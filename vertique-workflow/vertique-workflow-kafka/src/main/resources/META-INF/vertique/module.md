@@ -86,6 +86,24 @@ KafkaConsumerBinding<ShipmentDelivered> binding = source
 
 The stages of a source, listed above. `build()` returns the `KafkaConsumerBinding<T>` for the consumer registry.
 
+### KafkaSignalListener
+
+An interface annotated `@KafkaSignalListener(name, topic, groupId)` whose methods carry `@WorkflowSignalTarget` is a signal source with no implementation and no Dagger code. The annotation carries `@SignalSourceForm(KafkaSignalSource.class)`, so the annotation processor of `vertique-codegen-workflow` generates `<Interface>_SignalSource`, a `KafkaSignalSource<T>` with an `@Inject` constructor, and the generated registrations module binds it into the `Set<KafkaSignalSource<?>>` by name, exactly as it does a source annotated for another transport. The application's build needs `vertique-codegen-workflow` on the processor path next to `vertique-codegen-dagger`, and this module on the compile classpath.
+
+The annotation has three attributes and no more: `name` (the consumer's name and configuration key), `topic` and `groupId`, all required and non-blank. The generated source commits manually and retries, requires both strategies, and takes no dead-letter topic, value type or JSON profile of its own, so none of them is an attribute; a `@JsonProfile`, or a `@KafkaHandler` method beside a target, is a compile error because the source would drop it or leave the handler without records. The message type is the type of the target methods' only parameter, and a target by `businessKey` names `dedupBy`. A key is read by the no-argument method named like the property (a record component too), else by `getX()` or `isX()`, and that method returns `String`.
+
+```java
+@KafkaSignalListener(name = "carrier-events", topic = "carrier.events", groupId = "logistics")
+public interface CarrierSignals {
+    @WorkflowSignalTarget(contract = OrdersContract.class, signal = "shipment-delivered", key = "carrierRef")
+    @WorkflowSignalTarget(contract = OrdersContract.class, signal = "order-delivered", businessKey = "orderNumber",
+            dedupBy = "eventId")
+    void delivered(ShipmentDelivered event);
+}
+```
+
+An interface or class annotated `@KafkaListener` that carries a `@WorkflowSignalTarget` is a compile error that names `@KafkaSignalListener`: the Kafka listener processor routes records to `@KafkaHandler` methods and would otherwise leave the target without a source. Declare every target on the annotated interface itself; a target on a super-interface is an error.
+
 ### KafkaSignalSource and WorkflowKafkaSignalsModule
 
 A source may be a class instead of a call to `WorkflowKafkaSignals`. A class annotated `@WorkflowSignalSource` that implements `KafkaSignalSource<T>` and has an `@Inject` constructor is registered by generated wiring into the `Set<KafkaSignalSource<?>>`, with no application `@Provides` method. Its dependencies come by constructor injection, so a lookup written in `define` uses the repository the class received.

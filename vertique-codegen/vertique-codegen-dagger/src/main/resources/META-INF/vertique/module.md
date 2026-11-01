@@ -48,30 +48,20 @@ annotations by fully qualified name and takes no compile dependency on the workf
 - **A forgotten module leaves no source.** The generated registrations module carries both the sources and the transport
   module that consumes them, so a component that leaves it out builds and consumes nothing, as with any generated module.
   Name it in the component.
-- **A target on a type that is no source is an error.** A `@WorkflowSignalTarget` on a type that is neither a
-  `@KafkaListener` interface nor an interface annotated with an annotation that carries `@SignalSourceForm` fails
-  compilation, naming the type, because no processor generates a source for it. The check runs in every round, with
-  wiring disabled too.
 - **Opt-out.** `@NoAutoWire` and `-Avertique.codegen.autoWire=false` disable this registration like every other.
 
 A class that another processor generates is registered the same way, by name, in the round in which this processor sees
-the interface: a `@KafkaListener` interface with a method that carries `@WorkflowSignalTarget` has its
-`<Interface>_SignalSource` bound into the `Set<KafkaSignalSource<?>>`, and an interface annotated with an annotation that
-carries `@SignalSourceForm` has its `<Interface>_SignalSource` bound into the `Set` of the form's interface. Both the
-test "is this a signal listener" and the class name come from `vertique-codegen-core` (`SignalListeners`), the same code
+the interface: an interface annotated with an annotation that carries `@SignalSourceForm` (`@KafkaSignalListener` of
+`vertique-workflow-kafka`, `@CamelSignalListener` of the Camel module) has its `<Interface>_SignalSource` bound into the
+`Set` of the form's interface. The class name comes from `vertique-codegen-core` (`SignalSourceNaming`), the same code
 the generating processor calls, and the transport module is the one `@SignalSourceType` names on the target, so this
-module names no transport type for a form. The class is first visible in a later round, which a `@Binds` method
-tolerates. A `@KafkaListener` interface with targets leaves the `@KafkaConsumers` collection and its manual-contribution
-note.
+module names no transport type and every transport takes this one path.
 
 - **A missing generator is an error.** In the final round the processor looks up every class it predicted. One that no
-  processor generated is an error on its interface naming the class and the processor to add (`vertique-codegen-kafka`
-  for a listener, the processor of the form's annotation for a form), because Dagger would otherwise fail with a
-  missing-type message that points away from the cause. The report is skipped when an earlier round already raised an
-  error, which is then the cause: a misspelled signal makes the Kafka processor generate nothing, and the compilation
-  reports that error alone.
-- **The transport is on the classpath.** A listener with targets needs `KafkaSignalSource` (`vertique-workflow-kafka`) on
-  the compile classpath; without it the interface fails compilation, naming the missing type.
+  processor generated is an error on its interface naming the class and the annotation whose processor to add, because
+  Dagger would otherwise fail with a missing-type message that points away from the cause. The report is skipped when an
+  earlier round already raised an error, which is then the cause: a misspelled signal makes the generating processor
+  generate nothing, and the compilation reports that error alone.
 
 The processor uses `@SupportedAnnotationTypes("*")` so it runs every round regardless of which annotations are present. It always returns `false` from `process()` so Dagger, Lombok, and other processors see the same elements unmodified.
 
@@ -175,7 +165,7 @@ error naming a class that implements no marked interface.
 
 ### `GeneratedSignalSourceCollector`
 
-Predicts the class generated for a signal listener or a form-annotated interface and turns it into a required
+Predicts the class generated for a form-annotated interface and turns it into a required
 `Registration` that carries the target's `@SignalSourceType` module. It keeps the predicted names so the final round can
 report each one no processor generated, unless `RoundEnvironment.errorRaised()` is true. It honors `@NoAutoWire` and
 reads the form from the annotation types present in the round.

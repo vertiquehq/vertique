@@ -10,9 +10,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dagger.Binds;
 import dagger.multibindings.IntoSet;
 import dev.vertique.codegen.dagger.processor.AutoWireProcessor;
-import dev.vertique.codegen.kafka.processor.KafkaConsumerProcessor;
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
+import dev.vertique.codegen.workflow.signal.KafkaSignalListenerProcessor;
 import dev.vertique.workflow.kafka.KafkaSignalSource;
 import dev.vertique.workflow.kafka.WorkflowKafkaSignalsModule;
 import java.lang.reflect.Method;
@@ -26,7 +26,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Compiles an annotated {@code @KafkaListener} interface through the Kafka processor and {@link AutoWireProcessor} in
+ * Compiles an interface annotated {@code @KafkaSignalListener} through its processor and {@link AutoWireProcessor} in
  * one compilation, against the real annotations, {@code KafkaSignalSource} and transport module.
  *
  * <p>The generated {@code <Interface>_SignalSource} exists only from the second round, and the processor that registers
@@ -67,21 +67,14 @@ class AnnotatedKafkaSignalSourceChainTest {
             public record ShipmentDelivered(String eventId, String carrierRef, String orderNumber) {}
             """);
 
-    /** Writes both strategies explicitly and states one target by key and one by business key, both with one dedup key. */
+    /** States one target by key and one by business key, both with one dedup key. */
     private static final String LISTENER_TEMPLATE = """
             package dev.vertique.examples;
 
-            import dev.vertique.kafka.CommitStrategy;
-            import dev.vertique.kafka.ErrorStrategy;
-            import dev.vertique.kafka.KafkaListener;
+            import dev.vertique.workflow.kafka.KafkaSignalListener;
             import dev.vertique.workflow.source.WorkflowSignalTarget;
 
-            @KafkaListener(
-                    name = "carrier-events",
-                    topic = "carrier.events",
-                    groupId = "logistics",
-                    commitStrategy = CommitStrategy.MANUAL,
-                    errorStrategy = ErrorStrategy.RETRY)
+            @KafkaSignalListener(name = "carrier-events", topic = "carrier.events", groupId = "logistics")
             public interface CarrierSignals {
                 @WorkflowSignalTarget(
                         contract = OrdersContract.class,
@@ -100,12 +93,12 @@ class AnnotatedKafkaSignalSourceChainTest {
     @Test
     @DisplayName("a generated source resolves through both processors")
     void generatedSourceResolvesThroughBothProcessors() {
-        // Given a contract of two signals, a message record, and a @KafkaListener interface CarrierSignals that writes
-        // MANUAL and RETRY explicitly and carries a key target and a business-key target on one method, both with
-        // dedupBy eventId, and no @KafkaHandler
+        // Given a contract of two signals, a message record, and a @KafkaSignalListener interface CarrierSignals that
+        // carries a key target and a business-key target on one method, both with dedupBy eventId, and no
+        // @KafkaHandler
         JavaFileObject listener = listener("shipment-delivered");
 
-        // When the Kafka processor and AutoWireProcessor compile them in one compilation
+        // When the signal listener processor and AutoWireProcessor compile them in one compilation
         var result = compileChain(listener);
 
         // Then compilation succeeds
@@ -151,7 +144,7 @@ class AnnotatedKafkaSignalSourceChainTest {
         // declare
         JavaFileObject listener = listener("shipment-delivred");
 
-        // When the Kafka processor and AutoWireProcessor compile them in one compilation
+        // When the signal listener processor and AutoWireProcessor compile them in one compilation
         var result = compileChain(listener);
 
         // Then compilation fails with an error on the listener whose message contains the misspelled signal
@@ -163,10 +156,10 @@ class AnnotatedKafkaSignalSourceChainTest {
                                 && error.getSource().getName().endsWith("/CarrierSignals.java")
                                 && error.getMessage(null).contains("shipment-delivred")),
                 () -> "an error on the listener must name the signal but the errors were " + messages(errors));
-        // And no diagnostic names vertique-codegen-kafka; javac may still report the missing generated class
+        // And no diagnostic names a processor to add; javac may still report the missing generated class
         List<String> naming = result.compilation().diagnostics().stream()
                 .map(diagnostic -> diagnostic.getMessage(null))
-                .filter(message -> message.contains("vertique-codegen-kafka"))
+                .filter(message -> message.contains("annotation processor that handles"))
                 .toList();
         assertEquals(List.of(), naming, "no diagnostic may name the processor to add");
     }
@@ -176,7 +169,7 @@ class AnnotatedKafkaSignalSourceChainTest {
     }
 
     private static ProcessorTestHarness.Result compileChain(JavaFileObject listener) {
-        List<Processor> processors = List.of(new KafkaConsumerProcessor(), new AutoWireProcessor());
+        List<Processor> processors = List.of(new KafkaSignalListenerProcessor(), new AutoWireProcessor());
         return ProcessorTestHarness.run(processors, CONTRACT, MESSAGE, listener);
     }
 

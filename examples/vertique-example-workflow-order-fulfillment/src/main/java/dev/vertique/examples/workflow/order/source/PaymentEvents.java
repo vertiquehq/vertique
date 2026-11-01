@@ -5,7 +5,7 @@ package dev.vertique.examples.workflow.order.source;
 
 import dev.vertique.examples.workflow.order.OrderFulfillmentWorkflow;
 import dev.vertique.examples.workflow.order.signal.PaymentCaptured;
-import dev.vertique.kafka.KafkaListener;
+import dev.vertique.workflow.kafka.KafkaSignalListener;
 import dev.vertique.workflow.source.WorkflowSignalTarget;
 
 /**
@@ -16,7 +16,7 @@ import dev.vertique.workflow.source.WorkflowSignalTarget;
  * {@code orderId} finds the order. The interface needs no implementation, because the code generator turns it into a
  * signal source and registers it.
  */
-@KafkaListener(name = "payment-events", topic = "payments.captured", groupId = "order-fulfillment")
+@KafkaSignalListener(name = "payment-events", topic = "payments.captured", groupId = "order-fulfillment")
 public interface PaymentEvents {
 
     /**

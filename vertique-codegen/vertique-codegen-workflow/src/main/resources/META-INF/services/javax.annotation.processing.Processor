@@ -1,1 +1,3 @@
 dev.vertique.codegen.workflow.processor.WorkflowContractProcessor
+dev.vertique.codegen.workflow.signal.KafkaSignalListenerProcessor
+dev.vertique.codegen.workflow.signal.SignalTargetHostProcessor

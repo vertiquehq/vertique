@@ -34,6 +34,15 @@ SPDX-License-Identifier: EUPL-1.2
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <configuration>
+                    <!-- The test contracts declare signals only and no start, so the contract processor of
+                         vertique-codegen-workflow, which refuses such a contract, must not run here: name the
+                         processors that do. -->
+                    <annotationProcessors>
+                        <annotationProcessor>dagger.internal.codegen.ComponentProcessor</annotationProcessor>
+                        <annotationProcessor>dev.vertique.codegen.dagger.processor.AutoWireProcessor</annotationProcessor>
+                        <annotationProcessor>dev.vertique.codegen.workflow.signal.KafkaSignalListenerProcessor</annotationProcessor>
+                        <annotationProcessor>dev.vertique.codegen.workflow.signal.SignalTargetHostProcessor</annotationProcessor>
+                    </annotationProcessors>
                     <annotationProcessorPaths combine.children="append">
                         <path>
                             <groupId>dev.vertique</groupId>
@@ -41,7 +50,7 @@ SPDX-License-Identifier: EUPL-1.2
                         </path>
                         <path>
                             <groupId>dev.vertique</groupId>
-                            <artifactId>vertique-codegen-kafka</artifactId>
+                            <artifactId>vertique-codegen-workflow</artifactId>
                         </path>
                     </annotationProcessorPaths>
                 </configuration>
@@ -92,7 +101,7 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
-            <artifactId>vertique-codegen-kafka</artifactId>
+            <artifactId>vertique-codegen-workflow</artifactId>
             <scope>provided</scope>
         </dependency>
         <dependency>

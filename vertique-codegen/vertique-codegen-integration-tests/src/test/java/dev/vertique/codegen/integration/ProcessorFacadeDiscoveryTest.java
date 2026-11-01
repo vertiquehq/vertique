@@ -49,7 +49,10 @@ class ProcessorFacadeDiscoveryTest {
                     "vertique-codegen-delayed-job",
                     "dev.vertique.codegen.delayed.processor.DelayedJobContractProcessor"),
             new FacadeLeaf(
-                    "vertique-codegen-workflow", "dev.vertique.codegen.workflow.processor.WorkflowContractProcessor"),
+                    "vertique-codegen-workflow",
+                    "dev.vertique.codegen.workflow.processor.WorkflowContractProcessor",
+                    "dev.vertique.codegen.workflow.signal.KafkaSignalListenerProcessor",
+                    "dev.vertique.codegen.workflow.signal.SignalTargetHostProcessor"),
             new FacadeLeaf("vertique-codegen-cron", "dev.vertique.codegen.cron.processor.CronJobProcessor"),
             new FacadeLeaf(
                     "vertique-codegen-sanitization",
@@ -93,7 +96,7 @@ class ProcessorFacadeDiscoveryTest {
         requireFacadePom();
 
         Map<String, Long> expected = FROZEN_LEAVES.stream()
-                .map(FacadeLeaf::processorClassName)
+                .flatMap(leaf -> leaf.processorClassNames().stream())
                 .collect(Collectors.toMap(Function.identity(), ignored -> 1L, Long::sum, LinkedHashMap::new));
         Map<String, Long> discovered = ServiceLoader.load(
                         Processor.class, getClass().getClassLoader())
@@ -129,16 +132,18 @@ class ProcessorFacadeDiscoveryTest {
         Map<String, List<Processor>> processorsByClass =
                 ServiceLoader.load(Processor.class, ProcessorFacadeDiscoveryTest.class.getClassLoader()).stream()
                         .map(ServiceLoader.Provider::get)
-                        .filter(processor -> FROZEN_LEAVES.stream().anyMatch(leaf -> leaf.processorClassName()
-                                .equals(processor.getClass().getName())))
+                        .filter(processor -> FROZEN_LEAVES.stream().anyMatch(leaf -> leaf.processorClassNames()
+                                .contains(processor.getClass().getName())))
                         .collect(Collectors.groupingBy(
                                 processor -> processor.getClass().getName(), LinkedHashMap::new, Collectors.toList()));
 
         List<Processor> processors = new ArrayList<>(FROZEN_LEAVES.size());
         for (FacadeLeaf leaf : FROZEN_LEAVES) {
-            List<Processor> matches = processorsByClass.getOrDefault(leaf.processorClassName(), List.of());
-            assertEquals(1, matches.size(), leaf.processorClassName() + " must be discoverable exactly once");
-            processors.add(matches.getFirst());
+            for (String processorClassName : leaf.processorClassNames()) {
+                List<Processor> matches = processorsByClass.getOrDefault(processorClassName, List.of());
+                assertEquals(1, matches.size(), processorClassName + " must be discoverable exactly once");
+                processors.add(matches.getFirst());
+            }
         }
         return List.copyOf(processors);
     }
@@ -190,7 +195,13 @@ class ProcessorFacadeDiscoveryTest {
         return List.copyOf(matches);
     }
 
-    private record FacadeLeaf(String artifactId, String processorClassName) {}
+    /** A processor artifact of the facade and the processors its jar registers. */
+    private record FacadeLeaf(String artifactId, List<String> processorClassNames) {
+
+        FacadeLeaf(String artifactId, String... processorClassNames) {
+            this(artifactId, List.of(processorClassNames));
+        }
+    }
 
     private record PomDependency(String groupId, String artifactId, String scope, boolean excludesLombok) {}
 }

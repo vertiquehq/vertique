@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.codegen;
+package dev.vertique.codegen.workflow.signal;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.vertique.codegen.SignalTargetScan.DedupRequirement;
+import dev.vertique.codegen.CodegenContext;
+import dev.vertique.codegen.workflow.signal.SignalTargetScan.DedupRequirement;
 import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;

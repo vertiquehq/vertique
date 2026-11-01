@@ -6,7 +6,7 @@ package dev.vertique.codegen.dagger.processor.collect;
 import com.palantir.javapoet.ClassName;
 import dev.vertique.codegen.AnnotationMirrors;
 import dev.vertique.codegen.CodegenContext;
-import dev.vertique.codegen.SignalListeners;
+import dev.vertique.codegen.SignalSourceNaming;
 import dev.vertique.codegen.dagger.processor.Registration;
 import dev.vertique.codegen.dagger.processor.support.Filters;
 import java.util.ArrayList;
@@ -23,14 +23,10 @@ import javax.lang.model.type.DeclaredType;
  * Registers, in the round in which it sees an interface, the signal source class that another processor generates for
  * it, and reports the class that no processor generated.
  *
- * <p>Two kinds of interface have such a class, named by {@link SignalListeners#generatedName}, the one rule that the
- * generating processor also calls:
- * <ul>
- *   <li>a {@code @KafkaListener} interface that {@link SignalListeners#isSignalListener} accepts, whose class is
- *       bound into the {@code Set} of {@code KafkaSignalSource};</li>
- *   <li>an interface annotated with an annotation that carries {@code @SignalSourceForm}, whose class is bound into
- *       the {@code Set} of the form's {@code value()}, with this module naming no transport type.</li>
- * </ul>
+ * <p>The interfaces are those annotated with an annotation that carries {@code @SignalSourceForm}, such as
+ * {@code @KafkaSignalListener} or {@code @CamelSignalListener}. The generated class is named by
+ * {@link SignalSourceNaming#generatedName}, the one rule that the generating processor also calls, and is bound into
+ * the {@code Set} of the form's {@code value()}, with this module naming no transport type.
  *
  * <p>The class does not exist yet when this processor emits, in the first round, so the registration refers to it by
  * name, which a {@code @Binds} method tolerates until the class appears in a later round. The final round looks each
@@ -43,11 +39,8 @@ import javax.lang.model.type.DeclaredType;
  */
 public final class GeneratedSignalSourceCollector {
 
-    private static final String KAFKA_LISTENER_FQN = "dev.vertique.kafka.KafkaListener";
-    private static final String KAFKA_SIGNAL_SOURCE_FQN = "dev.vertique.workflow.kafka.KafkaSignalSource";
     private static final String SIGNAL_SOURCE_TYPE_FQN = "dev.vertique.workflow.source.SignalSourceType";
     private static final String SIGNAL_SOURCE_FORM_FQN = "dev.vertique.workflow.source.SignalSourceForm";
-    private static final String KAFKA_PROCESSOR = "vertique-codegen-kafka";
 
     /** A class predicted in the first round: the interface it is generated for and what to add if it is missing. */
     private record Prediction(TypeElement origin, String className, String remedy) {}
@@ -74,7 +67,6 @@ public final class GeneratedSignalSourceCollector {
      */
     public void collect(
             Set<? extends TypeElement> annotations, RoundEnvironment roundEnv, List<Registration> accumulator) {
-        collectListeners(roundEnv, accumulator);
         for (TypeElement annotation : annotations) {
             AnnotationMirrors.findByFqn(annotation, SIGNAL_SOURCE_FORM_FQN)
                     .ifPresent(form -> collectForm(annotation, form, roundEnv, accumulator));
@@ -102,31 +94,6 @@ public final class GeneratedSignalSourceCollector {
                                 prediction.className(),
                                 prediction.origin().getQualifiedName(),
                                 prediction.remedy());
-            }
-        }
-    }
-
-    private void collectListeners(RoundEnvironment roundEnv, List<Registration> accumulator) {
-        TypeElement listener = ctx.elements().getTypeElement(KAFKA_LISTENER_FQN);
-        if (listener == null) {
-            return;
-        }
-        for (Element element : roundEnv.getElementsAnnotatedWith(listener)) {
-            if (element instanceof TypeElement type
-                    && SignalListeners.isSignalListener(type)
-                    && !Filters.isOptedOut(type)) {
-                TypeElement target = ctx.elements().getTypeElement(KAFKA_SIGNAL_SOURCE_FQN);
-                if (target == null) {
-                    ctx.diagnostics()
-                            .error(
-                                    type,
-                                    "%s has signal targets, so it needs %s on the compile classpath: add"
-                                            + " vertique-workflow-kafka",
-                                    type.getQualifiedName(),
-                                    KAFKA_SIGNAL_SOURCE_FQN);
-                    continue;
-                }
-                register(type, target, "add " + KAFKA_PROCESSOR + " to the annotation processor path", accumulator);
             }
         }
     }
@@ -177,7 +144,7 @@ public final class GeneratedSignalSourceCollector {
                             origin.getQualifiedName());
             return;
         }
-        String className = SignalListeners.generatedName(origin);
+        String className = SignalSourceNaming.generatedName(origin);
         int split = className.lastIndexOf('.');
         ClassName implementation =
                 ClassName.get(split < 0 ? "" : className.substring(0, split), className.substring(split + 1));

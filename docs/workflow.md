@@ -127,7 +127,7 @@ lease. Wait for a recorded start with the execution probe. Signals, task complet
 | [workflow-events.md](../vertique-workflow/vertique-workflow-events/src/main/resources/META-INF/vertique/module.md) | `vertique-workflow-events` | Durable external workflow event stream |
 | [workflow-definition.md](../vertique-workflow/vertique-workflow-definition/src/main/resources/META-INF/vertique/module.md) | `vertique-workflow-definition` | Typed YAML/JSON workflow definition authoring |
 | [workflow-schema.md](../vertique-workflow/vertique-workflow-schema/src/main/resources/META-INF/vertique/module.md) | `vertique-workflow-schema` | Payload schemas for decision and start payloads, checked at definition registration, and the state-class comparison across scopes |
-| [codegen-workflow.md](../vertique-codegen/vertique-codegen-workflow/src/main/resources/META-INF/vertique/module.md) | `vertique-codegen-workflow` | Annotation processor: contract validation, generated client proxies and the generated type catalog module |
+| [codegen-workflow.md](../vertique-codegen/vertique-codegen-workflow/src/main/resources/META-INF/vertique/module.md) | `vertique-codegen-workflow` | Annotation processor: contract validation, generated client proxies, the generated type catalog module and the signal source of `@KafkaSignalListener` |
 
 ---
 
@@ -491,7 +491,7 @@ There are three forms, and all three build the same source:
 |---|---|---|
 | Builder | A call to `WorkflowKafkaSignals.on(topic, type)` that ends in `build()` | You add the built `KafkaConsumerBinding` to the `Set<KafkaConsumerBinding<?>>` that the Kafka consumer registry reads |
 | Source class | A class annotated `@WorkflowSignalSource` that implements `KafkaSignalSource<T>`, has an `@Inject` constructor and states the source in `define` | Generated wiring |
-| Annotated listener | A `@KafkaListener` interface whose methods carry `@WorkflowSignalTarget`; it needs no implementation | The code generator writes the source and the wiring |
+| Annotated listener | An interface annotated `@KafkaSignalListener(name, topic, groupId)` whose methods carry `@WorkflowSignalTarget`; it needs no implementation | The code generator writes the source and the wiring |
 
 ```java
 KafkaSignals<ShipmentDelivered> source = signals
@@ -528,7 +528,7 @@ final class ShipmentSignals implements KafkaSignalSource<ShipmentDelivered> {
 
 - **Stages.** Each signal names its contract and signal name with `signal(contract, name)` and takes exactly one key source: `key` or `businessKey` computes it from the message, and `keyFrom` or `businessKeyFrom` looks it up asynchronously, bounded by `lookupTimeoutMs` (default 5000). An optional `payload` maps the message to the signal's payload; without it the message type must be the signal's payload type. `when` excludes messages, `scope` takes a function from the message to the scope to match (an empty answer ends the message as `SCOPE_EMPTY`), `anyScope` states the default outright, which is to match every scope, `dedupBy` names the dedup key, `onNoMatch` sets the default no-match policy and a signal may set its own, `dispatchAs` sets the identity, and `restoreCorrelationFromHeaders` restores the correlation id. Kafka adds `topic`, `groupId`, `name`, `filter` and `dlqReplay`. A source may declare several signals; the signals of one message run one after the other.
 - **Dedup key.** A business-key signal must name `dedupBy`. Otherwise the dedup key is `topic:partition:offset`, so a redelivered record is recorded once. A dead-lettered record carries the position it started at in its `x-dlq-source-*` headers and keeps it when it is dead-lettered again, so a `dlqReplay` source computes the same key and the same inbox identities for any number of replays: a signal that finished on one replay is deduplicated on the next, and only a failed one runs again.
-- **Wiring.** Name the generated registrations module in the component; it includes the Kafka source module, so you do not list that. A component that leaves it out builds and consumes no source. An annotated listener also needs `vertique-workflow-kafka` on the compile classpath and `vertique-codegen-kafka` on the processor path.
+- **Wiring.** Name the generated registrations module in the component; it includes the Kafka source module, so you do not list that. A component that leaves it out builds and consumes no source. An annotated listener also needs `vertique-workflow-kafka` on the compile classpath and `vertique-codegen-workflow` on the processor path.
 - **Registration fails the build.** A source class with no `@Inject` constructor, one that is not concrete, one that implements no source interface, one the generated module cannot reference, and a listener target on a type that is no source each fail compilation and name the class. A registration is never skipped with a warning. `@NoAutoWire` turns the registration off.
 - **Checks at build.** `build()` fails with an `IllegalStateException` that names the source, never a key, for a signal the contract does not declare, a signal with no key source, a business-key signal with no `dedupBy`, and `scope` beside `anyScope`.
 
@@ -547,7 +547,7 @@ The order-fulfillment example saga waits at `wait-payment` for a `payment.captur
 An annotated listener turns the `payments.captured` topic into deliveries to that wait. The interface has no implementation:
 
 ```java
-@KafkaListener(name = "payment-events", topic = "payments.captured", groupId = "order-fulfillment")
+@KafkaSignalListener(name = "payment-events", topic = "payments.captured", groupId = "order-fulfillment")
 public interface PaymentEvents {
     @WorkflowSignalTarget(contract = OrderFulfillmentWorkflow.class, signal = "payment.captured", key = "orderId")
     void captured(PaymentCaptured event);

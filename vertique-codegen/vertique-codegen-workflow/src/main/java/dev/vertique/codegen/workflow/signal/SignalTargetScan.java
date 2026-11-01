@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.codegen;
+package dev.vertique.codegen.workflow.signal;
 
+import dev.vertique.codegen.AnnotationMirrors;
+import dev.vertique.codegen.CodegenContext;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
-import javax.annotation.processing.RoundEnvironment;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.AnnotationValue;
 import javax.lang.model.element.Element;
@@ -29,7 +29,7 @@ import javax.lang.model.util.ElementFilter;
  * <p>Holds the one scan of {@code dev.vertique.workflow.source.WorkflowSignalTarget} and its repeatable container on
  * the methods of an interface, and the compile rules every transport shares, so that every processor applies one rule
  * set. The annotations are identified by fully qualified name, because this module takes no dependency on the workflow
- * modules. Transport-specific settings stay with the processor of the transport.
+ * runtime modules. Transport-specific settings stay with the processor of the transport.
  *
  * <p>The scan refuses, on the offending element and naming it: a target on a concrete class, a target inherited from a
  * super-interface, a target method with other than one parameter, a generic message type, two message types on one
@@ -40,7 +40,7 @@ import javax.lang.model.util.ElementFilter;
  *
  * <p>An accessor is a public, non-static, no-argument method that returns a value: the method named like the property,
  * which is also a record component, or else {@code get} or {@code is} followed by the capitalized property.
- * {@link #rejectUnsupportedHosts} covers the types the scan never sees, because no processor generates a source for
+ * {@link SignalTargetHostProcessor} covers the types the scan never sees, because no processor generates a source for
  * them.
  */
 public final class SignalTargetScan {
@@ -84,7 +84,8 @@ public final class SignalTargetScan {
     private static final String WORKFLOW_CONTRACT_FQN = "dev.vertique.workflow.contract.WorkflowContract";
     private static final String WORKFLOW_SIGNAL_FQN = "dev.vertique.workflow.contract.WorkflowSignal";
     private static final String WORKFLOW_INSTANCE_ID_FQN = "dev.vertique.workflow.ops.WorkflowInstanceId";
-    private static final String SIGNAL_SOURCE_FORM_FQN = "dev.vertique.workflow.source.SignalSourceForm";
+    static final String SIGNAL_TARGET_FQN = "dev.vertique.workflow.source.WorkflowSignalTarget";
+    static final String SIGNAL_TARGETS_FQN = "dev.vertique.workflow.source.WorkflowSignalTargets";
     private static final Set<String> KEY_PARAMETER_FQNS = Set.of(
             "dev.vertique.workflow.contract.IdempotencyKey",
             "dev.vertique.workflow.contract.BusinessKey",
@@ -103,9 +104,9 @@ public final class SignalTargetScan {
      *     rule was violated, after every violation has been reported
      */
     public static List<Target> scan(CodegenContext context, TypeElement type, DedupRequirement requirement) {
-        List<ExecutableElement> methods = SignalListeners.targetMethods(type);
+        List<ExecutableElement> methods = targetMethods(type);
         boolean isInterface = type.getKind() == ElementKind.INTERFACE;
-        List<ExecutableElement> inherited = isInterface ? SignalListeners.inheritedTargetMethods(type) : List.of();
+        List<ExecutableElement> inherited = isInterface ? inheritedTargetMethods(type) : List.of();
         if (methods.isEmpty() && inherited.isEmpty()) {
             return List.of();
         }
@@ -135,48 +136,45 @@ public final class SignalTargetScan {
     }
 
     /**
-     * Reports, on its type, each type of the round that declares a target and that no processor turns into a signal
-     * source: a type that is neither annotated {@code @KafkaListener} nor an interface annotated with an annotation
-     * that carries {@code @SignalSourceForm}. Without this report the target compiles and does nothing.
+     * Returns whether a type declares, or inherits from a super-interface, a method that carries a signal target or
+     * its container, whether or not that target is well formed.
      *
-     * <p>A type annotated {@code @KafkaListener} is left to the Kafka processor, which reports a class and validates an
-     * interface, so no type is reported twice. A processor that sees every type of the round, such as the wiring
-     * processor, calls this once per round.
-     *
-     * @param context the codegen context that reports the diagnostics; must not be {@code null}
-     * @param roundEnv the current round; must not be {@code null}
+     * @param type the type to read; must not be {@code null}
+     * @return {@code true} when any such method exists
      */
-    public static void rejectUnsupportedHosts(CodegenContext context, RoundEnvironment roundEnv) {
-        Set<TypeElement> hosts = new LinkedHashSet<>();
-        for (String annotationName : List.of(SignalListeners.SIGNAL_TARGET_FQN, SignalListeners.SIGNAL_TARGETS_FQN)) {
-            TypeElement annotation = context.elements().getTypeElement(annotationName);
-            if (annotation == null) {
-                continue;
-            }
-            for (Element element : roundEnv.getElementsAnnotatedWith(annotation)) {
-                if (element instanceof ExecutableElement && element.getEnclosingElement() instanceof TypeElement host) {
-                    hosts.add(host);
-                }
-            }
-        }
-        for (TypeElement host : hosts) {
-            if (!AnnotationMirrors.isPresent(host, SignalListeners.KAFKA_LISTENER_FQN) && !isSignalSourceForm(host)) {
-                context.diagnostics()
-                        .error(
-                                host,
-                                "%s carries @WorkflowSignalTarget, but it is neither a @KafkaListener interface nor"
-                                        + " annotated with an annotation that carries @SignalSourceForm, so no signal"
-                                        + " source is generated for it and its targets would never run",
-                                host.getQualifiedName());
-            }
-        }
+    public static boolean declaresTarget(TypeElement type) {
+        return !targetMethods(type).isEmpty() || !inheritedTargetMethods(type).isEmpty();
     }
 
-    private static boolean isSignalSourceForm(TypeElement host) {
-        return host.getKind() == ElementKind.INTERFACE
-                && host.getAnnotationMirrors().stream()
-                        .anyMatch(mirror -> AnnotationMirrors.isPresent(
-                                mirror.getAnnotationType().asElement(), SIGNAL_SOURCE_FORM_FQN));
+    /**
+     * Returns the methods that a type itself declares and that carry a signal target or its container.
+     *
+     * @param type the type to read; must not be {@code null}
+     * @return the methods in declaration order
+     */
+    static List<ExecutableElement> targetMethods(TypeElement type) {
+        return ElementFilter.methodsIn(type.getEnclosedElements()).stream()
+                .filter(method -> AnnotationMirrors.isPresent(method, SIGNAL_TARGET_FQN)
+                        || AnnotationMirrors.isPresent(method, SIGNAL_TARGETS_FQN))
+                .toList();
+    }
+
+    /**
+     * Returns the methods that carry a signal target or its container and that a super-interface of the type
+     * declares.
+     *
+     * @param type the type to read; must not be {@code null}
+     * @return the inherited target methods, nearest super-interface first
+     */
+    static List<ExecutableElement> inheritedTargetMethods(TypeElement type) {
+        List<ExecutableElement> inherited = new ArrayList<>();
+        for (TypeMirror parent : type.getInterfaces()) {
+            if (parent instanceof DeclaredType declared && declared.asElement() instanceof TypeElement element) {
+                inherited.addAll(targetMethods(element));
+                inherited.addAll(inheritedTargetMethods(element));
+            }
+        }
+        return inherited;
     }
 
     private static List<AnnotationMirror> targetMirrors(ExecutableElement method) {
@@ -185,9 +183,9 @@ public final class SignalTargetScan {
             String fqn = ((TypeElement) mirror.getAnnotationType().asElement())
                     .getQualifiedName()
                     .toString();
-            if (SignalListeners.SIGNAL_TARGET_FQN.equals(fqn)) {
+            if (SIGNAL_TARGET_FQN.equals(fqn)) {
                 mirrors.add(mirror);
-            } else if (SignalListeners.SIGNAL_TARGETS_FQN.equals(fqn)) {
+            } else if (SIGNAL_TARGETS_FQN.equals(fqn)) {
                 for (AnnotationValue value : valueOf(mirror, "value")) {
                     if (value.getValue() instanceof AnnotationMirror nested) {
                         mirrors.add(nested);

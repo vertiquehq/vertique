@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.codegen.kafka.processor.emit;
+package dev.vertique.codegen.workflow.signal;
 
 import com.palantir.javapoet.AnnotationSpec;
 import com.palantir.javapoet.ClassName;
@@ -12,9 +12,8 @@ import com.palantir.javapoet.ParameterizedTypeName;
 import com.palantir.javapoet.TypeName;
 import com.palantir.javapoet.TypeSpec;
 import dev.vertique.codegen.CodegenContext;
-import dev.vertique.codegen.SignalListeners;
-import dev.vertique.codegen.SignalTargetScan.Target;
-import dev.vertique.codegen.kafka.processor.scan.ListenerModel;
+import dev.vertique.codegen.SignalSourceNaming;
+import dev.vertique.codegen.workflow.signal.SignalTargetScan.Target;
 import java.io.IOException;
 import java.util.List;
 import javax.annotation.processing.Generated;
@@ -23,9 +22,8 @@ import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.TypeMirror;
 
 /**
- * Emits {@code <Interface>_SignalSource}, the {@code KafkaSignalSource} generated for a signal listener: a
- * {@link dev.vertique.kafka.KafkaListener @KafkaListener} interface whose methods carry
- * {@code @WorkflowSignalTarget}.
+ * Emits {@code <Interface>_SignalSource}, the {@code KafkaSignalSource} generated for an interface annotated
+ * {@code @KafkaSignalListener} whose methods carry {@code @WorkflowSignalTarget}.
  *
  * <p>The generated class has an {@code @Inject} constructor and no other dependency, so the registration that the
  * dagger processor generates binds it into the {@code Set} of Kafka signal sources. Its {@code define} method calls the
@@ -33,13 +31,13 @@ import javax.lang.model.type.TypeMirror;
  * target the signal, the key accessor and the no-match policy. It names no key value and builds no payload mapping.
  * Every accessor is a method reference, so the generated class compiles only when the message type has it.
  *
- * <p>The class is named by {@link SignalListeners#generatedName}, the one rule that the registering processor also
+ * <p>The class is named by {@link SignalSourceNaming#generatedName}, the one rule that the registering processor also
  * calls, and lands in the interface's package. The workflow types are referenced by name, because this module takes no
  * dependency on the workflow modules.
  */
-public final class SignalSourceEmitter {
+final class KafkaSignalSourceEmitter {
 
-    private static final String PROCESSOR_FQN = "dev.vertique.codegen.kafka.processor.KafkaConsumerProcessor";
+    private static final String PROCESSOR_FQN = "dev.vertique.codegen.workflow.signal.KafkaSignalListenerProcessor";
 
     private static final ClassName KAFKA_SIGNAL_SOURCE =
             ClassName.get("dev.vertique.workflow.kafka", "KafkaSignalSource");
@@ -54,20 +52,20 @@ public final class SignalSourceEmitter {
      *
      * @param ctx the shared codegen context; must not be {@code null}
      */
-    public SignalSourceEmitter(CodegenContext ctx) {
+    KafkaSignalSourceEmitter(CodegenContext ctx) {
         this.ctx = ctx;
     }
 
     /**
      * Emits the signal source of a signal listener.
      *
-     * @param model the validated model of the listener; must not be {@code null}
+     * @param origin the annotated interface; must not be {@code null}
+     * @param settings the topic, group and name the annotation states; must not be {@code null}
      * @param targets the validated targets of the listener, which share one message type and one dedup accessor; must
      *     not be empty
      */
-    public void emit(ListenerModel model, List<Target> targets) {
-        TypeElement origin = model.originType();
-        String generated = SignalListeners.generatedName(origin);
+    void emit(TypeElement origin, ListenerSettings settings, List<Target> targets) {
+        String generated = SignalSourceNaming.generatedName(origin);
         int split = generated.lastIndexOf('.');
         String packageName = split < 0 ? "" : generated.substring(0, split);
         String simpleName = generated.substring(split + 1);
@@ -83,7 +81,7 @@ public final class SignalSourceEmitter {
                 .addAnnotation(Override.class)
                 .addModifiers(Modifier.PUBLIC)
                 .addParameter(ParameterizedTypeName.get(KAFKA_SIGNALS, messageName), "source")
-                .addCode(defineBody(model, targets, messageName))
+                .addCode(defineBody(settings, targets, messageName))
                 .build();
         TypeSpec type = TypeSpec.classBuilder(simpleName)
                 .addModifiers(Modifier.PUBLIC, Modifier.FINAL)
@@ -107,9 +105,13 @@ public final class SignalSourceEmitter {
         }
     }
 
-    private CodeBlock defineBody(ListenerModel model, List<Target> targets, TypeName messageName) {
+    private CodeBlock defineBody(ListenerSettings settings, List<Target> targets, TypeName messageName) {
         CodeBlock.Builder chain = CodeBlock.builder()
-                .add("$[source.topic($S)\n.groupId($S)\n.name($S)", model.topic(), model.groupId(), model.name());
+                .add(
+                        "$[source.topic($S)\n.groupId($S)\n.name($S)",
+                        settings.topic(),
+                        settings.groupId(),
+                        settings.name());
         String dedupByMethod = targets.get(0).dedupByMethod();
         if (!dedupByMethod.isBlank()) {
             chain.add("\n.dedupBy($T::$L)", messageName, dedupByMethod);

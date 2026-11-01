@@ -3,18 +3,16 @@
 
 package dev.vertique.workflow.kafka;
 
-import dev.vertique.kafka.KafkaListener;
 import dev.vertique.workflow.kafka.CarrierSignalTypes.OrdersContract;
 import dev.vertique.workflow.kafka.CarrierSignalTypes.ShipmentDelivered;
 import dev.vertique.workflow.source.WorkflowSignalTarget;
 
 /**
  * The annotated listener of the test sources: an interface with no Dagger code and no handler method, which the code
- * generator turns into a signal source and the generated registrations module registers. It writes neither strategy,
- * because the generated binding requires them. It is the only listener here, because the generated registrations module
- * collects every listener of the test sources.
+ * generator turns into a signal source and the generated registrations module registers. It is the only
+ * listener here, because the generated registrations module collects every listener of the test sources.
  */
-@KafkaListener(name = CarrierSignals.NAME, topic = CarrierSignals.TOPIC, groupId = CarrierSignals.GROUP)
+@KafkaSignalListener(name = CarrierSignals.NAME, topic = CarrierSignals.TOPIC, groupId = CarrierSignals.GROUP)
 interface CarrierSignals {
 
     /** The topic the listener reads. */

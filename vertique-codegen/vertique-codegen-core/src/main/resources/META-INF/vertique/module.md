@@ -340,9 +340,7 @@ final class LoggingInterceptor implements EventInterceptor, RequestInterceptor {
 
 Each declaration carries one `Class<?> value()` target. The annotated type must be concrete, have
 exactly one `jakarta.inject.Inject` or `javax.inject.Inject` constructor, and be assignable to the
-target. `@NoAutoWire` suppresses every registration declaration on the same type. A class annotated
-`@WorkflowSignalSource` (see `vertique-workflow-core`) is registered into the set of the
-`@SignalSourceType` interface it implements by the same processor. The processor
+target. `@NoAutoWire` suppresses every registration declaration on the same type. The processor
 emits `GeneratedRegistrationsModule` in the package resolved from the annotated origins; the module
 must be included explicitly by the owning Dagger component or aggregate module.
 
@@ -350,34 +348,18 @@ must be included explicitly by the owning Dagger component or aggregate module.
 
 ### Framework seams
 
-Twenty-one public types — `CodegenContext`, `AnnotationMirrors`, `AnnotationLiteralEmitter`,
+Twenty public types — `CodegenContext`, `AnnotationMirrors`, `AnnotationLiteralEmitter`,
 `Conditions`, `Constructors`, `DaggerModuleWriter`, `Diagnostics`, `Identifiers`,
 `InjectConstructorValidator`, `JaxRsAnnotations`, `JaxRsBeanScanner`, `MetadataEmitter`,
 `MethodOverrides`, `PackageResolver`, `PathPlaceholders`, `ProxyabilityValidator`,
-`SelectorPathValidator`, `SignalListeners`, `SignalTargetScan`, `TypeResolver`, and
-`TypeVisibility` — are the processor-authoring
+`SelectorPathValidator`, `SignalSourceNaming`, `TypeResolver`, and `TypeVisibility` — are the processor-authoring
 substrate. They are public because sibling framework processors in other artifacts call them across
 package boundaries, and their Javadoc marks them INTERNAL. They are outside this module's
 compatibility promise.
 
-`SignalListeners` and `SignalTargetScan` are **INTERNAL** seams, outside the maturity promise of this
-module, and an application never calls them. They are public only because the Kafka processor, the
-Camel processor of another repository and `AutoWireProcessor` call them across modules, so that every
-processor applies one rule set to a signal source. `SignalListeners` holds the one test that decides
-whether an interface is a signal listener (an interface annotated `dev.vertique.kafka.KafkaListener`
-with at least one method that carries `WorkflowSignalTarget` or its container, declared or inherited) and the one rule that
-names the generated class, `<Interface>_SignalSource` in the interface's package, and
-`Outer_Inner_SignalSource` for a nested interface. `SignalTargetScan` reads the target annotations on
-an interface's methods and applies the compile rules every transport shares: an undeclared signal, an
-accessor the message type lacks or one that does not return `String` (the no-argument method named like the
-property, else `getX()` or `isX()`), a generic message type, a message type that differs from the signal's
-type, targets that disagree on `dedupBy`, a target inherited from a super-interface, two message types on one
-interface, a target method with other than one parameter, both or neither of `key` and `businessKey`, and
-targets on a concrete class. Each is reported on the offending element, naming it.
-`rejectUnsupportedHosts` reports, from a processor that sees every type of a round, a type that carries a
-target and is neither a `@KafkaListener` nor an interface annotated with a `@SignalSourceForm` annotation. Its `DedupRequirement` parameter states whether
-`dedupBy` is required on a business-key target only or on every target. The annotations are
-identified by fully qualified name. Kafka-only settings stay with the Kafka processor.
+`SignalSourceNaming` is an **INTERNAL** seam that holds the one rule that names the class a signal source processor
+generates for an interface, `<Interface>_SignalSource` in the interface's package and `Outer_Inner_SignalSource` for a
+nested interface, so the generating processor and `AutoWireProcessor`, which registers the class by name, agree on it.
 
 Within this internal namespace, `JaxRsAnnotations.AUTHORIZED` identifies
 `dev.vertique.security.authz.Authorized`, owned by `vertique-security-core`.

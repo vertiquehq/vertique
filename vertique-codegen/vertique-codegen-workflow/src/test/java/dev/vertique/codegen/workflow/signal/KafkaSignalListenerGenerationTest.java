@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.codegen.kafka.processor;
+package dev.vertique.codegen.workflow.signal;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -18,20 +18,73 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Verifies the compile errors {@link KafkaConsumerProcessor} reports for a {@code @KafkaListener} interface whose
- * methods carry {@code @WorkflowSignalTarget}: a signal the contract does not declare, an accessor the message type
- * lacks, a message type that is not the signal's, a business-key target with no dedup key, targets that disagree on the
- * dedup key, strategies and settings the generated source cannot honour, and shapes it cannot honour.
+ * Verifies the compile errors {@link KafkaSignalListenerProcessor} reports for an interface annotated
+ * {@code @KafkaSignalListener} whose methods carry {@code @WorkflowSignalTarget}: a signal the contract does not
+ * declare, an accessor the message type lacks, a message type that is not the signal's, a business-key target with no
+ * dedup key, targets that disagree on the dedup key, settings the generated source cannot honour, and shapes it cannot
+ * honour; and the error it reports for a {@code @KafkaListener} type that carries a target.
  *
- * <p>Every case here is a compile failure, so the workflow annotations are inline stubs that the processor identifies by
- * fully qualified name; the cases that must generate need the real types and live in the integration-test module. The
- * Kafka annotations are the real ones on this module's test class path. Each failing case is asserted to name the
- * offending interface together with the member or setting that is wrong, so that a rejection for another reason does not
- * satisfy it.
+ * <p>Every case here is a compile failure, so the annotations and the workflow types are inline stubs that the
+ * processor identifies by fully qualified name; the cases that must generate need the real types and live in the
+ * integration-test module. Each failing case is asserted to name the offending interface together with the member or
+ * setting that is wrong, so that a rejection for another reason does not satisfy it.
  */
-class KafkaSignalSourceGenerationTest {
+class KafkaSignalListenerGenerationTest {
 
     private static final String PACKAGE = "dev.vertique.examples";
+
+    private static final JavaFileObject KAFKA_SIGNAL_LISTENER =
+            SourceFiles.inline("dev.vertique.workflow.kafka.KafkaSignalListener", """
+            package dev.vertique.workflow.kafka;
+
+            import java.lang.annotation.*;
+
+            @Target(ElementType.TYPE)
+            @Retention(RetentionPolicy.CLASS)
+            public @interface KafkaSignalListener {
+                String name();
+                String topic();
+                String groupId();
+            }
+            """);
+
+    private static final JavaFileObject KAFKA_LISTENER = SourceFiles.inline("dev.vertique.kafka.KafkaListener", """
+            package dev.vertique.kafka;
+
+            import java.lang.annotation.*;
+
+            @Target(ElementType.TYPE)
+            @Retention(RetentionPolicy.RUNTIME)
+            public @interface KafkaListener {
+                String name();
+                String topic();
+                String groupId();
+            }
+            """);
+
+    private static final JavaFileObject KAFKA_HANDLER = SourceFiles.inline("dev.vertique.kafka.KafkaHandler", """
+            package dev.vertique.kafka;
+
+            import java.lang.annotation.*;
+
+            @Target(ElementType.METHOD)
+            @Retention(RetentionPolicy.RUNTIME)
+            public @interface KafkaHandler {
+                boolean defaultHandler() default false;
+            }
+            """);
+
+    private static final JavaFileObject JSON_PROFILE = SourceFiles.inline("dev.vertique.core.json.JsonProfile", """
+            package dev.vertique.core.json;
+
+            import java.lang.annotation.*;
+
+            @Target({ElementType.TYPE, ElementType.METHOD})
+            @Retention(RetentionPolicy.RUNTIME)
+            public @interface JsonProfile {
+                String value();
+            }
+            """);
 
     private static final JavaFileObject SIGNAL_NO_MATCH =
             SourceFiles.inline("dev.vertique.workflow.source.SignalNoMatch", """
@@ -209,7 +262,7 @@ class KafkaSignalSourceGenerationTest {
     @DisplayName("a signal the contract does not declare fails compilation naming the signal")
     void misspelledSignalFailsCompilationNamingTheSignal() {
         // Given a contract that declares shipment-delivered and a listener whose target names shipment-delivred
-        JavaFileObject listener = listener("", "", """
+        JavaFileObject listener = listener("", """
                 @WorkflowSignalTarget(contract = OrdersContract.class, signal = "shipment-delivred", key = "carrierRef")
                 void carrierDelivery(ShipmentDelivered message);
                 """);
@@ -226,7 +279,7 @@ class KafkaSignalSourceGenerationTest {
     @DisplayName("a key, business key or dedup accessor the message type lacks fails compilation naming it")
     void misspelledAccessorFailsCompilationNamingIt(String attribute, String targetAttributes) {
         // Given a message type with the accessor carrierRef only, and a target that writes carrierRefs in one attribute
-        JavaFileObject listener = listener("", "", """
+        JavaFileObject listener = listener("", """
                 @WorkflowSignalTarget(contract = OrdersContract.class, %s, %s)
                 void carrierDelivery(ShipmentDelivered message);
                 """.formatted(DELIVERED, targetAttributes));
@@ -250,7 +303,7 @@ class KafkaSignalSourceGenerationTest {
     void messageTypeDifferingFromSignalTypeFailsNamingBothTypes() {
         // Given a signal shipment-delivered whose payload is DeliveryConfirmed, and a listener method that takes
         // ShipmentDelivered, with a valid key and no way to map a payload
-        JavaFileObject listener = listener("", "", """
+        JavaFileObject listener = listener("", """
                 @WorkflowSignalTarget(contract = ConfirmationContract.class, %s, key = "carrierRef")
                 void carrierDelivery(ShipmentDelivered message);
                 """.formatted(DELIVERED));
@@ -266,7 +319,7 @@ class KafkaSignalSourceGenerationTest {
     @DisplayName("a business-key target with no dedup key fails compilation naming the source")
     void businessKeyTargetWithoutDedupByFailsNamingTheSource() {
         // Given a listener CarrierSignals with a target that sets businessKey and no dedupBy
-        JavaFileObject listener = listener("", "", """
+        JavaFileObject listener = listener("", """
                 @WorkflowSignalTarget(contract = OrdersContract.class, %s, businessKey = "orderNumber")
                 void carrierDelivery(ShipmentDelivered message);
                 """.formatted(DELIVERED));
@@ -283,7 +336,7 @@ class KafkaSignalSourceGenerationTest {
     @DisplayName("targets that disagree on the dedup key fail compilation naming the listener")
     void targetsDisagreeingOnDedupByFailCompilationNamingTheListener(String caseName, String targets) {
         // Given a listener with two targets on one method that state different dedup keys
-        JavaFileObject listener = listener("", "", targets + "\nvoid carrierDelivery(ShipmentDelivered message);\n");
+        JavaFileObject listener = listener("", targets + "\nvoid carrierDelivery(ShipmentDelivered message);\n");
 
         // When the processor compiles it
         var result = compile(listener);
@@ -304,36 +357,15 @@ class KafkaSignalSourceGenerationTest {
                         """.formatted(DELIVERED, PARCEL)));
     }
 
-    // --- the strategies and the settings the generated binding forces or takes none of ---
+    // --- the settings the generated source would drop ---
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("otherStrategies")
-    @DisplayName("a listener that writes other strategies fails compilation naming the attribute")
-    void listenerSettingOtherStrategiesFailsCompilation(String attribute, String written) {
-        // Given a valid listener with one target that also writes a strategy other than MANUAL or RETRY explicitly
-        JavaFileObject listener = listener("", ", " + written, validTarget());
-
-        // When the processor compiles it
-        var result = compile(listener);
-
-        // Then compilation fails and an error names CarrierSignals and the attribute
-        assertErrorNaming(result, "CarrierSignals", attribute);
-    }
-
-    static Stream<Arguments> otherStrategies() {
-        return Stream.of(
-                Arguments.of("commitStrategy", "commitStrategy = CommitStrategy.AUTO"),
-                Arguments.of("errorStrategy", "errorStrategy = ErrorStrategy.SKIP"),
-                Arguments.of("errorStrategy", "errorStrategy = ErrorStrategy.DEAD_LETTER"));
-    }
-
-    @ParameterizedTest(name = "{0}")
-    @MethodSource("settingsTheBindingWouldDrop")
-    @DisplayName("a listener that writes a setting the generated binding would drop fails compilation naming it")
-    void listenerSettingTheGeneratedBindingWouldDropFailsCompilationNamingIt(
-            String setting, String typeAnnotations, String listenerAttributes, String members) {
+    @MethodSource("settingsTheSourceWouldDrop")
+    @DisplayName("a listener that writes a setting the generated source would drop fails compilation naming it")
+    void listenerSettingTheGeneratedSourceWouldDropFailsCompilationNamingIt(
+            String setting, String typeAnnotations, String members) {
         // Given a valid listener with one target that additionally writes the setting
-        JavaFileObject listener = listener(typeAnnotations, listenerAttributes, members);
+        JavaFileObject listener = listener(typeAnnotations, members);
 
         // When the processor compiles it
         var result = compile(listener);
@@ -342,12 +374,27 @@ class KafkaSignalSourceGenerationTest {
         assertErrorNaming(result, "CarrierSignals", setting);
     }
 
-    static Stream<Arguments> settingsTheBindingWouldDrop() {
+    static Stream<Arguments> settingsTheSourceWouldDrop() {
         return Stream.of(
-                Arguments.of("deadLetterTopic", "", ", deadLetterTopic = \"carrier.dlq\"", validTarget()),
-                Arguments.of("valueType", "", ", valueType = ShipmentDelivered.class", validTarget()),
-                Arguments.of("JsonProfile", "@JsonProfile(\"profile\")", "", validTarget()),
-                Arguments.of("JsonProfile", "", "", "@JsonProfile(\"profile\")\n" + validTarget()));
+                Arguments.of("JsonProfile", "@JsonProfile(\"profile\")", validTarget()),
+                Arguments.of("JsonProfile", "", "@JsonProfile(\"profile\")\n" + validTarget()));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("kafkaListenerHosts")
+    @DisplayName("a @KafkaListener type that carries a target fails compilation naming @KafkaSignalListener")
+    void kafkaListenerTypeWithATargetFailsCompilationNamingTheNewAnnotation(String kind, JavaFileObject host) {
+        // Given a @KafkaListener interface, or class, with a @WorkflowSignalTarget method
+        // When the processor compiles it
+        var result = compile(host);
+
+        // Then compilation fails and an error names CarrierSignals and @KafkaSignalListener
+        assertErrorNaming(result, "CarrierSignals", "@KafkaSignalListener");
+    }
+
+    static Stream<Arguments> kafkaListenerHosts() {
+        return Stream.of(
+                Arguments.of("an interface", kafkaListenerInterface()), Arguments.of("a class", kafkaListenerClass()));
     }
 
     // --- the shapes the generated source cannot honour ---
@@ -370,7 +417,7 @@ class KafkaSignalSourceGenerationTest {
         return Stream.of(
                 Arguments.of(
                         "a @KafkaHandler method beside a target",
-                        listener("", "", validTarget() + """
+                        listener("", validTarget() + """
 
                                 @KafkaHandler(defaultHandler = true)
                                 void onOther();
@@ -378,7 +425,7 @@ class KafkaSignalSourceGenerationTest {
                         List.of("KafkaHandler")),
                 Arguments.of(
                         "two message types on one interface",
-                        listener("", "", validTarget() + """
+                        listener("", validTarget() + """
 
                                 @WorkflowSignalTarget(contract = OrdersContract.class, %s, key = "carrierRef")
                                 void carrierCancellation(ShipmentCancelled message);
@@ -386,21 +433,21 @@ class KafkaSignalSourceGenerationTest {
                         List.of("ShipmentDelivered", "ShipmentCancelled")),
                 Arguments.of(
                         "a target method with no parameter",
-                        listener("", "", """
+                        listener("", """
                                 @WorkflowSignalTarget(contract = OrdersContract.class, %s, key = "carrierRef")
                                 void carrierDelivery();
                                 """.formatted(DELIVERED)),
                         List.of("parameter")),
                 Arguments.of(
                         "a target method with two parameters",
-                        listener("", "", """
+                        listener("", """
                                 @WorkflowSignalTarget(contract = OrdersContract.class, %s, key = "carrierRef")
                                 void carrierDelivery(ShipmentDelivered message, String extra);
                                 """.formatted(DELIVERED)),
                         List.of("parameter")),
                 Arguments.of(
                         "a target with both key and businessKey",
-                        listener("", "", """
+                        listener("", """
                                 @WorkflowSignalTarget(contract = OrdersContract.class, %s, key = "carrierRef",
                                         businessKey = "orderNumber", dedupBy = "eventId")
                                 void carrierDelivery(ShipmentDelivered message);
@@ -408,24 +455,21 @@ class KafkaSignalSourceGenerationTest {
                         List.of("businessKey")),
                 Arguments.of(
                         "a target with neither key nor businessKey",
-                        listener("", "", """
+                        listener("", """
                                 @WorkflowSignalTarget(contract = OrdersContract.class, %s)
                                 void carrierDelivery(ShipmentDelivered message);
                                 """.formatted(DELIVERED)),
                         List.of("businessKey")),
-                Arguments.of(
-                        "a target on a method of a concrete class",
-                        concreteListener(),
-                        List.of("WorkflowSignalTarget")),
+                Arguments.of("@KafkaSignalListener on a class", concreteListener(), List.of("interface")),
                 Arguments.of(
                         "a target inherited from a super-interface",
                         SourceFiles.inline(PACKAGE + ".CarrierSignals", """
                                 package dev.vertique.examples;
 
-                                import dev.vertique.kafka.KafkaListener;
+                                import dev.vertique.workflow.kafka.KafkaSignalListener;
                                 import dev.vertique.workflow.source.WorkflowSignalTarget;
 
-                                @KafkaListener(name = "carrier-events", topic = "carrier.events", groupId = "logistics")
+                                @KafkaSignalListener(name = "carrier-events", topic = "carrier.events", groupId = "logistics")
                                 public interface CarrierSignals extends BaseSignals {}
 
                                 interface BaseSignals {
@@ -435,14 +479,12 @@ class KafkaSignalSourceGenerationTest {
                                 """.formatted(DELIVERED)),
                         List.of("BaseSignals", "carrierDelivery")),
                 Arguments.of(
-                        "a key accessor that does not return String",
-                        listener("", "", """
+                        "a key accessor that does not return String", listener("", """
                                 @WorkflowSignalTarget(contract = OrdersContract.class,
                                         signal = "shipment-weighed", key = "grams")
                                 void carrierWeight(ShipmentWeighed message);
-                                """),
-                        List.of("grams", "String")),
-                Arguments.of("a generic message type", listener("", "", """
+                                """), List.of("grams", "String")),
+                Arguments.of("a generic message type", listener("", """
                                 @WorkflowSignalTarget(contract = OrdersContract.class,
                                         signal = "batch-delivered", key = "eventId")
                                 void carrierBatch(Batch<String> message);
@@ -456,10 +498,10 @@ class KafkaSignalSourceGenerationTest {
         return SourceFiles.inline(PACKAGE + ".CarrierSignals", """
                 package dev.vertique.examples;
 
-                import dev.vertique.kafka.KafkaListener;
+                import dev.vertique.workflow.kafka.KafkaSignalListener;
                 import dev.vertique.workflow.source.WorkflowSignalTarget;
 
-                @KafkaListener(name = "%s", topic = "carrier.events", groupId = "%s")
+                @KafkaSignalListener(name = "%s", topic = "carrier.events", groupId = "%s")
                 public interface CarrierSignals {
                 %s
                 }
@@ -476,57 +518,82 @@ class KafkaSignalSourceGenerationTest {
     }
 
     /**
-     * The interface {@code CarrierSignals}, a {@code @KafkaListener} that may write further attributes and carries
-     * the annotations on the type and the members the case needs.
+     * The interface {@code CarrierSignals}, a {@code @KafkaSignalListener} that carries the annotations on the type and
+     * the members the case needs.
      */
-    private static JavaFileObject listener(String typeAnnotations, String extraAttributes, String members) {
-        return SourceFiles.inline(
-                PACKAGE + ".CarrierSignals", """
+    private static JavaFileObject listener(String typeAnnotations, String members) {
+        return SourceFiles.inline(PACKAGE + ".CarrierSignals", """
                 package dev.vertique.examples;
 
                 import dev.vertique.core.json.JsonProfile;
-                import dev.vertique.kafka.CommitStrategy;
-                import dev.vertique.kafka.ErrorStrategy;
                 import dev.vertique.kafka.KafkaHandler;
-                import dev.vertique.kafka.KafkaListener;
+                import dev.vertique.workflow.kafka.KafkaSignalListener;
                 import dev.vertique.workflow.source.WorkflowSignalTarget;
 
                 %s
-                @KafkaListener(name = "carrier-events", topic = "carrier.events", groupId = "logistics"%s)
+                @KafkaSignalListener(name = "carrier-events", topic = "carrier.events", groupId = "logistics")
                 public interface CarrierSignals {
                 %s
                 }
-                """.formatted(typeAnnotations, extraAttributes, members));
+                """.formatted(typeAnnotations, members));
     }
 
-    /** A class, not an interface, annotated {@code @KafkaListener} that is a valid direct handler and carries a target. */
+    /** A class, not an interface, annotated {@code @KafkaSignalListener} that carries a target. */
     private static JavaFileObject concreteListener() {
         return SourceFiles.inline(PACKAGE + ".CarrierSignals", """
                 package dev.vertique.examples;
 
-                import dev.vertique.kafka.KafkaListener;
-                import dev.vertique.kafka.KafkaMessage;
-                import dev.vertique.kafka.KafkaRecordHandler;
+                import dev.vertique.workflow.kafka.KafkaSignalListener;
                 import dev.vertique.workflow.source.WorkflowSignalTarget;
-                import io.vertx.core.Future;
 
-                @KafkaListener(name = "carrier-events", topic = "carrier.events", groupId = "logistics")
-                public class CarrierSignals implements KafkaRecordHandler<ShipmentDelivered> {
+                @KafkaSignalListener(name = "carrier-events", topic = "carrier.events", groupId = "logistics")
+                public class CarrierSignals {
 
                     @WorkflowSignalTarget(contract = OrdersContract.class, %s, key = "carrierRef")
                     public void carrierDelivery(ShipmentDelivered message) {}
+                }
+                """.formatted(DELIVERED));
+    }
 
-                    @Override
-                    public Future<Void> handle(KafkaMessage<ShipmentDelivered> message) {
-                        return Future.succeededFuture();
-                    }
+    /** An interface annotated {@code @KafkaListener}, not {@code @KafkaSignalListener}, that carries a target. */
+    private static JavaFileObject kafkaListenerInterface() {
+        return SourceFiles.inline(PACKAGE + ".CarrierSignals", """
+                package dev.vertique.examples;
+
+                import dev.vertique.kafka.KafkaListener;
+                import dev.vertique.workflow.source.WorkflowSignalTarget;
+
+                @KafkaListener(name = "carrier-events", topic = "carrier.events", groupId = "logistics")
+                public interface CarrierSignals {
+                %s
+                }
+                """.formatted(validTarget()));
+    }
+
+    /** A class annotated {@code @KafkaListener} that carries a target. */
+    private static JavaFileObject kafkaListenerClass() {
+        return SourceFiles.inline(PACKAGE + ".CarrierSignals", """
+                package dev.vertique.examples;
+
+                import dev.vertique.kafka.KafkaListener;
+                import dev.vertique.workflow.source.WorkflowSignalTarget;
+
+                @KafkaListener(name = "carrier-events", topic = "carrier.events", groupId = "logistics")
+                public class CarrierSignals {
+
+                    @WorkflowSignalTarget(contract = OrdersContract.class, %s, key = "carrierRef")
+                    public void carrierDelivery(ShipmentDelivered message) {}
                 }
                 """.formatted(DELIVERED));
     }
 
     private static ProcessorTestHarness.Result compile(JavaFileObject listener) {
         return ProcessorTestHarness.run(
-                new KafkaConsumerProcessor(),
+                new KafkaSignalListenerProcessor(),
+                KAFKA_SIGNAL_LISTENER,
+                KAFKA_LISTENER,
+                KAFKA_HANDLER,
+                JSON_PROFILE,
                 SIGNAL_NO_MATCH,
                 SIGNAL_TARGET,
                 SIGNAL_TARGETS,

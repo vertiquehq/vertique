@@ -28,9 +28,8 @@ import org.junit.jupiter.api.Test;
  *
  * <p>An interface annotated with an annotation that carries {@code @SignalSourceForm} has its
  * {@code <Interface>_SignalSource} bound by name into the {@code Set} of the form's interface, whose
- * {@code @SignalSourceType} names the transport module the generated registrations module includes. A
- * {@code @KafkaListener} interface with signal targets is bound the same way into the {@code Set} of the Kafka source
- * type. The class is first visible in a later round, which the processor never sees in these runs because the generating
+ * {@code @SignalSourceType} names the transport module the generated registrations module includes, so this module
+ * knows no transport: a form annotation of any transport takes this one path. The class is first visible in a later round, which the processor never sees in these runs because the generating
  * processor is absent: the source set either holds the class, as a later round would make it, or leaves it out. The
  * processor identifies every annotation and interface by fully qualified name, so all of them are inline stubs and this
  * module takes no dependency on the workflow modules.
@@ -98,38 +97,6 @@ class AutoWireProcessorSignalSourceFormTest {
             public @interface WorkflowSignalTargets {
                 WorkflowSignalTarget[] value();
             }
-            """;
-
-    private static final String KAFKA_LISTENER = """
-            package dev.vertique.kafka;
-
-            import java.lang.annotation.*;
-
-            @Target(ElementType.TYPE)
-            @Retention(RetentionPolicy.RUNTIME)
-            public @interface KafkaListener {
-                String name() default "";
-                String topic() default "";
-                String groupId() default "";
-            }
-            """;
-
-    private static final String KAFKA_SIGNALS_MODULE = """
-            package dev.vertique.workflow.kafka;
-
-            import dagger.Module;
-
-            @Module
-            public abstract class WorkflowKafkaSignalsModule {}
-            """;
-
-    private static final String KAFKA_SIGNAL_SOURCE = """
-            package dev.vertique.workflow.kafka;
-
-            import dev.vertique.workflow.source.SignalSourceType;
-
-            @SignalSourceType(module = WorkflowKafkaSignalsModule.class)
-            public interface KafkaSignalSource<T> {}
             """;
 
     private static final String FEED_MODULE = """
@@ -220,31 +187,6 @@ class AutoWireProcessorSignalSourceFormTest {
             }
             """;
 
-    private static final String CARRIER_SIGNALS = """
-            package dev.vertique.examples;
-
-            import dev.vertique.kafka.KafkaListener;
-            import dev.vertique.workflow.source.WorkflowSignalTarget;
-
-            @KafkaListener(name = "carrier-events", topic = "carrier.events", groupId = "logistics")
-            public interface CarrierSignals {
-                @WorkflowSignalTarget(contract = OrdersContract.class, signal = "shipment-delivered", key = "carrierRef")
-                void delivered(Shipment event);
-            }
-            """;
-
-    private static final String CARRIER_SIGNALS_SOURCE = """
-            package dev.vertique.examples;
-
-            import dev.vertique.workflow.kafka.KafkaSignalSource;
-            import jakarta.inject.Inject;
-
-            public final class CarrierSignals_SignalSource implements KafkaSignalSource<Shipment> {
-                @Inject
-                public CarrierSignals_SignalSource() {}
-            }
-            """;
-
     @Test
     @DisplayName("a form-annotated interface is bound by name into its form's set")
     void formAnnotatedInterfaceIsBoundByNameIntoItsFormsSet() throws Exception {
@@ -283,96 +225,26 @@ class AutoWireProcessorSignalSourceFormTest {
     @Test
     @DisplayName("a predicted source that was never generated is reported on its interface naming the processor")
     void predictedSourceThatWasNeverGeneratedIsReportedOnItsInterfaceNamingTheProcessor() {
-        // Given a @KafkaListener interface CarrierSignals with a signal target, and a form-annotated interface
-        // CarrierFeed, and no class CarrierSignals_SignalSource or CarrierFeed_SignalSource among the sources; and for
-        // a
-        // control, the same sources plus a hand-written class of each name
-        JavaFileObject carrierSignals = source("CarrierSignals", CARRIER_SIGNALS);
+        // Given a form-annotated interface CarrierFeed and no class CarrierFeed_SignalSource among the sources; and for
+        // a control, the same sources plus a hand-written class of that name
         JavaFileObject carrierFeed = source("CarrierFeed", CARRIER_FEED);
 
-        // When the processor compiles each set, with the Kafka processor absent
-        var missing = compile(carrierSignals, carrierFeed);
-        var control = compile(
-                carrierSignals,
-                carrierFeed,
-                source("CarrierSignals_SignalSource", CARRIER_SIGNALS_SOURCE),
-                source("CarrierFeed_SignalSource", CARRIER_FEED_SOURCE));
+        // When the processor compiles each set, with the generating processor absent
+        var missing = compile(carrierFeed);
+        var control = compile(carrierFeed, source("CarrierFeed_SignalSource", CARRIER_FEED_SOURCE));
 
-        // Then the first compilation fails with one error on CarrierSignals that names CarrierSignals_SignalSource and
-        // vertique-codegen-kafka, and one on CarrierFeed that names CarrierFeed_SignalSource
+        // Then the first compilation fails with one error on CarrierFeed that names CarrierFeed_SignalSource and the
+        // annotation whose processor to add
         missing.assertFailed();
-        List<String> onListener = errorsIn(missing, "CarrierSignals.java");
-        assertEquals(1, onListener.size(), () -> "one error on CarrierSignals but were " + onListener);
-        assertTrue(
-                onListener.get(0).contains(PACKAGE + ".CarrierSignals_SignalSource")
-                        && onListener.get(0).contains("vertique-codegen-kafka"),
-                () -> "the error must name the class and the processor but was " + onListener);
         List<String> onForm = errorsIn(missing, "CarrierFeed.java");
         assertEquals(1, onForm.size(), () -> "one error on CarrierFeed but were " + onForm);
         assertTrue(
-                onForm.get(0).contains(PACKAGE + ".CarrierFeed_SignalSource"),
-                () -> "the error must name the class but was " + onForm);
-        // And the control compiles with neither error
+                onForm.get(0).contains(PACKAGE + ".CarrierFeed_SignalSource")
+                        && onForm.get(0).contains("@FeedSignals"),
+                () -> "the error must name the class and the annotation but was " + onForm);
+        // And the control compiles with no error
         control.assertSuccess();
-        assertEquals(List.of(), errorsIn(control, "CarrierSignals.java"));
         assertEquals(List.of(), errorsIn(control, "CarrierFeed.java"));
-    }
-
-    @Test
-    @DisplayName("a target on a type that no processor turns into a source is an error naming the type")
-    void targetOnATypeThatIsNoSourceIsAnErrorNamingTheType() {
-        // Given a plain class and an interface annotated with an annotation that carries no form, each with a target
-        // method; and for a control, a @KafkaListener interface and a form-annotated interface with targets and their
-        // classes
-        JavaFileObject plainClass = source("PlainClass", """
-                package dev.vertique.examples;
-
-                import dev.vertique.workflow.source.WorkflowSignalTarget;
-
-                public class PlainClass {
-                    @WorkflowSignalTarget(contract = OrdersContract.class, signal = "shipment-delivered", key = "carrierRef")
-                    public void delivered(Shipment event) {}
-                }
-                """);
-        JavaFileObject noSource = source("NoSource", """
-                package dev.vertique.examples;
-
-                import dev.vertique.workflow.source.WorkflowSignalTarget;
-
-                @PlainSignals
-                public interface NoSource {
-                    @WorkflowSignalTarget(contract = OrdersContract.class, signal = "shipment-delivered", key = "carrierRef")
-                    void delivered(Shipment event);
-                }
-                """);
-        JavaFileObject formWithTarget = source("CarrierFeed", """
-                package dev.vertique.examples;
-
-                import dev.vertique.workflow.source.WorkflowSignalTarget;
-
-                @FeedSignals
-                public interface CarrierFeed {
-                    @WorkflowSignalTarget(contract = OrdersContract.class, signal = "shipment-delivered", key = "carrierRef")
-                    void delivered(Shipment event);
-                }
-                """);
-
-        // When the processor compiles them, and again with wiring disabled
-        var rejected = compile(plainClass, noSource);
-        var disabled = compile(Map.of("vertique.codegen.autoWire", "false"), plainClass);
-        var control = compile(
-                formWithTarget,
-                source("CarrierFeed_SignalSource", CARRIER_FEED_SOURCE),
-                source("CarrierSignals", CARRIER_SIGNALS),
-                source("CarrierSignals_SignalSource", CARRIER_SIGNALS_SOURCE));
-
-        // Then each type is reported on itself, naming it, with wiring disabled too, and the control compiles
-        rejected.assertFailed();
-        assertTrue(errorsIn(rejected, "PlainClass.java").stream().anyMatch(m -> m.contains(PACKAGE + ".PlainClass")));
-        assertTrue(errorsIn(rejected, "NoSource.java").stream().anyMatch(m -> m.contains(PACKAGE + ".NoSource")));
-        disabled.assertFailed();
-        assertTrue(errorsIn(disabled, "PlainClass.java").stream().anyMatch(m -> m.contains(PACKAGE + ".PlainClass")));
-        control.assertSuccess();
     }
 
     /** The messages of the errors reported on the source file, which is where the processor puts an error on an element. */
@@ -409,12 +281,6 @@ class AutoWireProcessorSignalSourceFormTest {
                                                 "dev.vertique.workflow.source.WorkflowSignalTarget", SIGNAL_TARGET),
                                         SourceFiles.inline(
                                                 "dev.vertique.workflow.source.WorkflowSignalTargets", SIGNAL_TARGETS),
-                                        SourceFiles.inline("dev.vertique.kafka.KafkaListener", KAFKA_LISTENER),
-                                        SourceFiles.inline(
-                                                "dev.vertique.workflow.kafka.WorkflowKafkaSignalsModule",
-                                                KAFKA_SIGNALS_MODULE),
-                                        SourceFiles.inline(
-                                                "dev.vertique.workflow.kafka.KafkaSignalSource", KAFKA_SIGNAL_SOURCE),
                                         source("FeedModule", FEED_MODULE),
                                         source("Feed", FEED),
                                         source("FeedSignals", FEED_SIGNALS),
