@@ -78,6 +78,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -134,6 +135,11 @@ class DelayedJobPollerTest {
      * Pass {@code maxAttempts = 1} to make a timeout dead-letter rather than retry.
      */
     private static JobExecution sampleExecution(String jobId, String handler, int maxAttempts) {
+        return sampleExecution(jobId, handler, maxAttempts, null);
+    }
+
+    /** Creates a sample PROCESSING execution carrying the given stored payload. */
+    private static JobExecution sampleExecution(String jobId, String handler, int maxAttempts, Object payload) {
         return new JobExecution(
                 UUID.randomUUID(),
                 jobId,
@@ -143,7 +149,7 @@ class DelayedJobPollerTest {
                 JobState.PROCESSING,
                 0,
                 maxAttempts,
-                null,
+                payload,
                 0,
                 null,
                 Instant.now(),
@@ -401,6 +407,48 @@ class DelayedJobPollerTest {
                     noOpPropagator());
 
             vertx.deployVerticle(poller).onFailure(ctx::failNow);
+        }
+    }
+
+    @Nested
+    @DisplayName("payload decoding")
+    class PayloadDecoding {
+
+        @Test
+        @DisplayName("an undecodable payload fails through the completion handler and releases its slot")
+        void undecodablePayloadFailsAndReleasesSlot(Vertx vertx, VertxTestContext ctx) {
+            String handlerAddress = "test.undecodable.handler";
+            JobExecution execution = sampleExecution("undecodable-job", handlerAddress, 3, new JsonObject());
+            when(repository.claimNextJob(anyString(), anyInt()))
+                    .thenReturn(Future.succeededFuture(List.of(execution)))
+                    .thenReturn(Future.succeededFuture(List.of()));
+            when(completionHandler.handleCompletion(any(), any(), any())).thenReturn(Future.succeededFuture());
+            DelayedJobPoller poller = new DelayedJobPoller(
+                    "default",
+                    fastConfig(),
+                    repository,
+                    completionHandler,
+                    Set.of(),
+                    testEventBusClient(vertx),
+                    0L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting(),
+                    noOpPropagator(),
+                    Map.of(handlerAddress, UUID.class));
+
+            vertx.deployVerticle(poller).onFailure(ctx::failNow);
+
+            ArgumentCaptor<Result<?>> result = ArgumentCaptor.captor();
+            verify(completionHandler, timeout(5000)).handleCompletion(eq(execution), result.capture(), any());
+            ctx.verify(() -> assertInstanceOf(
+                    IllegalArgumentException.class, result.getValue().cause()));
+            // The slot is released right after the completion handler returns, on the poller's context.
+            vertx.setPeriodic(5, id -> {
+                if (poller.inFlightCount() == 0) {
+                    vertx.cancelTimer(id);
+                    ctx.completeNow();
+                }
+            });
         }
     }
 

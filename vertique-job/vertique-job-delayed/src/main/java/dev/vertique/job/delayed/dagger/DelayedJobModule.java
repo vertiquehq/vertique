@@ -3,6 +3,7 @@
 
 package dev.vertique.job.delayed.dagger;
 
+import dagger.Lazy;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.ElementsIntoSet;
@@ -185,6 +186,9 @@ public abstract class DelayedJobModule {
      * @param envelopeBuilder    the dispatch envelope builder for context-substrate capture
      * @param propagator         the durable context propagator for decoding persisted metadata into
      *                           each poller's outgoing envelope caller-overrides (FR-CTX-177)
+     * @param registrar          the handler registrar supplying each handler's declared payload type;
+     *                           lazy so that collecting the deployments does not build the contract
+     *                           registry
      * @return the set of poller deployment descriptors
      */
     @Provides
@@ -197,7 +201,8 @@ public abstract class DelayedJobModule {
             DelayedJobsConfig delayedJobsConfig,
             JobCoordinatorConfig coordinatorConfig,
             dev.vertique.context.DispatchEnvelopeBuilder envelopeBuilder,
-            dev.vertique.context.DurableContextPropagator propagator) {
+            dev.vertique.context.DurableContextPropagator propagator,
+            Lazy<DelayedJobHandlerRegistrar> registrar) {
         Map<String, DelayedJobQueueConfig> queues = delayedJobsConfig.queueIndex();
 
         Set<VerticleDeployment> deployments = new HashSet<>();
@@ -215,7 +220,8 @@ public abstract class DelayedJobModule {
                     eventBusClient,
                     coordinatorConfig,
                     envelopeBuilder,
-                    propagator));
+                    propagator,
+                    registrar));
         }
 
         return deployments;
@@ -296,6 +302,7 @@ public abstract class DelayedJobModule {
      * @param coordinatorConfig the coordinator configuration for timeout and flush interval
      * @param envelopeBuilder   the dispatch envelope builder for context-substrate capture
      * @param propagator        the durable context propagator for decoding persisted metadata
+     * @param registrar         the handler registrar supplying declared payload types
      * @return the deployment descriptor
      */
     private static VerticleDeployment buildPollerDeployment(
@@ -306,7 +313,8 @@ public abstract class DelayedJobModule {
             EventBusClient eventBusClient,
             JobCoordinatorConfig coordinatorConfig,
             dev.vertique.context.DispatchEnvelopeBuilder envelopeBuilder,
-            dev.vertique.context.DurableContextPropagator propagator) {
+            dev.vertique.context.DurableContextPropagator propagator,
+            Lazy<DelayedJobHandlerRegistrar> registrar) {
         String queueName = queueConfig.name();
         return new VerticleDeployment(
                 "delayed-job-poller-" + queueName,
@@ -320,7 +328,8 @@ public abstract class DelayedJobModule {
                         coordinatorConfig.executionTimeoutMs(),
                         coordinatorConfig.progressFlushIntervalMs(),
                         envelopeBuilder,
-                        propagator),
+                        propagator,
+                        registrar.get().handlerPayloadTypes()),
                 new DeploymentOptions().setInstances(queueConfig.instances()),
                 LifecyclePhase.SERVICES,
                 100);

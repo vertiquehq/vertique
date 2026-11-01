@@ -12,6 +12,8 @@ import dev.vertique.services.ServiceContractRegistry.ContractEntry;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamSource;
 import io.vertx.core.json.JsonObject;
 import java.lang.reflect.Method;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -155,7 +157,7 @@ public class DelayedJobContractContributor implements ServiceContractContributor
         }
 
         // Resolve P (payload type) from DelayedJobExecutor<P, C> — type arg index 0
-        Class<?> payloadType = TypeResolver.resolveTypeArgument(executorClass, DelayedJobExecutor.class, 0);
+        Class<?> payloadType = resolvePayloadType(executorClass);
         if (payloadType == null) {
             throw new IllegalStateException("Cannot resolve payload type parameter P from " + executorClass.getName());
         }
@@ -190,6 +192,29 @@ public class DelayedJobContractContributor implements ServiceContractContributor
     }
 
     // --- Reflection Helpers ---
+
+    /**
+     * Resolves the raw payload type of an executor. {@link TypeResolver} reports only a type argument
+     * that is itself a class, so a parameterized {@code P} such as {@code List<UUID>} is erased here.
+     * The handler registrar reads its generic arguments from the {@code execute} method.
+     *
+     * @param executorClass the executor implementation class
+     * @return the raw payload type, or {@code null} if it cannot be resolved
+     */
+    private static Class<?> resolvePayloadType(Class<?> executorClass) {
+        Class<?> payloadType = TypeResolver.resolveTypeArgument(executorClass, DelayedJobExecutor.class, 0);
+        if (payloadType != null) {
+            return payloadType;
+        }
+        for (Type declared : executorClass.getGenericInterfaces()) {
+            if (declared instanceof ParameterizedType executor
+                    && executor.getRawType() == DelayedJobExecutor.class
+                    && executor.getActualTypeArguments()[0] instanceof ParameterizedType parameterized) {
+                return (Class<?>) parameterized.getRawType();
+            }
+        }
+        return null;
+    }
 
     /**
      * Finds the {@code execute} method on the executor class that accepts the given payload type.
