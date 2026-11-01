@@ -80,7 +80,9 @@ public final class ReportBuilder {
         // The executable most runs used is the reference; a run of another build does not compare with them.
         Map<String, Integer> identities = new LinkedHashMap<>();
         for (JsonObject r : results) {
-            identities.merge(identityOf(r), 1, Integer::sum);
+            if (!identityOf(r).isEmpty()) {
+                identities.merge(identityOf(r), 1, Integer::sum);
+            }
         }
         String reference = identities.entrySet().stream()
                 .max(Map.Entry.comparingByValue())
@@ -192,6 +194,9 @@ public final class ReportBuilder {
         }
         if (!matrix.fingerprintOf(point.id()).equals(r.getString("fingerprint", ""))) {
             return "its configuration fingerprint differs from the one the matrix gives point " + point.id();
+        }
+        if (identityOf(r).isEmpty()) {
+            return "records no executable identity, so it matches no other run";
         }
         if (!identityOf(r).equals(reference)) {
             return "ran another executable than the other runs";

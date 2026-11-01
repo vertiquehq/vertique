@@ -284,6 +284,37 @@ class DriverProcessIT {
         assertTrue(Files.readAllLines(dir.resolve("arrivals.csv")).get(1).split(",").length >= 14);
     }
 
+    @Test
+    @DisplayName(
+            "a refusal answered after the grace for the main phase is reported as not replayed, and the ledger closes")
+    void refusalAfterTheGraceIsReported(@TempDir Path dir) throws Exception {
+        refuseEveryFourth = true;
+        refusedOnce.clear();
+        received.clear();
+        holdRefusalsMillis.set(5_500);
+        try (ChildJvm driver = start(dir, spec(dir, 20, 1, 1, 20))) {
+            assertEquals(0, driver.waitFor(Duration.ofSeconds(19)), driver.output());
+        } finally {
+            refuseEveryFourth = false;
+            holdRefusalsMillis.set(0);
+        }
+
+        JsonObject summary = summary(dir);
+        JsonObject main = summary.getJsonObject("main");
+        int refused = main.getInteger("refused");
+        int notReplayed = summary.getInteger("refusedNotReplayed");
+        assertTrue(notReplayed > 0, "some refusal came after the grace: " + summary.encode());
+        assertEquals(
+                refused,
+                summary.getJsonObject("replay").getInteger("planned") + notReplayed,
+                "refused = replayed + not replayed");
+        assertEquals(
+                notReplayed, summary.getJsonArray("refusedNotReplayedArrivals").size());
+        assertEquals(
+                main.getInteger("started"),
+                main.getInteger("accepted") + refused + main.getInteger("failed") + main.getInteger("unanswered"));
+    }
+
     private static void signal(String signal, long pid) throws Exception {
         Process p = new ProcessBuilder("kill", signal, Long.toString(pid))
                 .inheritIO()

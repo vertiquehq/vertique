@@ -260,7 +260,8 @@ class SqlMetricsIT {
         assertEquals(9, outbox.startToClaim().count(), "instances 1 to 9: first claim established");
         assertEquals(18.0, outbox.startToClaim().max(), 0.5);
         assertEquals(1, outbox.firstClaimUnresolved(), "instance 10 was claimed five seconds after its start");
-        assertEquals(10, outbox.dispatchRaw().count());
+        assertEquals(
+                9, outbox.dispatchRaw().count(), "instance 10 may have been reclaimed: its claim is not the first");
         assertEquals(30.0, outbox.dispatchRaw().p50(), 0.5);
         assertEquals(10.0, outbox.dispatchRaw().minus(20).p50(), 0.5, "less the handler delay it is a residual proxy");
         assertEquals(1, outbox.publishedAfterRetry());
@@ -335,6 +336,9 @@ class SqlMetricsIT {
     void oneSnapshot() throws Exception {
         double from = System.currentTimeMillis() / 1000.0 - 5;
         AtomicBoolean writing = new AtomicBoolean(true);
+        java.util.concurrent.atomic.AtomicInteger committed = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicReference<Throwable> writerFailure =
+                new java.util.concurrent.atomic.AtomicReference<>();
         Thread writer = new Thread(() -> {
             try (Connection c = db.connect()) {
                 c.setAutoCommit(false);
@@ -357,9 +361,10 @@ class SqlMetricsIT {
                         }
                     }
                     c.commit();
+                    committed.incrementAndGet();
                 }
             } catch (Exception e) {
-                throw new IllegalStateException(e);
+                writerFailure.set(e);
             }
         });
         writer.start();
@@ -384,6 +389,8 @@ class SqlMetricsIT {
             writing.set(false);
             writer.join();
         }
+        assertEquals(null, writerFailure.get(), "the writer failed: " + writerFailure.get());
+        assertTrue(committed.get() >= 20, "the writer made progress while the figures were read: " + committed.get());
     }
 
     @Test

@@ -342,6 +342,19 @@ class GatesTest {
         }
 
         @Test
+        @DisplayName("a run without a throughput does not count toward the two-run minimum")
+        void nanRunsDoNotCount() {
+            assertEquals(
+                    Verdict.INCONCLUSIVE,
+                    Gates.scaling(List.of(point(4, 600, 600.0, 599.0), point(16, 600, 560.0, Double.NaN)), limits)
+                            .verdict());
+            assertEquals(
+                    Verdict.INCONCLUSIVE,
+                    Gates.scaling(List.of(point(4, 600, 600.0, Double.NaN), point(16, 600, 560.0, 548.0)), limits)
+                            .verdict());
+        }
+
+        @Test
         @DisplayName("different offered rates cannot be compared")
         void differentRates() {
             assertEquals(

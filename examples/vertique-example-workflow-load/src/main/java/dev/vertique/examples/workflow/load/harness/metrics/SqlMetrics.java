@@ -731,8 +731,7 @@ public final class SqlMetrics {
         Latency raw = latency(
                 c,
                 "SELECT " + quantiles("extract(epoch from o.published_at - o.claimed_at) * 1000") + join
-                        + " WHERE o.state = 'PUBLISHED' AND o.attempt = 0 AND o.claimed_at IS NOT NULL"
-                        + " AND o.published_at IS NOT NULL",
+                        + " WHERE o.state = 'PUBLISHED' AND o.published_at IS NOT NULL" + established,
                 from,
                 to);
         Map<String, Long> scopes = new TreeMap<>();
@@ -748,10 +747,9 @@ public final class SqlMetrics {
         long peak = 0;
         try (PreparedStatement ps = c.prepareStatement("SELECT coalesce(max(running), 0) FROM (SELECT sum(d) OVER"
                 + " (PARTITION BY node ORDER BY t, d) AS running FROM (SELECT o.claimed_by AS node, o.claimed_at AS t, 1 AS d"
-                + join + " WHERE o.state = 'PUBLISHED' AND o.attempt = 0 AND o.claimed_at IS NOT NULL"
-                + " AND o.published_at IS NOT NULL UNION ALL SELECT o.claimed_by, o.published_at, -1" + join
-                + " WHERE o.state = 'PUBLISHED' AND o.attempt = 0 AND o.claimed_at IS NOT NULL"
-                + " AND o.published_at IS NOT NULL) e) r")) {
+                + join + " WHERE o.state = 'PUBLISHED' AND o.published_at IS NOT NULL" + established
+                + " UNION ALL SELECT o.claimed_by, o.published_at, -1" + join
+                + " WHERE o.state = 'PUBLISHED' AND o.published_at IS NOT NULL" + established + ") e) r")) {
             ps.setDouble(1, from);
             ps.setDouble(2, to);
             ps.setDouble(3, from);

@@ -311,6 +311,14 @@ public final class Gates {
         List<Scaling> sorted = points.stream()
                 .sorted((a, b) -> Integer.compare(a.nodes(), b.nodes()))
                 .toList();
+        sorted = sorted.stream()
+                .map(p -> new Scaling(
+                        p.nodes(),
+                        p.offeredPerSecond(),
+                        p.validCompletedPerSecond().stream()
+                                .filter(v -> v != null && !v.isNaN() && !v.isInfinite() && v >= 0)
+                                .toList()))
+                .toList();
         Scaling largest = sorted.get(sorted.size() - 1);
         double rate = largest.offeredPerSecond();
         if (!(rate > 0) || Double.isInfinite(rate)) {

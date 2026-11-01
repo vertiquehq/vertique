@@ -98,6 +98,8 @@ public final class LoadDriver {
         long profileEnd = t0 + Math.round(spec.profile().endSec() * 1e9);
         long recoveryEnd = profileEnd + spec.recoverySec() * 1_000_000_000L;
         ArrivalLedger replay;
+        List<Integer> refused;
+        List<Integer> notReplayed;
         long replayStart;
         long finalAt;
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -109,7 +111,7 @@ public final class LoadDriver {
             while (handedOver.get() > 0 && System.nanoTime() < mainDeadline) {
                 Thread.sleep(25);
             }
-            List<Integer> refused = main.refused();
+            refused = main.refused();
             replayStart = Math.max(System.nanoTime(), recoveryEnd);
             replay = replayLedger(refused, replayStart - t0);
             if (replay.planned() > 0) {
@@ -125,6 +127,10 @@ public final class LoadDriver {
             while (handedOver.get() > 0 && System.nanoTime() < finalAt) {
                 Thread.sleep(25);
             }
+            // A refusal that was answered after the grace for the main phase is in no replay. Its key is reported, so
+            // that the ledger still closes: refused equals replayed plus not replayed.
+            notReplayed = new java.util.ArrayList<>(main.refused());
+            notReplayed.removeAll(refused);
             main.closeOutstanding();
             replay.closeOutstanding();
             executor.shutdownNow();
@@ -133,7 +139,7 @@ public final class LoadDriver {
         }
         long retries = clients.stream().mapToLong(IngressClient::freshRetries).sum();
         sampler.interrupt();
-        return write(main, replay, t0, replayStart - t0, retries, descriptors());
+        return write(main, replay, t0, replayStart - t0, retries, descriptors(), notReplayed);
     }
 
     private volatile long openPeak;
@@ -251,7 +257,8 @@ public final class LoadDriver {
             long t0,
             long replayBaseNs,
             long freshRetries,
-            JsonObject descriptors)
+            JsonObject descriptors,
+            List<Integer> notReplayed)
             throws IOException {
         Path arrivals = spec.outDir().resolve("arrivals.csv");
         int rows;
@@ -275,6 +282,8 @@ public final class LoadDriver {
                 .put("replay", replay.summary(spec.lateArrivalMs()).toJson())
                 .put("requestsSentAgainOnNewConnection", freshRetries)
                 .put("fileDescriptors", descriptors)
+                .put("refusedNotReplayed", notReplayed.size())
+                .put("refusedNotReplayedArrivals", new io.vertx.core.json.JsonArray(new ArrayList<Object>(notReplayed)))
                 .put(
                         "socketExhaustion",
                         main.summary(spec.lateArrivalMs()).failureDetails().containsKey("socket-exhaustion")

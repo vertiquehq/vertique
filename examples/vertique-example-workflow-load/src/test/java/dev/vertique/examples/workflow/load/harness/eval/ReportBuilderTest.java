@@ -233,4 +233,20 @@ class ReportBuilderTest {
         assertTrue(violations.contains("a-r1-a3") && violations.contains("after a valid attempt"), violations);
         assertTrue(violations.contains("a-r2-a4") && violations.contains("over the ceiling"), violations);
     }
+
+    @Test
+    @DisplayName("a run with no recorded executable identity matches nothing, not even another run without one")
+    void absentIdentityMatchesNothing(@TempDir Path dir) throws IOException {
+        Matrix m = matrix(dir, new JsonObject(), point("a", false, 4, 600, 3), point("b", false, 16, 600, 3));
+        JsonObject noIdentity1 = run(m, "a", 1, 1, "valid", 600, "pass");
+        noIdentity1.remove("code");
+        JsonObject noIdentity2 = run(m, "a", 2, 1, "valid", 600, "pass");
+        noIdentity2.put("code", new JsonObject());
+
+        JsonObject report = ReportBuilder.build(m, List.of(noIdentity1, noIdentity2));
+
+        assertEquals(2, report.getJsonArray("excludedRuns").size());
+        assertTrue(report.getJsonArray("excludedRuns").encode().contains("no executable identity"));
+        assertEquals("not run", report.getJsonArray("points").getJsonObject(0).getString("status"));
+    }
 }
