@@ -986,6 +986,27 @@ public record SignalSourceEvent(String source, String transport, @Nullable Strin
 
 `onOutcome` runs on the context of the delivery, may run concurrently for different messages, and must not block. Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the enclosing operation. `LinkageError`, `AssertionError` and `StackOverflowError` are swallowed the same way, and a `LinkageError` is reported at error level at a limited rate. The log names the observer class and the callback, never the observer's message. A throw never changes a message's fate, and the other observers still receive the event.
 
+### Signal Source Types
+
+A correlated signal source is described with three small types in `dev.vertique.workflow.source`, shared by every transport. `SignalMessage<T>` is what a source's stages read: `body()` is the decoded message, `header(name)` a transport header, and `key()` the Kafka record key (always empty on Camel). `SignalNoMatch` is the policy for a message whose key matches no waiting instance: `IGNORE` finishes it, `RETRY` redelivers it.
+
+```java
+public interface SignalMessage<T> {
+    T body();
+    Optional<String> header(String name);
+    Optional<String> key();
+}
+
+public enum SignalNoMatch { IGNORE, RETRY }
+
+public final class SignalSourceRefusal extends RuntimeException {
+    public SignalSourceRefusal(String errorType);
+    public String errorType();
+}
+```
+
+A source's identity function (`dispatchAs`) fails with `SignalSourceRefusal` to refuse a message outright: the message is not retried and goes to the dead-letter path, or its exchange fails. The refusal carries its error type and nothing else (no cause, no stack trace, no message beyond the type), a null or blank error type is refused at construction, and the error type is the only detail that is forwarded, so keep it to a short name such as `TokenRejected` and never put a value from the message in it.
+
 `WorkflowDefinitionLifecycleException` reports a typed `reason()` and `key()` for lifecycle refusals,
 including stale claims, unavailable code, missing loaders, and plan drift. Asynchronous entrypoints
 report invalid arguments through failed Futures.

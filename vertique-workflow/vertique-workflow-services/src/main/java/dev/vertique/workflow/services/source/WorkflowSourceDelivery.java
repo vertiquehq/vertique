@@ -12,6 +12,7 @@ import dev.vertique.security.authz.InvocationOrigin;
 import dev.vertique.workflow.ops.CorrelatedSignal;
 import dev.vertique.workflow.ops.CorrelatedSignalReceipt;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
+import dev.vertique.workflow.source.SignalMessage;
 import dev.vertique.workflow.source.SignalSourceEvent;
 import dev.vertique.workflow.source.SignalSourceObserver;
 import io.vertx.core.Future;
@@ -30,7 +31,8 @@ import java.util.function.Supplier;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * Records one correlated signal for a source, under the identity its envelope names.
+ * Runs the messages of a correlated signal source and records their signals, each under the identity
+ * its envelope names.
  *
  * <p><strong>INTERNAL.</strong> This type is an internal seam, outside the maturity promise of
  * {@code vertique-workflow-services}. It is public only because a transport in another repository
@@ -47,6 +49,12 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>The future a delivery returns completes on the context the caller delivered from, after the
  * binding is closed. Nothing here blocks.
+ *
+ * <p>{@link #deliver} runs a whole {@link SignalSourcePlan} for one message. It captures its calling
+ * context once, runs every stage and every recording on a fresh duplicate of it, and returns to the
+ * captured context before it starts the next stage, because an application future may complete on
+ * another context. It answers one {@link SourceDisposition} per message and reports the outcome of each
+ * signal through {@link #report}.
  *
  * <p>The bean also tells the registered {@link SignalSourceObserver}s about an outcome through
  * {@link #report(SignalSourceEvent)}, which isolates every observer.
@@ -117,6 +125,33 @@ public final class WorkflowSourceDelivery {
     }
 
     /**
+     * Runs one message through a source plan and answers what the transport should do with it.
+     *
+     * <p>The stages run in this order: {@code when}, the dedup key, {@code dispatchAs} (unless the
+     * envelope's identity was contributed), {@code scope}; then, for each signal in the order written,
+     * its key, its payload and its recording. A message an earlier stage excludes or refuses reaches no
+     * later stage. Each signal is judged alone and reported once; the disposition is the most severe of
+     * them, {@link SourceDisposition.Fate#TERMINAL} over {@link SourceDisposition.Fate#RETRY} over
+     * {@link SourceDisposition.Fate#DONE}.
+     *
+     * <p>The disposition and the events carry the type of a failure, never its message, and nothing of
+     * the message: no key, header or payload.
+     *
+     * @param plan the source's plan
+     * @param message the decoded message
+     * @param envelope the resolved values the transport supplies for the message
+     * @param <T> the type of the decoded message body
+     * @return a future that completes, on the context the caller delivered from, with the disposition
+     */
+    public <T> Future<SourceDisposition> deliver(
+            SignalSourcePlan<T> plan, SignalMessage<T> message, SourceEnvelope envelope) {
+        Objects.requireNonNull(plan, "plan");
+        Objects.requireNonNull(message, "message");
+        Objects.requireNonNull(envelope, "envelope");
+        return new SignalSourceRun<>(this, plan, message, envelope, capture()).run();
+    }
+
+    /**
      * Tells every registered observer about an outcome.
      *
      * <p>An {@link Exception}, {@link LinkageError}, {@link AssertionError} or
@@ -151,7 +186,22 @@ public final class WorkflowSourceDelivery {
      *     operations failed with
      */
     Future<CorrelatedSignalReceipt> record(CorrelatedSignal signal, boolean businessKey, SourceEnvelope envelope) {
-        ContextInternal captured = capture();
+        return record(capture(), signal, businessKey, envelope);
+    }
+
+    /**
+     * Records one signal as {@link #record(CorrelatedSignal, boolean, SourceEnvelope)} does, completing on a
+     * context the caller has already captured, so that one capture serves every stage of a message.
+     *
+     * @param captured the context the caller delivers from
+     * @param signal the signal to record
+     * @param businessKey whether the signal addresses instances by business key rather than by key
+     * @param envelope the resolved values to bind for the recording
+     * @return a future that completes on {@code captured} with the receipt, or fails with what the
+     *     operations failed with
+     */
+    Future<CorrelatedSignalReceipt> record(
+            ContextInternal captured, CorrelatedSignal signal, boolean businessKey, SourceEnvelope envelope) {
         return runBound(
                 captured,
                 bindings(envelope),
@@ -164,6 +214,15 @@ public final class WorkflowSourceDelivery {
                             ? ops.signalByBusinessKey(withProvenance, connection)
                             : ops.signalByKey(withProvenance, connection);
                 }));
+    }
+
+    /**
+     * Returns the Vert.x instance, for the timers a stage is bounded by.
+     *
+     * @return the Vert.x instance
+     */
+    Vertx vertx() {
+        return vertx;
     }
 
     /**

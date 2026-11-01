@@ -266,4 +266,33 @@ class WorkflowSourceDeliveryBindingTest {
             assertNothingBound(deliveryContextWhenItRan.get());
         }
     }
+
+    @Test
+    @DisplayName("a caller's ambient correlation never reaches a recording whose envelope has none")
+    void aCallersAmbientCorrelationNeverReachesTheRecording(Vertx vertx) {
+        // Given a caller whose own duplicated context holds a correlation, and an envelope that has none
+        DeliveryFixture fixture = DeliveryFixture.succeeding(vertx);
+        CorrelationContext callerCorrelation = correlation("C-caller");
+        SourceEnvelope envelope = envelope(security("kafka source: carriers"), null, dedupKey -> KAFKA_PROVENANCE);
+
+        try (DeliveryFixture.Caller caller =
+                fixture.callerOnDuplicate().binding(CorrelationContext.class, callerCorrelation)) {
+            assertThat(fixture.currentOn(caller, CorrelationContext.class))
+                    .as("the caller holds its own correlation")
+                    .isEqualTo(callerCorrelation);
+
+            // When the signal is recorded from the caller's context
+            Future<CorrelatedSignalReceipt> returned = fixture.record(caller, signal("PAY-77", "d-7"), false, envelope);
+
+            // Then the recording saw no correlation, and the envelope's identity and origin
+            assertThat(await(returned)).isEqualTo(DeliveryFixture.RECEIPT);
+            assertThat(fixture.observed().entries()).hasSize(1);
+            Entry entry = fixture.observed().entries().get(0);
+            assertThat(entry.atEntry().correlation()).isNull();
+            assertAmbientIs(entry.atEntry(), envelope);
+
+            // and the caller's own correlation is untouched
+            assertThat(fixture.currentOn(caller, CorrelationContext.class)).isEqualTo(callerCorrelation);
+        }
+    }
 }

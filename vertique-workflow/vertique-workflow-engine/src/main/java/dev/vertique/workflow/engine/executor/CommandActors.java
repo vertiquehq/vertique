@@ -9,6 +9,7 @@ import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityIdentity;
 import dev.vertique.security.SnapshotDegradationMarker;
+import dev.vertique.workflow.actor.ActorText;
 import dev.vertique.workflow.actor.DefaultWorkflowActorMapper;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.actor.WorkflowActorMapper;
@@ -49,16 +50,10 @@ import java.util.function.Function;
 public final class CommandActors {
 
     /** The most characters of an actor id, reason or party acted for that are logged. */
-    static final int MAX_LENGTH = 255;
+    static final int MAX_LENGTH = ActorText.MAX_LENGTH;
 
     /** What an id, reason or party acted for is logged as when nothing of it is printable. */
-    static final String UNPRINTABLE = "[unprintable]";
-
-    /** U+2028, the line separator. */
-    private static final int LINE_SEPARATOR = 0x2028;
-
-    /** U+2029, the paragraph separator. */
-    private static final int PARAGRAPH_SEPARATOR = 0x2029;
+    static final String UNPRINTABLE = ActorText.UNPRINTABLE;
 
     private final ContextHolder holder;
     private final WorkflowActorMapper mapper;
@@ -180,23 +175,6 @@ public final class CommandActors {
      */
     @Nullable
     static String clean(@Nullable String text) {
-        if (text == null) {
-            return null;
-        }
-        StringBuilder kept = new StringBuilder(Math.min(text.length(), MAX_LENGTH));
-        int count = 0;
-        for (int index = 0; index < text.length() && count < MAX_LENGTH; ) {
-            int codePoint = text.codePointAt(index);
-            index += Character.charCount(codePoint);
-            if (Character.isISOControl(codePoint)
-                    || codePoint == LINE_SEPARATOR
-                    || codePoint == PARAGRAPH_SEPARATOR
-                    || Character.getType(codePoint) == Character.FORMAT) {
-                continue;
-            }
-            kept.appendCodePoint(codePoint);
-            count++;
-        }
-        return kept.isEmpty() ? UNPRINTABLE : kept.toString();
+        return ActorText.clean(text);
     }
 }

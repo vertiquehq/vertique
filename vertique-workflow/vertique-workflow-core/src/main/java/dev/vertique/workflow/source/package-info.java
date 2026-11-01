@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-/** Observation of correlated signal sources: {@code SignalSourceObserver} is told the outcome of each message a source receives, as a {@code SignalSourceEvent}. */
+/** Correlated signal sources: the {@code SignalMessage} a source's stages read, the {@code SignalNoMatch} policy, the {@code SignalSourceRefusal} a {@code dispatchAs} function fails with to refuse a message, and the {@code SignalSourceObserver} that is told the outcome of each message as a {@code SignalSourceEvent}. */
 package dev.vertique.workflow.source;

@@ -3,13 +3,17 @@
 
 package dev.vertique.workflow.services.source;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import dagger.BindsInstance;
 import dagger.BindsOptionalOf;
 import dagger.Component;
 import dagger.Module;
 import dagger.Provides;
+import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
 import dev.vertique.context.DefaultContextHolder;
 import dev.vertique.context.InboundExecutionContextScope;
@@ -18,16 +22,20 @@ import dev.vertique.inboxoutbox.OutboxDestinationHandler;
 import dev.vertique.inboxoutbox.OutboxService;
 import dev.vertique.services.ServiceContractContributor;
 import dev.vertique.services.ServiceTargetResolver;
+import dev.vertique.workflow.ops.CorrelatedSignalReceipt;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
 import dev.vertique.workflow.services.di.WorkflowServicesModule;
 import dev.vertique.workflow.services.di.WorkflowSourceModule;
 import dev.vertique.workflow.source.SignalSourceObserver;
+import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
+import io.vertx.sqlclient.SqlConnection;
 import jakarta.inject.Singleton;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 
 /**
  * Dagger test components for the delivery bean. Each stub module provides only the collaborators
@@ -143,6 +151,94 @@ final class GraphFixture {
         }
     }
 
+    /**
+     * The collaborators of a source module that delivers: a pool that applies the function it is given
+     * and operations that record every signal, answering definition {@code orders-v2}.
+     */
+    @Module
+    abstract static class DeliveringStubs {
+        @Provides
+        @Singleton
+        @SuppressWarnings("unchecked")
+        static TransactionalWorkflowOperations<SqlClient> operations() {
+            TransactionalWorkflowOperations<SqlClient> operations = mock(TransactionalWorkflowOperations.class);
+            when(operations.signalByKey(any(), any()))
+                    .thenReturn(Future.succeededFuture(
+                            new CorrelatedSignalReceipt(CorrelatedSignalReceipt.Outcome.RECORDED, "orders-v2")));
+            return operations;
+        }
+
+        @Provides
+        @Singleton
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        static Pool pool() {
+            Pool pool = mock(Pool.class);
+            SqlConnection connection = mock(SqlConnection.class);
+            doAnswer(invocation -> ((Function) invocation.getArgument(0)).apply(connection))
+                    .when(pool)
+                    .withTransaction(any(Function.class));
+            return pool;
+        }
+
+        @Provides
+        @Singleton
+        static InboundExecutionContextScope contextScope() {
+            return DeliveryFixture.scopeOver(new DefaultContextHolder());
+        }
+    }
+
+    /** Contributes one observer into the source module's observer set. */
+    @Module
+    static final class ObserverContribution {
+        private final SignalSourceObserver observer;
+
+        ObserverContribution(SignalSourceObserver observer) {
+            this.observer = observer;
+        }
+
+        @Provides
+        @IntoSet
+        SignalSourceObserver observer() {
+            return observer;
+        }
+    }
+
+    /** The source module with one observer contributed. */
+    @Singleton
+    @Component(modules = {WorkflowSourceModule.class, DeliveringStubs.class, ObserverContribution.class})
+    interface ObservedComponent {
+        WorkflowSourceDelivery delivery();
+
+        Set<SignalSourceObserver> observers();
+
+        @Component.Builder
+        interface Builder {
+            @BindsInstance
+            Builder vertx(Vertx vertx);
+
+            Builder contribution(ObserverContribution contribution);
+
+            ObservedComponent build();
+        }
+    }
+
+    /** The source module with no observer contributed. */
+    @Singleton
+    @Component(modules = {WorkflowSourceModule.class, DeliveringStubs.class})
+    interface UnobservedComponent {
+        WorkflowSourceDelivery delivery();
+
+        Set<SignalSourceObserver> observers();
+
+        @Component.Builder
+        interface Builder {
+            @BindsInstance
+            Builder vertx(Vertx vertx);
+
+            UnobservedComponent build();
+        }
+    }
+
     static ServicesComponent component(Vertx vertx) {
         return DaggerGraphFixture_ServicesComponent.builder().vertx(vertx).build();
     }
@@ -153,5 +249,18 @@ final class GraphFixture {
 
     static OptionalComponent optionalComponent(Vertx vertx) {
         return DaggerGraphFixture_OptionalComponent.builder().vertx(vertx).build();
+    }
+
+    /** A source-module component that delivers, with the observer contributed to its set. */
+    static ObservedComponent component(Vertx vertx, SignalSourceObserver observer) {
+        return DaggerGraphFixture_ObservedComponent.builder()
+                .vertx(vertx)
+                .contribution(new ObserverContribution(observer))
+                .build();
+    }
+
+    /** A source-module component that delivers, with nothing contributed to its observer set. */
+    static UnobservedComponent componentWithoutObservers(Vertx vertx) {
+        return DaggerGraphFixture_UnobservedComponent.builder().vertx(vertx).build();
     }
 }
