@@ -6,16 +6,13 @@ package dev.vertique.workflow.kafka;
 import dev.vertique.kafka.CommitStrategy;
 import dev.vertique.kafka.ErrorStrategy;
 import dev.vertique.kafka.KafkaConsumerBinding;
-import dev.vertique.kafka.KafkaMessage;
 import dev.vertique.kafka.KafkaRecordFilter;
-import dev.vertique.kafka.KafkaRecordHandler;
 import dev.vertique.kafka.KafkaTerminalFailure;
 import dev.vertique.workflow.services.source.AbstractSignalSourceBuilder;
 import dev.vertique.workflow.services.source.SignalSourcePlan;
 import dev.vertique.workflow.services.source.WorkflowSourceDelivery;
 import dev.vertique.workflow.source.SignalSourceEvent;
 import dev.vertique.workflow.source.SignalSourceEvent.Outcome;
-import io.vertx.core.Future;
 import jakarta.annotation.Nullable;
 import java.util.Objects;
 
@@ -101,7 +98,8 @@ final class DefaultKafkaSignals<T> extends AbstractSignalSourceBuilder<T, KafkaS
                 .forceStrategies()
                 .noHeaderContext()
                 .ignoreUndecodable(() -> report(sourceName, Outcome.UNDECODABLE))
-                .handler(new KafkaSignalHandler<>(plan, delivery, dlqReplay));
+                .handler(new KafkaSignalHandler<>(
+                        sourceName, plan, delivery, dlqReplay, KafkaCorrelationBaseline.create()));
         KafkaRecordFilter given = filter;
         if (given != null) {
             binding.filter(reporting(sourceName, given));
@@ -153,27 +151,5 @@ final class DefaultKafkaSignals<T> extends AbstractSignalSourceBuilder<T, KafkaS
             throw new IllegalArgumentException(stage + " must not be blank");
         }
         return value;
-    }
-
-    /**
-     * The handler of a built source, until the delivery is connected: it fails every record
-     * terminally, without a cause, so no record is recorded or retried.
-     */
-    private static final class KafkaSignalHandler<T> implements KafkaRecordHandler<T> {
-
-        private final SignalSourcePlan<T> plan;
-        private final WorkflowSourceDelivery delivery;
-        private final boolean dlqReplay;
-
-        KafkaSignalHandler(SignalSourcePlan<T> plan, WorkflowSourceDelivery delivery, boolean dlqReplay) {
-            this.plan = plan;
-            this.delivery = delivery;
-            this.dlqReplay = dlqReplay;
-        }
-
-        @Override
-        public Future<Void> handle(KafkaMessage<T> message) {
-            return Future.failedFuture(new KafkaTerminalFailure("SourceNotConnected"));
-        }
     }
 }

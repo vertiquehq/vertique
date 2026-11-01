@@ -38,6 +38,18 @@ The status is Alpha: public signatures and configuration may break in any releas
 
 **Filter.** A record the `.filter` rejects is committed as ignored and reported once as `IGNORED`, with no key, header or payload. A filter that throws is reported as `STAGE_FAILED` and raises a terminal failure whose error type is the exception's class name alone, so the record takes the exhausted strategy at once, is never retried, and does not pause the consumer. A source with no `.filter` installs none.
 
+**What a record becomes.** The handler decodes a record into the message the source's stages see (the value, the record key and the headers by name), runs it through the delivery bean, and maps the answer: a message that is finished completes the record; one that may succeed later fails it with an ordinary exception, so the binding retries it with the backoff of `kafka.consumers.{name}.retry` and then dead-letters it; one that never will succeed fails it with `KafkaTerminalFailure`, so it is dead-lettered at once, never retried, and does not pause the consumer. When a message has several signals, the most severe fate wins: terminal over retry over finished. A failure carries an error type only, never a key, a header or a payload, and an error type that is not a short token of letters, digits and `_ $ . -` is replaced before it reaches a header, so a `SignalSourceRefusal` cannot inject one.
+
+**Terminal input.** Input that the type or the database refuses (a key over 255 characters or blank, a NUL character in a key or payload, an invalid scope, an oversized payload), an ambiguous match, an anonymous identity, an identity the actor mapper refuses, a `.dispatchAs` that fails with `SignalSourceRefusal`, and a `.dedupBy` that answers blank are terminal. A no-match under `RETRY`, the open-signal limit, and a failed lookup or `.dispatchAs` future are retried.
+
+**Null and undecodable values.** A record with a null value is acknowledged and reported once as `UNDECODABLE`; it never reaches the stages.
+
+**Identity.** Each record is recorded under the system identity `kafka source: {name}` with the `kafka` invocation origin, so the command's actor is that system. `.dispatchAs(fn)` replaces the identity per record. No identity is ever restored from a record header.
+
+**Provenance and deduplication.** The command records the consumed record's own source name, topic, partition and offset, also on a `.dlqReplay()` source. With no `.dedupBy`, the dedup key is `topic:partition:offset`, so a redelivered record is recorded once. On a `.dlqReplay()` source the key is built from the record's `x-dlq-source-topic`, `x-dlq-source-partition` and `x-dlq-source-offset` headers instead when it carries them, so a replayed record answers a duplicate of the original; every other source ignores those headers. A replay record whose headers are incomplete, or whose partition or offset is not a non-negative integer, is reported as `INVALID_INPUT` and dead-lettered at once with the error type `InvalidReplayHeader`.
+
+**Correlation.** A source restores nothing from record headers unless it declares `.restoreCorrelationFromHeaders()`. Then it reads only the exact `vertique-correlation` header, ignores a value over 4096 characters, decodes it alone, takes the correlation id alone and only when it is at most 128 characters from `A-Z a-z 0-9 . _ ~ : / + = -`, and binds it on a freshly seeded context that keeps its own request id. A header that is missing, too long, malformed or invalid is ignored: it never fails the record and its value is never logged. A source without the stage binds no correlation.
+
 ---
 
 ## Key Classes
