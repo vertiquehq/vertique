@@ -10,6 +10,7 @@ import static org.mockito.Mockito.mock;
 import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
 import dev.vertique.core.config.ConfigParser;
+import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.kafka.KafkaConsumerBinding;
@@ -30,6 +31,7 @@ import io.vertx.core.json.JsonObject;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -76,9 +78,17 @@ final class SourceFixture {
          * @return the source, with no signal yet
          */
         KafkaSignals<ShipmentDelivered> source() {
-            return new WorkflowKafkaSignals(delivery)
-                    .on(TOPIC, ShipmentDelivered.class)
-                    .groupId(GROUP);
+            return signals().on(TOPIC, ShipmentDelivered.class).groupId(GROUP);
+        }
+
+        /**
+         * Creates the entry point over the double and a correlation factory with the default id
+         * generator.
+         *
+         * @return the entry point
+         */
+        WorkflowKafkaSignals signals() {
+            return new WorkflowKafkaSignals(delivery, new CorrelationContextFactory(Optional.empty()));
         }
     }
 

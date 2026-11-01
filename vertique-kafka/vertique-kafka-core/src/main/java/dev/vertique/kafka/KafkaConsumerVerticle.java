@@ -44,7 +44,9 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>Backpressure is enforced via an {@link AtomicInteger} tracking in-flight dispatches. When
  * {@link ResolvedKafkaConsumerConfig#maxInFlight()} is reached, the consumer is paused. It is resumed once
- * the in-flight count drops below the threshold.
+ * the in-flight count drops below the threshold. An entry that forces its strategies keeps the slot
+ * of a failed record until the error handling has settled, and a slot released while the entry waits
+ * out a backoff does not resume the consumer: the end of the backoff does.
  *
  * <p>Error handling follows the configured {@link ErrorStrategy}:
  *
@@ -119,6 +121,13 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
     private KafkaConsumer<String, byte[]> consumer;
     private final AtomicInteger inFlight = new AtomicInteger(0);
     private final AtomicBoolean paused = new AtomicBoolean(false);
+
+    /**
+     * Set while a forced entry waits out a backoff after a failure it will redeliver. A slot released
+     * during the backoff must not resume the consumer, so this is separate from the backpressure
+     * state in {@link #paused}. Never set for an entry that does not force its strategies.
+     */
+    private final AtomicBoolean backingOff = new AtomicBoolean(false);
 
     // --- Collaborators (initialised in start()) ---
 
@@ -368,14 +377,7 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
         try {
             accepted = entry.filter() == null || entry.filter().accept(record.key(), headers);
         } catch (Exception e) {
-            decrementInFlight();
-            errorHandler
-                    .handleError(record, rawBytes, headers, e, consumerControl())
-                    .onSuccess(outcome -> notifyCompleted(view, outcome))
-                    .onFailure(err -> {
-                        log.warn("[{}] Unexpected failure from handleError future", entry.name(), err);
-                        notifyCompleted(view, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
-                    });
+            handleFailure(record, rawBytes, headers, e, view, releaseUnlessForced());
             return;
         }
         if (!accepted) {
@@ -395,16 +397,7 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
         try {
             dispatchRecord(record, rawBytes, headers, textHeaders, correlationId, view);
         } catch (Exception e) {
-            decrementInFlight();
-            errorHandler
-                    .handleError(record, rawBytes, headers, e, consumerControl())
-                    .onSuccess(outcome -> notifyCompleted(view, outcome))
-                    .onFailure(err -> {
-                        log.warn("[{}] Unexpected failure from handleError future", entry.name(), err);
-                        // The error handler's own future failed — the record's disposition is
-                        // unknown, but the record must still complete exactly once.
-                        notifyCompleted(view, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
-                    });
+            handleFailure(record, rawBytes, headers, e, view, releaseUnlessForced());
         }
     }
 
@@ -451,25 +444,19 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
         try {
             deserialized = dispatcher.deserializeRecord(record, rawBytes, headers, resolvedRouteResult);
         } catch (Exception e) {
-            decrementInFlight();
             Runnable onIgnored = entry.ignoreUndecodable();
             if (onIgnored != null && !(e instanceof DeserializationException de && de.isTransient())) {
                 // An ignoring binding acknowledges the undecodable record: commit when MANUAL,
                 // report it skipped and run the callback; it does not go down the error strategy.
                 // A transient failure, such as an unreachable schema registry, is not the record's
                 // fault and does take the error strategy.
+                decrementInFlight();
                 commitIfManual(record);
                 runIgnoreCallback(onIgnored);
                 notifyCompleted(view, KafkaTerminalOutcome.SKIP);
                 return;
             }
-            errorHandler
-                    .handleError(record, rawBytes, headers, e, consumerControl())
-                    .onSuccess(outcome -> notifyCompleted(view, outcome))
-                    .onFailure(err -> {
-                        log.warn("[{}] Unexpected failure from handleError future", entry.name(), err);
-                        notifyCompleted(view, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
-                    });
+            handleFailure(record, rawBytes, headers, e, view, releaseUnlessForced());
             return;
         }
 
@@ -496,14 +483,7 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
         interceptorChain.runOnRecordObservers(dispatchCtx);
         interceptorChain.runBeforeInterceptors(dispatchCtx).onComplete(interceptorResult -> {
             if (interceptorResult.failed()) {
-                decrementInFlight();
-                errorHandler
-                        .handleError(record, rawBytes, headers, interceptorResult.cause(), consumerControl())
-                        .onSuccess(outcome -> notifyCompleted(view, outcome))
-                        .onFailure(err -> {
-                            log.warn("[{}] Unexpected failure from handleError future", entry.name(), err);
-                            notifyCompleted(view, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
-                        });
+                handleFailure(record, rawBytes, headers, interceptorResult.cause(), view, releaseUnlessForced());
                 return;
             }
 
@@ -560,7 +540,11 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                     };
 
             dispatchFuture.onComplete(dispatchResult -> {
-                decrementInFlight();
+                // A failed dispatch of a forced entry keeps its slot until the failure is settled.
+                boolean slotHeld = dispatchResult.failed() && entry.forceStrategies();
+                if (!slotHeld) {
+                    decrementInFlight();
+                }
                 if (dispatchResult.succeeded()) {
                     // Remove any retry state accumulated for this record on clean success
                     errorHandler.retryCounts.remove(retryKey);
@@ -578,25 +562,72 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                             .onSuccess(v -> {
                                 // Error was recovered by an interceptor — commit and move on
                                 commitIfManual(record);
+                                if (slotHeld) {
+                                    decrementInFlight();
+                                }
                                 notifyCompleted(view, KafkaTerminalOutcome.RECOVERED);
                             })
-                            .onFailure(e -> {
-                                // Not recovered — proceed with normal error strategy; complete the
-                                // record from the terminal-outcome future so observers run after all
-                                // async work (DLQ publish, seek, scheduleResume) has settled.
-                                errorHandler
-                                        .handleError(record, rawBytes, headers, e, consumerControl())
-                                        .onSuccess(outcome -> notifyCompleted(view, outcome))
-                                        .onFailure(err -> {
-                                            log.warn(
-                                                    "[{}] Unexpected failure from handleError future",
-                                                    entry.name(),
-                                                    err);
-                                            notifyCompleted(view, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
-                                        });
-                            });
+                            // Not recovered — proceed with normal error strategy; complete the
+                            // record from the terminal-outcome future so observers run after all
+                            // async work (DLQ publish, seek, scheduleResume) has settled.
+                            .onFailure(e -> handleFailure(record, rawBytes, headers, e, view, slotHeld));
                 }
             });
+        });
+    }
+
+    /**
+     * Releases the record's in-flight slot at once, unless the entry forces its strategies. A forced
+     * entry keeps the slot until the record's failure is settled, so no later record can be delivered,
+     * handled or committed ahead of it.
+     *
+     * @return {@code true} when the slot is still held and {@link #handleFailure} must release it
+     */
+    private boolean releaseUnlessForced() {
+        if (entry.forceStrategies()) {
+            return true;
+        }
+        decrementInFlight();
+        return false;
+    }
+
+    /**
+     * Hands a failed record to the error strategy and completes it from the terminal-outcome future,
+     * so observers run after all async work (DLQ publish, seek, scheduleResume) has settled.
+     *
+     * @param slotHeld whether the record still holds its in-flight slot; the slot is released once
+     *     the error handling has settled, whether it succeeded or failed
+     */
+    private void handleFailure(
+            KafkaConsumerRecord<String, byte[]> record,
+            byte[] rawBytes,
+            KafkaRecordHeaders headers,
+            Throwable cause,
+            @Nullable KafkaConsumerRecordView view,
+            boolean slotHeld) {
+        Future<KafkaTerminalOutcome> settled;
+        if (slotHeld) {
+            try {
+                settled = errorHandler.handleError(record, rawBytes, headers, cause, consumerControl());
+            } catch (RuntimeException e) {
+                // A held slot must not outlive a handler that threw: it would stall the consumer for good.
+                settled = Future.failedFuture(e);
+            }
+        } else {
+            settled = errorHandler.handleError(record, rawBytes, headers, cause, consumerControl());
+        }
+        settled.onComplete(result -> {
+            if (slotHeld) {
+                decrementInFlight();
+            }
+            if (result.succeeded()) {
+                notifyCompleted(view, result.result());
+            } else {
+                log.warn("[{}] Unexpected failure from handleError future", entry.name(), result.cause());
+                // The error handler's own future failed — the record's disposition is unknown, but
+                // the record must still complete exactly once.
+                notifyCompleted(view, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
+            }
         });
     }
 
@@ -629,6 +660,9 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
         return new KafkaErrorHandler.ConsumerControl() {
             @Override
             public void pause() {
+                if (entry.forceStrategies()) {
+                    backingOff.set(true);
+                }
                 if (paused.compareAndSet(false, true)) {
                     consumer.pause();
                 }
@@ -637,15 +671,9 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
             @Override
             public void scheduleResume(long delayMs) {
                 if (delayMs <= 0) {
-                    if (paused.compareAndSet(true, false)) {
-                        consumer.resume();
-                    }
+                    resumeAfterBackoff();
                 } else {
-                    vertx.setTimer(delayMs, id -> {
-                        if (paused.compareAndSet(true, false)) {
-                            consumer.resume();
-                        }
-                    });
+                    vertx.setTimer(delayMs, id -> resumeAfterBackoff());
                 }
             }
 
@@ -661,6 +689,23 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                 KafkaConsumerVerticle.this.commitIfManual(record);
             }
         };
+    }
+
+    /**
+     * Resumes the consumer when a backoff is over. A forced entry ends its backoff first and resumes
+     * only when no record still holds a slot; the release of that slot resumes it otherwise. Any other
+     * entry resumes at once, as it always has.
+     */
+    private void resumeAfterBackoff() {
+        if (entry.forceStrategies()) {
+            backingOff.set(false);
+            if (inFlight.get() >= entry.config().maxInFlight()) {
+                return;
+            }
+        }
+        if (paused.compareAndSet(true, false)) {
+            consumer.resume();
+        }
     }
 
     // --- Commit ---
@@ -717,11 +762,11 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
 
     /**
      * Decrements the in-flight counter and resumes the consumer if it was paused and the count has
-     * dropped below the max-in-flight threshold.
+     * dropped below the max-in-flight threshold, unless a forced entry is waiting out a backoff.
      */
     private void decrementInFlight() {
         int current = inFlight.decrementAndGet();
-        if (current < entry.config().maxInFlight() && paused.compareAndSet(true, false)) {
+        if (current < entry.config().maxInFlight() && !backingOff.get() && paused.compareAndSet(true, false)) {
             consumer.resume();
             log.debug("[{}] Resumed consumer: inFlight={}", entry.name(), current);
         }

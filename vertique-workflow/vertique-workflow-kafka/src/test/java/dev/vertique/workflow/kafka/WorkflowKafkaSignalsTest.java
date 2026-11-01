@@ -64,7 +64,7 @@ class WorkflowKafkaSignalsTest {
         // and a payload mapping
         Carriers carriers = SourceFixture.carriers();
         KafkaRecordFilter given = KafkaRecordFilter.headerEquals("type", "delivered");
-        KafkaSignals<ShipmentDelivered> source = new WorkflowKafkaSignals(carriers.delivery())
+        KafkaSignals<ShipmentDelivered> source = carriers.signals()
                 .on("carrier.events", ShipmentDelivered.class)
                 .groupId("logistics")
                 .filter(given);
@@ -119,15 +119,13 @@ class WorkflowKafkaSignalsTest {
         assertThat(named.name()).isEqualTo("carriers");
 
         // And a blank topic or group fails at construction
-        assertThatThrownBy(() -> keyedByCarrier(new WorkflowKafkaSignals(carriers.delivery())
-                        .on(" ", ShipmentDelivered.class)
-                        .groupId(GROUP)))
+        assertThatThrownBy(() -> keyedByCarrier(
+                        carriers.signals().on(" ", ShipmentDelivered.class).groupId(GROUP)))
                 .isInstanceOf(RuntimeException.class)
                 .message()
                 .containsIgnoringCase("topic");
-        assertThatThrownBy(() -> keyedByCarrier(new WorkflowKafkaSignals(carriers.delivery())
-                        .on(TOPIC, ShipmentDelivered.class)
-                        .groupId(" ")))
+        assertThatThrownBy(() -> keyedByCarrier(
+                        carriers.signals().on(TOPIC, ShipmentDelivered.class).groupId(" ")))
                 .isInstanceOf(RuntimeException.class)
                 .message()
                 .containsIgnoringCase("groupId");
@@ -345,7 +343,7 @@ class WorkflowKafkaSignalsTest {
         CorrelationContextFactory factory = new CorrelationContextFactory(Optional.of(() -> "application-id"));
 
         // When a source from the injected entry point restores correlation from headers and handles a record without
-        // a correlation header, and so does one from the one-argument constructor
+        // a correlation header, and so does one over a factory with the default generator
         KafkaConsumerBinding<ShipmentDelivered> injected =
                 keyedByCarrier(new WorkflowKafkaSignals(carriers.delivery(), factory)
                         .on(TOPIC, ShipmentDelivered.class)
@@ -373,7 +371,7 @@ class WorkflowKafkaSignalsTest {
         assertThat(seeded.correlationId().value()).isEqualTo("application-id");
         assertThat(seeded.requestId().value()).isEqualTo("application-id");
 
-        // And the one-argument constructor keeps the default generator
+        // And the factory with the default generator keeps it
         assertThat(envelopes.getAllValues().get(1).correlation().correlationId().value())
                 .isNotEqualTo("application-id");
 

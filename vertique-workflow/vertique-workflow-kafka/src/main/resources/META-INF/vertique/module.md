@@ -52,7 +52,7 @@ The status is Alpha: public signatures and configuration may break in any releas
 
 **Dead-lettering twice.** The dead-letter headers `x-dlq-source-topic`, `x-dlq-source-partition` and `x-dlq-source-offset` name the position of the record that failed last. A replayed record that is dead-lettered again carries the position of the dead-letter record it was replayed from, not the original one, so a second replay is deduplicated against that dead-letter record and no longer against the original record. Keep the first dead-letter record if the original position matters.
 
-**Correlation.** A source restores nothing from record headers unless it declares `.restoreCorrelationFromHeaders()`. Then it reads only the exact `vertique-correlation` header, ignores a value over 4096 characters, decodes it alone, takes the correlation id alone and only when it is at most 128 characters from `A-Z a-z 0-9 . _ ~ : / + = -`, and binds it on a context seeded by the application's `CorrelationContextFactory`, so the ids come from the application's correlation id generator, and that keeps its own request id. `CorrelationContextSeeder` takes no part: the binding installs no context from record headers. A header that is missing, too long, malformed or invalid is ignored: it never fails the record and its value is never logged. A source without the stage binds no correlation.
+**Correlation.** A source restores nothing from record headers unless it declares `.restoreCorrelationFromHeaders()`. Then it reads only the exact `vertique-correlation` header, ignores a value over 4096 characters, decodes it alone, takes the correlation id alone and only when it is at most 128 characters from `A-Z a-z 0-9 . _ ~ : / + = -`, and binds it on a context seeded by the application's `CorrelationContextFactory`, so the ids come from the application's correlation id generator, and that keeps its own request id. A header that is missing, too long, malformed or invalid is ignored: it never fails the record and its value is never logged, and the record keeps the freshly seeded correlation. A source without the stage restores nothing from headers, but the delivery bean installs the recording's dispatch scope, which runs the registered `CorrelationContextSeeder`: the record is recorded under a freshly seeded correlation, with ids from the application's correlation id generator. The seeder never replaces a correlation the stage bound.
 
 ---
 
@@ -60,7 +60,7 @@ The status is Alpha: public signatures and configuration may break in any releas
 
 ### WorkflowKafkaSignals
 
-The injectable entry point, `@Singleton` with an `@Inject` constructor taking `WorkflowSourceDelivery` and the application's `CorrelationContextFactory`. A constructor taking the delivery bean alone remains and uses the default correlation id generator.
+The injectable entry point, `@Singleton` with an `@Inject` constructor taking `WorkflowSourceDelivery` and the application's `CorrelationContextFactory`.
 
 ```java
 KafkaSignals<ShipmentDelivered> source = signals

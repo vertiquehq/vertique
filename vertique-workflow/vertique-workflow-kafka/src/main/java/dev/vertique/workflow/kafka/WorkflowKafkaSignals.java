@@ -8,7 +8,6 @@ import dev.vertique.workflow.services.source.WorkflowSourceDelivery;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.util.Objects;
-import java.util.Optional;
 
 /**
  * Starts the Kafka signal sources of an application.
@@ -22,17 +21,6 @@ public final class WorkflowKafkaSignals {
 
     private final WorkflowSourceDelivery delivery;
     private final CorrelationContextFactory correlationFactory;
-
-    /**
-     * Creates the entry point over the delivery bean that records the signals, seeding a source's
-     * correlation with the default correlation id generator. An application that supplies its own
-     * generator injects this class, which uses the application's {@link CorrelationContextFactory}.
-     *
-     * @param delivery the delivery bean, which also receives the source's outcome reports
-     */
-    public WorkflowKafkaSignals(WorkflowSourceDelivery delivery) {
-        this(delivery, new CorrelationContextFactory(Optional.empty()));
-    }
 
     /**
      * Creates the entry point over the delivery bean and the application's correlation factory.

@@ -229,8 +229,10 @@ exactly as it did before them.
   consumers. The default `256` cannot be told from an unset value and resolves to `1`.
   A dead-letter publish that fails does not leave the record behind: the consumer pauses, seeks back
   to the record and resumes after the retry backoff, which grows with the failures of that record,
-  and the record is delivered again. A binding without `forceStrategies` leaves the record
-  uncommitted and goes on.
+  and the record is delivered again. A failed record keeps its slot until its error handling has
+  settled, including a dead-letter publish still in flight, and the consumer stays paused through the
+  backoff, so no later record is delivered, handled or committed ahead of it. A binding without
+  `forceStrategies` leaves the record uncommitted and goes on.
 
 ### Model 3 — `@KafkaListener` routing interface
 
