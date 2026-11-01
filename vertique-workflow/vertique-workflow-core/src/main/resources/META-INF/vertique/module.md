@@ -969,6 +969,23 @@ observer must tolerate an event type it does not know: give its `switch` a `defa
 `try`: an exception it throws is caught and logged at warn level with the observer class and the event type, the other observers
 still receive the event, and command execution is unaffected.
 
+### Signal Source Observer
+
+`SignalSourceObserver` and `SignalSourceEvent` (package `dev.vertique.workflow.source`) report the outcome of each message that a correlated signal source receives. An application or a bridge module contributes an observer into the `Set<SignalSourceObserver>` multibinding, which `WorkflowSourceModule` in `vertique-workflow-services` declares empty.
+
+```java
+public interface SignalSourceObserver {
+    void onOutcome(SignalSourceEvent event);
+}
+
+public record SignalSourceEvent(String source, String transport, @Nullable String contractName, @Nullable String signalName,
+        @Nullable String definitionId, Outcome outcome) { }
+```
+
+`Outcome` is `APPLIED`, `NO_MATCH`, `AMBIGUOUS`, `DEDUPLICATED`, `IGNORED`, `UNDECODABLE`, `SCOPE_EMPTY`, `REFUSED_IDENTITY`, `INVALID_INPUT`, `LIMITED`, `OVERSIZED` and `STAGE_FAILED`. `APPLIED` means recorded for application. `contractName` and `signalName` are null only for an outcome reached before a signal is chosen. The event never carries a key, a header or a payload.
+
+`onOutcome` runs on the context of the delivery, may run concurrently for different messages, and must not block. Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the enclosing operation. `LinkageError`, `AssertionError` and `StackOverflowError` are swallowed the same way, and a `LinkageError` is reported at error level at a limited rate. The log names the observer class and the callback, never the observer's message. A throw never changes a message's fate, and the other observers still receive the event.
+
 `WorkflowDefinitionLifecycleException` reports a typed `reason()` and `key()` for lifecycle refusals,
 including stale claims, unavailable code, missing loaders, and plan drift. Asynchronous entrypoints
 report invalid arguments through failed Futures.

@@ -23,6 +23,7 @@ Install this module when workflows dispatch service work or when service consume
 | Service side-effect recorder | Persists `SERVICE` workflow intents to the outbox inside the workflow transaction |
 | Signal service contributor | Registers the `workflow.signals.post` service contract |
 | Composition validator | Fails startup when workflow service targets or outbox handlers are miswired |
+| Source delivery bean | `WorkflowSourceDelivery` records a correlated signal for a signal source, under the identity its envelope names (see "Source Delivery") |
 
 This module does not compile-depend on `workflow-postgresql` or `inbox-outbox-services`. The application composes those modules at the Dagger boundary.
 
@@ -100,6 +101,27 @@ populated from untrusted or end-user input, only from the relay that produced it
 `DurableMetadata.toCarrier()`. The carrier's provenance is not independently authenticated against
 the caller's identity — a future revision may derive the tenant namespace from the authenticated
 `SecurityContext` instead of trusting it verbatim off the carrier.
+
+---
+
+## Source Delivery
+
+`WorkflowSourceDelivery` is a singleton bean that records one correlated signal for a signal source, in process. It is added to the graph by `WorkflowSourceModule`, which `WorkflowServicesModule` includes. A node that only receives signals installs `WorkflowSourceModule` alone: the module needs `TransactionalWorkflowOperations<SqlClient>`, `Pool`, `Vertx` and `InboundExecutionContextScope`, and no outbox or inbox module.
+
+**INTERNAL.** `WorkflowSourceDelivery`, `SourceEnvelope` and `SourceDisposition` are internal seams, outside the maturity promise of `vertique-workflow-services`. They are public only because a transport in another repository needs them; application code does not depend on them.
+
+The caller passes resolved values only, in a `SourceEnvelope`: the transport (`kafka` or `camel`), the `SecurityContext` to record under, an optional `CorrelationContext`, the `InvocationOrigin`, and a function from a signal's resolved dedup key to its `SignalProvenance`. For each signal the bean:
+
+- creates its own duplicated Vert.x context, from the root of the context it was called on, so a value bound on the caller's context never reaches the recording;
+- installs exactly the envelope's security context, correlation (when there is one) and origin on that context through `InboundExecutionContextScope.installDispatch`, so the recorded command's actor comes from the envelope's security context, as it does for every recording, and two deliveries in flight never see each other's values;
+- runs `signalByKey` or `signalByBusinessKey` in its own transaction, with the provenance built for the signal's own dedup key;
+- closes the binding when the recording's future completes, whether it succeeded or failed, and also when the operations throw synchronously.
+
+The returned future completes on the context the caller delivered from, after the binding is closed, and a failure from the operations reaches the caller as the same exception instance. Nothing blocks, and the bean logs no key, header or payload.
+
+`report(SignalSourceEvent)` tells every `SignalSourceObserver` in the `Set<SignalSourceObserver>` multibinding about an outcome. It isolates each observer: an `Exception`, `LinkageError`, `AssertionError` or `StackOverflowError` from one observer is reported by observer class and callback name, never by its message, and does not stop the others or reach the caller. A transport reports its own outcomes through it. `WorkflowSourceModule` declares the set, so an application with no observer still resolves the bean.
+
+The bean adds no service operation and no event-bus address: only code in the application's JVM can call it. The only service entry of this module stays `workflow.signals.post`.
 
 ---
 

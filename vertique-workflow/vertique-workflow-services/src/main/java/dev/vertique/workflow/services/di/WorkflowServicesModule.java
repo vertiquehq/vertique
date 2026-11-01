@@ -19,7 +19,8 @@ import jakarta.inject.Singleton;
 /**
  * Dagger module that wires the workflow-services layer into the application graph.
  *
- * <p>Provides three bindings:
+ * <p>Includes {@link WorkflowSourceModule}, which provides the correlated-signal delivery bean, and
+ * provides three bindings of its own:
  * <ol>
  *   <li>{@link OutboxSideEffectRecorder} contributed into the {@code @WorkflowRecorders}
  *       {@code Set<WorkflowSideEffectRecorder<SqlClient>>} multibinding so the workflow engine
@@ -33,7 +34,7 @@ import jakarta.inject.Singleton;
  *       to an unknown service target or without a {@code SERVICE} outbox handler is refused.</li>
  * </ol>
  */
-@Module
+@Module(includes = WorkflowSourceModule.class)
 public abstract class WorkflowServicesModule {
 
     /**
