@@ -78,6 +78,38 @@ KafkaConsumerBinding<ShipmentDelivered> binding = source
 
 The stages of a source, listed above. `build()` returns the `KafkaConsumerBinding<T>` for the consumer registry.
 
+### KafkaSignalSource and WorkflowKafkaSignalsModule
+
+A source may be a class instead of a call to `WorkflowKafkaSignals`. A class annotated `@WorkflowSignalSource` that implements `KafkaSignalSource<T>` and has an `@Inject` constructor is registered by generated wiring into the `Set<KafkaSignalSource<?>>`, with no application `@Provides` method. Its dependencies come by constructor injection, so a lookup written in `define` uses the repository the class received.
+
+```java
+@WorkflowSignalSource
+final class ShipmentSignals implements KafkaSignalSource<ShipmentDelivered> {
+    private final ShipmentLookup lookup;
+
+    @Inject
+    ShipmentSignals(ShipmentLookup lookup) {
+        this.lookup = lookup;
+    }
+
+    @Override
+    public void define(KafkaSignals<ShipmentDelivered> source) {
+        source.topic("shipment.events")
+              .groupId("logistics")
+              .dedupBy(ShipmentDelivered::eventId)
+              .signal(OrdersContract.class, "shipment-delivered")
+              .businessKeyFrom(message -> lookup.orderNumberFor(message.body().carrierRef()));
+    }
+}
+```
+
+`WorkflowKafkaSignalsModule` turns every `KafkaSignalSource<?>` of that `Set` into a `KafkaConsumerBinding` in the `Set<KafkaConsumerBinding<?>>` the Kafka consumer registry reads. It calls the source's `define` with a `KafkaSignals<T>` builder when the binding set is first built, which is after the Dagger graph exists, and then calls `build()`. Nothing runs `define` earlier. The module needs only a `WorkflowSourceDelivery` and a `CorrelationContextFactory` from the application.
+
+- **Name only the generated module.** `KafkaSignalSource` is marked `@SignalSourceType(module = WorkflowKafkaSignalsModule.class)`, so the generated registrations module includes `WorkflowKafkaSignalsModule`. An application does not list it.
+- **A forgotten generated module fails the build.** The module declares no `@Multibinds` for `Set<KafkaSignalSource<?>>`, so a component that leaves out the generated registrations module has no binding for it and fails to build, instead of running with no source consuming.
+- **The message type is the type argument.** `T` is read from the class's `KafkaSignalSource<T>` type argument. A raw `KafkaSignalSource`, or a type variable the class leaves unresolved, fails startup with an `IllegalStateException` naming the class; it never falls back to `Object`.
+- **Exceptions from `define` are fatal.** An exception thrown by `define`, or by the checks of `build()`, propagates and fails the startup that builds the binding set; the message names the class.
+
 ---
 
 ## Extension Points
@@ -90,5 +122,6 @@ The shared stage interfaces (`SignalStages`, `SourceStages`, `SignalTargetStage`
 
 - **workflow-services** - the delivery bean, the source plan and the shared source stages. Its `vertique-workflow-core` types come through it.
 - **kafka-core** - the consumer binding, record filter and terminal failure.
+- **codegen-dagger** - `provided`, and on the module's own processor path, so the module compiles with the generator that registers source classes. An application gets the generator from its parent's processor paths.
 
 The module takes no compile dependency on `vertique-workflow-engine` or `vertique-workflow-postgresql`, and the build enforces it.

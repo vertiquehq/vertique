@@ -988,7 +988,7 @@ public record SignalSourceEvent(String source, String transport, @Nullable Strin
 
 ### Signal Source Types
 
-A correlated signal source is described with three small types in `dev.vertique.workflow.source`, shared by every transport. `SignalMessage<T>` is what a source's stages read: `body()` is the decoded message, `header(name)` a transport header, and `key()` the Kafka record key (always empty on Camel). `SignalNoMatch` is the policy for a message whose key matches no waiting instance: `IGNORE` finishes it, `RETRY` redelivers it.
+A correlated signal source is described with three small types (and the two annotations below) in `dev.vertique.workflow.source`, shared by every transport. `SignalMessage<T>` is what a source's stages read: `body()` is the decoded message, `header(name)` a transport header, and `key()` the Kafka record key (always empty on Camel). `SignalNoMatch` is the policy for a message whose key matches no waiting instance: `IGNORE` finishes it, `RETRY` redelivers it.
 
 ```java
 public interface SignalMessage<T> {
@@ -1006,6 +1006,18 @@ public final class SignalSourceRefusal extends RuntimeException {
 ```
 
 A source's identity function (`dispatchAs`) fails with `SignalSourceRefusal` to refuse a message outright: the message is not retried and goes to the dead-letter path, or its exchange fails. The refusal carries its error type and nothing else (no cause, no stack trace, no message beyond the type), a null or blank error type is refused at construction, and the error type is the only detail that is forwarded, so keep it to a short name such as `TokenRejected` and never put a value from the message in it.
+
+Two annotations in the same package describe a source written as a class. `@WorkflowSignalSource` marks a concrete class with an `@Inject` constructor that implements an interface annotated `@SignalSourceType`, such as `KafkaSignalSource` of `vertique-workflow-kafka`; both have class retention. Generated wiring (`vertique-codegen-dagger`) registers the class into the `Set` of that interface, so no application `@Provides` method names it and the dependencies it needs come by constructor injection. `@SignalSourceType(module = ...)` names the transport module that consumes the `Set`, and the generated registrations module includes it, so an application names only the generated module. A class with no `@Inject` constructor, and a registration the generated module cannot reference, fail compilation naming the class. `@NoAutoWire` and `-Avertique.codegen.autoWire=false` turn the registration off.
+
+```java
+@Target(ElementType.TYPE) @Retention(RetentionPolicy.CLASS)
+public @interface WorkflowSignalSource { }
+
+@Target(ElementType.TYPE) @Retention(RetentionPolicy.CLASS)
+public @interface SignalSourceType {
+    Class<?> module();
+}
+```
 
 `WorkflowDefinitionLifecycleException` reports a typed `reason()` and `key()` for lifecycle refusals,
 including stale claims, unavailable code, missing loaders, and plan drift. Asynchronous entrypoints

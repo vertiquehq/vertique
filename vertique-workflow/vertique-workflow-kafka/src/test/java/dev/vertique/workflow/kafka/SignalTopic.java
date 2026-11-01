@@ -53,7 +53,23 @@ final class SignalTopic implements AutoCloseable {
      */
     static SignalTopic create(String base) {
         String unique = UUID.randomUUID().toString().substring(0, 8);
-        String topic = base + "." + unique;
+        return open(base + "." + unique, "g-" + base + "." + unique, "carriers-" + unique);
+    }
+
+    /**
+     * Creates the topic of the exact name, and its dead-letter topic, for a source whose class states its topic, group
+     * and name itself. The group is deleted on close; the topic is not, so one proof may use the name once per broker.
+     *
+     * @param topic the topic the source reads
+     * @param group the consumer group the source states
+     * @param name the name the source states, which is also its consumer's configuration key
+     * @return the topic
+     */
+    static SignalTopic createExact(String topic, String group, String name) {
+        return open(topic, group, name);
+    }
+
+    private static SignalTopic open(String topic, String group, String name) {
         AdminClient admin = AdminClient.create(Map.of(
                 AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, SourceScenario.Infrastructure.bootstrap(),
                 AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, "10000",
@@ -79,7 +95,7 @@ final class SignalTopic implements AutoCloseable {
             admin.close(Duration.ofSeconds(1));
             throw new AssertionError("the topics were not created", e);
         }
-        return new SignalTopic(topic, "g-" + topic, "carriers-" + unique, admin, producer);
+        return new SignalTopic(topic, group, name, admin, producer);
     }
 
     /** The topic the source reads. */

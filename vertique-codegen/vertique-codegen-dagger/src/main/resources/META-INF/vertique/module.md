@@ -30,6 +30,26 @@ repeatable, so one implementation may be registered under multiple explicit targ
 processor emits `GeneratedRegistrationsModule` only when at least one valid registration exists;
 the owning Dagger component or aggregate module must include it explicitly.
 
+A class annotated `@WorkflowSignalSource` (package `dev.vertique.workflow.source`) is registered the same way, with
+no application `@Provides` method. The class implements an interface annotated `@SignalSourceType`, such as
+`KafkaSignalSource`, and has an `@Inject` constructor. The generated module gets an abstract
+`@Binds @IntoSet` method that returns that interface parameterized with wildcards (`KafkaSignalSource<?>`), so the
+`Set` the transport consumes is the one filled whatever the class's type argument. The processor identifies both
+annotations by fully qualified name and takes no compile dependency on the workflow modules.
+
+- **The transport module is included.** `@SignalSourceType(module = ...)` names the interface's transport module, and
+  the generated registrations module lists the distinct modules of the sources it registers in
+  `@Module(includes = {...})`. An application names only the generated module, and a source cannot be left unconsumed
+  by forgetting the transport module. A module with no source registration carries no `includes`.
+- **A source registration is required.** A source class with no `@Inject` constructor, a class that is not concrete,
+  a class that implements no `@SignalSourceType` interface, and a source the generated module cannot reference (a
+  package-private class outside the output package, for example) each fail compilation, naming the class. An
+  `@RegisterAs` or `@RegisterIntoSet` registration it cannot reference keeps its warning and is skipped.
+- **A forgotten module fails the build.** The transport module declares no `@Multibinds` for the `Set`, so a component
+  that leaves out the generated registrations module has no binding for it and fails to build, instead of consuming
+  nothing.
+- **Opt-out.** `@NoAutoWire` and `-Avertique.codegen.autoWire=false` disable this registration like every other.
+
 The processor uses `@SupportedAnnotationTypes("*")` so it runs every round regardless of which annotations are present. It always returns `false` from `process()` so Dagger, Lombok, and other processors see the same elements unmodified.
 
 ---
@@ -39,7 +59,7 @@ The processor uses `@SupportedAnnotationTypes("*")` so it runs every round regar
 | Package | Contents |
 |---------|----------|
 | `dev.vertique.codegen.dagger.processor` | `AutoWireProcessor`, `Qualifier` (enum), `Binding` (record) |
-| `dev.vertique.codegen.dagger.processor.collect` | `AnnotationRootedCollector` (shared base), `RestClientCollector`, `KafkaConsumerCollector`, `DelayedJobExecutorScanner`, `RegistrationCollector` |
+| `dev.vertique.codegen.dagger.processor.collect` | `AnnotationRootedCollector` (shared base), `RestClientCollector`, `KafkaConsumerCollector`, `DelayedJobExecutorScanner`, `RegistrationCollector`, `SignalSourceCollector` |
 | `dev.vertique.codegen.dagger.processor.emit` | `MultibindingModuleEmitter`, `RestClientModuleEmitter`, `RegistrationModuleEmitter` |
 | `dev.vertique.codegen.dagger.processor.support` | `Filters`, `FilerWriter` |
 
@@ -118,8 +138,17 @@ Root-element scan: loads `dev.vertique.job.delayed.DelayedJobExecutor` via `Elem
 requires exactly one Jakarta or Javax `@Inject` constructor, and checks implementation
 assignability to every declared target. `RegistrationModuleEmitter` writes valid registrations as
 abstract `@Binds` methods in `GeneratedRegistrationsModule`, adding `@IntoSet` for set
-registrations. Duplicate direct bindings remain Dagger's normal diagnostic; multiple set
+registrations. A required registration (a signal source class) is bound as its target parameterized with wildcards,
+adds its transport module to the module's `includes` once, and is an error rather than a skipped warning when the
+generated package cannot reference it. Duplicate direct bindings remain Dagger's normal diagnostic; multiple set
 contributions are supported.
+
+### `SignalSourceCollector`
+
+Collects classes annotated `@WorkflowSignalSource` and turns each into a required `Registration` per
+`@SignalSourceType` interface it implements, directly or through a supertype, carrying that marker's `module()`. It
+honors `@NoAutoWire`, rejects a class that is not concrete, requires exactly one `@Inject` constructor, and reports an
+error naming a class that implements no marked interface.
 
 ### `MultibindingModuleEmitter`
 

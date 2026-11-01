@@ -9,6 +9,7 @@ import dev.vertique.codegen.dagger.processor.collect.DelayedJobExecutorScanner;
 import dev.vertique.codegen.dagger.processor.collect.KafkaConsumerCollector;
 import dev.vertique.codegen.dagger.processor.collect.RegistrationCollector;
 import dev.vertique.codegen.dagger.processor.collect.RestClientCollector;
+import dev.vertique.codegen.dagger.processor.collect.SignalSourceCollector;
 import dev.vertique.codegen.dagger.processor.emit.MultibindingModuleEmitter;
 import dev.vertique.codegen.dagger.processor.emit.RegistrationModuleEmitter;
 import dev.vertique.codegen.dagger.processor.emit.RestClientModuleEmitter;
@@ -43,7 +44,10 @@ import javax.lang.model.element.TypeElement;
  *
  * <p>It also consumes the source-retained {@code @RegisterAs} and {@code @RegisterIntoSet}
  * annotations and emits an explicit {@code GeneratedRegistrationsModule} containing abstract
- * {@code @Binds} declarations.
+ * {@code @Binds} declarations. A class annotated {@code @WorkflowSignalSource} is registered the same way into the
+ * {@code Set} of the {@code @SignalSourceType} interface it implements, bound as that interface parameterized with
+ * wildcards, and the module includes the transport module the marker names. Such a registration is required: one the
+ * generated module cannot reference is an error naming the class.
  *
  * <p>JAX-RS resource binding ({@code @Path} &#8594; {@code GeneratedJaxRsResourcesModule}) is
  * owned by {@code JaxRsPipelineProcessor} in {@code vertique-codegen-jaxrs} (CG-010).
@@ -100,6 +104,7 @@ public final class AutoWireProcessor extends AbstractProcessor {
     private RestClientCollector restClientCollector;
     private KafkaConsumerCollector kafkaCollector;
     private RegistrationCollector registrationCollector;
+    private SignalSourceCollector signalSourceCollector;
     private DelayedJobExecutorScanner delayedJobScanner;
 
     // --- Emitters ---
@@ -150,6 +155,7 @@ public final class AutoWireProcessor extends AbstractProcessor {
         restClientCollector = new RestClientCollector(ctx);
         kafkaCollector = new KafkaConsumerCollector(ctx);
         registrationCollector = new RegistrationCollector(ctx);
+        signalSourceCollector = new SignalSourceCollector(ctx);
 
         // Scanners
         delayedJobScanner = new DelayedJobExecutorScanner(ctx);
@@ -202,6 +208,7 @@ public final class AutoWireProcessor extends AbstractProcessor {
         restClientCollector.collect(roundEnv, accumulator.get(Qualifier.REST_CLIENTS));
         kafkaCollector.collect(roundEnv, accumulator.get(Qualifier.KAFKA_CONSUMERS));
         registrationCollector.collect(roundEnv, registrations);
+        signalSourceCollector.collect(roundEnv, registrations);
 
         // --- Phase 2: Root-element scan for delayed-job executors ---
         List<TypeElement> concreteRootElements = collectConcreteRootElements(roundEnv);
