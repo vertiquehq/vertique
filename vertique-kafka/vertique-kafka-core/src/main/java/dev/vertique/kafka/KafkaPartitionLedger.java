@@ -220,6 +220,22 @@ final class KafkaPartitionLedger {
         return dropped;
     }
 
+    /**
+     * Lets go of every record the ledger holds, for the end of the assignment. A handler that still runs, or a timer or
+     * callback that is slow to notice the end, keeps this ledger reachable, and it must not keep the payloads with it.
+     */
+    void release() {
+        for (Entry entry : entries) {
+            entry.record = null;
+            entry.cause = null;
+            entry.view = null;
+            entry.timer = null;
+            entry.bytes = 0;
+        }
+        entries.clear();
+        retainedBytes = 0;
+    }
+
     /** Every entry, oldest first, for the end of the assignment. */
     Iterable<Entry> entries() {
         return entries;

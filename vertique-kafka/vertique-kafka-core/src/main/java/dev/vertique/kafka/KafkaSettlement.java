@@ -207,6 +207,10 @@ final class KafkaSettlement {
         }
         retainedRecords -= ledger.size();
         retainedBytes -= ledger.retainedBytes();
+        // The queue may not be polled again for a long time, while the gate is closed or every permit is held, so the
+        // ended assignment's entries leave it now, with their payloads.
+        queue.removeIf(entry -> entry.ledger == ledger);
+        ledger.release();
         holds.revoked(ledger.partition());
     }
 
@@ -658,6 +662,11 @@ final class KafkaSettlement {
 
     KafkaHoldController holds() {
         return holds;
+    }
+
+    /** The entries waiting for a permit, of any assignment. */
+    int queuedEntries() {
+        return queue.size();
     }
 
     long retainedRecords() {

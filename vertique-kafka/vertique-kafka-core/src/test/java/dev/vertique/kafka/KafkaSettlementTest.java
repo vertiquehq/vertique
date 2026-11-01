@@ -423,6 +423,40 @@ class KafkaSettlementTest {
         }
 
         @Test
+        @DisplayName(
+                "a revocation releases the records of the ended assignment though the closed gate keeps the queue still")
+        void revocationReleasesTheQueuedEntries() {
+            // Given a closed gate, so the queue is never polled, and a consumer whose partition keeps coming and going
+            AtomicBoolean open = new AtomicBoolean(false);
+            SettlementRig rig =
+                    new SettlementRig(settings(2, ErrorStrategy.SKIP, true, 1_000, 1L << 30, new KafkaDispatchGate() {
+                        @Override
+                        public boolean open() {
+                            return open.get();
+                        }
+                    }));
+            List<KafkaPartitionLedger.Entry> everEnded = new java.util.ArrayList<>();
+
+            for (int round = 0; round < 5; round++) {
+                rig.assign(P0).add(P0, 0, 1, 2);
+                assertEquals(3, rig.settlement.queuedEntries());
+                KafkaPartitionLedger ledger = rig.settlement.ledger(P0);
+                ledger.entries().forEach(everEnded::add);
+
+                // When the partition is revoked
+                rig.revoke(P0);
+
+                // Then no entry of it is queued, no ledger holds one, and none still holds its record
+                assertEquals(0, rig.settlement.queuedEntries(), "round " + round);
+                assertEquals(0, ledger.size(), "round " + round);
+            }
+            assertEquals(15, everEnded.size());
+            assertTrue(everEnded.stream().allMatch(entry -> entry.record == null && entry.cause == null));
+            assertEquals(0, rig.settlement.retainedRecords());
+            assertEquals(0, rig.settlement.retainedBytes());
+        }
+
+        @Test
         @DisplayName("a retry timer of a revoked assignment does not start the record")
         void staleRetryTimer() {
             SettlementRig rig = new SettlementRig(settings(2, ErrorStrategy.RETRY, false));
