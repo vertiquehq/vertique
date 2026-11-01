@@ -1205,7 +1205,7 @@ public void onRecordCompleted(KafkaConsumerCompletedEvent event, KafkaConsumerRe
 | `RETRY_SCHEDULED` | The offset is not committed and the record will run again. A `forceStrategies` binding reports it also for a `KafkaRedeliverFailure` |
 | `DLQ_PUBLISHED` | Forwarded to the dead-letter topic |
 | `DLQ_FAILED` | The DLQ publish failed; the offset was not committed and the publish is made again after a backoff |
-| `ERROR_HANDLER_FAILED` | No longer reported: a failure handled by the settlement always has a disposition |
+| `ERROR_HANDLER_FAILED` | Deprecated for removal. Nothing reports it: a failure handled by the settlement always has a disposition |
 
 > **Breaking change (core 0.3.0).** The separate consumer capture-hook SPI, its terminal and
 > raw-disposition records, and its `Set` multibinding are removed. Implement

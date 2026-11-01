@@ -62,8 +62,11 @@ public enum KafkaTerminalOutcome {
     DLQ_FAILED,
 
     /**
-     * The error handler itself failed while handling a dispatch error. A {@code MANUAL} consumer no
-     * longer reports it: a failure is always settled by its strategy.
+     * The error handler itself failed while handling a dispatch error. Nothing emits it: a failure is
+     * always settled by its strategy.
+     *
+     * @deprecated nothing emits this outcome; it is kept for source compatibility and will be removed
      */
+    @Deprecated(forRemoval = true)
     ERROR_HANDLER_FAILED,
 }
