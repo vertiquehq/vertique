@@ -17,8 +17,10 @@ import dev.vertique.job.JobState;
 import dev.vertique.job.JobType;
 import dev.vertique.job.ProgressSnapshot;
 import io.vertx.core.Future;
+import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
+import java.math.BigInteger;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -55,7 +57,14 @@ class PgJobRepositoryPayloadRejectionTest {
     }
 
     static Stream<Object> unstorablePayloads() {
-        return Stream.of(new Object(), new FailingPayload(), List.of(new FailingPayload()), new JsonNullPayload());
+        BigInteger overDigitLimit = BigInteger.TEN.pow(1000);
+        return Stream.of(
+                new Object(),
+                new FailingPayload(),
+                List.of(new FailingPayload()),
+                new JsonNullPayload(),
+                overDigitLimit,
+                new JsonObject().put("total", overDigitLimit));
     }
 
     private static JobExecution executionWith(Object payload) {

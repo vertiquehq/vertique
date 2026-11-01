@@ -229,6 +229,8 @@ public class PgJobRepositoryIT {
                 Arguments.of(1.5d, 1.5d),
                 Arguments.of(true, true),
                 Arguments.of(id, id.toString()),
+                Arguments.of(Instant.parse("2026-01-02T03:04:05Z"), "2026-01-02T03:04:05Z"),
+                Arguments.of(new byte[] {1, 2, 3}, "AQID"),
                 Arguments.of(
                         new JsonArray().add("a").add(1),
                         new JsonArray().add("a").add(1)),

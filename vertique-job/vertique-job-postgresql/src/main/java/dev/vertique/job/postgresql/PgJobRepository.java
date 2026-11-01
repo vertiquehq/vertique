@@ -17,6 +17,7 @@ import dev.vertique.job.JobState;
 import dev.vertique.job.LogEntry;
 import dev.vertique.job.ProgressSnapshot;
 import io.vertx.core.Future;
+import io.vertx.core.json.DecodeException;
 import io.vertx.core.json.EncodeException;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonObject;
@@ -40,8 +41,9 @@ import lombok.extern.slf4j.Slf4j;
  * PostgreSQL-backed implementation of {@link JobRepository}.
  *
  * <p>All SQL operations use the Vert.x reactive PostgreSQL client via the {@link PgSqlRepository}
- * query builder. JSONB columns ({@code payload}, {@code progress}) are serialized as Vert.x
- * {@link JsonObject} instances, which the pg-client driver handles natively.
+ * query builder. The {@code progress} JSONB column is serialized as a Vert.x {@link JsonObject},
+ * which the pg-client driver handles natively, and {@code payload} as the JSON value the payload
+ * serializes to.
  *
  * <p>The {@link #claimNextJob(String, int)} method runs inside a single transaction: it first
  * selects eligible rows with {@code FOR UPDATE SKIP LOCKED}, then immediately updates their state
@@ -687,8 +689,8 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
     }
 
     /**
-     * Builds the INSERT parameter tuple from a {@link JobExecution}. Serializes {@code payload},
-     * {@code progress}, and {@code parameters} to {@link JsonObject} for JSONB columns.
+     * Builds the INSERT parameter tuple from a {@link JobExecution}. Serializes {@code progress} and
+     * {@code parameters} to {@link JsonObject} and {@code payload} to its JSON value for JSONB columns.
      *
      * @param execution the execution to build parameters for
      * @return the parameter tuple
@@ -730,21 +732,26 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
      * Converts a job payload to the JSON value the {@code payload} column stores: a
      * {@link JsonObject}, a {@link io.vertx.core.json.JsonArray}, a string, a number or a boolean.
      *
+     * <p>The driver reads the column through the same process codec. A value that codec writes but
+     * cannot read back, such as a number over its digit limit, would fail every claim of the batch
+     * that selects it, so it is rejected here rather than stored.
+     *
      * @param payload the payload to convert, or {@code null}
      * @return the JSON value, or {@code null}
-     * @throws IllegalArgumentException if the payload cannot be serialized, or serializes to JSON
-     *                                  {@code null}. The message names only the type: Jackson's own
-     *                                  message quotes the value, and this one reaches error columns
-     *                                  and logs
+     * @throws IllegalArgumentException if the payload cannot be serialized, serializes to JSON
+     *                                  {@code null}, or cannot be read back. The message names only
+     *                                  the type: Jackson's own message quotes the value, and this
+     *                                  one reaches error columns and logs
      */
     private static Object payloadToJsonValue(Object payload) {
-        if (payload == null || payload instanceof JsonObject) {
-            return payload;
+        if (payload == null) {
+            return null;
         }
         Object value;
         try {
-            value = Json.decodeValue(Json.encodeToBuffer(payload));
-        } catch (EncodeException e) {
+            value = payload instanceof JsonObject ? payload : Json.CODEC.fromValue(payload, Object.class);
+            Json.decodeValue(Json.encodeToBuffer(value));
+        } catch (IllegalArgumentException | EncodeException | DecodeException e) {
             throw unserializablePayload(payload);
         }
         if (value == null) {

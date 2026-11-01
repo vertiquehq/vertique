@@ -26,8 +26,9 @@ import java.util.UUID;
  * @param state         current lifecycle state
  * @param attemptNumber zero-based attempt counter (0 = first attempt)
  * @param maxAttempts   maximum number of attempts allowed (inclusive)
- * @param payload       the typed job data passed to the handler (serialized as JSONB in DB), or
- *                      {@code null} if no payload was provided
+ * @param payload       the job data passed to the handler, or {@code null} if no payload was
+ *                      provided. Serialized as JSONB in the DB, so an execution read back holds the
+ *                      JSON value, which the handler's dispatcher converts to the declared type
  * @param priority      priority for claiming order — higher values are claimed first; default is 0
  * @param lockedBy      node identity of the worker currently processing this execution, or
  *                      {@code null} when not in progress

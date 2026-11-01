@@ -253,6 +253,9 @@ one read from the row. A payload that does not fit that type consumes an attempt
 handler, and the execution's error message names the type, never the value. Interceptors do not see
 that attempt.
 
+Payloads pass through JSON, so a decimal in a payload is read as a `double` under the default JSON
+profile and keeps about 15 significant digits. Send a value that needs more as a `String`.
+
 Implement `DelayedJobExecutor` **directly with concrete type arguments**. An intermediate abstract
 base class that forwards the type variables (`abstract class BaseJob<P, C> implements
 DelayedJobExecutor<P, C>`) is not supported — startup type resolution cannot trace `P` and `C`

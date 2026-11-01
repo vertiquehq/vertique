@@ -20,7 +20,9 @@ PostgreSQL implementation of the `JobRepository` SPI defined in `job-core`. Pers
 
 ### `PgJobRepository`
 
-Extends `PgSqlRepository` and implements `JobRepository`. All SQL operations use the Vert.x reactive PostgreSQL client. JSONB columns (`progress`, `parameters`) are serialized as Vert.x `JsonObject` instances, which the pg-client driver handles natively. `payload` stores whatever JSON value the payload serializes to, so a `String`, a number, a `Boolean`, a `UUID` or a list is stored as a JSON scalar or array rather than wrapped in an object, and `JobExecution.payload()` returns that JSON value. `save` and `tryInsert` fail their returned future with `IllegalArgumentException`, before any statement runs, for a payload that cannot be serialized or that serializes to JSON `null`. The message names the payload type, never its value.
+Extends `PgSqlRepository` and implements `JobRepository`. All SQL operations use the Vert.x reactive PostgreSQL client. JSONB columns (`progress`, `parameters`) are serialized as Vert.x `JsonObject` instances, which the pg-client driver handles natively. `payload` stores whatever JSON value the payload serializes to, so a `String`, a number, a `Boolean`, a `UUID` or a list is stored as a JSON scalar or array rather than wrapped in an object, and `JobExecution.payload()` returns that JSON value. `save` and `tryInsert` fail their returned future with `IllegalArgumentException`, before any statement runs, for a payload that cannot be serialized, that serializes to JSON `null`, or that the process JSON codec cannot read back, such as a number over its digit limit. The message names the payload type, never its value.
+
+A version before scalar payloads cannot read a row holding a non-object payload, and such a row fails every claim of the batch that selects it. Finish rolling out before enqueuing scalar or list payloads, and drain those rows before rolling back. Rows with object payloads are unaffected in both directions.
 
 Generates a stable `nodeId` from the hostname and a random 8-character suffix, used as the `locked_by` value during job claiming and as the server identity for heartbeats.
 

@@ -42,6 +42,8 @@ import io.vertx.pgclient.PgBuilder;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
+import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -101,6 +103,31 @@ class DelayedJobPayloadDeliveryIT {
             return record("typed-json-object", payload);
         }
     }
+
+    record Invoice(BigDecimal total, Instant dueAt) {}
+
+    @DelayedJobContract(name = "typed-invoice")
+    interface InvoiceJob extends DelayedJobClient<Invoice> {}
+
+    static final class InvoiceJobExecutor implements DelayedJobExecutor<Invoice, InvoiceJob> {
+        @Override
+        public Future<Void> execute(Invoice payload, JobContext ctx) {
+            return record("typed-invoice", payload);
+        }
+    }
+
+    /** Declares {@code execute} on a generic base, so the executor only exposes the erased method. */
+    abstract static class InheritedExecuteBase<P> {
+        public Future<Void> execute(P payload, JobContext ctx) {
+            return record("typed-inherited", payload);
+        }
+    }
+
+    @DelayedJobContract(name = "typed-inherited")
+    interface InheritedJob extends DelayedJobClient<Long> {}
+
+    static final class InheritedJobExecutor extends InheritedExecuteBase<Long>
+            implements DelayedJobExecutor<Long, InheritedJob> {}
 
     enum Tier {
         FREE,
@@ -170,6 +197,19 @@ class DelayedJobPayloadDeliveryIT {
         }
     }
 
+    @ServiceContract(namespace = "payload-test", value = "audit")
+    interface AuditService {
+        @ServiceOperation("record")
+        Future<Void> record(UUID id);
+    }
+
+    static final class AuditServiceHandler implements ServiceHandler<AuditService> {
+        @DelayedJobHandlerMethod("annotated-context-first")
+        public Future<Void> record(JobContext ctx, UUID id) {
+            return DelayedJobPayloadDeliveryIT.record("annotated-context-first", id);
+        }
+    }
+
     @ServiceContract(namespace = "payload-test", value = "batch")
     interface BatchService {
         @ServiceOperation("send")
@@ -214,9 +254,11 @@ class DelayedJobPayloadDeliveryIT {
                 new LongJobExecutor(),
                 new UuidJobExecutor(),
                 new EnumJobExecutor(),
-                new ListJobExecutor());
+                new ListJobExecutor(),
+                new InvoiceJobExecutor(),
+                new InheritedJobExecutor());
         ServiceContractRegistry registry = ServiceContractRegistry.build(
-                Set.of(new WelcomeServiceHandler(), new BatchServiceHandler()),
+                Set.of(new WelcomeServiceHandler(), new BatchServiceHandler(), new AuditServiceHandler()),
                 Set.of(new DelayedJobContractContributor(executors)),
                 new JsonObject(),
                 new DefaultConfigParser(DefaultConfigMapper.lenient()));
@@ -277,10 +319,14 @@ class DelayedJobPayloadDeliveryIT {
     }
 
     private static UUID enqueue(String handler, Object payload) throws Exception {
+        return enqueue(handler, payload, 1);
+    }
+
+    private static UUID enqueue(String handler, Object payload, int maxAttempts) throws Exception {
         return await(service.enqueue(DelayedJob.builder()
                 .handler(handler)
                 .payload(payload)
-                .maxAttempts(1)
+                .maxAttempts(maxAttempts)
                 .metadata(DurableMetadata.empty())
                 .build()));
     }
@@ -318,6 +364,35 @@ class DelayedJobPayloadDeliveryIT {
     void genericArgumentsAreHonored() throws Exception {
         UUID id = UUID.randomUUID();
         assertDelivered("annotated-generic", new JsonObject().put("id", id.toString()), id);
+    }
+
+    @Test
+    @DisplayName("decimal and timestamp fields of a record survive storage")
+    void decimalAndTimestampSurvive() throws Exception {
+        Invoice payload = new Invoice(new BigDecimal("1234.56"), Instant.parse("2026-01-02T03:04:05Z"));
+        assertDelivered("typed-invoice", payload, payload);
+    }
+
+    @Test
+    @DisplayName("an executor that only exposes the erased execute still receives its declared type")
+    void erasedExecuteReceivesDeclaredType() throws Exception {
+        assertDelivered("typed-inherited", 42L, 42L);
+    }
+
+    @Test
+    @DisplayName("the payload is found when it is not the handler's first parameter")
+    void payloadAfterContextParameter() throws Exception {
+        UUID payload = UUID.randomUUID();
+        assertDelivered("annotated-context-first", payload, payload);
+    }
+
+    @Test
+    @DisplayName("an undecodable payload consumes its attempts before dead-lettering")
+    void undecodablePayloadRetriesThenDeadLetters() throws Exception {
+        JobExecution finished = awaitTerminal(enqueue("typed-uuid", "not-a-uuid", 2));
+
+        assertEquals(JobState.DEAD_LETTER, finished.state());
+        assertEquals(1, finished.attemptNumber());
     }
 
     @Test

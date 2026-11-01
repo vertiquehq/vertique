@@ -49,7 +49,7 @@ final class DelayedJobPayloadDecoder {
         try {
             var mapper = VertiqueJson.mapper();
             return mapper.convertValue(stored, mapper.constructType(type));
-        } catch (IllegalArgumentException e) {
+        } catch (RuntimeException e) {
             throw new IllegalArgumentException("Job payload cannot be decoded to " + type.getTypeName());
         }
     }

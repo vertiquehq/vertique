@@ -349,8 +349,8 @@ public class DelayedJobPoller extends AbstractVerticle {
      *                                {@code 0} disables
      * @param envelopeBuilder         envelope builder used to construct outgoing job-dispatch envelopes
      * @param propagator              durable context propagator for decoding persisted metadata into
-     *                                the outgoing envelope's caller-overrides (FR-CTX-177); must not
-     *                                be {@code null}
+     *                                the outgoing envelope's caller-overrides; must not be
+     *                                {@code null}
      * @param payloadTypes            declared payload types by handler event bus address, from
      *                                {@link DelayedJobHandlerRegistrar#handlerPayloadTypes()}; a
      *                                handler with no entry receives the stored payload unconverted

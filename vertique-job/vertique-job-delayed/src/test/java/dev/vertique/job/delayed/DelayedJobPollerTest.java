@@ -435,12 +435,15 @@ class DelayedJobPollerTest {
 
             ArgumentCaptor<Result<?>> result = ArgumentCaptor.captor();
             verify(completionHandler, timeout(5000)).handleCompletion(eq(execution), result.capture(), any());
-            ctx.verify(() -> {
-                assertInstanceOf(
-                        IllegalArgumentException.class, result.getValue().cause());
-                assertEquals(0, poller.inFlightCount());
+            ctx.verify(() -> assertInstanceOf(
+                    IllegalArgumentException.class, result.getValue().cause()));
+            // The slot is released right after the completion handler returns, on the poller's context.
+            vertx.setPeriodic(5, id -> {
+                if (poller.inFlightCount() == 0) {
+                    vertx.cancelTimer(id);
+                    ctx.completeNow();
+                }
             });
-            ctx.completeNow();
         }
     }
 
