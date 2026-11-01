@@ -44,6 +44,12 @@ import java.util.List;
  * @param valueFormat the effective resolved value format (e.g. {@code "json"} or {@code "avro"})
  *     as determined by {@link KafkaConsumerValidation#validateAndBuild}; the single format resolved
  *     across a router's non-{@code Void} routes for {@link Kind#ROUTER}
+ * @param ignoreUndecodable callback that runs when a record fails to decode and is ignored; {@code null}
+ *     when an undecodable record goes down the error strategy
+ * @param noHeaderContext {@code true} when the handler path installs no durable context from the
+ *     record's headers
+ * @param forceStrategies {@code true} when registration required the resolved strategies to equal the
+ *     binding's
  */
 record ConsumerEntry(
         String name,
@@ -58,7 +64,61 @@ record ConsumerEntry(
         @Nullable KafkaDeserializer<?> deserializer,
         boolean frameworkOwnedDeserializer,
         @Nullable KafkaRecordFilter filter,
-        String valueFormat) {
+        String valueFormat,
+        @Nullable Runnable ignoreUndecodable,
+        boolean noHeaderContext,
+        boolean forceStrategies) {
+
+    /**
+     * Creates an entry that ignores no undecodable record, installs the header context and does not
+     * force its strategies.
+     *
+     * @param name binding name used as the config reference key and deployment identifier
+     * @param config resolved runtime configuration for this consumer
+     * @param kind the consumption model kind
+     * @param valueType the deserialization target type; {@code null} for {@link Kind#ROUTER}
+     * @param targetAddress event bus address to dispatch records to
+     * @param stableTargetId durable stable target id, or {@code null}
+     * @param targetOneWay {@code true} if the target operation is fire-and-forget
+     * @param routes route entries for {@link Kind#ROUTER}; empty for other kinds
+     * @param handler custom record handler for {@link Kind#HANDLER}; {@code null} for other kinds
+     * @param deserializer effective deserializer, or {@code null}
+     * @param frameworkOwnedDeserializer {@code true} when the registry built the deserializer
+     * @param filter pre-deserialization filter; {@code null} means accept-all
+     * @param valueFormat the effective resolved value format
+     */
+    ConsumerEntry(
+            String name,
+            ResolvedKafkaConsumerConfig config,
+            Kind kind,
+            @Nullable Class<?> valueType,
+            @Nullable String targetAddress,
+            @Nullable String stableTargetId,
+            boolean targetOneWay,
+            List<RouteEntry> routes,
+            @Nullable KafkaRecordHandler<?> handler,
+            @Nullable KafkaDeserializer<?> deserializer,
+            boolean frameworkOwnedDeserializer,
+            @Nullable KafkaRecordFilter filter,
+            String valueFormat) {
+        this(
+                name,
+                config,
+                kind,
+                valueType,
+                targetAddress,
+                stableTargetId,
+                targetOneWay,
+                routes,
+                handler,
+                deserializer,
+                frameworkOwnedDeserializer,
+                filter,
+                valueFormat,
+                null,
+                false,
+                false);
+    }
 
     // --- Nested Types ---
 

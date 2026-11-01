@@ -187,6 +187,9 @@ static KafkaConsumerBinding<?> orderBinding() {
 | `enabled(boolean)` | `true` | Deploy at startup |
 | `eventBusTimeoutMs(long)` | `30000` | Event-bus dispatch timeout |
 | `jsonProfile(JsonProfileId)` | `null` — framework default | JSON mapper profile for value deserialization |
+| `ignoreUndecodable(Runnable)` | off | Handler bindings: acknowledges a record that fails to decode, commits it when `MANUAL`, reports it `SKIP`, runs the callback, and skips the error strategy |
+| `noHeaderContext()` | off | Handler bindings: installs no durable context from the record's headers for the handler |
+| `forceStrategies()` | off | Handler bindings: registration fails unless the resolved configuration keeps the binding's `commitStrategy` and `errorStrategy` and a `DEAD_LETTER` `retry.exhaustedStrategy` |
 
 Use the durable operation id (`@ServiceOperation` value) in `dispatchTo` for stable-target-eligible
 operations so the binding survives a method rename.
@@ -198,6 +201,19 @@ and the registrar refuses it at startup. A handler binding is registered as a ha
 timestamp and headers, runs with the record's durable context installed, and keeps the binding's
 filter, commit strategy, error and retry strategy, dead-letter topic, custom deserializer and
 interceptors. No service is resolved for it.
+
+A binding that uses none of `ignoreUndecodable`, `noHeaderContext` and `forceStrategies` behaves
+exactly as it did before them.
+
+- **`ignoreUndecodable`.** Every deserializer failure is ignored, and nothing else: a handler
+  failure on a decodable record takes the error strategy. A callback that throws is logged by class
+  and does not change the outcome. A record with a `null` value is not a decode failure and reaches
+  the handler.
+- **`noHeaderContext`.** The handler runs without the durable context decoded from the record's
+  headers.
+- **`forceStrategies`.** `kafka.consumers.{name}.*` cannot restore `AUTO` or `SKIP`: the check runs
+  at registration on the resolved configuration, and a `KafkaRegistrationException` violation names
+  the consumer and the option (`commitStrategy`, `errorStrategy` or `retry.exhaustedStrategy`).
 
 ### Model 3 — `@KafkaListener` routing interface
 
@@ -755,6 +771,21 @@ record up to twelve dispatch attempts before the exhausted strategy applies.
 **`RETRY` blocks the partition.** No other record from that partition is delivered during the
 backoff. That is appropriate for failures measured in seconds; for failures measured in hours use
 `DEAD_LETTER` and reprocess from the DLQ.
+
+### `KafkaTerminalFailure`
+
+A handler fails a record with `new KafkaTerminalFailure(errorType)` when retrying cannot help. The
+record is not retried, the consumer does not pause, and the record takes the binding's exhausted
+strategy at once: `retry.exhaustedStrategy` for a `RETRY` binding, otherwise the `errorStrategy`.
+
+| Exhausted strategy | Behavior |
+|---|---|
+| `DEAD_LETTER` | Publish the original value, key and headers to the DLQ topic, then commit. Outcome `DLQ_PUBLISHED`, or `DLQ_FAILED` with no commit |
+| `SKIP` | Commit and log the skip with the consumer and the error type. Outcome `SKIP` |
+
+The failure carries the error type only: no cause and no message. The `x-dlq-error` header and the
+log lines hold the error type alone, so keep record data out of it. A retry count left by an
+earlier failure of the same record is removed.
 
 ### Poison-message guarantee
 

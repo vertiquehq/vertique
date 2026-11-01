@@ -367,6 +367,10 @@ final class KafkaConsumerScanner {
                 kafkaConfig,
                 consumerIndex.get(name));
 
+        if (binding.forceStrategies() && !checkForcedStrategies(binding, config, violations)) {
+            return;
+        }
+
         ConsumerEntry entry = validateAndBuild(
                 name,
                 config,
@@ -379,12 +383,54 @@ final class KafkaConsumerScanner {
                 binding.handler(),
                 binding.deserializer(),
                 binding.filter(),
+                binding.ignoreUndecodable(),
+                binding.noHeaderContext(),
+                binding.forceStrategies(),
                 usedNames,
                 violations);
 
         if (entry != null) {
             entries.add(entry);
         }
+    }
+
+    /**
+     * Checks a binding that forces its strategies against the configuration it resolved to: the
+     * commit and error strategies must equal the binding's, and the exhausted strategy, taken from
+     * {@code retry.exhaustedStrategy} or, without retry, from the error strategy, must be
+     * {@link ErrorStrategy#DEAD_LETTER}. A violation names the consumer and the option.
+     *
+     * @param binding the binding that forces its strategies
+     * @param config the configuration the binding resolved to
+     * @param violations mutable list to collect violation messages
+     * @return {@code true} if the resolved configuration satisfies the binding
+     */
+    private static boolean checkForcedStrategies(
+            KafkaConsumerBinding<?> binding, ResolvedKafkaConsumerConfig config, List<String> violations) {
+        String name = binding.name();
+        boolean satisfied = true;
+        if (config.commitStrategy() != binding.commitStrategy()) {
+            violations.add("Consumer '" + name + "': forceStrategies() requires commitStrategy "
+                    + binding.commitStrategy() + " but the resolved configuration has " + config.commitStrategy()
+                    + " (remove kafka.consumers." + name + ".commitStrategy)");
+            satisfied = false;
+        }
+        if (config.errorStrategy() != binding.errorStrategy()) {
+            violations.add("Consumer '" + name + "': forceStrategies() requires errorStrategy "
+                    + binding.errorStrategy() + " but the resolved configuration has " + config.errorStrategy()
+                    + " (remove kafka.consumers." + name + ".errorStrategy)");
+            satisfied = false;
+        } else {
+            ErrorStrategy exhausted =
+                    config.retryConfig() != null ? config.retryConfig().exhaustedStrategy() : config.errorStrategy();
+            if (exhausted != ErrorStrategy.DEAD_LETTER) {
+                violations.add("Consumer '" + name + "': forceStrategies() requires retry.exhaustedStrategy "
+                        + ErrorStrategy.DEAD_LETTER + " but the resolved configuration has " + exhausted
+                        + " (set kafka.consumers." + name + ".retry.exhaustedStrategy to DEAD_LETTER or remove it)");
+                satisfied = false;
+            }
+        }
+        return satisfied;
     }
 
     // --- Models 3 and 4: @KafkaListener handlers ---
@@ -801,6 +847,65 @@ final class KafkaConsumerScanner {
     }
 
     // --- Common validation and construction ---
+
+    /**
+     * Validates one consumer and carries the handler-binding options into its entry.
+     *
+     * @param name the binding name
+     * @param config the resolved consumer config
+     * @param kind the consumption kind
+     * @param valueType the deserialization target type
+     * @param targetAddress the event bus dispatch address, or {@code null}
+     * @param stableTargetId the durable stable target id, or {@code null}
+     * @param targetOneWay whether the dispatch is fire-and-forget
+     * @param routes route entries for ROUTER kind
+     * @param handler the handler instance for HANDLER kind
+     * @param customDeserializer the Model-2 custom deserializer, or {@code null}
+     * @param filter the pre-deserialization filter, or {@code null} for accept-all
+     * @param ignoreUndecodable the callback for an ignored undecodable record, or {@code null}
+     * @param noHeaderContext whether the handler path installs no durable context from the headers
+     * @param forceStrategies whether the binding forced its strategies
+     * @param usedNames mutable set of claimed names (updated if name is new)
+     * @param violations mutable list to collect violation messages
+     * @return the built entry, or {@code null} if any per-entry violation was recorded
+     */
+    private ConsumerEntry validateAndBuild(
+            String name,
+            ResolvedKafkaConsumerConfig config,
+            ConsumerEntry.Kind kind,
+            Class<?> valueType,
+            String targetAddress,
+            String stableTargetId,
+            boolean targetOneWay,
+            List<ConsumerEntry.RouteEntry> routes,
+            KafkaRecordHandler<?> handler,
+            KafkaDeserializer<?> customDeserializer,
+            KafkaRecordFilter filter,
+            Runnable ignoreUndecodable,
+            boolean noHeaderContext,
+            boolean forceStrategies,
+            Set<String> usedNames,
+            List<String> violations) {
+
+        return KafkaConsumerValidation.validateAndBuild(
+                name,
+                config,
+                kind,
+                valueType,
+                targetAddress,
+                stableTargetId,
+                targetOneWay,
+                routes,
+                handler,
+                serdeRegistry,
+                customDeserializer,
+                filter,
+                ignoreUndecodable,
+                noHeaderContext,
+                forceStrategies,
+                usedNames,
+                violations);
+    }
 
     /**
      * Delegates to {@link KafkaConsumerValidation#validateAndBuild} for shared validation logic.

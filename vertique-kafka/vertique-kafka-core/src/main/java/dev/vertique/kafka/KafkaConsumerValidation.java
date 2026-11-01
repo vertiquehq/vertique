@@ -166,6 +166,72 @@ final class KafkaConsumerValidation {
             KafkaRecordFilter filter,
             Set<String> usedNames,
             List<String> violations) {
+        return validateAndBuild(
+                name,
+                config,
+                kind,
+                valueType,
+                targetAddress,
+                stableTargetId,
+                targetOneWay,
+                routes,
+                handler,
+                registry,
+                customDeserializer,
+                filter,
+                null,
+                false,
+                false,
+                usedNames,
+                violations);
+    }
+
+    /**
+     * Validates one consumer exactly as the overload without the handler-binding options does, and
+     * carries those options into the entry it builds.
+     *
+     * @param name the binding name
+     * @param config the resolved consumer config
+     * @param kind the consumption kind
+     * @param valueType the deserialization target type; {@code null} for
+     *     {@link ConsumerEntry.Kind#ROUTER}
+     * @param targetAddress the event bus dispatch address; {@code null} for
+     *     {@link ConsumerEntry.Kind#ROUTER} and {@link ConsumerEntry.Kind#HANDLER}
+     * @param stableTargetId the durable stable target id; {@code null} if not available
+     * @param targetOneWay whether the dispatch is fire-and-forget
+     * @param routes route entries for {@link ConsumerEntry.Kind#ROUTER} kind; empty for other kinds
+     * @param handler the handler instance for {@link ConsumerEntry.Kind#HANDLER} kind;
+     *     {@code null} for other kinds
+     * @param registry the serde registry used to resolve format and build deserializers
+     * @param customDeserializer caller-supplied deserializer (Model-2 only); {@code null} for
+     *     all other models
+     * @param filter the pre-deserialization filter, or {@code null} for accept-all
+     * @param ignoreUndecodable the callback that runs for an ignored undecodable record, or
+     *     {@code null} when such a record goes down the error strategy
+     * @param noHeaderContext whether the handler path installs no durable context from the headers
+     * @param forceStrategies whether registration forced the resolved strategies
+     * @param usedNames mutable set of claimed names (updated if name is new)
+     * @param violations mutable list to collect violation messages
+     * @return the built entry, or {@code null} if any per-entry violation was recorded
+     */
+    static ConsumerEntry validateAndBuild(
+            String name,
+            ResolvedKafkaConsumerConfig config,
+            ConsumerEntry.Kind kind,
+            Class<?> valueType,
+            String targetAddress,
+            String stableTargetId,
+            boolean targetOneWay,
+            List<ConsumerEntry.RouteEntry> routes,
+            KafkaRecordHandler<?> handler,
+            KafkaSerdeRegistry registry,
+            KafkaDeserializer<?> customDeserializer,
+            KafkaRecordFilter filter,
+            Runnable ignoreUndecodable,
+            boolean noHeaderContext,
+            boolean forceStrategies,
+            Set<String> usedNames,
+            List<String> violations) {
 
         boolean valid = true;
 
@@ -392,7 +458,10 @@ final class KafkaConsumerValidation {
                 effectiveDeserializer,
                 frameworkOwnedDeserializer,
                 filter,
-                valueFormat);
+                valueFormat,
+                ignoreUndecodable,
+                noHeaderContext,
+                forceStrategies);
     }
 
     /**

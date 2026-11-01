@@ -455,7 +455,7 @@ final class KafkaRecordDispatcher {
      * @param record the original consumer record (for metadata)
      * @param headers the record's headers as received; the handler's message holds this instance
      * @param textHeaders the text projection of {@code headers}, computed once per record; the
-     *     durable context is decoded from it
+     *     durable context is decoded from it, unless the entry installs no header context
      * @return a future that completes when the handler has processed the record
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
@@ -483,11 +483,15 @@ final class KafkaRecordDispatcher {
         ContextHolder.Scope scope = null;
         Future<Void> handlerFuture;
         try {
-            scope = inboundExecutionContextScope.installDurable(
-                    DurableMetadataHeaderCodec.fromHeaders(textHeaders), DispatchBoundary.KAFKA);
+            if (!entry.noHeaderContext()) {
+                scope = inboundExecutionContextScope.installDurable(
+                        DurableMetadataHeaderCodec.fromHeaders(textHeaders), DispatchBoundary.KAFKA);
+            }
             handlerFuture = handler.handle(message);
             if (handlerFuture == null) {
-                scope.close();
+                if (scope != null) {
+                    scope.close();
+                }
                 return Future.failedFuture(new NullPointerException(
                         "KafkaRecordHandler " + handler.getClass().getName() + " returned null for consumer "
                                 + entry.name() + "; handler contract requires a Future"));
@@ -500,7 +504,9 @@ final class KafkaRecordDispatcher {
         }
         final ContextHolder.Scope finalScope = scope;
         return handlerFuture.eventually(() -> {
-            finalScope.close();
+            if (finalScope != null) {
+                finalScope.close();
+            }
             return Future.succeededFuture();
         });
     }

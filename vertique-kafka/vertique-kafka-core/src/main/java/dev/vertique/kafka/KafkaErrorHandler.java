@@ -115,6 +115,10 @@ final class KafkaErrorHandler {
             Throwable cause,
             ConsumerControl control) {
 
+        if (cause instanceof KafkaTerminalFailure terminal) {
+            return handleTerminalFailure(record, rawBytes, headers, terminal, control);
+        }
+
         ErrorStrategy strategy = entry.config().errorStrategy();
         return switch (strategy) {
             case SKIP -> {
@@ -143,6 +147,73 @@ final class KafkaErrorHandler {
                             return Future.succeededFuture(KafkaTerminalOutcome.DLQ_FAILED);
                         });
             case RETRY -> handleRetry(record, rawBytes, headers, cause, control);
+        };
+    }
+
+    // --- Terminal failure ---
+
+    /**
+     * Applies the binding's exhausted strategy to a record whose handler failed with a
+     * {@link KafkaTerminalFailure}, at once: the record is neither retried nor does it pause the
+     * consumer. Under {@link ErrorStrategy#DEAD_LETTER} it is published to the dead-letter topic and
+     * committed; under {@link ErrorStrategy#SKIP} it is committed and the skip is logged. Either way
+     * the record's retry count, if an earlier failure left one, is removed.
+     *
+     * <p>For a binding that retries, the exhausted strategy is {@link RetryConfig#exhaustedStrategy()};
+     * otherwise it is the binding's error strategy. Only the error type reaches the log and the
+     * dead-letter error header.
+     *
+     * @param record the failed consumer record
+     * @param rawBytes the raw record bytes (for DLQ publishing)
+     * @param headers the record's headers as received; forwarded to the dead-letter topic
+     * @param terminal the terminal failure
+     * @param control consumer control callbacks for commit
+     * @return a future that resolves with the terminal outcome after the dead-letter publish settles
+     */
+    private Future<KafkaTerminalOutcome> handleTerminalFailure(
+            KafkaConsumerRecord<String, byte[]> record,
+            byte[] rawBytes,
+            KafkaRecordHeaders headers,
+            KafkaTerminalFailure terminal,
+            ConsumerControl control) {
+
+        retryCounts.remove(record.topic() + ":" + record.partition() + ":" + record.offset());
+
+        ErrorStrategy strategy = entry.config().errorStrategy();
+        if (strategy == ErrorStrategy.RETRY) {
+            RetryConfig retryConfig = entry.config().retryConfig();
+            strategy = (retryConfig != null ? retryConfig : RetryConfig.DEFAULT).exhaustedStrategy();
+        }
+        return switch (strategy) {
+            case DEAD_LETTER ->
+                publishToDlq(record, rawBytes, headers, terminal)
+                        .map(v -> {
+                            control.commitIfManual(record);
+                            return KafkaTerminalOutcome.DLQ_PUBLISHED;
+                        })
+                        .recover(dlqCause -> {
+                            log.error(
+                                    "[{}] Failed to publish terminal failure {} to DLQ, record will not be committed",
+                                    entry.name(),
+                                    terminal.errorType(),
+                                    dlqCause);
+                            return Future.succeededFuture(KafkaTerminalOutcome.DLQ_FAILED);
+                        });
+            case SKIP -> {
+                log.warn(
+                        "[{}] Skipping record topic={} partition={} offset={} after terminal failure {}",
+                        entry.name(),
+                        record.topic(),
+                        record.partition(),
+                        record.offset(),
+                        terminal.errorType());
+                control.commitIfManual(record);
+                yield Future.succeededFuture(KafkaTerminalOutcome.SKIP);
+            }
+            default -> {
+                log.error("[{}] Invalid exhausted strategy: {}", entry.name(), strategy);
+                yield Future.succeededFuture(KafkaTerminalOutcome.SKIP);
+            }
         };
     }
 
@@ -292,7 +363,7 @@ final class KafkaErrorHandler {
                 record.topic(),
                 record.partition(),
                 record.offset(),
-                cause.getMessage());
+                cause instanceof KafkaTerminalFailure terminal ? terminal.errorType() : cause.getMessage());
 
         // The header objects are immutable, so the forwarded ones are reused rather than copied.
         List<KafkaRecordHeader> dlqHeaders = new ArrayList<>(headers.entries().size() + DLQ_HEADER_KEYS.size());
@@ -305,9 +376,14 @@ final class KafkaErrorHandler {
         dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.SOURCE_PARTITION, String.valueOf(record.partition())));
         dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.SOURCE_OFFSET, String.valueOf(record.offset())));
         dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.CONSUMER, entry.name()));
-        String msg = cause.getMessage();
-        String errorDetail = cause.getClass().getSimpleName()
-                + (msg != null ? ": " + msg.substring(0, Math.min(msg.length(), 200)) : "");
+        String errorDetail;
+        if (cause instanceof KafkaTerminalFailure terminal) {
+            errorDetail = terminal.errorType();
+        } else {
+            String msg = cause.getMessage();
+            errorDetail = cause.getClass().getSimpleName()
+                    + (msg != null ? ": " + msg.substring(0, Math.min(msg.length(), 200)) : "");
+        }
         dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.ERROR, errorDetail));
 
         return producerFactory

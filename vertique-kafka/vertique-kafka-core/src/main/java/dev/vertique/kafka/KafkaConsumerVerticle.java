@@ -452,6 +452,15 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
             deserialized = dispatcher.deserializeRecord(record, rawBytes, headers, resolvedRouteResult);
         } catch (Exception e) {
             decrementInFlight();
+            Runnable onIgnored = entry.ignoreUndecodable();
+            if (onIgnored != null) {
+                // An ignoring binding acknowledges the undecodable record: commit when MANUAL,
+                // report it skipped and run the callback; it does not go down the error strategy.
+                commitIfManual(record);
+                runIgnoreCallback(onIgnored);
+                notifyCompleted(view, KafkaTerminalOutcome.SKIP);
+                return;
+            }
             errorHandler
                     .handleError(record, rawBytes, headers, e, consumerControl())
                     .onSuccess(outcome -> notifyCompleted(view, outcome))
@@ -586,6 +595,23 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                 }
             });
         });
+    }
+
+    /**
+     * Runs the callback of an ignored undecodable record. A callback that throws is logged by class
+     * and does not change the record's outcome.
+     *
+     * @param onIgnored the binding's ignore callback
+     */
+    private void runIgnoreCallback(Runnable onIgnored) {
+        try {
+            onIgnored.run();
+        } catch (RuntimeException e) {
+            log.warn(
+                    "[{}] Ignore callback failed: {}",
+                    entry.name(),
+                    e.getClass().getName());
+        }
     }
 
     // --- ConsumerControl ---

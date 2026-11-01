@@ -6,6 +6,7 @@ package dev.vertique.kafka;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.kafka.serialization.KafkaDeserializer;
 import jakarta.annotation.Nullable;
+import java.util.Objects;
 
 /**
  * Immutable Kafka consumer binding (Model 2) that maps a topic to a service operation, or to a
@@ -48,6 +49,9 @@ public class KafkaConsumerBinding<V> {
     private final boolean enabled;
     private final long eventBusTimeoutMs;
     private final JsonProfileId jsonProfile;
+    private final Runnable ignoreUndecodable;
+    private final boolean noHeaderContext;
+    private final boolean forceStrategies;
 
     private KafkaConsumerBinding(Builder<V> builder) {
         this.name = builder.name;
@@ -65,6 +69,9 @@ public class KafkaConsumerBinding<V> {
         this.enabled = builder.enabled;
         this.eventBusTimeoutMs = builder.eventBusTimeoutMs;
         this.jsonProfile = builder.jsonProfile;
+        this.ignoreUndecodable = builder.ignoreUndecodable;
+        this.noHeaderContext = builder.noHeaderContext;
+        this.forceStrategies = builder.forceStrategies;
     }
 
     // --- Accessors ---
@@ -212,6 +219,37 @@ public class KafkaConsumerBinding<V> {
     }
 
     /**
+     * Returns the callback that runs when a record fails to decode and is ignored, or {@code null}
+     * when an undecodable record goes down the error strategy.
+     *
+     * @return the callback, or {@code null}
+     */
+    @Nullable
+    public Runnable ignoreUndecodable() {
+        return ignoreUndecodable;
+    }
+
+    /**
+     * Returns whether the handler runs without a durable context installed from the record's
+     * headers.
+     *
+     * @return {@code true} if no header context is installed
+     */
+    public boolean noHeaderContext() {
+        return noHeaderContext;
+    }
+
+    /**
+     * Returns whether registration requires the resolved commit and error strategies to equal this
+     * binding's and the resolved exhausted strategy to be {@link ErrorStrategy#DEAD_LETTER}.
+     *
+     * @return {@code true} if the strategies are forced
+     */
+    public boolean forceStrategies() {
+        return forceStrategies;
+    }
+
+    /**
      * Creates a new builder.
      *
      * @param name the binding name (used as config reference key)
@@ -245,6 +283,9 @@ public class KafkaConsumerBinding<V> {
         private boolean enabled = true;
         private long eventBusTimeoutMs = 30_000L;
         private JsonProfileId jsonProfile;
+        private Runnable ignoreUndecodable;
+        private boolean noHeaderContext;
+        private boolean forceStrategies;
 
         private Builder(String name, Class<V> valueType) {
             this.name = name;
@@ -400,6 +441,48 @@ public class KafkaConsumerBinding<V> {
          */
         public Builder<V> jsonProfile(@Nullable JsonProfileId jsonProfile) {
             this.jsonProfile = jsonProfile;
+            return this;
+        }
+
+        /**
+         * Makes the consumer ignore a record that fails to decode. The record is acknowledged,
+         * its offset is committed when the commit strategy is {@link CommitStrategy#MANUAL}, its
+         * outcome is reported as skipped, and the callback runs; the record does not go down the
+         * error strategy. Every deserializer failure is ignored, and nothing else: a handler
+         * failure on a decodable record is handled as usual. A callback that throws is logged by
+         * class and does not change the outcome. Applies to a binding with a
+         * {@link #handler(KafkaRecordHandler) handler}.
+         *
+         * @param onIgnored the callback to run for each ignored record
+         * @return this builder
+         */
+        public Builder<V> ignoreUndecodable(Runnable onIgnored) {
+            this.ignoreUndecodable = Objects.requireNonNull(onIgnored, "onIgnored");
+            return this;
+        }
+
+        /**
+         * Makes the handler run without a durable context installed from the record's headers.
+         * Applies to a binding with a {@link #handler(KafkaRecordHandler) handler}.
+         *
+         * @return this builder
+         */
+        public Builder<V> noHeaderContext() {
+            this.noHeaderContext = true;
+            return this;
+        }
+
+        /**
+         * Makes registration fail, naming this consumer and the option, unless the resolved
+         * {@code commitStrategy} and {@code errorStrategy} equal this binding's and the resolved
+         * {@code retry.exhaustedStrategy} is {@link ErrorStrategy#DEAD_LETTER}, so that
+         * {@code kafka.consumers.{name}.*} cannot change them. Applies to a binding with a
+         * {@link #handler(KafkaRecordHandler) handler}.
+         *
+         * @return this builder
+         */
+        public Builder<V> forceStrategies() {
+            this.forceStrategies = true;
             return this;
         }
 
