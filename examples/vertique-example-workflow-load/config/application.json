@@ -1,0 +1,50 @@
+{
+  "db": {
+    "host": "localhost",
+    "port": 5432,
+    "database": "workflow_load",
+    "user": "app_user",
+    "password": "app_secret",
+    "maxPoolSize": 20
+  },
+  "flyway": {
+    "mode": "DISABLED"
+  },
+  "workflow": {
+    "executor": {
+      "instances": 1,
+      "concurrency": 8,
+      "pollIntervalMs": 5000
+    },
+    "recording": {
+      "intake": {
+        "enabled": true,
+        "highMark": 10000,
+        "lowMark": 5000,
+        "sampleIntervalMs": 1000
+      }
+    }
+  },
+  "inboxOutbox": {
+    "relay": {
+      "strategy": "LISTEN_NOTIFY",
+      "pollingIntervalMs": 1000,
+      "batchSize": 50,
+      "instances": 1
+    }
+  },
+  "services": {
+    "load": {
+      "instances": 1
+    },
+    "workflow": {
+      "signals": {
+        "instances": 1
+      }
+    }
+  },
+  "load": {
+    "handlerDelayMs": 20,
+    "timerDelayMs": 1000
+  }
+}
