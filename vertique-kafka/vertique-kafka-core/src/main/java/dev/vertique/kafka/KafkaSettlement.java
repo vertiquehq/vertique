@@ -156,8 +156,9 @@ final class KafkaSettlement {
             if (old != null) {
                 finish(old);
             }
-            ledgers.put(partition, new KafkaPartitionLedger(partition));
-            holds.assigned(partition);
+            KafkaPartitionLedger ledger = new KafkaPartitionLedger(partition);
+            ledgers.put(partition, ledger);
+            holds.assigned(ledger);
         }
     }
 
@@ -183,7 +184,6 @@ final class KafkaSettlement {
         // ended assignment's entries leave it now, with their payloads.
         queue.removeIf(entry -> entry.ledger == ledger);
         ledger.release();
-        holds.revoked(ledger.partition());
     }
 
     // --- Register and Start ---
@@ -353,9 +353,9 @@ final class KafkaSettlement {
             return;
         }
         if (ledger.retryWaiting() > 0) {
-            holds.hold(ledger.partition(), KafkaHoldController.Reason.BACKOFF);
+            holds.hold(ledger, KafkaHoldController.Reason.BACKOFF);
         } else {
-            holds.release(ledger.partition(), KafkaHoldController.Reason.BACKOFF);
+            holds.release(ledger, KafkaHoldController.Reason.BACKOFF);
         }
     }
 
@@ -413,9 +413,9 @@ final class KafkaSettlement {
         }
         intakeOpen = open;
         if (open) {
-            holds.releaseAll(KafkaHoldController.Reason.INTAKE);
+            holds.releaseAll(KafkaHoldController.Reason.INTAKE, ledgers.values());
         } else {
-            holds.holdAll(KafkaHoldController.Reason.INTAKE);
+            holds.holdAll(KafkaHoldController.Reason.INTAKE, ledgers.values());
             armRecheck();
         }
     }
@@ -457,9 +457,9 @@ final class KafkaSettlement {
         for (KafkaPartitionLedger ledger : ledgers.values()) {
             ledger.retentionHeld(retentionHeld(ledger.retentionHeld(), ledger.size(), partitionRecords));
             if (ledger.retentionHeld() || consumerRetentionHeld) {
-                holds.hold(ledger.partition(), KafkaHoldController.Reason.RETENTION);
+                holds.hold(ledger, KafkaHoldController.Reason.RETENTION);
             } else {
-                holds.release(ledger.partition(), KafkaHoldController.Reason.RETENTION);
+                holds.release(ledger, KafkaHoldController.Reason.RETENTION);
             }
         }
     }
@@ -479,7 +479,7 @@ final class KafkaSettlement {
             return;
         }
         stopping = true;
-        holds.holdAll(KafkaHoldController.Reason.SHUTDOWN);
+        holds.holdAll(KafkaHoldController.Reason.SHUTDOWN, ledgers.values());
     }
 
     /**

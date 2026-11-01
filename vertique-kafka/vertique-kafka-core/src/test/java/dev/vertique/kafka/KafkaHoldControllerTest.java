@@ -10,8 +10,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.kafka.KafkaHoldController.Reason;
+import io.vertx.kafka.client.common.TopicPartition;
 import java.util.List;
-import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -26,6 +26,13 @@ class KafkaHoldControllerTest {
         return new KafkaHoldController("test", rig.port);
     }
 
+    /** A new assignment of a partition, assigned to the controller. */
+    private static KafkaPartitionLedger assign(KafkaHoldController holds, TopicPartition partition) {
+        KafkaPartitionLedger ledger = new KafkaPartitionLedger(partition);
+        holds.assigned(ledger);
+        return ledger;
+    }
+
     private static SettlementRig rig() {
         return new SettlementRig(SettlementRig.settings(1, ErrorStrategy.SKIP, false));
     }
@@ -35,18 +42,18 @@ class KafkaHoldControllerTest {
     void pausesOnFirstAndResumesOnLast() {
         SettlementRig rig = rig();
         KafkaHoldController holds = controller(rig);
-        holds.assigned(P0);
+        KafkaPartitionLedger ledger = assign(holds, P0);
         int assignmentCalls = rig.port.partitionCalls.size();
 
-        holds.hold(P0, Reason.RETENTION);
-        holds.hold(P0, Reason.BACKOFF);
+        holds.hold(ledger, Reason.RETENTION);
+        holds.hold(ledger, Reason.BACKOFF);
         assertTrue(rig.clientPaused(P0));
         assertEquals(assignmentCalls + 1, rig.port.partitionCalls.size(), "one pause for two reasons");
 
-        holds.release(P0, Reason.RETENTION);
+        holds.release(ledger, Reason.RETENTION);
         assertTrue(rig.clientPaused(P0), "the backoff still holds the partition");
 
-        holds.release(P0, Reason.BACKOFF);
+        holds.release(ledger, Reason.BACKOFF);
         assertFalse(rig.clientPaused(P0));
         assertEquals(assignmentCalls + 2, rig.port.partitionCalls.size());
     }
@@ -56,13 +63,12 @@ class KafkaHoldControllerTest {
     void reasonsAreNotCounted() {
         SettlementRig rig = rig();
         KafkaHoldController holds = controller(rig);
-        holds.assigned(P0);
+        KafkaPartitionLedger ledger = assign(holds, P0);
 
-        holds.hold(P0, Reason.BACKOFF);
-        holds.hold(P0, Reason.BACKOFF);
-        holds.release(P0, Reason.BACKOFF);
+        holds.hold(ledger, Reason.BACKOFF);
+        holds.hold(ledger, Reason.BACKOFF);
+        holds.release(ledger, Reason.BACKOFF);
 
-        assertFalse(holds.isHeld(P0, Reason.BACKOFF));
         assertFalse(rig.clientPaused(P0));
     }
 
@@ -71,13 +77,14 @@ class KafkaHoldControllerTest {
     void surplusRemovalIsIgnored() {
         SettlementRig rig = rig();
         KafkaHoldController holds = controller(rig);
-        holds.assigned(P0);
-        holds.hold(P0, Reason.RETENTION);
+        KafkaPartitionLedger ledger = assign(holds, P0);
+        holds.hold(ledger, Reason.RETENTION);
 
-        holds.release(P0, Reason.BACKOFF);
+        holds.release(ledger, Reason.BACKOFF);
 
         assertTrue(rig.clientPaused(P0));
-        assertEquals(Set.of(Reason.RETENTION), holds.reasons(P0));
+        holds.release(ledger, Reason.RETENTION);
+        assertFalse(rig.clientPaused(P0), "the retention was the reason, and nothing else was held");
     }
 
     @Test
@@ -85,10 +92,10 @@ class KafkaHoldControllerTest {
     void perPartition() {
         SettlementRig rig = rig();
         KafkaHoldController holds = controller(rig);
-        holds.assigned(P0);
-        holds.assigned(P1);
+        KafkaPartitionLedger first = assign(holds, P0);
+        assign(holds, P1);
 
-        holds.hold(P0, Reason.BACKOFF);
+        holds.hold(first, Reason.BACKOFF);
 
         assertTrue(rig.clientPaused(P0));
         assertFalse(rig.clientPaused(P1));
@@ -99,14 +106,14 @@ class KafkaHoldControllerTest {
     void heldEverywhereReachesNewAssignments() {
         SettlementRig rig = rig();
         KafkaHoldController holds = controller(rig);
-        holds.assigned(P0);
-        holds.holdAll(Reason.INTAKE);
+        KafkaPartitionLedger first = assign(holds, P0);
+        holds.holdAll(Reason.INTAKE, List.of(first));
         assertTrue(rig.clientPaused(P0));
 
-        holds.assigned(P1);
+        KafkaPartitionLedger second = assign(holds, P1);
         assertTrue(rig.clientPaused(P1));
 
-        holds.releaseAll(Reason.INTAKE);
+        holds.releaseAll(Reason.INTAKE, List.of(first, second));
         assertFalse(rig.clientPaused(P0));
         assertFalse(rig.clientPaused(P1));
     }
@@ -116,17 +123,18 @@ class KafkaHoldControllerTest {
     void reappliedOnAssignment() {
         SettlementRig rig = rig();
         KafkaHoldController holds = controller(rig);
-        holds.assigned(P0);
-        holds.hold(P0, Reason.SHUTDOWN);
-        holds.holdAll(Reason.INTAKE);
+        KafkaPartitionLedger old = assign(holds, P0);
+        holds.hold(old, Reason.SHUTDOWN);
+        holds.holdAll(Reason.INTAKE, List.of(old));
         int calls = rig.port.partitionCalls.size();
 
-        holds.revoked(P0);
-        holds.assigned(P0);
+        old.end();
+        KafkaPartitionLedger fresh = assign(holds, P0);
 
         assertEquals(calls + 1, rig.port.partitionCalls.size(), "the client is told to pause the new assignment");
         assertTrue(rig.port.partitionCalls.get(calls).pause);
-        assertEquals(Set.of(Reason.INTAKE), holds.reasons(P0), "only what is held everywhere carries over");
+        holds.releaseAll(Reason.INTAKE, List.of(fresh));
+        assertFalse(rig.clientPaused(P0), "only what is held everywhere carries over");
     }
 
     @Test
@@ -135,11 +143,11 @@ class KafkaHoldControllerTest {
         SettlementRig rig = rig();
         rig.port.autoComplete = false;
         KafkaHoldController holds = controller(rig);
-        holds.assigned(P0);
+        KafkaPartitionLedger ledger = assign(holds, P0);
         rig.port.partitionCalls.get(0).result.complete();
         int calls = rig.port.partitionCalls.size();
 
-        holds.hold(P0, Reason.RETENTION);
+        holds.hold(ledger, Reason.RETENTION);
         rig.port.partitionCalls.get(calls).result.fail("no current assignment");
         assertFalse(rig.clientPaused(P0));
         assertEquals(1, rig.pendingTimers().size());
@@ -156,12 +164,12 @@ class KafkaHoldControllerTest {
         SettlementRig rig = rig();
         rig.port.autoComplete = false;
         KafkaHoldController holds = controller(rig);
-        holds.assigned(P0);
+        KafkaPartitionLedger ledger = assign(holds, P0);
         rig.port.partitionCalls.get(0).result.complete();
         int calls = rig.port.partitionCalls.size();
 
-        holds.hold(P0, Reason.RETENTION);
-        holds.release(P0, Reason.RETENTION);
+        holds.hold(ledger, Reason.RETENTION);
+        holds.release(ledger, Reason.RETENTION);
         assertEquals(calls, rig.port.partitionCalls.size() - 1, "the pause is still pending");
 
         rig.port.partitionCalls.get(calls).result.complete();
@@ -175,19 +183,18 @@ class KafkaHoldControllerTest {
         SettlementRig rig = rig();
         rig.port.autoComplete = false;
         KafkaHoldController holds = controller(rig);
-        holds.assigned(P0);
+        KafkaPartitionLedger old = assign(holds, P0);
         rig.port.partitionCalls.get(0).result.complete();
-        holds.hold(P0, Reason.RETENTION);
+        holds.hold(old, Reason.RETENTION);
         SettlementRig.PartitionCall stale = rig.port.partitionCalls.get(1);
 
-        holds.revoked(P0);
-        holds.assigned(P0);
+        old.end();
+        assign(holds, P0);
         int calls = rig.port.partitionCalls.size();
         stale.result.fail("revoked");
 
         assertEquals(List.of(), rig.pendingTimers(), "no retry for a call of an ended assignment");
         assertEquals(calls, rig.port.partitionCalls.size());
-        assertFalse(holds.isHeld(P0, Reason.RETENTION));
     }
 
     @Test
@@ -198,15 +205,15 @@ class KafkaHoldControllerTest {
         SettlementRig rig = rig();
         rig.port.autoComplete = false;
         KafkaHoldController holds = controller(rig);
-        holds.assigned(P0);
+        KafkaPartitionLedger old = assign(holds, P0);
         rig.port.partitionCalls.get(0).result.complete();
-        holds.hold(P0, Reason.BACKOFF);
+        holds.hold(old, Reason.BACKOFF);
         SettlementRig.PartitionCall stalePause = rig.port.partitionCalls.get(1);
         assertTrue(stalePause.pause);
-        holds.revoked(P0);
+        old.end();
 
         // When the new assignment holds nothing, and the old pause lands on the client's new assignment
-        holds.assigned(P0);
+        assign(holds, P0);
         SettlementRig.PartitionCall explicitResume = rig.port.partitionCalls.get(2);
         stalePause.result.complete();
         explicitResume.result.complete();
@@ -214,7 +221,6 @@ class KafkaHoldControllerTest {
         // Then the client was told to resume after it, though the new assignment holds no reason
         assertFalse(explicitResume.pause, "the new assignment resumes, whatever the client holds");
         assertFalse(rig.clientPaused(P0), "the last call that reached the client is a resume");
-        assertTrue(holds.reasons(P0).isEmpty());
     }
 
     @Test
@@ -222,7 +228,7 @@ class KafkaHoldControllerTest {
     void firstCallIsAlwaysMade() {
         SettlementRig rig = rig();
 
-        new KafkaHoldController("test", rig.port).assigned(P1);
+        assign(new KafkaHoldController("test", rig.port), P1);
 
         assertEquals(1, rig.port.partitionCalls.size());
         assertFalse(rig.port.partitionCalls.get(0).pause);

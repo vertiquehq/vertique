@@ -4,12 +4,8 @@
 package dev.vertique.kafka;
 
 import io.vertx.core.Future;
-import io.vertx.kafka.client.common.TopicPartition;
-import jakarta.annotation.Nullable;
+import java.util.Collection;
 import java.util.EnumSet;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -48,29 +44,8 @@ final class KafkaHoldController {
     /** How long a failed pause or resume waits before it is applied again. */
     static final long APPLY_RETRY_MS = 500L;
 
-    /** One assigned partition. The object is the identity of the assignment. */
-    private static final class Slot {
-
-        final TopicPartition partition;
-        final EnumSet<Reason> reasons = EnumSet.noneOf(Reason.class);
-        /**
-         * What the client was last told, or {@code null} while that is unknown, which it is for a new assignment: a
-         * pause that was queued for the assignment before it can land on this one.
-         */
-        @Nullable
-        Boolean applied;
-
-        boolean applying;
-        boolean ended;
-
-        Slot(TopicPartition partition) {
-            this.partition = partition;
-        }
-    }
-
     private final String name;
     private final KafkaSettlement.Port port;
-    private final Map<TopicPartition, Slot> slots = new HashMap<>();
     private final EnumSet<Reason> everywhere = EnumSet.noneOf(Reason.class);
 
     KafkaHoldController(String name, KafkaSettlement.Port port) {
@@ -84,112 +59,74 @@ final class KafkaHoldController {
      * no assignment identity. The first call for the new assignment is therefore always made, a resume when nothing is
      * held, and it queues behind that older call.
      */
-    void assigned(TopicPartition partition) {
-        Slot old = slots.remove(partition);
-        if (old != null) {
-            old.ended = true;
-        }
-        Slot slot = new Slot(partition);
-        slot.reasons.addAll(everywhere);
-        slots.put(partition, slot);
-        apply(slot);
-    }
-
-    /** A partition is revoked: nothing is applied to it any more. */
-    void revoked(TopicPartition partition) {
-        Slot slot = slots.remove(partition);
-        if (slot != null) {
-            slot.ended = true;
-        }
+    void assigned(KafkaPartitionLedger ledger) {
+        ledger.reasons.addAll(everywhere);
+        apply(ledger);
     }
 
     /** Adds a reason to one partition. */
-    void hold(TopicPartition partition, Reason reason) {
-        Slot slot = slots.get(partition);
-        if (slot != null && slot.reasons.add(reason)) {
-            apply(slot);
+    void hold(KafkaPartitionLedger ledger, Reason reason) {
+        if (ledger.reasons.add(reason)) {
+            apply(ledger);
         }
     }
 
     /** Removes a reason from one partition. */
-    void release(TopicPartition partition, Reason reason) {
-        Slot slot = slots.get(partition);
-        if (slot != null && slot.reasons.remove(reason)) {
-            apply(slot);
+    void release(KafkaPartitionLedger ledger, Reason reason) {
+        if (ledger.reasons.remove(reason)) {
+            apply(ledger);
         }
     }
 
     /** Adds a reason to every assigned partition, and to every partition assigned while it is held. */
-    void holdAll(Reason reason) {
+    void holdAll(Reason reason, Collection<KafkaPartitionLedger> assigned) {
         if (everywhere.add(reason)) {
-            for (Slot slot : slots.values()) {
-                if (slot.reasons.add(reason)) {
-                    apply(slot);
-                }
+            for (KafkaPartitionLedger ledger : assigned) {
+                hold(ledger, reason);
             }
         }
     }
 
     /** Removes a reason from every assigned partition. */
-    void releaseAll(Reason reason) {
+    void releaseAll(Reason reason, Collection<KafkaPartitionLedger> assigned) {
         if (everywhere.remove(reason)) {
-            for (Slot slot : slots.values()) {
-                if (slot.reasons.remove(reason)) {
-                    apply(slot);
-                }
+            for (KafkaPartitionLedger ledger : assigned) {
+                release(ledger, reason);
             }
         }
     }
 
-    /** Whether a partition is held for a reason. */
-    boolean isHeld(TopicPartition partition, Reason reason) {
-        Slot slot = slots.get(partition);
-        return slot != null && slot.reasons.contains(reason);
-    }
-
-    /** The reasons a partition is held for; empty when it fetches or is not assigned. */
-    Set<Reason> reasons(TopicPartition partition) {
-        Slot slot = slots.get(partition);
-        return slot == null ? Set.of() : EnumSet.copyOf(slot.reasons);
-    }
-
-    /** Whether the client has been told to pause the partition, and no call is pending. */
-    boolean isPaused(TopicPartition partition) {
-        Slot slot = slots.get(partition);
-        return slot != null && Boolean.TRUE.equals(slot.applied) && !slot.applying;
-    }
-
-    private void apply(Slot slot) {
-        if (slot.ended || slot.applying) {
+    private void apply(KafkaPartitionLedger ledger) {
+        if (ledger.ended() || ledger.applying) {
             return;
         }
-        boolean wanted = !slot.reasons.isEmpty();
-        if (slot.applied != null && wanted == slot.applied) {
+        boolean wanted = !ledger.reasons.isEmpty();
+        if (ledger.applied != null && wanted == ledger.applied) {
             return;
         }
-        slot.applying = true;
+        ledger.applying = true;
         Future<Void> call;
         try {
-            call = wanted ? port.pause(slot.partition) : port.resume(slot.partition);
+            call = wanted ? port.pause(ledger.partition()) : port.resume(ledger.partition());
         } catch (Throwable thrown) {
             call = Future.failedFuture(thrown);
         }
         call.onComplete(result -> port.execute(() -> {
-            slot.applying = false;
-            if (slot.ended) {
+            ledger.applying = false;
+            if (ledger.ended()) {
                 return;
             }
             if (result.succeeded()) {
-                slot.applied = wanted;
-                apply(slot);
+                ledger.applied = wanted;
+                apply(ledger);
             } else {
                 log.warn(
                         "[{}] Could not {} partition {}; trying again",
                         name,
                         wanted ? "pause" : "resume",
-                        slot.partition,
+                        ledger.partition(),
                         result.cause());
-                port.schedule(APPLY_RETRY_MS, () -> apply(slot));
+                port.schedule(APPLY_RETRY_MS, () -> apply(ledger));
             }
         }));
     }

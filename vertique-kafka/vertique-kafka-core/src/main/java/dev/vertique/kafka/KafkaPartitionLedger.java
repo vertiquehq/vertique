@@ -8,6 +8,7 @@ import io.vertx.kafka.client.common.TopicPartition;
 import io.vertx.kafka.client.consumer.KafkaConsumerRecord;
 import jakarta.annotation.Nullable;
 import java.util.ArrayDeque;
+import java.util.EnumSet;
 
 /**
  * The records one consumer holds for one assignment of a partition, in the order it read them, and what it has
@@ -87,6 +88,21 @@ final class KafkaPartitionLedger {
     private long pendingCommit = NONE;
     private int retryWaiting;
     private boolean retentionHeld;
+
+    // The fetch state of the assignment, kept by KafkaHoldController.
+
+    /** Why the partition does not fetch. */
+    final EnumSet<KafkaHoldController.Reason> reasons = EnumSet.noneOf(KafkaHoldController.Reason.class);
+
+    /**
+     * What the client was last told: {@code true} for a pause, or {@code null} while that is unknown, which it is for a
+     * new assignment: a pause that was queued for the previous assignment can land on this one.
+     */
+    @Nullable
+    Boolean applied;
+
+    /** Whether a pause or resume call is pending. */
+    boolean applying;
 
     KafkaPartitionLedger(TopicPartition partition) {
         this.partition = partition;
