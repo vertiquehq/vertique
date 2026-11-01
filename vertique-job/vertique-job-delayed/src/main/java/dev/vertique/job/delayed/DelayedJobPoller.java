@@ -35,6 +35,7 @@ import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.eventbus.MessageConsumer;
+import java.lang.reflect.Type;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -148,6 +149,7 @@ public class DelayedJobPoller extends AbstractVerticle {
     private final DelayedJobQueueConfig config;
     private final JobRepository repository;
     private final JobCompletionHandler completionHandler;
+    private final DelayedJobPayloadDecoder payloadDecoder;
     private final List<JobInterceptor> interceptors;
     private final EventBusClient eventBusClient;
 
@@ -327,6 +329,56 @@ public class DelayedJobPoller extends AbstractVerticle {
                 progressFlushIntervalMs,
                 envelopeBuilder,
                 propagator,
+                Map.of());
+    }
+
+    /**
+     * Full constructor with the handlers' declared payload types, used by the framework's module.
+     * Identical to the constructor above with {@code payloadTypes} appended.
+     *
+     * @param queue                   the logical queue name to poll
+     * @param config                  per-queue polling configuration
+     * @param repository              the job repository for claiming and state updates
+     * @param completionHandler       shared utility for handling job completion
+     * @param interceptors            job interceptors to fire around each dispatch, in
+     *                                {@link dev.vertique.core.extension.OrderedExtension} order
+     *                                (phase → priority → orderKey)
+     * @param eventBusClient          the event bus client for dispatch protocol sends
+     * @param executionTimeoutMs      per-execution timeout in milliseconds; {@code 0} disables
+     * @param progressFlushIntervalMs interval in milliseconds for flushing progress snapshots;
+     *                                {@code 0} disables
+     * @param envelopeBuilder         envelope builder used to construct outgoing job-dispatch envelopes
+     * @param propagator              durable context propagator for decoding persisted metadata into
+     *                                the outgoing envelope's caller-overrides (FR-CTX-177); must not
+     *                                be {@code null}
+     * @param payloadTypes            declared payload types by handler event bus address, from
+     *                                {@link DelayedJobHandlerRegistrar#handlerPayloadTypes()}; a
+     *                                handler with no entry receives the stored payload unconverted
+     */
+    public DelayedJobPoller(
+            String queue,
+            DelayedJobQueueConfig config,
+            JobRepository repository,
+            JobCompletionHandler completionHandler,
+            Set<JobInterceptor> interceptors,
+            EventBusClient eventBusClient,
+            long executionTimeoutMs,
+            long progressFlushIntervalMs,
+            dev.vertique.context.DispatchEnvelopeBuilder envelopeBuilder,
+            DurableContextPropagator propagator,
+            Map<String, Type> payloadTypes) {
+        this(
+                queue,
+                config,
+                repository,
+                completionHandler,
+                interceptors,
+                eventBusClient,
+                executionTimeoutMs,
+                progressFlushIntervalMs,
+                envelopeBuilder,
+                propagator,
+                payloadTypes,
                 DEFAULT_SHUTDOWN_FLUSH_TIMEOUT_MS);
     }
 
@@ -366,6 +418,34 @@ public class DelayedJobPoller extends AbstractVerticle {
             dev.vertique.context.DispatchEnvelopeBuilder envelopeBuilder,
             DurableContextPropagator propagator,
             long shutdownFlushTimeoutMs) {
+        this(
+                queue,
+                config,
+                repository,
+                completionHandler,
+                interceptors,
+                eventBusClient,
+                executionTimeoutMs,
+                progressFlushIntervalMs,
+                envelopeBuilder,
+                propagator,
+                Map.of(),
+                shutdownFlushTimeoutMs);
+    }
+
+    private DelayedJobPoller(
+            String queue,
+            DelayedJobQueueConfig config,
+            JobRepository repository,
+            JobCompletionHandler completionHandler,
+            Set<JobInterceptor> interceptors,
+            EventBusClient eventBusClient,
+            long executionTimeoutMs,
+            long progressFlushIntervalMs,
+            dev.vertique.context.DispatchEnvelopeBuilder envelopeBuilder,
+            DurableContextPropagator propagator,
+            Map<String, Type> payloadTypes,
+            long shutdownFlushTimeoutMs) {
         if (shutdownFlushTimeoutMs <= 0) {
             throw new IllegalArgumentException("shutdownFlushTimeoutMs must be positive: " + shutdownFlushTimeoutMs);
         }
@@ -373,6 +453,7 @@ public class DelayedJobPoller extends AbstractVerticle {
         this.config = config;
         this.repository = repository;
         this.completionHandler = completionHandler;
+        this.payloadDecoder = new DelayedJobPayloadDecoder(payloadTypes);
         this.eventBusClient = eventBusClient;
         this.executionTimeoutMs = executionTimeoutMs;
         this.progressFlushIntervalMs = progressFlushIntervalMs;
@@ -683,6 +764,14 @@ public class DelayedJobPoller extends AbstractVerticle {
      * @param execution the claimed execution to dispatch
      */
     private void dispatch(JobExecution execution) {
+        Object payload;
+        try {
+            payload = payloadDecoder.decode(execution.handler(), execution.payload());
+        } catch (IllegalArgumentException e) {
+            failUndecodable(execution, e);
+            return;
+        }
+
         UUID executionId = execution.id();
         Instant startedAt = Instant.now();
 
@@ -739,7 +828,7 @@ public class DelayedJobPoller extends AbstractVerticle {
         // FR-CTX-015: always route through DispatchEnvelopeBuilder. The builder is required
         // (non-null) per the constructor contract.
         DispatchEnvelope<?> body = envelopeBuilder.build(
-                execution.payload(), ctx, dev.vertique.core.context.DispatchBoundary.SERVICE_DISPATCH, replyAddress);
+                payload, ctx, dev.vertique.core.context.DispatchBoundary.SERVICE_DISPATCH, replyAddress);
 
         // --- Per-execution resources: cancel consumer, progress-flush timer, timeout timer ---
 
@@ -944,6 +1033,28 @@ public class DelayedJobPoller extends AbstractVerticle {
                     execution.handler());
             eventBusClient.send(execution.handler(), body);
         }
+    }
+
+    /**
+     * Fails an execution whose payload cannot be converted to the type its handler declares. The
+     * handler never runs, so no per-execution resource exists to release the slot on a reply.
+     *
+     * <p>The failure consumes an attempt like any other: a node running a newer payload type may
+     * decode what this one cannot, and the attempt limit bounds a payload no node decodes.
+     *
+     * @param execution the claimed execution
+     * @param cause     the decode failure
+     */
+    private void failUndecodable(JobExecution execution, IllegalArgumentException cause) {
+        log.warn("Delayed job '{}' execution {} failed: {}", execution.jobId(), execution.id(), cause.getMessage());
+        completionHandler
+                .handleCompletion(execution, Result.failure(cause), resolveBackoffStrategy())
+                .onFailure(err -> log.warn(
+                        "Completion handling failed for job '{}' execution {}",
+                        execution.jobId(),
+                        execution.id(),
+                        err));
+        releaseSlot();
     }
 
     // --- Backoff strategy ---

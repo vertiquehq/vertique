@@ -81,7 +81,8 @@ and handler latency, not by `sleepDelayMs`.
 
 **What a handler receives.** Handlers run as ordinary service operations, so `JobContext` and
 `JobDispatchContext` from `dev.vertique:vertique-job-core` are injected simply by declaring them as
-parameters; cancellation, progress and structured logging all go through `JobContext`.
+parameters; cancellation, progress and structured logging all go through `JobContext`. The payload
+arrives as the type the handler declares, including its generic arguments.
 
 ---
 
@@ -244,8 +245,13 @@ class DeliverWebhookJobImpl implements DelayedJobExecutor<WebhookPayload, Delive
 }
 ```
 
-`execute` receives the deserialized payload and a `JobContext`. A failed future consumes an attempt
-and triggers retry according to the effective `maxAttempts`.
+`execute` receives the payload converted to its declared type and a `JobContext`. A failed future
+consumes an attempt and triggers retry according to the effective `maxAttempts`.
+
+The poller converts the stored payload before dispatch, using the type the handler declares, never
+one read from the row. A payload that does not fit that type consumes an attempt without running the
+handler, and the execution's error message names the type, never the value. Interceptors do not see
+that attempt.
 
 Implement `DelayedJobExecutor` **directly with concrete type arguments**. An intermediate abstract
 base class that forwards the type variables (`abstract class BaseJob<P, C> implements
