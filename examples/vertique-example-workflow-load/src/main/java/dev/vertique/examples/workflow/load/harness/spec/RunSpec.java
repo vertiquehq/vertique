@@ -63,7 +63,7 @@ public record RunSpec(
         Diagnostics diagnostics,
         JsonObject resolved) {
 
-    private static final Pattern NAME = Pattern.compile("[A-Za-z0-9._-]{1,64}");
+    private static final Pattern RUN_NAME = Pattern.compile("[A-Za-z0-9._-]{1,64}");
     private static final Pattern CONTAINER = Pattern.compile("wf017[A-Za-z0-9_.-]*");
 
     /**
@@ -187,7 +187,7 @@ public record RunSpec(
     public static RunSpec parse(JsonObject json) {
         SpecReader r = SpecReader.root(json);
         String name = r.requiredString("name");
-        if (!NAME.matcher(name).matches()) {
+        if (!RUN_NAME.matcher(name).matches()) {
             throw new ConfigurationException("Input name must be 1 to 64 characters of letters, digits, . _ and -");
         }
         String set = r.string("set", "adhoc");
@@ -215,14 +215,16 @@ public record RunSpec(
         if (!CONTAINER.matcher(container).matches()) {
             throw new ConfigurationException("Input database.container must start with wf017");
         }
+        // The throwaway database of the harness script has a password equal to its user name.
+        String user = d.string("user", "postgres");
         Database database = new Database(
                 container,
                 d.string("host", "127.0.0.1"),
                 d.intValue("port", 55417, 1, 65_535),
                 d.string("adminDatabase", "postgres"),
                 d.string("name", "workflow_load"),
-                d.string("user", "postgres"),
-                d.string("password", "postgres"),
+                user,
+                d.string("password", user),
                 d.enumValue("reset", ResetPolicy.class, ResetPolicy.DROP_CREATE),
                 d.stringList("extensions", List.of()));
         SpecReader c = r.object("collector");

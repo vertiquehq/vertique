@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 
 /**
@@ -59,8 +60,12 @@ public final class LoadDriver {
             DriverSpec spec = DriverSpec.read(new JsonObject(Files.readString(Path.of(args[1]))));
             new LoadDriver(spec).run();
             code = 0;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            e.printStackTrace(System.err);
+            code = 1;
         } catch (Exception e) {
-            e.printStackTrace();
+            e.printStackTrace(System.err);
             code = 1;
         }
         System.exit(code);
@@ -142,17 +147,18 @@ public final class LoadDriver {
         return write(main, replay, t0, replayStart - t0, retries, descriptors(), notReplayed);
     }
 
-    private volatile long openPeak;
+    private final AtomicLong openPeak = new AtomicLong();
 
     private void sampleDescriptors() {
         var os = java.lang.management.ManagementFactory.getOperatingSystemMXBean();
         while (!Thread.currentThread().isInterrupted()) {
             if (os instanceof com.sun.management.UnixOperatingSystemMXBean unix) {
-                openPeak = Math.max(openPeak, unix.getOpenFileDescriptorCount());
+                openPeak.accumulateAndGet(unix.getOpenFileDescriptorCount(), Math::max);
             }
             try {
                 Thread.sleep(100);
             } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
                 return;
             }
         }
@@ -160,7 +166,7 @@ public final class LoadDriver {
 
     private JsonObject descriptors() {
         var os = java.lang.management.ManagementFactory.getOperatingSystemMXBean();
-        JsonObject json = new JsonObject().put("openPeak", openPeak);
+        JsonObject json = new JsonObject().put("openPeak", openPeak.get());
         if (os instanceof com.sun.management.UnixOperatingSystemMXBean unix) {
             json.put("max", unix.getMaxFileDescriptorCount()).put("openAtEnd", unix.getOpenFileDescriptorCount());
         }

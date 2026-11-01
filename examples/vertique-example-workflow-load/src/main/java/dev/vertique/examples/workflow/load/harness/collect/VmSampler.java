@@ -3,6 +3,7 @@
 
 package dev.vertique.examples.workflow.load.harness.collect;
 
+import dev.vertique.examples.workflow.load.harness.Executables;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -53,6 +54,7 @@ final class VmSampler {
     private final AtomicBoolean stop;
     private Process process;
     private Thread thread;
+    private CsvOut out;
 
     VmSampler(CollectorSpec spec, Path dir, AtomicBoolean stop) {
         this.spec = spec;
@@ -61,15 +63,27 @@ final class VmSampler {
     }
 
     void start() throws IOException {
-        CsvOut out = new CsvOut(
-                dir.resolve("vm.csv"),
-                "t_ms,interval_ms,vm_cpu_busy_pct,vm_mem_total_mb,vm_mem_available_mb,vm_swap_used_mb,"
-                        + "container_cpu_pct_of_one_core,container_mem_mb");
-        process = new ProcessBuilder("docker", "exec", spec.container(), "sh", "-c", LOOP)
-                .redirectErrorStream(true)
-                .start();
-        HarnessPids.addHelper(process.pid(), "docker-exec");
-        thread = Thread.ofPlatform().name("vm-sampler").daemon().start(() -> read(out));
+        try {
+            out = new CsvOut(
+                    dir.resolve("vm.csv"),
+                    "t_ms,interval_ms,vm_cpu_busy_pct,vm_mem_total_mb,vm_mem_available_mb,vm_swap_used_mb,"
+                            + "container_cpu_pct_of_one_core,container_mem_mb");
+            process = new ProcessBuilder(Executables.path("docker"), "exec", spec.container(), "sh", "-c", LOOP)
+                    .redirectErrorStream(true)
+                    .start();
+            HarnessPids.addHelper(process.pid(), "docker-exec");
+            thread = Thread.ofPlatform().name("vm-sampler").daemon().start(() -> read(out));
+        } catch (IOException | RuntimeException e) {
+            // Nothing took over the file: close it before reporting the failure.
+            if (out != null) {
+                try {
+                    out.close();
+                } catch (IOException ignored) {
+                    // closing after a failed start
+                }
+            }
+            throw e;
+        }
     }
 
     void stop() {

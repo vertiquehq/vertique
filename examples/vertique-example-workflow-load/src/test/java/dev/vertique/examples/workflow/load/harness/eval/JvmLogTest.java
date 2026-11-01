@@ -68,4 +68,49 @@ class JvmLogTest {
         assertEquals(2, JvmLog.read(gz, 20).size());
         assertTrue(JvmLog.read(dir.resolve("none.log"), 20).isEmpty());
     }
+
+    @Test
+    @DisplayName("white space around a collection line, and its decorators, do not change what is read")
+    void toleratesWhiteSpaceAndDecorators() {
+        List<JvmLog.Pause> pauses = JvmLog.parse(
+                List.of(
+                        "[2026-11-01T12:25:08.825+0000][0.103s]  GC(2) Pause Young  (Normal)\t3.5ms \t ",
+                        "[2026-11-01T12:25:08.825+0000][info][gc][x y] GC(3)   Pause Full 12ms",
+                        "[2026-11-01T12:25:08.825+0000]GC(4) Pause Remark 0.25ms"),
+                0);
+
+        assertEquals(3, pauses.size());
+        assertEquals("Pause Young  (Normal)", pauses.get(0).label());
+        assertEquals(3.5, pauses.get(0).durationMs(), 1e-9);
+        assertEquals("Pause Full", pauses.get(1).label());
+        assertEquals(12, pauses.get(1).durationMs(), 1e-9);
+        assertEquals("Pause Remark", pauses.get(2).label());
+    }
+
+    @Test
+    @DisplayName("lines that are not a complete pause are ignored")
+    void ignoresIncompleteLines() {
+        List<String> lines = List.of(
+                "GC(1) Pause Young 1.0ms",
+                "[] GC(1) Pause Young 1.0ms",
+                "[2026-11-01T12:25:08.825+0000][0.1s] GC(1) Pause Young",
+                "[2026-11-01T12:25:08.825+0000][0.1s] GC(1) Pause 5ms",
+                "[2026-11-01T12:25:08.825+0000][0.1s] GC(1) Pause Young 1.0ms trailing",
+                "[2026-11-01T12:25:08.825+0000][0.1s] GC(x) Pause Young 1.0ms",
+                "[2026-11-01T12:25:08.825+0000][0.1s] GC(1) Cleanup 1.0ms",
+                "[2026-11-01T12:25:08.825+0000][0.1s Safepoint \"X\", Total: 5 ns",
+                "[2026-11-01T12:25:08.825+0000][0.1s] Safepoint \"X\", Total: five ns");
+
+        assertTrue(JvmLog.parse(lines, 0).isEmpty());
+    }
+
+    @Test
+    @DisplayName("a very long line of white space is read")
+    void readsLongLines() {
+        String spaces = " ".repeat(200_000);
+        String line = "[2026-11-01T12:25:08.825+0000][0.1s] GC(1) Pause Young" + spaces + "1.0ms" + spaces;
+
+        assertEquals(1, JvmLog.parse(List.of(line), 0).size());
+        assertTrue(JvmLog.parse(List.of(line + "x"), 0).isEmpty());
+    }
 }

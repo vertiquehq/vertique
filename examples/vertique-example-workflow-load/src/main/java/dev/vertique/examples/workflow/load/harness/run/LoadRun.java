@@ -30,6 +30,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -40,6 +41,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Stream;
 
 /**
  * Runs one measurement from start to verdict.
@@ -125,8 +127,8 @@ public final class LoadRun {
     private final JsonObject attempt = new JsonObject();
     private final HttpClient http =
             HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
-    private Process driver;
-    private Process collector;
+    private Process driverProcess;
+    private Process collectorProcess;
     private boolean finished;
 
     private LoadRun(RunSpec spec, JsonObject specInput, Path runDir, Path moduleDir, Path matrixFile) {
@@ -228,7 +230,7 @@ public final class LoadRun {
         }
         Path runDir = outRoot.resolve(spec.name());
         try {
-            if (Files.exists(runDir) && Files.list(runDir).findAny().isPresent()) {
+            if (Files.exists(runDir) && hasEntries(runDir)) {
                 err.println("The run directory " + runDir + " is not empty; give the attempt its own name");
                 return 2;
             }
@@ -524,8 +526,8 @@ public final class LoadRun {
         RunSpec.Database d = spec.database();
         try (Connection c = connect(d.adminDatabase());
                 Statement s = c.createStatement()) {
-            s.execute("DROP DATABASE IF EXISTS " + quote(d.name()) + " WITH (FORCE)");
-            s.execute("CREATE DATABASE " + quote(d.name()));
+            s.execute(statement(c, "DROP DATABASE IF EXISTS %I WITH (FORCE)", d.name()));
+            s.execute(statement(c, "CREATE DATABASE %I", d.name()));
         }
     }
 
@@ -547,7 +549,7 @@ public final class LoadRun {
                     }
                 }
                 for (String extension : extensions) {
-                    s.execute("CREATE EXTENSION IF NOT EXISTS " + quote(extension));
+                    s.execute(statement(c, "CREATE EXTENSION IF NOT EXISTS %I", extension));
                 }
             }
         }
@@ -741,7 +743,7 @@ public final class LoadRun {
                 .put("topRows", c.topRows());
         Path specFile = dir.resolve("collector-spec.json");
         Files.writeString(specFile, collectorSpec.encodePrettily());
-        collector = startJava(
+        collectorProcess = startJava(
                 "collector",
                 dir.resolve("collector.out"),
                 List.of(
@@ -753,7 +755,7 @@ public final class LoadRun {
         collectorStarted = true;
         long deadline = System.nanoTime() + 60_000_000_000L;
         while (!Files.exists(dir.resolve("ready"))) {
-            if (!collector.isAlive() || System.nanoTime() > deadline) {
+            if (!collectorProcess.isAlive() || System.nanoTime() > deadline) {
                 throw new IOException(
                         "the collector did not start:\n" + Files.readString(dir.resolve("collector.out")));
             }
@@ -827,7 +829,7 @@ public final class LoadRun {
                 spec.thresholds().lateArrivalMs());
         Path driverFile = runDir.resolve("driver/driver-spec.json");
         Files.writeString(driverFile, driverSpec.toJson().encodePrettily());
-        driver = startJava(
+        driverProcess = startJava(
                 "driver",
                 runDir.resolve("driver/driver.out"),
                 List.of(
@@ -839,35 +841,42 @@ public final class LoadRun {
 
         ExecutorService injections =
                 Executors.newCachedThreadPool(r -> Thread.ofPlatform().daemon().unstarted(r));
-        Injector injector = new Injector(
-                spec,
-                runDir.resolve("injections.log"),
-                i -> nodes[i],
-                driver,
-                jdbcUrl(spec.database().name()));
-        for (RunSpec.Injection injection : spec.injections()) {
-            injections.submit(() -> {
-                try {
-                    Thread.sleep(
-                            Math.max(0, loadStart + Math.round(injection.atSec() * 1000) - System.currentTimeMillis()));
-                    injector.run(injection);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            });
+        try {
+            Injector injector = new Injector(
+                    spec,
+                    runDir.resolve("injections.log"),
+                    i -> nodes[i],
+                    driverProcess,
+                    jdbcUrl(spec.database().name()));
+            for (RunSpec.Injection injection : spec.injections()) {
+                injections.submit(() -> {
+                    try {
+                        Thread.sleep(Math.max(
+                                0, loadStart + Math.round(injection.atSec() * 1000) - System.currentTimeMillis()));
+                        injector.run(injection);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                });
+            }
+            long replaySlackMs = Math.round(profile.total() / t.replayRatePerSec() * 1000);
+            long limit = (long) ((profile.endSec()
+                                    + t.recoverySec()
+                                    + 2L * spec.driver().graceSec())
+                            * 1000)
+                    + t.driverStartLeadMs()
+                    + replaySlackMs
+                    + 120_000;
+            if (!driverProcess.waitFor(limit, TimeUnit.MILLISECONDS)) {
+                driverProcess.destroyForcibly();
+                timeline.put("driverTimedOut", true);
+            }
+            injections.shutdown();
+            injections.awaitTermination(30, TimeUnit.SECONDS);
+        } finally {
+            // Not shutdownNow: an injection that outlasts the run, such as a stopped database, must still finish.
+            injections.shutdown();
         }
-        long replaySlackMs = Math.round(profile.total() / t.replayRatePerSec() * 1000);
-        long limit =
-                (long) ((profile.endSec() + t.recoverySec() + 2L * spec.driver().graceSec()) * 1000)
-                        + t.driverStartLeadMs()
-                        + replaySlackMs
-                        + 120_000;
-        if (!driver.waitFor(limit, TimeUnit.MILLISECONDS)) {
-            driver.destroyForcibly();
-            timeline.put("driverTimedOut", true);
-        }
-        injections.shutdown();
-        injections.awaitTermination(30, TimeUnit.SECONDS);
         long end = System.currentTimeMillis();
         timeline.put("driverEndMs", end);
         Path summary = runDir.resolve("driver/summary.json");
@@ -922,12 +931,12 @@ public final class LoadRun {
     private void stopCollector() throws IOException {
         Files.writeString(runDir.resolve("collector.stop"), "stop");
         try {
-            if (collector != null && !collector.waitFor(30, TimeUnit.SECONDS)) {
-                collector.destroyForcibly();
+            if (collectorProcess != null && !collectorProcess.waitFor(30, TimeUnit.SECONDS)) {
+                collectorProcess.destroyForcibly();
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            collector.destroyForcibly();
+            collectorProcess.destroyForcibly();
         }
     }
 
@@ -1082,7 +1091,24 @@ public final class LoadRun {
                 jdbcUrl(database), spec.database().user(), spec.database().password());
     }
 
-    private static String quote(String identifier) {
-        return '"' + identifier.replace("\"", "\"\"") + '"';
+    private static boolean hasEntries(Path directory) throws IOException {
+        try (Stream<Path> entries = Files.list(directory)) {
+            return entries.findAny().isPresent();
+        }
+    }
+
+    /**
+     * Builds a statement that names an identifier. A statement cannot bind an identifier, so the server puts it in, with
+     * the quoting of {@code format}'s {@code %I}.
+     */
+    private static String statement(Connection connection, String template, String identifier) throws SQLException {
+        try (PreparedStatement ps = connection.prepareStatement("SELECT format(?::text, ?::text)")) {
+            ps.setString(1, template);
+            ps.setString(2, identifier);
+            try (ResultSet r = ps.executeQuery()) {
+                r.next();
+                return r.getString(1);
+            }
+        }
     }
 }

@@ -15,6 +15,7 @@ import java.sql.Statement;
 import java.util.List;
 import java.util.StringJoiner;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Reads the database once per interval: queue depths, database counters, connections by application, notification
@@ -81,7 +82,7 @@ final class SqlSampler implements Runnable {
 
     private volatile long attemptStartedMs;
     private volatile long lastSuccessMs;
-    private volatile int consecutiveFailures;
+    private final AtomicInteger consecutiveFailures = new AtomicInteger();
     private final java.util.concurrent.atomic.AtomicLong rows = new java.util.concurrent.atomic.AtomicLong();
     private final java.util.concurrent.atomic.AtomicLong recorderErrors = new java.util.concurrent.atomic.AtomicLong();
 
@@ -118,7 +119,7 @@ final class SqlSampler implements Runnable {
                         started == 0 ? "idle" : "querying",
                         started == 0 ? 0 : now - started,
                         ok == 0 ? "" : Long.toString(now - ok),
-                        consecutiveFailures,
+                        consecutiveFailures.get(),
                         rows.get(),
                         recorderErrors.get());
                 next += interval;
@@ -148,6 +149,7 @@ final class SqlSampler implements Runnable {
                 try {
                     Thread.sleep(Math.min(next - now, 100));
                 } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
                     return;
                 }
                 continue;
@@ -234,7 +236,7 @@ final class SqlSampler implements Runnable {
                 }
             }
             lastSuccessMs = System.currentTimeMillis();
-            consecutiveFailures = 0;
+            consecutiveFailures.set(0);
             record(() -> {
                 ticks.row(row);
                 writeListeners(startMs, true, sessions);
@@ -242,7 +244,7 @@ final class SqlSampler implements Runnable {
             });
         } catch (SQLException | RuntimeException e) {
             reset();
-            consecutiveFailures++;
+            consecutiveFailures.incrementAndGet();
             record(() -> {
                 ticks.row(startMs, lateMs, false, message(e));
                 writeListeners(startMs, false, List.of());

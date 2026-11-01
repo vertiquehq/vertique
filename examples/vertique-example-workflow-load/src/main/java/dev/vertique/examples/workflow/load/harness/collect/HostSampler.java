@@ -3,6 +3,7 @@
 
 package dev.vertique.examples.workflow.load.harness.collect;
 
+import dev.vertique.examples.workflow.load.harness.Executables;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -35,6 +36,8 @@ final class HostSampler {
     private Process top;
     private Thread topThread;
     private Thread psThread;
+    private CsvOut hostOut;
+    private CsvOut procsOut;
 
     HostSampler(CollectorSpec spec, Path dir, AtomicBoolean stop) {
         this.spec = spec;
@@ -43,30 +46,47 @@ final class HostSampler {
     }
 
     void start() throws IOException {
-        CsvOut host = new CsvOut(
-                dir.resolve("host.csv"),
-                "t_ms,load1,cpu_user,cpu_sys,cpu_idle,mem_used_mb,mem_wired_mb,mem_compressor_mb,mem_unused_mb,"
-                        + "swapins,swapouts,swap_used_mb,swap_total_mb,mem_free_pct,pressure_level,system_cpu_pct,"
-                        + "vm_process_cpu_pct,harness_cpu_pct,independent_cpu_pct,unattributed_cpu_pct,rows_seen,"
-                        + "indep_pid,indep_command,indep_user,indep_cpu_pct");
-        CsvOut procs = new CsvOut(dir.resolve("procs.csv"), "t_ms,pid,role,rss_kb,cpu_s");
-        top = new ProcessBuilder(
-                        "top",
-                        "-l",
-                        "0",
-                        "-s",
-                        "1",
-                        "-n",
-                        Integer.toString(spec.topRows()),
-                        "-o",
-                        "cpu",
-                        "-stats",
-                        "pid,user,command,cpu,rsize")
-                .redirectErrorStream(true)
-                .start();
-        HarnessPids.addHelper(top.pid(), "top");
-        topThread = Thread.ofPlatform().name("host-top").daemon().start(() -> readTop(host));
-        psThread = Thread.ofPlatform().name("host-ps").daemon().start(() -> readProcs(procs));
+        try {
+            hostOut = new CsvOut(
+                    dir.resolve("host.csv"),
+                    "t_ms,load1,cpu_user,cpu_sys,cpu_idle,mem_used_mb,mem_wired_mb,mem_compressor_mb,mem_unused_mb,"
+                            + "swapins,swapouts,swap_used_mb,swap_total_mb,mem_free_pct,pressure_level,system_cpu_pct,"
+                            + "vm_process_cpu_pct,harness_cpu_pct,independent_cpu_pct,unattributed_cpu_pct,rows_seen,"
+                            + "indep_pid,indep_command,indep_user,indep_cpu_pct");
+            procsOut = new CsvOut(dir.resolve("procs.csv"), "t_ms,pid,role,rss_kb,cpu_s");
+            top = new ProcessBuilder(
+                            Executables.path("top"),
+                            "-l",
+                            "0",
+                            "-s",
+                            "1",
+                            "-n",
+                            Integer.toString(spec.topRows()),
+                            "-o",
+                            "cpu",
+                            "-stats",
+                            "pid,user,command,cpu,rsize")
+                    .redirectErrorStream(true)
+                    .start();
+            HarnessPids.addHelper(top.pid(), "top");
+            topThread = Thread.ofPlatform().name("host-top").daemon().start(() -> readTop(hostOut));
+            psThread = Thread.ofPlatform().name("host-ps").daemon().start(() -> readProcs(procsOut));
+        } catch (IOException | RuntimeException e) {
+            // Nothing took over the files: close what was opened before the failure.
+            closeQuietly(hostOut);
+            closeQuietly(procsOut);
+            throw e;
+        }
+    }
+
+    private static void closeQuietly(CsvOut out) {
+        if (out != null) {
+            try {
+                out.close();
+            } catch (IOException ignored) {
+                // closing after a failed start
+            }
+        }
     }
 
     void stop() {
@@ -196,7 +216,7 @@ final class HostSampler {
     private static double[] readSysctl() {
         try {
             Process p = new ProcessBuilder(
-                            "sysctl",
+                            Executables.path("sysctl"),
                             "-n",
                             "vm.swapusage",
                             "kern.memorystatus_level",
@@ -237,7 +257,7 @@ final class HostSampler {
                 }
                 String list = String.join(
                         ",", roles.keySet().stream().map(String::valueOf).toList());
-                Process p = new ProcessBuilder("ps", "-o", "pid=,rss=,time=", "-p", list)
+                Process p = new ProcessBuilder(Executables.path("ps"), "-o", "pid=,rss=,time=", "-p", list)
                         .redirectErrorStream(true)
                         .start();
                 Map<Integer, String[]> found = new HashMap<>();

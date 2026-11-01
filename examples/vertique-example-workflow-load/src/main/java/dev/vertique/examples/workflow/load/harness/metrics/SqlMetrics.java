@@ -528,7 +528,7 @@ public final class SqlMetrics {
                             runStart,
                             runEnd));
         }
-        String wait = "extract(epoch from c.settled_at - c.recorded_at) * 1000";
+        final String wait = "extract(epoch from c.settled_at - c.recorded_at) * 1000";
         Map<Long, Double> byRecorded = new TreeMap<>();
         try (PreparedStatement ps = c.prepareStatement(
                 "SELECT floor(extract(epoch from c.recorded_at))::bigint, percentile_disc(0.95) WITHIN GROUP (ORDER BY "
@@ -684,7 +684,7 @@ public final class SqlMetrics {
 
     private static OutboxCounts outbox(Connection c, long expected, long leaseMs, double from, double to)
             throws SQLException {
-        String join = " FROM " + COHORT + " k JOIN outbox o ON o.aggregate_id = k.workflow_id::text"
+        final String join = " FROM " + COHORT + " k JOIN outbox o ON o.aggregate_id = k.workflow_id::text"
                 + " AND o.destination = 'load.work'";
         long total;
         long afterRetry;
@@ -713,27 +713,31 @@ public final class SqlMetrics {
         // A reclaim after a stale lease puts the row back without raising attempt, and the next claim replaces
         // claimed_at.
         // A claim within the lease of the start cannot follow a reclaim, so only such a claim is shown to be the first.
-        String established = " AND o.attempt = 0 AND o.claimed_at IS NOT NULL AND o.claimed_at - k.started_at < "
-                + leaseMs + " * interval '1 millisecond'";
+        // The lease is a parameter, bound after the two of the window that the cohort takes.
+        final String established = " AND o.attempt = 0 AND o.claimed_at IS NOT NULL AND o.claimed_at - k.started_at < "
+                + "? * interval '1 millisecond'";
         Latency startToClaim = latency(
                 c,
                 "SELECT " + quantiles("extract(epoch from o.claimed_at - k.started_at) * 1000") + join + " WHERE true"
                         + established,
                 from,
-                to);
+                to,
+                leaseMs);
         long unresolved = scalar(
                 c,
                 "SELECT count(*)" + join
                         + " WHERE o.attempt = 0 AND o.claimed_at IS NOT NULL AND o.claimed_at - k.started_at >= "
-                        + leaseMs + " * interval '1 millisecond'",
+                        + "? * interval '1 millisecond'",
                 from,
-                to);
+                to,
+                leaseMs);
         Latency raw = latency(
                 c,
                 "SELECT " + quantiles("extract(epoch from o.published_at - o.claimed_at) * 1000") + join
                         + " WHERE o.state = 'PUBLISHED' AND o.published_at IS NOT NULL" + established,
                 from,
-                to);
+                to,
+                leaseMs);
         Map<String, Long> scopes = new TreeMap<>();
         try (PreparedStatement ps = c.prepareStatement("SELECT o.scope_key, count(*)" + join + " GROUP BY 1")) {
             ps.setDouble(1, from);
@@ -752,8 +756,10 @@ public final class SqlMetrics {
                 + " WHERE o.state = 'PUBLISHED' AND o.published_at IS NOT NULL" + established + ") e) r")) {
             ps.setDouble(1, from);
             ps.setDouble(2, to);
-            ps.setDouble(3, from);
-            ps.setDouble(4, to);
+            ps.setDouble(3, leaseMs);
+            ps.setDouble(4, from);
+            ps.setDouble(5, to);
+            ps.setDouble(6, leaseMs);
             try (ResultSet r = ps.executeQuery()) {
                 r.next();
                 peak = r.getLong(1);
@@ -780,10 +786,15 @@ public final class SqlMetrics {
                 + " percentile_disc(0.99) WITHIN GROUP (ORDER BY " + expression + "), max(" + expression + ")";
     }
 
-    private static Latency latency(Connection c, String sql, double from, double to) throws SQLException {
+    private static void bind(PreparedStatement ps, double[] parameters) throws SQLException {
+        for (int i = 0; i < parameters.length; i++) {
+            ps.setDouble(i + 1, parameters[i]);
+        }
+    }
+
+    private static Latency latency(Connection c, String sql, double... parameters) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setDouble(1, from);
-            ps.setDouble(2, to);
+            bind(ps, parameters);
             try (ResultSet r = ps.executeQuery()) {
                 r.next();
                 long count = r.getLong(1);
@@ -795,10 +806,9 @@ public final class SqlMetrics {
         }
     }
 
-    private static long scalar(Connection c, String sql, double from, double to) throws SQLException {
+    private static long scalar(Connection c, String sql, double... parameters) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setDouble(1, from);
-            ps.setDouble(2, to);
+            bind(ps, parameters);
             try (ResultSet r = ps.executeQuery()) {
                 r.next();
                 return r.getLong(1);

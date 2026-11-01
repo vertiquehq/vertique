@@ -59,6 +59,10 @@ class ListenerLedgerTest {
             assertEquals("some_channel", ListenerSession.channelOf("LISTEN some_channel"));
             assertNull(ListenerSession.channelOf("SELECT 1"));
             assertNull(ListenerSession.channelOf("LISTEN a; SELECT 1"));
+            assertEquals("some_channel", ListenerSession.channelOf("LISTEN\tsome_channel \n;\n "));
+            assertNull(ListenerSession.channelOf("LISTEN some_channel ;;"));
+            assertNull(ListenerSession.channelOf("LISTEN some_channel x"));
+            assertNull(ListenerSession.channelOf("LISTEN"));
             assertNull(ListenerSession.channelOf(null));
         }
 

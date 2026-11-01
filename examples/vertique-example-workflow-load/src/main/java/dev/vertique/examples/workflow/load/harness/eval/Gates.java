@@ -7,9 +7,11 @@ import dev.vertique.examples.workflow.load.harness.metrics.Quantiles;
 import dev.vertique.examples.workflow.load.harness.spec.Thresholds;
 import io.vertx.core.json.JsonObject;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.TreeMap;
 
 /**
@@ -141,7 +143,46 @@ public final class Gates {
             long refusedOver,
             double peakDepthOver,
             double[] depthAfterDrop,
-            double peakReadingFraction) {}
+            double peakReadingFraction) {
+
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof Overload that
+                    && highMark == that.highMark
+                    && lowMark == that.lowMark
+                    && sampleIntervalMs == that.sampleIntervalMs
+                    && Double.compare(acceptedStartsPerSecondOver, that.acceptedStartsPerSecondOver) == 0
+                    && refusedOver == that.refusedOver
+                    && Double.compare(peakDepthOver, that.peakDepthOver) == 0
+                    && Arrays.equals(depthAfterDrop, that.depthAfterDrop)
+                    && Double.compare(peakReadingFraction, that.peakReadingFraction) == 0;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(
+                    highMark,
+                    lowMark,
+                    sampleIntervalMs,
+                    acceptedStartsPerSecondOver,
+                    refusedOver,
+                    peakDepthOver,
+                    Arrays.hashCode(depthAfterDrop),
+                    peakReadingFraction);
+        }
+
+        @Override
+        public String toString() {
+            return "Overload[highMark=" + highMark
+                    + ", lowMark=" + lowMark
+                    + ", sampleIntervalMs=" + sampleIntervalMs
+                    + ", acceptedStartsPerSecondOver=" + acceptedStartsPerSecondOver
+                    + ", refusedOver=" + refusedOver
+                    + ", peakDepthOver=" + peakDepthOver
+                    + ", depthAfterDrop=" + Arrays.toString(depthAfterDrop)
+                    + ", peakReadingFraction=" + peakReadingFraction + "]";
+        }
+    }
 
     /**
      * Judges overload behavior: peak depth within the high mark plus the stated overshoot while above capacity, and

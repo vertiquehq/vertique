@@ -21,7 +21,9 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * The admin entry point of the load harness: it runs the migrations once and sets the trigger state of an arm.
@@ -191,7 +193,9 @@ public final class LoadAdmin {
         }
         try {
             vertx.close().toCompletionStage().toCompletableFuture().get(30, TimeUnit.SECONDS);
-        } catch (Exception ignored) {
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (ExecutionException | TimeoutException ignored) {
             // The process is about to exit; a slow close must not change the command's result.
         }
     }

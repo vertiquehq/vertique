@@ -3,6 +3,7 @@
 
 package dev.vertique.examples.workflow.load.harness.run;
 
+import dev.vertique.examples.workflow.load.harness.Executables;
 import dev.vertique.examples.workflow.load.harness.listen.ListenerProbe;
 import dev.vertique.examples.workflow.load.harness.listen.ListenerSession;
 import dev.vertique.examples.workflow.load.harness.spec.RunSpec;
@@ -92,7 +93,7 @@ final class Injector {
     }
 
     private static void signal(String signal, long pid) throws IOException, InterruptedException {
-        Process p = new ProcessBuilder("kill", signal, Long.toString(pid))
+        Process p = new ProcessBuilder(Executables.path("kill"), signal, Long.toString(pid))
                 .inheritIO()
                 .start();
         if (p.waitFor() != 0) {

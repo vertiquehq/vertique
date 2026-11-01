@@ -27,7 +27,8 @@ public record ListenerSession(int pid, long backendStartMs, String applicationNa
     /** The channel the outbox trigger notifies on. */
     public static final String OUTBOX_CHANNEL = "transactional_outbox_channel";
 
-    private static final Pattern LISTEN = Pattern.compile("(?is)^\\s*LISTEN\\s+\"?([A-Za-z0-9_]+)\"?\\s*;?\\s*$");
+    private static final Pattern LISTEN =
+            Pattern.compile("(?is)^\\s*LISTEN\\s+\"?([A-Za-z0-9_]+)\"?(?:\\s*+;)?+\\s*+$");
 
     /**
      * Returns the identity of the connection.
