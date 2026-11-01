@@ -10,13 +10,13 @@ import io.vertx.core.json.JsonObject;
  * Utility for encoding arbitrary Jackson-serializable payloads to and from the JSONB storage
  * format used by the outbox table.
  *
- * <p>The PostgreSQL JSONB column requires a {@link JsonObject} (or {@link io.vertx.core.json.JsonArray})
- * as the bind parameter. This codec handles all payload types:
+ * <p>The outbox table always binds a {@link JsonObject}, so a payload that is not a JSON object is
+ * wrapped. This codec handles all payload types:
  * <ul>
  *   <li>POJOs and {@code Map<String, ?>} — serialized directly via {@link JsonObject#mapFrom(Object)}.
  *       The stored JSONB is the natural JSON representation of the object.</li>
- *   <li>Scalar values ({@code String}, {@code Number}, {@code Boolean}) and
- *       {@link io.vertx.core.json.JsonArray} — wrapped in a one-key envelope
+ *   <li>Every other value, such as a {@code String}, {@code Number}, {@code Boolean}, {@code UUID},
+ *       enum, list or {@link io.vertx.core.json.JsonArray} — wrapped in a one-key envelope
  *       {@code {"_v": <value>}} so that the driver receives a {@link JsonObject}.
  *       The {@code _v} wrapper is transparent to handlers — {@link #decode(JsonObject)} and
  *       {@link #decode(JsonObject, Class)} unwrap it automatically.</li>

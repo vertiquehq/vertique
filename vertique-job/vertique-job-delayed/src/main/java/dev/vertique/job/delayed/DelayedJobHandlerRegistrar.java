@@ -7,6 +7,8 @@ import dev.vertique.job.delayed.exception.DelayedJobRegistrationException;
 import dev.vertique.services.ServiceContractRegistry;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
 import java.lang.reflect.Method;
+import java.lang.reflect.Type;
+import java.lang.reflect.TypeVariable;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -47,6 +49,7 @@ public class DelayedJobHandlerRegistrar {
 
     private final ServiceContractRegistry registry;
     private Map<String, String> handlerAddresses = Collections.emptyMap();
+    private Map<String, Type> handlerPayloadTypes = Collections.emptyMap();
 
     /**
      * Creates a new registrar.
@@ -68,6 +71,7 @@ public class DelayedJobHandlerRegistrar {
         List<String> violations = new ArrayList<>();
         Set<String> registeredNames = new HashSet<>();
         Map<String, String> addresses = new HashMap<>();
+        Map<String, Type> payloadTypes = new HashMap<>();
 
         // --- Scan: annotation-based and contributor-based handlers in a single pass ---
 
@@ -94,6 +98,7 @@ public class DelayedJobHandlerRegistrar {
                 }
 
                 addresses.put(handlerName, executeMeta.address());
+                registerPayloadType(executeMeta, payloadTypes);
                 registeredNames.add(handlerName);
 
                 log.info(
@@ -163,6 +168,7 @@ public class DelayedJobHandlerRegistrar {
                     }
 
                     addresses.put(handlerName, meta.address());
+                    registerPayloadType(meta, payloadTypes);
                     registeredNames.add(handlerName);
 
                     log.info(
@@ -180,6 +186,7 @@ public class DelayedJobHandlerRegistrar {
         }
 
         this.handlerAddresses = Collections.unmodifiableMap(addresses);
+        this.handlerPayloadTypes = Collections.unmodifiableMap(payloadTypes);
         log.info("DelayedJobHandlerRegistrar scan complete: {} handler(s) registered", addresses.size());
     }
 
@@ -191,6 +198,37 @@ public class DelayedJobHandlerRegistrar {
      */
     public Map<String, String> handlerAddresses() {
         return handlerAddresses;
+    }
+
+    /**
+     * Returns an unmodifiable mapping of handler event bus addresses to their declared payload types.
+     * A handler that declares no payload has no entry. Only valid after {@link #scan()} has been
+     * called.
+     *
+     * @return handler address to declared payload type mapping
+     */
+    public Map<String, Type> handlerPayloadTypes() {
+        return handlerPayloadTypes;
+    }
+
+    /**
+     * Records the payload type {@code meta}'s handler method declares, keeping its generic arguments.
+     * A type variable falls back to the resolved parameter type: a typed executor may only expose the
+     * erased {@code execute(Object, JobContext)}.
+     *
+     * @param meta         the handler's operation metadata
+     * @param payloadTypes the mapping to add to
+     */
+    private static void registerPayloadType(ServiceMethodMeta meta, Map<String, Type> payloadTypes) {
+        List<ServiceMethodMeta.ParamMeta> params = meta.handlerParams();
+        for (int i = 0; i < params.size(); i++) {
+            ServiceMethodMeta.ParamMeta param = params.get(i);
+            if (param.source() == ServiceMethodMeta.ParamSource.PAYLOAD) {
+                Type declared = meta.resolveHandlerMethod().getGenericParameterTypes()[i];
+                payloadTypes.put(meta.address(), declared instanceof TypeVariable<?> ? param.type() : declared);
+                return;
+            }
+        }
     }
 
     /**

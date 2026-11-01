@@ -23,6 +23,7 @@ import dev.vertique.job.LogEntry;
 import dev.vertique.job.ProgressSnapshot;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -35,14 +36,19 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Integration tests for {@link PgJobRepository} against a real PostgreSQL instance.
@@ -211,6 +217,41 @@ public class PgJobRepositoryIT {
                     ctx.completeNow();
                 }))
                 .onFailure(ctx::failNow);
+    }
+
+    static Stream<Arguments> jsonPayloads() {
+        UUID id = UUID.randomUUID();
+        return Stream.of(
+                Arguments.of("hello", "hello"),
+                Arguments.of("", ""),
+                Arguments.of(42, 42),
+                Arguments.of(5_000_000_000L, 5_000_000_000L),
+                Arguments.of(1.5d, 1.5d),
+                Arguments.of(true, true),
+                Arguments.of(id, id.toString()),
+                Arguments.of(Instant.parse("2026-01-02T03:04:05Z"), "2026-01-02T03:04:05Z"),
+                Arguments.of(new byte[] {1, 2, 3}, "AQID"),
+                Arguments.of(
+                        new JsonArray().add("a").add(1),
+                        new JsonArray().add("a").add(1)),
+                Arguments.of(List.of("a", "b"), new JsonArray().add("a").add("b")),
+                Arguments.of(Map.of("a", 1), new JsonObject().put("a", 1)),
+                Arguments.of(new JsonObject().put("a", 1), new JsonObject().put("a", 1)));
+    }
+
+    @ParameterizedTest
+    @MethodSource("jsonPayloads")
+    @DisplayName("a payload reads back as the JSON value it serializes to")
+    void payloadReadsBackAsJsonValue(Object payload, Object stored, VertxTestContext ctx) {
+        JobExecution exec = newExecution("default", 0).withPayload(payload);
+
+        repository
+                .save(exec)
+                .compose(repository::findById)
+                .onComplete(ctx.succeeding(found -> ctx.verify(() -> {
+                    assertEquals(stored, found.orElseThrow().payload());
+                    ctx.completeNow();
+                })));
     }
 
     @Test

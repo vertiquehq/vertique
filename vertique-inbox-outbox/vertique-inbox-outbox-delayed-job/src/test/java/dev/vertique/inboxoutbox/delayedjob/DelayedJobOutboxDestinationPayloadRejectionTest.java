@@ -44,8 +44,8 @@ import org.junit.jupiter.api.Test;
 class DelayedJobOutboxDestinationPayloadRejectionTest {
 
     @Test
-    @DisplayName("a scalar payload the job store rejects is a permanent failure")
-    void scalarPayloadIsPermanentFailure() {
+    @DisplayName("a payload the job store rejects is a permanent failure")
+    void rejectedPayloadIsPermanentFailure() {
         PgJobRepository repository = new PgJobRepository(mock(Pool.class), new PgDbExceptionMapper());
         DelayedJobHandlerRegistrar registrar = mock(DelayedJobHandlerRegistrar.class);
         when(registrar.handlerAddresses()).thenReturn(Map.of("deliver-webhook", "job/deliver-webhook/execute"));
@@ -65,7 +65,7 @@ class DelayedJobOutboxDestinationPayloadRejectionTest {
                 null,
                 "webhook.deliver",
                 "deliver-webhook",
-                PayloadCodec.encode("hello"),
+                PayloadCodec.encode(new Object()),
                 Map.of(),
                 new OutboxMetadata(
                         DurableMetadata.empty(),

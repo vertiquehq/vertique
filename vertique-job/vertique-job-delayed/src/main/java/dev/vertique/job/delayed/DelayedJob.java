@@ -40,8 +40,8 @@ public class DelayedJob {
     private final String handler;
 
     /**
-     * The typed job data passed to the handler. May be any Jackson-serializable object.
-     * Stored as JSONB in the database.
+     * The typed job data passed to the handler. May be any Jackson-serializable value, including a
+     * scalar or a list. Stored as JSONB in the database.
      */
     @Builder.Default
     private final Object payload = null;

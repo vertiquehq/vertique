@@ -17,9 +17,10 @@ import dev.vertique.job.JobState;
 import dev.vertique.job.JobType;
 import dev.vertique.job.ProgressSnapshot;
 import io.vertx.core.Future;
-import io.vertx.core.json.JsonArray;
+import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
+import java.math.BigInteger;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -29,9 +30,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Verifies that {@link PgJobRepository} reports a payload that does not serialize to a JSON object
- * through the returned future, before any statement runs, and that the failure does not quote the
- * payload.
+ * Verifies that {@link PgJobRepository} reports a payload it cannot store through the returned
+ * future, before any statement runs, and that the failure does not quote the payload.
  */
 @DisplayName("PgJobRepository payload rejection")
 class PgJobRepositoryPayloadRejectionTest {
@@ -41,7 +41,7 @@ class PgJobRepositoryPayloadRejectionTest {
     private final Pool pool = mock(Pool.class);
     private final PgJobRepository repository = new PgJobRepository(pool, new PgDbExceptionMapper());
 
-    /** Serializes to JSON {@code null}, which {@code JsonObject.mapFrom} reports differently from a scalar. */
+    /** Serializes to JSON {@code null}, which the column would not read back as a value. */
     record JsonNullPayload() {
         @JsonValue
         Object value() {
@@ -49,17 +49,22 @@ class PgJobRepositoryPayloadRejectionTest {
         }
     }
 
-    static Stream<Object> nonObjectPayloads() {
+    /** Fails serialization with a message that quotes the payload's content. */
+    static final class FailingPayload {
+        public String getSecret() {
+            throw new IllegalStateException(SECRET);
+        }
+    }
+
+    static Stream<Object> unstorablePayloads() {
+        BigInteger overDigitLimit = BigInteger.TEN.pow(1000);
         return Stream.of(
-                SECRET,
-                42,
-                42L,
-                1.5d,
-                true,
-                UUID.randomUUID(),
-                new JsonArray().add(SECRET),
-                List.of(SECRET),
-                new JsonNullPayload());
+                new Object(),
+                new FailingPayload(),
+                List.of(new FailingPayload()),
+                new JsonNullPayload(),
+                overDigitLimit,
+                new JsonObject().put("total", overDigitLimit));
     }
 
     private static JobExecution executionWith(Object payload) {
@@ -90,21 +95,21 @@ class PgJobRepositoryPayloadRejectionTest {
     private void assertRejected(Future<?> result) {
         assertTrue(result.failed(), "the rejection must arrive through the returned future");
         IllegalArgumentException failure = assertInstanceOf(IllegalArgumentException.class, result.cause());
-        assertTrue(failure.getMessage().contains("JSON object"), failure.getMessage());
+        assertTrue(failure.getMessage().contains("JSON value"), failure.getMessage());
         assertFalse(failure.getMessage().contains(SECRET), "the failure must not quote the payload");
         assertNull(failure.getCause(), "Jackson's message quotes the payload, so it must not be chained");
         verifyNoInteractions(pool);
     }
 
     @ParameterizedTest
-    @MethodSource("nonObjectPayloads")
+    @MethodSource("unstorablePayloads")
     @DisplayName("save fails the future")
     void saveFailsTheFuture(Object payload) {
         assertRejected(repository.save(executionWith(payload)));
     }
 
     @ParameterizedTest
-    @MethodSource("nonObjectPayloads")
+    @MethodSource("unstorablePayloads")
     @DisplayName("transactional save fails the future")
     void transactionalSaveFailsTheFuture(Object payload) {
         SqlClient client = mock(SqlClient.class);
@@ -115,7 +120,7 @@ class PgJobRepositoryPayloadRejectionTest {
     }
 
     @ParameterizedTest
-    @MethodSource("nonObjectPayloads")
+    @MethodSource("unstorablePayloads")
     @DisplayName("tryInsert fails the future")
     void tryInsertFailsTheFuture(Object payload) {
         assertRejected(repository.tryInsert(executionWith(payload)));

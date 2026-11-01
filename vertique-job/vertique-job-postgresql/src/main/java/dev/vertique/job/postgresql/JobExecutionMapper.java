@@ -17,8 +17,8 @@ import java.time.OffsetDateTime;
  * Maps database {@link Row} instances to {@link JobExecution} domain objects.
  *
  * <p>This mapper handles all column extraction and null-safety for the {@code job_executions}
- * table. JSONB columns are surfaced as {@link JsonObject}; callers that need typed deserialization
- * should further convert via {@code JsonObject.mapTo(Class)}.
+ * table. JSONB columns are surfaced as {@link JsonObject}, except {@code payload}, which holds any
+ * JSON value.
  */
 final class JobExecutionMapper {
 
@@ -53,9 +53,9 @@ final class JobExecutionMapper {
     /**
      * Maps a {@link Row} from {@code job_executions} to a {@link JobExecution}.
      *
-     * <p>The {@code payload} column is deserialized as a {@link JsonObject} (the opaque JSONB
-     * value). Callers that know the concrete payload type should further call
-     * {@code ((JsonObject) execution.payload()).mapTo(MyType.class)}.
+     * <p>The {@code payload} column is returned as the JSON value it stores: a {@link JsonObject},
+     * a {@link io.vertx.core.json.JsonArray}, a string, a number or a boolean. Callers that know the
+     * concrete payload type convert it themselves.
      *
      * <p>The {@code parameters} column is read as a {@link JsonObject} and converted to a
      * {@link java.util.Map} for the {@link JobExecution#parameters()} field. Returns an empty map
@@ -77,7 +77,7 @@ final class JobExecutionMapper {
                 JobState.valueOf(row.getString(COL_STATE)),
                 row.getInteger(COL_ATTEMPT),
                 row.getInteger(COL_MAX_ATTEMPTS),
-                row.getJsonObject(COL_PAYLOAD),
+                row.getValue(COL_PAYLOAD),
                 row.getInteger(COL_PRIORITY),
                 row.getString(COL_LOCKED_BY),
                 toInstant(row.getOffsetDateTime(COL_SCHEDULED_AT)),
