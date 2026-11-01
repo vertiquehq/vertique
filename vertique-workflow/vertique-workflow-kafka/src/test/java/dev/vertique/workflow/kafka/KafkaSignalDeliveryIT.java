@@ -230,6 +230,46 @@ class KafkaSignalDeliveryIT {
     }
 
     @Test
+    void consumerRestartedAfterRecordingBeforeCommitResumesTheInstanceOnce(io.vertx.core.Vertx vertx) {
+        try (SourceScenario scenario = SourceScenario.open(vertx, "restart").losingAcknowledgements()) {
+            // Given one waiting instance, a source that deduplicates on the event id with a retry far longer than the
+            // test, and a pool that completes a transaction and then fails its future once
+            Feed<ShipmentDelivered> carriers = scenario.carriers(
+                            "carriers", source -> source.dedupBy(ShipmentDelivered::eventId)
+                                    .signal(OrdersContract.class, SHIPMENT_DELIVERED)
+                                    .key(ShipmentDelivered::carrierRef)
+                                    .payload(SourceScenario::confirmation)
+                                    .build())
+                    .retry(2, 600_000);
+            scenario.start();
+            String ref = scenario.ref("PAY-77");
+            Waiting order = scenario.waitingOrder("acme", ref);
+            scenario.loseOneAcknowledgement();
+
+            // When the test produces one record, the signal is recorded and the offset is not committed, and the
+            // consumers are stopped and started again
+            Produced record = carriers.produce(scenario.delivered("1", ref));
+            assertThat(scenario.completions().awaitCompletions(record, 1, SourceScenario.PROMPT))
+                    .as("the first attempt ended")
+                    .isTrue();
+            assertThat(scenario.completions().outcomesOf(record)).containsExactly(KafkaTerminalOutcome.RETRY_SCHEDULED);
+            assertThat(scenario.commands(order)).hasSize(1);
+            carriers.restartConsumers();
+            scenario.awaitDelivered(record, order);
+
+            // Then the new consumer was handed the record again, answered a duplicate before any match and committed
+            assertThat(scenario.completions().outcomesOf(record))
+                    .containsExactly(KafkaTerminalOutcome.RETRY_SCHEDULED, KafkaTerminalOutcome.SUCCESS);
+            assertThat(scenario.observer().outcomesOf("carriers")).last().isEqualTo(Outcome.DEDUPLICATED);
+            assertThat(carriers.committed(record)).isTrue();
+
+            // And exactly one command exists for the event and the instance resumed once
+            assertThat(scenario.commandCount()).isEqualTo(1);
+            assertThat(scenario.signalsApplied(order)).isEqualTo(1);
+        }
+    }
+
+    @Test
     void lookupAnsweringDifferentlyOnRedeliveryStillRecordsOnce(io.vertx.core.Vertx vertx) {
         try (SourceScenario scenario = SourceScenario.open(vertx, "lookup").losingAcknowledgements()) {
             // Given two live instances with business keys A and B, and a business-key lookup that answers A on its

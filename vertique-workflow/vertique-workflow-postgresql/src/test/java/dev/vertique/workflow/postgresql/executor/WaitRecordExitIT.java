@@ -10,6 +10,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
+import dev.vertique.workflow.exception.WorkflowSignalNoMatchException;
 import dev.vertique.workflow.ops.CorrelatedSignal;
 import dev.vertique.workflow.ops.CorrelatedSignalReceipt;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
@@ -260,7 +261,7 @@ class WaitRecordExitIT {
             // And a delivery by key with A-1 leaves no command, and one with B-1 records a command
             assertThat(f.deliverByKeyFailure(
                             node, CorrelatedSignal.of(ForkContract.class, SHIPPED, "A-1", new Payment("txn-1"), "d-1")))
-                    .isNotNull();
+                    .isInstanceOf(WorkflowSignalNoMatchException.class);
             assertThat(f.signalCommands(id)).isEmpty();
             CorrelatedSignalReceipt receipt = f.deliverByKey(
                     node, CorrelatedSignal.of(ForkContract.class, SHIPPED, "B-1", new Payment("txn-2"), "d-2"));

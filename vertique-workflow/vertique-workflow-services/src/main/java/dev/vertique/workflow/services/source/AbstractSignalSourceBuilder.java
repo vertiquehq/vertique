@@ -187,11 +187,12 @@ public abstract class AbstractSignalSourceBuilder<T, SELF, R> implements SourceS
 
     /**
      * Tells whether any shared stage was set: {@code when}, {@code scope}, {@code anyScope},
-     * {@code dedupBy}, {@code dispatchAs}, {@code onNoMatch}, {@code lookupTimeoutMs} or
-     * {@code restoreCorrelationFromHeaders}, or a {@code signal} target. A transport whose own
-     * shorthand cannot carry these stages uses it to refuse a mix instead of dropping them.
+     * {@code dispatchAs}, {@code onNoMatch} or {@code lookupTimeoutMs}, or a {@code signal}
+     * target. A transport whose own shorthand cannot carry these stages uses it to refuse a mix
+     * instead of dropping them.
      *
-     * <p>{@code dedupBy} and {@code restoreCorrelationFromHeaders} do not count, because a transport's older form takes them too.
+     * <p>{@code dedupBy} and {@code restoreCorrelationFromHeaders} do not count, because a
+     * transport's older form takes them too.
      *
      * @return {@code true} when a shared stage or a signal target was set
      */

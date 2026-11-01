@@ -54,6 +54,7 @@ import dev.vertique.workflow.source.SignalSourceEvent.Outcome;
 import dev.vertique.workflow.source.SignalSourceRefusal;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.internal.ContextInternal;
 import io.vertx.core.json.EncodeException;
@@ -69,6 +70,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -1172,6 +1175,102 @@ class WorkflowSourceDeliveryPlanTest {
             // and the second signal's operations call started after the first call's future completed
             assertThat(rig.timeline()).containsExactly("start:1", "end:1", "start:2", "end:2");
         }
+    }
+
+    @Test
+    @DisplayName("two overlapping deliveries whose futures complete on one foreign context keep their own identity"
+            + " and scope")
+    void overlappingDeliveriesWhoseFuturesCompleteOnOneForeignContextKeepEachOwnIdentityAndScope(Vertx vertx)
+            throws InterruptedException {
+        // Given two callers and one foreign context F that every application future completes on
+        try (DeliveryRig rig = DeliveryRig.over(vertx);
+                DeliveryRig.Caller first = rig.callerOnRoot();
+                DeliveryRig.Caller second = rig.callerOnRoot()) {
+            ContextInternal f = rig.foreignContext();
+            assertThat(f).isNotSameAs(first.context()).isNotSameAs(second.context());
+            LookupProbe probe = rig.probe();
+            Map<String, SecurityIdentity> identityOf = Map.of("PAY-A", user("alice"), "PAY-B", user("bob"));
+            Map<String, String> scopeOf = Map.of("PAY-A", "acme", "PAY-B", "globex");
+            Map<String, Promise<Optional<SecurityIdentity>>> dispatches = new ConcurrentHashMap<>();
+            Map<String, Promise<Optional<String>>> lookups = new ConcurrentHashMap<>();
+            CountDownLatch bothInDispatchAs = new CountDownLatch(2);
+            CountDownLatch bothInLookup = new CountDownLatch(2);
+
+            // and a plan whose dispatchAs and lookup each hold their future open until the test completes it from F
+            SignalSourcePlan<ShipmentDelivered> plan = shipments()
+                    .dispatchAs(message -> {
+                        Promise<Optional<SecurityIdentity>> promise = Promise.promise();
+                        dispatches.put(message.body().carrierRef(), promise);
+                        bothInDispatchAs.countDown();
+                        return promise.future();
+                    })
+                    .scope(message -> Optional.of(scopeOf.get(message.body().carrierRef())))
+                    .signal(OrdersContract.class, SHIPMENT_DELIVERED)
+                    .keyFrom(message -> {
+                        String reference = message.body().carrierRef();
+                        probe.sample("lookup-" + reference);
+                        Promise<Optional<String>> promise = Promise.promise();
+                        lookups.put(reference, promise);
+                        bothInLookup.countDown();
+                        return promise.future();
+                    })
+                    .payload(PlanFixture::confirmation)
+                    .build();
+            rig.operations(rig.recordedFrom(f));
+
+            // When both messages are delivered, and both are waiting on dispatchAs at the same time
+            Future<SourceDisposition> deliveryA = first.deliver(plan, shipment("PAY-A"), envelope());
+            Future<SourceDisposition> deliveryB = second.deliver(plan, shipment("PAY-B"), envelope());
+            assertThat(bothInDispatchAs.await(10, TimeUnit.SECONDS))
+                    .as("both deliveries wait on dispatchAs together")
+                    .isTrue();
+            assertThat(deliveryA.isComplete()).isFalse();
+            assertThat(deliveryB.isComplete()).isFalse();
+
+            // and F completes B's future, then A's, so the later delivery resumes first
+            completeFrom(f, dispatches.get("PAY-B"), Optional.of(identityOf.get("PAY-B")));
+            completeFrom(f, dispatches.get("PAY-A"), Optional.of(identityOf.get("PAY-A")));
+            assertThat(bothInLookup.await(10, TimeUnit.SECONDS))
+                    .as("both deliveries wait on their lookup together")
+                    .isTrue();
+
+            // and F completes both lookups, A's first
+            completeFrom(f, lookups.get("PAY-A"), Optional.of("PAY-A"));
+            completeFrom(f, lookups.get("PAY-B"), Optional.of("PAY-B"));
+            SourceDisposition dispositionA = await(deliveryA);
+            SourceDisposition dispositionB = await(deliveryB);
+
+            // Then both settled as done, each holding its own identity
+            assertThat(dispositionA.fate()).isEqualTo(Fate.DONE);
+            assertThat(dispositionB.fate()).isEqualTo(Fate.DONE);
+            assertThat(dispositionA.security().identity()).isEqualTo(identityOf.get("PAY-A"));
+            assertThat(dispositionB.security().identity()).isEqualTo(identityOf.get("PAY-B"));
+
+            // and each lookup ran under its own message's scope, with no identity bound
+            for (String reference : List.of("PAY-A", "PAY-B")) {
+                Seen lookup = probe.seenBy("lookup-" + reference);
+                assertThat(lookup).as(reference).isNotNull();
+                assertThat(lookup.scope()).as(reference).isNotNull();
+                assertThat(lookup.scope().scopeKey().value()).as(reference).isEqualTo(scopeOf.get(reference));
+                assertThat(lookup.security()).as(reference).isNull();
+            }
+
+            // and each command names its own identity and scope
+            assertThat(rig.calls()).hasSize(2);
+            for (Call call : rig.calls()) {
+                String reference = call.signal().key();
+                assertThat(call.ambient().security().identity())
+                        .as("the identity of the command for %s", reference)
+                        .isEqualTo(identityOf.get(reference));
+                assertThat(call.signal().scopeKey()).as(reference).isEqualTo(scopeOf.get(reference));
+            }
+            assertThat(rig.calls()).extracting(call -> call.signal().key()).containsExactlyInAnyOrder("PAY-A", "PAY-B");
+        }
+    }
+
+    /** Completes the promise, a moment from now, on the given context. */
+    private static <V> void completeFrom(ContextInternal context, Promise<V> promise, V value) {
+        context.runOnContext(v -> promise.complete(value));
     }
 
     @Test

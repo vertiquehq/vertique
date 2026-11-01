@@ -482,6 +482,16 @@ final class SourceScenario implements AutoCloseable {
         }
 
         /**
+         * Stops the consumers and starts new ones in the same group, without touching the group's committed offset, as
+         * after a process restart: a record the group has not committed is consumed again.
+         */
+        void restartConsumers() {
+            await(node.consumerDeployments().undeployAll());
+            await(node.consumerDeployments().deployAll());
+            awaitAssigned(this);
+        }
+
+        /**
          * Resets the group's committed offset to the record, through the admin client, and restarts the consumers, so
          * that the record is consumed a second time at the same topic, partition and offset.
          */

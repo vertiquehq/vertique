@@ -84,6 +84,10 @@ class EntryFenceIT {
             assertUnchangedBySignal(f, id);
             assertThat(f.openSignals(id)).isZero();
             assertNoKeyLeaked(f, id, "PAY-77");
+
+            // And when the same delivery is made again, the replay answers duplicate and applies nothing
+            assertReplayAnswersDuplicate(f, node, id, paid("PAY-77", "d-1"));
+            assertThat(only(f.waitRecords(id)).waitId()).isEqualTo(second.waitId());
             HeldCommandInvariant.holds(f);
         }
     }
@@ -117,9 +121,15 @@ class EntryFenceIT {
 
             // And the command is stale once, and the instance is unchanged by it
             assertStaleOnce(f, id, command);
+            assertStaleLogged(f, id, command, PAID);
             assertThat(f.fixture.instanceOf(id).status()).isEqualTo("WAITING");
             assertThat(f.fixture.instanceOf(id).currentStepId()).isEqualTo("wait-payment");
             assertUnchangedBySignal(f, id);
+            assertThat(only(f.waitRecords(id)).waitId()).isEqualTo(second.waitId());
+
+            // And when the same delivery is made again, the replay answers duplicate although the new entry matches
+            // its key, and applies nothing
+            assertReplayAnswersDuplicate(f, node, id, paid("PAY-77", "d-1"));
             assertThat(only(f.waitRecords(id)).waitId()).isEqualTo(second.waitId());
             HeldCommandInvariant.holds(f);
         }
@@ -900,6 +910,17 @@ class EntryFenceIT {
                 .anyMatch(entry -> entry.contains(id.value().toString())
                         && entry.contains(signalName)
                         && entry.contains(String.valueOf(command.id())));
+    }
+
+    /** A delivery made again answers duplicate, adds no command and applies nothing. */
+    private static void assertReplayAnswersDuplicate(
+            KeyedWaitFixture f, Node node, WorkflowInstanceId id, CorrelatedSignal replayed) {
+        CorrelatedSignalReceipt replay = f.deliverByKey(node, replayed);
+        assertThat(replay.outcome()).isEqualTo(CorrelatedSignalReceipt.Outcome.DUPLICATE);
+        f.idle(node, id);
+        assertThat(f.signalRows(id)).hasSize(1);
+        assertUnchangedBySignal(f, id);
+        assertThat(f.openSignals(id)).isZero();
     }
 
     /** No signal was received and no payload of a signal reached the state of the instance. */
