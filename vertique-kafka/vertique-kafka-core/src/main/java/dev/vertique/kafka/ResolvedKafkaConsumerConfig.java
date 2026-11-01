@@ -202,15 +202,18 @@ record ResolvedKafkaConsumerConfig(
     }
 
     /**
-     * Returns this configuration set to handle one record at a time: {@code maxInFlight} is
-     * {@code 1}, and {@code max.poll.records} is {@code 1} so that a poll never hands the consumer a
-     * second record while the first is still being handled.
+     * Returns this configuration as a binding that forces its strategies needs it. It handles one
+     * record at a time: {@code maxInFlight} is {@code 1}, and {@code max.poll.records} is {@code 1} so
+     * that a poll never hands the consumer a second record while the first is still being handled. A
+     * new group starts at the beginning of the topic unless {@code auto.offset.reset} is configured,
+     * so a first record that fails before any commit is not skipped after a restart.
      *
      * @return the changed configuration
      */
-    ResolvedKafkaConsumerConfig oneRecordAtATime() {
+    ResolvedKafkaConsumerConfig forced() {
         Map<String, String> properties = new HashMap<>(kafkaProperties);
         properties.put("max.poll.records", "1");
+        properties.putIfAbsent("auto.offset.reset", "earliest");
         return new ResolvedKafkaConsumerConfig(
                 topic,
                 groupId,

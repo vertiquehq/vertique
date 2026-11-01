@@ -70,7 +70,8 @@ The at-least-once guarantee starts at a partition's **first committed offset**. 
 `auto.offset.reset` at Kafka's default, `latest`, so a group's first-ever record that fails before
 any offset is committed can be lost if the consumer restarts or the partition moves. To read from the
 start of the topic instead, set `kafka.consumers.{name}.properties` `auto.offset.reset=earliest`; a
-new group then reads all retained history.
+new group then reads all retained history. A binding that forces its strategies defaults to
+`earliest`, and a configured value wins, so that loss needs `latest` to be set on purpose.
 
 ### Record headers the framework reads and writes
 
@@ -230,7 +231,8 @@ exactly as it did before them.
   The binding also handles **one record at a time**: `maxInFlight` resolves to `1` and
   `max.poll.records` to `1`, so a poll never hands the consumer a second record while the first is
   being handled. A configured `maxInFlight` other than `1` fails registration naming
-  `maxInFlight`; a configured `max.poll.records` is replaced. With several records in flight, two
+  `maxInFlight`; a configured `max.poll.records` is replaced. A new group starts at the beginning of
+  the topic unless `auto.offset.reset` is configured. With several records in flight, two
   failures in one partition could leave the consumer positioned past the earlier one, which a later
   success then commits past. **Throughput consequence:** each consumer instance runs one handler at a
   time, so its throughput is the inverse of one handler run per record; raise `instances` to add

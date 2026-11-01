@@ -70,6 +70,29 @@ class KafkaForcedStrategiesTest {
     }
 
     @Test
+    @DisplayName("a forcing binding starts a new group at the beginning of the topic, unless the reset is configured")
+    void forcingBindingDefaultsToTheBeginningOfTheTopic() {
+        // Given: a forcing binding, and a binding that does not force its strategies
+        KafkaConsumerBinding<Payload> forcing = StrategyRig.binding(true, ErrorStrategy.RETRY);
+        KafkaConsumerBinding<Payload> notForcing = StrategyRig.binding(false, ErrorStrategy.SKIP);
+        JsonObject latest = new JsonObject().put("properties", new JsonObject().put("auto.offset.reset", "latest"));
+
+        // When: each registers, with no reset configured and with one
+        // Then: only the forcing binding changes the default, and a configured value wins
+        assertEquals("earliest", offsetReset(forcing, new JsonObject()));
+        assertEquals("latest", offsetReset(forcing, latest));
+        assertEquals(null, offsetReset(notForcing, new JsonObject()));
+    }
+
+    private static String offsetReset(KafkaConsumerBinding<Payload> binding, JsonObject consumerConfig) {
+        return List.copyOf(StrategyRig.register(binding, consumerConfig).entries())
+                .get(0)
+                .config()
+                .kafkaProperties()
+                .get("auto.offset.reset");
+    }
+
+    @Test
     @DisplayName("a configuration that changes a forced strategy fails registration naming the option")
     void configurationChangingAForcedStrategyFailsRegistrationNamingTheOption() {
         // Given: a MANUAL, RETRY handler binding that forces its strategies, and a MANUAL, SKIP binding that

@@ -372,7 +372,7 @@ final class KafkaConsumerScanner {
                 return;
             }
             // One record at a time: with several in flight a later record could commit past a failed one.
-            config = config.oneRecordAtATime();
+            config = config.forced();
         }
 
         ConsumerEntry entry = KafkaConsumerValidation.validateAndBuild(

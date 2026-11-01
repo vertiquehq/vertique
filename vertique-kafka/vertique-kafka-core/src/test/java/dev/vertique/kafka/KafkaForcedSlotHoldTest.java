@@ -192,7 +192,7 @@ class KafkaForcedSlotHoldTest {
                 kafkaConfig.consumerIndex().get("test"));
         return new ConsumerEntry(
                 "test",
-                config.oneRecordAtATime(),
+                config.forced(),
                 ConsumerEntry.Kind.HANDLER,
                 Object.class,
                 null,
