@@ -24,6 +24,9 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 final class KafkaErrorHandler {
 
+    /** Kafka's default for {@code max.poll.interval.ms}. */
+    private static final long DEFAULT_MAX_POLL_INTERVAL_MS = 300_000L;
+
     // --- DLQ header constants ---
 
     /** The header keys this handler writes; an inbound header with one of them is not forwarded. */
@@ -433,7 +436,7 @@ final class KafkaErrorHandler {
                 retryConfig = RetryConfig.DEFAULT;
             }
             int failures = dlqFailures.merge(positionKey(record), 1, Integer::sum);
-            long delayMs = retryConfig.delayMs(failures - 1);
+            long delayMs = Math.min(retryConfig.delayMs(failures - 1), longestPauseMs());
             log.warn(
                     "[{}] Will deliver topic={} partition={} offset={} again in {}ms; {}",
                     entry.name(),
@@ -451,6 +454,16 @@ final class KafkaErrorHandler {
         } catch (Throwable thrown) {
             return Future.failedFuture(thrown);
         }
+    }
+
+    /**
+     * The longest pause of a redelivery that repeats without limit. A paused consumer does not poll, so a
+     * pause past {@code max.poll.interval.ms} would evict it from its group; half of it leaves time to
+     * handle the record that the resume delivers.
+     */
+    private long longestPauseMs() {
+        String configured = entry.config().kafkaProperties().get("max.poll.interval.ms");
+        return (configured == null ? DEFAULT_MAX_POLL_INTERVAL_MS : Long.parseLong(configured.trim())) / 2;
     }
 
     /**

@@ -842,7 +842,7 @@ earlier failure of the same record is removed.
 A handler fails a record with `new KafkaRedeliverFailure(errorType)` when the record is fine and must
 be delivered again later, such as when the system is busy. It applies on a `forceStrategies` binding:
 the consumer pauses, seeks back to the record and resumes after a backoff that grows with the
-redeliveries of that record up to `retry.maxBackoffMs`, and the outcome is `RETRY_SCHEDULED`. The
+redeliveries of that record up to `retry.maxBackoffMs` and never past half of `max.poll.interval.ms`, so the consumer keeps its group membership, and the outcome is `RETRY_SCHEDULED`. The
 record stays uncommitted and keeps its slot until the seek back is confirmed, a seek that cannot be
 confirmed is handled as for a failed dead-letter publish, and no later record is delivered ahead of
 it. It spends no retry: the record's retry count does not change, the number of redeliveries has no

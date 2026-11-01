@@ -167,10 +167,20 @@ class KafkaForcedSlotHoldTest {
             ErrorStrategy strategy,
             @Nullable KafkaRecordHandler<?> handler,
             @Nullable KafkaRecordFilter filter) {
+        return entry(force, strategy, handler, filter, new JsonObject());
+    }
+
+    private static ConsumerEntry entry(
+            boolean force,
+            ErrorStrategy strategy,
+            @Nullable KafkaRecordHandler<?> handler,
+            @Nullable KafkaRecordFilter filter,
+            JsonObject properties) {
         JsonObject consumer = new JsonObject()
                 .put("topic", TOPIC)
                 .put("groupId", "grp")
                 .put("enabled", true)
+                .put("properties", properties)
                 .put(
                         "retry",
                         new JsonObject()
@@ -835,6 +845,31 @@ class KafkaForcedSlotHoldTest {
                 .when(rig.consumer())
                 .seek(any(TopicPartition.class), anyLong());
         return held;
+    }
+
+    @Test
+    @DisplayName("a repeated redelivery never pauses for more than half of the poll interval")
+    void repeatedRedeliveryStaysWithinThePollInterval() {
+        // Given: a forcing entry whose poll interval is shorter than its backoff, and one left at Kafka's default
+        JsonObject shortInterval = new JsonObject().put("max.poll.interval.ms", String.valueOf(BACKOFF_MS));
+        KafkaConsumerRecord<String, byte[]> failed = record(FAILED_OFFSET, null);
+        KafkaProducerFactory producer = producerAnswering(Future.succeededFuture());
+        KafkaErrorHandler capped =
+                new KafkaErrorHandler(entry(true, ErrorStrategy.RETRY, null, null, shortInterval), producer);
+        KafkaErrorHandler uncapped = new KafkaErrorHandler(entry(true, ErrorStrategy.RETRY, null, null), producer);
+        KafkaTerminalOutcomeTest.CapturingConsumerControl cappedControl =
+                new KafkaTerminalOutcomeTest.CapturingConsumerControl();
+        KafkaTerminalOutcomeTest.CapturingConsumerControl uncappedControl =
+                new KafkaTerminalOutcomeTest.CapturingConsumerControl();
+
+        // When: each is asked to deliver the record again
+        KafkaRedeliverFailure busy = new KafkaRedeliverFailure("Busy");
+        capped.handleError(failed, new byte[0], KafkaRecordHeaders.empty(), busy, cappedControl);
+        uncapped.handleError(failed, new byte[0], KafkaRecordHeaders.empty(), busy, uncappedControl);
+
+        // Then: the short interval caps the pause at half of itself, and the default leaves the backoff alone
+        assertEquals(BACKOFF_MS / 2, cappedControl.lastDelayMs);
+        assertEquals(BACKOFF_MS, uncappedControl.lastDelayMs);
     }
 
     private static void setPaused(Rig rig, boolean value) throws ReflectiveOperationException {
