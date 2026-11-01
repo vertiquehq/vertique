@@ -39,6 +39,10 @@ SPDX-License-Identifier: EUPL-1.2
                             <groupId>dev.vertique</groupId>
                             <artifactId>vertique-codegen-dagger</artifactId>
                         </path>
+                        <path>
+                            <groupId>dev.vertique</groupId>
+                            <artifactId>vertique-codegen-kafka</artifactId>
+                        </path>
                     </annotationProcessorPaths>
                 </configuration>
             </plugin>
@@ -84,6 +88,11 @@ SPDX-License-Identifier: EUPL-1.2
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-codegen-dagger</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-codegen-kafka</artifactId>
             <scope>provided</scope>
         </dependency>
         <dependency>

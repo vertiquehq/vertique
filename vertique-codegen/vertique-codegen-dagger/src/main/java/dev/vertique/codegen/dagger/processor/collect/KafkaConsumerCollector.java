@@ -4,6 +4,7 @@
 package dev.vertique.codegen.dagger.processor.collect;
 
 import dev.vertique.codegen.CodegenContext;
+import dev.vertique.codegen.SignalListeners;
 import dev.vertique.codegen.dagger.processor.Binding;
 import java.util.List;
 import javax.lang.model.element.ElementKind;
@@ -54,12 +55,17 @@ public final class KafkaConsumerCollector extends AnnotationRootedCollector {
     }
 
     /**
-     * Skips interfaces (Model 3 routers) with a {@code NOTE}. Concrete classes proceed through
-     * the standard {@code @Inject}-constructor validation in {@link AnnotationRootedCollector}.
+     * Skips interfaces (Model 3 routers) with a {@code NOTE}, and a signal listener without one: the signal
+     * source generated for it is registered by {@link GeneratedSignalSourceCollector}, so there is no manual
+     * contribution to keep. Concrete classes proceed through the standard {@code @Inject}-constructor validation in
+     * {@link AnnotationRootedCollector}.
      */
     @Override
     protected Binding createBinding(TypeElement type) {
         if (type.getKind() == ElementKind.INTERFACE) {
+            if (SignalListeners.isSignalListener(type)) {
+                return null;
+            }
             ctx.diagnostics()
                     .note(
                             type,

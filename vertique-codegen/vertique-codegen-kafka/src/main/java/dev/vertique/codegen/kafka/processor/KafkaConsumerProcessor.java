@@ -5,7 +5,10 @@ package dev.vertique.codegen.kafka.processor;
 
 import dev.vertique.codegen.AnnotationMirrors;
 import dev.vertique.codegen.CodegenContext;
+import dev.vertique.codegen.SignalListeners;
+import dev.vertique.codegen.SignalTargetScan;
 import dev.vertique.codegen.kafka.processor.emit.BindingMetaEmitter;
+import dev.vertique.codegen.kafka.processor.emit.SignalSourceEmitter;
 import dev.vertique.codegen.kafka.processor.scan.KafkaListenerScanner;
 import dev.vertique.codegen.kafka.processor.scan.KafkaParamClassifier;
 import dev.vertique.codegen.kafka.processor.scan.KafkaSourceModel;
@@ -13,6 +16,7 @@ import dev.vertique.codegen.kafka.processor.scan.KafkaSourceScanner;
 import dev.vertique.codegen.kafka.processor.scan.ListenerModel;
 import dev.vertique.codegen.kafka.processor.validate.KafkaConsumerValidator;
 import dev.vertique.codegen.kafka.processor.validate.KafkaSourceValidator;
+import dev.vertique.codegen.kafka.processor.validate.SignalListenerValidator;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -27,6 +31,7 @@ import javax.annotation.processing.SupportedOptions;
 import javax.annotation.processing.SupportedSourceVersion;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.Element;
+import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.TypeElement;
 
@@ -49,6 +54,11 @@ import javax.lang.model.element.TypeElement;
  *       {@code KafkaRecordHandler<V>}; emits a
  *       {@link dev.vertique.kafka.KafkaBindingMeta.Kind#HANDLER HANDLER} meta with the resolved
  *       value type {@code V}.</li>
+ *   <li><b>Signal listener</b> — a {@code @KafkaListener} interface whose methods carry
+ *       {@code @WorkflowSignalTarget}; emits {@code <Interface>_SignalSource}, a {@code KafkaSignalSource}
+ *       that the dagger processor registers by name, and no {@code _BindingMeta}. The shared scan in
+ *       {@code vertique-codegen-core} validates the targets, and {@link SignalListenerValidator} the Kafka-only
+ *       settings.</li>
  * </ul>
  *
  * <p>Consumer shape is validated at compile time by {@link KafkaConsumerValidator}
@@ -80,6 +90,8 @@ public final class KafkaConsumerProcessor extends AbstractProcessor {
     private KafkaSourceScanner sourceScanner;
     private KafkaSourceValidator sourceValidator;
     private BindingMetaEmitter emitter;
+    private SignalListenerValidator signalValidator;
+    private SignalSourceEmitter signalEmitter;
 
     /** Guard to ensure emission runs at most once (the first non-final round). */
     private boolean emitted;
@@ -96,6 +108,8 @@ public final class KafkaConsumerProcessor extends AbstractProcessor {
         sourceScanner = new KafkaSourceScanner(ctx);
         sourceValidator = new KafkaSourceValidator(ctx);
         emitter = new BindingMetaEmitter(ctx);
+        signalValidator = new SignalListenerValidator(ctx);
+        signalEmitter = new SignalSourceEmitter(ctx);
         emitted = false;
     }
 
@@ -116,7 +130,20 @@ public final class KafkaConsumerProcessor extends AbstractProcessor {
                 }
             }
         }
-        List<ListenerModel> validModels = validator.validate(models);
+        List<ListenerModel> validModels = new ArrayList<>();
+        for (ListenerModel model : validator.validate(models)) {
+            if (SignalListeners.isSignalListener(model.originType())) {
+                generateSignalSource(model);
+            } else {
+                validModels.add(model);
+            }
+        }
+        // A class carrying a target is not a signal listener; the shared scan reports it.
+        for (ListenerModel model : models) {
+            if (model.originType().getKind() != ElementKind.INTERFACE) {
+                SignalTargetScan.scan(ctx, model.originType(), SignalTargetScan.DedupRequirement.BUSINESS_KEY_TARGETS);
+            }
+        }
 
         // Build a map from origin TypeElement to valid ListenerModel for O(1) lookup when merging
         // with @KafkaSource models below.
@@ -158,6 +185,23 @@ public final class KafkaConsumerProcessor extends AbstractProcessor {
     }
 
     // --- Internal helpers ---
+
+    /**
+     * Validates a signal listener and emits its {@code <Interface>_SignalSource}. A signal listener has no binding
+     * meta: it has no route, and a zero-route router must never be loaded for it. The shared scan validates the
+     * targets, with {@code dedupBy} required on a business-key target; both validations run, so one compilation
+     * reports every violation.
+     *
+     * @param model the listener model that passed the generic listener validation
+     */
+    private void generateSignalSource(ListenerModel model) {
+        boolean settingsValid = signalValidator.validate(model);
+        List<SignalTargetScan.Target> targets =
+                SignalTargetScan.scan(ctx, model.originType(), SignalTargetScan.DedupRequirement.BUSINESS_KEY_TARGETS);
+        if (settingsValid && !targets.isEmpty()) {
+            signalEmitter.emit(model, targets);
+        }
+    }
 
     /**
      * Collects all elements annotated with {@code @KafkaSource}, groups the annotated methods by

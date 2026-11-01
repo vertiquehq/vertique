@@ -1019,6 +1019,26 @@ public @interface SignalSourceType {
 }
 ```
 
+Three more annotations in the same package, all with class retention, let an interface be the source with no Dagger code. `@WorkflowSignalTarget` is repeatable (its container is `@WorkflowSignalTargets`) and goes on a method of a `@KafkaListener` interface: `contract` and `signal` name a signal a `@WorkflowContract` declares, `key` or `businessKey` (exactly one) names an accessor of the method's only parameter, the message, `dedupBy` names the accessor that yields the dedup key, and `onNoMatch` is the `SignalNoMatch` policy, `IGNORE` by default. An accessor is a record component or a no-argument method of the message type, and the generated source refers to it by method reference, so a misspelled name fails compilation naming it. The message type must be the signal's payload type, because this form maps no payload; a lookup, a payload mapping and a scope belong to the builder or to a source class. A message has one dedup key, so every target of an interface states the same `dedupBy` (an empty one included), and a target by `businessKey` must state it. `@SignalSourceForm(Interface.class)` marks an annotation that declares such an interface, such as a transport's own source annotation: generated wiring binds `<Interface>_SignalSource` into the `Set` of the named source interface, by name, with no code generator naming a transport type.
+
+```java
+@Target(ElementType.METHOD) @Retention(RetentionPolicy.CLASS)
+@Repeatable(WorkflowSignalTargets.class)
+public @interface WorkflowSignalTarget {
+    Class<?> contract();
+    String signal();
+    String key() default "";
+    String businessKey() default "";
+    String dedupBy() default "";
+    SignalNoMatch onNoMatch() default SignalNoMatch.IGNORE;
+}
+
+@Target(ElementType.ANNOTATION_TYPE) @Retention(RetentionPolicy.CLASS)
+public @interface SignalSourceForm {
+    Class<?> value();
+}
+```
+
 `WorkflowDefinitionLifecycleException` reports a typed `reason()` and `key()` for lifecycle refusals,
 including stale claims, unavailable code, missing loaders, and plan drift. Asynchronous entrypoints
 report invalid arguments through failed Futures.

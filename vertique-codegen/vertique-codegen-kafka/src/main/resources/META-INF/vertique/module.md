@@ -45,6 +45,33 @@ Lifecycle:
 
 **Dual-annotation aggregation:** A class that is both a `@KafkaListener` direct-handler (Model 4) and carries `@KafkaSource` methods produces one companion. The `METAS` list contains the HANDLER entry followed by all SOURCE entries. The runtime loader's `scanKafkaSources` hook filters to SOURCE metas; `scanListeners` takes HANDLER (or ROUTER) metas.
 
+### Signal listeners and `SignalSourceEmitter`
+
+A `@KafkaListener` interface whose methods carry `@WorkflowSignalTarget` (package `dev.vertique.workflow.source`) is a
+signal listener. It needs no `@KafkaHandler` method and no Dagger code. For it the processor generates
+`<Interface>_SignalSource` in the interface's package, a `KafkaSignalSource<T>` with an `@Inject` constructor and no other
+dependency, and `AutoWireProcessor` binds that class by name into `Set<KafkaSignalSource<?>>` (see
+`vertique-codegen-dagger`). The class name is the one rule of `vertique-codegen-core` (`SignalListeners`), and a signal
+listener emits no `_BindingMeta`, so the runtime never loads a router with no routes for it. The generated source calls
+the same builder as a source written by hand (topic, group and name from the listener, `dedupBy` and, per target, the
+signal, the key accessor and the no-match policy), so an annotated and a builder source behave the same. It names no key
+value and builds no payload mapping.
+
+```java
+@KafkaListener(name = "carrier-events", topic = "carrier.events", groupId = "logistics")
+public interface CarrierSignals {
+    @WorkflowSignalTarget(contract = OrdersContract.class, signal = "shipment-delivered", key = "carrierRef")
+    @WorkflowSignalTarget(contract = OrdersContract.class, signal = "order-delivered", businessKey = "orderNumber",
+            dedupBy = "eventId")
+    void delivered(ShipmentDelivered event);
+}
+```
+
+The generated source commits manually and retries, so the listener leaves `commitStrategy` and `errorStrategy` out or
+writes `MANUAL` and `RETRY`. The target rules are the shared scan of `vertique-codegen-core` (`SignalTargetScan`), which the
+Camel processor applies too; `SignalListenerValidator` adds the Kafka-only rules. The application's build needs
+`vertique-workflow-kafka` on the compile classpath, which carries `KafkaSignalSource`.
+
 ### Scanners
 
 **`KafkaListenerScanner`** scans a `@KafkaListener`-annotated `TypeElement` into a `ListenerModel`. It reads annotation attributes via `KafkaAttrs`, inspects the type's kind (interface → Model 3 router; class implementing `KafkaRecordHandler<V>` → Model 4 direct handler), and extracts `@KafkaHandler` methods into `RouteModel` entries. A shared `KafkaParamClassifier` determines payload type by walking method parameters.
@@ -63,7 +90,7 @@ Lifecycle:
 | `HandlerMatchValidator` | `matchHeader`, `matchProperty`, `defaultHandler` mutual exclusivity; at most one `defaultHandler` per router; duplicate route selectors (same `matchHeader`+`matchValue` or `matchProperty`+`matchValue`) | ERROR |
 | `HandlerParamValidator` | Payload parameter arity and type | ERROR |
 | `HandlerReturnTypeValidator` | Return type must be `void` or `Future<Void>` | ERROR |
-| `DirectHandlerValidator` | `@KafkaListener` class must implement `KafkaRecordHandler`; `@KafkaListener#valueType()` must be assignable to the handler's `V` parameter; raw-handler with unresolved `V` rejected | ERROR |
+| `DirectHandlerValidator` | A `@KafkaListener` interface must have a `@KafkaHandler` route unless it is a signal listener; a `@KafkaListener` class must implement `KafkaRecordHandler`; `@KafkaListener#valueType()` must be assignable to the handler's `V` parameter; raw-handler with unresolved `V` rejected | ERROR |
 
 **Source validators:**
 
@@ -132,6 +159,8 @@ The NFR's "≥50% lower scan time" is a scan/classify-fraction claim. Measuring 
 | `@KafkaListener` class does not implement `KafkaRecordHandler` | ERROR | `@KafkaListener OrderEventHandler must implement KafkaRecordHandler<V>` |
 | `@KafkaListener#valueType()` not assignable to handler `V` | ERROR | `@KafkaListener on OrderEventHandler: declared valueType OtherEvent is not assignable to handler type OrderEvent` |
 | Raw-handler with unresolvable `V` | ERROR | `@KafkaListener on RawHandler: KafkaRecordHandler<V> type parameter V cannot be resolved; declare valueType` |
+| Signal listener: a signal the contract does not declare, an accessor the message type lacks, a message type that is not the signal's, a business-key target with no `dedupBy`, targets that disagree on `dedupBy`, a target method without exactly one parameter, both or neither of `key` and `businessKey`, two message types on one interface, or targets on a concrete class | ERROR | `CarrierSignals.delivered names signal 'shipment-delivred', which contract OrdersContract does not declare` |
+| Signal listener: an explicit `commitStrategy` other than `MANUAL`, `errorStrategy` other than `RETRY`, a `deadLetterTopic`, a `valueType`, a `@JsonProfile`, or a `@KafkaHandler` method | ERROR | `CarrierSignals sets commitStrategy = AUTO, but the signal source generated for a listener with signal targets forces MANUAL` — read from the explicit values only, so a listener that writes none passes |
 | `@KafkaSource` on a contract interface method | ERROR | `@KafkaSource on OrderService.processOrder must be on a service-implementation method, not a contract interface` |
 
 ---

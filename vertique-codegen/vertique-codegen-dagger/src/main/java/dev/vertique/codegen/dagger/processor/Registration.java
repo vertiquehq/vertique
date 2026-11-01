@@ -56,6 +56,23 @@ public record Registration(
     }
 
     /**
+     * Creates the required registration of a class that another processor generates for an interface, bound by name
+     * into the set of a source type.
+     *
+     * <p>The class need not exist when the registration is made: a processor generates it in a later round.
+     *
+     * @param origin          the interface the class is generated for
+     * @param implementation  the name of the generated class
+     * @param target          the source type the generated class implements
+     * @param transportModule the module of the transport that consumes the set
+     * @return the registration
+     */
+    public static Registration generatedSource(
+            TypeElement origin, ClassName implementation, TypeElement target, TypeElement transportModule) {
+        return new Registration(origin, target, implementation, true, true, transportModule);
+    }
+
+    /**
      * Returns whether this registration binds the target parameterized with wildcards.
      *
      * @return {@code true} for a signal source class

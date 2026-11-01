@@ -6,6 +6,7 @@ package dev.vertique.codegen.kafka.processor.validate;
 import dev.vertique.codegen.AnnotationMirrors;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.Diagnostics;
+import dev.vertique.codegen.SignalListeners;
 import dev.vertique.codegen.kafka.processor.KafkaCodegenAnnotations;
 import dev.vertique.codegen.kafka.processor.scan.ListenerModel;
 import java.util.Optional;
@@ -21,7 +22,8 @@ import javax.lang.model.type.TypeMirror;
  * <ul>
  *   <li>A {@code @KafkaListener} interface with no {@code @KafkaHandler} methods has no routes and
  *       cannot implement {@code KafkaRecordHandler<V>} — it is neither a router nor a direct
- *       handler.</li>
+ *       handler, unless it is a signal listener (a method carries {@code @WorkflowSignalTarget}),
+ *       whose generated signal source consumes the topic.</li>
  *   <li>A {@code @KafkaListener} class that does not implement {@code KafkaRecordHandler} (not even
  *       as a raw type) has no handler contract — it is neither a router nor a direct handler.</li>
  *   <li>A {@code @KafkaListener} class that implements the raw {@code KafkaRecordHandler} (no type
@@ -63,7 +65,8 @@ public final class DirectHandlerValidator {
      * <p>Validation rules:
      * <ul>
      *   <li>{@link ListenerModel.Kind#ROUTER} with at least one route → valid (no-op)</li>
-     *   <li>{@link ListenerModel.Kind#ROUTER} with no routes → error</li>
+     *   <li>{@link ListenerModel.Kind#ROUTER} with no routes → valid for a signal listener, error
+     *       otherwise</li>
      *   <li>{@link ListenerModel.Kind#HANDLER} whose class is not assignable to
      *       {@code KafkaRecordHandler} → error</li>
      *   <li>{@link ListenerModel.Kind#HANDLER} whose class implements raw {@code KafkaRecordHandler}
@@ -85,6 +88,11 @@ public final class DirectHandlerValidator {
         if (model.kind() == ListenerModel.Kind.ROUTER) {
             // A ROUTER model with at least one @KafkaHandler route is valid.
             if (!model.routes().isEmpty()) {
+                return true;
+            }
+            // A signal listener declares its routes as signal targets, not as @KafkaHandler methods, and the
+            // signal source generated for it consumes the topic.
+            if (SignalListeners.isSignalListener(model.originType())) {
                 return true;
             }
             // A ROUTER model with no routes is an interface that declares no @KafkaHandler methods.

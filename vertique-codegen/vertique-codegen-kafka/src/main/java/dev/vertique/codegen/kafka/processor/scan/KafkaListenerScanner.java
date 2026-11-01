@@ -5,6 +5,7 @@ package dev.vertique.codegen.kafka.processor.scan;
 
 import dev.vertique.codegen.AnnotationMirrors;
 import dev.vertique.codegen.CodegenContext;
+import dev.vertique.codegen.SignalListeners;
 import dev.vertique.codegen.kafka.processor.KafkaCodegenAnnotations;
 import dev.vertique.codegen.support.MethodOverrides;
 import java.util.ArrayList;
@@ -97,7 +98,10 @@ public final class KafkaListenerScanner {
         // Read the type-level @JsonProfile annotation (by FQN string match, no module dep) as the
         // sole per-binding profile selector. A method-level @JsonProfile on a listener type is
         // rejected here (FR-JSON-066).
-        rejectMethodLevelJsonProfile(type);
+        // A signal listener's settings are checked by the signal validator, which names the signal source.
+        if (!SignalListeners.isSignalListener(type)) {
+            rejectMethodLevelJsonProfile(type);
+        }
         String jsonProfile = resolveEffectiveProfile(type);
 
         // Enum constants arrive as VariableElement in the APT mirror

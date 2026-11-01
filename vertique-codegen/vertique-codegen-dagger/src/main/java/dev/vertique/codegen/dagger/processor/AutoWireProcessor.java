@@ -6,6 +6,7 @@ package dev.vertique.codegen.dagger.processor;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.PackageResolver;
 import dev.vertique.codegen.dagger.processor.collect.DelayedJobExecutorScanner;
+import dev.vertique.codegen.dagger.processor.collect.GeneratedSignalSourceCollector;
 import dev.vertique.codegen.dagger.processor.collect.KafkaConsumerCollector;
 import dev.vertique.codegen.dagger.processor.collect.RegistrationCollector;
 import dev.vertique.codegen.dagger.processor.collect.RestClientCollector;
@@ -48,6 +49,12 @@ import javax.lang.model.element.TypeElement;
  * {@code Set} of the {@code @SignalSourceType} interface it implements, bound as that interface parameterized with
  * wildcards, and the module includes the transport module the marker names. Such a registration is required: one the
  * generated module cannot reference is an error naming the class.
+ *
+ * <p>It also binds, in round one and by name, the {@code <Interface>_SignalSource} class that another processor
+ * generates for a {@code @KafkaListener} interface with signal targets, and for an interface annotated with an
+ * annotation that carries {@code @SignalSourceForm}. The class does not exist yet, so the final round reports each
+ * predicted class that no processor generated, naming the processor to add, unless an earlier round already raised an
+ * error.
  *
  * <p>JAX-RS resource binding ({@code @Path} &#8594; {@code GeneratedJaxRsResourcesModule}) is
  * owned by {@code JaxRsPipelineProcessor} in {@code vertique-codegen-jaxrs} (CG-010).
@@ -105,6 +112,7 @@ public final class AutoWireProcessor extends AbstractProcessor {
     private KafkaConsumerCollector kafkaCollector;
     private RegistrationCollector registrationCollector;
     private SignalSourceCollector signalSourceCollector;
+    private GeneratedSignalSourceCollector generatedSignalSourceCollector;
     private DelayedJobExecutorScanner delayedJobScanner;
 
     // --- Emitters ---
@@ -156,6 +164,7 @@ public final class AutoWireProcessor extends AbstractProcessor {
         kafkaCollector = new KafkaConsumerCollector(ctx);
         registrationCollector = new RegistrationCollector(ctx);
         signalSourceCollector = new SignalSourceCollector(ctx);
+        generatedSignalSourceCollector = new GeneratedSignalSourceCollector(ctx);
 
         // Scanners
         delayedJobScanner = new DelayedJobExecutorScanner(ctx);
@@ -198,9 +207,15 @@ public final class AutoWireProcessor extends AbstractProcessor {
             return false;
         }
 
-        // Skip collection and emission on the final synthetic round (processingOver) and on any
-        // subsequent rounds after we have already emitted
-        if (roundEnv.processingOver() || emitted) {
+        // The final synthetic round collects and emits nothing; it only reports a predicted signal source that no
+        // processor generated.
+        if (roundEnv.processingOver()) {
+            generatedSignalSourceCollector.reportMissing(roundEnv);
+            return false;
+        }
+
+        // Skip collection and emission on any round after we have already emitted
+        if (emitted) {
             return false;
         }
 
@@ -209,6 +224,7 @@ public final class AutoWireProcessor extends AbstractProcessor {
         kafkaCollector.collect(roundEnv, accumulator.get(Qualifier.KAFKA_CONSUMERS));
         registrationCollector.collect(roundEnv, registrations);
         signalSourceCollector.collect(roundEnv, registrations);
+        generatedSignalSourceCollector.collect(annotations, roundEnv, registrations);
 
         // --- Phase 2: Root-element scan for delayed-job executors ---
         List<TypeElement> concreteRootElements = collectConcreteRootElements(roundEnv);
