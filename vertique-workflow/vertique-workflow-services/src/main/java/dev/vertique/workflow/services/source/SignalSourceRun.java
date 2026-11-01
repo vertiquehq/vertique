@@ -48,7 +48,7 @@ import lombok.extern.slf4j.Slf4j;
  * Runs one message through a {@link SignalSourcePlan} to one {@link SourceDisposition}.
  *
  * <p>The run is a chain of futures over the context {@code deliver} captured. Every stage and every
- * recording starts on its own duplicate of that context, made by {@link WorkflowSourceDelivery}, and
+ * recording starts on its own duplicate of that context, made by {@link WorkflowSignalSourceDelivery}, and
  * the chain resumes on the captured context before the next stage starts, whichever context completed
  * the stage's own future. The stages run in this order: {@code when}, the dedup key, {@code dispatchAs},
  * {@code scope}; then, for each signal in turn, its key, its payload and its recording. Each signal is
@@ -106,7 +106,7 @@ final class SignalSourceRun<T> {
         }
     }
 
-    private final WorkflowSourceDelivery delivery;
+    private final WorkflowSignalSourceDelivery delivery;
     private final SignalSourcePlan<T> plan;
     private final SignalMessage<T> message;
     private final SourceEnvelope envelope;
@@ -118,7 +118,7 @@ final class SignalSourceRun<T> {
     private @Nullable String scopeKey;
 
     SignalSourceRun(
-            WorkflowSourceDelivery delivery,
+            WorkflowSignalSourceDelivery delivery,
             SignalSourcePlan<T> plan,
             SignalMessage<T> message,
             SourceEnvelope envelope,
@@ -337,7 +337,7 @@ final class SignalSourceRun<T> {
 
     /** The identity of this target of the message in the inbox: the contract, the signal, the scope and the dedup key. */
     private String inboxId(Target<T> target) {
-        return WorkflowDedupScopes.sourceInboxId(target.contractName(), target.signalName(), scopeKey, dedupKey);
+        return WorkflowDedupScopes.signalSourceInboxId(target.contractName(), target.signalName(), scopeKey, dedupKey);
     }
 
     /** Whether a verdict ended a target without a signal because there was nothing to address: a null or empty key. */
@@ -401,7 +401,7 @@ final class SignalSourceRun<T> {
             return Verdict.of(Outcome.LIMITED, Fate.RETRY, typeOf(cause));
         }
         if (cause instanceof WorkflowIntakeRefusedException) {
-            return Verdict.of(Outcome.LIMITED, Fate.WAIT, typeOf(cause));
+            return Verdict.of(Outcome.LIMITED, Fate.DEFER, typeOf(cause));
         }
         if (cause instanceof WorkflowInvalidPayloadException) {
             return Verdict.of(Outcome.OVERSIZED, Fate.TERMINAL, typeOf(cause));
@@ -485,7 +485,7 @@ final class SignalSourceRun<T> {
             case DONE -> 0;
             case RETRY -> 1;
             case TERMINAL -> 2;
-            case WAIT -> 3;
+            case DEFER -> 3;
         };
     }
 

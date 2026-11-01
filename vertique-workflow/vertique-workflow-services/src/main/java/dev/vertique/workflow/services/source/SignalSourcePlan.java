@@ -16,7 +16,7 @@ import java.util.function.Predicate;
 
 /**
  * A transport-neutral description of a correlated signal source, run one message at a time by
- * {@link WorkflowSourceDelivery#deliver}.
+ * {@link WorkflowSignalSourceDelivery#deliver}.
  *
  * <p><strong>INTERNAL.</strong> This type is an internal seam, outside the maturity promise of
  * {@code vertique-workflow-services}. It is public only because a transport in another repository

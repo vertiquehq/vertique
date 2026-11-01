@@ -150,7 +150,7 @@ public class KafkaSettlementIT {
                     .errorStrategy(ErrorStrategy.RETRY)
                     .deadLetterTopic(topic + ".dlq")
                     .handler(handler)
-                    .forceStrategies();
+                    .requireBindingStrategies();
             if (gate != null) {
                 builder.dispatchGate(gate);
             }

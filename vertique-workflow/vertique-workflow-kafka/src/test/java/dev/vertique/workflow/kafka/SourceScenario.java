@@ -27,7 +27,7 @@ import dev.vertique.workflow.engine.intake.IntakePressureSampler;
 import dev.vertique.workflow.exception.WorkflowIntakeRefusedException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
-import dev.vertique.workflow.services.source.WorkflowSourceDelivery;
+import dev.vertique.workflow.services.source.WorkflowSignalSourceDelivery;
 import dev.vertique.workflow.source.SignalMessage;
 import dev.vertique.workflow.source.SignalSourceRefusal;
 import io.vertx.core.Context;
@@ -1162,7 +1162,8 @@ final class SourceScenario implements AutoCloseable {
 
     private static boolean calledByDelivery() {
         return StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE)
-                .walk(frames -> frames.anyMatch(frame -> frame.getDeclaringClass() == WorkflowSourceDelivery.class));
+                .walk(frames ->
+                        frames.anyMatch(frame -> frame.getDeclaringClass() == WorkflowSignalSourceDelivery.class));
     }
 
     // --- shared infrastructure ---

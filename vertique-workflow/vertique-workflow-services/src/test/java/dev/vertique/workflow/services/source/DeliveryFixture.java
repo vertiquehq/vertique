@@ -235,7 +235,7 @@ final class DeliveryFixture {
     private final Mode mode;
     private final Throwable cause;
     private final ContextInternal home;
-    private final WorkflowSourceDelivery delivery;
+    private final WorkflowSignalSourceDelivery delivery;
 
     private DeliveryFixture(Vertx vertx, Mode mode, Throwable cause, ContextInternal home) {
         this.vertx = vertx;
@@ -244,7 +244,8 @@ final class DeliveryFixture {
         this.home = home;
         stubPool();
         stubOperations();
-        this.delivery = new WorkflowSourceDelivery(() -> operations, new FakeInbox(), pool, vertx, scope, Set.of());
+        this.delivery =
+                new WorkflowSignalSourceDelivery(() -> operations, new FakeInbox(), pool, vertx, scope, Set.of());
     }
 
     /** Operations that record the call and succeed with {@link #RECEIPT} at once. */
@@ -285,7 +286,7 @@ final class DeliveryFixture {
         return new InboundExecutionContextScope(new InboundDispatchScope(), durable, initializers);
     }
 
-    WorkflowSourceDelivery delivery() {
+    WorkflowSignalSourceDelivery delivery() {
         return delivery;
     }
 

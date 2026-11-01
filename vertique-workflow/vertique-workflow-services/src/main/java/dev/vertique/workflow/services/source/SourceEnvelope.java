@@ -12,7 +12,7 @@ import java.util.Objects;
 import java.util.function.Function;
 
 /**
- * The resolved values a transport hands to {@link WorkflowSourceDelivery} with one message.
+ * The resolved values a transport hands to {@link WorkflowSignalSourceDelivery} with one message.
  *
  * <p><strong>INTERNAL.</strong> This type is an internal seam, outside the maturity promise of
  * {@code vertique-workflow-services}. It is public only because a transport in another repository

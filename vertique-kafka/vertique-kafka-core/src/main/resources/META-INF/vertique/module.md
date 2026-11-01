@@ -71,7 +71,7 @@ The at-least-once guarantee starts at a partition's **first committed offset**. 
 `auto.offset.reset` at Kafka's default, `latest`, so a group's first-ever record that fails before
 any offset is committed can be lost if the consumer restarts or the partition moves. To read from the
 start of the topic instead, set `kafka.consumers.{name}.properties` `auto.offset.reset=earliest`; a
-new group then reads all retained history. A binding that forces its strategies defaults to
+new group then reads all retained history. A binding that requires its strategies defaults to
 `earliest`, and a configured value wins, so that loss needs `latest` to be set on purpose.
 
 ### Record headers the framework reads and writes
@@ -202,7 +202,7 @@ static KafkaConsumerBinding<?> orderBinding() {
 | `jsonProfile(JsonProfileId)` | `null` — framework default | JSON mapper profile for value deserialization |
 | `ignoreUndecodable(Runnable)` | off | Handler bindings: acknowledges a record that fails to decode, commits it when `MANUAL`, reports it `SKIP`, runs the callback, and skips the error strategy; a transient decode failure takes the error strategy |
 | `noHeaderContext()` | off | Handler bindings: installs no durable context from the record's headers for the handler |
-| `forceStrategies()` | off | Handler bindings, `commitStrategy(MANUAL)` required: registration fails unless the resolved configuration keeps the binding's `commitStrategy` and `errorStrategy` and a `DEAD_LETTER` `retry.exhaustedStrategy`; a new group starts at the beginning of the topic |
+| `requireBindingStrategies()` | off | Handler bindings, `commitStrategy(MANUAL)` required: registration fails unless the resolved configuration keeps the binding's `commitStrategy` and `errorStrategy` and a `DEAD_LETTER` `retry.exhaustedStrategy`; a new group starts at the beginning of the topic |
 | `dispatchGate(KafkaDispatchGate)` | none | `commitStrategy(MANUAL)` required, also after configuration: registration fails, naming `commitStrategy`, when `kafka.consumers.{name}` resolves the binding to `AUTO`. Works with `handler` and `dispatchTo` bindings. Asked before a record starts. While it answers closed no record starts and no partition fetches, and the consumer keeps polling; see [A dispatch gate](#a-dispatch-gate) |
 
 Use the durable operation id (`@ServiceOperation` value) in `dispatchTo` for stable-target-eligible
@@ -210,8 +210,8 @@ operations so the binding survives a method rename.
 
 A binding names a `handler` or a `dispatchTo` target, not both: `build()` throws
 `IllegalStateException`, naming the binding, when both are set. `build()` also throws it when
-`ignoreUndecodable`, `noHeaderContext` or `forceStrategies` is set and no `handler` is, and when
-`forceStrategies` is set without `commitStrategy(CommitStrategy.MANUAL)`: the default `AUTO` could
+`ignoreUndecodable`, `noHeaderContext` or `requireBindingStrategies` is set and no `handler` is, and when
+`requireBindingStrategies` is set without `commitStrategy(CommitStrategy.MANUAL)`: the default `AUTO` could
 commit past an unsettled record when the consumer closes. A binding
 that names neither a handler nor a target builds, and the registrar refuses it at startup. A handler binding is registered as a handler-kind consumer
 (see Model 4): it receives the decoded `KafkaMessage<V>` with key, topic, partition, offset,
@@ -219,7 +219,7 @@ timestamp and headers, runs with the record's durable context installed, and kee
 filter, commit strategy, error and retry strategy, dead-letter topic, custom deserializer and
 interceptors. No service is resolved for it.
 
-A binding that uses none of `ignoreUndecodable`, `noHeaderContext` and `forceStrategies` behaves
+A binding that uses none of `ignoreUndecodable`, `noHeaderContext` and `requireBindingStrategies` behaves
 exactly as it did before them.
 
 - **`ignoreUndecodable`.** Every permanent deserializer failure is ignored, and nothing else: a
@@ -232,7 +232,7 @@ exactly as it did before them.
   the handler.
 - **`noHeaderContext`.** The handler runs without the durable context decoded from the record's
   headers.
-- **`forceStrategies`.** `kafka.consumers.{name}.*` cannot restore `AUTO` or `SKIP`: the check runs
+- **`requireBindingStrategies`.** `kafka.consumers.{name}.*` cannot restore `AUTO` or `SKIP`: the check runs
   at registration on the resolved configuration, and a `KafkaRegistrationException` violation names
   the consumer and the option (`commitStrategy`, `errorStrategy` or `retry.exhaustedStrategy`).
   A new group starts at the beginning of the topic unless `auto.offset.reset` is configured. The binding
@@ -240,8 +240,8 @@ exactly as it did before them.
   binding's `maxInFlight` and `max.poll.records`. A dead-letter publish that fails does not leave the
   record behind: the record stays uncommitted, holds the commit of every record after it, and its
   publish is made again after the retry backoff, which grows with the failures of that record.
-  A handler that fails with `KafkaRedeliverFailure` returns the record to the queue without spending a
-  retry (see `KafkaRedeliverFailure`). A binding without `forceStrategies` also keeps its strategies,
+  A handler that fails with `KafkaDeferredFailure` returns the record to the queue without spending a
+  retry (see `KafkaDeferredFailure`). A binding without `requireBindingStrategies` also keeps its strategies,
   retry counts and delays; it differs in that `kafka.consumers.{name}.*` may change them, and in that
   a retry waiting stops its partition from fetching (see [How `RETRY` works](#how-retry-works)).
 
@@ -779,9 +779,9 @@ service-level `@Retry`, `@Timeout`, and `@CircuitBreaker` policies. The record s
 settles, and so does every record after it in its partition, so a restart reads them again.
 
 A retry waiting holds no permit: other records of the consumer keep running while it waits. A binding
-that does not force its strategies also stops its partition from fetching for as long as one of its
+that does not require its strategies also stops its partition from fetching for as long as one of its
 records waits for a retry, and two overlapping retries keep it stopped until both have ended; the consumer
-keeps polling, so it stays in its group. A binding that forces its strategies has no partition backoff.
+keeps polling, so it stays in its group. A binding that requires its strategies has no partition backoff.
 
 Retry delays use the shared `vertique-resilience` exponential backoff policy with zero jitter. The
 configured `backoffMs`, `backoffMultiplier`, and `maxBackoffMs` therefore retain deterministic Kafka
@@ -824,10 +824,10 @@ character reaches a header or a log line. The failure carries the error type onl
 log lines hold the error type alone, so keep record data out of it. A retry count left by an
 earlier failure of the same record is removed.
 
-### `KafkaRedeliverFailure`
+### `KafkaDeferredFailure`
 
-A handler fails a record with `new KafkaRedeliverFailure(errorType)` when the record is fine and must
-be run again later, such as when the system is busy. It applies on a `forceStrategies` binding: the
+A handler fails a record with `new KafkaDeferredFailure(errorType)` when the record is fine and must
+be run again later, such as when the system is busy. It applies on a `requireBindingStrategies` binding: the
 record goes back to the queue, holding no permit, with its attempts unchanged, and the outcome is
 `RETRY_SCHEDULED`. The consumer then starts no record and fetches no partition until it asks again, one
 quarter second later, and finds the gate open. It spends no retry: the
@@ -913,8 +913,8 @@ spent, nothing is dead-lettered and nothing is committed past it. The consumer a
 milliseconds; when it opens, the queued records start in the order they were read and the partitions
 fetch again. `open()` is called on the consumer's own context, often, so it must be cheap and must not block.
 
-A gate that closes after a record started can be met with a `KafkaRedeliverFailure` from the handler (on a binding
-that forces its strategies): the record returns to the queue with its attempts unchanged, and the consumer waits for
+A gate that closes after a record started can be met with a `KafkaDeferredFailure` from the handler (on a binding
+that requires its strategies): the record returns to the queue with its attempts unchanged, and the consumer waits for
 the gate as it does for a closed one.
 
 ---
@@ -1202,7 +1202,7 @@ public void onRecordCompleted(KafkaConsumerCompletedEvent event, KafkaConsumerRe
 | `SUCCESS` | The handler completed successfully |
 | `SKIP` | Skipped per `ErrorStrategy.SKIP`, filtered, or no matching route |
 | `RECOVERED` | An interceptor's `recoverError` handled the error |
-| `RETRY_SCHEDULED` | The offset is not committed and the record will run again. A `forceStrategies` binding reports it also for a `KafkaRedeliverFailure` |
+| `RETRY_SCHEDULED` | The offset is not committed and the record will run again. A `requireBindingStrategies` binding reports it also for a `KafkaDeferredFailure` |
 | `DLQ_PUBLISHED` | Forwarded to the dead-letter topic |
 | `DLQ_FAILED` | The DLQ publish failed; the offset was not committed and the publish is made again after a backoff |
 | `ERROR_HANDLER_FAILED` | Deprecated for removal. Nothing reports it: a failure handled by the settlement always has a disposition |

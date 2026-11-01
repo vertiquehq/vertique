@@ -103,7 +103,7 @@ final class KafkaSettlement {
      * @param maxInFlight the permits: the most handlers that run at once
      * @param errorStrategy the binding's error strategy
      * @param retryConfig the retry settings; {@code null} unless the strategy is {@link ErrorStrategy#RETRY}
-     * @param forced whether the binding forces its strategies: a handler's {@link KafkaRedeliverFailure} then returns
+     * @param forced whether the binding requires its strategies: a handler's {@link KafkaDeferredFailure} then returns
      *     the record to the queue, and a retry waiting does not stop its partition's fetching
      * @param retentionLimit the records one partition may keep before it stops fetching; the consumer stops at twice
      *     this, and fetching resumes at half of either
@@ -248,7 +248,7 @@ final class KafkaSettlement {
 
     private void failed(Entry entry, Throwable cause, @Nullable KafkaConsumerRecordView view) {
         KafkaPartitionLedger ledger = entry.ledger;
-        if (settings.forced() && cause instanceof KafkaRedeliverFailure) {
+        if (settings.forced() && cause instanceof KafkaDeferredFailure) {
             // The record is fine and the system is busy: it goes back to the queue, spends no retry and waits for the
             // gate.
             ledger.move(entry, State.QUEUED);

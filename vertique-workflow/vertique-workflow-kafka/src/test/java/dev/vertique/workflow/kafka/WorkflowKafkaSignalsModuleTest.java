@@ -16,7 +16,7 @@ import dev.vertique.kafka.KafkaConsumerBinding;
 import dev.vertique.workflow.kafka.SourceFixture.DeliveryConfirmed;
 import dev.vertique.workflow.kafka.SourceFixture.OrdersContract;
 import dev.vertique.workflow.kafka.SourceFixture.ShipmentDelivered;
-import dev.vertique.workflow.services.source.WorkflowSourceDelivery;
+import dev.vertique.workflow.services.source.WorkflowSignalSourceDelivery;
 import jakarta.inject.Singleton;
 import java.util.Optional;
 import java.util.Set;
@@ -82,8 +82,8 @@ class WorkflowKafkaSignalsModuleTest {
 
             @Provides
             @Singleton
-            static WorkflowSourceDelivery delivery() {
-                return mock(WorkflowSourceDelivery.class);
+            static WorkflowSignalSourceDelivery delivery() {
+                return mock(WorkflowSignalSourceDelivery.class);
             }
 
             @Provides

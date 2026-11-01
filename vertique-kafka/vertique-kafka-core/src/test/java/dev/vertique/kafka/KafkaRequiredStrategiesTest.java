@@ -19,13 +19,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies the forced-strategy check of a handler binding at registration, on the resolved
+ * Verifies the required-strategies check of a handler binding at registration, on the resolved
  * configuration and without deploying anything.
  *
  * <p>Verified:
  * <ul>
- *   <li>A binding that forces its strategies registers when the configuration is silent or states
- *       the forced values.</li>
+ *   <li>A binding that requires its strategies registers when the configuration is silent or states
+ *       the required values.</li>
  *   <li>A configuration that changes the commit strategy, the error strategy or the exhausted
  *       strategy fails registration with a {@link KafkaRegistrationException} that names the
  *       consumer and the option; a forcing binding that registers keeps the configured
@@ -35,7 +35,7 @@ import org.junit.jupiter.api.Test;
  *
  * <p>A {@code StrategyRig} hides the registry call; the rows of the table are named by option.
  */
-class KafkaForcedStrategiesTest {
+class KafkaRequiredStrategiesTest {
 
     private static final String CONSUMER = "forced";
 
@@ -48,7 +48,7 @@ class KafkaForcedStrategiesTest {
      * @param label the row, named by the option it states
      * @param consumerConfig the consumer's configuration block
      * @param changedOption the option a forcing binding must name, or {@code null} when the row
-     *     leaves every forced value as it is
+     *     leaves every required value as it is
      */
     record Row(String label, JsonObject consumerConfig, String changedOption) {}
 
@@ -72,7 +72,7 @@ class KafkaForcedStrategiesTest {
     @Test
     @DisplayName("a forcing binding starts a new group at the beginning of the topic, unless the reset is configured")
     void forcingBindingDefaultsToTheBeginningOfTheTopic() {
-        // Given: a forcing binding, and a binding that does not force its strategies
+        // Given: a forcing binding, and a binding that does not require its strategies
         KafkaConsumerBinding<Payload> forcing = StrategyRig.binding(true, ErrorStrategy.RETRY);
         KafkaConsumerBinding<Payload> notForcing = StrategyRig.binding(false, ErrorStrategy.SKIP);
         JsonObject latest = new JsonObject().put("properties", new JsonObject().put("auto.offset.reset", "latest"));
@@ -93,16 +93,16 @@ class KafkaForcedStrategiesTest {
     }
 
     @Test
-    @DisplayName("a configuration that changes a forced strategy fails registration naming the option")
-    void configurationChangingAForcedStrategyFailsRegistrationNamingTheOption() {
-        // Given: a MANUAL, RETRY handler binding that forces its strategies, and a MANUAL, SKIP binding that
+    @DisplayName("a configuration that changes a required strategy fails registration naming the option")
+    void configurationChangingARequiredStrategyFailsRegistrationNamingTheOption() {
+        // Given: a MANUAL, RETRY handler binding that requires its strategies, and a MANUAL, SKIP binding that
         // does not, on which every row of the table is a legal configuration
         KafkaConsumerBinding<Payload> forcing = StrategyRig.binding(true, ErrorStrategy.RETRY);
         KafkaConsumerBinding<Payload> notForcing = StrategyRig.binding(false, ErrorStrategy.SKIP);
 
         for (Row row : rows()) {
             // When: the registry is built over the row's configuration
-            // Then: the forcing binding registers on the forced values and fails on any other, naming the option
+            // Then: the forcing binding registers on the required values and fails on any other, naming the option
             if (row.changedOption() == null) {
                 List<ConsumerEntry> registered = List.copyOf(
                         StrategyRig.register(forcing, row.consumerConfig()).entries());
@@ -129,13 +129,13 @@ class KafkaForcedStrategiesTest {
                                 + "' and the option '" + row.changedOption() + "' but was: " + failure.violations());
             }
 
-            // And: the binding that does not force registers under the same configuration, as today
+            // And: the binding that does not require its strategies registers under the same configuration, as today
             assertEquals(
                     1,
                     StrategyRig.register(notForcing, row.consumerConfig())
                             .entries()
                             .size(),
-                    "a binding that does not force must register with " + row.label());
+                    "a binding that does not require its strategies must register with " + row.label());
         }
     }
 
@@ -147,7 +147,7 @@ class KafkaForcedStrategiesTest {
         /**
          * Builds the handler binding under test.
          *
-         * @param force whether the binding forces its strategies
+         * @param force whether the binding requires its strategies
          * @param errorStrategy the binding's error strategy
          * @return the binding, named {@code forced}, with {@code MANUAL} commit
          */
@@ -159,7 +159,7 @@ class KafkaForcedStrategiesTest {
                     .errorStrategy(errorStrategy)
                     .handler(message -> Future.succeededFuture());
             if (force) {
-                builder.forceStrategies();
+                builder.requireBindingStrategies();
             }
             return builder.build();
         }

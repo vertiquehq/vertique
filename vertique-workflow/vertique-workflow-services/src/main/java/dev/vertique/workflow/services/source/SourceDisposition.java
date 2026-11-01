@@ -50,7 +50,7 @@ public record SourceDisposition(
         /** The message may succeed later: redeliver it. */
         RETRY,
         /** The message is fine and the system is busy: deliver it again without spending a retry. */
-        WAIT,
+        DEFER,
         /** The message will never succeed: refuse it without retry. */
         TERMINAL
     }

@@ -24,7 +24,7 @@ import dev.vertique.workflow.contract.SignalDedupKey;
 import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
-import dev.vertique.workflow.services.source.WorkflowSourceDelivery;
+import dev.vertique.workflow.services.source.WorkflowSignalSourceDelivery;
 import dev.vertique.workflow.source.SignalSourceEvent;
 import io.vertx.core.Future;
 import io.vertx.core.json.JsonObject;
@@ -70,7 +70,7 @@ final class SourceFixture {
      * @param delivery the double, to hand to {@link WorkflowKafkaSignals}
      * @param events the events reported to it, in order
      */
-    record Carriers(WorkflowSourceDelivery delivery, List<SignalSourceEvent> events) {
+    record Carriers(WorkflowSignalSourceDelivery delivery, List<SignalSourceEvent> events) {
 
         /**
          * Starts a source over the carriers' topic and group.
@@ -107,7 +107,7 @@ final class SourceFixture {
      * @return the double and its events
      */
     static Carriers recordingDelivery() {
-        WorkflowSourceDelivery delivery = mock(WorkflowSourceDelivery.class);
+        WorkflowSignalSourceDelivery delivery = mock(WorkflowSignalSourceDelivery.class);
         List<SignalSourceEvent> events = Collections.synchronizedList(new ArrayList<>());
         doAnswer(invocation -> {
                     events.add(invocation.getArgument(0));

@@ -31,7 +31,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
-class WorkflowSourceDeliveryIdentityLogTest {
+class WorkflowSignalSourceDeliveryIdentityLogTest {
 
     private static final String FORGED_LINE = "[2026-11-01 INFO] forged: admin granted";
 
@@ -65,7 +65,7 @@ class WorkflowSourceDeliveryIdentityLogTest {
                 // and it holds no control or line separator character
                 assertThat(logged.codePoints())
                         .as(row)
-                        .noneMatch(WorkflowSourceDeliveryIdentityLogTest::isControlOrLineSeparator);
+                        .noneMatch(WorkflowSignalSourceDeliveryIdentityLogTest::isControlOrLineSeparator);
 
                 // and no line of it is the forged text
                 assertThat(logged.lines()).as(row).noneMatch(line -> line.startsWith(FORGED_LINE));

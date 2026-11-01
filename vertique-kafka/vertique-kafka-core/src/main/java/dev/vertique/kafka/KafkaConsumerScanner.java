@@ -393,11 +393,11 @@ final class KafkaConsumerScanner {
                 kafkaConfig,
                 consumerIndex.get(name));
 
-        if (binding.forceStrategies()) {
-            if (!checkForcedStrategies(binding, config, violations)) {
+        if (binding.requireBindingStrategies()) {
+            if (!checkRequiredStrategies(binding, config, violations)) {
                 return;
             }
-            config = config.forced();
+            config = config.forBindingRequiringStrategies();
         }
 
         ConsumerEntry entry = KafkaConsumerValidation.validateAndBuild(
@@ -415,7 +415,7 @@ final class KafkaConsumerScanner {
                 binding.filter(),
                 binding.ignoreUndecodable(),
                 binding.noHeaderContext(),
-                binding.forceStrategies(),
+                binding.requireBindingStrategies(),
                 binding.dispatchGate(),
                 usedNames,
                 violations);
@@ -426,28 +426,28 @@ final class KafkaConsumerScanner {
     }
 
     /**
-     * Checks a binding that forces its strategies against the configuration it resolved to: the
+     * Checks a binding that requires its strategies against the configuration it resolved to: the
      * commit and error strategies must equal the binding's, and the exhausted strategy, taken from
      * {@code retry.exhaustedStrategy} or, without retry, from the error strategy, must be
      * {@link ErrorStrategy#DEAD_LETTER}. A violation names the consumer and the option.
      *
-     * @param binding the binding that forces its strategies
+     * @param binding the binding that requires its strategies
      * @param config the configuration the binding resolved to
      * @param violations mutable list to collect violation messages
      * @return {@code true} if the resolved configuration satisfies the binding
      */
-    private static boolean checkForcedStrategies(
+    private static boolean checkRequiredStrategies(
             KafkaConsumerBinding<?> binding, ResolvedKafkaConsumerConfig config, List<String> violations) {
         String name = binding.name();
         boolean satisfied = true;
         if (config.commitStrategy() != binding.commitStrategy()) {
-            violations.add("Consumer '" + name + "': forceStrategies() requires commitStrategy "
+            violations.add("Consumer '" + name + "': requireBindingStrategies() requires commitStrategy "
                     + binding.commitStrategy() + " but the resolved configuration has " + config.commitStrategy()
                     + " (remove kafka.consumers." + name + ".commitStrategy)");
             satisfied = false;
         }
         if (config.errorStrategy() != binding.errorStrategy()) {
-            violations.add("Consumer '" + name + "': forceStrategies() requires errorStrategy "
+            violations.add("Consumer '" + name + "': requireBindingStrategies() requires errorStrategy "
                     + binding.errorStrategy() + " but the resolved configuration has " + config.errorStrategy()
                     + " (remove kafka.consumers." + name + ".errorStrategy)");
             satisfied = false;
@@ -455,7 +455,7 @@ final class KafkaConsumerScanner {
             ErrorStrategy exhausted =
                     config.retryConfig() != null ? config.retryConfig().exhaustedStrategy() : config.errorStrategy();
             if (exhausted != ErrorStrategy.DEAD_LETTER) {
-                violations.add("Consumer '" + name + "': forceStrategies() requires retry.exhaustedStrategy "
+                violations.add("Consumer '" + name + "': requireBindingStrategies() requires retry.exhaustedStrategy "
                         + ErrorStrategy.DEAD_LETTER + " but the resolved configuration has " + exhausted
                         + " (set kafka.consumers." + name + ".retry.exhaustedStrategy to DEAD_LETTER or remove it)");
                 satisfied = false;

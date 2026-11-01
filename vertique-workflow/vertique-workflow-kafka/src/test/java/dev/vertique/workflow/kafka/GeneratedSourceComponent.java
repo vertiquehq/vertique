@@ -10,7 +10,7 @@ import dagger.Module;
 import dagger.Provides;
 import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.kafka.KafkaConsumerBinding;
-import dev.vertique.workflow.services.source.WorkflowSourceDelivery;
+import dev.vertique.workflow.services.source.WorkflowSignalSourceDelivery;
 import jakarta.inject.Singleton;
 import java.util.Optional;
 import java.util.Set;
@@ -39,8 +39,8 @@ interface GeneratedSourceComponent {
 
         @Provides
         @Singleton
-        WorkflowSourceDelivery delivery() {
-            return mock(WorkflowSourceDelivery.class);
+        WorkflowSignalSourceDelivery delivery() {
+            return mock(WorkflowSignalSourceDelivery.class);
         }
 
         @Provides

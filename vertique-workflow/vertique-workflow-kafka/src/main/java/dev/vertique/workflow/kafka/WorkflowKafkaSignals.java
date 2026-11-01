@@ -4,7 +4,7 @@
 package dev.vertique.workflow.kafka;
 
 import dev.vertique.correlation.CorrelationContextFactory;
-import dev.vertique.workflow.services.source.WorkflowSourceDelivery;
+import dev.vertique.workflow.services.source.WorkflowSignalSourceDelivery;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.util.Objects;
@@ -14,12 +14,12 @@ import java.util.Objects;
  *
  * <p>Each source reads one topic and turns its records into correlated workflow signals; see
  * {@link KafkaSignals} for the stages. The binding a source builds always commits manually, retries
- * and forces both strategies, so a record is not lost before its signal is recorded.
+ * and requires both strategies, so a record is not lost before its signal is recorded.
  */
 @Singleton
 public final class WorkflowKafkaSignals {
 
-    private final WorkflowSourceDelivery delivery;
+    private final WorkflowSignalSourceDelivery delivery;
     private final CorrelationContextFactory correlationFactory;
 
     /**
@@ -30,7 +30,7 @@ public final class WorkflowKafkaSignals {
      *     from record headers, so the ids come from the application's generator
      */
     @Inject
-    public WorkflowKafkaSignals(WorkflowSourceDelivery delivery, CorrelationContextFactory correlationFactory) {
+    public WorkflowKafkaSignals(WorkflowSignalSourceDelivery delivery, CorrelationContextFactory correlationFactory) {
         this.delivery = Objects.requireNonNull(delivery, "delivery");
         this.correlationFactory = Objects.requireNonNull(correlationFactory, "correlationFactory");
     }

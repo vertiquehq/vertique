@@ -5,11 +5,11 @@ package dev.vertique.workflow.kafka;
 
 import dev.vertique.core.context.DispatchBoundary;
 import dev.vertique.core.correlation.CorrelationContext;
+import dev.vertique.kafka.KafkaDeferredFailure;
 import dev.vertique.kafka.KafkaDlqHeaders;
 import dev.vertique.kafka.KafkaMessage;
 import dev.vertique.kafka.KafkaRecordHandler;
 import dev.vertique.kafka.KafkaRecordHeader;
-import dev.vertique.kafka.KafkaRedeliverFailure;
 import dev.vertique.kafka.KafkaTerminalFailure;
 import dev.vertique.security.SecurityContexts;
 import dev.vertique.security.SystemIdentities;
@@ -18,7 +18,7 @@ import dev.vertique.workflow.ops.SignalProvenance;
 import dev.vertique.workflow.services.source.SignalSourcePlan;
 import dev.vertique.workflow.services.source.SourceDisposition;
 import dev.vertique.workflow.services.source.SourceEnvelope;
-import dev.vertique.workflow.services.source.WorkflowSourceDelivery;
+import dev.vertique.workflow.services.source.WorkflowSignalSourceDelivery;
 import dev.vertique.workflow.source.SignalMessage;
 import dev.vertique.workflow.source.SignalSourceEvent;
 import dev.vertique.workflow.source.SignalSourceEvent.Outcome;
@@ -28,12 +28,12 @@ import java.util.Optional;
 
 /**
  * The record handler of a built source: it turns one Kafka record into a {@link SignalMessage} and a
- * {@link SourceEnvelope}, runs them through {@link WorkflowSourceDelivery}, and maps the fate the
+ * {@link SourceEnvelope}, runs them through {@link WorkflowSignalSourceDelivery}, and maps the fate the
  * delivery answers onto the consumer's retry and dead-letter handling.
  *
  * <p>A fate of {@code DONE} completes the record. {@code RETRY} fails it with an ordinary exception,
- * so the binding retries it and then takes its exhausted strategy. {@code WAIT} fails it with a
- * {@link KafkaRedeliverFailure}, so the binding delivers it again after a backoff without spending a
+ * so the binding retries it and then takes its exhausted strategy. {@code DEFER} fails it with a
+ * {@link KafkaDeferredFailure}, so the binding delivers it again after a backoff without spending a
  * retry. {@code TERMINAL} fails it with a {@link KafkaTerminalFailure}, so it takes the exhausted
  * strategy at once. A failure carries an error type only: never a key, a header or a payload.
  *
@@ -48,14 +48,14 @@ final class KafkaSignalHandler<T> implements KafkaRecordHandler<T> {
 
     private final String sourceName;
     private final SignalSourcePlan<T> plan;
-    private final WorkflowSourceDelivery delivery;
+    private final WorkflowSignalSourceDelivery delivery;
     private final boolean dlqReplay;
     private final KafkaCorrelationBaseline correlation;
 
     KafkaSignalHandler(
             String sourceName,
             SignalSourcePlan<T> plan,
-            WorkflowSourceDelivery delivery,
+            WorkflowSignalSourceDelivery delivery,
             boolean dlqReplay,
             KafkaCorrelationBaseline correlation) {
         this.sourceName = sourceName;
@@ -91,7 +91,7 @@ final class KafkaSignalHandler<T> implements KafkaRecordHandler<T> {
         return switch (disposition.fate()) {
             case DONE -> Future.succeededFuture();
             case RETRY -> Future.failedFuture(new SignalRetryRequested(retryType(disposition.errorType())));
-            case WAIT -> Future.failedFuture(new KafkaRedeliverFailure(terminalType(disposition.errorType())));
+            case DEFER -> Future.failedFuture(new KafkaDeferredFailure(terminalType(disposition.errorType())));
             case TERMINAL -> Future.failedFuture(new KafkaTerminalFailure(terminalType(disposition.errorType())));
         };
     }

@@ -31,7 +31,7 @@ import org.slf4j.LoggerFactory;
 final class ObserverFixture {
 
     /** The bean under test and the reporter it was given. */
-    record Built(WorkflowSourceDelivery delivery, ObserverFailureReporter reporter) {}
+    record Built(WorkflowSignalSourceDelivery delivery, ObserverFailureReporter reporter) {}
 
     private ObserverFixture() {}
 
@@ -41,7 +41,7 @@ final class ObserverFixture {
         Set<SignalSourceObserver> set = new LinkedHashSet<>(List.of(observers));
         @SuppressWarnings("unchecked")
         TransactionalWorkflowOperations<SqlClient> operations = mock(TransactionalWorkflowOperations.class);
-        WorkflowSourceDelivery delivery = new WorkflowSourceDelivery(
+        WorkflowSignalSourceDelivery delivery = new WorkflowSignalSourceDelivery(
                 () -> operations,
                 new FakeInbox(),
                 mock(Pool.class),

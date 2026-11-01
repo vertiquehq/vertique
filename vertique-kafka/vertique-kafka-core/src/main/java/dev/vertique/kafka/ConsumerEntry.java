@@ -48,7 +48,7 @@ import java.util.List;
  *     when an undecodable record goes down the error strategy
  * @param noHeaderContext {@code true} when the handler path installs no durable context from the
  *     record's headers
- * @param forceStrategies {@code true} when registration required the resolved strategies to equal the
+ * @param requireBindingStrategies {@code true} when registration required the resolved strategies to equal the
  *     binding's
  * @param dispatchGate the gate that says whether a record may start, or {@code null} for none
  */
@@ -68,12 +68,12 @@ record ConsumerEntry(
         String valueFormat,
         @Nullable Runnable ignoreUndecodable,
         boolean noHeaderContext,
-        boolean forceStrategies,
+        boolean requireBindingStrategies,
         @Nullable KafkaDispatchGate dispatchGate) {
 
     /**
      * Creates an entry that ignores no undecodable record, installs the header context and does not
-     * force its strategies.
+     * require its strategies.
      *
      * @param name binding name used as the config reference key and deployment identifier
      * @param config resolved runtime configuration for this consumer

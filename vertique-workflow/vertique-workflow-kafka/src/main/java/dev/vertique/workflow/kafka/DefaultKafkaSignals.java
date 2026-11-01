@@ -11,7 +11,7 @@ import dev.vertique.kafka.KafkaRecordFilter;
 import dev.vertique.kafka.KafkaTerminalFailure;
 import dev.vertique.workflow.services.source.AbstractSignalSourceBuilder;
 import dev.vertique.workflow.services.source.SignalSourcePlan;
-import dev.vertique.workflow.services.source.WorkflowSourceDelivery;
+import dev.vertique.workflow.services.source.WorkflowSignalSourceDelivery;
 import dev.vertique.workflow.source.SignalSourceEvent;
 import dev.vertique.workflow.source.SignalSourceEvent.Outcome;
 import jakarta.annotation.Nullable;
@@ -28,7 +28,7 @@ final class DefaultKafkaSignals<T> extends AbstractSignalSourceBuilder<T, KafkaS
 
     private static final String TRANSPORT = "kafka";
 
-    private final WorkflowSourceDelivery delivery;
+    private final WorkflowSignalSourceDelivery delivery;
     private final Class<T> type;
     private final CorrelationContextFactory correlationFactory;
     private @Nullable String topic;
@@ -38,7 +38,8 @@ final class DefaultKafkaSignals<T> extends AbstractSignalSourceBuilder<T, KafkaS
     private boolean dlqReplay;
     private boolean built;
 
-    DefaultKafkaSignals(WorkflowSourceDelivery delivery, Class<T> type, CorrelationContextFactory correlationFactory) {
+    DefaultKafkaSignals(
+            WorkflowSignalSourceDelivery delivery, Class<T> type, CorrelationContextFactory correlationFactory) {
         super(type);
         this.delivery = delivery;
         this.type = type;
@@ -98,7 +99,7 @@ final class DefaultKafkaSignals<T> extends AbstractSignalSourceBuilder<T, KafkaS
                 .groupId(groupId)
                 .commitStrategy(CommitStrategy.MANUAL)
                 .errorStrategy(ErrorStrategy.RETRY)
-                .forceStrategies()
+                .requireBindingStrategies()
                 .dispatchGate(delivery::admitting)
                 .noHeaderContext()
                 .ignoreUndecodable(() -> report(sourceName, Outcome.UNDECODABLE))

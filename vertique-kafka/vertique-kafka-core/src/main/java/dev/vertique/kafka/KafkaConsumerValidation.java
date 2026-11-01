@@ -210,7 +210,7 @@ final class KafkaConsumerValidation {
      * @param ignoreUndecodable the callback that runs for an ignored undecodable record, or
      *     {@code null} when such a record goes down the error strategy
      * @param noHeaderContext whether the handler path installs no durable context from the headers
-     * @param forceStrategies whether registration forced the resolved strategies
+     * @param requireBindingStrategies whether registration required the resolved strategies
      * @param dispatchGate the gate that says whether a record may start, or {@code null} for none
      * @param usedNames mutable set of claimed names (updated if name is new)
      * @param violations mutable list to collect violation messages
@@ -231,7 +231,7 @@ final class KafkaConsumerValidation {
             KafkaRecordFilter filter,
             Runnable ignoreUndecodable,
             boolean noHeaderContext,
-            boolean forceStrategies,
+            boolean requireBindingStrategies,
             KafkaDispatchGate dispatchGate,
             Set<String> usedNames,
             List<String> violations) {
@@ -464,7 +464,7 @@ final class KafkaConsumerValidation {
                 valueFormat,
                 ignoreUndecodable,
                 noHeaderContext,
-                forceStrategies,
+                requireBindingStrategies,
                 dispatchGate);
     }
 

@@ -122,14 +122,14 @@ final class GraphFixture {
     @Module
     interface OptionalDeliveryModule {
         @BindsOptionalOf
-        WorkflowSourceDelivery optionalDelivery();
+        WorkflowSignalSourceDelivery optionalDelivery();
     }
 
     /** A node that installs the services module, which includes the source module. */
     @Singleton
     @Component(modules = {WorkflowServicesModule.class, SourceStubs.class, OutboxInboxStubs.class})
     interface ServicesComponent {
-        WorkflowSourceDelivery delivery();
+        WorkflowSignalSourceDelivery delivery();
 
         Set<ServiceContractContributor> contributors();
 
@@ -146,7 +146,7 @@ final class GraphFixture {
     @Singleton
     @Component(modules = {WorkflowSourceModule.class, SourceStubs.class, InboxStub.class})
     interface SourceOnlyComponent {
-        WorkflowSourceDelivery delivery();
+        WorkflowSignalSourceDelivery delivery();
 
         Set<SignalSourceObserver> observers();
 
@@ -163,9 +163,9 @@ final class GraphFixture {
     @Singleton
     @Component(modules = {WorkflowSourceModule.class, SourceStubs.class, InboxStub.class, OptionalDeliveryModule.class})
     interface OptionalComponent {
-        Optional<WorkflowSourceDelivery> optionalDelivery();
+        Optional<WorkflowSignalSourceDelivery> optionalDelivery();
 
-        WorkflowSourceDelivery delivery();
+        WorkflowSignalSourceDelivery delivery();
 
         @Component.Builder
         interface Builder {
@@ -233,7 +233,7 @@ final class GraphFixture {
     @Component(
             modules = {WorkflowSourceModule.class, DeliveringStubs.class, InboxStub.class, ObserverContribution.class})
     interface ObservedComponent {
-        WorkflowSourceDelivery delivery();
+        WorkflowSignalSourceDelivery delivery();
 
         Set<SignalSourceObserver> observers();
 
@@ -252,7 +252,7 @@ final class GraphFixture {
     @Singleton
     @Component(modules = {WorkflowSourceModule.class, DeliveringStubs.class, InboxStub.class})
     interface UnobservedComponent {
-        WorkflowSourceDelivery delivery();
+        WorkflowSignalSourceDelivery delivery();
 
         Set<SignalSourceObserver> observers();
 

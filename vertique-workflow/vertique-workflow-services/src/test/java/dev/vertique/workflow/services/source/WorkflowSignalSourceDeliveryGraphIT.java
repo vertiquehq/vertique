@@ -29,7 +29,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * Verifies, at the dependency-injection boundary, that {@link WorkflowSourceDelivery} is an
+ * Verifies, at the dependency-injection boundary, that {@link WorkflowSignalSourceDelivery} is an
  * in-process bean: the services module adds no service operation for it, the source module alone
  * resolves it without any outbox or inbox binding, and its constructor stays free of {@code @Inject}
  * so a graph may declare it optional.
@@ -38,7 +38,7 @@ import org.junit.jupiter.api.Timeout;
  * broker. The {@link Vertx} the components share is closed after the last test.
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
-public class WorkflowSourceDeliveryGraphIT {
+public class WorkflowSignalSourceDeliveryGraphIT {
 
     private static Vertx vertx;
 
@@ -61,7 +61,7 @@ public class WorkflowSourceDeliveryGraphIT {
         GraphFixture.ServicesComponent component = GraphFixture.component(vertx);
 
         // When the bean and the service contributors are requested, and every contributor is asked for its entries
-        WorkflowSourceDelivery delivery = component.delivery();
+        WorkflowSignalSourceDelivery delivery = component.delivery();
         List<ContractEntry<?>> entries = component.contributors().stream()
                 .flatMap(contributor -> contributor.contribute(new JsonObject()).stream())
                 .toList();
@@ -77,7 +77,7 @@ public class WorkflowSourceDeliveryGraphIT {
         assertThat(entry.name()).isEqualTo("signals");
         assertThat(entry.operations()).containsOnlyKeys("post");
         assertThat(entry.operations().get("post").payloadType()).isEqualTo(WorkflowSignalRequest.class);
-        assertThat(entries).noneMatch(candidate -> candidate.serviceInstance() instanceof WorkflowSourceDelivery);
+        assertThat(entries).noneMatch(candidate -> candidate.serviceInstance() instanceof WorkflowSignalSourceDelivery);
     }
 
     @Test
@@ -87,7 +87,7 @@ public class WorkflowSourceDeliveryGraphIT {
         GraphFixture.SourceOnlyComponent component = GraphFixture.sourceOnlyComponent(vertx);
 
         // When the bean and the observer set are requested
-        WorkflowSourceDelivery delivery = component.delivery();
+        WorkflowSignalSourceDelivery delivery = component.delivery();
 
         // Then the component compiled, the bean resolves and is the same instance on a second request
         assertThat(delivery).isNotNull();
@@ -104,10 +104,10 @@ public class WorkflowSourceDeliveryGraphIT {
         GraphFixture.OptionalComponent component = GraphFixture.optionalComponent(vertx);
 
         // When the optional and the bean are requested, and the bean's constructors are read
-        Optional<WorkflowSourceDelivery> optional = component.optionalDelivery();
-        WorkflowSourceDelivery direct = component.delivery();
-        Constructor<?>[] publicConstructors = WorkflowSourceDelivery.class.getConstructors();
-        Constructor<?>[] allConstructors = WorkflowSourceDelivery.class.getDeclaredConstructors();
+        Optional<WorkflowSignalSourceDelivery> optional = component.optionalDelivery();
+        WorkflowSignalSourceDelivery direct = component.delivery();
+        Constructor<?>[] publicConstructors = WorkflowSignalSourceDelivery.class.getConstructors();
+        Constructor<?>[] allConstructors = WorkflowSignalSourceDelivery.class.getDeclaredConstructors();
 
         // Then the optional is present and holds the same instance as the direct request
         assertThat(optional).isPresent();

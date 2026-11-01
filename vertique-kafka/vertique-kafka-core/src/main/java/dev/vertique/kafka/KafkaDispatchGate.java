@@ -15,7 +15,7 @@ package dev.vertique.kafka;
  * past it.
  *
  * <p>A handler that finds the gate closed after it started the record, because the gate closed in between, fails the
- * record with {@link KafkaRedeliverFailure} on a binding that forces its strategies. The record then returns to the
+ * record with {@link KafkaDeferredFailure} on a binding that requires its strategies. The record then returns to the
  * queue with its attempts unchanged and the binding waits for the gate, as it does for a closed one.
  *
  * <p>The gate is read from the consumer's own context and often, so {@link #open()} must be cheap, must not block and

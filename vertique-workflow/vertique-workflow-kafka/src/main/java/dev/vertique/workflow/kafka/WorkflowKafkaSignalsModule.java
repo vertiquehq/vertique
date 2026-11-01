@@ -8,7 +8,7 @@ import dagger.Provides;
 import dagger.multibindings.ElementsIntoSet;
 import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.kafka.KafkaConsumerBinding;
-import dev.vertique.workflow.services.source.WorkflowSourceDelivery;
+import dev.vertique.workflow.services.source.WorkflowSignalSourceDelivery;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
@@ -28,7 +28,7 @@ import java.util.Set;
  * binding for it and fails to build, instead of running with no source consuming.
  *
  * <p>Each source's {@code define} runs once, when the binding set is first built, which is after the dependency graph
- * exists. The module needs only a {@code WorkflowSourceDelivery} and a {@code CorrelationContextFactory} of the
+ * exists. The module needs only a {@code WorkflowSignalSourceDelivery} and a {@code CorrelationContextFactory} of the
  * application.
  */
 @Module
@@ -48,7 +48,7 @@ public abstract class WorkflowKafkaSignalsModule {
     @ElementsIntoSet
     static Set<KafkaConsumerBinding<?>> kafkaSignalBindings(
             Set<KafkaSignalSource<?>> sources,
-            WorkflowSourceDelivery delivery,
+            WorkflowSignalSourceDelivery delivery,
             CorrelationContextFactory correlationFactory) {
         Set<KafkaConsumerBinding<?>> bindings = new LinkedHashSet<>();
         for (KafkaSignalSource<?> source : sources) {
@@ -58,7 +58,7 @@ public abstract class WorkflowKafkaSignalsModule {
     }
 
     private static <T> KafkaConsumerBinding<?> binding(
-            KafkaSignalSource<T> source, WorkflowSourceDelivery delivery, CorrelationContextFactory factory) {
+            KafkaSignalSource<T> source, WorkflowSignalSourceDelivery delivery, CorrelationContextFactory factory) {
         @SuppressWarnings("unchecked")
         Class<T> type = (Class<T>) messageType(source.getClass());
         DefaultKafkaSignals<T> builder = new DefaultKafkaSignals<>(delivery, type, factory);

@@ -31,7 +31,7 @@ import java.security.NoSuchAlgorithmException;
  *   <li><b>correlated</b> — kind {@code 'correlated'}. The namespace is a 64-char SHA-256 hex digest of
  *       {@code (contract name, signal name, scope or empty)} and the key a 64-char digest of the caller's
  *       dedup key, so one event is unique across instances and no name, scope or key is stored in clear.</li>
- *   <li><b>sourceInboxId</b> — the inbox-message-id of one target of a signal source: the 64-char SHA-256 hex
+ *   <li><b>signalSourceInboxId</b> — the inbox-message-id of one target of a signal source: the 64-char SHA-256 hex
  *       digest of {@code (contract name, signal name, scope or empty, message dedup key)}. It holds neither
  *       the resolved workflow or key, nor the declaration position of the target, nor the name of the
  *       source, so a replay of the same message meets the same identity.</li>
@@ -195,7 +195,7 @@ public final class WorkflowDedupScopes {
      * @param dedupKey the message's dedup key
      * @return 64-char SHA-256 hex digest
      */
-    public static String sourceInboxId(
+    public static String signalSourceInboxId(
             String contractName, String signalName, @Nullable String scope, String dedupKey) {
         return sha256Hex(contractName, signalName, scope == null ? "" : scope, dedupKey);
     }

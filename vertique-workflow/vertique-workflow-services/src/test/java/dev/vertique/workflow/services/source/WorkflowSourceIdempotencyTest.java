@@ -63,7 +63,7 @@ class WorkflowSourceIdempotencyTest {
     private static final String PLAN_DEDUP_KEY = "D-" + KEY;
 
     private static String idOf(String contract, String signal, String scope, String dedupKey) {
-        return WorkflowDedupScopes.sourceInboxId(contract, signal, scope, dedupKey);
+        return WorkflowDedupScopes.signalSourceInboxId(contract, signal, scope, dedupKey);
     }
 
     @Test
@@ -277,7 +277,7 @@ class WorkflowSourceIdempotencyTest {
             SourceDisposition first = rig.deliver(twoSignalPlan(SignalNoMatch.IGNORE), shipment(KEY), envelope("D-1"));
 
             // Then the message waits, so no target is dead-lettered, and no row was committed
-            assertThat(first.fate()).isEqualTo(Fate.WAIT);
+            assertThat(first.fate()).isEqualTo(Fate.DEFER);
             assertThat(rig.inbox().committed).isEmpty();
 
             // And: once intake admits, both targets run again and decide

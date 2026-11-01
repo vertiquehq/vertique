@@ -66,7 +66,7 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Singleton
-public final class WorkflowSourceDelivery {
+public final class WorkflowSignalSourceDelivery {
 
     private static final String OBSERVER_CALLBACK = "onOutcome";
 
@@ -91,7 +91,7 @@ public final class WorkflowSourceDelivery {
      * @param contextScope installs the envelope's values on a delivery's context
      * @param observers the observers that {@link #report(SignalSourceEvent)} tells
      */
-    public WorkflowSourceDelivery(
+    public WorkflowSignalSourceDelivery(
             Provider<TransactionalWorkflowOperations<SqlClient>> operations,
             InboxService inbox,
             Pool pool,
@@ -119,7 +119,7 @@ public final class WorkflowSourceDelivery {
      * @param observers the observers that {@link #report(SignalSourceEvent)} tells
      * @param observerFailureReporter receives what an observer throws
      */
-    WorkflowSourceDelivery(
+    WorkflowSignalSourceDelivery(
             Provider<TransactionalWorkflowOperations<SqlClient>> operations,
             InboxService inbox,
             Pool pool,
@@ -143,7 +143,7 @@ public final class WorkflowSourceDelivery {
      * envelope's identity was contributed), {@code scope}; then, for each signal in the order written,
      * its key, its payload and its recording. A message an earlier stage excludes or refuses reaches no
      * later stage. Each signal is judged alone and reported once; the disposition is the most severe of
-     * them, {@link SourceDisposition.Fate#WAIT} over {@link SourceDisposition.Fate#TERMINAL} over
+     * them, {@link SourceDisposition.Fate#DEFER} over {@link SourceDisposition.Fate#TERMINAL} over
      * {@link SourceDisposition.Fate#RETRY} over {@link SourceDisposition.Fate#DONE}.
      *
      * <p>The disposition and the events carry the type of a failure, never its message, and nothing of
@@ -216,7 +216,7 @@ public final class WorkflowSourceDelivery {
      * @param businessKey whether the signal addresses instances by business key rather than by key
      * @param envelope the resolved values to bind for the recording
      * @param inboxId the identity of this target of the message, from
-     *     {@link dev.vertique.workflow.dedup.WorkflowDedupScopes#sourceInboxId}
+     *     {@link dev.vertique.workflow.dedup.WorkflowDedupScopes#signalSourceInboxId}
      * @return a future that completes on {@code captured} with the receipt, or fails with what the
      *     operations failed with
      */

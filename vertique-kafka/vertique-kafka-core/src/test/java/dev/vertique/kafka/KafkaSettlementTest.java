@@ -359,8 +359,8 @@ class KafkaSettlementTest {
         }
 
         @Test
-        @DisplayName("a binding that forces its strategies has no partition backoff")
-        void forcedBindingHasNoPartitionBackoff() {
+        @DisplayName("a binding that requires its strategies has no partition backoff")
+        void requiredBindingHasNoPartitionBackoff() {
             SettlementRig rig = new SettlementRig(settings(2, ErrorStrategy.RETRY, true));
             rig.assign(P0).add(P0, 0);
             rig.run(P0, 0).fail();
@@ -793,7 +793,7 @@ class KafkaSettlementTest {
 
             // When: it is refused again and again
             for (int refusals = 0; refusals < 5; refusals++) {
-                rig.run(P0, 0).fail(new KafkaRedeliverFailure("IntakeRefused"));
+                rig.run(P0, 0).fail(new KafkaDeferredFailure("IntakeRefused"));
                 assertEquals(0, rig.port.publishes.size(), "never dead-lettered");
                 assertTrue(rig.clientPaused(P0), "the consumer holds fetching while it waits");
                 rig.pendingTimers().get(rig.pendingTimers().size() - 1).fire();
@@ -818,7 +818,7 @@ class KafkaSettlementTest {
                 if (rig.port.runs.size() > 50) {
                     throw new AssertionError("the refused record is started again and again");
                 }
-                run.fail(new KafkaRedeliverFailure("IntakeRefused"));
+                run.fail(new KafkaDeferredFailure("IntakeRefused"));
             };
             rig.assign(P0);
 
@@ -846,19 +846,19 @@ class KafkaSettlementTest {
             rig.pendingTimers().get(0).fire();
             assertEquals(1, rig.run(P0, 0).attempt);
 
-            rig.run(P0, 0).fail(new KafkaRedeliverFailure("IntakeRefused"));
+            rig.run(P0, 0).fail(new KafkaDeferredFailure("IntakeRefused"));
             rig.pendingTimers().get(rig.pendingTimers().size() - 1).fire();
 
             assertEquals(1, rig.run(P0, 0).attempt, "the refusal spent nothing");
         }
 
         @Test
-        @DisplayName("on a binding that does not force its strategies a redeliver failure is an ordinary failure")
+        @DisplayName("on a binding that does not require its strategies a deferred failure is an ordinary failure")
         void redeliverFailureOnAnOrdinaryBinding() {
             SettlementRig rig = new SettlementRig(settings(1, ErrorStrategy.SKIP, false));
             rig.assign(P0).add(P0, 0);
 
-            rig.run(P0, 0).fail(new KafkaRedeliverFailure("IntakeRefused"));
+            rig.run(P0, 0).fail(new KafkaDeferredFailure("IntakeRefused"));
 
             assertEquals(List.of(1L), rig.committed(P0));
         }

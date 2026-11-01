@@ -7,7 +7,7 @@ import dev.vertique.core.util.Strings;
 
 /**
  * Failure a {@link KafkaRecordHandler} raises to say that the record is fine and must be run again
- * later, without spending a retry. It applies on a binding that forces its strategies: the record
+ * later, without spending a retry. It applies on a binding that requires its strategies: the record
  * goes back to the queue, holding no permit and keeping its attempts, and stays uncommitted, with
  * every record after it. The consumer starts no record and fetches no partition until it asks its
  * {@link KafkaDispatchGate} again and finds it open, and the record then runs again. The record is
@@ -25,20 +25,20 @@ import dev.vertique.core.util.Strings;
  * character, is replaced by {@code InvalidErrorType}, so a value that arrives from outside
  * cannot reach a log line.
  */
-public final class KafkaRedeliverFailure extends RuntimeException {
+public final class KafkaDeferredFailure extends RuntimeException {
 
     private static final long serialVersionUID = 1L;
 
     private final String errorType;
 
     /**
-     * Creates a redeliver failure.
+     * Creates a deferred failure.
      *
      * @param errorType a short, stable name for the kind of failure; it must not carry data taken
      *     from the record. A value that is not a simple token is replaced by
      *     {@code InvalidErrorType}
      */
-    public KafkaRedeliverFailure(String errorType) {
+    public KafkaDeferredFailure(String errorType) {
         super(checked(errorType), null, false, false);
         this.errorType = getMessage();
     }

@@ -49,7 +49,7 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
- * Shared setup of the plan delivery proofs: a {@link WorkflowSourceDelivery} over the context classes
+ * Shared setup of the plan delivery proofs: a {@link WorkflowSignalSourceDelivery} over the context classes
  * of {@code vertique-context}, a mocked {@link Pool} that applies its function to a mocked connection,
  * fake operations that answer from a script, a recording observer, a reporter that records what it is
  * handed, and a capture of every log record.
@@ -129,7 +129,7 @@ final class DeliveryRig implements AutoCloseable {
     private final ObserverFailureReporter reporter = mock(ObserverFailureReporter.class);
     private final LogCapture logs = new LogCapture();
     private final LookupProbe probe = new LookupProbe(holder);
-    private final WorkflowSourceDelivery delivery;
+    private final WorkflowSignalSourceDelivery delivery;
 
     private final List<Call> calls = new CopyOnWriteArrayList<>();
     private final List<String> timeline = new CopyOnWriteArrayList<>();
@@ -155,7 +155,7 @@ final class DeliveryRig implements AutoCloseable {
             observers.add(recorder);
         }
         observers.addAll(others);
-        this.delivery = new WorkflowSourceDelivery(
+        this.delivery = new WorkflowSignalSourceDelivery(
                 () -> operations,
                 inbox,
                 pool,

@@ -205,14 +205,14 @@ record ResolvedKafkaConsumerConfig(
     }
 
     /**
-     * Returns this configuration as a binding that forces its strategies needs it. A new group starts at the
+     * Returns this configuration as a binding that requires its strategies needs it: the binding rejects configuration that changes them. A new group starts at the
      * beginning of the topic unless {@code auto.offset.reset} is configured, so a first record that fails before any
      * commit is not skipped after a restart. Nothing else changes: the binding runs records concurrently up to
      * {@code maxInFlight}, like any other.
      *
      * @return the changed configuration
      */
-    ResolvedKafkaConsumerConfig forced() {
+    ResolvedKafkaConsumerConfig forBindingRequiringStrategies() {
         Map<String, String> properties = new HashMap<>(kafkaProperties);
         properties.putIfAbsent("auto.offset.reset", "earliest");
         return new ResolvedKafkaConsumerConfig(

@@ -19,12 +19,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies that {@link WorkflowSourceDelivery#report(SignalSourceEvent)} tells every registered
+ * Verifies that {@link WorkflowSignalSourceDelivery#report(SignalSourceEvent)} tells every registered
  * observer about an outcome and isolates each one: a throw from an observer never reaches the
  * caller, never stops the observers after it, and is handed to the bean's failure reporter by the
  * observer's class and the callback name alone.
  */
-class WorkflowSourceDeliveryObserverTest {
+class WorkflowSignalSourceDeliveryObserverTest {
 
     private static final String SECRET = "PAY-77";
 

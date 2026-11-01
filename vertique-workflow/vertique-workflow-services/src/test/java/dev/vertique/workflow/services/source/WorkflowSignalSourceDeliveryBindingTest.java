@@ -40,7 +40,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Verifies how {@link WorkflowSourceDelivery} records a correlated signal for a source: under the
+ * Verifies how {@link WorkflowSignalSourceDelivery} records a correlated signal for a source: under the
  * envelope's own security context, correlation and origin, bound on a duplicate of the calling
  * context that is closed whichever way the recording ends, with the provenance the envelope
  * builds for the signal's dedup key, and with the returned future completing back on the context
@@ -51,7 +51,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
-class WorkflowSourceDeliveryBindingTest {
+class WorkflowSignalSourceDeliveryBindingTest {
 
     private static final SignalProvenance KAFKA_PROVENANCE =
             SignalProvenance.kafka("carriers", "carrier.events", 3, 42);

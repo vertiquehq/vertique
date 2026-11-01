@@ -84,7 +84,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Verifies how {@link WorkflowSourceDelivery#deliver} runs a {@link SignalSourcePlan} to one
+ * Verifies how {@link WorkflowSignalSourceDelivery#deliver} runs a {@link SignalSourcePlan} to one
  * {@link SourceDisposition} per message: the order of the stages, the context each stage runs on,
  * the outcome and fate of each cause, how the signals of one message are folded into one fate, and
  * that nothing of the message reaches a disposition, an event or a log record.
@@ -95,7 +95,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
-class WorkflowSourceDeliveryPlanTest {
+class WorkflowSignalSourceDeliveryPlanTest {
 
     private static final String KEY = "PAY-77";
 
@@ -332,10 +332,10 @@ class WorkflowSourceDeliveryPlanTest {
             assertThat(rig.outcomes()).containsExactly(Outcome.LIMITED);
         }
 
-        // and a node refusing intake is WAIT with one LIMITED event
+        // and a node refusing intake is DEFER with one LIMITED event
         try (DeliveryRig rig = DeliveryRig.over(vertx).operationsRaising(new WorkflowIntakeRefusedException())) {
             SourceDisposition disposition = rig.deliver(keyedPlan(), shipment(), envelope());
-            assertThat(disposition.fate()).isEqualTo(Fate.WAIT);
+            assertThat(disposition.fate()).isEqualTo(Fate.DEFER);
             assertThat(rig.outcomes()).containsExactly(Outcome.LIMITED);
         }
 
@@ -382,35 +382,35 @@ class WorkflowSourceDeliveryPlanTest {
                         DeliveryRig.recorded(),
                         DeliveryRig.raising(new WorkflowIntakeRefusedException()),
                         SignalNoMatch.IGNORE,
-                        Fate.WAIT,
+                        Fate.DEFER,
                         List.of(Outcome.RECORDED, Outcome.LIMITED)),
                 new Row(
                         "intake refusal then open-signal limit",
                         DeliveryRig.raising(new WorkflowIntakeRefusedException()),
                         DeliveryRig.raising(limit),
                         SignalNoMatch.IGNORE,
-                        Fate.WAIT,
+                        Fate.DEFER,
                         List.of(Outcome.LIMITED, Outcome.LIMITED)),
                 new Row(
                         "open-signal limit then intake refusal",
                         DeliveryRig.raising(limit),
                         DeliveryRig.raising(new WorkflowIntakeRefusedException()),
                         SignalNoMatch.IGNORE,
-                        Fate.WAIT,
+                        Fate.DEFER,
                         List.of(Outcome.LIMITED, Outcome.LIMITED)),
                 new Row(
                         "intake refusal then ambiguous",
                         DeliveryRig.raising(new WorkflowIntakeRefusedException()),
                         DeliveryRig.raising(new WorkflowSignalAmbiguousException("billing", INVOICE_SETTLED)),
                         SignalNoMatch.IGNORE,
-                        Fate.WAIT,
+                        Fate.DEFER,
                         List.of(Outcome.LIMITED, Outcome.AMBIGUOUS)),
                 new Row(
                         "ambiguous then intake refusal",
                         DeliveryRig.raising(new WorkflowSignalAmbiguousException("orders", SHIPMENT_DELIVERED)),
                         DeliveryRig.raising(new WorkflowIntakeRefusedException()),
                         SignalNoMatch.IGNORE,
-                        Fate.WAIT,
+                        Fate.DEFER,
                         List.of(Outcome.AMBIGUOUS, Outcome.LIMITED)),
                 new Row(
                         "recorded then recorded",

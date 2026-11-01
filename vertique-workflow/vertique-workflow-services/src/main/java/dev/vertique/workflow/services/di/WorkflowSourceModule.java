@@ -9,7 +9,7 @@ import dagger.multibindings.Multibinds;
 import dev.vertique.context.InboundExecutionContextScope;
 import dev.vertique.inboxoutbox.InboxService;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
-import dev.vertique.workflow.services.source.WorkflowSourceDelivery;
+import dev.vertique.workflow.services.source.WorkflowSignalSourceDelivery;
 import dev.vertique.workflow.source.SignalSourceObserver;
 import io.vertx.core.Vertx;
 import io.vertx.sqlclient.Pool;
@@ -55,13 +55,13 @@ public abstract class WorkflowSourceModule {
      */
     @Provides
     @Singleton
-    static WorkflowSourceDelivery sourceDelivery(
+    static WorkflowSignalSourceDelivery sourceDelivery(
             Provider<TransactionalWorkflowOperations<SqlClient>> operations,
             InboxService inbox,
             Pool pool,
             Vertx vertx,
             InboundExecutionContextScope contextScope,
             Set<SignalSourceObserver> observers) {
-        return new WorkflowSourceDelivery(operations, inbox, pool, vertx, contextScope, observers);
+        return new WorkflowSignalSourceDelivery(operations, inbox, pool, vertx, contextScope, observers);
     }
 }

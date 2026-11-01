@@ -12,7 +12,7 @@ import dev.vertique.workflow.services.source.SourceStages;
  * {@code onNoMatch}, then the stages of the topic.
  *
  * <p>The source offers no stage for a commit strategy, an error strategy or a retry strategy. The
- * binding {@link #build() built} here commits manually, retries, forces both strategies, so that
+ * binding {@link #build() built} here commits manually, retries, requires both strategies, so that
  * {@code kafka.consumers.{name}.*} cannot restore automatic commit or skipping, installs no header
  * context, and acknowledges a record that cannot be decoded after reporting it.
  *

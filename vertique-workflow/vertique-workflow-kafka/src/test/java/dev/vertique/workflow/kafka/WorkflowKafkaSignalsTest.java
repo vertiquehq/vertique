@@ -20,10 +20,10 @@ import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.kafka.CommitStrategy;
 import dev.vertique.kafka.ErrorStrategy;
 import dev.vertique.kafka.KafkaConsumerBinding;
+import dev.vertique.kafka.KafkaDeferredFailure;
 import dev.vertique.kafka.KafkaMessage;
 import dev.vertique.kafka.KafkaRecordFilter;
 import dev.vertique.kafka.KafkaRecordHeaders;
-import dev.vertique.kafka.KafkaRedeliverFailure;
 import dev.vertique.kafka.KafkaRegistrationException;
 import dev.vertique.kafka.KafkaTerminalFailure;
 import dev.vertique.workflow.kafka.SourceFixture.Carriers;
@@ -33,7 +33,7 @@ import dev.vertique.workflow.kafka.SourceFixture.ShipmentDelivered;
 import dev.vertique.workflow.services.source.SourceDisposition;
 import dev.vertique.workflow.services.source.SourceDisposition.Fate;
 import dev.vertique.workflow.services.source.SourceEnvelope;
-import dev.vertique.workflow.services.source.WorkflowSourceDelivery;
+import dev.vertique.workflow.services.source.WorkflowSignalSourceDelivery;
 import dev.vertique.workflow.source.SignalSourceEvent;
 import dev.vertique.workflow.source.SignalSourceEvent.Outcome;
 import io.vertx.core.Future;
@@ -56,11 +56,11 @@ class WorkflowKafkaSignalsTest {
 
     private static final String SECRET_KEY = "SECRET-KEY-7";
 
-    /** One configuration of the built consumer, and the option a forced strategy must name on it. */
+    /** One configuration of the built consumer, and the option a required strategy must name on it. */
     record Row(String label, JsonObject consumerConfig, String changedOption) {}
 
     @Test
-    void builtSourceIsAManualRetryingForcedBindingWithTheSourceOptions() {
+    void builtSourceIsAManualRetryingRequiredStrategiesBindingWithTheSourceOptions() {
         // Given a source over a topic and group, with a filter, one signal keyed by carrier reference
         // and a payload mapping
         Carriers carriers = SourceFixture.carriers();
@@ -76,12 +76,12 @@ class WorkflowKafkaSignalsTest {
                 .payload(message -> new DeliveryConfirmed(message.carrierRef(), message.note()))
                 .build();
 
-        // Then the binding carries the topic and group, commits manually and retries, forces both
+        // Then the binding carries the topic and group, commits manually and retries, requires both
         assertThat(binding.topic()).isEqualTo("carrier.events");
         assertThat(binding.groupId()).isEqualTo("logistics");
         assertThat(binding.commitStrategy()).isEqualTo(CommitStrategy.MANUAL);
         assertThat(binding.errorStrategy()).isEqualTo(ErrorStrategy.RETRY);
-        assertThat(binding.forceStrategies()).isTrue();
+        assertThat(binding.requireBindingStrategies()).isTrue();
         // And it installs no header context and ignores undecodable records
         assertThat(binding.noHeaderContext()).isTrue();
         assertThat(binding.ignoreUndecodable()).isNotNull();
@@ -334,8 +334,8 @@ class WorkflowKafkaSignalsTest {
 
     @Test
     void waitFateFailsTheRecordWithARedeliverFailureCarryingTheErrorType() {
-        // Given a source whose delivery answers WAIT with an error type, RETRY and TERMINAL
-        for (Fate fate : List.of(Fate.WAIT, Fate.RETRY, Fate.TERMINAL)) {
+        // Given a source whose delivery answers DEFER with an error type, RETRY and TERMINAL
+        for (Fate fate : List.of(Fate.DEFER, Fate.RETRY, Fate.TERMINAL)) {
             Carriers carriers = SourceFixture.carriers();
             doReturn(Future.succeededFuture(new SourceDisposition(fate, "WorkflowIntakeRefusedException")))
                     .when(carriers.delivery())
@@ -356,17 +356,17 @@ class WorkflowKafkaSignalsTest {
                     .toCompletableFuture()
                     .get());
 
-            // Then WAIT fails it with KafkaRedeliverFailure carrying the error type and nothing more, and the other
+            // Then DEFER fails it with KafkaDeferredFailure carrying the error type and nothing more, and the other
             // fates keep their own failures
             Throwable cause = failure.getCause();
-            if (fate == Fate.WAIT) {
-                assertThat(cause).isInstanceOf(KafkaRedeliverFailure.class).hasNoCause();
-                assertThat(((KafkaRedeliverFailure) cause).errorType()).isEqualTo("WorkflowIntakeRefusedException");
+            if (fate == Fate.DEFER) {
+                assertThat(cause).isInstanceOf(KafkaDeferredFailure.class).hasNoCause();
+                assertThat(((KafkaDeferredFailure) cause).errorType()).isEqualTo("WorkflowIntakeRefusedException");
             } else if (fate == Fate.TERMINAL) {
                 assertThat(cause).isInstanceOf(KafkaTerminalFailure.class);
             } else {
                 assertThat(cause)
-                        .isNotInstanceOf(KafkaRedeliverFailure.class)
+                        .isNotInstanceOf(KafkaDeferredFailure.class)
                         .isNotInstanceOf(KafkaTerminalFailure.class);
             }
         }
@@ -472,6 +472,6 @@ class WorkflowKafkaSignalsTest {
                         .filter(constructor -> constructor.isAnnotationPresent(Inject.class))
                         .map(constructor -> List.of(constructor.getParameterTypes()))
                         .toList())
-                .containsExactly(List.of(WorkflowSourceDelivery.class, CorrelationContextFactory.class));
+                .containsExactly(List.of(WorkflowSignalSourceDelivery.class, CorrelationContextFactory.class));
     }
 }

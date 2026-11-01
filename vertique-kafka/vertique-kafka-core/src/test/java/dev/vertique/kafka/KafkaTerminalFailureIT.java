@@ -241,7 +241,7 @@ public class KafkaTerminalFailureIT {
     @Test
     @DisplayName("a terminal failure under SKIP is skipped with a log and no dead letter")
     void terminalFailureUnderSkipIsSkippedWithALogAndNoDeadLetter(Vertx vertx) throws Exception {
-        // Given: a binding that does not force its strategies, MANUAL RETRY on a 30-second backoff that
+        // Given: a binding that does not require its strategies, MANUAL RETRY on a 30-second backoff that
         // skips on exhaustion, and a handler that fails the first record terminally and accepts the second
         CompletableFuture<Void> secondHandled = new CompletableFuture<>();
         TerminalRig rig = TerminalRig.open(vertx, "terminal-skip", false, ErrorStrategy.SKIP, message -> {
@@ -418,7 +418,7 @@ public class KafkaTerminalFailureIT {
          *
          * @param vertx the Vert.x instance
          * @param consumerName the binding's name, which is also its consumer name in logs
-         * @param force whether the binding forces its strategies
+         * @param force whether the binding requires its strategies
          * @param exhausted the exhausted strategy the configuration states
          * @param handler the binding's handler
          * @return the running rig
@@ -440,7 +440,7 @@ public class KafkaTerminalFailureIT {
          *
          * @param vertx the Vert.x instance
          * @param consumerName the binding's name, which is also its consumer name in logs
-         * @param force whether the binding forces its strategies
+         * @param force whether the binding requires its strategies
          * @param exhausted the exhausted strategy the configuration states
          * @param backoffMs the retry backoff in milliseconds
          * @param handler the binding's handler
@@ -466,7 +466,7 @@ public class KafkaTerminalFailureIT {
                         .deadLetterTopic(rig.deadLetterTopic)
                         .handler(handler);
                 if (force) {
-                    builder.forceStrategies();
+                    builder.requireBindingStrategies();
                 }
                 JsonObject retry = new JsonObject()
                         .put(

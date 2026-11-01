@@ -51,7 +51,7 @@ public class KafkaConsumerBinding<V> {
     private final JsonProfileId jsonProfile;
     private final Runnable ignoreUndecodable;
     private final boolean noHeaderContext;
-    private final boolean forceStrategies;
+    private final boolean requireBindingStrategies;
     private final KafkaDispatchGate dispatchGate;
 
     private KafkaConsumerBinding(Builder<V> builder) {
@@ -72,7 +72,7 @@ public class KafkaConsumerBinding<V> {
         this.jsonProfile = builder.jsonProfile;
         this.ignoreUndecodable = builder.ignoreUndecodable;
         this.noHeaderContext = builder.noHeaderContext;
-        this.forceStrategies = builder.forceStrategies;
+        this.requireBindingStrategies = builder.requireBindingStrategies;
         this.dispatchGate = builder.dispatchGate;
     }
 
@@ -245,10 +245,10 @@ public class KafkaConsumerBinding<V> {
      * Returns whether registration requires the resolved commit and error strategies to equal this
      * binding's and the resolved exhausted strategy to be {@link ErrorStrategy#DEAD_LETTER}.
      *
-     * @return {@code true} if the strategies are forced
+     * @return {@code true} if the binding requires its strategies
      */
-    public boolean forceStrategies() {
-        return forceStrategies;
+    public boolean requireBindingStrategies() {
+        return requireBindingStrategies;
     }
 
     /**
@@ -297,7 +297,7 @@ public class KafkaConsumerBinding<V> {
         private JsonProfileId jsonProfile;
         private Runnable ignoreUndecodable;
         private boolean noHeaderContext;
-        private boolean forceStrategies;
+        private boolean requireBindingStrategies;
         private KafkaDispatchGate dispatchGate;
 
         private Builder(String name, Class<V> valueType) {
@@ -497,8 +497,8 @@ public class KafkaConsumerBinding<V> {
          *
          * @return this builder
          */
-        public Builder<V> forceStrategies() {
-            this.forceStrategies = true;
+        public Builder<V> requireBindingStrategies() {
+            this.requireBindingStrategies = true;
             return this;
         }
 
@@ -523,22 +523,22 @@ public class KafkaConsumerBinding<V> {
          * @return the immutable binding
          * @throws IllegalStateException if the binding names both a {@link #handler handler} and a
          *     {@link #dispatchTo(Class, String) dispatchTo} target, or names no handler and sets
-         *     {@link #ignoreUndecodable}, {@link #noHeaderContext} or {@link #forceStrategies}, or
-         *     sets {@link #forceStrategies} without {@link CommitStrategy#MANUAL}
+         *     {@link #ignoreUndecodable}, {@link #noHeaderContext} or {@link #requireBindingStrategies}, or
+         *     sets {@link #requireBindingStrategies} without {@link CommitStrategy#MANUAL}
          */
         public KafkaConsumerBinding<V> build() {
             if (handler != null && targetService != null) {
                 throw new IllegalStateException("KafkaConsumerBinding '" + name
                         + "' names both a handler and a dispatchTo target; name one or the other");
             }
-            if (handler == null && (ignoreUndecodable != null || noHeaderContext || forceStrategies)) {
+            if (handler == null && (ignoreUndecodable != null || noHeaderContext || requireBindingStrategies)) {
                 throw new IllegalStateException("KafkaConsumerBinding '" + name
-                        + "' sets ignoreUndecodable, noHeaderContext or forceStrategies, which apply to a handler"
+                        + "' sets ignoreUndecodable, noHeaderContext or requireBindingStrategies, which apply to a handler"
                         + " only; name a handler");
             }
-            if (forceStrategies && commitStrategy != CommitStrategy.MANUAL) {
+            if (requireBindingStrategies && commitStrategy != CommitStrategy.MANUAL) {
                 throw new IllegalStateException("KafkaConsumerBinding '" + name
-                        + "' sets forceStrategies, which needs commitStrategy MANUAL but has " + commitStrategy
+                        + "' sets requireBindingStrategies, which needs commitStrategy MANUAL but has " + commitStrategy
                         + "; close-time auto-commit could pass a record whose failure is unsettled");
             }
             return new KafkaConsumerBinding<>(this);
