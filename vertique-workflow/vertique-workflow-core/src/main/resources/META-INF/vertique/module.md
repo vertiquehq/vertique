@@ -872,9 +872,10 @@ and a new signal with `WorkflowIntakeRefusedException` and writes nothing.
   `workflow.signals.post` is recorded through `RelayedSignals<TX>`, which is the public signal form without the intake check: the
   signal is already durable in the outbox, and refusing it would only spend delivery attempts until it was dead-lettered. An
   application that signals through the outbox therefore passes the limit.
-- **Overshoot.** The limit is approximate. At worst the cluster records `5 x sampleIntervalMs x` its intake rate more commands than
+- **Overshoot.** The limit is approximate, not a hard bound. While readings succeed, the cluster records up to about `5 x sampleIntervalMs x` its intake rate more commands than
   the last reading showed: the longest wait between two readings of an idle node (four intervals) plus the interval a reading may
-  take. At the defaults and 2,000 commands per second that is 10,000 commands past the last reading.
+  take. At the defaults and 2,000 commands per second that is 10,000 commands past the last reading. The estimate leaves out transactions
+  already admitted and not yet committed, and it does not hold while reads keep failing, because a node then opens intake.
 - **A failed reading.** A reading that fails, or has not settled one interval after it started, counts as a failed sample, and at
   most one reading is outstanding per node. A node keeps its state through two failed samples in a row and admits on the third,
   with one warning for the outage, because the limit protects the database and must not become an outage of its own. The next good
