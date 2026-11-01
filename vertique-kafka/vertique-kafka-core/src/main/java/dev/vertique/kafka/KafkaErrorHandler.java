@@ -459,11 +459,20 @@ final class KafkaErrorHandler {
     /**
      * The longest pause of a redelivery that repeats without limit. A paused consumer does not poll, so a
      * pause past {@code max.poll.interval.ms} would evict it from its group; half of it leaves time to
-     * handle the record that the resume delivers.
+     * handle the record that the resume delivers. A value that is not a number, such as a config
+     * provider expression only the client resolves, counts as Kafka's default: this path must not fail
+     * on a configuration the client accepts.
      */
     private long longestPauseMs() {
         String configured = entry.config().kafkaProperties().get("max.poll.interval.ms");
-        return (configured == null ? DEFAULT_MAX_POLL_INTERVAL_MS : Long.parseLong(configured.trim())) / 2;
+        if (configured == null) {
+            return DEFAULT_MAX_POLL_INTERVAL_MS / 2;
+        }
+        try {
+            return Long.parseLong(configured.trim()) / 2;
+        } catch (NumberFormatException notANumber) {
+            return DEFAULT_MAX_POLL_INTERVAL_MS / 2;
+        }
     }
 
     /**

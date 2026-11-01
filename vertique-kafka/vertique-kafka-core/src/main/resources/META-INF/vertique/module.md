@@ -847,7 +847,10 @@ record stays uncommitted and keeps its slot until the seek back is confirmed, a 
 confirmed is handled as for a failed dead-letter publish, and no later record is delivered ahead of
 it. It spends no retry: the record's retry count does not change, the number of redeliveries has no
 limit, and the record is never dead-lettered because of it. A handler that raises it for a failure
-that never clears stalls the consumer and lets its lag grow.
+that never clears stalls the consumer and lets its lag grow. Keep handling a record under half of
+`max.poll.interval.ms`: a longer handler plus the pause can pass the interval, and the group then
+rebalances and the record is delivered again. A value only the client can read, such as a config
+provider expression, counts as Kafka's default of five minutes here.
 
 On any other binding it is an ordinary failure, handled by the binding's error strategy. The error
 type follows the rules of `KafkaTerminalFailure`, and the failure carries the error type only.

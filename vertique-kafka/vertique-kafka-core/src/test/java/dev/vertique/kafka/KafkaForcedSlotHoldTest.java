@@ -857,6 +857,11 @@ class KafkaForcedSlotHoldTest {
         KafkaErrorHandler capped =
                 new KafkaErrorHandler(entry(true, ErrorStrategy.RETRY, null, null, shortInterval), producer);
         KafkaErrorHandler uncapped = new KafkaErrorHandler(entry(true, ErrorStrategy.RETRY, null, null), producer);
+        JsonObject expression = new JsonObject().put("max.poll.interval.ms", "${file:/etc/kafka.properties:poll}");
+        KafkaErrorHandler unread =
+                new KafkaErrorHandler(entry(true, ErrorStrategy.RETRY, null, null, expression), producer);
+        KafkaTerminalOutcomeTest.CapturingConsumerControl unreadControl =
+                new KafkaTerminalOutcomeTest.CapturingConsumerControl();
         KafkaTerminalOutcomeTest.CapturingConsumerControl cappedControl =
                 new KafkaTerminalOutcomeTest.CapturingConsumerControl();
         KafkaTerminalOutcomeTest.CapturingConsumerControl uncappedControl =
@@ -866,10 +871,15 @@ class KafkaForcedSlotHoldTest {
         KafkaRedeliverFailure busy = new KafkaRedeliverFailure("Busy");
         capped.handleError(failed, new byte[0], KafkaRecordHeaders.empty(), busy, cappedControl);
         uncapped.handleError(failed, new byte[0], KafkaRecordHeaders.empty(), busy, uncappedControl);
+        Future<KafkaTerminalOutcome> redelivered =
+                unread.handleError(failed, new byte[0], KafkaRecordHeaders.empty(), busy, unreadControl);
 
-        // Then: the short interval caps the pause at half of itself, and the default leaves the backoff alone
+        // Then: the short interval caps the pause at half of itself, the default leaves the backoff alone, and
+        // an interval only the client can read does not fail the redelivery
         assertEquals(BACKOFF_MS / 2, cappedControl.lastDelayMs);
         assertEquals(BACKOFF_MS, uncappedControl.lastDelayMs);
+        assertEquals(KafkaTerminalOutcome.RETRY_SCHEDULED, redelivered.result());
+        assertEquals(BACKOFF_MS, unreadControl.lastDelayMs);
     }
 
     private static void setPaused(Rig rig, boolean value) throws ReflectiveOperationException {
