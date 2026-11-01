@@ -38,6 +38,9 @@ import lombok.extern.slf4j.Slf4j;
  * forwarded to the job: no application header reaches it, neither in the job's payload nor in its
  * metadata.
  *
+ * <p>The job takes its scope from {@link OutboxEnvelope#scopeKey()} alone, never from headers or
+ * metadata, so a job produced from an outbox row runs in the row's scope.
+ *
  * <p>Error classification:
  * <ul>
  *   <li>{@link OutboxPublishResult#unresolvable(String)} — the target id is not registered;
@@ -160,6 +163,7 @@ public class DelayedJobOutboxDestinationHandler implements OutboxDestinationHand
                 .maxAttempts(snapshot.maxAttempts())
                 .runAt(envelope.scheduledAt())
                 .metadata(context)
+                .scopeKey(envelope.scopeKey())
                 .build();
 
         // 4. Enqueue — standalone, NOT transactional (FR-TM-065)

@@ -21,13 +21,17 @@ import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import dev.vertique.context.DefaultContextHolder;
 import dev.vertique.context.DispatchEnvelopeBuilder;
+import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.DeferredExecutionOrigin;
 import dev.vertique.core.eventbus.DispatchEnvelope;
 import dev.vertique.core.eventbus.EventBusClient;
 import dev.vertique.core.eventbus.EventBusExceptionMapper;
 import dev.vertique.core.eventbus.LocalMessageCodec;
 import dev.vertique.core.eventbus.Result;
+import dev.vertique.core.scope.ScopeContext;
+import dev.vertique.core.scope.ScopeKey;
 import dev.vertique.job.CronJobSchedule;
 import dev.vertique.job.DefaultJobContext;
 import dev.vertique.job.JobContext;
@@ -43,6 +47,7 @@ import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.eventbus.DeliveryOptions;
+import io.vertx.core.internal.ContextInternal;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.time.Instant;
@@ -570,6 +575,73 @@ class CronSchedulerTest {
 
         scheduler.register(job);
         scheduler.start();
+    }
+
+    @Test
+    @DisplayName("a cron fire is in the default scope even when the scheduler runs under a bound scope")
+    void cronExecutionIsInDefaultScope(Vertx vertx, VertxTestContext ctx) {
+        DefaultContextHolder holder = new DefaultContextHolder();
+        AtomicReference<JobExecution> saved = new AtomicReference<>();
+        AtomicReference<ScopeContext> ambientAtFire = new AtomicReference<>();
+        AtomicReference<ContextHolder.Scope> bound = new AtomicReference<>();
+        AtomicBoolean asserted = new AtomicBoolean(false);
+
+        JobRepository repo = stubRepoCapturingCompletion(new AtomicReference<>());
+        when(repo.save(any(JobExecution.class))).thenAnswer(inv -> {
+            JobExecution execution = inv.getArgument(0);
+            saved.set(execution);
+            return Future.succeededFuture(execution.id());
+        });
+        JobInterceptor interceptor = new JobInterceptor() {
+            @Override
+            public void onDispatch(JobDispatchContext dispatchCtx) {
+                ambientAtFire.set(holder.current(ScopeContext.class).orElse(null));
+            }
+        };
+        scheduler =
+                compressedScheduler(vertx, Set.of(interceptor), repo, stubTargetResolver(), testEventBusClient(vertx));
+
+        ContextInternal producer = ((ContextInternal) vertx.getOrCreateContext()).duplicate();
+
+        vertx.eventBus().consumer("test.scope.address", msg -> {
+            if (!(msg.body() instanceof DispatchEnvelope<?> body) || !asserted.compareAndSet(false, true)) {
+                return;
+            }
+            Map<String, Object> dispatchContext = body.metadata().dispatchContext();
+            JobContext jobContext = (JobContext) dispatchContext.get(JobContext.class.getName());
+            JobDispatchContext dispatch = (JobDispatchContext) dispatchContext.get(JobDispatchContext.class.getName());
+            producer.runOnContext(ignored -> bound.get().close());
+            ctx.verify(() -> {
+                assertEquals(
+                        new ScopeContext(new ScopeKey("acme")),
+                        ambientAtFire.get(),
+                        "the scope must be bound while the job fires");
+                assertEquals("default", jobContext.scopeKey());
+                assertEquals("default", dispatch.scopeKey());
+                assertEquals("default", saved.get().scopeKey());
+            });
+            ctx.completeNow();
+        });
+
+        CronJobDefinition job = new CronJobDefinition(
+                "scope-test-job",
+                new CronExpression("* * * * * *"),
+                new CronTargetReference.EventBusTarget("test.scope.address"),
+                "test.scope.address",
+                ExecutionMode.EVERY_INSTANCE,
+                ZoneId.of("UTC"),
+                3,
+                null,
+                OverlapPolicy.SKIP,
+                true,
+                Map.of(),
+                MisfirePolicy.SKIP);
+
+        scheduler.register(job);
+        producer.runOnContext(ignored -> {
+            bound.set(holder.bind(ScopeContext.class, new ScopeContext(new ScopeKey("acme"))));
+            scheduler.start();
+        });
     }
 
     @Test

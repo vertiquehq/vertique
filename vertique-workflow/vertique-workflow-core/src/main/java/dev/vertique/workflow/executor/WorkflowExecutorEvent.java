@@ -65,4 +65,17 @@ public sealed interface WorkflowExecutorEvent {
      * @param kind the command kind
      */
     record ActorAbsent(String kind) implements WorkflowExecutorEvent {}
+
+    /**
+     * This node's intake limit changed between admitting and refusing starts and signals from outside. Every node
+     * reports its own transitions, including a node that runs no executor.
+     *
+     * <p>A node that opens intake because its reads keep failing reports the transition with {@code readFailed}
+     * {@code true}, and the commands it counted last are then stale.
+     *
+     * @param refusing   {@code true} when the node now refuses, {@code false} when it now admits
+     * @param due        the due commands counted by the last successful reading, at most the high mark plus one
+     * @param readFailed {@code true} when the node admits again only because its reads kept failing
+     */
+    record IntakePressureChanged(boolean refusing, long due, boolean readFailed) implements WorkflowExecutorEvent {}
 }

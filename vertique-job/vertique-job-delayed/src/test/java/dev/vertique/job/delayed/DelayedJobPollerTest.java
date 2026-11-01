@@ -25,9 +25,11 @@ import dev.vertique.context.DefaultContextHolder;
 import dev.vertique.context.DispatchEnvelopeBuilder;
 import dev.vertique.context.DurableContextMetadataRegistry;
 import dev.vertique.context.DurableContextPropagator;
+import dev.vertique.context.DurableJsonContextCodecs;
 import dev.vertique.core.context.ContextDecodeResult;
 import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.context.DeferredExecutionOrigin;
+import dev.vertique.core.context.DispatchBoundary;
 import dev.vertique.core.context.DurableCarrierDescriptor;
 import dev.vertique.core.context.DurableContextMetadataDecoder;
 import dev.vertique.core.context.DurableDecodeContext;
@@ -37,6 +39,8 @@ import dev.vertique.core.eventbus.EventBusClient;
 import dev.vertique.core.eventbus.EventBusExceptionMapper;
 import dev.vertique.core.eventbus.LocalMessageCodec;
 import dev.vertique.core.eventbus.Result;
+import dev.vertique.core.scope.ScopeContext;
+import dev.vertique.core.scope.ScopeKey;
 import dev.vertique.job.DefaultJobContext;
 import dev.vertique.job.JobCompletionHandler;
 import dev.vertique.job.JobContext;
@@ -53,6 +57,7 @@ import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.eventbus.DeliveryOptions;
+import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.Checkpoint;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -62,6 +67,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -465,6 +471,99 @@ class DelayedJobPollerTest {
                                         "target address == executing row handler");
                                 ctx.completeNow();
                             }));
+
+            DelayedJobPoller poller = new DelayedJobPoller(
+                    "default",
+                    fastConfig(),
+                    repository,
+                    completionHandler,
+                    Set.of(),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting(),
+                    propagator);
+
+            vertx.deployVerticle(poller).onFailure(ctx::failNow);
+        }
+    }
+
+    @Nested
+    @DisplayName("scope reads")
+    class ScopeReads {
+
+        private static final String HANDLER_ADDRESS = "test.scope.handler";
+
+        private JobExecution rowIn(String jobId, String scopeKey) {
+            JobExecution base = sampleExecution(jobId, HANDLER_ADDRESS);
+            return new JobExecution(
+                    base.id(),
+                    base.jobId(),
+                    base.jobType(),
+                    base.handler(),
+                    base.queue(),
+                    base.state(),
+                    base.attemptNumber(),
+                    base.maxAttempts(),
+                    base.payload(),
+                    base.priority(),
+                    base.lockedBy(),
+                    base.scheduledAt(),
+                    base.enqueuedAt(),
+                    base.startedAt(),
+                    base.completedAt(),
+                    base.errorMessage(),
+                    base.errorType(),
+                    base.progress(),
+                    base.parameters(),
+                    base.attributes(),
+                    DurableMetadata.of("scope", new JsonObject().put("scopeKey", "acme")),
+                    scopeKey);
+        }
+
+        @Test
+        @DisplayName("handler reads the row scope beside the scope restored from metadata")
+        void handlerReadsRowScopeBesideRestoredContext(Vertx vertx, VertxTestContext ctx) {
+            JobExecution inDefault = rowIn("scope-default-job", "default");
+            JobExecution inGlobex = rowIn("scope-globex-job", "globex");
+
+            DefaultContextHolder holder = new DefaultContextHolder();
+            DurableContextPropagator propagator = new DurableContextPropagator(
+                    new DurableContextMetadataRegistry(
+                            Set.of(),
+                            Set.of(DurableJsonContextCodecs.jsonDecoder(
+                                    ScopeContext.class,
+                                    "scope",
+                                    Set.of(DispatchBoundary.DELAYED_JOB),
+                                    body -> ContextDecodeResult.of(
+                                            new ScopeContext(new ScopeKey(body.getString("scopeKey"))))))),
+                    holder,
+                    new ContextScopeBinder(holder));
+
+            when(repository.claimNextJob(anyString(), anyInt()))
+                    .thenReturn(Future.succeededFuture(List.of(inDefault, inGlobex)))
+                    .thenReturn(Future.succeededFuture(List.of()));
+
+            Map<UUID, String> jobScopeByRow = new ConcurrentHashMap<>();
+            Map<UUID, String> restoredScopeByRow = new ConcurrentHashMap<>();
+            vertx.eventBus().consumer(HANDLER_ADDRESS, msg -> {
+                if (!(msg.body() instanceof DispatchEnvelope<?> body)) {
+                    return;
+                }
+                Map<String, Object> dispatchContext = body.metadata().dispatchContext();
+                JobContext jobContext = (JobContext) dispatchContext.get(JobContext.class.getName());
+                ScopeContext restored = (ScopeContext) dispatchContext.get(ScopeContext.class.getName());
+                jobScopeByRow.put(jobContext.executionId(), jobContext.scopeKey());
+                restoredScopeByRow.put(
+                        jobContext.executionId(), restored.scopeKey().value());
+                if (jobScopeByRow.size() == 2) {
+                    ctx.verify(() -> {
+                        assertEquals("default", jobScopeByRow.get(inDefault.id()));
+                        assertEquals("globex", jobScopeByRow.get(inGlobex.id()));
+                        assertEquals("acme", restoredScopeByRow.get(inDefault.id()));
+                        assertEquals("acme", restoredScopeByRow.get(inGlobex.id()));
+                    });
+                    ctx.completeNow();
+                }
+            });
 
             DelayedJobPoller poller = new DelayedJobPoller(
                     "default",

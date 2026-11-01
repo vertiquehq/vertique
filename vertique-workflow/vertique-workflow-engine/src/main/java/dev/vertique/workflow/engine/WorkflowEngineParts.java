@@ -13,6 +13,7 @@ import dev.vertique.workflow.actor.WorkflowActorMapper;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.engine.history.WorkflowHistoryEventPublisher;
+import dev.vertique.workflow.engine.intake.IntakeAdmission;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.CommandWakeups;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
@@ -49,7 +50,7 @@ import java.util.Set;
  * <p>The class has no public constructor: {@link #builder()} is the only way to create it, so a part can be added
  * later without breaking a caller. {@link Builder#build()} fails fast with a {@link NullPointerException} that names
  * the first required part that is missing. Every part is required except the {@link Set} parts, which default to
- * empty except the optional intent kinds, which default to the engine default, the {@link Optional} parts, which default to empty, and the {@code propagator}, which may be {@code null}.
+ * empty except the optional intent kinds, which default to the engine default, the {@link Optional} parts, which default to empty, the {@code intakeAdmission}, which defaults to accepting every call, and the {@code propagator}, which may be {@code null}.
  * The {@code clock} has no default.
  */
 public final class WorkflowEngineParts {
@@ -86,6 +87,7 @@ public final class WorkflowEngineParts {
     private final WorkflowActorMapper actorMapper;
     private final Optional<WorkflowHistoryRedactor> historyRedactor;
     private final WorkflowHistoryEventPublisher historyPublisher;
+    private final IntakeAdmission intakeAdmission;
 
     private WorkflowEngineParts(Builder b) {
         this.txRunner = Objects.requireNonNull(b.txRunner, "txRunner");
@@ -120,6 +122,7 @@ public final class WorkflowEngineParts {
         this.actorMapper = Objects.requireNonNull(b.actorMapper, "actorMapper");
         this.historyRedactor = Objects.requireNonNull(b.historyRedactor, "historyRedactor");
         this.historyPublisher = Objects.requireNonNull(b.historyPublisher, "historyPublisher");
+        this.intakeAdmission = Objects.requireNonNull(b.intakeAdmission, "intakeAdmission");
     }
 
     /**
@@ -306,6 +309,14 @@ public final class WorkflowEngineParts {
     }
 
     /**
+     * The admission a new start or signal from outside is checked against; one that always accepts by default, which
+     * is what an engine without a sampler uses. Supply a refusing one to exercise the refusal.
+     */
+    public IntakeAdmission intakeAdmission() {
+        return intakeAdmission;
+    }
+
+    /**
      * The producer of the payload schemas a new task's decision snapshot stores; empty by default, in which case the
      * tasks it creates carry no schemas and the executor alone validates their completions.
      */
@@ -355,6 +366,7 @@ public final class WorkflowEngineParts {
         private WorkflowActorMapper actorMapper = new DefaultWorkflowActorMapper();
         private Optional<WorkflowHistoryRedactor> historyRedactor = Optional.empty();
         private WorkflowHistoryEventPublisher historyPublisher = WorkflowHistoryEventPublisher.disabled();
+        private IntakeAdmission intakeAdmission = IntakeAdmission.alwaysAdmitting();
 
         private Builder() {}
 
@@ -542,6 +554,12 @@ public final class WorkflowEngineParts {
         /** Sets the publisher of history announcements; the default announces nothing. */
         public Builder historyPublisher(WorkflowHistoryEventPublisher historyPublisher) {
             this.historyPublisher = Objects.requireNonNull(historyPublisher, "historyPublisher");
+            return this;
+        }
+
+        /** Sets the admission a new start or signal from outside is checked against; the default accepts every call. */
+        public Builder intakeAdmission(IntakeAdmission intakeAdmission) {
+            this.intakeAdmission = Objects.requireNonNull(intakeAdmission, "intakeAdmission");
             return this;
         }
 

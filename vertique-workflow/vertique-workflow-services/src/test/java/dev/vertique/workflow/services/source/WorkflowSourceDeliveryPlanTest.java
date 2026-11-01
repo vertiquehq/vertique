@@ -30,6 +30,7 @@ import dev.vertique.core.context.InboundContextInitializer;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContexts;
 import dev.vertique.security.SecurityIdentity;
+import dev.vertique.workflow.exception.WorkflowIntakeRefusedException;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import dev.vertique.workflow.exception.WorkflowSignalActorException;
 import dev.vertique.workflow.exception.WorkflowSignalAmbiguousException;
@@ -318,6 +319,13 @@ class WorkflowSourceDeliveryPlanTest {
             SourceDisposition disposition = rig.deliver(keyedPlan(), shipment(), envelope());
 
             // Then the limit is RETRY with one LIMITED event
+            assertThat(disposition.fate()).isEqualTo(Fate.RETRY);
+            assertThat(rig.outcomes()).containsExactly(Outcome.LIMITED);
+        }
+
+        // and a node refusing intake is RETRY with one LIMITED event
+        try (DeliveryRig rig = DeliveryRig.over(vertx).operationsRaising(new WorkflowIntakeRefusedException())) {
+            SourceDisposition disposition = rig.deliver(keyedPlan(), shipment(), envelope());
             assertThat(disposition.fate()).isEqualTo(Fate.RETRY);
             assertThat(rig.outcomes()).containsExactly(Outcome.LIMITED);
         }

@@ -132,6 +132,7 @@ public class PgInboxOutboxSchemaIT {
             "idx_outbox_dead_letter",
             "idx_inbox_processed_at");
     private static final String OUTBOX_SEQUENCE = "outbox_id_seq";
+    private static final String SCOPE_COLUMN = "scope_key";
     private static final String NOTIFY_FUNCTION = "notify_transactional_outbox";
     private static final String NOTIFY_TRIGGER = "transactional_outbox_notify";
 
@@ -172,8 +173,8 @@ public class PgInboxOutboxSchemaIT {
             // When: the named runner migrates for the first time
             MigrationReport first = await(runner.run(vertx));
 
-            // Then: one script ran and every inbox/outbox object exists only in the mapped schema
-            assertInboxOutboxMigrated(first, 1);
+            // Then: both scripts ran and every inbox/outbox object exists only in the mapped schema
+            assertInboxOutboxMigrated(first, 2);
             assertObjectsLiveOnlyInMappedSchema();
             assertDecoyDefaultSchemaUntouched();
 
@@ -182,7 +183,7 @@ public class PgInboxOutboxSchemaIT {
 
             // Then: nothing is applied twice
             assertInboxOutboxMigrated(second, 0);
-            assertEquals(List.of("1"), versionedHistory());
+            assertEquals(List.of("1", "002"), versionedHistory());
 
             // Then: every concrete and SPI lookup resolves the one scoped repository and its claim identity
             assertScopedRepositoryIdentity(runtime);
@@ -432,7 +433,7 @@ public class PgInboxOutboxSchemaIT {
         MigrationInstanceResult result = results.get(0);
         assertEquals(MigrationStatus.MIGRATED, result.status());
         assertEquals(expectedApplied, result.migrationsApplied(), "applied scripts");
-        assertEquals("1", result.currentVersion());
+        assertEquals("002", result.currentVersion());
         assertEquals(MAPPED_SCHEMA, result.instance().schema(), "resolved history schema");
         assertEquals(HISTORY, result.instance().table(), "resolved history table");
     }
@@ -466,6 +467,12 @@ public class PgInboxOutboxSchemaIT {
                         "SELECT n.nspname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace"
                                 + " WHERE p.proname = ?",
                         NOTIFY_FUNCTION)));
+        assertEquals(
+                Set.of(MAPPED_SCHEMA),
+                Set.copyOf(column(
+                        "SELECT table_schema FROM information_schema.columns"
+                                + " WHERE table_name = 'outbox' AND column_name = ?",
+                        SCOPE_COLUMN)));
     }
 
     private static List<String> versionedHistory() throws SQLException {

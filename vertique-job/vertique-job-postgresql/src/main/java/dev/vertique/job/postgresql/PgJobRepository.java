@@ -128,16 +128,16 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
                 INSERT INTO %s (
                     id, job_id, job_type, handler, queue, state, payload, progress, parameters,
                     metadata, attempt, max_attempts, priority, scheduled_at, locked_by,
-                    last_error, error_type, created_at, updated_at
+                    last_error, error_type, scope_key, created_at, updated_at
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
-                          $11, $12, $13, $14, $15, $16, $17, NOW(), NOW())
+                          $11, $12, $13, $14, $15, $16, $17, $18, NOW(), NOW())
                 RETURNING id
                 """.formatted(executions);
 
         this.sqlSelectAllCols = """
                 SELECT id, job_id, job_type, handler, queue, state, payload, progress, parameters,
                        metadata, attempt, max_attempts, priority, scheduled_at, started_at, completed_at,
-                       locked_by, last_error, error_type, created_at, updated_at
+                       locked_by, last_error, error_type, scope_key, created_at, updated_at
                 FROM %s
                 """.formatted(executions);
 
@@ -183,9 +183,9 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
                 INSERT INTO %s (
                     id, job_id, job_type, handler, queue, state, payload, progress, parameters,
                     metadata, attempt, max_attempts, priority, scheduled_at, locked_by,
-                    last_error, error_type, created_at, updated_at
+                    last_error, error_type, scope_key, created_at, updated_at
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
-                          $11, $12, $13, $14, $15, $16, $17, NOW(), NOW())
+                          $11, $12, $13, $14, $15, $16, $17, $18, NOW(), NOW())
                 ON CONFLICT (job_id, scheduled_at) WHERE job_type = 'CRON' AND state NOT IN ('DEAD_LETTER', 'CANCELLED')
                 DO NOTHING
                 RETURNING id
@@ -688,7 +688,8 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
                 toOffsetDateTime(execution.scheduledAt()),
                 execution.lockedBy(),
                 execution.errorMessage(),
-                execution.errorType());
+                execution.errorType(),
+                execution.scopeKey());
     }
 
     /**

@@ -45,6 +45,36 @@ put and `attemptNumber` increments, so a specific attempt is `(id, attemptNumber
 creates a distinct row each time. `attemptNumber` is zero-based and `maxAttempts` is inclusive, so
 attempts remain while `attemptNumber + 1 < maxAttempts`.
 
+### Scope
+
+Every `JobExecution` carries a `scopeKey`, the application's partition label for the work (a tenant,
+project or workspace). The enqueue call selects it explicitly (`DelayedJobClientFactory.client(...).scope(...)` or
+`DelayedJob.scopeKey` in `vertique-job-delayed`); an execution that never selected one reads `default`
+(`ScopeKey.DEFAULT.value()`), and `scopeKey()` is never `null`. The ambient `ScopeContext` does not
+choose it. The scope is a label, not authorization: claiming, retry, retention and cron
+de-duplication ignore it, so a worker claims jobs of every scope from its queue.
+
+A running handler reads the row's scope from `JobContext.scopeKey()` or
+`JobDispatchContext.scopeKey()`, and a state-transition listener reads it from
+`JobExecutionStateTransitionEvent.scopeKey()`. All three are never `null`; a `JobContext` or
+dispatch context built without a scope reports `default`. The framework does not bind a
+`ScopeContext` from the row, so the row scope and any ambient `ScopeContext` the handler sees are two
+independent values: the ambient one is whatever durable context was captured at enqueue, and it may
+differ from the row or be absent.
+
+A handler that partitions data by scope:
+
+- **Choose one source** for the scope, the row (`scopeKey()`) or the ambient `ScopeContext`, and use
+  it everywhere in the handler.
+- **Compare the other** when both are present, and fail the execution on a mismatch rather than
+  pick one.
+- **Authorize the access itself.** The scope is a label: it is not checked at enqueue, by execution
+  id, or under a service principal, so a handler that reads or writes tenant data must establish that
+  the work may touch that scope.
+
+A cron fire has no enqueue-time scope, so its `JobContext`, dispatch context and execution row all
+report `default`.
+
 ### The state machine
 
 There is no `SCHEDULED` state. Future-dated work is `ENQUEUED` with a future `scheduledAt`, and claim
@@ -71,9 +101,10 @@ coordinator has reclaimed its execution, and that late reply must win.
 `ContextValue`, so declaring either as a handler-method parameter is enough — the dispatch layer
 injects them. `JobContext` is mutable per-execution state; `JobDispatchContext` is an immutable
 snapshot of the scheduling metadata (`jobId`, `executionId`, `jobType`, `attemptNumber`,
-`maxAttempts`, `queue`, `scheduledAt`, `startedAt`, `parameters`, `attributes`), with
+`maxAttempts`, `queue`, `scheduledAt`, `startedAt`, `parameters`, `attributes`, `scopeKey`), with
 `withAttribute(String, Object)` returning a copy and `toMdcContext()` rendering the standard logging
-keys `job.id`, `job.type`, `job.executionId`, `job.queue`, `job.attempt`.
+keys `job.id`, `job.type`, `job.executionId`, `job.queue`, `job.attempt` (the scope is not a logging
+key).
 
 ```java
 @CronJob(id = "daily-report", cron = "0 0 8 * * *")
@@ -106,6 +137,7 @@ Per-execution runtime API; thread-safe.
 | Method | Description |
 |---|---|
 | `jobId()` / `executionId()` / `attemptNumber()` / `jobType()` | Execution identity |
+| `scopeKey()` | The row's scope label, never `null`; `default` when the execution has none. A `default` method, so existing implementations keep compiling |
 | `progress()` / `logger()` | The execution's `ProgressReporter` and buffered `JobLogger` (never `null`) |
 | `isCancelled()` / `setCancelled(boolean)` | Cooperative cancellation flag |
 | `saveMetadata(String, Object)` / `getMetadata(String, Class<T>)` | Named values; a `null` value removes the key |
@@ -314,9 +346,12 @@ component order is part of this contract:
 
 - `JobExecution(id, jobId, jobType, handler, queue, state, attemptNumber, maxAttempts, payload,
   priority, lockedBy, scheduledAt, enqueuedAt, startedAt, completedAt, errorMessage, errorType,
-  progress, parameters, attributes, metadata)` — 21 components. The compact constructor copies
-  `parameters`/`attributes` and defaults `progress` to `ProgressSnapshot.EMPTY` and `metadata` to
-  `DurableMetadata.empty()`. Copy-on-write helpers: `withState`, `withProgress`, `withPayload`,
+  progress, parameters, attributes, metadata, scopeKey)` — 22 components; a public 21-argument
+  constructor without `scopeKey` remains and reads `default`. The compact constructor copies
+  `parameters`/`attributes`, defaults `progress` to `ProgressSnapshot.EMPTY` and `metadata` to
+  `DurableMetadata.empty()`, and maps a `null` `scopeKey` to `default`. A repository must persist
+  `scopeKey` with the execution and return it unchanged on every read. Copy-on-write helpers (each
+  carries `scopeKey`): `withState`, `withProgress`, `withPayload`,
   `withLockedBy`, `withError`, `withStarted(Instant, String)`, `withCompleted(Instant)`.
 - `CronJobSchedule(jobId, cronExpression, handler, target, executionMode, timezone, enabled,
   overlapPolicy, maxAttempts, tracked, lastFiredAt, nextFireAt)` — 12 components, persisted for
@@ -386,10 +421,11 @@ public interface JobExecutionStateTransitionListener {
 
 The event is a curated, safe-by-type record with components, in order: `executionId`, `jobId`,
 `jobType`, `queue`, `newState`, `attemptNumber`, `maxAttempts`, `errorType`, `scheduledAt`,
-`enqueuedAt`, `startedAt`, `completedAt`, `metadata`. `errorType` is the fully qualified exception
+`enqueuedAt`, `startedAt`, `completedAt`, `metadata`, `scopeKey`. `errorType` is the fully qualified exception
 class name, or `null` on success; `newState` may be the non-terminal `ABANDONED`; `startedAt` is
 `null` when the job never ran; `metadata` is the persisted `DurableMetadata` document and is never
-`null`. The record deliberately omits the payload, the raw error message, and the
+`null`; `scopeKey` is the row's scope, `default` when none was set, and never `null`. The record
+keeps a public constructor without `scopeKey` that reads `default`. The record deliberately omits the payload, the raw error message, and the
 `parameters`/`attributes` maps.
 
 Implementations **must not block** — the call is synchronous on the completion thread. Submit async

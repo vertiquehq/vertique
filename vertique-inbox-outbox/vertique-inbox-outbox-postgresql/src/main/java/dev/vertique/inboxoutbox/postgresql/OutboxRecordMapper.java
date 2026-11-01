@@ -59,6 +59,7 @@ final class OutboxRecordMapper {
     static final String COL_ERROR_TYPE = "error_type";
     static final String COL_CREATED_AT = "created_at";
     static final String COL_UPDATED_AT = "updated_at";
+    static final String COL_SCOPE_KEY = "scope_key";
 
     /**
      * Maps a single {@link Row} from the {@code outbox} table to an {@link OutboxRecord}.
@@ -90,7 +91,8 @@ final class OutboxRecordMapper {
                 row.getString(COL_LAST_ERROR),
                 row.getString(COL_ERROR_TYPE),
                 toInstant(row.getOffsetDateTime(COL_CREATED_AT)),
-                toInstant(row.getOffsetDateTime(COL_UPDATED_AT)));
+                toInstant(row.getOffsetDateTime(COL_UPDATED_AT)),
+                row.getString(COL_SCOPE_KEY));
     }
 
     /**

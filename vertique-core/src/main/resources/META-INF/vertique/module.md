@@ -168,6 +168,14 @@ controls (including U+00A0, U+2028, and U+2029) is accepted. Construction preser
 string; equality uses that exact text. `ScopeKey.DEFAULT` equals `new ScopeKey("default")` and
 names an ordinary partition — it confers no privilege, fallback, or automatic binding.
 
+Two static helpers keep the rules in one place for code that holds a key as plain text.
+`ScopeKey.requireValid(String)` returns the text when it is a valid key and otherwise throws
+`IllegalArgumentException`, including for `null`; its messages never repeat the text. Use it at an
+entry point that accepts a caller-chosen scope: a method that returns a `Future` fails its future
+with that exception, and a synchronous method throws it. `ScopeKey.orDefault(String)` returns the
+default key's text for `null` and otherwise the text unchanged, with no validation. It is for a
+record field whose scope was never selected, not a way to choose a scope.
+
 `ScopeContext` wraps one non-null `ScopeKey` and implements `ContextValue`, so callers may bind it
 explicitly through the existing holder API. Construction itself installs no ambient state. When the
 application's existing context runtime includes `ContextRuntimeModule` from `vertique-context`, its
@@ -446,6 +454,8 @@ directly or through the module that enforces those declarations.
 ```java
 public record ScopeKey(String value) {
     public static final ScopeKey DEFAULT;   // equal to new ScopeKey("default")
+    public static String orDefault(@Nullable String value);   // null -> "default"; no validation
+    public static String requireValid(String value);          // null or invalid -> IllegalArgumentException
 }
 
 public record ScopeContext(ScopeKey scopeKey) implements ContextValue {}

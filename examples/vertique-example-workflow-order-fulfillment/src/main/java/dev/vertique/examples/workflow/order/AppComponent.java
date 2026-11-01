@@ -42,6 +42,7 @@ import dev.vertique.management.ManagementModule;
 import dev.vertique.services.DispatchModule;
 import dev.vertique.workflow.client.WorkflowClientFactory;
 import dev.vertique.workflow.di.WorkflowExecutorConfigModule;
+import dev.vertique.workflow.di.WorkflowRecordingConfigModule;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowOperations;
@@ -103,6 +104,9 @@ import java.util.Set;
  *       {@code WorkflowEngineModule}), PostgreSQL repositories, and recorder multibinding.</li>
  *   <li>{@link WorkflowExecutorConfigModule} — the parsed {@code workflow.executor} configuration of the
  *       workflow executor, which the engine deploys in the {@code SERVICES} phase.</li>
+ *   <li>{@link WorkflowRecordingConfigModule} — the parsed {@code workflow.recording} configuration:
+ *       the execution-lock wait, the payload bounds and the intake limit, whose
+ *       {@code workflow.recording.intake} keys (including {@code enabled}) apply only when it is installed.</li>
  *   <li>{@link WorkflowSchemaModule} and {@link JsonRuntimeModule} — the producer of the schemas that
  *       definition rows store, which a node that runs the executor needs, and the JSON profile
  *       bindings it reads.</li>
@@ -158,6 +162,7 @@ import java.util.Set;
             TransactionalMessagingServiceModule.class,
             WorkflowPostgresqlModule.class,
             WorkflowExecutorConfigModule.class,
+            WorkflowRecordingConfigModule.class,
             WorkflowSchemaModule.class,
             JsonRuntimeModule.class,
             WorkflowServicesModule.class,

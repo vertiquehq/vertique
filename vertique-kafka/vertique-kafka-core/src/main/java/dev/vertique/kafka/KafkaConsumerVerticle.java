@@ -44,12 +44,12 @@ import lombok.extern.slf4j.Slf4j;
  * without creating a Kafka connection.
  *
  * <p>Backpressure is enforced via an {@link AtomicInteger} tracking in-flight dispatches. When
- * {@link ResolvedKafkaConsumerConfig#maxInFlight()} is reached, the consumer is paused. It is resumed once
- * the in-flight count drops below the threshold. An entry that forces its strategies keeps the slot
- * of a failed record until the error handling has settled, and a slot released while the entry waits
- * out a backoff does not resume the consumer: the end of the backoff does. A held slot is released
- * only after a confirmed disposition or a confirmed seek back, or when the record's partition is no
- * longer assigned to this consumer; otherwise the consumer stays paused, and only a restart ends it.
+ * {@link ResolvedKafkaConsumerConfig#maxInFlight()} is reached, the consumer is paused. The in-flight count dropping
+ * below the threshold releases that pause, and the consumer resumes once no other pause reason, such as the backoff of
+ * a retried record, remains. An entry that forces its strategies keeps the slot of a failed record until the error
+ * handling has settled. A held slot is released only after a confirmed disposition or a confirmed seek back, or when
+ * the record's partition is no longer assigned to this consumer; otherwise the consumer stays paused, and only a
+ * restart ends it.
  *
  * <p>Error handling follows the configured {@link ErrorStrategy}:
  *
@@ -123,14 +123,12 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
 
     private KafkaConsumer<String, byte[]> consumer;
     private final AtomicInteger inFlight = new AtomicInteger(0);
-    private final AtomicBoolean paused = new AtomicBoolean(false);
 
     /**
-     * Set while a forced entry waits out a backoff after a failure it will redeliver. A slot released
-     * during the backoff must not resume the consumer, so this is separate from the backpressure
-     * state in {@link #paused}. Never set for an entry that does not force its strategies.
+     * The reasons the consumer is paused: the in-flight limit and the backoff of each retried record. It resumes only
+     * when none remains.
      */
-    private final AtomicBoolean backingOff = new AtomicBoolean(false);
+    private final KafkaPauseReasons pauses = new KafkaPauseReasons(() -> consumer.pause(), () -> consumer.resume());
 
     /** The in-flight slot of a failed record of a forced entry, held until its failure is settled. */
     private static final class HeldSlot {
@@ -722,7 +720,7 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
             @Nullable KafkaConsumerRecordView view,
             HeldSlot slot,
             Throwable seekFailure) {
-        backingOff.set(true);
+        holdBackoff();
         Future<Set<io.vertx.kafka.client.common.TopicPartition>> assigned;
         try {
             assigned = consumer.assignment();
@@ -760,7 +758,7 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                 entry.name(),
                 slot.position);
         errorHandler.forget(slot.positionKey);
-        backingOff.set(false);
+        pauses.release(KafkaPauseReasons.Reason.ERROR_BACKOFF);
         releaseSlot(slot);
     }
 
@@ -789,24 +787,22 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
      *
      * @return a consumer control delegating to the current consumer and verticle state
      */
-    private KafkaErrorHandler.ConsumerControl consumerControl() {
+    KafkaErrorHandler.ConsumerControl consumerControl() {
         return new KafkaErrorHandler.ConsumerControl() {
+            // Each pause is ended by exactly one scheduleResume, but for the failed seek of a forced entry, which
+            // holdBackoff covers. Ending it releases the backoff hold only: a consumer that is also at its in-flight
+            // limit, or waiting out the backoff of another record, stays paused.
             @Override
             public void pause() {
-                if (entry.forceStrategies()) {
-                    backingOff.set(true);
-                }
-                if (paused.compareAndSet(false, true)) {
-                    consumer.pause();
-                }
+                holdBackoff();
             }
 
             @Override
             public void scheduleResume(long delayMs) {
                 if (delayMs <= 0) {
-                    resumeAfterBackoff();
+                    pauses.release(KafkaPauseReasons.Reason.ERROR_BACKOFF);
                 } else {
-                    vertx.setTimer(delayMs, id -> resumeAfterBackoff());
+                    vertx.setTimer(delayMs, id -> pauses.release(KafkaPauseReasons.Reason.ERROR_BACKOFF));
                 }
             }
 
@@ -825,19 +821,12 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
     }
 
     /**
-     * Resumes the consumer when a backoff is over. A forced entry ends its backoff first and resumes
-     * only when no record still holds a slot; the release of that slot resumes it otherwise. Any other
-     * entry resumes at once, as it always has.
+     * Holds the consumer for a backoff. A forced entry has one record in flight, and a failed seek leaves its pause
+     * unended before the seek back pauses again, so it holds the reason once however often that record pauses.
      */
-    private void resumeAfterBackoff() {
-        if (entry.forceStrategies()) {
-            backingOff.set(false);
-            if (inFlight.get() >= entry.config().maxInFlight()) {
-                return;
-            }
-        }
-        if (paused.compareAndSet(true, false)) {
-            consumer.resume();
+    private void holdBackoff() {
+        if (!entry.forceStrategies() || !pauses.isHeld(KafkaPauseReasons.Reason.ERROR_BACKOFF)) {
+            pauses.hold(KafkaPauseReasons.Reason.ERROR_BACKOFF);
         }
     }
 
@@ -881,10 +870,10 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
     /**
      * Increments the in-flight counter and pauses the consumer if the threshold is reached.
      */
-    private void incrementInFlight() {
+    void incrementInFlight() {
         int current = inFlight.incrementAndGet();
-        if (current >= entry.config().maxInFlight() && paused.compareAndSet(false, true)) {
-            consumer.pause();
+        if (current >= entry.config().maxInFlight() && !pauses.isHeld(KafkaPauseReasons.Reason.IN_FLIGHT)) {
+            pauses.hold(KafkaPauseReasons.Reason.IN_FLIGHT);
             log.debug(
                     "[{}] Paused consumer: inFlight={} maxInFlight={}",
                     entry.name(),
@@ -894,14 +883,14 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
     }
 
     /**
-     * Decrements the in-flight counter and resumes the consumer if it was paused and the count has
-     * dropped below the max-in-flight threshold, unless a forced entry is waiting out a backoff.
+     * Decrements the in-flight counter and releases the in-flight pause once the count has dropped below the
+     * max-in-flight threshold. The consumer resumes only if no other reason, such as a retry's backoff, still holds it.
      */
-    private void decrementInFlight() {
+    void decrementInFlight() {
         int current = inFlight.decrementAndGet();
-        if (current < entry.config().maxInFlight() && !backingOff.get() && paused.compareAndSet(true, false)) {
-            consumer.resume();
-            log.debug("[{}] Resumed consumer: inFlight={}", entry.name(), current);
+        if (current < entry.config().maxInFlight() && pauses.isHeld(KafkaPauseReasons.Reason.IN_FLIGHT)) {
+            pauses.release(KafkaPauseReasons.Reason.IN_FLIGHT);
+            log.debug("[{}] Released the in-flight pause: inFlight={}", entry.name(), current);
         }
     }
 

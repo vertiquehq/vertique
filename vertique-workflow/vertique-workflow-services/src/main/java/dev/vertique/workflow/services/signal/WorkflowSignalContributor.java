@@ -10,11 +10,14 @@ import dev.vertique.services.ServiceContractEntries;
 import dev.vertique.services.ServiceContractRegistry;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamSource;
 import dev.vertique.workflow.dedup.WorkflowDedupScopes;
+import dev.vertique.workflow.ops.RelayedSignals;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
+import dev.vertique.workflow.ops.WorkflowInstanceId;
 import io.vertx.core.Future;
 import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
+import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
@@ -39,8 +42,10 @@ import java.util.List;
  *       {@code messageId} of the form {@code workflowId + ":" + dedupKey}. This instance-scoping
  *       prevents two different workflow instances that reuse the same caller-supplied dedup string
  *       from colliding in the inbox table.</li>
- *   <li>{@link TransactionalWorkflowOperations#signal} — applies the signal inside the same
- *       transaction so the inbox record and the workflow state transition commit atomically.</li>
+ *   <li>{@link RelayedSignals#signal} — records the signal inside the same transaction so the inbox
+ *       record and the recorded command commit atomically. A signal delivered here is already durable in the
+ *       outbox, so it is never refused by the intake limit that applies to a start or a signal from outside:
+ *       refusing it would spend delivery attempts until it was dead-lettered.</li>
  * </ol>
  *
  * <p>The handler-pattern is used: the contract interface is {@link WorkflowSignalEndpoint} (for
@@ -70,14 +75,34 @@ public final class WorkflowSignalContributor implements ServiceContractContribut
         }
     }
 
-    private final Provider<TransactionalWorkflowOperations<SqlClient>> txOpsProvider;
+    private final Provider<RelayedSignals<SqlClient>> relayedSignalsProvider;
     private final InboxService inboxService;
     private final Pool pool;
 
     /**
-     * Creates a new contributor.
+     * Creates a contributor that records through the public signal forms of
+     * {@link TransactionalWorkflowOperations}, so a signal it delivers is subject to the intake limit that applies to
+     * a signal from outside. The dependency graph uses {@link #WorkflowSignalContributor(InboxService, Pool, Provider)}
+     * instead.
      *
-     * <p>The {@code txOps} is injected as a {@link Provider} rather than directly to avoid a
+     * <p>The {@code txOps} is injected as a {@link Provider} rather than directly for the reason given there.
+     *
+     * @param txOpsProvider lazy provider for transactional workflow operations; resolved at
+     *     dispatch time, not at contributor construction
+     * @param inboxService  inbox service used to deduplicate signal deliveries
+     * @param pool          connection pool used to open a new transaction per signal invocation
+     */
+    public WorkflowSignalContributor(
+            Provider<TransactionalWorkflowOperations<SqlClient>> txOpsProvider, InboxService inboxService, Pool pool) {
+        this.relayedSignalsProvider = () -> new OperationsAdapter(txOpsProvider.get());
+        this.inboxService = inboxService;
+        this.pool = pool;
+    }
+
+    /**
+     * Creates a new contributor that records a delivered signal without the intake limit.
+     *
+     * <p>The {@code relayedSignals} is injected as a {@link Provider} rather than directly to avoid a
      * Dagger dependency cycle: {@code WorkflowSignalContributor} is a
      * {@link ServiceContractContributor}, and the {@code ServiceContractRegistry} that aggregates
      * contributors is in turn needed by {@code ServiceTargetResolver}, which is depended on by
@@ -85,15 +110,15 @@ public final class WorkflowSignalContributor implements ServiceContractContribut
      * multibinding consumed by {@code RecorderRouter}, which {@code WorkflowEngine} depends on.
      * Using {@code Provider} defers the lookup to dispatch-time, breaking the compile-time cycle.
      *
-     * @param txOpsProvider lazy provider for transactional workflow operations; resolved at
-     *     dispatch time, not at contributor construction
      * @param inboxService  inbox service used to deduplicate signal deliveries
      * @param pool          connection pool used to open a new transaction per signal invocation
+     * @param relayedSignalsProvider lazy provider for the recording of already-durable signals; resolved at
+     *     dispatch time, not at contributor construction
      */
     @Inject
     public WorkflowSignalContributor(
-            Provider<TransactionalWorkflowOperations<SqlClient>> txOpsProvider, InboxService inboxService, Pool pool) {
-        this.txOpsProvider = txOpsProvider;
+            InboxService inboxService, Pool pool, Provider<RelayedSignals<SqlClient>> relayedSignalsProvider) {
+        this.relayedSignalsProvider = relayedSignalsProvider;
         this.inboxService = inboxService;
         this.pool = pool;
     }
@@ -139,7 +164,8 @@ public final class WorkflowSignalContributor implements ServiceContractContribut
      * <pre>{@code
      * pool.withTransaction(tx ->
      *     inboxService.processOnce(inboxMessageId, "workflow-signals", tx, () ->
-     *         txOpsProvider.get().signal(req.workflowId(), req.signalName(), req.payload(), req.dedupKey(), tx))
+     *         relayedSignalsProvider.get().signal(req.workflowId(), req.signalName(), req.payload(), req.dedupKey(),
+     *             req.forkStepId(), req.branchId(), tx))
      *     .mapEmpty())
      * }</pre>
      * Both the inbox dedup record and the recorded signal command commit in the same transaction.
@@ -150,12 +176,12 @@ public final class WorkflowSignalContributor implements ServiceContractContribut
      * {@code workflowId.value() + ":" + req.dedupKey()}. This prevents two different workflow
      * instances that happen to reuse the same caller-supplied dedup string from colliding in the
      * inbox table and silently dropping one another's signals. The {@code dedupKey} argument passed
-     * to {@link TransactionalWorkflowOperations#signal} is unchanged — the engine's
+     * to {@link RelayedSignals#signal} is unchanged — the engine's
      * {@code workflow_dedup} table already scopes dedup to the instance.
      *
      * <p>PRD-WF-007 (Contract Appendix C4): when {@link WorkflowSignalRequest#metadata()} is
      * non-null, it is decoded via {@link DurableMetadata#fromCarrier(io.vertx.core.json.JsonObject)}
-     * and delivered through the metadata-aware 8-arg {@link TransactionalWorkflowOperations#signal}
+     * and delivered through the metadata-aware 8-arg {@link RelayedSignals#signal}
      * overload. A {@code null} carrier keeps calling the legacy 7-arg overload byte-for-byte.
      *
      * <p>The carrier decode runs INSIDE the {@code processOnce} work supplier rather than before
@@ -191,14 +217,14 @@ public final class WorkflowSignalContributor implements ServiceContractContribut
         // the inbox table. Non-branch requests preserve the cycle-2 form (workflowId + ":" + key).
         String inboxMessageId =
                 WorkflowDedupScopes.signalInboxId(req.workflowId(), req.forkStepId(), req.branchId(), req.dedupKey());
-        TransactionalWorkflowOperations<SqlClient> txOps = txOpsProvider.get();
+        RelayedSignals<SqlClient> relayed = relayedSignalsProvider.get();
         if (req.metadata() == null) {
             return pool.withTransaction(tx -> inboxService
                     .processOnce(
                             inboxMessageId,
                             "workflow-signals",
                             tx,
-                            () -> txOps.signal(
+                            () -> relayed.signal(
                                     req.workflowId(),
                                     req.signalName(),
                                     req.payload(),
@@ -211,7 +237,7 @@ public final class WorkflowSignalContributor implements ServiceContractContribut
         return pool.withTransaction(tx -> inboxService
                 .processOnce(inboxMessageId, "workflow-signals", tx, () -> {
                     DurableMetadata signalMetadata = DurableMetadata.fromCarrier(req.metadata());
-                    return txOps.signal(
+                    return relayed.signal(
                             req.workflowId(),
                             req.signalName(),
                             req.payload(),
@@ -222,5 +248,38 @@ public final class WorkflowSignalContributor implements ServiceContractContribut
                             tx);
                 })
                 .mapEmpty());
+    }
+
+    /**
+     * Presents the public signal forms of {@link TransactionalWorkflowOperations} as {@link RelayedSignals}, for the
+     * constructor that takes operations. The intake limit applies to a signal recorded through it.
+     */
+    private record OperationsAdapter(TransactionalWorkflowOperations<SqlClient> operations)
+            implements RelayedSignals<SqlClient> {
+
+        @Override
+        public Future<Void> signal(
+                WorkflowInstanceId id,
+                String signalName,
+                Object payload,
+                String signalDedupKey,
+                @Nullable String forkStepId,
+                @Nullable String branchId,
+                SqlClient tx) {
+            return operations.signal(id, signalName, payload, signalDedupKey, forkStepId, branchId, tx);
+        }
+
+        @Override
+        public Future<Void> signal(
+                WorkflowInstanceId id,
+                String signalName,
+                Object payload,
+                String signalDedupKey,
+                @Nullable String forkStepId,
+                @Nullable String branchId,
+                @Nullable DurableMetadata signalMetadata,
+                SqlClient tx) {
+            return operations.signal(id, signalName, payload, signalDedupKey, forkStepId, branchId, signalMetadata, tx);
+        }
     }
 }

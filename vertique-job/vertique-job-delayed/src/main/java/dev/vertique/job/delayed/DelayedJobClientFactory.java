@@ -3,6 +3,7 @@
 
 package dev.vertique.job.delayed;
 
+import dev.vertique.core.scope.ScopeKey;
 import dev.vertique.core.util.GeneratedCompanions;
 import dev.vertique.job.delayed.config.DelayedJobContractConfig;
 import io.vertx.core.json.JsonObject;
@@ -80,8 +81,36 @@ public class DelayedJobClientFactory {
      * @return a proxy implementing {@code T} that routes enqueue calls to {@link DelayedJobService}
      * @throws IllegalArgumentException if the interface does not meet the requirements above
      */
-    @SuppressWarnings("unchecked")
     public <T extends DelayedJobClient<?>> T create(Class<T> contractInterface) {
+        return instantiate(contractInterface, jobService);
+    }
+
+    /**
+     * Starts a builder for a client of the given {@link DelayedJobClient} contract interface, so a scope
+     * can be selected before the client is created.
+     *
+     * <p>Every enqueue from a client built with {@link DelayedJobClientBuilder#scope(String)} is stored in
+     * that scope. A generated proxy compiled earlier needs no regeneration, and an application that serves
+     * several scopes keeps one client per scope. The contract must meet the requirements of
+     * {@link #create(Class)}.
+     *
+     * <p>Example:
+     * <pre>{@code
+     * DeliverWebhookJob client = factory.client(DeliverWebhookJob.class).scope("acme").create();
+     * }</pre>
+     *
+     * @param <T>               the contract interface type
+     * @param contractInterface the contract interface class token
+     * @return a builder whose client is in the {@code default} scope until a scope is selected
+     * @throws IllegalArgumentException if the interface does not meet the requirements of
+     *                                  {@link #create(Class)}
+     */
+    public <T extends DelayedJobClient<?>> DelayedJobClientBuilder<T> client(Class<T> contractInterface) {
+        requireContract(contractInterface);
+        return new ScopedClientBuilder<>(contractInterface);
+    }
+
+    private static DelayedJobContract requireContract(Class<?> contractInterface) {
         if (!contractInterface.isInterface()) {
             throw new IllegalArgumentException(
                     "DelayedJobClient contract must be an interface: " + contractInterface.getName());
@@ -92,6 +121,12 @@ public class DelayedJobClientFactory {
             throw new IllegalArgumentException(
                     contractInterface.getName() + " must be annotated with @DelayedJobContract");
         }
+        return annotation;
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T extends DelayedJobClient<?>> T instantiate(Class<T> contractInterface, DelayedJobService service) {
+        DelayedJobContract annotation = requireContract(contractInterface);
 
         JsonObject contractConfig = resolveContractConfig(annotation);
 
@@ -101,13 +136,13 @@ public class DelayedJobClientFactory {
                         contractInterface,
                         PROXY_SUFFIX,
                         new Class<?>[] {DelayedJobService.class, DelayedJobContract.class, JsonObject.class},
-                        new Object[] {jobService, annotation, contractConfig},
+                        new Object[] {service, annotation, contractConfig},
                         (fqn, e) -> new IllegalStateException(
                                 "Generated proxy %s is present but could not be instantiated".formatted(fqn), e))
                 .orElseGet(() -> (T) Proxy.newProxyInstance(
                         contractInterface.getClassLoader(),
                         new Class<?>[] {contractInterface},
-                        new DelayedJobClientProxy(jobService, annotation, contractConfig)));
+                        new DelayedJobClientProxy(service, annotation, contractConfig)));
     }
 
     /**
@@ -126,5 +161,28 @@ public class DelayedJobClientFactory {
     private JsonObject resolveContractConfig(DelayedJobContract annotation) {
         DelayedJobContractConfig contractConfig = contractConfigs.get(annotation.name());
         return contractConfig != null ? contractConfig.toContractConfigJson() : new JsonObject();
+    }
+
+    /** Collects the scope selection of one {@link DelayedJobClientBuilder} and creates the client from it. */
+    private final class ScopedClientBuilder<T extends DelayedJobClient<?>> implements DelayedJobClientBuilder<T> {
+
+        private final Class<T> contractInterface;
+        private String scope;
+
+        private ScopedClientBuilder(Class<T> contractInterface) {
+            this.contractInterface = contractInterface;
+        }
+
+        @Override
+        public DelayedJobClientBuilder<T> scope(String scope) {
+            // ScopeKey messages never repeat the key, so the failure text stays free of caller-supplied scope text.
+            this.scope = ScopeKey.requireValid(scope);
+            return this;
+        }
+
+        @Override
+        public T create() {
+            return instantiate(contractInterface, scope == null ? jobService : jobService.scopedTo(scope));
+        }
     }
 }

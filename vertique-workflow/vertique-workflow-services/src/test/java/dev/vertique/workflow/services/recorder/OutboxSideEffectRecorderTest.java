@@ -110,6 +110,45 @@ class OutboxSideEffectRecorderTest {
         assertThat(headers).containsEntry("x-workflow-definition-id", "purchase-approval");
     }
 
+    @Test
+    @DisplayName("the entry is in the start scope, not the definition scope, and the headers are unchanged")
+    void entryIsInStartScope() {
+        // Given: a correlation for an instance started in scope acme and pinned to a definition in scope default
+        WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
+        WorkflowSideEffectIntent.Correlation correlation = WorkflowSideEffectIntent.Correlation.singlePath(
+                workflowId, 2L, "purchase-approval", "default", "acme", "notify");
+        WorkflowSideEffectIntent intent =
+                new WorkflowSideEffectIntent(IntentKind.SERVICE, "svc.scope.op", "payload", Map.of(), correlation);
+        ServiceMethodMeta meta = mock(ServiceMethodMeta.class);
+        when(meta.oneWay()).thenReturn(false);
+        doReturn(Void.class).when(meta).returnType();
+        when(meta.params()).thenReturn(List.of(new ParamMeta("req", ParamSource.PAYLOAD, Object.class)));
+        ResolvedServiceTarget target = mock(ResolvedServiceTarget.class);
+        when(target.meta()).thenReturn(meta);
+        lenient().when(target.targetId()).thenReturn("svc.scope.op");
+        lenient().when(target.operation()).thenReturn("op");
+        when(targetResolver.resolve("svc.scope.op")).thenReturn(target);
+        when(outboxService.publish(eq(tx), any(OutboxEntry.class))).thenReturn(Future.succeededFuture(1L));
+
+        // When: the recorder records it
+        Future<RecorderResult> result = recorder.record(intent, tx);
+
+        // Then: the entry is in the start scope and the headers equal their baseline values
+        assertThat(result.succeeded()).isTrue();
+        ArgumentCaptor<OutboxEntry> entryCaptor = ArgumentCaptor.forClass(OutboxEntry.class);
+        verify(outboxService).publish(eq(tx), entryCaptor.capture());
+        OutboxEntry entry = entryCaptor.getValue();
+        assertThat(entry.scopeKey()).isEqualTo("acme");
+        assertThat(entry.headers())
+                .isEqualTo(Map.of(
+                        "x-workflow-id", workflowId.value().toString(),
+                        "x-workflow-step-sequence", "2",
+                        "x-workflow-definition-id", "purchase-approval",
+                        "x-workflow-definition-scope", "default",
+                        "x-workflow-scope", "acme",
+                        "x-workflow-step-id", "notify"));
+    }
+
     // --- Happy path ---
 
     @Nested

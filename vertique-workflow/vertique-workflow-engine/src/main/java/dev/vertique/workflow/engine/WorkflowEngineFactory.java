@@ -86,6 +86,9 @@ public final class WorkflowEngineFactory {
      * time decides it. A store that cannot read on the caller's transaction, see {@link TransactionalDefinitionReads},
      * fails the start of an instance.
      *
+     * <p>The engine this method assembles runs no intake sampler: unless the parts carry an admission, it accepts every
+     * start and signal from outside.
+     *
      * @param parts the engine's externally supplied dependencies, including the durable definition store
      * @return the assembled engine as a {@link WorkflowEngineHandle}
      */
@@ -206,7 +209,8 @@ public final class WorkflowEngineFactory {
                 planCache.marks()::find,
                 transactionalReads(parts.definitionStore()),
                 new CommandActors(parts.contextHolder(), parts.actorMapper(), parts.executorObservers()),
-                parts.historyPublisher());
+                parts.historyPublisher(),
+                parts.intakeAdmission());
         executorHolder[0] = new WorkflowExecutor(
                 parts.vertx(),
                 parts.executorConfig(),

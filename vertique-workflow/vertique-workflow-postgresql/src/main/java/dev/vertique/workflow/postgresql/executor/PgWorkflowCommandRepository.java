@@ -647,6 +647,11 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
         return json == null ? null : Json.decodeValue(json);
     }
 
+    /** The statement {@link #countDue} runs, with {@code $1} for the cap. */
+    String countDueStatement() {
+        return queries.countDue;
+    }
+
     /** The statement {@link #peek} runs, with {@code $1} for the limit. */
     String peekStatement() {
         return peekHeads;
@@ -1829,6 +1834,17 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                             row.getLong("dead_lettered"));
                 })
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands countQueue")));
+    }
+
+    @Override
+    public Future<Long> countDue(long cap) {
+        if (cap < 1) {
+            throw new IllegalArgumentException("cap must be at least 1");
+        }
+        return pool.preparedQuery(queries.countDue)
+                .execute(Tuple.of(cap))
+                .map(rows -> rows.iterator().next().getLong(0))
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands countDue")));
     }
 
     @Override

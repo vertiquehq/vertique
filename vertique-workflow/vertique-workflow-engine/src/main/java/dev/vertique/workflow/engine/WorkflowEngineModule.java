@@ -22,12 +22,17 @@ import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.deploy.VerticleDeployment;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
+import dev.vertique.workflow.config.WorkflowIntakeConfig;
+import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.di.WorkflowCoreModule;
 import dev.vertique.workflow.engine.executor.DefaultWorkflowExecutionProbe;
 import dev.vertique.workflow.engine.executor.HoldingSegments;
 import dev.vertique.workflow.engine.executor.OutboxRelayCarriage;
 import dev.vertique.workflow.engine.executor.WorkflowExecutor;
 import dev.vertique.workflow.engine.executor.WorkflowSegments;
+import dev.vertique.workflow.engine.intake.IntakeAdmission;
+import dev.vertique.workflow.engine.intake.IntakeAdmissionState;
+import dev.vertique.workflow.engine.intake.IntakePressureSampler;
 import dev.vertique.workflow.engine.registry.FailingMarks;
 import dev.vertique.workflow.engine.registry.PlanCache;
 import dev.vertique.workflow.engine.spi.CommandWakeups;
@@ -37,6 +42,7 @@ import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
 import dev.vertique.workflow.history.WorkflowHistoryRedactor;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
+import dev.vertique.workflow.ops.RelayedSignals;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowExecutionProbe;
@@ -99,6 +105,19 @@ public abstract class WorkflowEngineModule {
     @Binds
     @Singleton
     abstract TransactionalWorkflowOperations<SqlClient> bindTxOps(WorkflowEngine impl);
+
+    /**
+     * Provides the engine's recording of signals that are already durable, such as those the outbox relay delivers,
+     * which are never refused by the intake limit.
+     *
+     * @param engine the engine singleton
+     * @return the relayed signals of the engine
+     */
+    @Provides
+    @Singleton
+    static RelayedSignals<SqlClient> relayedSignals(WorkflowEngine engine) {
+        return engine.relayedSignals();
+    }
 
     /**
      * Binds {@link WorkflowEngine} as the {@link TransactionalTaskCallbacks} implementation for the
@@ -355,6 +374,67 @@ public abstract class WorkflowEngineModule {
      */
     @BindsOptionalOf
     abstract ConfigParser optionalConfigParser();
+
+    /**
+     * The limit on intake from outside, as configured, or the default when the graph binds no recording configuration.
+     */
+    private static WorkflowIntakeConfig intakeConfig(Optional<WorkflowRecordingConfig> recording) {
+        return recording.orElseGet(WorkflowRecordingConfig::defaults).intake();
+    }
+
+    /**
+     * Provides this node's admission state: it starts admitting and moves with the readings of the sampler.
+     *
+     * @param recording the optional recording configuration, or empty for the defaults
+     * @return the state
+     */
+    @Provides
+    @Singleton
+    static IntakeAdmissionState intakeAdmissionState(Optional<WorkflowRecordingConfig> recording) {
+        WorkflowIntakeConfig intake = intakeConfig(recording);
+        return new IntakeAdmissionState(intake.highMark(), intake.lowMark());
+    }
+
+    /**
+     * Provides the admission the engine checks a new start or signal against: this node's state, or an admission that
+     * always accepts when {@code workflow.recording.intake.enabled} is {@code false}.
+     *
+     * @param recording the optional recording configuration, or empty for the defaults
+     * @param state     this node's admission state
+     * @return the admission
+     */
+    @Provides
+    @Singleton
+    static IntakeAdmission intakeAdmission(Optional<WorkflowRecordingConfig> recording, IntakeAdmissionState state) {
+        return intakeConfig(recording).enabled() ? state : IntakeAdmission.alwaysAdmitting();
+    }
+
+    /**
+     * Contributes the {@code workflow-intake-sampler} deployment to the {@code SERVICES} phase of every node, the
+     * recording-only ones included, because a node that only records starts and signals needs the reading as much as
+     * one that runs them. It reads the command repository and shares nothing with the executor. A node that sets
+     * {@code workflow.recording.intake.enabled} to {@code false} contributes none.
+     *
+     * @param recording the optional recording configuration, or empty for the defaults
+     * @param commands  the command repository
+     * @param state     this node's admission state
+     * @param observers the observers of the executor's events; empty unless the application contributes some
+     * @return a set holding the deployment, or an empty set when the limit is off
+     */
+    @Provides
+    @Singleton
+    @ElementsIntoSet
+    static Set<VerticleDeployment> intakeSamplerDeployments(
+            Optional<WorkflowRecordingConfig> recording,
+            WorkflowCommandRepository<SqlClient> commands,
+            IntakeAdmissionState state,
+            Set<WorkflowExecutorObserver> observers) {
+        WorkflowIntakeConfig intake = intakeConfig(recording);
+        if (!intake.enabled()) {
+            return Set.of();
+        }
+        return Set.of(IntakePressureSampler.deployment(commands, intake, state, observers));
+    }
 
     /**
      * Binds the executor as the control the engine exposes.

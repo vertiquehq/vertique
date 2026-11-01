@@ -542,6 +542,30 @@ class KafkaForcedSlotHoldTest {
     }
 
     @Test
+    @DisplayName("a retry whose seek fails and whose seek back is confirmed still resumes once, after the backoff")
+    void failedRetrySeekLeavesNoPauseBehindTheConfirmedSeekBack(Vertx vertx) throws Exception {
+        // Given: a forcing entry whose first seek fails and whose second is confirmed
+        Rig rig = wire(
+                vertx,
+                entry(true, ErrorStrategy.RETRY, handlerFailing(FAILED_OFFSET, new ArrayList<>()), null),
+                List.of(),
+                producerAnswering(Future.succeededFuture()));
+        when(rig.consumer().seek(any(), anyLong()))
+                .thenReturn(Future.failedFuture(new RuntimeException("seek failed")))
+                .thenReturn(Future.succeededFuture());
+
+        // When: the record fails, and the backoff of the seek back is over
+        rig.process(record(FAILED_OFFSET, null));
+        verify(rig.consumer(), timeout(5_000).times(1)).resume();
+
+        // Then: both seeks ran, the slot is free and the consumer is running: neither pause outlived the backoff
+        verify(rig.consumer(), times(2)).seek(POSITION, FAILED_OFFSET);
+        assertEquals(0, rig.inFlight());
+        assertFalse(rig.broker().paused.get());
+        assertEquals(1, rig.broker().resumes.get());
+    }
+
+    @Test
     @DisplayName(
             "an entry that does not force its strategies still releases its slot before its error handling settles")
     void unforcedEntryReleasesItsSlotAtOnce(Vertx vertx) throws Exception {
@@ -668,9 +692,11 @@ class KafkaForcedSlotHoldTest {
     }
 
     private static void setPaused(Rig rig, boolean value) throws ReflectiveOperationException {
-        Field field = KafkaConsumerVerticle.class.getDeclaredField("paused");
-        field.setAccessible(true);
-        ((AtomicBoolean) field.get(rig.verticle())).set(value);
+        Field pauses = KafkaConsumerVerticle.class.getDeclaredField("pauses");
+        pauses.setAccessible(true);
+        Field paused = KafkaPauseReasons.class.getDeclaredField("paused");
+        paused.setAccessible(true);
+        paused.setBoolean(pauses.get(rig.verticle()), value);
     }
 
     /**

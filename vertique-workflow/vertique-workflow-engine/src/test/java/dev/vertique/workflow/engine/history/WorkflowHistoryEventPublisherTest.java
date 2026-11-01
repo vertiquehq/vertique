@@ -776,4 +776,31 @@ class WorkflowHistoryEventPublisherTest {
         assertThat(failures.get(0).action()).isEqualTo(Action.CANCEL);
         assertThat(failures.get(0).instanceId()).isEqualTo(other);
     }
+
+    @Test
+    @DisplayName("a work that writes nothing takes no lock and reads no sequence, and its failure is still reported")
+    void notWritingTakesNoLockAndReadsNothing() {
+        // Given a listener
+        WorkflowHistoryEventPublisher publisher = publisher(recorder);
+        IllegalStateException refusal = new IllegalStateException("refused");
+
+        // When a succeeding and a failing work run through the wrapper for work that writes nothing
+        Future<String> succeeded =
+                publisher.aroundNotWriting(Action.SIGNAL, ID, tx, () -> Future.succeededFuture("ok"));
+        Future<String> failed = publisher.aroundNotWriting(
+                Action.SIGNAL, new WorkflowInstanceId(UUID.randomUUID()), tx, () -> Future.failedFuture(refusal));
+        completion.complete();
+
+        // Then neither took the execution lock or read the sequence, and nothing was announced
+        assertThat(locked).isEmpty();
+        verify(history, never()).nextSequence(any(), any());
+        verify(history, never()).listRange(any(), anyLong(), anyLong(), anyInt(), any());
+        assertThat(changes).isEmpty();
+        // And the results are the work's, and the failing work was reported once
+        assertThat(succeeded.result()).isEqualTo("ok");
+        assertThat(failed.cause()).isSameAs(refusal);
+        assertThat(failures).hasSize(1);
+        assertThat(failures.get(0).action()).isEqualTo(Action.SIGNAL);
+        assertThat(failures.get(0).errorType()).isEqualTo("IllegalStateException");
+    }
 }

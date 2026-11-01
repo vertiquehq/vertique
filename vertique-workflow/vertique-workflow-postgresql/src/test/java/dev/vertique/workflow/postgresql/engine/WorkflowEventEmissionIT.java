@@ -81,8 +81,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * state transitions at the six primary {@link WorkflowEventType} emission sites.
  *
  * <p>Each test runs a workflow scenario end-to-end against a real Testcontainers Postgres instance.
- * A real {@link WorkflowEventSideEffectRecorder} backed by {@link DefaultOutboxService} (via
- * {@link PgInboxOutboxRepository}) is wired in so the outbox {@code INSERT} participates in the
+ * A real {@link WorkflowEventSideEffectRecorder} backed by {@link PgInboxOutboxRepository} is wired
+ * in so the outbox {@code INSERT} participates in the
  * same transaction as the workflow state write. After each operation the test reads the
  * {@code outbox} table directly and asserts:
  * <ul>
@@ -1053,6 +1053,42 @@ public class WorkflowEventEmissionIT {
             WorkflowEventEnvelope envelope = deserializeEnvelope(row);
             assertEquals(ScopedApprovalFixture.ACME, envelope.definitionScopeKey(), row.getString("event_type"));
             assertEquals("tenant-1", envelope.scopeKey(), row.getString("event_type"));
+        }
+    }
+
+    /**
+     * An instance started in scope {@code tenant-1} writes its event rows in that scope; the row written at start,
+     * before the stamp, stays in the default scope.
+     */
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    @DisplayName("event rows are in the instance's start scope")
+    void eventRowsAreInStartScope() throws Exception {
+        // Given: an instance started in the default scope, then stamped as pinned to the acme plan and as started in
+        // scope tenant-1
+        WorkflowInstanceId id = startPurchaseApproval("event-rows");
+        List<Row> rowsAtStart = await(readOutboxRowsForWorkflow(id.value()));
+        ScopedApprovalFixture.stampScope(pool, id, ScopedApprovalFixture.ACME, "tenant-1", acmePlanHash());
+
+        // When: the signal advances the instance through the dispatch step to the task
+        await(engine.signal(id, "submit", "payload", "k-submit-" + id.value()));
+        await(engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT));
+        List<Row> allRows = await(readOutboxRowsForWorkflow(id.value()));
+        List<Row> rowsAfterStamp = allRows.subList(rowsAtStart.size(), allRows.size());
+
+        // Then: the row written at start is in the default scope
+        assertEquals(1, rowsAtStart.size(), "one row is written at start");
+        assertEquals("default", rowsAtStart.get(0).getString("scope_key"), "scope of the row written at start");
+
+        // and: every row written after the stamp is in scope tenant-1
+        assertTrue(
+                rowsAfterStamp.stream()
+                        .map(r -> r.getString("event_type"))
+                        .toList()
+                        .contains(WorkflowEventType.TASK_CREATED.name()),
+                "the task event must follow the stamp");
+        for (Row row : rowsAfterStamp) {
+            assertEquals("tenant-1", row.getString("scope_key"), row.getString("event_type"));
         }
     }
 

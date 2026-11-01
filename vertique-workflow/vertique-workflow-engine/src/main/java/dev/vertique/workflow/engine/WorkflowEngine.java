@@ -20,6 +20,7 @@ import dev.vertique.workflow.engine.executor.StartPayloadValidation;
 import dev.vertique.workflow.engine.executor.WorkflowSegments;
 import dev.vertique.workflow.engine.history.DecisionLog;
 import dev.vertique.workflow.engine.history.WorkflowHistoryEventPublisher;
+import dev.vertique.workflow.engine.intake.IntakeAdmission;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
 import dev.vertique.workflow.engine.spi.CommandActor;
@@ -46,6 +47,7 @@ import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowIdempotencyConflictException;
 import dev.vertique.workflow.exception.WorkflowInstanceNotFoundException;
+import dev.vertique.workflow.exception.WorkflowIntakeRefusedException;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import dev.vertique.workflow.exception.WorkflowPlanHashDriftException;
 import dev.vertique.workflow.exception.WorkflowSignalActorException;
@@ -57,6 +59,7 @@ import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
 import dev.vertique.workflow.history.WorkflowHistoryFailure;
 import dev.vertique.workflow.ops.CorrelatedSignal;
 import dev.vertique.workflow.ops.CorrelatedSignalReceipt;
+import dev.vertique.workflow.ops.RelayedSignals;
 import dev.vertique.workflow.ops.SignalProvenance;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
@@ -294,6 +297,41 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /** Announces the history a committed transaction wrote, and the actions that failed, to the history listeners. */
     private final WorkflowHistoryEventPublisher historyPublisher;
 
+    /** Decides from node-local state whether a new start or signal from outside is accepted. */
+    private final IntakeAdmission intake;
+
+    /**
+     * Records a signal that was already durable, such as one the outbox relay delivers: every check, guard and
+     * sanitization of the public signal forms, without the intake check.
+     */
+    private final RelayedSignals<SqlClient> relayedSignals = new RelayedSignals<>() {
+        @Override
+        public Future<Void> signal(
+                WorkflowInstanceId id,
+                String signalName,
+                Object payload,
+                String signalDedupKey,
+                @Nullable String forkStepId,
+                @Nullable String branchId,
+                SqlClient tx) {
+            return signalToBranch(id, signalName, payload, signalDedupKey, forkStepId, branchId, tx, false);
+        }
+
+        @Override
+        public Future<Void> signal(
+                WorkflowInstanceId id,
+                String signalName,
+                Object payload,
+                String signalDedupKey,
+                @Nullable String forkStepId,
+                @Nullable String branchId,
+                @Nullable DurableMetadata signalMetadata,
+                SqlClient tx) {
+            return signalWithCarrier(
+                    id, signalName, payload, signalDedupKey, forkStepId, branchId, signalMetadata, tx, false);
+        }
+    };
+
     @Inject
     WorkflowEngine(
             WorkflowTransactionRunner<SqlClient> txRunner,
@@ -327,8 +365,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             CommandActors actors,
             RecorderRouter recorderRouter,
             WorkflowHistoryEventPublisher historyPublisher,
-            WorkflowTypeNames typeNames) {
+            WorkflowTypeNames typeNames,
+            IntakeAdmission intake) {
         WorkflowRecordingConfig recordingConfig = recording.orElseGet(WorkflowRecordingConfig::defaults);
+        this.intake = intake;
         this.historyPublisher = historyPublisher;
         this.actors = actors;
         this.recorderRouter = recorderRouter;
@@ -436,7 +476,86 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 key -> Optional.empty(),
                 definitionReads,
                 CommandActors.ambient(),
-                WorkflowHistoryEventPublisher.disabled());
+                WorkflowHistoryEventPublisher.disabled(),
+                IntakeAdmission.alwaysAdmitting());
+    }
+
+    /**
+     * Assembles the engine like the constructor that takes an intake admission, with an admission that always accepts.
+     */
+    WorkflowEngine(
+            WorkflowTransactionRunner<SqlClient> txRunner,
+            WorkflowRegistry registry,
+            WorkflowInstanceRepository<SqlClient> instances,
+            WorkflowHistoryRepository<SqlClient> history,
+            WorkflowDedupRepository<SqlClient> dedup,
+            WorkflowSignalWaitRepository<SqlClient> signalWaits,
+            RecorderRouter recorders,
+            TimerStore<SqlClient> timerStore,
+            TaskStore<SqlClient> taskStore,
+            FingerprintCanonicalizer fingerprintCanonicalizer,
+            Clock clock,
+            BranchTokenRepository<SqlClient> branchTokens,
+            JoinStateRepository<SqlClient> joinStates,
+            BranchTransitionEngine branchEngine,
+            BranchCompensationOrchestrator branchCompensation,
+            @Nullable DurableContextPropagator propagator,
+            Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry> migrationRegistryOpt,
+            WorkflowEventEmitter eventEmitter,
+            WorkflowHistoryRecorder historyRecorder,
+            ReminderScheduler reminderScheduler,
+            CompensationService compensationService,
+            @Nullable dev.vertique.context.InboundExecutionContextScope inboundExecScope,
+            PayloadConstraintCheck payloadConstraintCheck,
+            WorkflowTypeNames typeNames,
+            Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility,
+            WorkflowExecutionProbe executionProbe,
+            WorkflowCommandRepository<SqlClient> commands,
+            Supplier<WorkflowExecutorControl> executorControl,
+            WorkflowRecordingConfig recordingConfig,
+            TaskReservations<SqlClient> reservations,
+            Optional<WorkflowPlanSchemaProducer> schemaProducer,
+            Function<DefinitionKey, Optional<DefinitionFailure>> failingMarks,
+            @Nullable TransactionalDefinitionReads<SqlClient> definitionReads,
+            CommandActors actors,
+            WorkflowHistoryEventPublisher historyPublisher) {
+        this(
+                txRunner,
+                registry,
+                instances,
+                history,
+                dedup,
+                signalWaits,
+                recorders,
+                timerStore,
+                taskStore,
+                fingerprintCanonicalizer,
+                clock,
+                branchTokens,
+                joinStates,
+                branchEngine,
+                branchCompensation,
+                propagator,
+                migrationRegistryOpt,
+                eventEmitter,
+                historyRecorder,
+                reminderScheduler,
+                compensationService,
+                inboundExecScope,
+                payloadConstraintCheck,
+                typeNames,
+                stateCompatibility,
+                executionProbe,
+                commands,
+                executorControl,
+                recordingConfig,
+                reservations,
+                schemaProducer,
+                failingMarks,
+                definitionReads,
+                actors,
+                historyPublisher,
+                IntakeAdmission.alwaysAdmitting());
     }
 
     /**
@@ -487,7 +606,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * command repository whose execution lock every instance-changing entry point takes. The {@code reservations}
      * parameter reserves a task for a recorded completion; the {@code schemaProducer} parameter, when present, supplies
      * the payload schemas a new task's decision snapshot stores. The {@code failingMarks} parameter reads this node's
-     * evaluation of a version of a scope other than the default one, which a migration into it is refused for.
+     * evaluation of a version of a scope other than the default one, which a migration into it is refused for. The
+     * {@code intake} parameter decides whether a start or a signal from outside is accepted.
      *
      * <p>Package-visible (not {@code private}) so the factory in the same package can invoke it; it
      * is not part of any production API.
@@ -527,7 +647,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             Function<DefinitionKey, Optional<DefinitionFailure>> failingMarks,
             @Nullable TransactionalDefinitionReads<SqlClient> definitionReads,
             CommandActors actors,
-            WorkflowHistoryEventPublisher historyPublisher) {
+            WorkflowHistoryEventPublisher historyPublisher,
+            IntakeAdmission intake) {
+        this.intake = intake;
         this.historyPublisher = historyPublisher;
         this.actors = actors;
         this.recorderRouter = recorders;
@@ -708,6 +830,16 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         return executorControl.get();
     }
 
+    /**
+     * The recording of signals that are already durable, bound for the transport that delivers them: the same
+     * recording as the public signal forms, without the intake check.
+     *
+     * @return the relayed signals of this engine
+     */
+    RelayedSignals<SqlClient> relayedSignals() {
+        return relayedSignals;
+    }
+
     // --- WorkflowOperations ---
 
     /**
@@ -872,7 +1004,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * <p>Looks for a start dedup row of the start scope, the definition id and the idempotency key first; a
      * replay returns the existing instance before any version is resolved. A first start resolves the
      * definition from one read of the database on the caller's transaction, compares the command's contract with the
-     * resolved definition's contract, validates the start payload against the stored start schema, takes the new instance's execution lock, atomically claims the start dedup slot and, when it
+     * resolved definition's contract, validates the start payload against the stored start schema, fails with
+     * {@link WorkflowIntakeRefusedException} while this node refuses intake and writes nothing then, takes the new instance's execution lock, atomically claims the start dedup slot and, when it
      * wins, records the instance as {@code PENDING} with a {@code START} command and returns. The executor derives the
      * initial state and drives the first steps afterwards. A null start scope is the default scope.
      *
@@ -1053,6 +1186,12 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             AtomicBoolean created,
             SqlClient tx) {
         String fingerprint = "definitionVersion=" + selected.version();
+
+        // The last refusal before the execution lock: a replay, a terminal refusal and an invalid payload have been
+        // answered, and nothing has been written.
+        if (!intake.admitting()) {
+            return Future.failedFuture(new WorkflowIntakeRefusedException());
+        }
 
         UUID newId = UUID.randomUUID();
         WorkflowInstanceId proposedId = new WorkflowInstanceId(newId);
@@ -1896,8 +2035,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * <p>Records the signal as a {@code SIGNAL} command in the caller's transaction and returns once it is recorded; an
      * executor applies it afterwards, in its own segment, in queue order. The call is refused synchronously only for a
      * missing or ended instance, a name the instance's pinned definition row does not declare, a payload over the
-     * record-time size or depth bounds, or an instance that already holds the configured number of open signals. A
-     * committed duplicate returns success before any of that.
+     * record-time size or depth bounds, an instance that already holds the configured number of open signals, or this
+     * node refusing intake ({@link WorkflowIntakeRefusedException}, which writes nothing and leaves the dedup key
+     * free). A committed duplicate returns success before any of that, and a refusal for a missing or ended instance,
+     * an undeclared name or an invalid payload is not replaced by the intake refusal.
      *
      * @param id the workflow instance id; must not be null
      * @param signalName the name of the signal to deliver; must not be null
@@ -1927,7 +2068,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         if (invalidClient != null) {
             return invalidClient;
         }
-        return recordSignal(id, callerContractName, signalName, payload, signalDedupKey, null, null, null, tx);
+        return recordSignal(id, callerContractName, signalName, payload, signalDedupKey, null, null, null, true, tx);
     }
 
     /**
@@ -1944,13 +2085,30 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             @jakarta.annotation.Nullable String forkStepId,
             @jakarta.annotation.Nullable String branchId,
             SqlClient tx) {
+        return signalToBranch(id, signalName, payload, signalDedupKey, forkStepId, branchId, tx, true);
+    }
+
+    /**
+     * Records a signal for an instance or one of its branches. The intake limit applies when {@code checkIntake} is
+     * {@code true}: the public forms pass {@code true} and the relayed forms {@code false}; every other check is the
+     * same.
+     */
+    private Future<Void> signalToBranch(
+            WorkflowInstanceId id,
+            String signalName,
+            Object payload,
+            String signalDedupKey,
+            @Nullable String forkStepId,
+            @Nullable String branchId,
+            SqlClient tx,
+            boolean checkIntake) {
         Future<Void> invalidClient = WorkflowTransactionClientGuard.reject("signal", tx);
         if (invalidClient != null) {
             return invalidClient;
         }
 
         if (forkStepId == null && branchId == null) {
-            return signal(id, signalName, payload, signalDedupKey, tx);
+            return recordSignal(id, null, signalName, payload, signalDedupKey, null, null, null, checkIntake, tx);
         }
         if (forkStepId == null || branchId == null) {
             return Future.failedFuture(
@@ -1961,7 +2119,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             return Future.failedFuture(new UnsupportedOperationException(
                     "branch-aware signal requires branch collaborators; engine constructed without them"));
         }
-        return recordSignal(id, null, signalName, payload, signalDedupKey, forkStepId, branchId, null, tx);
+        return recordSignal(id, null, signalName, payload, signalDedupKey, forkStepId, branchId, null, checkIntake, tx);
     }
 
     /**
@@ -2007,13 +2165,30 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             @Nullable String branchId,
             @Nullable DurableMetadata signalMetadata,
             SqlClient tx) {
+        return signalWithCarrier(
+                id, signalName, payload, signalDedupKey, forkStepId, branchId, signalMetadata, tx, true);
+    }
+
+    /**
+     * Records a signal with an optional explicit carrier; {@code checkIntake} is as in {@link #signalToBranch}.
+     */
+    private Future<Void> signalWithCarrier(
+            WorkflowInstanceId id,
+            String signalName,
+            Object payload,
+            String signalDedupKey,
+            @Nullable String forkStepId,
+            @Nullable String branchId,
+            @Nullable DurableMetadata signalMetadata,
+            SqlClient tx,
+            boolean checkIntake) {
         Future<Void> invalidClient = WorkflowTransactionClientGuard.reject("signal", tx);
         if (invalidClient != null) {
             return invalidClient;
         }
 
         if (signalMetadata == null) {
-            return signal(id, signalName, payload, signalDedupKey, forkStepId, branchId, tx);
+            return signalToBranch(id, signalName, payload, signalDedupKey, forkStepId, branchId, tx, checkIntake);
         }
         if (propagator == null) {
             // No-silent-drop (C4): an explicit carrier with no durable-context propagation wired has
@@ -2035,7 +2210,17 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         // exactly once, here at the entry. The identity snapshot is never stored in a command row.
         DurableMetadata sanitizedMetadata =
                 propagator.sanitizeInboundCarrier(signalMetadata).without(IDENTITY_SNAPSHOT_NAMESPACE);
-        return recordSignal(id, null, signalName, payload, signalDedupKey, forkStepId, branchId, sanitizedMetadata, tx);
+        return recordSignal(
+                id,
+                null,
+                signalName,
+                payload,
+                signalDedupKey,
+                forkStepId,
+                branchId,
+                sanitizedMetadata,
+                checkIntake,
+                tx);
     }
 
     /**
@@ -2046,18 +2231,19 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * dedup row of the signal's contract, signal name, scope and dedup key; a hit answers
      * {@link CorrelatedSignalReceipt.Outcome#DUPLICATE} and writes nothing. Otherwise it finds the open wait records of
      * the signal's contract, signal name and key (at most two, narrowed by the signal's definition id and scope, and
-     * leaving out the records of ended instances), takes the execution lock of the matched instance, looks the dedup row
-     * up again, re-checks that the record is still the one open, and records the signal as
-     * {@link #signal(WorkflowInstanceId, String, Object, String, SqlClient)} does: admission, the size and depth bounds
-     * of the payload, the actor of the caller, the open-signal cap, then the dedup claim and the {@code SIGNAL} command
-     * in the same transaction. The dedup row and the command's dedup key hold SHA-256 digests, never the key. An
-     * executor applies the command later.
+     * leaving out the records of ended instances), checks the size and depth bounds of the payload and the intake
+     * limit, takes the execution lock of the matched instance, looks the dedup row up again, re-checks that the record
+     * is still the one open, and records the signal as
+     * {@link #signal(WorkflowInstanceId, String, Object, String, SqlClient)} does: admission, the actor of the caller,
+     * the open-signal cap, then the dedup claim and the {@code SIGNAL} command in the same transaction. The dedup row
+     * and the command's dedup key hold SHA-256 digests, never the key. An executor applies the command later.
      *
      * <p>A delivery that matches no record, a record that closed, whose instance ended or whose pinned definition does
      * not declare the signal before the lock, or several records fails the returned future with
      * {@link WorkflowSignalNoMatchException} or
      * {@link WorkflowSignalAmbiguousException} and records nothing. The failure names the contract and the signal and
-     * never the key.
+     * never the key. A delivery that a node refusing intake would otherwise record fails with
+     * {@link WorkflowIntakeRefusedException}, writes nothing and takes no lock.
      *
      * @param signal the signal, addressed by contract, signal name and key; must not be null
      * @param tx the active SQL transaction; must not be null
@@ -2086,7 +2272,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 () -> signalWaits.findOpen(
                         contractName, signalName, signal.key(), signal.definitionId(), signal.scopeKey(), tx),
                 SignalWaitRecord::instanceId,
-                (match, namespace, dedupKey) -> signalWaits
+                (match, payloadJson, namespace, dedupKey) -> signalWaits
                         .findById(match.waitId(), tx)
                         .compose(current -> {
                             if (current.isEmpty()) {
@@ -2101,6 +2287,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                                     match.forkStepId().isEmpty() ? null : match.forkStepId(),
                                     match.branchId().isEmpty() ? null : match.branchId(),
                                     match.waitId().toString(),
+                                    payloadJson,
                                     namespace,
                                     dedupKey,
                                     tx);
@@ -2126,7 +2313,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      *
      * <p>A delivery that matches no instance, an instance that ended before the lock, or several instances fails the
      * returned future with {@link WorkflowSignalNoMatchException} or {@link WorkflowSignalAmbiguousException} and
-     * records nothing. The failure names the contract and the signal and never the business key.
+     * records nothing. The failure names the contract and the signal and never the business key. A delivery that a
+     * node refusing intake would otherwise record fails with {@link WorkflowIntakeRefusedException}, writes nothing
+     * and takes no lock.
      *
      * @param signal the signal, addressed by contract, signal name and business key; must not be null
      * @param tx the active SQL transaction; must not be null
@@ -2157,7 +2346,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 WorkflowInstance::id,
                 // The instance is re-read under the lock: one that ended meanwhile answers no-match, in
                 // recordCorrelated's admission.
-                (match, namespace, dedupKey) -> recordCorrelated(
+                (match, payloadJson, namespace, dedupKey) -> recordCorrelated(
                         signal,
                         contractName,
                         match.id(),
@@ -2165,6 +2354,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                         null,
                         null,
                         null,
+                        payloadJson,
                         namespace,
                         dedupKey,
                         tx),
@@ -2174,13 +2364,15 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /** What a delivery does with the one match it found, once it holds the match's lock and no duplicate shows. */
     @FunctionalInterface
     private interface CorrelatedRecording<M> {
-        Future<CorrelatedSignalReceipt> record(M match, String namespace, String dedupKey);
+        Future<CorrelatedSignalReceipt> record(M match, String payloadJson, String namespace, String dedupKey);
     }
 
     /**
      * The delivery both correlated entries share: the bound on the signal name, the committed duplicate lookup, the
-     * match (at most two found; none answers no-match, several answer ambiguity), the execution lock of the matched
-     * instance, the duplicate lookup again, and then the recording of the match.
+     * match (at most two found; none answers no-match, several answer ambiguity), the bounds of the payload, the intake
+     * limit, the execution lock of the matched instance, the duplicate lookup again, and then the recording of the
+     * match. The intake check needs no state from the entry: with no instance named yet, the history announcement takes
+     * no lock first.
      *
      * @param <M> what a match is: a wait record, or an instance
      * @param find reads at most two matches
@@ -2217,11 +2409,26 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                             new WorkflowSignalAmbiguousException(contractName, signalName));
                 }
                 M match = found.getFirst();
+                String payloadJson;
+                try {
+                    recordValidator.validate(signal.payload());
+                    payloadJson = signal.payload() == null ? null : Json.encode(signal.payload());
+                } catch (WorkflowInvalidPayloadException e) {
+                    return Future.<CorrelatedSignalReceipt>failedFuture(new WorkflowInvalidPayloadException(
+                            "Signal '" + EchoedNames.bounded(signalName) + "' of contract '"
+                                    + EchoedNames.bounded(contractName) + "' is refused: " + e.getMessage(),
+                            e.violations()));
+                }
+                // The last refusal before the execution lock: a replay, a refusal that a retry cannot change and an
+                // invalid payload have been answered, and nothing has been written.
+                if (!intake.admitting()) {
+                    return Future.<CorrelatedSignalReceipt>failedFuture(new WorkflowIntakeRefusedException());
+                }
                 return commands.lockInstance(instanceOf.apply(match), tx)
                         .compose(locked -> dedup.findCorrelated(namespace, dedupKey, tx))
                         .compose(again -> again.isPresent()
                                 ? Future.succeededFuture(duplicateReceipt())
-                                : recording.record(match, namespace, dedupKey));
+                                : recording.record(match, payloadJson, namespace, dedupKey));
             });
         });
     }
@@ -2235,7 +2442,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * Records the signal for the addressed instance under the instance's execution lock, for a delivery that matched
      * an open wait (which also names the fork step, the branch and the wait) or an instance by business key (which
      * names none of them): the
-     * admission, the bounds, the actor, the open-signal cap, the dedup claim and the command. A refusal before the
+     * admission, the actor, the open-signal cap, the dedup claim and the command. A refusal before the
      * claim writes nothing; an instance that ended answers no-match. A claim that another delivery of the same event
      * won gives the open-signal slot back and answers a duplicate.
      */
@@ -2247,55 +2454,45 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             @Nullable String forkStepId,
             @Nullable String branchId,
             @Nullable String waitId,
+            String payloadJson,
             String namespace,
             String dedupKey,
             SqlClient tx) {
         String signalName = signal.signalName();
         return admitSignal(id, contractName, signalName, forkStepId, branchId, contractName, tx)
-                .compose(admitted -> {
-                    String payloadJson;
-                    try {
-                        recordValidator.validate(signal.payload());
-                        payloadJson = signal.payload() == null ? null : Json.encode(signal.payload());
-                    } catch (WorkflowInvalidPayloadException e) {
-                        return Future.<CorrelatedSignalReceipt>failedFuture(new WorkflowInvalidPayloadException(
-                                "Signal '" + EchoedNames.bounded(signalName) + "' of contract '"
-                                        + EchoedNames.bounded(contractName) + "' is refused: " + e.getMessage(),
-                                e.violations()));
-                    }
-                    return capturedForDelivery(signal, contractName).compose(actor -> commands.raiseOpenSignals(
-                                    id, maxOpenSignals, tx)
-                            .compose(raised -> {
-                                if (!raised) {
-                                    return Future.<CorrelatedSignalReceipt>failedFuture(
-                                            new WorkflowSignalLimitException(
-                                                    id, maxOpenSignals, contractName, signalName));
-                                }
-                                return dedup.claimOrResolveCorrelated(namespace, dedupKey, id, tx)
-                                        .compose(inserted -> {
-                                            if (!inserted) {
-                                                // Another delivery of the event won the claim: give the slot back.
-                                                return commands.lowerOpenSignals(id, tx)
-                                                        .map(lowered -> duplicateReceipt());
-                                            }
-                                            return commands.recordSignal(
-                                                            id,
-                                                            signalName,
-                                                            forkStepId,
-                                                            branchId,
-                                                            waitId,
-                                                            dedupKey,
-                                                            payloadJson,
-                                                            null,
-                                                            provenanceJson(signal.provenance()),
-                                                            actor,
-                                                            tx)
-                                                    .onSuccess(recorded -> actors.reportAbsence(actor, "SIGNAL"))
-                                                    .map(recorded -> new CorrelatedSignalReceipt(
-                                                            CorrelatedSignalReceipt.Outcome.RECORDED, definitionId));
-                                        });
-                            }));
-                });
+                .compose(admitted -> capturedForDelivery(signal, contractName)
+                        .compose(actor -> commands.raiseOpenSignals(id, maxOpenSignals, tx)
+                                .compose(raised -> {
+                                    if (!raised) {
+                                        return Future.<CorrelatedSignalReceipt>failedFuture(
+                                                new WorkflowSignalLimitException(
+                                                        id, maxOpenSignals, contractName, signalName));
+                                    }
+                                    return dedup.claimOrResolveCorrelated(namespace, dedupKey, id, tx)
+                                            .compose(inserted -> {
+                                                if (!inserted) {
+                                                    // Another delivery of the event won the claim: give the slot back.
+                                                    return commands.lowerOpenSignals(id, tx)
+                                                            .map(lowered -> duplicateReceipt());
+                                                }
+                                                return commands.recordSignal(
+                                                                id,
+                                                                signalName,
+                                                                forkStepId,
+                                                                branchId,
+                                                                waitId,
+                                                                dedupKey,
+                                                                payloadJson,
+                                                                null,
+                                                                provenanceJson(signal.provenance()),
+                                                                actor,
+                                                                tx)
+                                                        .onSuccess(recorded -> actors.reportAbsence(actor, "SIGNAL"))
+                                                        .map(recorded -> new CorrelatedSignalReceipt(
+                                                                CorrelatedSignalReceipt.Outcome.RECORDED,
+                                                                definitionId));
+                                            });
+                                })));
     }
 
     /**
@@ -2344,7 +2541,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /**
      * Records a {@code SIGNAL} command: the committed duplicate lookup first (a hit returns success and reads nothing
      * else); then the instance, its ended status and the declared name, read without the execution lock; then the size
-     * and depth bounds of the payload and of the explicit carrier, which do no I/O; then, under the execution lock, the
+     * and depth bounds of the payload and of the explicit carrier, which do no I/O; then, when {@code checkIntake} is
+     * set, the intake limit, which reads node-local state only; then, under the execution lock, the
      * duplicate lookup and the checks again, the open-signal cap through the queue row's counter, the dedup claim and the
      * command insert. A refusal before the claim writes nothing, so the caller may commit other work in the same
      * transaction and the refused key stays free.
@@ -2358,21 +2556,27 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             @Nullable String forkStepId,
             @Nullable String branchId,
             @Nullable DurableMetadata carrier,
+            boolean checkIntake,
             SqlClient tx) {
-        return historyPublisher.around(
-                WorkflowHistoryFailure.Action.SIGNAL,
-                id,
-                tx,
-                () -> recordSignalUnannounced(
-                        id,
-                        callerContractName,
-                        signalName,
-                        payload,
-                        signalDedupKey,
-                        forkStepId,
-                        branchId,
-                        carrier,
-                        tx));
+        // The node's state is read once, here. A node that refuses at this point answers without taking the execution
+        // lock: everything before the intake check only reads, so the work writes nothing and needs no announcement,
+        // and a refusal under pressure does not wait for the lock or hold a connection while it waits.
+        IntakeMode mode = !checkIntake ? IntakeMode.SKIP : intake.admitting() ? IntakeMode.CHECK : IntakeMode.REFUSE;
+        Supplier<Future<Void>> work = () -> recordSignalUnannounced(
+                id, callerContractName, signalName, payload, signalDedupKey, forkStepId, branchId, carrier, mode, tx);
+        return mode == IntakeMode.REFUSE
+                ? historyPublisher.aroundNotWriting(WorkflowHistoryFailure.Action.SIGNAL, id, tx, work)
+                : historyPublisher.around(WorkflowHistoryFailure.Action.SIGNAL, id, tx, work);
+    }
+
+    /** How the recording of a signal treats the intake limit. */
+    private enum IntakeMode {
+        /** The intake limit does not apply. */
+        SKIP,
+        /** The node admitted at entry; the limit is checked again immediately before the execution lock. */
+        CHECK,
+        /** The node refused at entry; the recording ends with the refusal once the checks before it have answered. */
+        REFUSE
     }
 
     /** The recording of {@link #recordSignal}, inside the announcement of the history it writes. */
@@ -2385,6 +2589,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             @Nullable String forkStepId,
             @Nullable String branchId,
             @Nullable DurableMetadata carrier,
+            IntakeMode mode,
             SqlClient tx) {
         String oversized = oversizedName(signalName, forkStepId, branchId);
         if (oversized != null) {
@@ -2415,6 +2620,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                                     "Signal '" + EchoedNames.bounded(signalName) + "' for instance '" + id.value()
                                             + "' is refused: " + e.getMessage(),
                                     e.violations()));
+                        }
+                        // The last refusal before the execution lock: a replay, a terminal refusal and an invalid
+                        // payload have been answered, and nothing has been written.
+                        if (mode == IntakeMode.REFUSE || (mode == IntakeMode.CHECK && !intake.admitting())) {
+                            return Future.<Void>failedFuture(new WorkflowIntakeRefusedException());
                         }
                         return commands.lockInstance(id, tx)
                                 .compose(locked -> dedup.findSignal(id, key, tx))

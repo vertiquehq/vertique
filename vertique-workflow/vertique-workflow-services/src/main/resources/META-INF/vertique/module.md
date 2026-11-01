@@ -38,6 +38,7 @@ Recorder behavior:
 - Resolve the workflow target id through `ServiceTargetResolver`.
 - Require the target to be a one-payload, `Future<Void>` service operation.
 - Write an outbox entry with workflow correlation headers: `x-workflow-id`, `x-workflow-step-sequence`, `x-workflow-definition-id`, `x-workflow-definition-scope` (the scope of the definition the instance is pinned to), `x-workflow-scope` (the scope the instance was started in), `x-workflow-step-id`, and the branch identity headers for a branch dispatch. A correlation header replaces an intent header of the same name.
+- Write the outbox row in the scope the instance was started in: `scope_key` carries it alongside `x-workflow-scope`. The workflow client's `.scope(...)` or `StartCommand.startScope` selects that scope, and an instance started without one is in `default`. A target reads it from `TransactionalMessageContext.scopeKey()`. The scope is a label, not authorization: nothing checks it at publish, by id, or under a service principal. Row scope and the ambient `ScopeContext` are independent, so a handler that partitions data chooses one source, compares the other when both are present, fails on a mismatch, and authorizes access itself.
 - Fail the workflow transaction on an unknown or invalid target.
 - Treat a `null` intent header map as no headers, and fail the returned future with an `IllegalArgumentException` naming the key when an intent header has a `null` key or value.
 
@@ -47,13 +48,15 @@ The recorder must never make a live downstream call. The outbox row is the durab
 
 ## Signal Ingress
 
-`WorkflowSignalContributor` registers the `workflow.signals.post` service contract. Service delivery uses inbox deduplication before calling `TransactionalWorkflowOperations.signal(...)` in the same SQL transaction.
+`WorkflowSignalContributor` registers the `workflow.signals.post` service contract. Service delivery uses inbox deduplication before recording the signal in the same SQL transaction through `RelayedSignals<SqlClient>` (`vertique-workflow-core`), which the engine binds. `RelayedSignals` is the public `signal` form of `TransactionalWorkflowOperations` with the same transaction guard, branch guards, carrier sanitization and checks, minus one: it is never refused by the intake limit (`WorkflowIntakeRefusedException`). The signal is already durable in the outbox, and a refusal would only spend delivery attempts until it was dead-lettered while the queue it would join is the one that must drain. The public constructor that takes `Provider<TransactionalWorkflowOperations<SqlClient>>` stays and adapts the operations it receives, so the signals it records go through the public forms, which the limit applies to; the dependency graph uses the constructor that takes `Provider<RelayedSignals<SqlClient>>`.
 
 The endpoint's reply means the signal is **recorded**, not applied: `signal` records a `SIGNAL` command of the instance and returns,
 and an executor applies it afterwards in queue order. A signal the instance does not await yet is parked and applied when the instance
 reaches a wait that accepts it. The call is refused only for what recording refuses: a missing or ended instance, a name the instance's
 pinned definition does not declare for the addressed wait, a payload or carrier over the record-time bounds, or an instance that already
-holds `workflow.recording.maxOpenSignalsPerInstance` open signals (`WorkflowSignalLimitException`). A refusal rolls the inbox record back
+holds `workflow.recording.maxOpenSignalsPerInstance` open signals (`WorkflowSignalLimitException`). It is never refused because the
+cluster holds too many due commands: an application that signals through the outbox passes the intake limit, and its backlog is bounded
+by the relay and not by the limit. A refusal rolls the inbox record back
 with the transaction, so the relay retries it.
 
 **Who is logged.** The endpoint records the signal inside the dispatch context the relay rebuilt for the delivery, and the engine
@@ -150,6 +153,7 @@ A `SignalSourcePlan<T>` describes a transport-neutral signal source, and `Workfl
 | Anonymous identity, whether the envelope carried it or `dispatchAs` answered it, `WorkflowSignalActorException`, or `SignalSourceRefusal` from `dispatchAs`, also when wrapped in another exception | `REFUSED_IDENTITY` | `TERMINAL` |
 | A key, scope or payload the type or database refuses (blank, over 255 characters, NUL, SQLSTATE class `22`); a payload that cannot be encoded as JSON; a null or blank dedup key | `INVALID_INPUT` | `TERMINAL` |
 | `WorkflowSignalLimitException` | `LIMITED` | `RETRY` |
+| `WorkflowIntakeRefusedException` | `LIMITED` | `RETRY` |
 | `WorkflowInvalidPayloadException` (oversized payload) | `OVERSIZED` | `TERMINAL` |
 | A stage that throws before it returns | `STAGE_FAILED` | `TERMINAL` |
 | A lookup or `dispatchAs` future that fails or times out; any other failure, such as a database outage | `STAGE_FAILED` | `RETRY` |

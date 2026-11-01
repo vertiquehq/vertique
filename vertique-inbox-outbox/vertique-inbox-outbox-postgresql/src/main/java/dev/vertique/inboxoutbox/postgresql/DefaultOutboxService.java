@@ -8,6 +8,7 @@ import dev.vertique.core.context.DurableCarrierDescriptor;
 import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.core.context.DurableMetadataHeaderCodec;
 import dev.vertique.core.context.DurableTarget;
+import dev.vertique.core.scope.ScopeKey;
 import dev.vertique.inboxoutbox.DelayedJobControl;
 import dev.vertique.inboxoutbox.OutboxDeliveryMetadata;
 import dev.vertique.inboxoutbox.OutboxEntry;
@@ -102,7 +103,10 @@ class DefaultOutboxService implements OutboxService {
      * a {@code null} key, a {@code null} value, or a key with the reserved framework prefix
      * ({@link DurableMetadataHeaderCodec#RESERVED_PREFIX}) fails the returned future with an
      * {@link IllegalArgumentException} that names the key (never the value), and nothing is inserted.
-     * A {@code null} header map means no headers. When the entry carries a {@link DelayedJobControl}
+     * A {@code null} header map means no headers. A {@code null} or invalid
+     * {@link OutboxEntry#scopeKey()} likewise fails the returned future with an
+     * {@link IllegalArgumentException} that does not repeat the key, and nothing is inserted; the
+     * scope is stored as given and the ambient {@code ScopeContext} does not select it. When the entry carries a {@link DelayedJobControl}
      * snapshot, it is persisted in {@code metadata.delivery.delayedJob}; all other entries receive
      * an empty delivery section (FR-CTX-175, FR-TM-039).
      *
@@ -130,6 +134,12 @@ class DefaultOutboxService implements OutboxService {
         IllegalArgumentException undeliverable = undeliverableHeader(entry.headers());
         if (undeliverable != null) {
             return Future.failedFuture(undeliverable);
+        }
+        // The row's scope is chosen by the entry alone; the ambient ScopeContext never selects it.
+        try {
+            ScopeKey.requireValid(entry.scopeKey());
+        } catch (IllegalArgumentException e) {
+            return Future.failedFuture(e);
         }
         // F3b row binding: allocate the carrier id up front so the durable snapshot this call
         // captures is signed for THIS row, then persist the same id into the first-class column.

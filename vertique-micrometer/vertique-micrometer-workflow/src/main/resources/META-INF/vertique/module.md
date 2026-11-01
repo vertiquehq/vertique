@@ -47,6 +47,9 @@ not added.
 | `vertique.workflow.commands.dead` | gauge | none | `QueueSnapshot` |
 | `vertique.workflow.notification.queue.usage` | gauge | none | `QueueSnapshot` |
 
+`IntakePressureChanged`, which a node emits when it starts or stops refusing new starts and signals, has no meter: it is reported by the event
+and a warning in the log.
+
 Tag values are the event's `kind` and `outcome` strings, lower-cased and truncated to 64 characters.
 No instance id, definition key, payload or actor value is ever a tag. Registry failures are swallowed,
 so telemetry cannot change command execution.

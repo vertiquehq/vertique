@@ -39,6 +39,19 @@ pool.withTransaction(tx -> {
 immediately and throws `IllegalArgumentException` if any rule fails. The proxy is not
 application-scoped — create it inside the open transaction and do not inject it as a singleton.
 
+**`create(Class<T> contract, String scopeKey, SqlClient tx)`** is the same proxy with every entry it
+writes stored in the given scope:
+
+```java
+NotificationService txNotification =
+        factory.create(NotificationService.class, "acme", tx);
+```
+
+The two-argument form writes the `default` scope. A `null` `scopeKey`, or a key that is not a
+valid core `ScopeKey` (blank, longer than 255 code points, or containing a control or format
+character), throws `IllegalArgumentException` when `create` is called and not when a method is
+invoked. The message does not repeat the key.
+
 Invoking a method on the returned proxy:
 1. Looks up the precomputed stable service target id for that method.
 2. Takes the single payload argument (proxy methods take the payload only — not `SqlClient`).
@@ -95,6 +108,31 @@ At relay time:
    content; the decode failure is the cause. It is retried because during a rolling deploy an older
    node can claim an entry that only a newer node can decode — a later attempt lets the newer node
    deliver it — while the entry's maximum attempts still dead-letter one that no node can decode.
+
+#### Scope at delivery
+
+The envelope's `scopeKey` is passed through unchanged as `TransactionalMessageContext.scopeKey`, so a
+service target reads the scope the entry was published in by declaring the context as a parameter of its
+`ServiceHandler` implementation method, not of the transactional contract:
+
+```java
+public Future<Void> handleOrderPlaced(OrderPlacedEvent event, TransactionalMessageContext ctx) {
+    String scope = ctx.scopeKey();
+    // ...
+}
+```
+
+- **Omitted means `default`.** Entries written without a scope, including every row that existed
+  before scope was added, read `default`.
+- **A scope is a label, not authorization.** Nothing checks the caller's right to a scope when the
+  entry is published, when it is fetched by id, or under a service principal; the target
+  authorizes access itself.
+- **Row scope and `ScopeContext` are independent.** The relay does not bind `ScopeContext` from the
+  row, and a `ScopeContext` captured into the durable context is restored independently of
+  `scopeKey`. A handler that partitions data by scope chooses one source, compares the other when
+  both are present, fails on a mismatch, and authorizes access itself. Do not assume the two agree.
+- **Kafka adds no scope header.** The Kafka destination does not publish the row scope; it is not
+  part of the record headers.
 
 `SERVICE` delivery guarantee: at-least-once handoff to the service. The service must be idempotent
 or use `InboxService` for dedup if needed.

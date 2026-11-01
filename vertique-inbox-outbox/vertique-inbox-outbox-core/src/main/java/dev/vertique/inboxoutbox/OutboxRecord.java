@@ -3,6 +3,8 @@
 
 package dev.vertique.inboxoutbox;
 
+import dev.vertique.core.scope.ScopeKey;
+import jakarta.annotation.Nullable;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
@@ -47,6 +49,10 @@ import java.util.UUID;
  * @param errorType       exception class name from the most recent failed attempt, or {@code null}
  * @param createdAt       time at which the entry was inserted into the outbox table
  * @param updatedAt       time at which the entry was last modified
+ * @param scopeKey        the scope this entry belongs to, a partition label chosen when the entry was
+ *                        published; {@code null} is read as {@link ScopeKey#DEFAULT}, so the accessor
+ *                        never returns {@code null}. The text is stored exactly as supplied and is not
+ *                        validated here; publish validates it as a {@link ScopeKey}
  */
 public record OutboxRecord(
         long id,
@@ -70,15 +76,97 @@ public record OutboxRecord(
         String lastError,
         String errorType,
         Instant createdAt,
-        Instant updatedAt) {
+        Instant updatedAt,
+        @Nullable String scopeKey) {
+
+    /**
+     * Creates a record in the default scope.
+     *
+     * <p>This is the constructor shape that predates {@code scopeKey}; it passes {@code null}, which
+     * the canonical constructor reads as {@link ScopeKey#DEFAULT}.
+     *
+     * @param id              surrogate primary key assigned by the database on insert
+     * @param carrierId       framework-generated durable row-carrier identity
+     * @param aggregateType   optional domain aggregate type that produced the event
+     * @param aggregateId     optional identifier of the specific aggregate instance
+     * @param eventType       logical event type name
+     * @param destination     specific destination address within the destination type
+     * @param destinationType category of the destination system
+     * @param payload         event payload as read from JSONB storage
+     * @param headers         application/transport headers; {@code null} means none
+     * @param metadata        structured metadata document
+     * @param scheduledAt     optional earliest wall-clock time at which the entry may be delivered
+     * @param availableAt     earliest time at which the entry may be claimed
+     * @param state           current lifecycle state of the entry
+     * @param attempt         number of delivery attempts made so far
+     * @param maxAttempts     maximum number of delivery attempts allowed
+     * @param claimedAt       time at which the current worker claimed this entry, or {@code null}
+     * @param claimedBy       identity of the relay worker currently holding the entry, or {@code null}
+     * @param publishedAt     time at which the entry was delivered, or {@code null}
+     * @param lastError       message from the most recent failed attempt, or {@code null}
+     * @param errorType       exception class name from the most recent failed attempt, or {@code null}
+     * @param createdAt       time at which the entry was inserted
+     * @param updatedAt       time at which the entry was last modified
+     */
+    public OutboxRecord(
+            long id,
+            UUID carrierId,
+            String aggregateType,
+            String aggregateId,
+            String eventType,
+            String destination,
+            DestinationType destinationType,
+            Object payload,
+            Map<String, String> headers,
+            OutboxMetadata metadata,
+            Instant scheduledAt,
+            Instant availableAt,
+            OutboxEntryState state,
+            int attempt,
+            int maxAttempts,
+            Instant claimedAt,
+            String claimedBy,
+            Instant publishedAt,
+            String lastError,
+            String errorType,
+            Instant createdAt,
+            Instant updatedAt) {
+        this(
+                id,
+                carrierId,
+                aggregateType,
+                aggregateId,
+                eventType,
+                destination,
+                destinationType,
+                payload,
+                headers,
+                metadata,
+                scheduledAt,
+                availableAt,
+                state,
+                attempt,
+                maxAttempts,
+                claimedAt,
+                claimedBy,
+                publishedAt,
+                lastError,
+                errorType,
+                createdAt,
+                updatedAt,
+                null);
+    }
 
     /**
      * Takes an unmodifiable copy of {@code headers}, so a later change to the given map does not
-     * reach the record and the map {@link #headers()} returns rejects mutation.
+     * reach the record and the map {@link #headers()} returns rejects mutation, and maps a
+     * {@code null} {@code scopeKey} to {@link ScopeKey#DEFAULT}.
      *
-     * @param headers the application headers; may be {@code null} (treated as empty)
+     * @param headers  the application headers; may be {@code null} (treated as empty)
+     * @param scopeKey the scope label; may be {@code null} (treated as the default scope)
      */
     public OutboxRecord {
         headers = OutboxEntry.unmodifiableCopy(headers);
+        scopeKey = ScopeKey.orDefault(scopeKey);
     }
 }

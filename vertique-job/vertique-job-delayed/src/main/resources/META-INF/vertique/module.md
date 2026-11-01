@@ -83,6 +83,13 @@ and handler latency, not by `sleepDelayMs`.
 `JobDispatchContext` from `dev.vertique:vertique-job-core` are injected simply by declaring them as
 parameters; cancellation, progress and structured logging all go through `JobContext`.
 
+**The scope a handler sees.** `JobContext.scopeKey()` and `JobDispatchContext.scopeKey()` report the
+scope stored on the claimed row. The poller does not bind a `ScopeContext` from the row: the ambient
+`ScopeContext`, if any, is the one restored from the durable context captured at enqueue, and it is
+independent of the row scope. A handler that partitions data chooses one source for the scope,
+compares the other when both are present and fails on a mismatch, and authorizes access itself,
+because scope is not checked at enqueue, by execution id, or under a service principal.
+
 ---
 
 ## Key Classes
@@ -134,6 +141,17 @@ Lombok `@Builder` value object. Only `handler` is required.
 | `maxAttempts` | `3` | Attempts before dead-letter; must be in `[1, 1000]` |
 | `jobId` | auto-generated | Logical job id, stable across retries; generated as `delayed-<uuid>` when `null` |
 | `metadata` | empty `DurableMetadata` | Durable propagation context; normally left alone |
+| `scopeKey` | `"default"` | Scope label stored with the execution; validated as a core `ScopeKey` at enqueue |
+
+`scopeKey` is selected here only when you build the `DelayedJob` yourself; a typed contract client
+selects it once for all its enqueues (see [DelayedJobClientFactory](#delayedjobclientfactory)).
+Leaving it out stores `default`. A `null`, blank, over-long (more
+than 255 code points) or control- or format-character key fails the enqueue with an
+`IllegalArgumentException` in a failed future, before any write, and the message does not repeat the
+key. This holds for `enqueue` and `enqueuePremerged`, with or without a `SqlClient`. The ambient
+`ScopeContext` never selects the row's scope; it is captured into `metadata` like any other durable
+context. The scope is a label, not authorization: the poller still claims jobs of every scope from
+its queue.
 
 `metadata` exists for advanced callers that must supply a pre-built `DurableMetadata` document. In
 the normal path the framework captures ambient durable context at enqueue time and merges it over
@@ -272,6 +290,26 @@ job.enqueue(payload, DelayedJobOptions.builder()
 Creates the client proxy for a contract interface via `create(Class<T>)`, rejecting a non-interface
 or an interface without `@DelayedJobContract` with `IllegalArgumentException`. See
 [Registering a typed job](#registering-a-typed-job) for the binding.
+
+**Selecting a scope.** `client(Class<T>)` returns a `DelayedJobClientBuilder<T>`; its `scope(String)`
+stores every enqueue from the built client in that scope, and `create()` builds the client.
+
+```java
+DeliverWebhookJob acme = factory.client(DeliverWebhookJob.class).scope("acme").create();
+acme.enqueue(payload);   // stored in scope "acme"
+```
+
+- Every overload of the client stores the scope, including enqueue inside a transaction and with
+  `DelayedJobOptions`. The scope replaces any `DelayedJob.scopeKey` and is applied by the service
+  that the client enqueues through.
+- `scope` throws `IllegalArgumentException` for `null`, and for a blank, over-long (more than 255
+  code points) or control- or format-character key, when it is called. The message does not repeat
+  the key.
+- `client(C.class).create()` without `scope`, and `create(C.class)`, store `default`.
+- A generated `{Contract}_DelayedJobProxy` needs no regeneration: the scope travels in the service
+  the proxy is given, not in a constructor argument or a `DelayedJobOptions` field.
+- **One client per scope.** A client has one scope for its lifetime. An application that serves several
+  scopes creates a client for each, for example from a small map keyed by scope.
 
 When `dev.vertique:vertique-codegen-delayed-job` has generated a static
 `{Contract}_DelayedJobProxy`, the factory uses it; otherwise it falls back to an equivalent

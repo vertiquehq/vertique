@@ -45,7 +45,7 @@ Mapped or not, `tryInsert` and `insert` run on the `SqlClient` the caller passes
 **Outbox operations.** Every `mark*` method carries a `claimed_by` owner guard and returns
 `Future<Boolean>`: `false` means this node no longer owns the row, so a node whose lease was reclaimed
 cannot complete a row another node now owns.
-- `insert(OutboxEntry entry, OutboxMetadata metadata, UUID carrierId, SqlClient tx)` — inserts the outbox row in the caller's transaction; returns the assigned id
+- `insert(OutboxEntry entry, OutboxMetadata metadata, UUID carrierId, SqlClient tx)` — inserts the outbox row in the caller's transaction; returns the assigned id. The row's `scope_key` is `entry.scopeKey()`, stored as given
 - `claimBatch(int batchSize, String claimedBy, RelayCapabilities capabilities)` — short transaction: selects eligible `PENDING` rows with `FOR UPDATE SKIP LOCKED` and marks them `PROCESSING`
 - `markPublished(long entryId, String claimedBy)` — transitions an owned row to `PUBLISHED`
 - `markRetry(long entryId, String claimedBy, int newAttempt, Instant availableAt, String lastError, String errorType)` — transitions an owned row back to `PENDING` with the incremented attempt and backoff
@@ -78,6 +78,8 @@ The read path uses `DestinationType.of(...)` (lenient factory) when mapping rows
 
 **Sharp edge — unregistered destination types:** A destination type with no registered handler/scope stays `PENDING` indefinitely. Because of the per-aggregate head-of-line subquery, an unclaimable-type row at an aggregate HEAD (the lowest id among `PENDING`/`PROCESSING` for that `aggregate_id`) blocks younger claimable siblings of the same aggregate until that type's handler and claim scope are registered. This is intentional ordering behavior, not a bug.
 
+**Scope:** `insert` writes `OutboxEntry.scopeKey()` to `outbox.scope_key`, and every read maps it to `OutboxRecord.scopeKey()`, including the rows `claimBatch` returns after a retry or a stale-lease reclaim. The claim predicate, the claim ordering, the lease recovery and the retention cleanup do not read it, so a relay claims rows of every scope. The head-of-line ordering above keys on `aggregate_id` alone and is therefore global across scopes: two scopes that reuse an `aggregateId` order against each other. Keep aggregate ids unique across scopes, for example `<scope>:<id>`.
+
 ### `DefaultInboxService`
 
 Default `InboxService` implementation backed by `PgInboxOutboxRepository`.
@@ -106,6 +108,12 @@ outboxService.publish(tx, OutboxEntry.builder()
     .onSuccess(id -> log.info("Outbox entry {} recorded", id));
 ```
 
+**Scope selection.** The entry names its scope with `OutboxEntry.builder().scopeKey("acme")`; omitting it stores `default`. `publish` validates the key as a core `ScopeKey` before it writes anything: a `null` key (an explicit `scopeKey(null)`) and an invalid one (blank, longer than 255 code points, or containing a control or format character) return a failed future with an `IllegalArgumentException` whose message does not repeat the key, and nothing is inserted. The ambient `ScopeContext` never selects the row's scope; it is captured into `metadata.context` like any other durable context.
+
+The scope is a label, not authorization. Nothing checks the caller's right to a scope at publish, by id, or under a service principal. Row scope and `ScopeContext` are independent, so a handler that partitions data chooses one source, compares the other when both are present, fails on a mismatch, and authorizes access itself. Inbox deduplication is not scoped: `inbox` rows key on `(message_id, source)` only.
+
+A custom `OutboxRepository` must persist `scopeKey` with the row and return it on every read; a store that drops it returns rows that read `default`.
+
 ### `OutboxRelay`
 
 Vert.x `AbstractVerticle` that polls the repository and dispatches claimed rows to registered `OutboxDestinationHandler` instances. Deployed in `SERVICES` phase at priority 100.
@@ -132,6 +140,7 @@ When `LISTEN_NOTIFY` is configured but the notification channel is unavailable o
 8. A failed future from `publish()` is treated as retryable.
 9. A handler that throws synchronously from `publish()` — an exception, an `AssertionError` or a `LinkageError` — returns `null` instead of a future, or completes its future with `null` is treated as retryable too: it costs that one entry an attempt, the rest of the claimed batch is still delivered, and polling continues.
 10. When the `mark*` call of steps 4–7 has settled — succeeded, failed, or thrown — every registered `OutboxPublishObserver` (see `dev.vertique:vertique-inbox-outbox-core`) is notified once with the attempt's facts and the envelope from step 2. The callback runs on the relay's context: when the `mark*` call settles on another context or thread, the relay hops back to its own context before it notifies. `dispositionRecorded` is `true` only when the `mark*` call returned `true`.
+11. When a claim has completed, every registered observer is also told through `onClaimCompleted` how long the claim took and how many entries it returned, on the relay's context, after the entries are dispatched. A claim that failed is not reported.
 
 **Draining a backlog.** A claim that returns as many rows as the relay had free slots is followed by another almost at once, and so is a freed slot after a cycle that found more work than it could take: with every slot busy the relay claims nothing and waits, and the next slot to free asks for the pass. A cycle that comes back short or empty keeps the interval pacing and its backoff. A `NOTIFY` that arrives while a claim is in flight does not start a second claim; it makes that claim be followed by a pass. There is one claim in flight per relay instance, so the rate at which one instance drains is bounded by `batchSize` and handler latency, not by `pollingIntervalMs`.
 
@@ -214,6 +223,9 @@ The Flyway migration creates two tables and associated indexes. **`V1__create_in
 is frozen from this Stable release.** Every later schema change ships as `V2+`, never as an edit to
 `V1`.
 
+- `V1__create_inbox_outbox_tables.sql` — the `outbox` and `inbox` tables, their indexes and the `LISTEN/NOTIFY` trigger.
+- `V002__add_outbox_scope.sql` — adds `outbox.scope_key VARCHAR(255) NOT NULL DEFAULT 'default'`, so every existing row reads `default`. The default is a constant, so PostgreSQL 11 and later add the column without rewriting the table. The script sets `lock_timeout` to 30 s, which bounds only the wait for the table lock, and is safe to rerun. No index and no check constraint are added; `inbox` is unchanged.
+
 **`outbox` table** — relay rows:
 
 | Column | Type | Description |
@@ -238,6 +250,7 @@ is frozen from this Stable release.** Every later schema change ships as `V2+`, 
 | `published_at` | `TIMESTAMPTZ` | Publish timestamp |
 | `last_error` | `TEXT` | Last error message |
 | `error_type` | `VARCHAR(500)` | Last error type |
+| `scope_key` | `VARCHAR(255) NOT NULL DEFAULT 'default'` | Scope label chosen at publish; not read by claim, ordering, lease recovery or cleanup. Added by `V002` |
 | `created_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | Row creation time |
 | `updated_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | Row last-modified time |
 

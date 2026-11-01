@@ -12,6 +12,7 @@ import dev.vertique.security.SecurityContexts;
 import dev.vertique.security.SecurityIdentity;
 import dev.vertique.security.authz.InvocationOrigin;
 import dev.vertique.workflow.actor.ActorText;
+import dev.vertique.workflow.exception.WorkflowIntakeRefusedException;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import dev.vertique.workflow.exception.WorkflowSignalActorException;
 import dev.vertique.workflow.exception.WorkflowSignalAmbiguousException;
@@ -368,7 +369,7 @@ final class SignalSourceRun<T> {
         if (cause instanceof WorkflowSignalAmbiguousException) {
             return Verdict.of(Outcome.AMBIGUOUS, Fate.TERMINAL, typeOf(cause));
         }
-        if (cause instanceof WorkflowSignalLimitException) {
+        if (cause instanceof WorkflowSignalLimitException || cause instanceof WorkflowIntakeRefusedException) {
             return Verdict.of(Outcome.LIMITED, Fate.RETRY, typeOf(cause));
         }
         if (cause instanceof WorkflowInvalidPayloadException) {

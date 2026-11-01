@@ -23,6 +23,7 @@ import dev.vertique.inboxoutbox.OutboxService;
 import dev.vertique.services.ServiceContractContributor;
 import dev.vertique.services.ServiceTargetResolver;
 import dev.vertique.workflow.ops.CorrelatedSignalReceipt;
+import dev.vertique.workflow.ops.RelayedSignals;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
 import dev.vertique.workflow.services.di.WorkflowServicesModule;
 import dev.vertique.workflow.services.di.WorkflowSourceModule;
@@ -71,6 +72,13 @@ final class GraphFixture {
     /** What the services module needs on top of the source stubs: the outbox and inbox side. */
     @Module
     abstract static class OutboxInboxStubs {
+        @Provides
+        @Singleton
+        @SuppressWarnings("unchecked")
+        static RelayedSignals<SqlClient> relayedSignals() {
+            return mock(RelayedSignals.class);
+        }
+
         @Provides
         @Singleton
         static InboxService inboxService() {

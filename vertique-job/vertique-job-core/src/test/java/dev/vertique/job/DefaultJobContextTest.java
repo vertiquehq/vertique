@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.vertx.core.Future;
@@ -31,6 +32,16 @@ class DefaultJobContextTest {
     @BeforeEach
     void setUp() {
         ctx = new DefaultJobContext(JOB_ID, EXECUTION_ID, 0, JobType.CRON);
+    }
+
+    @Test
+    @DisplayName("exposes the scope key, defaulting when none is given")
+    void exposesScopeKey() {
+        assertEquals("default", ctx.scopeKey());
+        assertEquals("default", new DefaultJobContext(JOB_ID, EXECUTION_ID, 0, JobType.DELAYED).scopeKey());
+        assertEquals("acme", new DefaultJobContext(JOB_ID, EXECUTION_ID, 0, JobType.CRON, "acme").scopeKey());
+        assertThrows(
+                NullPointerException.class, () -> new DefaultJobContext(JOB_ID, EXECUTION_ID, 0, JobType.CRON, null));
     }
 
     @Nested

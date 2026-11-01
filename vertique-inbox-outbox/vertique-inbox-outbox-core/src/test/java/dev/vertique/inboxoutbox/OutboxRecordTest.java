@@ -16,7 +16,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-/** Unit tests for the header copy {@link OutboxRecord} takes at construction. */
+/** Unit tests for the header copy and the scope default {@link OutboxRecord} applies at construction. */
 @DisplayName("OutboxRecord")
 class OutboxRecordTest {
 
@@ -61,6 +61,45 @@ class OutboxRecordTest {
     @DisplayName("a null map is an empty map")
     void nullMapIsEmpty() {
         assertTrue(recordWith(null).headers().isEmpty());
+    }
+
+    @Test
+    @DisplayName("the previous-arity constructor and a null scope key in the canonical form both read the default")
+    void previousArityYieldsDefault() {
+        // Given: a record from the previous-arity constructor, and one from the canonical form with null
+        OutboxRecord previousArity = recordWith(Map.of());
+        OutboxRecord canonicalWithNull = canonicalRecordWith(null);
+
+        // When/Then: both report the default scope
+        assertEquals("default", previousArity.scopeKey());
+        assertEquals("default", canonicalWithNull.scopeKey());
+    }
+
+    private static OutboxRecord canonicalRecordWith(String scopeKey) {
+        return new OutboxRecord(
+                42L,
+                UUID.randomUUID(),
+                "Order",
+                "order-123",
+                "order.placed",
+                "orders/handle-order-placed",
+                DestinationType.SERVICE,
+                new JsonObject().put("orderId", "order-123"),
+                Map.of(),
+                OutboxMetadata.empty(),
+                null,
+                Instant.EPOCH,
+                OutboxEntryState.PENDING,
+                0,
+                20,
+                null,
+                null,
+                null,
+                null,
+                null,
+                Instant.EPOCH,
+                Instant.EPOCH,
+                scopeKey);
     }
 
     private static OutboxRecord recordWith(Map<String, String> headers) {

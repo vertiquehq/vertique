@@ -9,6 +9,7 @@ import dev.vertique.workflow.executor.WorkflowExecutorEvent;
 import dev.vertique.workflow.executor.WorkflowExecutorEvent.ActorAbsent;
 import dev.vertique.workflow.executor.WorkflowExecutorEvent.CommandDeferred;
 import dev.vertique.workflow.executor.WorkflowExecutorEvent.CommandSettled;
+import dev.vertique.workflow.executor.WorkflowExecutorEvent.IntakePressureChanged;
 import dev.vertique.workflow.executor.WorkflowExecutorEvent.LeaseExpired;
 import dev.vertique.workflow.executor.WorkflowExecutorEvent.QueueSnapshot;
 import dev.vertique.workflow.executor.WorkflowExecutorEvent.TransientRetry;
@@ -107,6 +108,9 @@ public final class WorkflowExecutorMetricsObserver implements WorkflowExecutorOb
                 case LeaseExpired expired -> count(LEASE_EXPIRED_COUNTER, expired.kind());
                 case ActorAbsent absent -> count(ACTOR_ABSENT_COUNTER, absent.kind());
                 case QueueSnapshot snapshot -> snapshot(snapshot);
+                case IntakePressureChanged ignoredChange -> {
+                    // A transition of the intake limit has no meter: it is reported by the event and a warn log.
+                }
             }
         } catch (Throwable ignored) {
             // Telemetry must never alter command execution.
