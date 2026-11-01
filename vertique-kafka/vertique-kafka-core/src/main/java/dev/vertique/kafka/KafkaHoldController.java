@@ -5,6 +5,7 @@ package dev.vertique.kafka;
 
 import io.vertx.core.Future;
 import io.vertx.kafka.client.common.TopicPartition;
+import jakarta.annotation.Nullable;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Map;
@@ -52,7 +53,13 @@ final class KafkaHoldController {
 
         final TopicPartition partition;
         final EnumSet<Reason> reasons = EnumSet.noneOf(Reason.class);
-        boolean applied;
+        /**
+         * What the client was last told, or {@code null} while that is unknown, which it is for a new assignment: a
+         * pause that was queued for the assignment before it can land on this one.
+         */
+        @Nullable
+        Boolean applied;
+
         boolean applying;
         boolean ended;
 
@@ -71,7 +78,12 @@ final class KafkaHoldController {
         this.port = port;
     }
 
-    /** A partition is assigned: it starts unpaused in the client, so reapply what is held everywhere. */
+    /**
+     * A partition is assigned. What the client holds for it is not known: a pause or resume that was queued for the
+     * partition's previous assignment, ahead of the poll that reassigned it, can land on this one, and a call carries
+     * no assignment identity. The first call for the new assignment is therefore always made, a resume when nothing is
+     * held, and it queues behind that older call.
+     */
     void assigned(TopicPartition partition) {
         Slot old = slots.remove(partition);
         if (old != null) {
@@ -144,7 +156,7 @@ final class KafkaHoldController {
     /** Whether the client has been told to pause the partition, and no call is pending. */
     boolean isPaused(TopicPartition partition) {
         Slot slot = slots.get(partition);
-        return slot != null && slot.applied && !slot.applying;
+        return slot != null && Boolean.TRUE.equals(slot.applied) && !slot.applying;
     }
 
     private void apply(Slot slot) {
@@ -152,7 +164,7 @@ final class KafkaHoldController {
             return;
         }
         boolean wanted = !slot.reasons.isEmpty();
-        if (wanted == slot.applied) {
+        if (slot.applied != null && wanted == slot.applied) {
             return;
         }
         slot.applying = true;
