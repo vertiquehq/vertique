@@ -380,8 +380,6 @@ Decisions carry typed payloads; `void.class`, as used for `approve` above, decla
 
 When version stability is required, task completion compares the version the reviewer saw with the version snapshotted when the task was created. The engine does not read live domain content; applications remain responsible for authorization and for loading current object state.
 
-This is the intended fit for Vertique Objects: workflow state should carry object type/id/version and workflow-local progress, not a copy of the object document.
-
 ---
 
 ## Side Effects
