@@ -25,6 +25,7 @@ import dev.vertique.examples.workflow.order.service.StubInventoryService;
 import dev.vertique.examples.workflow.order.service.StubPaymentService;
 import dev.vertique.examples.workflow.order.service.StubScenario;
 import dev.vertique.examples.workflow.order.service.StubShippingService;
+import dev.vertique.examples.workflow.order.source.GeneratedRegistrationsModule;
 import dev.vertique.inboxoutbox.InboxService;
 import dev.vertique.inboxoutbox.OutboxService;
 import dev.vertique.inboxoutbox.postgresql.PgInboxOutboxRepository;
@@ -33,6 +34,9 @@ import dev.vertique.inboxoutbox.services.TransactionalMessagingServiceModule;
 import dev.vertique.job.cron.dagger.CronPersistenceModule;
 import dev.vertique.job.postgresql.JobPostgresqlModule;
 import dev.vertique.json.JsonRuntimeModule;
+import dev.vertique.kafka.KafkaConsumerDeploymentManager;
+import dev.vertique.kafka.KafkaModule;
+import dev.vertique.kafka.json.KafkaJsonModule;
 import dev.vertique.management.ManagementModule;
 import dev.vertique.services.DispatchModule;
 import dev.vertique.workflow.client.WorkflowClientFactory;
@@ -124,6 +128,9 @@ import java.util.Set;
  *       cycle-3 human-task IT.</li>
  *   <li>{@link StubServicesModule} — stub inventory, payment, shipping, and fraud-screening
  *       service implementations for integration tests.</li>
+ *   <li>{@code KafkaModule} and {@code KafkaJsonModule} — the Kafka consumer runtime and its JSON format.</li>
+ *   <li>{@code GeneratedRegistrationsModule} — registers the signal source the annotation processor generates from
+ *       {@code PaymentEvents}, with the Kafka signal transport it needs.</li>
  *   <li>{@link AppModule} — management verticle deployment.</li>
  * </ul>
  *
@@ -160,6 +167,9 @@ import java.util.Set;
             WorkflowTasksModule.class,
             TaskReviewDefinitionModule.class,
             StubServicesModule.class,
+            KafkaModule.class,
+            KafkaJsonModule.class,
+            GeneratedRegistrationsModule.class,
             AppModule.class
         })
 public interface AppComponent extends VertiqueApplicationComponent {
@@ -200,6 +210,15 @@ public interface AppComponent extends VertiqueApplicationComponent {
      * @return the verticle deployments
      */
     Set<VerticleDeployment> verticleDeployments();
+
+    /**
+     * Returns the manager that deploys the Kafka consumers, among them the {@code payment-events} consumer.
+     *
+     * <p>Nothing starts the consumers on its own: an application calls {@code deployAll()} when it is ready to read.
+     *
+     * @return the Kafka consumer deployment manager
+     */
+    KafkaConsumerDeploymentManager kafkaConsumerDeploymentManager();
 
     /**
      * Returns the workflow client factory for creating typed proxies from a definition class.

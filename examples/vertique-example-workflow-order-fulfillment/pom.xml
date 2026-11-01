@@ -51,6 +51,20 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-workflow-tasks</artifactId>
         </dependency>
 
+        <!-- Kafka: the payment-events signal source -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-workflow-kafka</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-kafka-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-kafka-json</artifactId>
+        </dependency>
+
         <!-- Job modules (the inbox/outbox relay needs the cron scheduler and the job repository) -->
         <dependency>
             <groupId>dev.vertique</groupId>
@@ -189,6 +203,11 @@ SPDX-License-Identifier: EUPL-1.2
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-db-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-kafka-test</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
