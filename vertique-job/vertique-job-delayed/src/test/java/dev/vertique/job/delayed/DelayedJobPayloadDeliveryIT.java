@@ -102,6 +102,61 @@ class DelayedJobPayloadDeliveryIT {
         }
     }
 
+    enum Tier {
+        FREE,
+        PAID
+    }
+
+    @DelayedJobContract(name = "typed-string")
+    interface StringJob extends DelayedJobClient<String> {}
+
+    static final class StringJobExecutor implements DelayedJobExecutor<String, StringJob> {
+        @Override
+        public Future<Void> execute(String payload, JobContext ctx) {
+            return record("typed-string", payload);
+        }
+    }
+
+    @DelayedJobContract(name = "typed-long")
+    interface LongJob extends DelayedJobClient<Long> {}
+
+    static final class LongJobExecutor implements DelayedJobExecutor<Long, LongJob> {
+        @Override
+        public Future<Void> execute(Long payload, JobContext ctx) {
+            return record("typed-long", payload);
+        }
+    }
+
+    @DelayedJobContract(name = "typed-uuid")
+    interface UuidJob extends DelayedJobClient<UUID> {}
+
+    static final class UuidJobExecutor implements DelayedJobExecutor<UUID, UuidJob> {
+        @Override
+        public Future<Void> execute(UUID payload, JobContext ctx) {
+            return record("typed-uuid", payload);
+        }
+    }
+
+    @DelayedJobContract(name = "typed-enum")
+    interface EnumJob extends DelayedJobClient<Tier> {}
+
+    static final class EnumJobExecutor implements DelayedJobExecutor<Tier, EnumJob> {
+        @Override
+        public Future<Void> execute(Tier payload, JobContext ctx) {
+            return record("typed-enum", payload);
+        }
+    }
+
+    @DelayedJobContract(name = "typed-list")
+    interface ListJob extends DelayedJobClient<List<UUID>> {}
+
+    static final class ListJobExecutor implements DelayedJobExecutor<List<UUID>, ListJob> {
+        @Override
+        public Future<Void> execute(List<UUID> payload, JobContext ctx) {
+            return record("typed-list", payload);
+        }
+    }
+
     @ServiceContract(namespace = "payload-test", value = "welcome")
     interface WelcomeService {
         @ServiceOperation("send")
@@ -152,7 +207,14 @@ class DelayedJobPayloadDeliveryIT {
 
         vertx.eventBus().registerCodec(new LocalMessageCodec<>("dispatch.result"));
 
-        Set<Object> executors = Set.of(new RecordJobExecutor(), new JsonObjectJobExecutor());
+        Set<Object> executors = Set.of(
+                new RecordJobExecutor(),
+                new JsonObjectJobExecutor(),
+                new StringJobExecutor(),
+                new LongJobExecutor(),
+                new UuidJobExecutor(),
+                new EnumJobExecutor(),
+                new ListJobExecutor());
         ServiceContractRegistry registry = ServiceContractRegistry.build(
                 Set.of(new WelcomeServiceHandler(), new BatchServiceHandler()),
                 Set.of(new DelayedJobContractContributor(executors)),
@@ -256,6 +318,47 @@ class DelayedJobPayloadDeliveryIT {
     void genericArgumentsAreHonored() throws Exception {
         UUID id = UUID.randomUUID();
         assertDelivered("annotated-generic", new JsonObject().put("id", id.toString()), id);
+    }
+
+    @Test
+    @DisplayName("a String payload reaches a String executor")
+    void stringReachesExecutor() throws Exception {
+        assertDelivered("typed-string", "hello", "hello");
+    }
+
+    @Test
+    @DisplayName("a Long payload small enough to come back as an Integer reaches a Long executor as a Long")
+    void longReachesExecutorAsLong() throws Exception {
+        assertDelivered("typed-long", 42L, 42L);
+    }
+
+    @Test
+    @DisplayName("a UUID payload stored as a JSON string reaches a UUID executor as a UUID")
+    void uuidReachesExecutorAsUuid() throws Exception {
+        UUID payload = UUID.randomUUID();
+        assertDelivered("typed-uuid", payload, payload);
+    }
+
+    @Test
+    @DisplayName("an enum payload reaches an enum executor")
+    void enumReachesExecutor() throws Exception {
+        assertDelivered("typed-enum", Tier.PAID, Tier.PAID);
+    }
+
+    @Test
+    @DisplayName("a list payload reaches an executor with its element type")
+    void listReachesExecutorWithElementType() throws Exception {
+        List<UUID> payload = List.of(UUID.randomUUID(), UUID.randomUUID());
+        assertDelivered("typed-list", payload, payload);
+    }
+
+    @Test
+    @DisplayName("a scalar that does not fit the declared type dead-letters without quoting the value")
+    void undecodableScalarFailsWithoutQuotingIt() throws Exception {
+        JobExecution finished = awaitTerminal(enqueue("typed-uuid", "secret-value"));
+
+        assertEquals(JobState.DEAD_LETTER, finished.state());
+        assertEquals("Job payload cannot be decoded to " + UUID.class.getTypeName(), finished.errorMessage());
     }
 
     @Test

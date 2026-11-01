@@ -128,7 +128,7 @@ Lombok `@Builder` value object. Only `handler` is required.
 | Field | Default | Description |
 |---|---|---|
 | `handler` | *required* | Handler name; must match a registered handler |
-| `payload` | `null` | Any Jackson-serializable object; stored as JSONB |
+| `payload` | `null` | Any Jackson-serializable value, including a scalar or a list; stored as JSONB |
 | `runAt` | `null` | Eligibility time; `null` or past means immediately claimable |
 | `queue` | `"default"` | Logical queue name |
 | `priority` | `0` | Higher values claimed first |

@@ -26,8 +26,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Verifies every {@link DelayedJobService} enqueue path, which back {@link DelayedJobClient}, against
- * the real {@link PgJobRepository}: a payload that does not serialize to a JSON object fails the
- * returned future instead of throwing out of it.
+ * the real {@link PgJobRepository}: a payload that cannot be serialized fails the returned future
+ * instead of throwing out of it.
  */
 @DisplayName("DelayedJobService payload rejection")
 class DelayedJobServicePayloadRejectionTest {
@@ -45,10 +45,10 @@ class DelayedJobServicePayloadRejectionTest {
         service = new DelayedJobService(repository, repository, registrar, propagator, new DelayedJobExceptionMapper());
     }
 
-    private static DelayedJob stringJob() {
+    private static DelayedJob unserializableJob() {
         return DelayedJob.builder()
                 .handler("my-handler")
-                .payload("hello")
+                .payload(new Object())
                 .metadata(DurableMetadata.empty())
                 .build();
     }
@@ -61,24 +61,24 @@ class DelayedJobServicePayloadRejectionTest {
     @Test
     @DisplayName("enqueue fails the future")
     void enqueueFailsTheFuture() {
-        assertRejected(service.enqueue(stringJob()));
+        assertRejected(service.enqueue(unserializableJob()));
     }
 
     @Test
     @DisplayName("transactional enqueue fails the future")
     void transactionalEnqueueFailsTheFuture() {
-        assertRejected(service.enqueue(stringJob(), mock(SqlClient.class)));
+        assertRejected(service.enqueue(unserializableJob(), mock(SqlClient.class)));
     }
 
     @Test
     @DisplayName("pre-merged enqueue fails the future")
     void premergedEnqueueFailsTheFuture() {
-        assertRejected(service.enqueuePremerged(stringJob()));
+        assertRejected(service.enqueuePremerged(unserializableJob()));
     }
 
     @Test
     @DisplayName("transactional pre-merged enqueue fails the future")
     void transactionalPremergedEnqueueFailsTheFuture() {
-        assertRejected(service.enqueuePremerged(stringJob(), mock(SqlClient.class)));
+        assertRejected(service.enqueuePremerged(unserializableJob(), mock(SqlClient.class)));
     }
 }

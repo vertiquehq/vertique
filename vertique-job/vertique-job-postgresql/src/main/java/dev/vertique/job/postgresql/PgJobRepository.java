@@ -17,6 +17,8 @@ import dev.vertique.job.JobState;
 import dev.vertique.job.LogEntry;
 import dev.vertique.job.ProgressSnapshot;
 import io.vertx.core.Future;
+import io.vertx.core.json.EncodeException;
+import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
@@ -699,7 +701,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
                 execution.handler(),
                 execution.queue(),
                 execution.state().name(),
-                payloadToJsonObject(execution.payload()),
+                payloadToJsonValue(execution.payload()),
                 toJsonObject(execution.progress()),
                 toJsonObject(execution.parameters()),
                 execution.metadata().toCarrier(),
@@ -725,22 +727,35 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
     }
 
     /**
-     * Converts a job payload to the {@link JsonObject} the {@code payload} column stores.
+     * Converts a job payload to the JSON value the {@code payload} column stores: a
+     * {@link JsonObject}, a {@link io.vertx.core.json.JsonArray}, a string, a number or a boolean.
      *
      * @param payload the payload to convert, or {@code null}
-     * @return the {@link JsonObject} representation, or {@code null}
-     * @throws IllegalArgumentException if the payload does not serialize to a JSON object. The
-     *                                  message names only the type: Jackson's own message quotes
-     *                                  the value, and this one reaches error columns and logs
+     * @return the JSON value, or {@code null}
+     * @throws IllegalArgumentException if the payload cannot be serialized, or serializes to JSON
+     *                                  {@code null}. The message names only the type: Jackson's own
+     *                                  message quotes the value, and this one reaches error columns
+     *                                  and logs
      */
-    private static JsonObject payloadToJsonObject(Object payload) {
-        try {
-            return toJsonObject(payload);
-        } catch (IllegalArgumentException | NullPointerException e) {
-            // JsonObject.mapFrom reports a value that serializes to JSON null with a NullPointerException.
-            throw new IllegalArgumentException(
-                    "Job payload of type " + payload.getClass().getName() + " does not serialize to a JSON object");
+    private static Object payloadToJsonValue(Object payload) {
+        if (payload == null || payload instanceof JsonObject) {
+            return payload;
         }
+        Object value;
+        try {
+            value = Json.decodeValue(Json.encodeToBuffer(payload));
+        } catch (EncodeException e) {
+            throw unserializablePayload(payload);
+        }
+        if (value == null) {
+            throw unserializablePayload(payload);
+        }
+        return value;
+    }
+
+    private static IllegalArgumentException unserializablePayload(Object payload) {
+        return new IllegalArgumentException(
+                "Job payload of type " + payload.getClass().getName() + " does not serialize to a JSON value");
     }
 
     /**
