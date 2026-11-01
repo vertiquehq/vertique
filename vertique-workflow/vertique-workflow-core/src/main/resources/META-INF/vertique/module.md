@@ -110,7 +110,7 @@ Future<CorrelatedSignalReceipt> signalByKey(CorrelatedSignal signal, TX tx);
 Future<CorrelatedSignalReceipt> signalByBusinessKey(CorrelatedSignal signal, TX tx);
 ```
 
-Both are default methods that fail the returned future with `UnsupportedOperationException`, so an implementer written before them keeps compiling; a binding opts in by overriding. `dev.vertique:vertique-workflow-engine` overrides `signalByKey`.
+Both are default methods that fail the returned future with `UnsupportedOperationException`, so an implementer written before them keeps compiling; a binding opts in by overriding. `dev.vertique:vertique-workflow-engine` overrides both.
 
 `CorrelatedSignal` is a record of `contract`, `signalName`, `key`, `payload`, `dedupKey`, `definitionId`, `scopeKey` and `provenance`. `CorrelatedSignal.of(contract, signalName, key, payload, dedupKey)` leaves `definitionId`, `scopeKey` and `provenance` null, so the delivery matches across definitions and scopes; `withDefinition`, `withScope` and `withProvenance` return a copy that differs in that one component. The key must be non-blank, at most 255 characters and free of NUL; the dedup key must be non-blank; `withScope` applies the scope key rules. A refusal names the component and never repeats the value, and `toString` prints the contract and signal name only, never the key, dedup key or payload.
 

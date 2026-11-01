@@ -175,7 +175,7 @@ Each step has an `id` and `type`. Common step fields:
 
 Callback-like fields are string identifiers resolved against registries contributed by the application. The document never embeds Java lambdas or scripts.
 
-A `wait-signal` step may declare `correlationKey: order.paymentReference`, the id of a registered correlation-key resolver (state -> key string). The compiler maps it to `correlateBy(...)` on the same `waitForSignal` chain a Java definition uses, so the document and the builder produce the same `WaitSignalNode`, with `correlationKeyCallbackId` set. An absent field leaves the id `null` and the plan hash unchanged. The key is recorded in the plan; a declared key is not evaluated yet.
+A `wait-signal` step may declare `correlationKey: order.paymentReference`, the id of a registered correlation-key resolver (state -> key string). The compiler maps it to `correlateBy(...)` on the same `waitForSignal` chain a Java definition uses, so the document and the builder produce the same `WaitSignalNode`, with `correlationKeyCallbackId` set. An absent field leaves the id `null` and the plan hash unchanged. The engine evaluates the key when an instance enters the wait.
 
 ---
 

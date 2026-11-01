@@ -84,7 +84,11 @@ PostgreSQL and definition modules never depend on it.
 (the source delivery bean and the shared source stages) and `vertique-kafka-core` (the consumer
 binding), and neither depends on it. It takes no compile dependency on the workflow engine or on
 PostgreSQL, which the build enforces, so a Kafka source records its signals through the generic
-operations of `vertique-workflow-core`.
+operations of `vertique-workflow-core`. Generated Dagger wiring from `vertique-codegen-dagger`
+registers the signal sources of an application, both the classes annotated
+`@WorkflowSignalSource` and the sources generated for annotated `@KafkaListener` interfaces, into
+the `Set` of the transport's source interface. It recognizes the annotations by name and takes no
+compile dependency on the workflow modules.
 
 `vertique-rest-openapi-docs` is the opt-in runtime OpenAPI documentation module: it depends on
 `vertique-rest-jaxrs`, `vertique-rest-core`, `vertique-security-core`, `vertique-core`, and

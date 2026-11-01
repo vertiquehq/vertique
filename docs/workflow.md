@@ -82,7 +82,7 @@ For object-backed workflows, state should usually carry object type, object id, 
 
 ### Signals
 
-A signal is an external event delivered to a waiting workflow instance. Signals have names, payloads, and dedup keys. They are useful for service callbacks, webhooks, message consumers, and user actions that resume a waiting workflow.
+A signal is an external event delivered to a waiting workflow instance. Signals have names, payloads, and dedup keys. They are useful for service callbacks, webhooks, message consumers, and user actions that resume a waiting workflow. An event that carries a business reference, such as an order id, and not a workflow instance id can resume the instance that waits for it: see [Signals from events with a reference](#signals-from-events-with-a-reference).
 
 ### Tasks
 
@@ -122,6 +122,7 @@ lease. Wait for a recorded start with the execution probe. Signals, task complet
 | [workflow-core.md](../vertique-workflow/vertique-workflow-core/src/main/resources/META-INF/vertique/module.md) | `vertique-workflow-core` | Public APIs, builder DSL, registry, contracts, task/timer/side-effect SPIs |
 | [workflow-postgresql.md](../vertique-workflow/vertique-workflow-postgresql/src/main/resources/META-INF/vertique/module.md) | `vertique-workflow-postgresql` | Durable Postgres engine and stores, the workflow schema migration declaration (`WorkflowMigrationsModule`) and the optional `db.schemas.workflow` placement |
 | [workflow-services.md](../vertique-workflow/vertique-workflow-services/src/main/resources/META-INF/vertique/module.md) | `vertique-workflow-services` | Service-dispatch outbox recorder and workflow signal service contract |
+| [workflow-kafka.md](../vertique-workflow/vertique-workflow-kafka/src/main/resources/META-INF/vertique/module.md) | `vertique-workflow-kafka` | Kafka topics as signal sources: builder, source classes and annotated listeners |
 | [workflow-tasks.md](../vertique-workflow/vertique-workflow-tasks/src/main/resources/META-INF/vertique/module.md) | `vertique-workflow-tasks` | Application-facing task list/get/complete/reassign API |
 | [workflow-events.md](../vertique-workflow/vertique-workflow-events/src/main/resources/META-INF/vertique/module.md) | `vertique-workflow-events` | Durable external workflow event stream |
 | [workflow-definition.md](../vertique-workflow/vertique-workflow-definition/src/main/resources/META-INF/vertique/module.md) | `vertique-workflow-definition` | Typed YAML/JSON workflow definition authoring |
@@ -138,6 +139,7 @@ lease. Wait for a recorded start with the execution probe. Signals, task complet
 | Persist and execute workflows | `WorkflowPostgresqlModule` (also contributes the workflow schema migration declaration), plus `WorkflowSchemaModule` and `JsonRuntimeModule` on every node that runs the executor: such a node fails startup without the schema producer |
 | Run a node that only records starts, signals and task completions and runs no workflow code | `workflow.executor.enabled=false`; the node needs no workflow class and no `WorkflowSchemaModule`, and refuses document load, publication, reinstatement, `WorkflowRegistry.load` and `WorkflowPayloadSchemas` with `WorkflowNodeRoleException` |
 | Run the workflow schema migration without starting the application | `WorkflowMigrationsModule` in a migration-only component (see below) |
+| Deliver a signal by a key from a Kafka topic | `vertique-workflow-kafka` with `WorkflowSourceModule`, and `KafkaModule` with `KafkaJsonModule`; `WorkflowPostgresqlModule` on any node, executor or recording-only |
 | Dispatch workflow service calls | `WorkflowServicesModule` plus transactional messaging service relay |
 | Wait on timers or signal timeouts | Nothing to add: the workflow executor of `WorkflowPostgresqlModule` fires them as commands |
 | Meters for the executor | `MicrometerWorkflowModule` from `vertique-micrometer-workflow`, with a bound `MeterRegistry` (see [Executor metrics](#executor-metrics)) |
@@ -404,6 +406,9 @@ reported as stuck, and `retry` offers dead-lettered commands again.
 
 - **Executor nodes.** The node needs `WorkflowSchemaModule` and `JsonRuntimeModule` (see [Common App Wiring](#common-app-wiring)); it fails startup without the schema producer.
 - **Recording-only nodes.** `workflow.executor.enabled=false` deploys no executor. The node claims and runs nothing, needs no workflow class and no `WorkflowSchemaModule`, and still records starts, signals, task completions, retries, migrations, cancellations and reassignments, answers queries, and activates, deprecates and retires versions. It refuses `publish`, `reinstate`, document load, `WorkflowRegistry.load` and `WorkflowPayloadSchemas` with `WorkflowNodeRoleException`. The lifecycle operations stay open on such a node and the framework authorizes none of them, so put an authorization layer in front of them.
+- **Signal sources on a recording-only node.** A [signal source](#signal-sources) only records signals, and recording needs no plan and no workflow class, so a source may run on a recording-only node while the executors run elsewhere. The source records the signal in a transaction of its own; an executor node applies it afterwards.
+- **What that node installs.** The workflow database and recording path in its JVM (`WorkflowPostgresqlModule` and the database modules); the contract and payload classes that the source's signals name; `JsonRuntimeModule`, with the same `json.systemProfile` as the executors, because the profile is a wire-format decision that reaches workflow state and payloads (`KafkaJsonModule` installs `JsonRuntimeModule`); and `WorkflowSourceModule`, which supplies the delivery bean `WorkflowSourceDelivery`. `WorkflowServicesModule` includes `WorkflowSourceModule`, so a node that also dispatches service calls installs the services module; a node that only receives signals installs `WorkflowSourceModule` alone. A source needs neither an outbox module nor an inbox module: only service dispatch needs them. The node still needs no `WorkflowSchemaModule`.
+- **Rollout of correlated signals.** Apply the workflow schema migration first (`V004__signal_correlation.sql` of `vertique-workflow-postgresql`; it is additive and needs no stop of older nodes), then upgrade the nodes in any order. Nodes that still carry the earlier migrations keep running against the upgraded database. A business-key command applies on an older executor, because its provenance is stored in its own column and its target keeps its earlier shape. A wait's-key command belongs to an instance pinned to a version that declares the key, which only an upgraded node has the code for; an older executor that is still running defers the command as not runnable, spending no attempt, until an upgraded executor runs it. Deployments stay roll-forward only (see [Roll-forward only](#roll-forward-only)).
 - **Deployment.** The executor is deployed in the `SERVICES` phase with the application's other verticles. An application that is wired by hand and does not use a starter must include the deployer of `vertique-deploy` (`DeployerModule`) and deploy the phase through it. Without it no command executes and every start stays `PENDING`.
 
 | Key | Default | Meaning |
@@ -430,6 +435,157 @@ A signal is recorded when `signal` returns and applied by a segment afterwards, 
 - **Parked signals.** A signal the instance does not await yet is parked: it keeps its place, blocks nothing and spends no attempt, and it is applied when the instance reaches a wait that accepts it. A signal the plan never waits for, or that the contract does not declare, is refused or rejected.
 - **Open-signal cap.** An instance holds at most `workflow.recording.maxOpenSignalsPerInstance` signals that are pending, deferred, claimed or parked. A signal recorded beyond it fails with `WorkflowSignalLimitException` (a 400) and writes nothing, so the dedup key stays free. The cap holds under every isolation level.
 - **Re-queue beyond the segment budget.** After a segment reaches a wait, it applies the parked signals that wait accepts, in order, while it has run at most half of `maxStepsPerSegment` nodes. When the next one would start beyond that, or its application overruns the cap, every signal the wait accepts is set back to `PENDING` at its original place and the segment commits at the wait. Each of them then runs as the command of its own segment.
+
+#### Signals from events with a reference
+
+An event usually names something the business knows, such as an order id, and not the id of a workflow instance. A correlated signal finds the waiting instance from that reference. The delivery has two forms, which differ in what the reference identifies:
+
+| Delivery | The reference is | It finds | What you declare |
+|---|---|---|---|
+| `signalByKey` | A key the wait computes from the instance's state | The one instance that waits at a wait of that contract and signal name with that key | A key on the wait |
+| `signalByBusinessKey` | The business key the instance was started with | The one live instance that carries that business key and whose pinned version declares the signal | Nothing; the instance has the key from its start |
+
+- **One signal resumes exactly one instance.** A delivery that finds no instance is a no-match, and one that finds more than one is ambiguous. Neither writes anything.
+- **Early events.** A wait's key has no record before the instance reaches the wait: the record exists exactly while the wait is open. An event that arrives first is therefore a no-match, which a source reports as `NO_MATCH`. By default the source drops it; choose `RETRY` to have it redelivered until the wait opens. A business key exists from the start, so an event for a live instance that has not reached its wait yet is recorded and parked, and applies when the instance reaches a wait that accepts it. An event for a business key that no live instance carries is a no-match.
+- **Scope.** A delivery matches instances of every scope and definition unless it is narrowed. A source narrows with `scope`; a direct delivery narrows with `withScope` and `withDefinition`. Scope is a filter, not an isolation boundary.
+- **Keys are sensitive.** A key never appears in a log line, an error message, a history entry or an outcome report; a refusal names the contract and the signal and never repeats the value, so a metric built from the outcomes carries none either. A dedup key is stored only as a hash. The wait record itself holds its key in plain text, so restrict access to the workflow tables accordingly.
+
+##### Declaring a key
+
+A key identifies a wait for the lifetime of that wait. Declare it in code or in a document; both produce the same plan node.
+
+- **In code.** `correlateBy(Function<S, String>)` on the `waitForSignal` chain. The engine computes the key from the instance's state when the instance enters the wait and stores it with the wait.
+- **In a document.** `correlationKey` on a `wait-signal` step names the id of a registered correlation-key resolver, for example `correlationKey: order.paymentReference`. An unregistered id fails the load with `CORRELATION_KEY_RESOLVER_UNKNOWN`, naming the step and the id.
+- **A valid key** is a non-blank string of at most 255 characters with no NUL character. A key that is not, or a resolver that throws, fails the wait's segment with `WorkflowCorrelationKeyException`, which names the definition, the step and the reason and never the key. When a signal's application reached the wait, that signal is rejected and the instance stays where it was.
+- **Declare it in a new version.** A declared key changes the plan hash of the version that declares it; a wait without a key hashes as before.
+- **Branches.** A keyed wait inside a fork branch records its own key, computed from the parent instance's state as the branch enters the wait.
+
+##### Delivery and outcomes
+
+Application code rarely calls the delivery methods: a source does. `TransactionalWorkflowOperations` declares them, and `vertique-workflow-engine` implements them.
+
+```java
+Future<CorrelatedSignalReceipt> signalByKey(CorrelatedSignal signal, TX tx);
+Future<CorrelatedSignalReceipt> signalByBusinessKey(CorrelatedSignal signal, TX tx);
+```
+
+| Outcome | How it is reported | What it writes |
+|---|---|---|
+| Recorded | `CorrelatedSignalReceipt` with outcome `RECORDED` and the id of the matched instance's definition | The `SIGNAL` command |
+| Duplicate | `CorrelatedSignalReceipt` with outcome `DUPLICATE`; this is a success | Nothing |
+| No match | `WorkflowSignalNoMatchException`; a wait may open later, so the caller may deliver again | Nothing |
+| Ambiguous | `WorkflowSignalAmbiguousException` (409); narrow the delivery | Nothing |
+
+- **Recorded is not applied.** Like every signal, a correlated one is applied by the executor afterwards, in queue order. The open-signal cap and the payload bounds apply as for any signal.
+- **It applies to the wait that matched.** The recorded command carries the identity of the wait entry it matched. If that wait is left before the command runs, the command settles as `STALE`, is logged and changes nothing. A wait entered again is a new entry, even with an equal key.
+- **Deduplication is per event.** The dedup key names the event. A delivery by key is deduplicated by contract, signal name, narrowing scope and dedup key across instances, not within one instance as an instance-addressed signal's key is. A redelivery after the first one resumed the instance answers `DUPLICATE` and writes nothing, even when another instance now waits on the same key.
+- **Identity.** A delivery that carries provenance records under the identity bound on the call. When there is none, or it is anonymous, or the actor mapper refuses it, the delivery fails with `WorkflowSignalActorException` and writes nothing, so no recorded command lacks an actor.
+
+##### Signal sources
+
+A signal source turns the messages of a transport into correlated deliveries. `vertique-workflow-kafka` provides sources for Kafka topics. Sibling framework modules offer the same stages for other transports, so a source reads the same on each. A source needs `vertique-workflow-services`, which supplies the delivery bean through `WorkflowSourceModule`, and it needs no outbox module and no inbox module.
+
+There are three forms, and all three build the same source:
+
+| Form | You write | Registered by |
+|---|---|---|
+| Builder | A call to `WorkflowKafkaSignals.on(topic, type)` that ends in `build()` | You add the built `KafkaConsumerBinding` to the `Set<KafkaConsumerBinding<?>>` that the Kafka consumer registry reads |
+| Source class | A class annotated `@WorkflowSignalSource` that implements `KafkaSignalSource<T>`, has an `@Inject` constructor and states the source in `define` | Generated wiring |
+| Annotated listener | A `@KafkaListener` interface whose methods carry `@WorkflowSignalTarget`; it needs no implementation | The code generator writes the source and the wiring |
+
+```java
+KafkaSignals<ShipmentDelivered> source = signals
+    .on("carrier.events", ShipmentDelivered.class)
+    .groupId("logistics")
+    .filter(KafkaRecordFilter.headerEquals("type", "delivered"));
+
+KafkaConsumerBinding<ShipmentDelivered> binding = source
+    .signal(OrdersContract.class, "shipment-delivered")
+    .key(ShipmentDelivered::carrierRef)
+    .build();
+```
+
+```java
+@WorkflowSignalSource
+final class ShipmentSignals implements KafkaSignalSource<ShipmentDelivered> {
+    private final ShipmentLookup lookup;
+
+    @Inject
+    ShipmentSignals(ShipmentLookup lookup) {
+        this.lookup = lookup;
+    }
+
+    @Override
+    public void define(KafkaSignals<ShipmentDelivered> source) {
+        source.topic("shipment.events")
+              .groupId("logistics")
+              .dedupBy(ShipmentDelivered::eventId)
+              .signal(OrdersContract.class, "shipment-delivered")
+              .businessKeyFrom(message -> lookup.orderNumberFor(message.body().carrierRef()));
+    }
+}
+```
+
+- **Stages.** Each signal names its contract and signal name with `signal(contract, name)` and takes exactly one key source: `key` or `businessKey` computes it from the message, and `keyFrom` or `businessKeyFrom` looks it up asynchronously, bounded by `lookupTimeoutMs` (default 5000). An optional `payload` maps the message to the signal's payload; without it the message type must be the signal's payload type. `when` excludes messages, `scope` takes a function from the message to the scope to match (an empty answer ends the message as `SCOPE_EMPTY`), `anyScope` states the default outright, which is to match every scope, `dedupBy` names the dedup key, `onNoMatch` sets the default no-match policy and a signal may set its own, `dispatchAs` sets the identity, and `restoreCorrelationFromHeaders` restores the correlation id. Kafka adds `topic`, `groupId`, `name`, `filter` and `dlqReplay`. A source may declare several signals; they run one at a time.
+- **Dedup key.** A business-key signal must name `dedupBy`. Otherwise the dedup key is `topic:partition:offset`, so a redelivered record is recorded once.
+- **Wiring.** Name the generated registrations module in the component; it includes the Kafka source module, so you do not list that. A component that leaves it out builds and consumes no source. An annotated listener also needs `vertique-workflow-kafka` on the compile classpath and `vertique-codegen-kafka` on the processor path.
+- **Registration fails the build.** A source class with no `@Inject` constructor, one that is not concrete, one that implements no source interface, one the generated module cannot reference, and a listener target on a type that is no source each fail compilation and name the class. A registration is never skipped with a warning. `@NoAutoWire` turns the registration off.
+- **Checks at build.** `build()` fails with an `IllegalStateException` that names the source, never a key, for a signal the contract does not declare, a signal with no key source, a business-key signal with no `dedupBy`, and `scope` beside `anyScope`.
+
+##### A worked example
+
+The order-fulfillment example saga waits at `wait-payment` for a `payment.captured` signal. The payment event carries the order id and no instance id, so the wait keys on the order id:
+
+```java
+.waitForSignal("wait-payment", "payment.captured", PaymentCaptured.class)
+.correlateBy(OrderState::orderId)
+.onSignal((s, sig) -> s.withPayment(sig.chargeId()))
+.toStepOnSignal("create-shipment")
+.build()
+```
+
+An annotated listener turns the `payments.captured` topic into deliveries to that wait. The interface has no implementation:
+
+```java
+@KafkaListener(name = "payment-events", topic = "payments.captured", groupId = "order-fulfillment")
+public interface PaymentEvents {
+    @WorkflowSignalTarget(contract = OrderFulfillmentWorkflow.class, signal = "payment.captured", key = "orderId")
+    void captured(PaymentCaptured event);
+}
+```
+
+- **A matching event.** The event's `orderId` finds the one order that waits at `wait-payment` with that key. The source records the signal, the commit follows, and an executor resumes the order at `create-shipment`.
+- **An early event.** An event for an order that has not reached `wait-payment` finds no wait. The target sets no policy, so the default applies: the event is reported as `NO_MATCH` and dropped. Add `onNoMatch = SignalNoMatch.RETRY` to the target to have it redelivered with the consumer's retry backoff and then dead-lettered.
+- **A redelivered event.** The target names no `dedupBy`, so the dedup key is `topic:partition:offset` and a redelivered record answers `DUPLICATE`.
+- **Identity.** The command is recorded under the system identity `kafka source: payment-events` with the `kafka` origin. Add `dispatchAs` in the builder or source-class form to record under another identity.
+
+A listener that targets a business key states the accessor of the dedup key, for example `@WorkflowSignalTarget(..., businessKey = "orderNumber", dedupBy = "eventId")`.
+
+##### What a source does with a message
+
+- **One record at a time.** A Kafka source resolves `maxInFlight` and `max.poll.records` to 1 and handles one record per consumer instance at a time. Its throughput is one recording transaction, plus any lookup, per record; raise `kafka.consumers.{name}.instances` to add consumers.
+- **At-least-once from a partition's first committed offset.** A source commits manually and retries, and the configuration cannot restore `AUTO` commit or the `SKIP` error strategies; registration fails naming the consumer and the option. `auto.offset.reset` stays Kafka's default, `latest`, so a first-ever record that fails before the first commit can be lost when the consumer restarts or the partition moves. Set `kafka.consumers.{name}.properties` `auto.offset.reset=earliest` to start a new group at the beginning of the topic; it then reads all retained history, and `dedupBy` does not catch those old events.
+- **Finished, retried or terminal.** A message that is finished completes the record. One that may succeed later fails the record with an ordinary exception, so the consumer retries it with the backoff of `kafka.consumers.{name}.retry` and then dead-letters it. One that never will succeed is terminal: it is dead-lettered at once, never retried, and does not pause the consumer. When a message has several signals, the most severe fate wins.
+
+| What happened | Outcome reported | Fate |
+|---|---|---|
+| The signal was recorded | `APPLIED` | Finished |
+| A duplicate delivery | `DEDUPLICATED` | Finished |
+| No match | `NO_MATCH` | Finished; retried under `RETRY` |
+| More than one match | `AMBIGUOUS` | Terminal |
+| `when` rejected the message, a key was null or empty, or a lookup answered empty | `IGNORED` | Finished |
+| `scope` answered empty | `SCOPE_EMPTY` | Finished |
+| Anonymous identity, an actor the mapper refuses, or a `SignalSourceRefusal` from `dispatchAs` | `REFUSED_IDENTITY` | Terminal |
+| Input the message type or the database refuses (a blank or over-long key, a NUL character, an invalid scope), a payload that cannot be encoded as JSON, a blank dedup key, or a `dlqReplay` record with malformed replay headers and no `dedupBy` | `INVALID_INPUT` | Terminal |
+| The instance holds the open-signal cap | `LIMITED` | Retried |
+| An oversized payload | `OVERSIZED` | Terminal |
+| A stage threw | `STAGE_FAILED` | Terminal |
+| A lookup or `dispatchAs` failed or timed out, or the database failed | `STAGE_FAILED` | Retried |
+| The record could not be decoded, or has a null value | `UNDECODABLE` | Acknowledged |
+
+- **Undecodable records.** A record that cannot be decoded is acknowledged and reported once. A transient decode failure, such as an unreachable schema registry, is retried and then dead-lettered instead.
+- **Outcome reports.** Each signal reports one outcome to every `SignalSourceObserver` contributed to the `Set<SignalSourceObserver>`; a message that ends before a signal is chosen reports once with no contract or signal name. The report names the source, transport and outcome and never a key, header or payload. A rising `NO_MATCH` count shows events that arrive before their wait, or for a key nothing waits on.
+- **Provenance.** Each recorded command stores the source name, topic, partition and offset of the record that caused it.
 
 ### Timers
 
