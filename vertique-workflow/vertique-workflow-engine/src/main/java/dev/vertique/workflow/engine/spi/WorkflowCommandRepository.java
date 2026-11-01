@@ -84,6 +84,24 @@ public interface WorkflowCommandRepository<TX> {
     }
 
     /**
+     * Counts the commands that are {@code PENDING} or {@code DEFERRED} and available now, up to a cap. This is the
+     * reading of the intake limit: it is a proxy for the work the executors have not run, and it does not judge
+     * whether a command is at the head of its queue. Commands that are {@code CLAIMED}, {@code PARKED} or dead-lettered,
+     * and timers and backed-off commands that are not yet available, are not counted.
+     *
+     * <p>The read must stop once it has found {@code cap} commands, so that its cost is bounded by the cap however deep
+     * the queue is. It borrows one pooled connection for one statement and judges availability against the database
+     * clock. This default implementation reports no commands, so a repository that does not provide the reading never
+     * causes a refusal.
+     *
+     * @param cap the most commands to count; at least 1
+     * @return a {@link Future} containing the number of due commands, at most {@code cap}
+     */
+    default Future<Long> countDue(long cap) {
+        return Future.succeededFuture(0L);
+    }
+
+    /**
      * Lists the commands reported stuck, ordered by instance and sequence: every dead-lettered command, and every
      * unsettled command whose first availability is older than {@code stuckAfterSeconds}. The first availability of a
      * timer command is its fire time and of any other command the time it was recorded, never its current

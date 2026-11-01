@@ -15,6 +15,7 @@ import dev.vertique.workflow.engine.WorkflowEngineHandle;
 import dev.vertique.workflow.engine.WorkflowEngineParts;
 import dev.vertique.workflow.engine.executor.CommandActors;
 import dev.vertique.workflow.engine.history.WorkflowHistoryEventPublisher;
+import dev.vertique.workflow.engine.intake.IntakeAdmission;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.CommandWakeups;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
@@ -621,6 +622,7 @@ public final class PgWorkflowEngineTestSupport {
         private Set<WorkflowExecutorObserver> executorObservers = Set.of();
         private CommandWakeups commandWakeups = CommandWakeups.none();
         private Set<WorkflowHistoryListener> historyListeners = Set.of();
+        private IntakeAdmission intakeAdmission = IntakeAdmission.alwaysAdmitting();
         private UnaryOperator<WorkflowTransactionRunner<SqlClient>> runnerDecorator = UnaryOperator.identity();
         private UnaryOperator<WorkflowCommandRepository<SqlClient>> commandsDecorator = UnaryOperator.identity();
 
@@ -690,6 +692,12 @@ public final class PgWorkflowEngineTestSupport {
             return this;
         }
 
+        /** The admission a new start or signal from outside is checked against; the engine accepts every call by default. */
+        public ExecutorEngine intakeAdmission(IntakeAdmission intakeAdmission) {
+            this.intakeAdmission = intakeAdmission;
+            return this;
+        }
+
         /** The durable context propagator the engine captures and binds with. */
         public ExecutorEngine propagator(DurableContextPropagator propagator) {
             this.propagator = propagator;
@@ -756,6 +764,7 @@ public final class PgWorkflowEngineTestSupport {
                     .vertx(vertx)
                     .executorConfig(executorConfig)
                     .executorObservers(executorObservers)
+                    .intakeAdmission(intakeAdmission)
                     .commandWakeups(commandWakeups);
             if (recordingConfig != null) {
                 parts.recordingConfig(recordingConfig);

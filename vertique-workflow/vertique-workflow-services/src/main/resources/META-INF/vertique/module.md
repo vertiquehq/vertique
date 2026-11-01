@@ -46,13 +46,15 @@ The recorder must never make a live downstream call. The outbox row is the durab
 
 ## Signal Ingress
 
-`WorkflowSignalContributor` registers the `workflow.signals.post` service contract. Service delivery uses inbox deduplication before calling `TransactionalWorkflowOperations.signal(...)` in the same SQL transaction.
+`WorkflowSignalContributor` registers the `workflow.signals.post` service contract. Service delivery uses inbox deduplication before recording the signal in the same SQL transaction through `RelayedSignals<SqlClient>` (`vertique-workflow-core`), which the engine binds. `RelayedSignals` is the public `signal` form of `TransactionalWorkflowOperations` with the same transaction guard, branch guards, carrier sanitization and checks, minus one: it is never refused by the intake limit (`WorkflowIntakeRefusedException`). The signal is already durable in the outbox, and a refusal would only spend delivery attempts until it was dead-lettered while the queue it would join is the one that must drain. The public constructor that takes `Provider<TransactionalWorkflowOperations<SqlClient>>` stays and adapts the operations it receives, so the signals it records go through the public forms, which the limit applies to; the dependency graph uses the constructor that takes `Provider<RelayedSignals<SqlClient>>`.
 
 The endpoint's reply means the signal is **recorded**, not applied: `signal` records a `SIGNAL` command of the instance and returns,
 and an executor applies it afterwards in queue order. A signal the instance does not await yet is parked and applied when the instance
 reaches a wait that accepts it. The call is refused only for what recording refuses: a missing or ended instance, a name the instance's
 pinned definition does not declare for the addressed wait, a payload or carrier over the record-time bounds, or an instance that already
-holds `workflow.recording.maxOpenSignalsPerInstance` open signals (`WorkflowSignalLimitException`). A refusal rolls the inbox record back
+holds `workflow.recording.maxOpenSignalsPerInstance` open signals (`WorkflowSignalLimitException`). It is never refused because the
+cluster holds too many due commands: an application that signals through the outbox passes the intake limit, and its backlog is bounded
+by the relay and not by the limit. A refusal rolls the inbox record back
 with the transaction, so the relay retries it.
 
 **Who is logged.** The endpoint records the signal inside the dispatch context the relay rebuilt for the delivery, and the engine

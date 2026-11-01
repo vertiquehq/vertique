@@ -6,6 +6,7 @@ package dev.vertique.workflow.postgresql.executor;
 import static dev.vertique.workflow.postgresql.executor.ExecutorFixture.IDLE;
 import static dev.vertique.workflow.postgresql.executor.ExecutorFixture.await;
 import static dev.vertique.workflow.postgresql.executor.ExecutorFixture.awaitCondition;
+import static dev.vertique.workflow.postgresql.executor.ExecutorFixture.failureOf;
 import static dev.vertique.workflow.postgresql.executor.RecordedSignalIT.signal;
 import static dev.vertique.workflow.postgresql.executor.RecordedSignalIT.waitFor;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -13,6 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
+import dev.vertique.workflow.exception.WorkflowIntakeRefusedException;
 import dev.vertique.workflow.history.CommandKind;
 import dev.vertique.workflow.history.WorkflowHistoryEvent;
 import dev.vertique.workflow.migration.DefaultWorkflowMigrationRegistry;
@@ -46,6 +48,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.DisplayName;
@@ -220,6 +223,46 @@ public class RecordedMigrationIT {
                     .singleElement()
                     .satisfies(
                             event -> assertThat(event.entryInfo().definition()).isEqualTo(target));
+        }
+    }
+
+    @Test
+    @DisplayName("a migration is recorded and run on a node that refuses new intake")
+    void migrationIsRecordedWhileTheNodeRefusesIntake() {
+        Versioned v1 = versioned(1, true);
+        try (SignalFixture f = new SignalFixture(db.toPoolConfig(), v1, List.of("paid", "note"))) {
+            // Given an instance waiting on version 1, version 2 available and a handler to it, on a node whose intake
+            // can be closed
+            seed(f, versioned(2, true), List.of("paid", "note"));
+            AtomicBoolean refusing = new AtomicBoolean();
+            Node node = f.node("engine")
+                    .intakeAdmission(() -> !refusing.get())
+                    .migrations(new DefaultWorkflowMigrationRegistry(
+                            Set.<WorkflowMigrationHandler<?, ?>>of(handler(
+                                    ID,
+                                    1,
+                                    2,
+                                    State.class,
+                                    State.class,
+                                    (state, ctx) ->
+                                            MigrationResult.anchorAtInitial(state.add("migrated", signal("v2"))))),
+                            f.registry))
+                    .build();
+            WorkflowInstanceId id = f.waiting(node, "refusing-migration");
+            refusing.set(true);
+
+            // When the migration is recorded and the executor runs it
+            migrate(f, node, id, 2);
+            f.idle(node, id);
+
+            // Then the node refused a new start meanwhile, and the migration completed
+            assertThat(failureOf(
+                            f.caller(() ->
+                                    node.pool.withTransaction(tx -> node.engine.start(f.start("refused-start"), tx))),
+                            IDLE))
+                    .isInstanceOf(WorkflowIntakeRefusedException.class);
+            assertThat(migrationOf(f, id).state()).isEqualTo("COMPLETE");
+            assertThat(pin(f, id).getLong("definition_version")).isEqualTo(2L);
         }
     }
 

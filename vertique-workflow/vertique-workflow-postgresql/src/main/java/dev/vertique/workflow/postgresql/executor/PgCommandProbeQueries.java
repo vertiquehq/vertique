@@ -27,6 +27,8 @@ final class PgCommandProbeQueries {
     final String findNotYetAvailable;
     final String findStuck;
     final String countQueue;
+    /** The bounded count of due commands that the intake limit reads, with the cap as {@code $1}. */
+    final String countDue;
 
     PgCommandProbeQueries(CommandEligibilitySql eligibility) {
         String from = " FROM " + eligibility.commandsTable() + " c WHERE ";
@@ -39,6 +41,12 @@ final class PgCommandProbeQueries {
                 + eligibility.claimable("c") + SCOPE + ORDER;
         this.findStuck = COLUMNS + from + stuck("c", "$2") + SCOPE + ORDER;
         String commands = eligibility.commandsTable();
+        // Ordered by the one column of the partial index so that the planner walks the index in order and stops at the
+        // cap, whatever the table statistics say. The state is a filter on that index, so the walk also passes over
+        // the claimed rows, which executor slots bound; it does not judge whether a command is at the head.
+        this.countDue = "SELECT count(*) FROM (SELECT 1 FROM " + commands
+                + " c WHERE c.state IN ('PENDING','DEFERRED') AND c.available_at <= now()"
+                + " ORDER BY c.available_at LIMIT $1) due";
         this.countQueue = "SELECT (SELECT count(*) FROM " + commands + " c WHERE " + eligibility.claimable("c")
                 + ") AS available, (SELECT count(*) FROM " + commands + " c WHERE " + stuck("c", "$1")
                 + ") AS stuck, (SELECT count(*) FROM " + commands + " c WHERE c.state = 'PARKED') AS parked,"

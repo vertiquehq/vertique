@@ -403,7 +403,7 @@ A command that fails transiently is retried with a capped backoff, one that exha
 reported as stuck, and `retry` offers dead-lettered commands again.
 
 - **Executor nodes.** The node needs `WorkflowSchemaModule` and `JsonRuntimeModule` (see [Common App Wiring](#common-app-wiring)); it fails startup without the schema producer.
-- **Recording-only nodes.** `workflow.executor.enabled=false` deploys no executor. The node claims and runs nothing, needs no workflow class and no `WorkflowSchemaModule`, and still records starts, signals, task completions, retries, migrations, cancellations and reassignments, answers queries, and activates, deprecates and retires versions. It refuses `publish`, `reinstate`, document load, `WorkflowRegistry.load` and `WorkflowPayloadSchemas` with `WorkflowNodeRoleException`. The lifecycle operations stay open on such a node and the framework authorizes none of them, so put an authorization layer in front of them.
+- **Recording-only nodes.** `workflow.executor.enabled=false` deploys no executor. The node claims and runs nothing, needs no workflow class and no `WorkflowSchemaModule`, and still records starts, signals, task completions, retries, migrations, cancellations and reassignments, answers queries, and activates, deprecates and retires versions. It still runs the intake sampler and refuses new starts and signals under pressure like an executor node (see [Intake limit](#intake-limit)). It refuses `publish`, `reinstate`, document load, `WorkflowRegistry.load` and `WorkflowPayloadSchemas` with `WorkflowNodeRoleException`. The lifecycle operations stay open on such a node and the framework authorizes none of them, so put an authorization layer in front of them.
 - **Deployment.** The executor is deployed in the `SERVICES` phase with the application's other verticles. An application that is wired by hand and does not use a starter must include the deployer of `vertique-deploy` (`DeployerModule`) and deploy the phase through it. Without it no command executes and every start stays `PENDING`.
 
 | Key | Default | Meaning |
@@ -420,7 +420,7 @@ reported as stuck, and `retry` offers dead-lettered commands again.
 
 Read the keys by installing `WorkflowExecutorConfigModule` and `WorkflowRecordingConfigModule` together with `ConfigParsingModule`;
 otherwise the defaults apply. The recording keys are `workflow.recording.lockTimeoutMs` (5000), `maxPayloadBytes` (262144, at
-least 1024), `maxOpenSignalsPerInstance` (100, 1 to 10000) and `schemaCacheMaxEntries` (256). See the
+least 1024), `maxOpenSignalsPerInstance` (100, 1 to 10000), `schemaCacheMaxEntries` (256) and the `intake` block (see [Intake limit](#intake-limit)). See the
 [workflow core reference](../vertique-workflow/vertique-workflow-core/src/main/resources/META-INF/vertique/module.md) for the full table.
 
 ### Signals
@@ -430,6 +430,30 @@ A signal is recorded when `signal` returns and applied by a segment afterwards, 
 - **Parked signals.** A signal the instance does not await yet is parked: it keeps its place, blocks nothing and spends no attempt, and it is applied when the instance reaches a wait that accepts it. A signal the plan never waits for, or that the contract does not declare, is refused or rejected.
 - **Open-signal cap.** An instance holds at most `workflow.recording.maxOpenSignalsPerInstance` signals that are pending, deferred, claimed or parked. A signal recorded beyond it fails with `WorkflowSignalLimitException` (a 400) and writes nothing, so the dedup key stays free. The cap holds under every isolation level.
 - **Re-queue beyond the segment budget.** After a segment reaches a wait, it applies the parked signals that wait accepts, in order, while it has run at most half of `maxStepsPerSegment` nodes. When the next one would start beyond that, or its application overruns the cap, every signal the wait accepts is set back to `PENDING` at its original place and the segment commits at the wait. Each of them then runs as the command of its own segment.
+
+### Intake limit
+
+Recording a start or a signal is cheaper than running it, so intake can outrun the executors until the database is the bottleneck. A node therefore refuses a **new** start or signal with `WorkflowIntakeRefusedException`, a retryable 503 that writes nothing, while the cluster holds too many due commands. Callers see this as a new 503 from `start` and `signal` under load: wait and send the same request again, and a source of records pauses and keeps them.
+
+- **What is counted.** Commands that are `PENDING` or `DEFERRED` and available now, read once per node every `sampleIntervalMs` (four intervals while the queue is at or below the low mark) with a statement that stops at `highMark + 1`. Timers not yet due, parked signals and claimed commands are not counted, so an idle system with many timers is never refused. It is a proxy for unrun work and does not judge whether a command is at the head of its queue.
+- **Each node decides alone**, including a [recording-only node](#node-roles-and-the-executor): it refuses from a reading at or above `highMark`, and admits again from a reading at or below `lowMark`. The check reads node-local state and adds no SQL.
+- **What keeps its outcome.** The check is the last one before the execution lock, and a refused call never takes it, whether or not a history listener is bound, so a refusal under pressure does not wait for the lock. A start or signal that committed before the pressure rose returns its original outcome when retried, and a missing or ended instance, an undeclared name, an unavailable version and an invalid payload keep their own refusal.
+- **What is never refused.** `cancel`, `retry`, `migrate`, task completions and reassignments, timers, everything a segment records, and a signal the outbox relay delivers to `workflow.signals.post`: it is already durable, and refusing it would only spend delivery attempts until it was dead-lettered. An application that signals through the outbox passes the limit.
+- **It is approximate.** At worst the cluster records `5 x sampleIntervalMs x` its intake rate more commands than the last reading showed. At the defaults and 2,000 commands per second that is 10,000 commands past the last reading.
+- **A failing reading never becomes an outage.** A node keeps its state through two failed or timed-out readings and admits on the third, with one warning for the outage.
+- **It does not bound the outbox.** A command that runs can move its backlog into the outbox, and the table is shared, so its depth is not pressure. Watch the outbox claim report (`OutboxPublishObserver.onClaimCompleted`).
+- **Commands no executor can claim stay counted**, so they can hold refusal on. When an `IntakePressureChanged` event reports a node refusing while the executors are idle, read the report of the execution probe and fix the cause (deploy the missing version, `retry` or `cancel` the instance). If that cannot be done at once, set `workflow.recording.intake.enabled` to `false` on the recording nodes and restart them. **Prerequisite:** this key is read only when the application installs `WorkflowRecordingConfigModule` together with `ConfigParsingModule` (see [Node roles and the executor](#node-roles-and-the-executor)); without the module every node runs the default limit and ignores the setting, so confirm the module is installed before you rely on it.
+
+The keys below are read only when the application installs `WorkflowRecordingConfigModule` together with `ConfigParsingModule`; without it the defaults apply and a configured value, `enabled=false` included, has no effect.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `workflow.recording.intake.enabled` | `true` | `false` runs no sampler and admits every call |
+| `workflow.recording.intake.highMark` | `10000` | Due commands at or above which the node refuses |
+| `workflow.recording.intake.lowMark` | `5000` | Due commands at or below which it admits again; at least 1 and below `highMark` |
+| `workflow.recording.intake.sampleIntervalMs` | `1000` | Time between readings, and the longest a reading may take; at least 100 |
+
+Each change of a node between admitting and refusing emits one `WorkflowExecutorEvent.IntakePressureChanged` to the executor observers and one warning. The marks are depths, not capacities: tune them for a deployment whose drain rate is far from the default. See the [workflow core reference](../vertique-workflow/vertique-workflow-core/src/main/resources/META-INF/vertique/module.md).
 
 ### Timers
 
@@ -1034,7 +1058,8 @@ is registered, and a static source failing a limit fails startup naming the reso
 - New: `workflow.definitions.cache.maximumEntries` (500) and `workflow.definitions.cache.ttlSeconds` (0, no expiry) size and expire
   the plan cache, and `workflow.definitions.buildDefaultScopeDocumentsAtStartup` (`false`); see [Plan cache](#plan-cache).
 - New: `workflow.executor.*` (see [Node roles and the executor](#node-roles-and-the-executor)) and `workflow.recording.*`,
-  including `workflow.recording.maxOpenSignalsPerInstance` (100).
+  including `workflow.recording.maxOpenSignalsPerInstance` (100) and `workflow.recording.intake.*` (see [Intake limit](#intake-limit)),
+  which is on by default.
 
 See [Configuration](#configuration).
 
@@ -1043,7 +1068,7 @@ See [Configuration](#configuration).
 - **Run an executor.** Every node that should run workflow code needs `WorkflowSchemaModule` and `JsonRuntimeModule` and, when the application is wired by hand, the deployer of `vertique-deploy` so that the `workflow-executor` verticle is deployed in the `SERVICES` phase. Without the deployer no command executes. Use `workflow.executor.enabled=false` for a node that only records.
 - **Expect operations to return before they run.** `start`, `signal`, task completion, `retry` and `migrate` return once the command is recorded. A failure, a rejection or a stale outcome appears in the instance's log and not as an exception of the call. Code and tests that read an instance right after a start await the execution probe.
 - **Remove the delayed module.** The `vertique-workflow-delayed` artifact is removed in 0.4.0, because timers are commands: drop the dependency and `WorkflowDelayedModule` from your components.
-- **Handle the new refusals.** A signal beyond the open-signal cap fails with `WorkflowSignalLimitException`.
+- **Handle the new refusals.** A signal beyond the open-signal cap fails with `WorkflowSignalLimitException`. A new start or signal fails with `WorkflowIntakeRefusedException`, a 503 that writes nothing, while the cluster holds too many due commands (see [Intake limit](#intake-limit)); retry it later. Release notes: callers can now receive this 503 under load.
 - **Review who the downstream runs as.** A service operation that a segment dispatches through the outbox runs as the relay's identity, not as the recording user. See [Who asked, and what the downstream runs as](#who-asked-and-what-the-downstream-runs-as).
 - **Decide on redaction and read authorization.** Bind a `WorkflowHistoryRedactor` if the log must never hold some values, and authorize the history reads in your application.
 - **Add the metrics bridge** if you want executor meters: `vertique-micrometer-workflow` with a bound `MeterRegistry`.

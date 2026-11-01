@@ -17,6 +17,7 @@ import dev.vertique.inboxoutbox.InboxResult;
 import dev.vertique.inboxoutbox.InboxService;
 import dev.vertique.services.ServiceContractRegistry.ContractEntry;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
+import dev.vertique.workflow.ops.RelayedSignals;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import io.vertx.core.Future;
@@ -232,6 +233,100 @@ class WorkflowSignalContributorTest {
 
             assertThat(result.succeeded()).isTrue();
             verify(txOps, never()).signal(any(), any(), any(), any(), any());
+        }
+    }
+
+    // --- handleSignal(): recording through the relayed signals ---
+
+    @Nested
+    @DisplayName("handleSignal(): a contributor built with the relayed signals")
+    class HandleSignalRelayed {
+
+        @Mock
+        private RelayedSignals<SqlClient> relayed;
+
+        private WorkflowSignalContributor relayedContributor;
+
+        @BeforeEach
+        void setUp() {
+            Provider<RelayedSignals<SqlClient>> provider = () -> relayed;
+            relayedContributor = new WorkflowSignalContributor(inboxService, pool, provider);
+        }
+
+        @SuppressWarnings("unchecked")
+        private void runInOneTransaction() {
+            doAnswer(invocation -> {
+                        Function<SqlConnection, Future<Void>> fn = invocation.getArgument(0);
+                        return fn.apply(tx);
+                    })
+                    .when(pool)
+                    .withTransaction(any());
+            when(inboxService.processOnce(any(), any(), any(), any())).thenAnswer(invocation -> {
+                java.util.function.Supplier<Future<Void>> work = invocation.getArgument(3);
+                return work.get().map(v -> new InboxResult.Processed<>(v));
+            });
+        }
+
+        @Test
+        @DisplayName("records a signal through the relayed signals and never through the public forms")
+        void recordsThroughTheRelayedSignals() {
+            runInOneTransaction();
+            WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
+            WorkflowSignalRequest req =
+                    WorkflowSignalRequest.instance(workflowId, "payment-confirmed", "payload-value", "dedup-key-1");
+            when(relayed.signal(any(), any(), any(), any(), any(), any(), eq(tx)))
+                    .thenReturn(Future.succeededFuture());
+
+            Future<Void> result = relayedContributor.handleSignal(req);
+
+            assertThat(result.succeeded()).isTrue();
+            verify(relayed).signal(workflowId, "payment-confirmed", "payload-value", "dedup-key-1", null, null, tx);
+            verify(txOps, never()).signal(any(), any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("records a branch signal with its carrier through the relayed signals")
+        void recordsABranchSignalWithItsCarrier() {
+            runInOneTransaction();
+            WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
+            JsonObject carrier = DurableMetadata.of("tenant", new JsonObject().put("id", "t-1"))
+                    .toCarrier();
+            WorkflowSignalRequest req = WorkflowSignalRequest.branch(
+                    workflowId, "approve", "payload", "dedup-2", "fork-1", "branch-a", carrier);
+            when(relayed.signal(any(), any(), any(), any(), any(), any(), any(DurableMetadata.class), eq(tx)))
+                    .thenReturn(Future.succeededFuture());
+
+            Future<Void> result = relayedContributor.handleSignal(req);
+
+            assertThat(result.succeeded()).isTrue();
+            ArgumentCaptor<DurableMetadata> metadata = ArgumentCaptor.forClass(DurableMetadata.class);
+            verify(relayed)
+                    .signal(
+                            eq(workflowId),
+                            eq("approve"),
+                            eq("payload"),
+                            eq("dedup-2"),
+                            eq("fork-1"),
+                            eq("branch-a"),
+                            metadata.capture(),
+                            eq(tx));
+            assertThat(metadata.getValue().body("tenant")).isPresent();
+        }
+
+        @Test
+        @DisplayName("a failure of the relayed signals fails the delivery, so the relay retries it")
+        void aFailureFailsTheDelivery() {
+            runInOneTransaction();
+            WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
+            WorkflowSignalRequest req = WorkflowSignalRequest.instance(workflowId, "gone", null, "k");
+            RuntimeException refusal = new IllegalStateException("instance is gone");
+            when(relayed.signal(any(), any(), any(), any(), any(), any(), eq(tx)))
+                    .thenReturn(Future.failedFuture(refusal));
+
+            Future<Void> result = relayedContributor.handleSignal(req);
+
+            assertThat(result.failed()).isTrue();
+            assertThat(result.cause()).isSameAs(refusal);
         }
     }
 
