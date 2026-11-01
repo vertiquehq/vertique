@@ -24,6 +24,7 @@ import dev.vertique.kafka.test.KafkaTestContainers;
 import dev.vertique.services.ServiceContractRegistry;
 import dev.vertique.services.ServiceTargetResolver;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.json.jackson.DatabindCodec;
@@ -40,9 +41,11 @@ import java.util.OptionalLong;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -71,6 +74,8 @@ import org.testcontainers.kafka.KafkaContainer;
  *       alone.</li>
  *   <li>Under {@code SKIP} the record is skipped with a log that names the consumer and the error
  *       type, and the dead-letter topic stays empty.</li>
+ *   <li>A forcing binding handles one record at a time: two records of one partition that fail
+ *       together are both delivered again, and none is lost.</li>
  *   <li>Neither path retries, and neither pauses the consumer: the next record is handled long
  *       before the configured backoff would end. Nothing the error handler logs holds the record's
  *       value.</li>
@@ -284,6 +289,52 @@ public class KafkaTerminalFailureIT {
         }
     }
 
+    @Test
+    @DisplayName("two records of one partition that fail together are both delivered again and none is lost")
+    void twoRecordsOfOnePartitionThatFailTogetherAreBothDeliveredAgain(Vertx vertx) throws Exception {
+        // Given: a forcing binding on a short backoff, and a handler that fails each record once after a delay
+        // long enough for both to be in flight together if the binding allowed it
+        AtomicInteger running = new AtomicInteger();
+        AtomicInteger mostRunning = new AtomicInteger();
+        Map<String, AtomicInteger> attempts = new ConcurrentHashMap<>();
+        List<String> succeeded = Collections.synchronizedList(new ArrayList<>());
+        TerminalRig rig = TerminalRig.open(vertx, "terminal-pair", true, ErrorStrategy.DEAD_LETTER, 200L, message -> {
+            String id = message.value().id();
+            mostRunning.accumulateAndGet(running.incrementAndGet(), Math::max);
+            int attempt =
+                    attempts.computeIfAbsent(id, key -> new AtomicInteger()).incrementAndGet();
+            Promise<Void> result = Promise.promise();
+            vertx.setTimer(300, timer -> {
+                running.decrementAndGet();
+                if (attempt == 1) {
+                    result.fail(new RuntimeException("first attempt of " + id));
+                } else {
+                    succeeded.add(id);
+                    result.complete();
+                }
+            });
+            return result.future();
+        });
+        try {
+            // When: two records are produced to the same partition
+            RecordMetadata first = rig.produce("k-1", new TestEvent("evt-1", "one"));
+            RecordMetadata second = rig.produce("k-2", new TestEvent("evt-2", "two"));
+            assertEquals(first.getPartition(), second.getPartition(), "the records should share a partition");
+
+            // Then: the offset is committed past both, and both succeeded on their second attempt
+            assertEquals(OptionalLong.of(second.getOffset() + 1), rig.awaitCommittedOffset(second.getOffset() + 1));
+            assertEquals(List.of("evt-1", "evt-2"), List.copyOf(succeeded));
+            assertTrue(attempts.get("evt-1").get() >= 2, "the first record should be delivered again");
+            assertTrue(attempts.get("evt-2").get() >= 2, "the second record should be delivered again");
+
+            // And: the binding handled one record at a time, and nothing was dead-lettered
+            assertEquals(1, mostRunning.get(), "a forcing binding should run one handler at a time");
+            assertTrue(rig.readDeadLetters(1, 3_000L).isEmpty(), "nothing should be dead-lettered");
+        } finally {
+            rig.close();
+        }
+    }
+
     // --- Helpers ---
 
     /**
@@ -380,6 +431,30 @@ public class KafkaTerminalFailureIT {
                 ErrorStrategy exhausted,
                 KafkaRecordHandler<TestEvent> handler)
                 throws Exception {
+            return open(vertx, consumerName, force, exhausted, 30_000L, handler);
+        }
+
+        /**
+         * Builds and deploys the binding as {@link #open(Vertx, String, boolean, ErrorStrategy, KafkaRecordHandler)}
+         * does, with the given backoff.
+         *
+         * @param vertx the Vert.x instance
+         * @param consumerName the binding's name, which is also its consumer name in logs
+         * @param force whether the binding forces its strategies
+         * @param exhausted the exhausted strategy the configuration states
+         * @param backoffMs the retry backoff in milliseconds
+         * @param handler the binding's handler
+         * @return the running rig
+         * @throws Exception if the deployment fails
+         */
+        static TerminalRig open(
+                Vertx vertx,
+                String consumerName,
+                boolean force,
+                ErrorStrategy exhausted,
+                long backoffMs,
+                KafkaRecordHandler<TestEvent> handler)
+                throws Exception {
             TerminalRig rig = new TerminalRig(vertx, consumerName);
             try {
                 KafkaConsumerBinding.Builder<TestEvent> builder = KafkaConsumerBinding.builder(
@@ -398,7 +473,7 @@ public class KafkaTerminalFailureIT {
                                 "retry",
                                 new JsonObject()
                                         .put("maxRetries", 3)
-                                        .put("backoffMs", 30_000L)
+                                        .put("backoffMs", backoffMs)
                                         .put("exhaustedStrategy", exhausted.name()));
                 rig.deploy(builder.build(), retry);
             } catch (Exception | Error e) {

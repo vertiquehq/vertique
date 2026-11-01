@@ -3,10 +3,12 @@
 
 package dev.vertique.workflow.kafka;
 
+import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.workflow.services.source.WorkflowSourceDelivery;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Starts the Kafka signal sources of an application.
@@ -19,15 +21,30 @@ import java.util.Objects;
 public final class WorkflowKafkaSignals {
 
     private final WorkflowSourceDelivery delivery;
+    private final CorrelationContextFactory correlationFactory;
 
     /**
-     * Creates the entry point over the delivery bean that records the signals.
+     * Creates the entry point over the delivery bean that records the signals, seeding a source's
+     * correlation with the default correlation id generator. An application that supplies its own
+     * generator injects this class, which uses the application's {@link CorrelationContextFactory}.
      *
      * @param delivery the delivery bean, which also receives the source's outcome reports
      */
-    @Inject
     public WorkflowKafkaSignals(WorkflowSourceDelivery delivery) {
+        this(delivery, new CorrelationContextFactory(Optional.empty()));
+    }
+
+    /**
+     * Creates the entry point over the delivery bean and the application's correlation factory.
+     *
+     * @param delivery the delivery bean, which also receives the source's outcome reports
+     * @param correlationFactory the factory that seeds the correlation of a source that restores it
+     *     from record headers, so the ids come from the application's generator
+     */
+    @Inject
+    public WorkflowKafkaSignals(WorkflowSourceDelivery delivery, CorrelationContextFactory correlationFactory) {
         this.delivery = Objects.requireNonNull(delivery, "delivery");
+        this.correlationFactory = Objects.requireNonNull(correlationFactory, "correlationFactory");
     }
 
     /**
@@ -44,6 +61,6 @@ public final class WorkflowKafkaSignals {
      */
     public <T> KafkaSignals<T> on(String topic, Class<T> type) {
         Objects.requireNonNull(type, "type");
-        return new DefaultKafkaSignals<>(delivery, type).topic(topic);
+        return new DefaultKafkaSignals<>(delivery, type, correlationFactory).topic(topic);
     }
 }

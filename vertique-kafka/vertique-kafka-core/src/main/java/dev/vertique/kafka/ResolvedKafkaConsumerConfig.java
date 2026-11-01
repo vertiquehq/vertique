@@ -68,6 +68,9 @@ record ResolvedKafkaConsumerConfig(
         JsonObject serdeConfig,
         @Nullable String jsonProfile) {
 
+    /** The number of in-flight records a consumer allows when {@code maxInFlight} is not configured. */
+    static final int DEFAULT_MAX_IN_FLIGHT = 256;
+
     // --- Factory ---
 
     /**
@@ -124,8 +127,9 @@ record ResolvedKafkaConsumerConfig(
         long eventBusTimeoutMs = consumerConfig != null && consumerConfig.eventBusTimeoutMs() != null
                 ? consumerConfig.eventBusTimeoutMs()
                 : defaultEventBusTimeoutMs;
-        int maxInFlight =
-                consumerConfig != null && consumerConfig.maxInFlight() != null ? consumerConfig.maxInFlight() : 256;
+        int maxInFlight = consumerConfig != null && consumerConfig.maxInFlight() != null
+                ? consumerConfig.maxInFlight()
+                : DEFAULT_MAX_IN_FLIGHT;
 
         CommitStrategy commitStrategy = resolveEnum(
                 consumerConfig != null ? consumerConfig.commitStrategy() : null,
@@ -190,6 +194,35 @@ record ResolvedKafkaConsumerConfig(
                 maxInFlight,
                 deploymentOptions,
                 kafkaProperties,
+                endpointFormat,
+                globalFormat,
+                workerConfigured,
+                serdeConfig,
+                jsonProfile);
+    }
+
+    /**
+     * Returns this configuration set to handle one record at a time: {@code maxInFlight} is
+     * {@code 1}, and {@code max.poll.records} is {@code 1} so that a poll never hands the consumer a
+     * second record while the first is still being handled.
+     *
+     * @return the changed configuration
+     */
+    ResolvedKafkaConsumerConfig oneRecordAtATime() {
+        Map<String, String> properties = new HashMap<>(kafkaProperties);
+        properties.put("max.poll.records", "1");
+        return new ResolvedKafkaConsumerConfig(
+                topic,
+                groupId,
+                enabled,
+                commitStrategy,
+                errorStrategy,
+                retryConfig,
+                deadLetterTopic,
+                eventBusTimeoutMs,
+                1,
+                deploymentOptions,
+                Map.copyOf(properties),
                 endpointFormat,
                 globalFormat,
                 workerConfigured,

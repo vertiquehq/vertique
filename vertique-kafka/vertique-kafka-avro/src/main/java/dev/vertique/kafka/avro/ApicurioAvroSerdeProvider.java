@@ -3,6 +3,7 @@
 
 package dev.vertique.kafka.avro;
 
+import com.microsoft.kiota.ApiException;
 import dev.vertique.kafka.DeserializationException;
 import dev.vertique.kafka.KafkaRecordHeaders;
 import dev.vertique.kafka.config.KafkaConfig;
@@ -12,6 +13,9 @@ import dev.vertique.kafka.serialization.KafkaSerializer;
 import io.apicurio.registry.serde.avro.AvroKafkaDeserializer;
 import io.apicurio.registry.serde.avro.AvroKafkaSerializer;
 import io.vertx.core.json.JsonObject;
+import java.io.EOFException;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.HashMap;
 import java.util.Map;
 import org.apache.avro.generic.GenericRecord;
@@ -164,8 +168,35 @@ public final class ApicurioAvroSerdeProvider implements KafkaSerdeProvider {
             return deserializer.deserialize(topic, data);
         } catch (RuntimeException e) {
             throw new DeserializationException(
-                    "Avro deserialization failed on topic " + topic + ": " + e.getMessage(), e);
+                    "Avro deserialization failed on topic " + topic + ": " + e.getMessage(), e, isInfrastructure(e));
         }
+    }
+
+    /**
+     * Whether a failure comes from the registry or the network rather than from the bytes: an I/O
+     * cause other than a truncated payload, or a registry answer of 5xx, 401, 403, 408 or 429. Any
+     * other answer, such as a schema that does not exist, is the record's own.
+     */
+    private static boolean isInfrastructure(Throwable failure) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof EOFException) {
+                return false;
+            }
+            if (cause instanceof IOException || cause instanceof UncheckedIOException) {
+                return true;
+            }
+            if (cause instanceof ApiException api && isInfrastructureStatus(api.getResponseStatusCode())) {
+                return true;
+            }
+            if (cause.getCause() == cause) {
+                break;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isInfrastructureStatus(int status) {
+        return status >= 500 || status == 401 || status == 403 || status == 408 || status == 429;
     }
 
     @Override

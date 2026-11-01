@@ -205,11 +205,10 @@ class KafkaSignalIdentityIT {
     }
 
     @Test
-    void overlappingDispatchAsFuturesOnAForeignContextKeepEachRecordsIdentityAndScope(Vertx vertx) {
+    void dispatchAsFuturesCompletedOnAForeignContextKeepEachRecordsIdentityAndScope(Vertx vertx) {
         try (SourceScenario scenario = SourceScenario.open(vertx, "overlap")) {
-            // Given a two-partition topic and a source whose scope is the x-scope header, whose dispatchAs holds two
-            // futures open until both records are waiting and releases them from one foreign context in the opposite
-            // order, and whose key reads the ambient scope
+            // Given a two-partition topic and a source whose scope is the x-scope header, whose dispatchAs holds each
+            // future open until the test completes it from a foreign context, and whose key reads the ambient scope
             Overlap overlap = scenario.new Overlap();
             List<String> scopesSeen = Collections.synchronizedList(new ArrayList<>());
             String base = scenario.ref("PAY");

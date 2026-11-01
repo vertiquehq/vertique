@@ -10,11 +10,18 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.sun.net.httpserver.HttpServer;
 import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
+import dev.vertique.kafka.DeserializationException;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import dev.vertique.kafka.config.KafkaConfig;
 import dev.vertique.kafka.serialization.KafkaSerdeRegistry;
 import io.vertx.core.json.JsonObject;
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Set;
 import org.apache.avro.Schema;
 import org.apache.avro.SchemaBuilder;
@@ -190,6 +197,73 @@ class ApicurioAvroSerdeProviderTest {
         @DisplayName("the router routing SPI delegates to the provider's matchValue")
         void routingDelegates() {
             assertEquals("shipped", registry.matchValue("avro", orderRecord("shipped", "7"), "type"));
+        }
+    }
+
+    // --- Transient failures ---
+
+    @Nested
+    @DisplayName("a deserialization failure says whether it is transient")
+    class TransientFailures {
+
+        private final byte[] framed = {0, 0, 0, 0, 1, 1, 2};
+
+        private DeserializationException failureAgainst(String registryUrl, byte[] data) {
+            return assertThrows(DeserializationException.class, () -> provider.deserializer(
+                            SampleSpecificRecord.class, endpointConfig(registryUrl))
+                    .deserialize(data, "t", new KafkaRecordHeaders(List.of())));
+        }
+
+        private DeserializationException failureAgainstRegistryAnswering(int status) throws IOException {
+            HttpServer server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+            server.createContext("/", exchange -> {
+                byte[] body = ("{\"status\":" + status + ",\"title\":\"x\"}").getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().add("Content-Type", "application/json");
+                exchange.sendResponseHeaders(status, body.length);
+                exchange.getResponseBody().write(body);
+                exchange.close();
+            });
+            server.start();
+            try {
+                return failureAgainst(
+                        "http://localhost:" + server.getAddress().getPort() + "/apis/registry/v3", framed);
+            } finally {
+                server.stop(0);
+            }
+        }
+
+        @Test
+        @DisplayName("an unreachable registry is transient")
+        void unreachableRegistry() {
+            assertTrue(failureAgainst("http://localhost:1/apis/registry/v3", framed)
+                    .isTransient());
+        }
+
+        @Test
+        @DisplayName("a registry that answers 503 is transient")
+        void registryUnavailable() throws IOException {
+            assertTrue(failureAgainstRegistryAnswering(503).isTransient());
+        }
+
+        @Test
+        @DisplayName("a registry that answers 404 for the schema is not transient")
+        void unknownSchema() throws IOException {
+            assertFalse(failureAgainstRegistryAnswering(404).isTransient());
+        }
+
+        @Test
+        @DisplayName("bytes that are not in the registry framing are not transient")
+        void malformedBytes() {
+            assertFalse(failureAgainst("http://localhost:1/apis/registry/v3", new byte[] {1, 2, 3})
+                    .isTransient());
+            assertFalse(failureAgainst("http://localhost:1/apis/registry/v3", new byte[] {0, 0})
+                    .isTransient());
+        }
+
+        @Test
+        @DisplayName("the two-argument constructor builds a permanent failure")
+        void defaultConstructor() {
+            assertFalse(new DeserializationException("x", null).isTransient());
         }
     }
 }

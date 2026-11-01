@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.kafka;
 
+import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.kafka.CommitStrategy;
 import dev.vertique.kafka.ErrorStrategy;
 import dev.vertique.kafka.KafkaConsumerBinding;
@@ -29,6 +30,7 @@ final class DefaultKafkaSignals<T> extends AbstractSignalSourceBuilder<T, KafkaS
 
     private final WorkflowSourceDelivery delivery;
     private final Class<T> type;
+    private final CorrelationContextFactory correlationFactory;
     private @Nullable String topic;
     private @Nullable String groupId;
     private @Nullable String name;
@@ -36,10 +38,11 @@ final class DefaultKafkaSignals<T> extends AbstractSignalSourceBuilder<T, KafkaS
     private boolean dlqReplay;
     private boolean built;
 
-    DefaultKafkaSignals(WorkflowSourceDelivery delivery, Class<T> type) {
+    DefaultKafkaSignals(WorkflowSourceDelivery delivery, Class<T> type, CorrelationContextFactory correlationFactory) {
         super(type);
         this.delivery = delivery;
         this.type = type;
+        this.correlationFactory = correlationFactory;
     }
 
     @Override
@@ -99,7 +102,7 @@ final class DefaultKafkaSignals<T> extends AbstractSignalSourceBuilder<T, KafkaS
                 .noHeaderContext()
                 .ignoreUndecodable(() -> report(sourceName, Outcome.UNDECODABLE))
                 .handler(new KafkaSignalHandler<>(
-                        sourceName, plan, delivery, dlqReplay, KafkaCorrelationBaseline.create()));
+                        sourceName, plan, delivery, dlqReplay, new KafkaCorrelationBaseline(correlationFactory)));
         KafkaRecordFilter given = filter;
         if (given != null) {
             binding.filter(reporting(sourceName, given));

@@ -453,9 +453,11 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
         } catch (Exception e) {
             decrementInFlight();
             Runnable onIgnored = entry.ignoreUndecodable();
-            if (onIgnored != null) {
+            if (onIgnored != null && !(e instanceof DeserializationException de && de.isTransient())) {
                 // An ignoring binding acknowledges the undecodable record: commit when MANUAL,
                 // report it skipped and run the callback; it does not go down the error strategy.
+                // A transient failure, such as an unreachable schema registry, is not the record's
+                // fault and does take the error strategy.
                 commitIfManual(record);
                 runIgnoreCallback(onIgnored);
                 notifyCompleted(view, KafkaTerminalOutcome.SKIP);
@@ -562,6 +564,7 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                 if (dispatchResult.succeeded()) {
                     // Remove any retry state accumulated for this record on clean success
                     errorHandler.retryCounts.remove(retryKey);
+                    errorHandler.dlqFailures.remove(retryKey);
                     interceptorChain.runOnSuccessObservers(ctx);
                     interceptorChain.runAfterInterceptors(ctx).onComplete(v -> {
                         commitIfManual(record);

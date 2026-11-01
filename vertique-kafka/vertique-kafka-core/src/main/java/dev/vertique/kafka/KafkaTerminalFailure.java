@@ -4,6 +4,7 @@
 package dev.vertique.kafka;
 
 import java.util.Objects;
+import java.util.regex.Pattern;
 
 /**
  * Failure a {@link KafkaRecordHandler} raises to say that retrying the record cannot help. The
@@ -15,10 +16,20 @@ import java.util.Objects;
  * <p>The failure carries a short {@link #errorType() error type} and nothing else: no cause and no
  * message beyond the type, so nothing from the record can reach a log line or the dead-letter
  * {@code x-dlq-error} header, which holds the error type alone. It also records no stack trace.
+ *
+ * <p>The error type must be a simple token: a letter, {@code _} or {@code $} followed by up to 127
+ * letters, digits and {@code _ $ . -}. Any other text, such as one with a space or a control
+ * character, is replaced by {@code InvalidErrorType}, so a value that arrives from outside
+ * cannot reach a log line or a header.
  */
 public final class KafkaTerminalFailure extends RuntimeException {
 
     private static final long serialVersionUID = 1L;
+
+    /** The error type that stands in for one that is not a simple token. */
+    private static final String INVALID_ERROR_TYPE = "InvalidErrorType";
+
+    private static final Pattern ERROR_TYPE_TOKEN = Pattern.compile("[A-Za-z_$][A-Za-z0-9_$.\\-]{0,127}");
 
     private final String errorType;
 
@@ -26,11 +37,17 @@ public final class KafkaTerminalFailure extends RuntimeException {
      * Creates a terminal failure.
      *
      * @param errorType a short, stable name for the kind of failure; it must not carry data taken
-     *     from the record
+     *     from the record. A value that is not a simple token is replaced by
+     *     {@code InvalidErrorType}
      */
     public KafkaTerminalFailure(String errorType) {
-        super(Objects.requireNonNull(errorType, "errorType"), null, false, false);
-        this.errorType = errorType;
+        super(checked(errorType), null, false, false);
+        this.errorType = getMessage();
+    }
+
+    private static String checked(String errorType) {
+        Objects.requireNonNull(errorType, "errorType");
+        return ERROR_TYPE_TOKEN.matcher(errorType).matches() ? errorType : INVALID_ERROR_TYPE;
     }
 
     /**

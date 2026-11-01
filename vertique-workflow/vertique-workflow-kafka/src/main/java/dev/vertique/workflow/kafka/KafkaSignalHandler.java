@@ -24,7 +24,6 @@ import dev.vertique.workflow.source.SignalSourceEvent.Outcome;
 import io.vertx.core.Future;
 import jakarta.annotation.Nullable;
 import java.util.Optional;
-import java.util.regex.Pattern;
 
 /**
  * The record handler of a built source: it turns one Kafka record into a {@link SignalMessage} and a
@@ -42,16 +41,8 @@ final class KafkaSignalHandler<T> implements KafkaRecordHandler<T> {
 
     private static final String TRANSPORT = "kafka";
 
-    /** The error type of a record whose dead-letter source headers cannot be read. */
-    static final String INVALID_REPLAY_HEADER = "InvalidReplayHeader";
-
-    /** Stands in for an error type that is not a simple token, so it cannot reach a header. */
-    static final String INVALID_ERROR_TYPE = "InvalidErrorType";
-
     /** Stands in for a terminal fate that names no error type. */
     static final String UNSPECIFIED_ERROR_TYPE = "TerminalFailure";
-
-    private static final Pattern ERROR_TYPE_TOKEN = Pattern.compile("[A-Za-z_$][A-Za-z0-9_$.\\-]{0,127}");
 
     private final String sourceName;
     private final SignalSourcePlan<T> plan;
@@ -78,13 +69,7 @@ final class KafkaSignalHandler<T> implements KafkaRecordHandler<T> {
             report(Outcome.UNDECODABLE);
             return Future.succeededFuture();
         }
-        String dedupKey;
-        try {
-            dedupKey = defaultDedupKey(message);
-        } catch (InvalidReplayHeaderException e) {
-            report(Outcome.INVALID_INPUT);
-            return Future.failedFuture(new KafkaTerminalFailure(INVALID_REPLAY_HEADER));
-        }
+        String dedupKey = defaultDedupKey(message);
         String topic = message.topic();
         int partition = message.partition();
         long offset = message.offset();
@@ -108,17 +93,26 @@ final class KafkaSignalHandler<T> implements KafkaRecordHandler<T> {
         };
     }
 
-    /** The dedup key of a record on a source that names none: the record's own position, or the replayed one. */
-    private String defaultDedupKey(KafkaMessage<T> message) {
+    /**
+     * The dedup key of a record on a source that names none: the record's own position, or the replayed
+     * one. It is {@code null} for a replay record whose source headers cannot be read, so that a
+     * {@code .when} or a {@code .dedupBy} stays in charge and only a record that needs the key fails.
+     */
+    private @Nullable String defaultDedupKey(KafkaMessage<T> message) {
         if (dlqReplay) {
             String topic = headerText(message, KafkaDlqHeaders.SOURCE_TOPIC);
             String partition = headerText(message, KafkaDlqHeaders.SOURCE_PARTITION);
             String offset = headerText(message, KafkaDlqHeaders.SOURCE_OFFSET);
             if (topic != null || partition != null || offset != null) {
                 if (topic == null || partition == null || offset == null) {
-                    throw new InvalidReplayHeaderException();
+                    return null;
                 }
-                return topic + ":" + nonNegativeInt(partition) + ":" + nonNegativeLong(offset);
+                Integer replayedPartition = nonNegativeInt(partition);
+                Long replayedOffset = nonNegativeLong(offset);
+                if (replayedPartition == null || replayedOffset == null) {
+                    return null;
+                }
+                return topic + ":" + replayedPartition + ":" + replayedOffset;
             }
         }
         return message.topic() + ":" + message.partition() + ":" + message.offset();
@@ -147,54 +141,31 @@ final class KafkaSignalHandler<T> implements KafkaRecordHandler<T> {
         }
     }
 
-    private static int nonNegativeInt(String text) {
+    private static @Nullable Integer nonNegativeInt(String text) {
         try {
             int value = Integer.parseInt(text);
-            if (value >= 0) {
-                return value;
-            }
+            return value >= 0 ? value : null;
         } catch (NumberFormatException e) {
-            // falls through to the refusal below; the header's value is not kept
+            return null;
         }
-        throw new InvalidReplayHeaderException();
     }
 
-    private static long nonNegativeLong(String text) {
+    private static @Nullable Long nonNegativeLong(String text) {
         try {
             long value = Long.parseLong(text);
-            if (value >= 0) {
-                return value;
-            }
+            return value >= 0 ? value : null;
         } catch (NumberFormatException e) {
-            // falls through to the refusal below; the header's value is not kept
+            return null;
         }
-        throw new InvalidReplayHeaderException();
     }
 
     private static String terminalType(@Nullable String errorType) {
-        if (errorType == null) {
-            return UNSPECIFIED_ERROR_TYPE;
-        }
-        return isToken(errorType) ? errorType : INVALID_ERROR_TYPE;
+        return errorType == null ? UNSPECIFIED_ERROR_TYPE : errorType;
     }
 
+    /** The error type a retry carries, as {@link KafkaTerminalFailure} would keep it, or {@code null} for none. */
     private static @Nullable String retryType(@Nullable String errorType) {
-        return errorType != null && isToken(errorType) ? errorType : null;
-    }
-
-    /** Whether the text is a simple token that can ride a header: a short name, with no space or control character. */
-    static boolean isToken(String text) {
-        return ERROR_TYPE_TOKEN.matcher(text).matches();
-    }
-
-    /** What the record's own source headers could not be read as; it carries nothing of the headers. */
-    private static final class InvalidReplayHeaderException extends RuntimeException {
-
-        private static final long serialVersionUID = 1L;
-
-        InvalidReplayHeaderException() {
-            super(null, null, false, false);
-        }
+        return errorType == null ? null : new KafkaTerminalFailure(errorType).errorType();
     }
 
     /** The ordinary failure that makes the binding retry a record; it carries an error type at most. */

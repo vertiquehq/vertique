@@ -187,16 +187,17 @@ static KafkaConsumerBinding<?> orderBinding() {
 | `enabled(boolean)` | `true` | Deploy at startup |
 | `eventBusTimeoutMs(long)` | `30000` | Event-bus dispatch timeout |
 | `jsonProfile(JsonProfileId)` | `null` — framework default | JSON mapper profile for value deserialization |
-| `ignoreUndecodable(Runnable)` | off | Handler bindings: acknowledges a record that fails to decode, commits it when `MANUAL`, reports it `SKIP`, runs the callback, and skips the error strategy |
+| `ignoreUndecodable(Runnable)` | off | Handler bindings: acknowledges a record that fails to decode, commits it when `MANUAL`, reports it `SKIP`, runs the callback, and skips the error strategy; a transient decode failure takes the error strategy |
 | `noHeaderContext()` | off | Handler bindings: installs no durable context from the record's headers for the handler |
-| `forceStrategies()` | off | Handler bindings: registration fails unless the resolved configuration keeps the binding's `commitStrategy` and `errorStrategy` and a `DEAD_LETTER` `retry.exhaustedStrategy` |
+| `forceStrategies()` | off | Handler bindings: registration fails unless the resolved configuration keeps the binding's `commitStrategy` and `errorStrategy` and a `DEAD_LETTER` `retry.exhaustedStrategy`, and resolves `maxInFlight` to `1` |
 
 Use the durable operation id (`@ServiceOperation` value) in `dispatchTo` for stable-target-eligible
 operations so the binding survives a method rename.
 
 A binding names a `handler` or a `dispatchTo` target, not both: `build()` throws
-`IllegalStateException`, naming the binding, when both are set. A binding that names neither builds,
-and the registrar refuses it at startup. A handler binding is registered as a handler-kind consumer
+`IllegalStateException`, naming the binding, when both are set. `build()` also throws it when
+`ignoreUndecodable`, `noHeaderContext` or `forceStrategies` is set and no `handler` is. A binding
+that names neither a handler nor a target builds, and the registrar refuses it at startup. A handler binding is registered as a handler-kind consumer
 (see Model 4): it receives the decoded `KafkaMessage<V>` with key, topic, partition, offset,
 timestamp and headers, runs with the record's durable context installed, and keeps the binding's
 filter, commit strategy, error and retry strategy, dead-letter topic, custom deserializer and
@@ -205,8 +206,12 @@ interceptors. No service is resolved for it.
 A binding that uses none of `ignoreUndecodable`, `noHeaderContext` and `forceStrategies` behaves
 exactly as it did before them.
 
-- **`ignoreUndecodable`.** Every deserializer failure is ignored, and nothing else: a handler
-  failure on a decodable record takes the error strategy. A callback that throws is logged by class
+- **`ignoreUndecodable`.** Every permanent deserializer failure is ignored, and nothing else: a
+  handler failure on a decodable record takes the error strategy, and so does a
+  `DeserializationException` whose `isTransient()` is `true`, such as a schema registry that cannot
+  be reached. A deserializer sets that flag through the three-argument constructor; the two-argument
+  constructor builds a permanent failure, and the Avro format sets it for I/O causes and for registry
+  answers of 5xx, 401, 403, 408 and 429. A callback that throws is logged by class
   and does not change the outcome. A record with a `null` value is not a decode failure and reaches
   the handler.
 - **`noHeaderContext`.** The handler runs without the durable context decoded from the record's
@@ -214,6 +219,18 @@ exactly as it did before them.
 - **`forceStrategies`.** `kafka.consumers.{name}.*` cannot restore `AUTO` or `SKIP`: the check runs
   at registration on the resolved configuration, and a `KafkaRegistrationException` violation names
   the consumer and the option (`commitStrategy`, `errorStrategy` or `retry.exhaustedStrategy`).
+  The binding also handles **one record at a time**: `maxInFlight` resolves to `1` and
+  `max.poll.records` to `1`, so a poll never hands the consumer a second record while the first is
+  being handled. A configured `maxInFlight` other than `1` fails registration naming
+  `maxInFlight`; a configured `max.poll.records` is replaced. With several records in flight, two
+  failures in one partition could leave the consumer positioned past the earlier one, which a later
+  success then commits past. **Throughput consequence:** each consumer instance runs one handler at a
+  time, so its throughput is the inverse of one handler run per record; raise `instances` to add
+  consumers. The default `256` cannot be told from an unset value and resolves to `1`.
+  A dead-letter publish that fails does not leave the record behind: the consumer pauses, seeks back
+  to the record and resumes after the retry backoff, which grows with the failures of that record,
+  and the record is delivered again. A binding without `forceStrategies` leaves the record
+  uncommitted and goes on.
 
 ### Model 3 — `@KafkaListener` routing interface
 
@@ -780,10 +797,12 @@ strategy at once: `retry.exhaustedStrategy` for a `RETRY` binding, otherwise the
 
 | Exhausted strategy | Behavior |
 |---|---|
-| `DEAD_LETTER` | Publish the original value, key and headers to the DLQ topic, then commit. Outcome `DLQ_PUBLISHED`, or `DLQ_FAILED` with no commit |
+| `DEAD_LETTER` | Publish the original value, key and headers to the DLQ topic, then commit. Outcome `DLQ_PUBLISHED`, or `DLQ_FAILED` with no commit; a `forceStrategies` binding then seeks back and delivers the record again after a backoff |
 | `SKIP` | Commit and log the skip with the consumer and the error type. Outcome `SKIP` |
 
-The failure carries the error type only: no cause and no message. The `x-dlq-error` header and the
+The error type must be a simple token (a letter, `_` or `$`, then up to 127 letters, digits and
+`_ $ . -`); any other text becomes `InvalidErrorType`, so nothing with a space or a control
+character reaches a header or a log line. The failure carries the error type only: no cause and no message. The `x-dlq-error` header and the
 log lines hold the error type alone, so keep record data out of it. A retry count left by an
 earlier failure of the same record is removed.
 
@@ -1089,7 +1108,7 @@ public void onRecordCompleted(KafkaConsumerCompletedEvent event, KafkaConsumerRe
 | `RECOVERED` | An interceptor's `recoverError` handled the error |
 | `RETRY_SCHEDULED` | Consumer paused, offset not committed, Kafka will redeliver |
 | `DLQ_PUBLISHED` | Forwarded to the dead-letter topic |
-| `DLQ_FAILED` | The DLQ publish failed; the offset was not committed |
+| `DLQ_FAILED` | The DLQ publish failed; the offset was not committed. A `forceStrategies` binding is paused, seeks back and resumes after a backoff |
 | `ERROR_HANDLER_FAILED` | The error handler's own future failed; the record's disposition is unknown |
 
 > **Breaking change (core 0.3.0).** The separate consumer capture-hook SPI, its terminal and

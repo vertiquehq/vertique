@@ -12,10 +12,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
 
+import dev.vertique.core.correlation.CorrelationContext;
+import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.kafka.CommitStrategy;
 import dev.vertique.kafka.ErrorStrategy;
 import dev.vertique.kafka.KafkaConsumerBinding;
+import dev.vertique.kafka.KafkaMessage;
 import dev.vertique.kafka.KafkaRecordFilter;
 import dev.vertique.kafka.KafkaRecordHeaders;
 import dev.vertique.kafka.KafkaRegistrationException;
@@ -24,15 +29,22 @@ import dev.vertique.workflow.kafka.SourceFixture.Carriers;
 import dev.vertique.workflow.kafka.SourceFixture.DeliveryConfirmed;
 import dev.vertique.workflow.kafka.SourceFixture.OrdersContract;
 import dev.vertique.workflow.kafka.SourceFixture.ShipmentDelivered;
+import dev.vertique.workflow.services.source.SourceDisposition;
+import dev.vertique.workflow.services.source.SourceDisposition.Fate;
+import dev.vertique.workflow.services.source.SourceEnvelope;
+import dev.vertique.workflow.services.source.WorkflowSourceDelivery;
 import dev.vertique.workflow.source.SignalSourceEvent;
 import dev.vertique.workflow.source.SignalSourceEvent.Outcome;
+import io.vertx.core.Future;
 import io.vertx.core.json.JsonObject;
+import jakarta.inject.Inject;
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 /**
  * Proves the Kafka source builder: what a built source binds, how it is named, which sources it
@@ -319,5 +331,57 @@ class WorkflowKafkaSignalsTest {
         assertThat(rejectingBinding.filter().accept(SECRET_KEY, KafkaRecordHeaders.empty()))
                 .isFalse();
         assertThat(rejecting.events()).extracting(SignalSourceEvent::outcome).containsExactly(Outcome.IGNORED);
+    }
+
+    @Test
+    void injectedCorrelationFactorySeedsTheCorrelationOfAnOptInSource() throws Exception {
+        // Given a delivery double that keeps the envelope it is handed, and a correlation factory over an
+        // application-supplied id generator
+        Carriers carriers = SourceFixture.carriers();
+        ArgumentCaptor<SourceEnvelope> envelopes = ArgumentCaptor.forClass(SourceEnvelope.class);
+        doReturn(Future.succeededFuture(new SourceDisposition(Fate.DONE, null)))
+                .when(carriers.delivery())
+                .deliver(any(), any(), envelopes.capture());
+        CorrelationContextFactory factory = new CorrelationContextFactory(Optional.of(() -> "application-id"));
+
+        // When a source from the injected entry point restores correlation from headers and handles a record without
+        // a correlation header, and so does one from the one-argument constructor
+        KafkaConsumerBinding<ShipmentDelivered> injected =
+                keyedByCarrier(new WorkflowKafkaSignals(carriers.delivery(), factory)
+                        .on(TOPIC, ShipmentDelivered.class)
+                        .groupId(GROUP)
+                        .restoreCorrelationFromHeaders());
+        KafkaConsumerBinding<ShipmentDelivered> byDefault =
+                keyedByCarrier(carriers.source().restoreCorrelationFromHeaders());
+        for (KafkaConsumerBinding<ShipmentDelivered> binding : List.of(injected, byDefault)) {
+            binding.handler()
+                    .handle(new KafkaMessage<>(
+                            new ShipmentDelivered("ref-1", "order-1", "note"),
+                            "key-1",
+                            TOPIC,
+                            0,
+                            1L,
+                            0L,
+                            KafkaRecordHeaders.empty()))
+                    .toCompletionStage()
+                    .toCompletableFuture()
+                    .get();
+        }
+
+        // Then the first record's correlation and request ids come from the application's generator
+        CorrelationContext seeded = envelopes.getAllValues().get(0).correlation();
+        assertThat(seeded.correlationId().value()).isEqualTo("application-id");
+        assertThat(seeded.requestId().value()).isEqualTo("application-id");
+
+        // And the one-argument constructor keeps the default generator
+        assertThat(envelopes.getAllValues().get(1).correlation().correlationId().value())
+                .isNotEqualTo("application-id");
+
+        // And the injectable constructor takes the delivery bean and the correlation factory
+        assertThat(Arrays.stream(WorkflowKafkaSignals.class.getConstructors())
+                        .filter(constructor -> constructor.isAnnotationPresent(Inject.class))
+                        .map(constructor -> List.of(constructor.getParameterTypes()))
+                        .toList())
+                .containsExactly(List.of(WorkflowSourceDelivery.class, CorrelationContextFactory.class));
     }
 }

@@ -1380,8 +1380,9 @@ final class SourceScenario implements AutoCloseable {
     }
 
     /**
-     * Holds the answers of two {@code dispatchAs} calls until both have arrived, and then completes them from one
-     * Vert.x context that is not the consumer's, in the opposite order of their arrival.
+     * Holds the answer of each {@code dispatchAs} call until the test releases it, and completes it from one Vert.x
+     * context that is not the consumer's. A source handles one record at a time, so the second call opens only once the
+     * first record is settled.
      */
     final class Overlap {
 
@@ -1404,20 +1405,18 @@ final class SourceScenario implements AutoCloseable {
             };
         }
 
-        /** Waits until both calls are open, and then completes them, the later arrival first. */
+        /** Completes the two calls in the order they open, each as soon as it has opened. */
         void release() {
-            long deadline = System.nanoTime() + IDLE.toNanos();
-            while (promises.size() < 2 && System.nanoTime() < deadline) {
-                pause(25);
-            }
-            if (promises.size() < 2) {
-                throw new AssertionError("the two calls were not open at the same time; open: " + promises.size());
-            }
-            List<Promise<Optional<SecurityIdentity>>> open = List.copyOf(promises);
-            List<String> named = List.copyOf(users);
-            for (int index = open.size() - 1; index >= 0; index--) {
-                Promise<Optional<SecurityIdentity>> promise = open.get(index);
-                String user = named.get(index);
+            for (int index = 0; index < 2; index++) {
+                long deadline = System.nanoTime() + IDLE.toNanos();
+                while (promises.size() <= index && System.nanoTime() < deadline) {
+                    pause(25);
+                }
+                if (promises.size() <= index) {
+                    throw new AssertionError("call " + index + " did not open; open: " + promises.size());
+                }
+                Promise<Optional<SecurityIdentity>> promise = promises.get(index);
+                String user = users.get(index);
                 foreign.runOnContext(ignored -> promise.tryComplete(Optional.of(Identities.user(user))));
             }
         }

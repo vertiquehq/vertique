@@ -319,18 +319,66 @@ class KafkaSignalDeliveryIT {
                     replay.produce(null, scenario.delivered("1", ref), Headers.dlqRecord(replay.topic(), 0, "abc"));
             Produced good = replay.produce(scenario.delivered("2", ref));
 
-            // Then the first record is in the dead-letter topic with the error type InvalidReplayHeader, was published
-            // there at once and never scheduled for a retry
+            // Then the first record has no default dedup key, so it is in the dead-letter topic with the error type
+            // BlankDedupKey, was published there at once and never scheduled for a retry
             scenario.awaitSettled(bad, SourceScenario.PROMPT);
             assertThat(scenario.completions().outcomesOf(bad)).containsExactly(KafkaTerminalOutcome.DLQ_PUBLISHED);
             List<DlqReader.Entry> deadLetters = replay.dlq().await(1, SourceScenario.PROMPT);
             assertThat(deadLetters).hasSize(1);
-            assertThat(deadLetters.get(0).errorType()).isEqualTo("InvalidReplayHeader");
+            assertThat(deadLetters.get(0).errorType()).isEqualTo("BlankDedupKey");
             // And the observer saw one INVALID_INPUT event, and the good record is handled within 5 seconds
             assertThat(scenario.observer().count("replay", Outcome.INVALID_INPUT))
                     .isEqualTo(1);
             scenario.awaitSettled(good, SourceScenario.PROMPT);
             scenario.awaitIdle(order);
+            assertThat(scenario.commands(order)).hasSize(1);
+        }
+    }
+
+    @Test
+    void badReplayHeaderFailsOnlyARecordThatNeedsTheDefaultKey(io.vertx.core.Vertx vertx) {
+        try (SourceScenario scenario = SourceScenario.open(vertx, "replay-header-kept")) {
+            // Given two sources declaring dlqReplay, one gated by a when stage and one naming its dedupBy, a waiting
+            // instance, and a long retry backoff
+            Feed<ShipmentDelivered> gated = scenario.carriers("gated", source -> source.dlqReplay()
+                            .when(event -> event.type().equals("delivered"))
+                            .signal(OrdersContract.class, SHIPMENT_DELIVERED)
+                            .key(ShipmentDelivered::carrierRef)
+                            .payload(SourceScenario::confirmation)
+                            .build())
+                    .retry(2, 30_000);
+            Feed<ShipmentDelivered> named = scenario.carriers("named", source -> source.dlqReplay()
+                            .dedupBy(ShipmentDelivered::eventId)
+                            .signal(OrdersContract.class, SHIPMENT_DELIVERED)
+                            .key(ShipmentDelivered::carrierRef)
+                            .payload(SourceScenario::confirmation)
+                            .build())
+                    .retry(2, 30_000);
+            scenario.start();
+            Waiting order = scenario.waitingOrder("acme", scenario.ref("PAY-78"));
+
+            // When the test produces, to each, a record whose source offset header is not a number: to the gated source
+            // one of a type its when stage rejects, to the other one for the waiting instance
+            Produced rejected = gated.produce(
+                    null,
+                    scenario.delivered("1", order.key()).withType("shipped"),
+                    Headers.dlqRecord(gated.topic(), 0, "abc"));
+            Produced recorded = named.produce(
+                    null, scenario.delivered("2", order.key()), Headers.dlqRecord(named.topic(), 0, "abc"));
+
+            // Then both succeed, nothing is dead-lettered, and neither is reported as invalid input
+            scenario.awaitSettled(rejected, SourceScenario.PROMPT);
+            scenario.awaitDelivered(recorded, order);
+            assertThat(scenario.completions().outcomesOf(rejected)).containsExactly(KafkaTerminalOutcome.SUCCESS);
+            assertThat(scenario.completions().outcomesOf(recorded)).containsExactly(KafkaTerminalOutcome.SUCCESS);
+            assertThat(gated.dlq().read()).isEmpty();
+            assertThat(named.dlq().read()).isEmpty();
+            assertThat(scenario.observer().count("gated", Outcome.INVALID_INPUT))
+                    .isZero();
+            assertThat(scenario.observer().count("named", Outcome.INVALID_INPUT))
+                    .isZero();
+            // And the rejected record is reported as ignored, and the other recorded its command once
+            assertThat(scenario.observer().count("gated", Outcome.IGNORED)).isEqualTo(1);
             assertThat(scenario.commands(order)).hasSize(1);
         }
     }

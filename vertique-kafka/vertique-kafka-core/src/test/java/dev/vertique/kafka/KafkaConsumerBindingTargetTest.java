@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.vertx.core.Future;
+import java.util.List;
 import java.util.function.UnaryOperator;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -57,6 +58,34 @@ class KafkaConsumerBindingTargetTest {
         KafkaConsumerBinding<String> dispatching = binding(targetOnly);
         assertSame(String.class, dispatching.targetService(), "a dispatchTo binding reports its target service");
         assertNull(dispatching.handler(), "a dispatchTo binding has no handler");
+    }
+
+    @Test
+    @DisplayName("a binding that sets a handler-only option without a handler is refused, naming the binding")
+    void bindingSettingAHandlerOnlyOptionWithoutAHandlerIsRefused() {
+        // Given: builders that set each handler-only option, with a dispatchTo target and with nothing
+        List<UnaryOperator<KafkaConsumerBinding.Builder<String>>> options = List.of(
+                builder -> builder.ignoreUndecodable(() -> {}),
+                KafkaConsumerBinding.Builder::noHeaderContext,
+                KafkaConsumerBinding.Builder::forceStrategies);
+
+        for (UnaryOperator<KafkaConsumerBinding.Builder<String>> option : options) {
+            // When / Then: the option beside a dispatchTo target, or alone, is refused and the refusal names the
+            // binding
+            for (UnaryOperator<KafkaConsumerBinding.Builder<String>> target :
+                    List.<UnaryOperator<KafkaConsumerBinding.Builder<String>>>of(
+                            builder -> builder.dispatchTo(String.class, "process"), builder -> builder)) {
+                IllegalStateException refusal = assertThrows(
+                        IllegalStateException.class, () -> binding(builder -> option.apply(target.apply(builder))));
+                assertTrue(
+                        String.valueOf(refusal.getMessage()).contains(BINDING_NAME),
+                        "the refusal should name the binding, was: " + refusal.getMessage());
+            }
+
+            // When / Then: the same option beside a handler builds
+            KafkaConsumerBinding<String> handling = binding(builder -> option.apply(builder.handler(HANDLER)));
+            assertSame(HANDLER, handling.handler(), "a handler binding keeps its handler with the option");
+        }
     }
 
     // --- Helpers ---

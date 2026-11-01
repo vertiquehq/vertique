@@ -44,6 +44,12 @@ final class KafkaErrorHandler {
     final Map<String, Integer> retryCounts = new ConcurrentHashMap<>();
 
     /**
+     * Counts failed dead-letter publishes per record, keyed like {@link #retryCounts}. Populated only
+     * for an entry that forces its strategies, which redelivers a record whose publish failed.
+     */
+    final Map<String, Integer> dlqFailures = new ConcurrentHashMap<>();
+
+    /**
      * Callback interface for consumer operations needed by error handling. Implemented by
      * {@link KafkaConsumerVerticle} to decouple from the Kafka consumer instance.
      */
@@ -136,6 +142,7 @@ final class KafkaErrorHandler {
             case DEAD_LETTER ->
                 publishToDlq(record, rawBytes, headers, cause)
                         .map(v -> {
+                            dlqFailures.remove(positionKey(record));
                             control.commitIfManual(record);
                             return KafkaTerminalOutcome.DLQ_PUBLISHED;
                         })
@@ -144,7 +151,7 @@ final class KafkaErrorHandler {
                                     "[{}] Failed to publish to DLQ, record will not be committed",
                                     entry.name(),
                                     dlqCause);
-                            return Future.succeededFuture(KafkaTerminalOutcome.DLQ_FAILED);
+                            return dlqPublishFailed(record, control);
                         });
             case RETRY -> handleRetry(record, rawBytes, headers, cause, control);
         };
@@ -188,6 +195,7 @@ final class KafkaErrorHandler {
             case DEAD_LETTER ->
                 publishToDlq(record, rawBytes, headers, terminal)
                         .map(v -> {
+                            dlqFailures.remove(positionKey(record));
                             control.commitIfManual(record);
                             return KafkaTerminalOutcome.DLQ_PUBLISHED;
                         })
@@ -197,7 +205,7 @@ final class KafkaErrorHandler {
                                     entry.name(),
                                     terminal.errorType(),
                                     dlqCause);
-                            return Future.succeededFuture(KafkaTerminalOutcome.DLQ_FAILED);
+                            return dlqPublishFailed(record, control);
                         });
             case SKIP -> {
                 log.warn(
@@ -267,10 +275,14 @@ final class KafkaErrorHandler {
                     record.topic(),
                     record.partition(),
                     record.offset());
-            retryCounts.remove(retryKey);
 
             // Apply exhausted strategy — delegate to the same outcome-bearing paths
             ErrorStrategy exhausted = retryConfig.exhaustedStrategy();
+            // A forced entry whose dead-letter publish fails is redelivered; keeping the count makes the
+            // redelivery go straight back to the publish instead of through every retry again.
+            if (!(entry.forceStrategies() && exhausted == ErrorStrategy.DEAD_LETTER)) {
+                retryCounts.remove(retryKey);
+            }
             return switch (exhausted) {
                 case SKIP -> {
                     log.warn("[{}] Retry exhausted — skipping record", entry.name());
@@ -280,6 +292,8 @@ final class KafkaErrorHandler {
                 case DEAD_LETTER ->
                     publishToDlq(record, rawBytes, headers, cause)
                             .map(v -> {
+                                retryCounts.remove(retryKey);
+                                dlqFailures.remove(retryKey);
                                 control.commitIfManual(record);
                                 return KafkaTerminalOutcome.DLQ_PUBLISHED;
                             })
@@ -289,7 +303,7 @@ final class KafkaErrorHandler {
                                                 + " record will not be committed",
                                         entry.name(),
                                         dlqCause);
-                                return Future.succeededFuture(KafkaTerminalOutcome.DLQ_FAILED);
+                                return dlqPublishFailed(record, control);
                             });
                 default -> {
                     log.error("[{}] Invalid exhausted strategy: {}", entry.name(), exhausted);
@@ -332,6 +346,61 @@ final class KafkaErrorHandler {
                     control.scheduleResume(0);
                     return Future.succeededFuture(KafkaTerminalOutcome.RETRY_SCHEDULED);
                 });
+    }
+
+    // --- Failed dead-letter publish ---
+
+    /**
+     * Settles a record whose dead-letter publish failed. Its offset is not committed. An entry that
+     * forces its strategies also pauses the consumer, seeks back to the record and resumes after a
+     * backoff, as {@link #handleRetry} does, so the record is delivered again and a later record
+     * cannot commit past it; the backoff grows with the failures of that record. Any other entry
+     * leaves the record uncommitted and goes on, as it always has.
+     *
+     * @param record the record whose publish failed
+     * @param control consumer control callbacks for pause/seek/resume
+     * @return a future that resolves with {@link KafkaTerminalOutcome#DLQ_FAILED}
+     */
+    private Future<KafkaTerminalOutcome> dlqPublishFailed(
+            KafkaConsumerRecord<String, byte[]> record, ConsumerControl control) {
+
+        if (!entry.forceStrategies()) {
+            return Future.succeededFuture(KafkaTerminalOutcome.DLQ_FAILED);
+        }
+        RetryConfig retryConfig = entry.config().retryConfig();
+        if (retryConfig == null) {
+            retryConfig = RetryConfig.DEFAULT;
+        }
+        int failures = dlqFailures.merge(positionKey(record), 1, Integer::sum);
+        long delayMs = retryConfig.delayMs(failures - 1);
+        log.warn(
+                "[{}] Will deliver topic={} partition={} offset={} again in {}ms; its dead-letter publish failed",
+                entry.name(),
+                record.topic(),
+                record.partition(),
+                record.offset(),
+                delayMs);
+        control.pause();
+        return control.seekToOffset(record.topic(), record.partition(), record.offset())
+                .map(v -> {
+                    control.scheduleResume(delayMs);
+                    return KafkaTerminalOutcome.DLQ_FAILED;
+                })
+                .recover(seekCause -> {
+                    log.error(
+                            "[{}] Failed to seek back to offset {} after a failed dead-letter publish;"
+                                    + " resuming without redelivery",
+                            entry.name(),
+                            record.offset(),
+                            seekCause);
+                    dlqFailures.remove(positionKey(record));
+                    control.scheduleResume(0);
+                    return Future.succeededFuture(KafkaTerminalOutcome.DLQ_FAILED);
+                });
+    }
+
+    private static String positionKey(KafkaConsumerRecord<String, byte[]> record) {
+        return record.topic() + ":" + record.partition() + ":" + record.offset();
     }
 
     // --- DLQ publishing ---

@@ -54,11 +54,6 @@ final class KafkaCorrelationBaseline {
         this.header = DurableMetadataHeaderCodec.RESERVED_PREFIX + decoder.namespace();
     }
 
-    /** A baseline over the default correlation id generator. */
-    static KafkaCorrelationBaseline create() {
-        return new KafkaCorrelationBaseline(new CorrelationContextFactory(Optional.empty()));
-    }
-
     /**
      * Returns the seeded correlation, with the restored correlation id when the header carries a valid one.
      *

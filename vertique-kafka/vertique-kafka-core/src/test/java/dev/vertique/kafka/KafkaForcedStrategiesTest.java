@@ -27,8 +27,9 @@ import org.junit.jupiter.api.Test;
  *   <li>A binding that forces its strategies registers when the configuration is silent or states
  *       the forced values.</li>
  *   <li>A configuration that changes the commit strategy, the error strategy or the exhausted
- *       strategy fails registration with a {@link KafkaRegistrationException} that names the
- *       consumer and the option.</li>
+ *       strategy, or that asks for more than one record in flight, fails registration with a
+ *       {@link KafkaRegistrationException} that names the consumer and the option; a forcing binding
+ *       that registers handles one record at a time.</li>
  *   <li>The same configurations on a non-forcing {@code SKIP} binding, on which each is legal, register as they always did.</li>
  * </ul>
  *
@@ -58,6 +59,8 @@ class KafkaForcedStrategiesTest {
                         "retry.exhaustedStrategy=DEAD_LETTER",
                         new JsonObject().put("retry", new JsonObject().put("exhaustedStrategy", "DEAD_LETTER")),
                         null),
+                new Row("maxInFlight=1", new JsonObject().put("maxInFlight", 1), null),
+                new Row("maxInFlight=2", new JsonObject().put("maxInFlight", 2), "maxInFlight"),
                 new Row("commitStrategy=AUTO", new JsonObject().put("commitStrategy", "AUTO"), "commitStrategy"),
                 new Row("errorStrategy=SKIP", new JsonObject().put("errorStrategy", "SKIP"), "errorStrategy"),
                 new Row(
@@ -78,12 +81,17 @@ class KafkaForcedStrategiesTest {
             // When: the registry is built over the row's configuration
             // Then: the forcing binding registers on the forced values and fails on any other, naming the option
             if (row.changedOption() == null) {
+                List<ConsumerEntry> registered = List.copyOf(
+                        StrategyRig.register(forcing, row.consumerConfig()).entries());
+                assertEquals(1, registered.size(), "a forcing binding must register with " + row.label());
                 assertEquals(
                         1,
-                        StrategyRig.register(forcing, row.consumerConfig())
-                                .entries()
-                                .size(),
-                        "a forcing binding must register with " + row.label());
+                        registered.get(0).config().maxInFlight(),
+                        "a forcing binding must handle one record at a time with " + row.label());
+                assertEquals(
+                        "1",
+                        registered.get(0).config().kafkaProperties().get("max.poll.records"),
+                        "a forcing binding must poll one record at a time with " + row.label());
             } else {
                 KafkaRegistrationException failure = assertThrows(
                         KafkaRegistrationException.class,

@@ -241,7 +241,8 @@ public class KafkaConsumerBinding<V> {
 
     /**
      * Returns whether registration requires the resolved commit and error strategies to equal this
-     * binding's and the resolved exhausted strategy to be {@link ErrorStrategy#DEAD_LETTER}.
+     * binding's, the resolved exhausted strategy to be {@link ErrorStrategy#DEAD_LETTER} and
+     * {@code maxInFlight} to be {@code 1}.
      *
      * @return {@code true} if the strategies are forced
      */
@@ -476,8 +477,12 @@ public class KafkaConsumerBinding<V> {
          * Makes registration fail, naming this consumer and the option, unless the resolved
          * {@code commitStrategy} and {@code errorStrategy} equal this binding's and the resolved
          * {@code retry.exhaustedStrategy} is {@link ErrorStrategy#DEAD_LETTER}, so that
-         * {@code kafka.consumers.{name}.*} cannot change them. Applies to a binding with a
-         * {@link #handler(KafkaRecordHandler) handler}.
+         * {@code kafka.consumers.{name}.*} cannot change them. The consumer also handles one record
+         * at a time: {@code maxInFlight} and {@code max.poll.records} resolve to {@code 1}, and
+         * registration fails, naming the option, when a {@code maxInFlight} other than {@code 1} is
+         * configured. Without that limit a later record
+         * of a partition could commit past an earlier one whose retry or dead-letter publish is still
+         * pending. Applies to a binding with a {@link #handler(KafkaRecordHandler) handler}.
          *
          * @return this builder
          */
@@ -491,12 +496,18 @@ public class KafkaConsumerBinding<V> {
          *
          * @return the immutable binding
          * @throws IllegalStateException if the binding names both a {@link #handler handler} and a
-         *     {@link #dispatchTo(Class, String) dispatchTo} target
+         *     {@link #dispatchTo(Class, String) dispatchTo} target, or names no handler and sets
+         *     {@link #ignoreUndecodable}, {@link #noHeaderContext} or {@link #forceStrategies}
          */
         public KafkaConsumerBinding<V> build() {
             if (handler != null && targetService != null) {
                 throw new IllegalStateException("KafkaConsumerBinding '" + name
                         + "' names both a handler and a dispatchTo target; name one or the other");
+            }
+            if (handler == null && (ignoreUndecodable != null || noHeaderContext || forceStrategies)) {
+                throw new IllegalStateException("KafkaConsumerBinding '" + name
+                        + "' sets ignoreUndecodable, noHeaderContext or forceStrategies, which apply to a handler"
+                        + " only; name a handler");
             }
             return new KafkaConsumerBinding<>(this);
         }

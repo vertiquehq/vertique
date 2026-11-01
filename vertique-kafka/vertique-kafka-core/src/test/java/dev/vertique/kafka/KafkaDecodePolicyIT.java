@@ -14,6 +14,7 @@ import dev.vertique.kafka.interceptor.KafkaConsumerInterceptor;
 import dev.vertique.kafka.interceptor.KafkaConsumerRecordView;
 import dev.vertique.kafka.interceptor.KafkaTerminalOutcome;
 import dev.vertique.kafka.producer.KafkaProducerFactory;
+import dev.vertique.kafka.serialization.KafkaDeserializer;
 import dev.vertique.kafka.test.KafkaTestContainers;
 import dev.vertique.services.ServiceContractRegistry;
 import dev.vertique.services.ServiceTargetResolver;
@@ -62,6 +63,8 @@ import org.testcontainers.kafka.KafkaContainer;
  *       whose handler fails is still retried and does not run the callback.</li>
  *   <li>A binding of the same shape without the policy sends the undecodable record down the error
  *       strategy, as before.</li>
+ *   <li>A decode failure that the deserializer marks transient is not ignored: it takes the error
+ *       strategy, while a permanent one on the same binding is ignored.</li>
  * </ul>
  *
  * <p>The class timeout is longer than the standard 20 seconds because the broker may be starting.
@@ -188,6 +191,67 @@ public class KafkaDecodePolicyIT {
         }
     }
 
+    @Test
+    @DisplayName("a transient decode failure takes the error strategy and a permanent one is ignored")
+    void transientDecodeFailureTakesTheErrorStrategyAndAPermanentOneIsIgnored(Vertx vertx) throws Exception {
+        // Given: an ignoring binding whose deserializer fails permanently on one marker and transiently on another
+        AtomicInteger ignored = new AtomicInteger();
+        List<String> handled = Collections.synchronizedList(new ArrayList<>());
+        KafkaDeserializer<TestEvent> deserializer = (data, topic, headers) -> {
+            String text = new String(data, StandardCharsets.UTF_8);
+            if (text.contains("registry-down")) {
+                throw new DeserializationException("registry unreachable", new java.io.IOException("down"), true);
+            }
+            if (text.contains("not-json")) {
+                throw new DeserializationException("not decodable", null);
+            }
+            try {
+                return DatabindCodec.mapper().readValue(data, TestEvent.class);
+            } catch (java.io.IOException e) {
+                throw new DeserializationException("not decodable", e);
+            }
+        };
+        DecodeRig rig = DecodeRig.open(
+                vertx,
+                ignored::incrementAndGet,
+                message -> {
+                    handled.add(message.value().id());
+                    return Future.succeededFuture();
+                },
+                message -> Future.succeededFuture(),
+                deserializer);
+        try {
+            // When: a permanent failure, a valid record and then a transient failure are produced
+            RecordMetadata permanent = rig.produce(rig.ignoringTopic, DecodeRig.garbage());
+            RecordMetadata valid = rig.produce(rig.ignoringTopic, DecodeRig.valid("ok-1"));
+            RecordMetadata transientFailure =
+                    rig.produce(rig.ignoringTopic, "registry-down".getBytes(StandardCharsets.UTF_8));
+            awaitTrue(() -> !rig.interceptor
+                    .outcomesAt(rig.ignoringTopic, transientFailure.getOffset())
+                    .isEmpty());
+
+            // Then: the permanent failure was ignored and the valid record reached the handler
+            assertEquals(
+                    List.of(KafkaTerminalOutcome.SKIP),
+                    rig.interceptor.outcomesAt(rig.ignoringTopic, permanent.getOffset()));
+            assertEquals(List.of("ok-1"), List.copyOf(handled));
+
+            // And: the transient failure took the error strategy, so it is retried
+            assertEquals(
+                    KafkaTerminalOutcome.RETRY_SCHEDULED,
+                    rig.interceptor
+                            .outcomesAt(rig.ignoringTopic, transientFailure.getOffset())
+                            .get(0));
+
+            // And: the callback ran for the permanent failure alone, and the transient record is not committed
+            assertEquals(1, ignored.get(), "the callback should run once, for the permanent failure");
+            assertEquals(
+                    OptionalLong.of(valid.getOffset() + 1), rig.committedOffset(rig.ignoringGroup, rig.ignoringTopic));
+        } finally {
+            rig.close();
+        }
+    }
+
     // --- Helpers ---
 
     /**
@@ -273,9 +337,31 @@ public class KafkaDecodePolicyIT {
                 KafkaRecordHandler<TestEvent> ignoringHandler,
                 KafkaRecordHandler<TestEvent> plainHandler)
                 throws Exception {
+            return open(vertx, onIgnored, ignoringHandler, plainHandler, null);
+        }
+
+        /**
+         * Builds the two bindings as {@link #open(Vertx, Runnable, KafkaRecordHandler, KafkaRecordHandler)}
+         * does, with a custom deserializer on the ignoring binding.
+         *
+         * @param vertx the Vert.x instance
+         * @param onIgnored the callback of the ignoring binding
+         * @param ignoringHandler the handler of the ignoring binding
+         * @param plainHandler the handler of the other binding
+         * @param ignoringDeserializer the deserializer of the ignoring binding, or {@code null} for the framework's
+         * @return the running rig
+         * @throws Exception if the deployment fails
+         */
+        static DecodeRig open(
+                Vertx vertx,
+                Runnable onIgnored,
+                KafkaRecordHandler<TestEvent> ignoringHandler,
+                KafkaRecordHandler<TestEvent> plainHandler,
+                KafkaDeserializer<TestEvent> ignoringDeserializer)
+                throws Exception {
             DecodeRig rig = new DecodeRig(vertx);
             try {
-                KafkaConsumerBinding<TestEvent> ignoring = KafkaConsumerBinding.builder(
+                KafkaConsumerBinding.Builder<TestEvent> ignoringBuilder = KafkaConsumerBinding.builder(
                                 "decode-ignoring", TestEvent.class)
                         .topic(rig.ignoringTopic)
                         .groupId(rig.ignoringGroup)
@@ -283,8 +369,11 @@ public class KafkaDecodePolicyIT {
                         .errorStrategy(ErrorStrategy.RETRY)
                         .deadLetterTopic(rig.ignoringDeadLetterTopic)
                         .handler(ignoringHandler)
-                        .ignoreUndecodable(onIgnored)
-                        .build();
+                        .ignoreUndecodable(onIgnored);
+                if (ignoringDeserializer != null) {
+                    ignoringBuilder.deserializer(ignoringDeserializer);
+                }
+                KafkaConsumerBinding<TestEvent> ignoring = ignoringBuilder.build();
                 KafkaConsumerBinding<TestEvent> plain = KafkaConsumerBinding.builder("decode-plain", TestEvent.class)
                         .topic(rig.plainTopic)
                         .groupId("it-decode-plain-" + UUID.randomUUID())
