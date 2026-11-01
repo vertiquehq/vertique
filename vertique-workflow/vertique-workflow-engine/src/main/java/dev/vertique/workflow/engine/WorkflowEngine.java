@@ -998,6 +998,12 @@ final class WorkflowEngine implements WorkflowEngineHandle {
 
     // --- TransactionalWorkflowOperations ---
 
+    /** {@inheritDoc} */
+    @Override
+    public boolean admitting() {
+        return intake.admitting();
+    }
+
     /**
      * {@inheritDoc}
      *

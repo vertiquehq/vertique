@@ -157,6 +157,17 @@ public final class WorkflowSourceDelivery {
     }
 
     /**
+     * Whether this node accepts new signals now. A transport that can hold a message back asks before it delivers one,
+     * so a node that refuses intake keeps the message in the transport and not in a retry. The answer reads node-local
+     * state only and may be read from any thread.
+     *
+     * @return {@code true} unless the node refuses new signals
+     */
+    public boolean admitting() {
+        return operations.get().admitting();
+    }
+
+    /**
      * Tells every registered observer about an outcome.
      *
      * <p>An {@link Exception}, {@link LinkageError}, {@link AssertionError} or

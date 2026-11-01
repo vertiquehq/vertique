@@ -132,16 +132,36 @@ public class KafkaSettlementIT {
                 int maxInFlight,
                 int maxRetainedRecords)
                 throws Exception {
+            return deploy(handler, consumerProperties, drainMs, maxInFlight, maxRetainedRecords, null);
+        }
+
+        /** Deploys a forcing consumer whose binding asks the gate before it starts a record. */
+        String deployGated(KafkaRecordHandler<Event> handler, JsonObject consumerProperties, KafkaDispatchGate gate)
+                throws Exception {
+            return deploy(handler, consumerProperties, 1_000L, 8, 4096, gate);
+        }
+
+        private String deploy(
+                KafkaRecordHandler<Event> handler,
+                JsonObject consumerProperties,
+                long drainMs,
+                int maxInFlight,
+                int maxRetainedRecords,
+                KafkaDispatchGate gate)
+                throws Exception {
             String name = "settle-" + names.incrementAndGet();
-            KafkaConsumerBinding<Event> binding = KafkaConsumerBinding.builder(name, Event.class)
+            KafkaConsumerBinding.Builder<Event> builder = KafkaConsumerBinding.builder(name, Event.class)
                     .topic(topic)
                     .groupId(group)
                     .commitStrategy(CommitStrategy.MANUAL)
                     .errorStrategy(ErrorStrategy.RETRY)
                     .deadLetterTopic(topic + ".dlq")
                     .handler(handler)
-                    .forceStrategies()
-                    .build();
+                    .forceStrategies();
+            if (gate != null) {
+                builder.dispatchGate(gate);
+            }
+            KafkaConsumerBinding<Event> binding = builder.build();
             JsonObject consumer = new JsonObject()
                     .put("maxInFlight", maxInFlight)
                     .put("maxRetainedRecords", maxRetainedRecords)
@@ -397,6 +417,58 @@ public class KafkaSettlementIT {
             }
             assertEquals(10L, rig.awaitCommitted(0, 10L));
             assertEquals(10L, rig.awaitCommitted(1, 10L));
+        }
+    }
+
+    @Test
+    @DisplayName("a closed gate holds the records and the fetching without leaving the group, and no retry is spent")
+    void closedGateHoldsRecordsWithoutEviction(Vertx vertx) throws Exception {
+        try (Rig rig = new Rig(vertx, 2)) {
+            // Given: a gate that is closed, and a short poll interval
+            java.util.concurrent.atomic.AtomicBoolean open = new java.util.concurrent.atomic.AtomicBoolean(false);
+            Map<String, AtomicInteger> handled = new ConcurrentHashMap<>();
+            JsonObject shortPoll = new JsonObject()
+                    .put("max.poll.interval.ms", "3000")
+                    .put("session.timeout.ms", "6000")
+                    .put("heartbeat.interval.ms", "1000");
+            rig.deployGated(
+                    message -> {
+                        handled.computeIfAbsent(message.value().id(), k -> new AtomicInteger())
+                                .incrementAndGet();
+                        return Future.succeededFuture();
+                    },
+                    shortPoll,
+                    new KafkaDispatchGate() {
+                        @Override
+                        public boolean open() {
+                            return open.get();
+                        }
+
+                        @Override
+                        public long recheckMs() {
+                            return 100L;
+                        }
+                    });
+            for (int i = 0; i < 6; i++) {
+                rig.produce(i % 2, "g" + i);
+            }
+
+            // When: the gate stays closed for three poll intervals
+            Thread.sleep(9_000);
+            assertEquals(0, handled.size(), "no record starts while the gate is closed");
+            assertEquals(-1L, rig.committed(0));
+
+            // And: it opens
+            open.set(true);
+
+            // Then: every record runs once, so the consumer kept its place in the group
+            await(() -> handled.size() == 6, "all records handled");
+            Thread.sleep(1_000);
+            for (int i = 0; i < 6; i++) {
+                assertEquals(1, handled.get("g" + i).get(), "record g" + i + " must run once");
+            }
+            assertEquals(3L, rig.awaitCommitted(0, 3L));
+            assertEquals(3L, rig.awaitCommitted(1, 3L));
         }
     }
 

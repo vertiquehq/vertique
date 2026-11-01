@@ -17,6 +17,42 @@ class KafkaConsumerBindingTest {
 
     record TestEvent(String name) {}
 
+    // --- Dispatch gate ---
+
+    @Nested
+    @DisplayName("Dispatch gate")
+    class DispatchGate {
+
+        @Test
+        @DisplayName("a binding has no gate unless one is set")
+        void noGateByDefault() {
+            KafkaConsumerBinding<TestEvent> binding = KafkaConsumerBinding.builder("test-binding", TestEvent.class)
+                    .topic("test.topic")
+                    .groupId("test-group")
+                    .build();
+
+            assertNull(binding.dispatchGate());
+        }
+
+        @Test
+        @DisplayName("a gate needs MANUAL commit, and is kept on the binding")
+        void gateNeedsManualCommit() {
+            KafkaDispatchGate gate = () -> true;
+            KafkaConsumerBinding.Builder<TestEvent> builder = KafkaConsumerBinding.builder(
+                            "test-binding", TestEvent.class)
+                    .topic("test.topic")
+                    .groupId("test-group")
+                    .dispatchGate(gate);
+
+            IllegalStateException refused = assertThrows(IllegalStateException.class, builder::build);
+            assertTrue(refused.getMessage().contains("dispatchGate"));
+            assertTrue(refused.getMessage().contains("test-binding"));
+
+            assertSame(
+                    gate, builder.commitStrategy(CommitStrategy.MANUAL).build().dispatchGate());
+        }
+    }
+
     // --- Default values ---
 
     @Nested

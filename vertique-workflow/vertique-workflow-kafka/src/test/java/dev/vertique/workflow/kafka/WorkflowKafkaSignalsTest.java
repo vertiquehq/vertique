@@ -373,6 +373,22 @@ class WorkflowKafkaSignalsTest {
     }
 
     @Test
+    void builtSourceDispatchesOnlyWhileTheNodeAdmitsIntake() {
+        // Given a source whose delivery reports the node's intake, first admitting and then refusing
+        Carriers carriers = SourceFixture.carriers();
+        doReturn(true, false, true).when(carriers.delivery()).admitting();
+        KafkaConsumerBinding<ShipmentDelivered> binding = keyedByCarrier(carriers.source());
+
+        // When the binding's gate is asked three times
+        // Then it follows the node, and asks again within the sampling of the node's pressure
+        assertThat(binding.dispatchGate()).isNotNull();
+        assertThat(binding.dispatchGate().open()).isTrue();
+        assertThat(binding.dispatchGate().open()).isFalse();
+        assertThat(binding.dispatchGate().open()).isTrue();
+        assertThat(binding.dispatchGate().recheckMs()).isLessThanOrEqualTo(1_000L);
+    }
+
+    @Test
     void injectedCorrelationFactorySeedsTheCorrelationOfAnOptInSource() throws Exception {
         // Given a delivery double that keeps the envelope it is handed, and a correlation factory over an
         // application-supplied id generator

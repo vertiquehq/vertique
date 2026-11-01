@@ -30,6 +30,18 @@ import jakarta.annotation.Nullable;
 public interface TransactionalWorkflowOperations<TX> {
 
     /**
+     * Whether this node accepts new starts and signals from outside now. A transport that can hold a message back
+     * before it records anything, such as a Kafka signal source, asks first, instead of recording the message and
+     * having it refused. The answer reads node-local state only, takes no lock and may be read from any thread. A
+     * {@code true} answer does not promise that the next call is accepted: the node can start refusing in between.
+     *
+     * @return {@code true} unless this node refuses new starts and signals; the default accepts
+     */
+    default boolean admitting() {
+        return true;
+    }
+
+    /**
      * Starts a new workflow instance within the given transaction.
      *
      * <p>As {@link WorkflowOperations#start(StartCommand)}, a start that creates an instance fails with

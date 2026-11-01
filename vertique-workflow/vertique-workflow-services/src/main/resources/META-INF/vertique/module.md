@@ -122,6 +122,8 @@ The caller passes resolved values only, in a `SourceEnvelope`: the transport (`k
 
 The returned future completes on the context the caller delivered from, after the binding is closed, and a failure from the operations reaches the caller as the same exception instance. Nothing blocks, and the bean logs no key, header or payload.
 
+`admitting()` answers whether this node accepts new signals now, from the transactional operations. A transport that can hold a message back asks it before it delivers one: the Kafka source's dispatch gate does, so a node that refuses intake keeps its records in the topic and spends no retry.
+
 `report(SignalSourceEvent)` tells every `SignalSourceObserver` in the `Set<SignalSourceObserver>` multibinding about an outcome. It isolates each observer: an `Exception`, `LinkageError`, `AssertionError` or `StackOverflowError` from one observer is reported by observer class and callback name, never by its message, and does not stop the others or reach the caller. A transport reports its own outcomes through it. `WorkflowSourceModule` declares the set, so an application with no observer still resolves the bean.
 
 The bean adds no service operation and no event-bus address: only code in the application's JVM can call it. The only service entry of this module stays `workflow.signals.post`.

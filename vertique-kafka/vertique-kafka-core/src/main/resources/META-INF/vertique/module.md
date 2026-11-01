@@ -198,6 +198,7 @@ static KafkaConsumerBinding<?> orderBinding() {
 | `ignoreUndecodable(Runnable)` | off | Handler bindings: acknowledges a record that fails to decode, commits it when `MANUAL`, reports it `SKIP`, runs the callback, and skips the error strategy; a transient decode failure takes the error strategy |
 | `noHeaderContext()` | off | Handler bindings: installs no durable context from the record's headers for the handler |
 | `forceStrategies()` | off | Handler bindings, `commitStrategy(MANUAL)` required: registration fails unless the resolved configuration keeps the binding's `commitStrategy` and `errorStrategy` and a `DEAD_LETTER` `retry.exhaustedStrategy`; a new group starts at the beginning of the topic |
+| `dispatchGate(KafkaDispatchGate)` | none | `commitStrategy(MANUAL)` required: asked before a record starts. While it answers closed no record starts and no partition fetches, and the consumer keeps polling; see [A dispatch gate](#a-dispatch-gate) |
 
 Use the durable operation id (`@ServiceOperation` value) in `dispatchTo` for stable-target-eligible
 operations so the binding survives a method rename.
@@ -882,6 +883,33 @@ finished.
 - **Stopping.** A stop starts no record and no retry, stops all fetching, waits for the running records, dead-letter
   publishes and commits for a drain period, then commits the finished prefix of each partition and closes. A record
   that did not finish stays uncommitted and runs again at the next start.
+
+### A dispatch gate
+
+A binding can carry a `KafkaDispatchGate`, a small hook that answers whether a record may start now. It exists for a
+handler that cannot take work for a while, such as a service that is shedding load, so the consumer holds records
+back instead of starting them to see them fail.
+
+```java
+KafkaConsumerBinding.builder("orders", Order.class)
+        .topic("orders").groupId("order-processing")
+        .commitStrategy(CommitStrategy.MANUAL)
+        .errorStrategy(ErrorStrategy.RETRY)
+        .handler(handler)
+        .dispatchGate(() -> loadShedder.admitting())
+        .build();
+```
+
+While the gate answers closed the consumer starts no record, every assigned partition stops fetching, and the
+consumer keeps polling, so it keeps its group membership however long the gate stays closed. Records that run finish,
+and records already received stay queued in memory. A record the gate held back has not been attempted: no retry is
+spent, nothing is dead-lettered and nothing is committed past it. The consumer asks a closed gate again after
+`recheckMs()` (default `1000`); when it opens, the queued records start in the order they were read and the partitions
+fetch again. `open()` is called on the consumer's own context, often, so it must be cheap and must not block.
+
+A gate that closes after a record started can be met with a `KafkaRedeliverFailure` from the handler (on a binding
+that forces its strategies): the record returns to the queue with its attempts unchanged, and the consumer waits for
+the gate as it does for a closed one.
 
 ---
 

@@ -105,6 +105,8 @@ A computed key is a non-blank string of at most 255 characters with no NUL. A ke
 
 `TransactionalWorkflowOperations<TX>` has two delivery methods that address a signal by a key instead of an instance id:
 
+`TransactionalWorkflowOperations.admitting()` reports whether this node accepts new starts and signals now. A transport that can hold a message back, such as a Kafka signal source, asks before it dispatches one, so a node under the intake limit keeps the message in the transport and not in a retry. The default answer is `true`; the engine answers from its intake admission, which reads node-local state and may be read from any thread. A `true` answer does not promise that the next call is accepted.
+
 ```java
 Future<CorrelatedSignalReceipt> signalByKey(CorrelatedSignal signal, TX tx);
 Future<CorrelatedSignalReceipt> signalByBusinessKey(CorrelatedSignal signal, TX tx);

@@ -167,6 +167,16 @@ class WorkflowEngineIntakeTest {
     class PublicForms {
 
         @Test
+        @DisplayName("the engine reports the admission of the node to a transport that can hold a message back")
+        void reportsTheAdmissionToATransport() {
+            refusing.set(true);
+            assertThat(engine.admitting()).isFalse();
+
+            refusing.set(false);
+            assertThat(engine.admitting()).isTrue();
+        }
+
+        @Test
         @DisplayName("a refusing node refuses every form with the retryable 503 refusal and writes nothing")
         void refusesEveryFormAndWritesNothing() {
             DurableMetadata carrier = DurableMetadata.of(TenantCtxCodec.NAMESPACE, new JsonObject().put("t", "x"));
