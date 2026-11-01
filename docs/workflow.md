@@ -408,7 +408,7 @@ reported as stuck, and `retry` offers dead-lettered commands again.
 - **Recording-only nodes.** `workflow.executor.enabled=false` deploys no executor. The node claims and runs nothing, needs no workflow class and no `WorkflowSchemaModule`, and still records starts, signals, task completions, retries, migrations, cancellations and reassignments, answers queries, and activates, deprecates and retires versions. It still runs the intake sampler and refuses new starts and signals under pressure like an executor node (see [Intake limit](#intake-limit)). It refuses `publish`, `reinstate`, document load, `WorkflowRegistry.load` and `WorkflowPayloadSchemas` with `WorkflowNodeRoleException`. The lifecycle operations stay open on such a node and the framework authorizes none of them, so put an authorization layer in front of them.
 - **Signal sources on a recording-only node.** A [signal source](#signal-sources) only records signals, and recording needs no plan and no workflow class, so a source may run on a recording-only node while the executors run elsewhere. The source records the signal in a transaction of its own; an executor node applies it afterwards.
 - **What that node installs.** The workflow database and recording path in its JVM (`WorkflowPostgresqlModule` and the database modules); the contract and payload classes that the source's signals name; `JsonRuntimeModule`, with the same `json.systemProfile` as the executors, because the profile is a wire-format decision that reaches workflow state and payloads (`KafkaJsonModule` installs `JsonRuntimeModule`); and `WorkflowSourceModule`, which supplies the delivery bean `WorkflowSourceDelivery`. `WorkflowServicesModule` includes `WorkflowSourceModule`, so a node that also dispatches service calls installs the services module; a node that only receives signals installs `WorkflowSourceModule` alone. A source needs no outbox module, but it needs the inbox module (`vertique-inbox-outbox-postgresql`) with its migration and its cleanup job, on a recording-only node as on any other: the delivery bean writes an inbox row per signal, and a graph without an `InboxService` does not compile. The node still needs no `WorkflowSchemaModule`.
-- **Rollout of correlated signals.** Apply the workflow schema migrations first (`V004__signal_correlation.sql` and `V005__business_key_lookup_index.sql` of `vertique-workflow-postgresql`; they are additive and need no stop of older nodes, but `V005` blocks writers of `workflow_instances` while its index builds, so a large installation builds that index ahead of the upgrade as the module reference shows), then upgrade the nodes in any order. Nodes that still carry the earlier migrations keep running against the upgraded database. A business-key command applies on an older executor, because its provenance is stored in its own column and its target keeps its earlier shape. A wait's-key command belongs to an instance pinned to a version that declares the key, which only an upgraded node has the code for; an older executor that is still running defers the command as not runnable, spending no attempt, until an upgraded executor runs it. Deployments stay roll-forward only (see [Roll-forward only](#roll-forward-only)).
+- **Rollout of correlated signals.** The schema that correlated signals need (the table of open wait records, the command provenance column and the business-key index) is part of the single `V002__` migration of `vertique-workflow-postgresql`, so it arrives with the upgrade from 0.3.0, which stops every node of the previous release first (see [Migrate the schema](#1-migrate-the-schema)). The migration builds the business-key index while it holds its locks, which blocks writers of `workflow_instances` until the migration commits, so a large installation builds that index ahead of the upgrade as the large-installations note of [Migrate the schema](#1-migrate-the-schema) shows. Deployments stay roll-forward only (see [Roll-forward only](#roll-forward-only)).
 - **Deployment.** The executor is deployed in the `SERVICES` phase with the application's other verticles. An application that is wired by hand and does not use a starter must include the deployer of `vertique-deploy` (`DeployerModule`) and deploy the phase through it. Without it no command executes and every start stays `PENDING`.
 
 | Key | Default | Meaning |
@@ -1027,8 +1027,8 @@ changes startup for every PostgreSQL application. Operations now record work tha
 
 ### 1. Migrate the schema
 
-- Flyway applies two new migrations from `db/migration/workflow`: `V002__workflow_definitions_and_scopes.sql` and, after it,
-  `V003__recorded_execution.sql` (see the last bullet of this step). `V1__` is unchanged. `V002__` creates the `workflow_definitions` table, keyed by `(scope_key, definition_id,
+- Flyway applies one new migration from `db/migration/workflow`: `V002__definitions_scopes_recorded_execution_signal_correlation.sql` (see the last bullet of this step
+  for its recorded-execution part). `V1__` is unchanged. `V002__` creates the `workflow_definitions` table, keyed by `(scope_key, definition_id,
   definition_version)`, with its `document_digest`, `contract_name`, `state_type_name` and `name_binding` columns, and the
   `workflow_definition_activations` table, keyed by `(scope_key, definition_id)`. It also converts the
   released tables to scope keys:
@@ -1048,9 +1048,10 @@ changes startup for every PostgreSQL application. Operations now record work tha
   transaction is open on `workflow_tasks`, `workflow_instances` or `workflow_dedup`. It waits at most 30 seconds per
   statement for a lock (`SET LOCAL lock_timeout`), during which new statements on that table queue behind it, and then
   fails, so rerun it after the blocking transaction ends. A manual run must be one transaction
-  (`psql --single-transaction -f V002__workflow_definitions_and_scopes.sql`), or the timeout has no effect.
+  (`psql --single-transaction -f V002__definitions_scopes_recorded_execution_signal_correlation.sql`), or the timeout has no effect.
 - **Large installations.** The column and keyset-index statements are `IF NOT EXISTS`, so you can add the scope columns
-  and build the two keyset indexes ahead of the upgrade and let the migration find them done, but only after the last
+  and build the two keyset indexes and the business-key lookup index ahead of the upgrade and let the migration find
+  them done, but only after the last
   0.3.0 node has stopped is it safe to change `workflow_dedup`, which always happens inside the migration. Run these exact
   statements outside a transaction (each on an autocommit connection), with the `ALTER` statements first. A statement that
   times out on its lock changes nothing and can be rerun:
@@ -1063,13 +1064,15 @@ changes startup for every PostgreSQL application. Operations now record work tha
       ON workflow_tasks (scope_key, updated_at DESC, task_id ASC);
   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_workflow_instances_scope_updated_at
       ON workflow_instances (scope_key, updated_at DESC, id ASC);
+  CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_workflow_instances_business_key_scope_key_definition_id
+      ON workflow_instances (business_key, scope_key, definition_id) WHERE business_key IS NOT NULL;
   ```
 
   The migration then builds nothing for them. It always drops and rebuilds the business-key index, and it always renames
   the dedup column (`ALTER TABLE ... RENAME COLUMN` has no `IF EXISTS` form, so do not run it ahead of time). The
   `IF NOT EXISTS` forms match by name only, so a column or index of that name with a different definition is silently
   accepted: use the statements above unchanged. A failed concurrent build leaves an `INVALID` index that `IF NOT EXISTS`
-  would skip: check `pg_index.indisvalid` for both index names and drop an invalid one before the migration runs.
+  would skip: check `pg_index.indisvalid` for all three index names and drop an invalid one before the migration runs.
 - **Existing rows.** Instances, tasks and start deduplication rows of 0.3.0 read the default scope after the upgrade; the
   instances resume in it and complete their stored task decisions. A start that names no start scope runs in the default
   scope as well.
@@ -1080,10 +1083,11 @@ changes startup for every PostgreSQL application. Operations now record work tha
   is disabled, run the migration script yourself, in one transaction, before the first 0.4.0 node starts.
 - Durable `DOCUMENT` bodies need `server_encoding = UTF8`. The check runs before the first document read or write. `CODE`
   rows and applications without documents work on any encoding.
-- **`V003__recorded_execution.sql` converts the running work of 0.3.0 in the same stop-the-fleet step.** It adds the command
-  log and the history columns, and it turns each scheduled timer into a `TIMER` command and each retry-scheduled branch into a
+- **The same `V002__` migration converts the running work of 0.3.0 in the same stop-the-fleet step.** It adds the command
+  log with its provenance column, the table of open signal wait records, the index that serves business-key lookup
+  and the history columns, and it turns each scheduled timer into a `TIMER` command and each retry-scheduled branch into a
   `RETRY` command. It marks every existing instance so that the first segment that claims it logs a full-state baseline; that mark is one unfiltered
-  update of `workflow_instances`, which rewrites every row once inside the migration, so plan the window and a vacuum afterwards on a large table. It also deletes the live
+  update of `workflow_instances`, which rewrites every row once inside the migration, so plan the window and a vacuum afterwards on a large table. The business-key lookup index is built inside the migration and blocks writers of `workflow_instances` until it commits, so on a large table build it ahead of the upgrade with the `CREATE INDEX CONCURRENTLY IF NOT EXISTS` statement, with its `WHERE` clause, in the large-installations note of this step. The statement needs the `scope_key` column of `workflow_instances`, so run it after the `ALTER` statements of that note. It also deletes the live
   jobs that fired 0.3.0 timers (`vertique.workflow.timer.fire`) from `job_executions` when that table resolves in the schema the migration runs in under its default
   name. A deployment whose job tables are in another schema, or a job table shared by several deployments, runs a manual statement before the first
   0.4.0 node starts; it is in the [workflow-postgresql reference](../vertique-workflow/vertique-workflow-postgresql/src/main/resources/META-INF/vertique/module.md#recorded-execution-schema).

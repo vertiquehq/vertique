@@ -14,23 +14,16 @@ import dev.vertique.db.test.PostgresContainer;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Stream;
 import org.flywaydb.core.Flyway;
-import org.flywaydb.core.api.MigrationInfo;
-import org.flywaydb.core.api.MigrationVersion;
 import org.flywaydb.core.api.configuration.FluentConfiguration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -39,9 +32,9 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Verifies that the signal correlation migration upgrades a populated database, stores wait records that go with
- * their instance, leaves a node carrying only the previous migrations working, and keeps an index built ahead of the
- * upgrade.
+ * Verifies that the recorded-execution migration upgrades a populated database with the signal correlation schema,
+ * stores wait records that go with their instance, serves key and business-key lookup through its indexes, and keeps an
+ * index built ahead of the upgrade.
  */
 @ExtendWith(DatabaseExtension.class)
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
@@ -50,12 +43,9 @@ public class SignalCorrelationMigrationIT {
     static final PostgresContainer db = new PostgresContainer().withDatabaseName("wf_signal_correlation_migration_it");
 
     private static final String MIGRATION_LOCATION = "db/migration/workflow";
-    private static final List<String> PREVIOUS_RELEASE_SCRIPTS = List.of(
-            "V1__create_workflow_tables.sql",
-            "V002__workflow_definitions_and_scopes.sql",
-            "V003__recorded_execution.sql");
-    private static final String SIGNAL_CORRELATION_SCRIPT = "V004__signal_correlation.sql";
-    private static final String BUSINESS_KEY_INDEX_SCRIPT = "V005__business_key_lookup_index.sql";
+    private static final String MIGRATION_SCRIPT = "V002__definitions_scopes_recorded_execution_signal_correlation.sql";
+    private static final String DEDUP_COLUMN_RENAME =
+            "ALTER TABLE workflow_dedup RENAME COLUMN scope TO dedup_namespace;";
     private static final String BUSINESS_KEY_INDEX = "idx_workflow_instances_business_key_scope_key_definition_id";
 
     private static final String INSTANCE_ID = "00000000-0000-0000-0000-0000000000a1";
@@ -68,13 +58,6 @@ public class SignalCorrelationMigrationIT {
     private static final String NAMESPACE_HASH = "a".repeat(64);
     private static final String KEY_HASH = "b".repeat(64);
 
-    /** Every column the command log has at version 3, in table order, as an older node lists them. */
-    private static final String COMMAND_COLUMNS_AT_VERSION_3 = "id, workflow_id, seq, kind, timer_kind, timer_id,"
-            + " task_id, target_json, payload_json, state, recorded_at, available_at, fire_at, attempts,"
-            + " transient_count, deferral_count, claim_token, lease_until, claimed_by, context_json,"
-            + " explicit_carrier_json, actor_kind, actor_id, actor_reason, on_behalf_of, attribution_status,"
-            + " dedup_key, settled_at, last_error";
-
     @BeforeEach
     void resetSchema() throws SQLException {
         try (Connection connection = connection();
@@ -85,40 +68,32 @@ public class SignalCorrelationMigrationIT {
     }
 
     @Test
-    @DisplayName("The migration upgrades a version 3 database, keeps its rows and accepts wait records and"
+    @DisplayName("The migration upgrades a version 1 database, keeps its rows and accepts wait records and"
             + " command provenance")
     void upgradesPreviousSchemaAndAcceptsWaitRecordsAndProvenance() throws Exception {
-        // Given a database migrated to version 3 holding a running instance, a pending instance and one SIGNAL
-        // command with context_json set
-        migrateTo("3");
-        long signalCommandId;
+        // Given a database migrated to version 1 holding a running instance
+        migrateTo("1");
         try (Connection connection = connection()) {
             insertRunningInstance(connection, INSTANCE_ID);
-            insertPendingInstance(connection, PENDING_INSTANCE_ID);
-            signalCommandId = insertSignalCommand(connection, PENDING_INSTANCE_ID, 1);
         }
 
         // When the database is migrated to the latest version
         Flyway latest = flyway().load();
         latest.migrate();
 
-        // Then version 4 is applied with nothing pending
-        assertThat(latest.info().applied())
-                .extracting(MigrationInfo::getVersion)
-                .contains(MigrationVersion.fromVersion("4"));
+        // Then nothing is pending
         assertThat(latest.info().pending()).isEmpty();
 
         try (Connection connection = connection()) {
-            // And the seeded rows read unchanged
+            // And the seeded row reads unchanged
             assertThat(rows(connection, """
                             SELECT status || '|' || current_step_id || '|' || state_json::text
                             FROM workflow_instances WHERE id = '%s'
                             """.formatted(INSTANCE_ID))).containsExactly("RUNNING|start|{\"k\": 1}");
-            assertThat(rows(connection, """
-                            SELECT status || '|' || coalesce(current_step_id, 'null') || '|'
-                                || coalesce(state_json::text, 'null')
-                            FROM workflow_instances WHERE id = '%s'
-                            """.formatted(PENDING_INSTANCE_ID))).containsExactly("PENDING|null|null");
+
+            // And a pending instance with one SIGNAL command that records no provenance inserts
+            insertPendingInstance(connection, PENDING_INSTANCE_ID);
+            long signalCommandId = insertSignalCommand(connection, PENDING_INSTANCE_ID, 1);
             assertThat(rows(connection, """
                             SELECT kind || '|' || state || '|' || seq || '|' || context_json::text
                             FROM workflow_commands WHERE id = %d
@@ -290,72 +265,28 @@ public class SignalCorrelationMigrationIT {
     }
 
     @Test
-    @DisplayName("A node carrying only the previous migrations validates and runs against a database at the new"
-            + " version")
-    void previousReleaseFlywayValidatesADatabaseAlreadyAtTheNewVersion() throws Exception {
-        Path previousScripts = Files.createTempDirectory("previous-release-migrations");
-        try {
-            // Given a database migrated to the latest version through the classpath location
-            Flyway latest = flyway().load();
-            latest.migrate();
-            assertThat(latest.info().applied())
-                    .extracting(MigrationInfo::getVersion)
-                    .contains(MigrationVersion.fromVersion("4"));
-
-            // And a Flyway configuration over a directory holding only the previous migrations
-            Flyway previousRelease = previousReleaseFlyway(previousScripts).load();
-
-            // When the previous release validates and migrates
-            assertDoesNotThrow(() -> {
-                previousRelease.validate();
-            });
-            assertDoesNotThrow(() -> {
-                previousRelease.migrate();
-            });
-
-            // Then nothing is pending and version 4 is still listed as applied
-            assertThat(previousRelease.info().pending()).isEmpty();
-            assertThat(previousRelease.info().applied())
-                    .extracting(MigrationInfo::getVersion)
-                    .contains(MigrationVersion.fromVersion("4"));
-
-            // And a statement written for the previous schema inserts a SIGNAL command and selects its columns
-            try (Connection connection = connection()) {
-                insertRunningInstance(connection, INSTANCE_ID);
-                long commandId = insertSignalCommand(connection, INSTANCE_ID, 1);
-                assertThat(rows(connection, """
-                                SELECT kind || '|' || state || '|' || context_json::text FROM (
-                                    SELECT %s FROM workflow_commands WHERE id = %d) AS command
-                                """.formatted(COMMAND_COLUMNS_AT_VERSION_3, commandId)))
-                        .containsExactly("SIGNAL|PENDING|{\"c\": 1}");
-
-                // And the inserted row's provenance_json is null
-                assertThat(rows(connection, """
-                                SELECT (provenance_json IS NULL)::text FROM workflow_commands WHERE id = %d
-                                """.formatted(commandId))).containsExactly("true");
-            }
-        } finally {
-            deleteRecursively(previousScripts);
-        }
-    }
-
-    @Test
     @DisplayName("An index built ahead of the upgrade is kept and the script reruns cleanly")
     void indexBuiltAheadOfTheUpgradeIsKeptAndTheScriptRerunsCleanly() throws Exception {
-        // Given a reference run that records the index the migration adds to the instance table and the instance
-        // indexes after the latest migration
-        String addedIndexDefinition = indexDefinitionAddedBy("5");
+        // Given a reference run that records the definition of the business-key index and the instance indexes after
+        // the latest migration
         flyway().load().migrate();
+        String indexDefinition = indexDefinition(BUSINESS_KEY_INDEX);
         List<String> referenceIndexes = indexNamesOf("workflow_instances");
+        assertThat(referenceIndexes).contains(BUSINESS_KEY_INDEX);
 
-        // And a fresh database at version 3 where the operator builds that index ahead of the upgrade, outside any
-        // transaction
+        // And a fresh database at version 1 where the operator adds the scope column the index names and builds that
+        // index ahead of the upgrade, outside any transaction
         resetSchema();
-        migrateTo("3");
+        migrateTo("1");
+        assertThat(indexNamesOf("workflow_instances")).doesNotContain(BUSINESS_KEY_INDEX);
         try (Connection autocommit = connection();
                 Statement statement = autocommit.createStatement()) {
+            statement.execute("""
+                    ALTER TABLE workflow_instances
+                        ADD COLUMN IF NOT EXISTS scope_key VARCHAR(255) NOT NULL DEFAULT 'default'
+                    """);
             String buildAhead =
-                    addedIndexDefinition.replaceFirst("^CREATE INDEX ", "CREATE INDEX CONCURRENTLY IF NOT EXISTS ");
+                    indexDefinition.replaceFirst("^CREATE INDEX ", "CREATE INDEX CONCURRENTLY IF NOT EXISTS ");
             assertThat(buildAhead).startsWith("CREATE INDEX CONCURRENTLY IF NOT EXISTS ");
             statement.execute(buildAhead);
         }
@@ -368,67 +299,32 @@ public class SignalCorrelationMigrationIT {
         // another name
         assertThat(latest.info().pending()).isEmpty();
         assertThat(indexNamesOf("workflow_instances")).containsExactlyElementsOf(referenceIndexes);
+        assertThat(indexDefinition(BUSINESS_KEY_INDEX)).isEqualTo(indexDefinition);
 
-        // And running the text of each script a second time in one transaction raises no error and adds nothing
+        // And running the text of the script a second time in one transaction, without the dedup column rename that
+        // has no IF EXISTS form, raises no error and adds nothing
         List<String> catalogBefore = catalogSnapshot();
-        assertDoesNotThrow(() -> executeScript(SIGNAL_CORRELATION_SCRIPT));
-        assertDoesNotThrow(() -> executeScript(BUSINESS_KEY_INDEX_SCRIPT));
+        assertDoesNotThrow(() -> executeScript(MIGRATION_SCRIPT));
         assertThat(catalogSnapshot()).containsExactlyElementsOf(catalogBefore);
     }
 
-    @Test
-    @DisplayName("The instance index builds in a migration of its own, so the build holds no lock on the command log")
-    void instanceIndexBuildsInAMigrationOfItsOwn() throws Exception {
-        // Given a database at the version that adds the command log column
-        migrateTo("4");
-        try (Connection connection = connection()) {
-            assertThat(rows(connection, """
-                    SELECT column_name FROM information_schema.columns
-                    WHERE table_schema = current_schema() AND table_name = 'workflow_commands'
-                      AND column_name = 'provenance_json'
-                    """)).containsExactly("provenance_json");
-        }
-
-        // And that version has not built the instance index
-        assertThat(indexNamesOf("workflow_instances")).doesNotContain(BUSINESS_KEY_INDEX);
-
-        // When the next version applies, in a transaction of its own
-        migrateTo("5");
-
-        // Then the instance index is built
-        assertThat(indexNamesOf("workflow_instances")).contains(BUSINESS_KEY_INDEX);
-    }
-
-    /**
-     * Resets the schema, migrates to the version before the given one and then to the given one, and returns the
-     * definition of the single index the given version added to the instance table.
-     */
-    private String indexDefinitionAddedBy(String version) throws SQLException {
-        resetSchema();
-        assertThat(flyway().load().info().all())
-                .as("migrations the classpath resolves")
-                .extracting(MigrationInfo::getVersion)
-                .contains(MigrationVersion.fromVersion(version));
-        migrateTo(String.valueOf(Integer.parseInt(version) - 1));
-        List<String> before = indexNamesOf("workflow_instances");
-        migrateTo(version);
-        List<String> added = new ArrayList<>(indexNamesOf("workflow_instances"));
-        added.removeAll(before);
-        assertThat(added)
-                .as("indexes added to workflow_instances by version " + version)
-                .hasSize(1);
+    /** The definition of the named index of the instance table. */
+    private String indexDefinition(String indexName) throws SQLException {
         try (Connection connection = connection()) {
             List<String> definitions = rows(connection, """
                     SELECT indexdef FROM pg_indexes
                     WHERE schemaname = current_schema() AND tablename = 'workflow_instances'
                       AND indexname = '%s'
-                    """.formatted(added.get(0)));
+                    """.formatted(indexName));
             assertThat(definitions).hasSize(1);
             return definitions.get(0);
         }
     }
 
-    /** Runs the text of a packaged migration script in one transaction, as Flyway does. */
+    /**
+     * Runs the text of a packaged migration script in one transaction, as Flyway does, without the one statement
+     * that cannot run twice.
+     */
     private static void executeScript(String script) throws SQLException, IOException {
         String text;
         try (InputStream stream =
@@ -438,36 +334,14 @@ public class SignalCorrelationMigrationIT {
             }
             text = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
         }
+        String withoutRename = text.replace(DEDUP_COLUMN_RENAME, "");
+        assertThat(withoutRename).as("the script holds the dedup column rename").isNotEqualTo(text);
+        text = withoutRename;
         try (Connection connection = connection();
                 Statement statement = connection.createStatement()) {
             connection.setAutoCommit(false);
             statement.execute(text);
             connection.commit();
-        }
-    }
-
-    /** A Flyway configuration over a directory holding copies of the previous release's migrations only. */
-    private static FluentConfiguration previousReleaseFlyway(Path directory) throws IOException {
-        for (String script : PREVIOUS_RELEASE_SCRIPTS) {
-            try (InputStream stream =
-                    SignalCorrelationMigrationIT.class.getResourceAsStream("/" + MIGRATION_LOCATION + "/" + script)) {
-                if (stream == null) {
-                    throw new IllegalStateException("migration script not on the classpath: " + script);
-                }
-                Files.copy(stream, directory.resolve(script), StandardCopyOption.REPLACE_EXISTING);
-            }
-        }
-        return Flyway.configure()
-                .dataSource(db.jdbcUrl(), db.username(), db.password())
-                .locations("filesystem:" + directory.toAbsolutePath())
-                .validateOnMigrate(true);
-    }
-
-    private static void deleteRecursively(Path directory) throws IOException {
-        try (Stream<Path> paths = Files.walk(directory)) {
-            for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
-                Files.deleteIfExists(path);
-            }
         }
     }
 
@@ -560,7 +434,7 @@ public class SignalCorrelationMigrationIT {
         }
     }
 
-    /** Inserts a pending SIGNAL command with a context at the given sequence, listing only version 3 columns. */
+    /** Inserts a pending SIGNAL command with a context at the given sequence, recording no provenance. */
     private static long insertSignalCommand(Connection connection, String workflowId, long seq) throws SQLException {
         try (Statement statement = connection.createStatement();
                 ResultSet result = statement.executeQuery("""

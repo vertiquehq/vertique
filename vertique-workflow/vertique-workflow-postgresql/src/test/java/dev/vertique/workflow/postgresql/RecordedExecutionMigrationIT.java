@@ -32,9 +32,9 @@ import org.postgresql.PGNotification;
 /** Verifies that the recorded-execution migration upgrades a populated database and notifies on runnable commands. */
 @ExtendWith(DatabaseExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
-public class V003MigrationIT {
+public class RecordedExecutionMigrationIT {
 
-    static final PostgresContainer db = new PostgresContainer().withDatabaseName("wf_v003_migration_it");
+    static final PostgresContainer db = new PostgresContainer().withDatabaseName("wf_recorded_execution_migration_it");
 
     private static final String INSTANCE_ID = "00000000-0000-0000-0000-0000000000a1";
     private static final String PENDING_INSTANCE_ID = "00000000-0000-0000-0000-0000000000a2";
@@ -55,12 +55,13 @@ public class V003MigrationIT {
     }
 
     @Test
-    @DisplayName("V003 upgrades a V002 database, keeps its rows and accepts pending instances, commands and"
-            + " reservations")
-    void upgradesV002AndAcceptsPendingInstancesCommandsAndReservations() throws Exception {
-        // Given a database migrated to version 2 holding a running instance, an open task, a scheduled timer and a
+    @DisplayName(
+            "The migration upgrades a version 1 database, keeps its rows and accepts pending instances, commands and"
+                    + " reservations")
+    void upgradesVersion1AndAcceptsPendingInstancesCommandsAndReservations() throws Exception {
+        // Given a database migrated to version 1 holding a running instance, an open task, a scheduled timer and a
         // history entry
-        migrateTo("2");
+        migrateTo("1");
         try (Connection connection = connection()) {
             insertRunningInstance(connection);
             insertOpenTask(connection);
@@ -72,10 +73,10 @@ public class V003MigrationIT {
         Flyway latest = flyway().load();
         latest.migrate();
 
-        // Then version 3 is applied
+        // Then version 2 is applied
         assertThat(latest.info().applied())
                 .extracting(MigrationInfo::getVersion)
-                .contains(MigrationVersion.fromVersion("3"));
+                .contains(MigrationVersion.fromVersion("2"));
         assertThat(latest.info().pending()).isEmpty();
 
         try (Connection connection = connection()) {

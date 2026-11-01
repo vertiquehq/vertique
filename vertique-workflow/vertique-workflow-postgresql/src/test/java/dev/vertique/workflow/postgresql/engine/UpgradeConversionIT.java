@@ -320,7 +320,7 @@ public class UpgradeConversionIT {
         // an enqueued fire job; instance B whose scheduled timeout belongs to a wait it has left; and instance C
         // waiting on a task whose due date is in the future, with a reminder that already fired
         Map<String, String> planHashes = currentPlanHashes(vertx);
-        flyway(timersDb).target("2").load().migrate();
+        flyway(timersDb).target("1").load().migrate();
         createJobTables(timersDb, "public");
         UUID instanceA = UUID.randomUUID();
         UUID instanceB = UUID.randomUUID();
@@ -458,7 +458,7 @@ public class UpgradeConversionIT {
         // still had a retry scheduled without a due time
         Map<String, String> planHashes = currentPlanHashes(vertx);
         STEP_RUNS.clear();
-        flyway(branchesDb).target("2").load().migrate();
+        flyway(branchesDb).target("1").load().migrate();
         UUID retrying = UUID.randomUUID();
         UUID decided = UUID.randomUUID();
         Instant retryDue = Instant.now().minus(Duration.ofMinutes(5)).truncatedTo(ChronoUnit.SECONDS);
@@ -576,7 +576,7 @@ public class UpgradeConversionIT {
         // Given an upgraded database holding an instance at a wait whose scheduled timeout was converted, and a
         // signal for that instance recorded before the timeout's fire time that is still pending
         Map<String, String> planHashes = currentPlanHashes(vertx);
-        flyway(holdBackDb).target("2").load().migrate();
+        flyway(holdBackDb).target("1").load().migrate();
         UUID instance = UUID.randomUUID();
         UUID timer = UUID.randomUUID();
         Instant due = Instant.now().minus(Duration.ofMinutes(3)).truncatedTo(ChronoUnit.SECONDS);
@@ -628,13 +628,13 @@ public class UpgradeConversionIT {
         // Given three databases at the previous release's schema: (a) job tables under the default name next to the
         // workflow tables, holding a timer fire job in each state and an enqueued job of another handler; (b) no job
         // tables; (c) the same job rows in a separate schema
-        flyway(jobsDefaultDb).target("2").load().migrate();
+        flyway(jobsDefaultDb).target("1").load().migrate();
         createJobTables(jobsDefaultDb, "public");
         try (Connection connection = connection(jobsDefaultDb)) {
             seedJobRows(connection, "job_executions");
         }
-        flyway(noJobsDb).target("2").load().migrate();
-        flyway(jobsMappedDb).target("2").load().migrate();
+        flyway(noJobsDb).target("1").load().migrate();
+        flyway(jobsMappedDb).target("1").load().migrate();
         createJobTables(jobsMappedDb, "jobs");
         try (Connection connection = connection(jobsMappedDb)) {
             seedJobRows(connection, "jobs.job_executions");
@@ -653,7 +653,7 @@ public class UpgradeConversionIT {
         // And (b) migrated without error to the latest version
         try (Connection connection = connection(noJobsDb)) {
             assertThat(rows(connection, "SELECT max(version::int)::text FROM flyway_schema_history WHERE success"))
-                    .containsExactly("5");
+                    .containsExactly("2");
         }
 
         // And in (c) the migration left every job row unchanged
@@ -672,7 +672,7 @@ public class UpgradeConversionIT {
     void migrationLeavesAJobTableNameThatResolvesToAViewAlone() throws Exception {
         // Given a database at the previous release's schema whose unqualified job_executions is a view over the job
         // table of another schema
-        flyway(jobsViewDb).target("2").load().migrate();
+        flyway(jobsViewDb).target("1").load().migrate();
         createJobTables(jobsViewDb, "jobs");
         try (Connection connection = connection(jobsViewDb)) {
             seedJobRows(connection, "jobs.job_executions");
