@@ -248,7 +248,7 @@ final class KafkaSettlement {
             do {
                 pumpAgain = false;
                 refreshGate();
-                while (lifecycle == Lifecycle.RUNNING && permits < settings.maxInFlight() && intakeOpen) {
+                while (lifecycle == Lifecycle.RUNNING && permits < settings.maxInFlight() && intakeOpen && !refused) {
                     Entry entry = nextQueued();
                     if (entry == null) {
                         break;

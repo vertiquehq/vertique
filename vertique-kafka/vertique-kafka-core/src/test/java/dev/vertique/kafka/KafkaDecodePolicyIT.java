@@ -185,7 +185,7 @@ public class KafkaDecodePolicyIT {
             assertEquals(1, ignored.get(), "a handler failure must not run the undecodable callback");
             assertEquals(
                     OptionalLong.of(ignoringValid.getOffset() + 1),
-                    rig.committedOffset(rig.ignoringGroup, rig.ignoringTopic));
+                    rig.awaitCommittedOffset(rig.ignoringGroup, rig.ignoringTopic, ignoringValid.getOffset() + 1));
         } finally {
             rig.close();
         }
@@ -245,8 +245,10 @@ public class KafkaDecodePolicyIT {
 
             // And: the callback ran for the permanent failure alone, and the transient record is not committed
             assertEquals(1, ignored.get(), "the callback should run once, for the permanent failure");
+            // The commit follows the settled records asynchronously, so it is awaited
             assertEquals(
-                    OptionalLong.of(valid.getOffset() + 1), rig.committedOffset(rig.ignoringGroup, rig.ignoringTopic));
+                    OptionalLong.of(valid.getOffset() + 1),
+                    rig.awaitCommittedOffset(rig.ignoringGroup, rig.ignoringTopic, valid.getOffset() + 1));
         } finally {
             rig.close();
         }

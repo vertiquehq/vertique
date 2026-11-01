@@ -19,6 +19,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 /**
  * Proves the settlement protocol of a {@code MANUAL} consumer one interleaving at a time. Every handler run, publish,
@@ -791,6 +792,36 @@ class KafkaSettlementTest {
             rig.run(P0, 0).succeed();
             assertEquals(List.of(1L), rig.committed(P0));
             assertEquals(0, rig.settlement.permits());
+        }
+
+        @Test
+        @Timeout(10)
+        @DisplayName(
+                "a handler that refuses in the same call is not started again in a loop, but when the consumer asks again")
+        void immediateRefusalDoesNotSpin() {
+            // Given runs that refuse the moment they start, as a handler that finds intake closed would
+            SettlementRig rig = new SettlementRig(settings(2, ErrorStrategy.RETRY, true));
+            rig.port.onRun = run -> {
+                if (rig.port.runs.size() > 50) {
+                    throw new AssertionError("the refused record is started again and again");
+                }
+                run.fail(new KafkaRedeliverFailure("IntakeRefused"));
+            };
+            rig.assign(P0);
+
+            // When records arrive
+            rig.add(P0, 0, 1, 2);
+
+            // Then one was started and refused, and none was started again
+            assertEquals(1, rig.port.runs.size());
+            assertTrue(rig.clientPaused(P0));
+
+            // And: when the consumer asks again, the records start in the order they were read
+            rig.port.onRun = null;
+            rig.pendingTimers().get(rig.pendingTimers().size() - 1).fire();
+            assertEquals(3, rig.port.runs.size(), "the refused record and the next one take the two permits");
+            assertEquals(0, rig.port.runs.get(1).offset());
+            assertEquals(1, rig.port.runs.get(2).offset());
         }
 
         @Test

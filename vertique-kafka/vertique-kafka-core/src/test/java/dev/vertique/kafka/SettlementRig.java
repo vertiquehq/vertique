@@ -138,10 +138,16 @@ final class SettlementRig {
         /** Whether commits, pauses and resumes are acknowledged at once. */
         boolean autoComplete = true;
 
+        /** Told of each run as it starts, so a test can complete it in the same call, as a handler that is quick would. */
+        java.util.function.Consumer<Run> onRun;
+
         @Override
         public Future<KafkaSettlement.Result> run(KafkaConsumerRecord<String, byte[]> record, int attempt) {
             Run run = new Run(record, attempt);
             runs.add(run);
+            if (onRun != null) {
+                onRun.accept(run);
+            }
             return run.result.future();
         }
 
