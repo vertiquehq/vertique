@@ -62,9 +62,6 @@ final class KafkaPartitionLedger {
         @Nullable
         KafkaConsumerRecord<String, byte[]> record;
 
-        /** The estimated bytes the record holds while it is not settled. */
-        long bytes;
-
         /** What the last run failed with, for the dead-letter headers. */
         @Nullable
         Throwable cause;
@@ -79,12 +76,11 @@ final class KafkaPartitionLedger {
         @Nullable
         KafkaSettlement.Timer timer;
 
-        Entry(KafkaPartitionLedger ledger, KafkaConsumerRecord<String, byte[]> record, long sequence, long bytes) {
+        Entry(KafkaPartitionLedger ledger, KafkaConsumerRecord<String, byte[]> record, long sequence) {
             this.ledger = ledger;
             this.offset = record.offset();
             this.sequence = sequence;
             this.record = record;
-            this.bytes = bytes;
         }
     }
 
@@ -95,7 +91,6 @@ final class KafkaPartitionLedger {
     private long watermark = NONE;
     private long lastAcked = NONE;
     private long pendingCommit = NONE;
-    private long retainedBytes;
     private int retryWaiting;
     private boolean retentionHeld;
 
@@ -119,11 +114,6 @@ final class KafkaPartitionLedger {
     /** The registered records that have not left the ledger: unsettled ones and settled ones above a gap. */
     int size() {
         return entries.size();
-    }
-
-    /** The estimated bytes of the records that are not settled. */
-    long retainedBytes() {
-        return retainedBytes;
     }
 
     /**
@@ -168,10 +158,9 @@ final class KafkaPartitionLedger {
      *
      * @return the new entry
      */
-    Entry register(KafkaConsumerRecord<String, byte[]> record, long sequence, long bytes) {
-        Entry entry = new Entry(this, record, sequence, bytes);
+    Entry register(KafkaConsumerRecord<String, byte[]> record, long sequence) {
+        Entry entry = new Entry(this, record, sequence);
         entries.addLast(entry);
-        retainedBytes += bytes;
         return entry;
     }
 
@@ -188,19 +177,13 @@ final class KafkaPartitionLedger {
 
     /**
      * Settles an entry: it releases its payload at once. The ledger keeps the entry until the watermark passes it.
-     *
-     * @return the bytes the entry released
      */
-    long settle(Entry entry) {
+    void settle(Entry entry) {
         move(entry, State.SETTLED);
-        long released = entry.bytes;
-        retainedBytes -= released;
-        entry.bytes = 0;
         entry.record = null;
         entry.cause = null;
         entry.view = null;
         entry.timer = null;
-        return released;
     }
 
     /**
@@ -230,10 +213,8 @@ final class KafkaPartitionLedger {
             entry.cause = null;
             entry.view = null;
             entry.timer = null;
-            entry.bytes = 0;
         }
         entries.clear();
-        retainedBytes = 0;
     }
 
     /** Every entry, oldest first, for the end of the assignment. */

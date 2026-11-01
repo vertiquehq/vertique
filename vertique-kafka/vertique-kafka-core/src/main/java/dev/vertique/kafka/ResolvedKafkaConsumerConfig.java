@@ -35,8 +35,6 @@ import java.util.Map;
  * @param deadLetterTopic effective DLQ topic (resolved default: {@code {topic}.dlq})
  * @param eventBusTimeoutMs event bus send timeout in milliseconds
  * @param maxInFlight max concurrent dispatches
- * @param maxRetainedRecords the records a consumer keeps in memory before its partitions stop fetching
- * @param maxRetainedBytes the estimated bytes a consumer keeps in memory before its partitions stop fetching
  * @param deploymentOptions Vert.x deployment options (instances, worker threading model)
  * @param kafkaProperties native Kafka consumer properties merged from global and per-consumer config
  * @param endpointFormat the endpoint-level format override from
@@ -62,8 +60,6 @@ record ResolvedKafkaConsumerConfig(
         String deadLetterTopic,
         long eventBusTimeoutMs,
         int maxInFlight,
-        int maxRetainedRecords,
-        long maxRetainedBytes,
         DeploymentOptions deploymentOptions,
         Map<String, String> kafkaProperties,
         @Nullable String endpointFormat,
@@ -75,11 +71,8 @@ record ResolvedKafkaConsumerConfig(
     /** The number of in-flight records a consumer allows when {@code maxInFlight} is not configured. */
     static final int DEFAULT_MAX_IN_FLIGHT = 256;
 
-    /** The records a consumer keeps in memory when {@code maxRetainedRecords} is not configured. */
-    static final int DEFAULT_MAX_RETAINED_RECORDS = 4096;
-
-    /** The estimated bytes a consumer keeps in memory when {@code maxRetainedBytes} is not configured: 64 MiB. */
-    static final long DEFAULT_MAX_RETAINED_BYTES = 64L * 1024 * 1024;
+    /** Kafka's default for {@code max.poll.records}. */
+    static final int DEFAULT_MAX_POLL_RECORDS = 500;
 
     // --- Factory ---
 
@@ -140,12 +133,6 @@ record ResolvedKafkaConsumerConfig(
         int maxInFlight = consumerConfig != null && consumerConfig.maxInFlight() != null
                 ? consumerConfig.maxInFlight()
                 : DEFAULT_MAX_IN_FLIGHT;
-        int maxRetainedRecords = consumerConfig != null && consumerConfig.maxRetainedRecords() != null
-                ? consumerConfig.maxRetainedRecords()
-                : DEFAULT_MAX_RETAINED_RECORDS;
-        long maxRetainedBytes = consumerConfig != null && consumerConfig.maxRetainedBytes() != null
-                ? consumerConfig.maxRetainedBytes()
-                : DEFAULT_MAX_RETAINED_BYTES;
 
         CommitStrategy commitStrategy = resolveEnum(
                 consumerConfig != null ? consumerConfig.commitStrategy() : null,
@@ -208,8 +195,6 @@ record ResolvedKafkaConsumerConfig(
                 deadLetterTopic,
                 eventBusTimeoutMs,
                 maxInFlight,
-                maxRetainedRecords,
-                maxRetainedBytes,
                 deploymentOptions,
                 kafkaProperties,
                 endpointFormat,
@@ -240,8 +225,6 @@ record ResolvedKafkaConsumerConfig(
                 deadLetterTopic,
                 eventBusTimeoutMs,
                 maxInFlight,
-                maxRetainedRecords,
-                maxRetainedBytes,
                 deploymentOptions,
                 Map.copyOf(properties),
                 endpointFormat,
@@ -249,6 +232,30 @@ record ResolvedKafkaConsumerConfig(
                 workerConfigured,
                 serdeConfig,
                 jsonProfile);
+    }
+
+    /**
+     * The records a {@code MANUAL} consumer may keep for one partition before the partition stops fetching: twice the
+     * larger of {@code max.poll.records} and {@code maxInFlight}. The whole consumer stops at twice this limit, and
+     * fetching resumes at half the limit. A value of {@code max.poll.records} that is not a number, such as a config
+     * provider expression only the client resolves, counts as Kafka's default of {@value #DEFAULT_MAX_POLL_RECORDS}.
+     *
+     * @return the per-partition limit
+     */
+    int retentionLimit() {
+        return 2 * Math.max(maxPollRecords(), maxInFlight);
+    }
+
+    private int maxPollRecords() {
+        String configured = kafkaProperties.get("max.poll.records");
+        if (configured == null) {
+            return DEFAULT_MAX_POLL_RECORDS;
+        }
+        try {
+            return Math.max(1, Integer.parseInt(configured.trim()));
+        } catch (NumberFormatException notANumber) {
+            return DEFAULT_MAX_POLL_RECORDS;
+        }
     }
 
     // --- Private helpers ---

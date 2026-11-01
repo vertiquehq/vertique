@@ -630,8 +630,6 @@ build time.
         "deadLetterTopic": "order.created.dlq",
         "eventBusTimeoutMs": 30000,
         "maxInFlight": 256,
-        "maxRetainedRecords": 4096,
-        "maxRetainedBytes": 67108864,
         "instances": 2,
         "worker": false,
         "format": "avro",
@@ -677,8 +675,6 @@ build time.
 | `deadLetterTopic` | `"{topic}.dlq"` | Used by `DEAD_LETTER` |
 | `eventBusTimeoutMs` | `30000` | Must be `> 0` |
 | `maxInFlight` | `256` | Must be `>= 1`. The most records a consumer runs at once. A `MANUAL` consumer holds the rest in memory; an `AUTO` consumer pauses at this many in-flight dispatches and resumes as they finish |
-| `maxRetainedRecords` | `4096` | Must be `>= 1`. The records a `MANUAL` consumer keeps in memory before its partitions stop fetching. One partition may keep a quarter of it. Never less than `maxInFlight` |
-| `maxRetainedBytes` | `67108864` | Must be `>= 1`. The estimated bytes of the records a `MANUAL` consumer keeps in memory before its partitions stop fetching. One partition may keep a quarter of it |
 | `instances` | `1` | Must be `>= 1` |
 | `worker` | unset | Event-loop threading unless a `mayBlock()` serde forces worker; see below |
 | `format` | per-endpoint, else `kafka.format`, else auto-detect, else `json` | Any registered provider format |
@@ -874,13 +870,18 @@ finished.
   transaction marker, do not hold it. One commit is in flight per partition; one that fails is submitted again with the
   offset of that moment. Every commit comes from here: the consumer never commits the position it has read to.
 - **Nothing seeks.** A retry runs from memory, so a record the client already fetched is never dropped by a seek.
-- **Fetching.** A partition stops fetching, and the consumer keeps polling, while it holds as many records as
-  `maxRetainedRecords` or `maxRetainedBytes` allow, while a retry of an ordinary binding waits, while the dispatch
-  gate is closed and while the consumer stops. Polling never stops, so the consumer keeps its group membership
-  however long its handlers take. A fetch already under way can overshoot a bound by one batch, and a partition
-  fetches again once it holds half of the bound. The records a consumer keeps are those not yet committed:
-  settled records above a record that has not finished count too, although their payload is released at once. A
-  slow record therefore costs memory, and then fetching, while the broker's lag grows.
+- **Fetching.** A partition stops fetching, and the consumer keeps polling, while it holds as many records as its
+  limit allows, while a retry of an ordinary binding waits, while the dispatch gate is closed and while the consumer
+  stops. Polling never stops, so the consumer keeps its group membership however long its handlers take. The limit is
+  derived, with no option of its own: **twice the larger of `max.poll.records` and `maxInFlight`** records per
+  partition (`max.poll.records` is Kafka's, `500` unless configured), and twice that for the whole consumer, whose
+  partitions all stop when it is reached. A partition fetches again once it holds half of the limit, and the consumer
+  once it holds half of its own. A fetch already under way can overshoot the limit by one poll. The records a consumer
+  keeps are those not yet committed: settled records above a record that has not finished count too, although their
+  payload is released at once. A slow record therefore costs memory, and then fetching, while the broker's lag grows.
+  The bytes are bounded by the records Kafka hands over in one poll, so tune memory with `max.poll.records` and the
+  client's fetch size settings, with `maxInFlight`, and with `instances`, which divides the partitions among
+  consumers.
 - **Rebalances.** Each assignment of a partition has its own state. When a partition is revoked the consumer
   commits its finished prefix as a best effort and drops the rest; a handler that is still running finishes into
   nothing and keeps its permit until it does. A partition that returns to the same consumer starts afresh with

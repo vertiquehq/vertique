@@ -659,8 +659,7 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                 cfg.errorStrategy(),
                 cfg.retryConfig(),
                 entry.forceStrategies(),
-                cfg.maxRetainedRecords(),
-                cfg.maxRetainedBytes(),
+                cfg.retentionLimit(),
                 entry.dispatchGate());
     }
 

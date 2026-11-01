@@ -118,28 +118,21 @@ public class KafkaSettlementIT {
         /** Deploys a forcing consumer of the group; returns its deployment id. */
         String deploy(KafkaRecordHandler<Event> handler, JsonObject consumerProperties, long drainMs, int maxInFlight)
                 throws Exception {
-            return deploy(handler, consumerProperties, drainMs, maxInFlight, 4096);
+            return deploy(handler, consumerProperties, drainMs, maxInFlight, null);
         }
 
-        /** Deploys a consumer with two permits and a retention bound of eight records, so it fills at once. */
+        /**
+         * Deploys a consumer with two permits and {@code max.poll.records} of 2, so its limit is four records per
+         * partition and eight for the consumer, and it fills at once.
+         */
         String deployBounded(KafkaRecordHandler<Event> handler, JsonObject consumerProperties) throws Exception {
-            return deploy(handler, consumerProperties, 1_000L, 2, 8);
-        }
-
-        private String deploy(
-                KafkaRecordHandler<Event> handler,
-                JsonObject consumerProperties,
-                long drainMs,
-                int maxInFlight,
-                int maxRetainedRecords)
-                throws Exception {
-            return deploy(handler, consumerProperties, drainMs, maxInFlight, maxRetainedRecords, null);
+            return deploy(handler, consumerProperties.copy().put("max.poll.records", "2"), 1_000L, 2, null);
         }
 
         /** Deploys a forcing consumer whose binding asks the gate before it starts a record. */
         String deployGated(KafkaRecordHandler<Event> handler, JsonObject consumerProperties, KafkaDispatchGate gate)
                 throws Exception {
-            return deploy(handler, consumerProperties, 1_000L, 8, 4096, gate);
+            return deploy(handler, consumerProperties, 1_000L, 8, gate);
         }
 
         private String deploy(
@@ -147,7 +140,6 @@ public class KafkaSettlementIT {
                 JsonObject consumerProperties,
                 long drainMs,
                 int maxInFlight,
-                int maxRetainedRecords,
                 KafkaDispatchGate gate)
                 throws Exception {
             String name = "settle-" + names.incrementAndGet();
@@ -165,7 +157,6 @@ public class KafkaSettlementIT {
             KafkaConsumerBinding<Event> binding = builder.build();
             JsonObject consumer = new JsonObject()
                     .put("maxInFlight", maxInFlight)
-                    .put("maxRetainedRecords", maxRetainedRecords)
                     .put(
                             "retry",
                             new JsonObject()

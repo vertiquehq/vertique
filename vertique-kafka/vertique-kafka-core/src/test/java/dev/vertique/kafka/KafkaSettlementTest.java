@@ -428,13 +428,12 @@ class KafkaSettlementTest {
         void revocationReleasesTheQueuedEntries() {
             // Given a closed gate, so the queue is never polled, and a consumer whose partition keeps coming and going
             AtomicBoolean open = new AtomicBoolean(false);
-            SettlementRig rig =
-                    new SettlementRig(settings(2, ErrorStrategy.SKIP, true, 1_000, 1L << 30, new KafkaDispatchGate() {
-                        @Override
-                        public boolean open() {
-                            return open.get();
-                        }
-                    }));
+            SettlementRig rig = new SettlementRig(settings(2, ErrorStrategy.SKIP, true, 1_000, new KafkaDispatchGate() {
+                @Override
+                public boolean open() {
+                    return open.get();
+                }
+            }));
             List<KafkaPartitionLedger.Entry> everEnded = new java.util.ArrayList<>();
 
             for (int round = 0; round < 5; round++) {
@@ -453,7 +452,6 @@ class KafkaSettlementTest {
             assertEquals(15, everEnded.size());
             assertTrue(everEnded.stream().allMatch(entry -> entry.record == null && entry.cause == null));
             assertEquals(0, rig.settlement.retainedRecords());
-            assertEquals(0, rig.settlement.retainedBytes());
         }
 
         @Test
@@ -614,7 +612,7 @@ class KafkaSettlementTest {
         @DisplayName("a partition stops fetching at its record bound and fetches again at half of it")
         void partitionRecordBound() {
             // Given: a consumer bound of 8 records, so 2 per partition
-            SettlementRig rig = new SettlementRig(settings(1, ErrorStrategy.SKIP, false, 8, 1L << 30, null));
+            SettlementRig rig = new SettlementRig(settings(1, ErrorStrategy.SKIP, false, 2, null));
             rig.assign(P0).add(P0, 0);
             assertFalse(rig.clientPaused(P0));
 
@@ -634,83 +632,68 @@ class KafkaSettlementTest {
         }
 
         @Test
-        @DisplayName("a partition stops fetching at its byte bound")
-        void partitionByteBound() {
-            SettlementRig rig = new SettlementRig(settings(1, ErrorStrategy.SKIP, false, 1_000, 4_000, null));
-            rig.assign(P0);
-
-            rig.settlement.register(record(P0, 0, 2_000));
-            assertTrue(rig.clientPaused(P0), "a partition may use a quarter of the consumer's bytes");
-            rig.run(P0, 0).succeed();
-            assertFalse(rig.clientPaused(P0), "a settled record releases its payload at once");
-        }
-
-        @Test
-        @DisplayName("the consumer bound stops every partition, though each holds a single record")
+        @DisplayName("the consumer limit stops every partition, though each holds a single record")
         void consumerBound() {
-            // Given: a consumer bound of 8 records over eight partitions, and one permit
-            SettlementRig rig = new SettlementRig(settings(1, ErrorStrategy.SKIP, false, 8, 1L << 30, null));
-            TopicPartitionSet partitions = new TopicPartitionSet(8);
+            // Given: a partition limit of 2, so a consumer limit of 4, over four partitions, and one permit
+            SettlementRig rig = new SettlementRig(settings(1, ErrorStrategy.SKIP, false, 2, null));
+            TopicPartitionSet partitions = new TopicPartitionSet(4);
             rig.settlement.assigned(partitions.all());
 
-            // When: seven partitions each hold one record
-            for (int i = 0; i < 7; i++) {
+            // When: three partitions each hold one record
+            for (int i = 0; i < 3; i++) {
                 rig.settlement.register(record(partitions.get(i), 0));
             }
-            for (int i = 0; i < 7; i++) {
+            for (int i = 0; i < 3; i++) {
                 assertFalse(rig.clientPaused(partitions.get(i)));
             }
 
-            // And: the eighth record reaches the consumer bound
-            rig.settlement.register(record(partitions.get(7), 0));
+            // And: the fourth record reaches the consumer limit
+            rig.settlement.register(record(partitions.get(3), 0));
 
             // Then: every partition stops fetching
-            for (int i = 0; i < 8; i++) {
+            for (int i = 0; i < 4; i++) {
                 assertTrue(rig.clientPaused(partitions.get(i)), "partition " + i);
             }
 
-            // And: they fetch again once the consumer is at half of its bound
-            for (int i = 0; i < 4; i++) {
+            // And: they fetch again once the consumer is at half of its limit
+            for (int i = 0; i < 2; i++) {
                 rig.run(partitions.get(i), 0).succeed();
             }
-            assertEquals(4, rig.settlement.retainedRecords());
-            for (int i = 0; i < 8; i++) {
+            assertEquals(2, rig.settlement.retainedRecords());
+            for (int i = 0; i < 4; i++) {
                 assertFalse(rig.clientPaused(partitions.get(i)), "partition " + i);
             }
         }
 
         @Test
-        @DisplayName("settled records above a gap still count as records, and release their payload at once")
+        @DisplayName("settled records above a gap still count as records")
         void settledRecordsAboveAGap() {
-            SettlementRig rig = new SettlementRig(settings(3, ErrorStrategy.SKIP, false, 100, 1L << 30, null));
+            SettlementRig rig = new SettlementRig(settings(3, ErrorStrategy.SKIP, false, 100, null));
             rig.assign(P0).add(P0, 0, 1, 2);
-            long bytes = rig.settlement.retainedBytes();
 
             rig.run(P0, 1).succeed();
             rig.run(P0, 2).succeed();
 
             assertEquals(3, rig.settlement.retainedRecords(), "0 holds the gap open");
-            assertTrue(rig.settlement.retainedBytes() < bytes, "two payloads were released");
         }
 
         @Test
         @DisplayName("a revoked partition gives its records back to the consumer's bound")
         void revocationReleasesRetention() {
-            SettlementRig rig = new SettlementRig(settings(1, ErrorStrategy.SKIP, false, 8, 1L << 30, null));
+            SettlementRig rig = new SettlementRig(settings(1, ErrorStrategy.SKIP, false, 2, null));
             rig.assign(P0).add(P0, 0, 1, 2);
             assertEquals(3, rig.settlement.retainedRecords());
 
             rig.revoke(P0);
 
             assertEquals(0, rig.settlement.retainedRecords());
-            assertEquals(0, rig.settlement.retainedBytes());
         }
 
         @Test
         @DisplayName("every permit held, every retry slot waiting and the buffer full still make progress")
         void fullBuffersMakeProgress() {
             // Given: two permits, a partition bound of 2 and records that all fail once
-            SettlementRig rig = new SettlementRig(settings(2, ErrorStrategy.RETRY, false, 8, 1L << 30, null));
+            SettlementRig rig = new SettlementRig(settings(2, ErrorStrategy.RETRY, false, 2, null));
             rig.assign(P0).add(P0, 0, 1, 2, 3);
             rig.run(P0, 0).fail();
             rig.run(P0, 1).fail();
@@ -765,8 +748,7 @@ class KafkaSettlementTest {
         @DisplayName("a closed gate starts nothing and stops every partition from fetching, until it opens")
         void closedGate() {
             AtomicBoolean open = new AtomicBoolean(false);
-            SettlementRig rig =
-                    new SettlementRig(settings(2, ErrorStrategy.RETRY, true, 1_000, 1L << 30, gateOf(open)));
+            SettlementRig rig = new SettlementRig(settings(2, ErrorStrategy.RETRY, true, 1_000, gateOf(open)));
             rig.assign(P0, P1);
 
             // When: records arrive while the gate is closed
@@ -791,8 +773,7 @@ class KafkaSettlementTest {
         @DisplayName("records that were running when the gate closed finish and settle")
         void runningRecordsFinish() {
             AtomicBoolean open = new AtomicBoolean(true);
-            SettlementRig rig =
-                    new SettlementRig(settings(2, ErrorStrategy.RETRY, true, 1_000, 1L << 30, gateOf(open)));
+            SettlementRig rig = new SettlementRig(settings(2, ErrorStrategy.RETRY, true, 1_000, gateOf(open)));
             rig.assign(P0).add(P0, 0, 1);
 
             open.set(false);
@@ -808,8 +789,7 @@ class KafkaSettlementTest {
         void refusedRecordSpendsNoAttempt() {
             // Given: a forcing binding whose gate is open, and a handler that finds intake closed after it started
             AtomicBoolean open = new AtomicBoolean(true);
-            SettlementRig rig =
-                    new SettlementRig(settings(2, ErrorStrategy.RETRY, true, 1_000, 1L << 30, gateOf(open)));
+            SettlementRig rig = new SettlementRig(settings(2, ErrorStrategy.RETRY, true, 1_000, gateOf(open)));
             rig.assign(P0).add(P0, 0);
 
             // When: it is refused again and again

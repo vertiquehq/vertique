@@ -10,12 +10,10 @@ import dev.vertique.kafka.interceptor.KafkaTerminalOutcome;
 import io.vertx.core.Future;
 import io.vertx.kafka.client.common.TopicPartition;
 import io.vertx.kafka.client.consumer.KafkaConsumerRecord;
-import io.vertx.kafka.client.producer.KafkaHeader;
 import jakarta.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
 import lombok.extern.slf4j.Slf4j;
@@ -39,8 +37,9 @@ import lombok.extern.slf4j.Slf4j;
  * <h2>Permits and retention</h2>
  * A permit is held by a running handler only. A record that waits for a retry, for its dead-letter publish or for the
  * gate holds none, so records that cannot run never keep the records behind them from running. The records a
- * consumer keeps in memory are bounded by count and bytes, per partition and for the consumer; when a bound is
- * reached the partition stops fetching, and it fetches again once the count has fallen to half the bound.
+ * consumer keeps in memory are bounded by count, per partition and for the consumer, at twice and four times the
+ * larger of {@code max.poll.records} and {@code maxInFlight}; when a bound is reached the partition stops fetching, and
+ * it fetches again once the count has fallen to half the bound. The bytes follow from the records the client fetches.
  *
  * <h2>Threading</h2>
  * The class is not thread-safe. Every method runs on the consumer's owner context, and every callback of the
@@ -110,8 +109,8 @@ final class KafkaSettlement {
      * @param retryConfig the retry settings; {@code null} unless the strategy is {@link ErrorStrategy#RETRY}
      * @param forced whether the binding forces its strategies: a handler's {@link KafkaRedeliverFailure} then returns
      *     the record to the queue, and a retry waiting does not stop its partition's fetching
-     * @param maxRetainedRecords the records the consumer keeps in memory before its partitions stop fetching
-     * @param maxRetainedBytes the estimated bytes the consumer keeps in memory before its partitions stop fetching
+     * @param retentionLimit the records one partition may keep before it stops fetching; the consumer stops at twice
+     *     this, and fetching resumes at half of either
      * @param gate the dispatch gate; {@code null} for none
      */
     record Settings(
@@ -120,8 +119,7 @@ final class KafkaSettlement {
             ErrorStrategy errorStrategy,
             @Nullable RetryConfig retryConfig,
             boolean forced,
-            int maxRetainedRecords,
-            long maxRetainedBytes,
+            int retentionLimit,
             @Nullable KafkaDispatchGate gate) {}
 
     private enum Lifecycle {
@@ -129,11 +127,6 @@ final class KafkaSettlement {
         STOPPING,
         CLOSED
     }
-
-    /** The share of the consumer's retention bound one partition may use. */
-    private static final int PARTITION_SHARE = 4;
-
-    private static final long RECORD_OVERHEAD_BYTES = 128L;
 
     private final Settings settings;
     private final Port port;
@@ -143,16 +136,13 @@ final class KafkaSettlement {
     private final PriorityQueue<Entry> queue = new PriorityQueue<>((a, b) -> Long.compare(a.sequence, b.sequence));
 
     private final long partitionRecords;
-    private final long partitionBytes;
     private final long consumerRecords;
-    private final long consumerBytes;
 
     private Lifecycle lifecycle = Lifecycle.RUNNING;
     private long nextSequence;
     private int permits;
     private int publishes;
     private long retainedRecords;
-    private long retainedBytes;
     private boolean consumerRetentionHeld;
     private boolean intakeOpen = true;
     private boolean refused;
@@ -165,10 +155,8 @@ final class KafkaSettlement {
         this.port = port;
         this.holds = new KafkaHoldController(settings.name(), port);
         this.commits = new KafkaCommitController(settings.name(), port);
-        this.consumerRecords = Math.max(settings.maxRetainedRecords(), settings.maxInFlight());
-        this.consumerBytes = settings.maxRetainedBytes();
-        this.partitionRecords = Math.max(1, consumerRecords / PARTITION_SHARE);
-        this.partitionBytes = Math.max(1, consumerBytes / PARTITION_SHARE);
+        this.partitionRecords = Math.max(1, settings.retentionLimit());
+        this.consumerRecords = 2 * partitionRecords;
     }
 
     // --- Assignment ---
@@ -206,7 +194,6 @@ final class KafkaSettlement {
             cancelTimer(entry);
         }
         retainedRecords -= ledger.size();
-        retainedBytes -= ledger.retainedBytes();
         // The queue may not be polled again for a long time, while the gate is closed or every permit is held, so the
         // ended assignment's entries leave it now, with their payloads.
         queue.removeIf(entry -> entry.ledger == ledger);
@@ -232,10 +219,8 @@ final class KafkaSettlement {
                     record.offset());
             return;
         }
-        long bytes = sizeOf(record);
-        Entry entry = ledger.register(record, nextSequence++, bytes);
+        Entry entry = ledger.register(record, nextSequence++);
         retainedRecords++;
-        retainedBytes += bytes;
         queue.add(entry);
         evaluateRetention(ledger);
         pump();
@@ -358,7 +343,7 @@ final class KafkaSettlement {
 
     private void settle(Entry entry, @Nullable KafkaConsumerRecordView view, KafkaTerminalOutcome outcome) {
         KafkaPartitionLedger ledger = entry.ledger;
-        retainedBytes -= ledger.settle(entry);
+        ledger.settle(entry);
         retainedRecords -= ledger.advance();
         commits.commit(ledger);
         updateBackoff(ledger);
@@ -524,15 +509,15 @@ final class KafkaSettlement {
             return;
         }
         boolean held = ledger.retentionHeld();
-        if (!held && (ledger.size() >= partitionRecords || ledger.retainedBytes() >= partitionBytes)) {
+        if (!held && ledger.size() >= partitionRecords) {
             ledger.retentionHeld(true);
-        } else if (held && ledger.size() <= partitionRecords / 2 && ledger.retainedBytes() <= partitionBytes / 2) {
+        } else if (held && ledger.size() <= partitionRecords / 2) {
             ledger.retentionHeld(false);
         }
         boolean consumerHeld = consumerRetentionHeld;
-        if (!consumerHeld && (retainedRecords >= consumerRecords || retainedBytes >= consumerBytes)) {
+        if (!consumerHeld && retainedRecords >= consumerRecords) {
             consumerRetentionHeld = true;
-        } else if (consumerHeld && retainedRecords <= consumerRecords / 2 && retainedBytes <= consumerBytes / 2) {
+        } else if (consumerHeld && retainedRecords <= consumerRecords / 2) {
             consumerRetentionHeld = false;
         }
         if (consumerRetentionHeld != consumerHeld) {
@@ -545,14 +530,14 @@ final class KafkaSettlement {
     private void reevaluateRetention() {
         for (KafkaPartitionLedger ledger : new ArrayList<>(ledgers.values())) {
             boolean held = ledger.retentionHeld();
-            if (held && ledger.size() <= partitionRecords / 2 && ledger.retainedBytes() <= partitionBytes / 2) {
+            if (held && ledger.size() <= partitionRecords / 2) {
                 ledger.retentionHeld(false);
             }
         }
         boolean consumerHeld = consumerRetentionHeld;
-        if (consumerHeld && retainedRecords <= consumerRecords / 2 && retainedBytes <= consumerBytes / 2) {
+        if (consumerHeld && retainedRecords <= consumerRecords / 2) {
             consumerRetentionHeld = false;
-        } else if (!consumerHeld && (retainedRecords >= consumerRecords || retainedBytes >= consumerBytes)) {
+        } else if (!consumerHeld && retainedRecords >= consumerRecords) {
             consumerRetentionHeld = true;
         }
         for (KafkaPartitionLedger ledger : ledgers.values()) {
@@ -566,26 +551,6 @@ final class KafkaSettlement {
         } else {
             holds.release(ledger.partition(), KafkaHoldController.Reason.RETENTION);
         }
-    }
-
-    private static long sizeOf(KafkaConsumerRecord<String, byte[]> record) {
-        long bytes = RECORD_OVERHEAD_BYTES;
-        byte[] value = record.value();
-        if (value != null) {
-            bytes += value.length;
-        }
-        String key = record.key();
-        if (key != null) {
-            bytes += key.length();
-        }
-        List<KafkaHeader> headers = record.headers();
-        if (headers != null) {
-            for (KafkaHeader header : headers) {
-                bytes += header.key() == null ? 0 : header.key().length();
-                bytes += header.value() == null ? 0 : header.value().length();
-            }
-        }
-        return bytes;
     }
 
     // --- Stop ---
@@ -671,9 +636,5 @@ final class KafkaSettlement {
 
     long retainedRecords() {
         return retainedRecords;
-    }
-
-    long retainedBytes() {
-        return retainedBytes;
     }
 }

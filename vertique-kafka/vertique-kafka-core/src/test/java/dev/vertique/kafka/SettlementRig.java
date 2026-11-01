@@ -214,21 +214,19 @@ final class SettlementRig {
 
     /** Settings of a binding with the given strategy and generous retention. */
     static KafkaSettlement.Settings settings(int maxInFlight, ErrorStrategy strategy, boolean forced) {
-        return settings(maxInFlight, strategy, forced, 1_000, 1L << 30, null);
+        return settings(maxInFlight, strategy, forced, 1_000, null);
     }
 
     static KafkaSettlement.Settings settings(
             int maxInFlight,
             ErrorStrategy strategy,
             boolean forced,
-            int maxRetainedRecords,
-            long maxRetainedBytes,
+            int retentionLimit,
             @Nullable KafkaDispatchGate gate) {
         RetryConfig retry = strategy == ErrorStrategy.RETRY
                 ? new RetryConfig(2, 100L, 2.0, ErrorStrategy.DEAD_LETTER, 10_000L)
                 : null;
-        return new KafkaSettlement.Settings(
-                "test", maxInFlight, strategy, retry, forced, maxRetainedRecords, maxRetainedBytes, gate);
+        return new KafkaSettlement.Settings("test", maxInFlight, strategy, retry, forced, retentionLimit, gate);
     }
 
     /** A record of a partition with a value of {@code size} bytes. */
