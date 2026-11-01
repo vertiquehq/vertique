@@ -17,6 +17,7 @@ import dev.vertique.context.InboundDispatchScope;
 import dev.vertique.context.InboundExecutionContextScope;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
+import dev.vertique.core.context.InboundContextInitializer;
 import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContexts;
@@ -273,10 +274,15 @@ final class DeliveryFixture {
 
     /** The context classes of {@code vertique-context}, built as their own unit test builds them. */
     static InboundExecutionContextScope scopeOver(DefaultContextHolder holder) {
+        return scopeOver(holder, Set.of());
+    }
+
+    static InboundExecutionContextScope scopeOver(
+            DefaultContextHolder holder, Set<InboundContextInitializer> initializers) {
         ContextScopeBinder binder = new ContextScopeBinder(holder);
         DurableContextMetadataRegistry emptyRegistry = new DurableContextMetadataRegistry(Set.of(), Set.of());
         DurableContextPropagator durable = new DurableContextPropagator(emptyRegistry, holder, binder);
-        return new InboundExecutionContextScope(new InboundDispatchScope(), durable, Set.of());
+        return new InboundExecutionContextScope(new InboundDispatchScope(), durable, initializers);
     }
 
     WorkflowSourceDelivery delivery() {
@@ -310,7 +316,7 @@ final class DeliveryFixture {
     /** Delivers one signal from the caller and returns the future the bean produced. */
     Future<CorrelatedSignalReceipt> record(
             Caller caller, CorrelatedSignal signal, boolean businessKey, SourceEnvelope envelope) {
-        return caller.run(() -> delivery.record(signal, businessKey, envelope));
+        return caller.run(() -> delivery.record(delivery.capture(), signal, businessKey, envelope));
     }
 
     /** Runs two deliveries so that both are open together, then completes them in the opposite order. */

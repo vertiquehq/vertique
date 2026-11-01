@@ -141,13 +141,18 @@ public final class WorkflowSourceDelivery {
      * @param message the decoded message
      * @param envelope the resolved values the transport supplies for the message
      * @param <T> the type of the decoded message body
-     * @return a future that completes, on the context the caller delivered from, with the disposition
+     * @return a future that completes, on the context the caller delivered from, with the disposition;
+     *     it fails with a {@link NullPointerException} when an argument is {@code null}
      */
     public <T> Future<SourceDisposition> deliver(
             SignalSourcePlan<T> plan, SignalMessage<T> message, SourceEnvelope envelope) {
-        Objects.requireNonNull(plan, "plan");
-        Objects.requireNonNull(message, "message");
-        Objects.requireNonNull(envelope, "envelope");
+        try {
+            Objects.requireNonNull(plan, "plan");
+            Objects.requireNonNull(message, "message");
+            Objects.requireNonNull(envelope, "envelope");
+        } catch (NullPointerException e) {
+            return Future.failedFuture(e);
+        }
         return new SignalSourceRun<>(this, plan, message, envelope, capture()).run();
     }
 
@@ -173,25 +178,12 @@ public final class WorkflowSourceDelivery {
     }
 
     /**
-     * Records one signal under the envelope's binding, in its own transaction.
+     * Records one signal under the envelope's binding, in its own transaction, completing on a context
+     * the caller has already captured, so that one capture serves every stage of a message.
      *
      * <p>The signal is recorded with the provenance the envelope builds for the signal's own dedup key,
      * through {@code signalByBusinessKey} when {@code businessKey} is true and {@code signalByKey}
      * otherwise.
-     *
-     * @param signal the signal to record
-     * @param businessKey whether the signal addresses instances by business key rather than by key
-     * @param envelope the resolved values to bind for the recording
-     * @return a future that completes on the calling context with the receipt, or fails with what the
-     *     operations failed with
-     */
-    Future<CorrelatedSignalReceipt> record(CorrelatedSignal signal, boolean businessKey, SourceEnvelope envelope) {
-        return record(capture(), signal, businessKey, envelope);
-    }
-
-    /**
-     * Records one signal as {@link #record(CorrelatedSignal, boolean, SourceEnvelope)} does, completing on a
-     * context the caller has already captured, so that one capture serves every stage of a message.
      *
      * @param captured the context the caller delivers from
      * @param signal the signal to record

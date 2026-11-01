@@ -4,17 +4,20 @@
 package dev.vertique.workflow.source;
 
 /**
- * Observes the outcome of every message a correlated signal source receives.
+ * Observes the outcome of every signal a correlated signal source records, and of every message that ends before a
+ * signal is chosen.
  *
  * <p>Register an observer by contributing it into the {@code Set<SignalSourceObserver>} multibinding.
- * Every observer is told about every outcome, once per message, in no defined order. An observer never
+ * Every observer is told about every outcome, once per signal, or once for an outcome reached before a signal is
+ * chosen, in no defined order. An observer never
  * changes an outcome: what it throws is contained and reported by the framework, and a message's fate
  * is the same with or without it.
  */
 public interface SignalSourceObserver {
 
     /**
-     * Called once with the outcome of a message, after the source has decided it.
+     * Called once with the outcome of a signal, or of a message that ended before a signal was chosen, after the
+     * source has decided it.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
      * enclosing operation.

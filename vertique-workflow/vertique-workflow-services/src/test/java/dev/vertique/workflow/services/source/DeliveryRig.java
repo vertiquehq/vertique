@@ -14,6 +14,7 @@ import static org.mockito.Mockito.when;
 import dev.vertique.context.DefaultContextHolder;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
+import dev.vertique.core.context.InboundContextInitializer;
 import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.core.extension.ObserverFailureReporter;
 import dev.vertique.security.SecurityContext;
@@ -140,7 +141,11 @@ final class DeliveryRig implements AutoCloseable {
     private final AtomicInteger transactions = new AtomicInteger();
     private volatile List<Answer> script = List.of(recorded());
 
-    private DeliveryRig(Vertx vertx, boolean recording, List<SignalSourceObserver> others) {
+    private DeliveryRig(
+            Vertx vertx,
+            boolean recording,
+            List<SignalSourceObserver> others,
+            Set<InboundContextInitializer> initializers) {
         this.vertx = vertx;
         stubPool();
         stubOperations();
@@ -150,17 +155,22 @@ final class DeliveryRig implements AutoCloseable {
         }
         observers.addAll(others);
         this.delivery = new WorkflowSourceDelivery(
-                () -> operations, pool, vertx, DeliveryFixture.scopeOver(holder), observers, reporter);
+                () -> operations, pool, vertx, DeliveryFixture.scopeOver(holder, initializers), observers, reporter);
     }
 
     /** A rig whose only observer is the rig's own recorder, read through {@link #events()}. */
     static DeliveryRig over(Vertx vertx) {
-        return new DeliveryRig(vertx, true, List.of());
+        return new DeliveryRig(vertx, true, List.of(), Set.of());
+    }
+
+    /** A rig as {@link #over}, whose context binding runs the given initializer on every stage and recording. */
+    static DeliveryRig initializing(Vertx vertx, InboundContextInitializer initializer) {
+        return new DeliveryRig(vertx, true, List.of(), Set.of(initializer));
     }
 
     /** A rig whose observer set is exactly the observers given, in order. */
     static DeliveryRig observing(Vertx vertx, SignalSourceObserver... observers) {
-        return new DeliveryRig(vertx, false, List.of(observers));
+        return new DeliveryRig(vertx, false, List.of(observers), Set.of());
     }
 
     // --- scripting the operations ---

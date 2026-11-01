@@ -971,7 +971,7 @@ still receive the event, and command execution is unaffected.
 
 ### Signal Source Observer
 
-`SignalSourceObserver` and `SignalSourceEvent` (package `dev.vertique.workflow.source`) report the outcome of each message that a correlated signal source receives. An application or a bridge module contributes an observer into the `Set<SignalSourceObserver>` multibinding, which `WorkflowSourceModule` in `vertique-workflow-services` declares empty.
+`SignalSourceObserver` and `SignalSourceEvent` (package `dev.vertique.workflow.source`) report the outcome of each signal a correlated signal source records, once per signal, and of a message that ends before a signal is chosen, once for the message. An application or a bridge module contributes an observer into the `Set<SignalSourceObserver>` multibinding, which `WorkflowSourceModule` in `vertique-workflow-services` declares empty.
 
 ```java
 public interface SignalSourceObserver {

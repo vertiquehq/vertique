@@ -29,6 +29,7 @@ import dev.vertique.workflow.types.ScopeKeyRules;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.internal.ContextInternal;
+import io.vertx.core.json.EncodeException;
 import io.vertx.sqlclient.DatabaseException;
 import jakarta.annotation.Nullable;
 import java.util.LinkedHashMap;
@@ -132,10 +133,10 @@ final class SignalSourceRun<T> {
         whenStage()
                 .compose(stop -> stop != null ? Future.succeededFuture(stop) : dedupStage())
                 .compose(stop -> stop != null ? Future.succeededFuture(stop) : dispatchStage())
+                .map(stop -> stop != null ? stop : identityStage())
                 .compose(stop -> stop != null ? Future.succeededFuture(stop) : scopeStage())
                 .compose(stop -> stop != null ? Future.succeededFuture(stop) : signals())
-                .recover(failure -> Future.succeededFuture(
-                        conclude(null, Verdict.of(Outcome.STAGE_FAILED, Fate.RETRY, typeOf(failure)), false)))
+                .recover(failure -> Future.succeededFuture(conclude(null, failedVerdict(failure))))
                 .onComplete(out);
         return out.future();
     }
@@ -148,11 +149,11 @@ final class SignalSourceRun<T> {
         }
         return sync(bindings(null), () -> plan.when().test(message.body())).map(result -> {
             if (result.thrown() != null) {
-                return stop(null, thrownVerdict(result.thrown()));
+                return conclude(null, thrownVerdict(result.thrown()));
             }
             return Boolean.TRUE.equals(result.value())
                     ? null
-                    : stop(null, Verdict.of(Outcome.IGNORED, Fate.DONE, null));
+                    : conclude(null, Verdict.of(Outcome.IGNORED, Fate.DONE, null));
         });
     }
 
@@ -163,7 +164,7 @@ final class SignalSourceRun<T> {
         }
         return sync(bindings(null), () -> dedupBy.apply(message.body())).map(result -> {
             if (result.thrown() != null) {
-                return stop(null, thrownVerdict(result.thrown()));
+                return conclude(null, thrownVerdict(result.thrown()));
             }
             return acceptDedupKey(result.value());
         });
@@ -171,7 +172,7 @@ final class SignalSourceRun<T> {
 
     private @Nullable SourceDisposition acceptDedupKey(@Nullable String key) {
         if (key == null || key.isBlank()) {
-            return stop(null, Verdict.of(Outcome.INVALID_INPUT, Fate.TERMINAL, BLANK_DEDUP_KEY));
+            return conclude(null, Verdict.of(Outcome.INVALID_INPUT, Fate.TERMINAL, BLANK_DEDUP_KEY));
         }
         dedupKey = key;
         return null;
@@ -184,37 +185,38 @@ final class SignalSourceRun<T> {
         }
         return lookup(Map.of(), () -> dispatchAs.apply(message)).map(result -> {
             Throwable failure = result.thrown() != null ? result.thrown() : result.failed();
-            if (failure instanceof SignalSourceRefusal refusal) {
-                return stop(null, Verdict.of(Outcome.REFUSED_IDENTITY, Fate.TERMINAL, refusal.errorType()));
+            SignalSourceRefusal refusal = refusalIn(failure);
+            if (refusal != null) {
+                return conclude(null, Verdict.of(Outcome.REFUSED_IDENTITY, Fate.TERMINAL, refusal.errorType()));
             }
             if (result.thrown() != null) {
-                return stop(null, thrownVerdict(result.thrown()));
+                return conclude(null, thrownVerdict(result.thrown()));
             }
             if (result.failed() != null) {
-                return stop(null, failedVerdict(result.failed()));
+                return conclude(null, failedVerdict(result.failed()));
             }
             Optional<SecurityIdentity> answer = result.value();
             if (answer == null || answer.isEmpty()) {
                 return null;
             }
-            SecurityIdentity identity = answer.get();
-            if (identity.actor().type() == PrincipalType.ANONYMOUS) {
-                return stop(null, Verdict.of(Outcome.REFUSED_IDENTITY, Fate.TERMINAL, ANONYMOUS_IDENTITY));
-            }
-            try {
-                effective = new SourceEnvelope(
-                        envelope.transport(),
-                        SecurityContexts.unauthenticated(identity),
-                        envelope.identityContributed(),
-                        envelope.correlation(),
-                        envelope.origin(),
-                        envelope.defaultDedupKey(),
-                        envelope.provenance());
-            } catch (RuntimeException e) {
-                return stop(null, thrownVerdict(e));
-            }
+            effective = new SourceEnvelope(
+                    envelope.transport(),
+                    SecurityContexts.unauthenticated(answer.get()),
+                    envelope.identityContributed(),
+                    envelope.correlation(),
+                    envelope.origin(),
+                    envelope.defaultDedupKey(),
+                    envelope.provenance());
             return null;
         });
+    }
+
+    /** Refuses an anonymous identity, whether the envelope carried it or {@code dispatchAs} answered it. */
+    private @Nullable SourceDisposition identityStage() {
+        if (effective.security().identity().actor().type() == PrincipalType.ANONYMOUS) {
+            return conclude(null, Verdict.of(Outcome.REFUSED_IDENTITY, Fate.TERMINAL, ANONYMOUS_IDENTITY));
+        }
+        return null;
     }
 
     private Future<SourceDisposition> scopeStage() {
@@ -224,11 +226,11 @@ final class SignalSourceRun<T> {
         }
         return sync(bindings(null), () -> scope.apply(message)).map(result -> {
             if (result.thrown() != null) {
-                return stop(null, thrownVerdict(result.thrown()));
+                return conclude(null, thrownVerdict(result.thrown()));
             }
             Optional<String> answer = result.value();
             if (answer == null || answer.isEmpty()) {
-                return stop(null, Verdict.of(Outcome.SCOPE_EMPTY, Fate.DONE, null));
+                return conclude(null, Verdict.of(Outcome.SCOPE_EMPTY, Fate.DONE, null));
             }
             try {
                 String key = answer.get();
@@ -236,7 +238,7 @@ final class SignalSourceRun<T> {
                 scopeContext = new ScopeContext(new ScopeKey(key));
                 scopeKey = key;
             } catch (IllegalArgumentException e) {
-                return stop(null, Verdict.of(Outcome.INVALID_INPUT, Fate.TERMINAL, typeOf(e)));
+                return conclude(null, Verdict.of(Outcome.INVALID_INPUT, Fate.TERMINAL, typeOf(e)));
             }
             return null;
         });
@@ -252,18 +254,24 @@ final class SignalSourceRun<T> {
         return folded;
     }
 
+    /**
+     * Runs one signal to its disposition. A failure the stages did not judge ends this signal as a retry,
+     * so a later signal still runs and the message's fate stays the most severe of them.
+     */
     private Future<SourceDisposition> signal(Target<T> target) {
-        return keyStep(target).compose(key -> {
-            if (key.verdict() != null) {
-                return Future.succeededFuture(conclude(target, key.verdict(), false));
-            }
-            return payloadStep(target).compose(payload -> {
-                if (payload.verdict() != null) {
-                    return Future.succeededFuture(conclude(target, payload.verdict(), false));
-                }
-                return record(target, key.value(), payload.value());
-            });
-        });
+        return keyStep(target)
+                .compose(key -> {
+                    if (key.verdict() != null) {
+                        return Future.succeededFuture(conclude(target, key.verdict()));
+                    }
+                    return payloadStep(target).compose(payload -> {
+                        if (payload.verdict() != null) {
+                            return Future.succeededFuture(conclude(target, payload.verdict()));
+                        }
+                        return record(target, key.value(), payload.value());
+                    });
+                })
+                .recover(failure -> Future.succeededFuture(conclude(target, failedVerdict(failure))));
     }
 
     private Future<Step<String>> keyStep(Target<T> target) {
@@ -307,17 +315,11 @@ final class SignalSourceRun<T> {
     }
 
     private Future<SourceDisposition> record(Target<T> target, @Nullable String key, @Nullable Object payload) {
-        CorrelatedSignal signal;
-        try {
-            signal = new CorrelatedSignal(
-                    target.contract(), target.signalName(), key, payload, dedupKey, null, scopeKey, null);
-        } catch (IllegalArgumentException e) {
-            return Future.succeededFuture(
-                    conclude(target, Verdict.of(Outcome.INVALID_INPUT, Fate.TERMINAL, typeOf(e)), false));
-        }
+        CorrelatedSignal signal = new CorrelatedSignal(
+                target.contract(), target.signalName(), key, payload, dedupKey, null, scopeKey, null);
         return delivery.record(captured, signal, target.businessKey(), effective)
                 .transform(outcome -> Future.succeededFuture(judge(target, outcome.cause(), outcome.result())))
-                .map(verdict -> conclude(target, verdict, true));
+                .map(verdict -> conclude(target, verdict));
     }
 
     // --- judging a recording ---
@@ -330,16 +332,27 @@ final class SignalSourceRun<T> {
             }
             return new Verdict(Outcome.APPLIED, Fate.DONE, null, receipt == null ? null : receipt.definitionId());
         }
+        Verdict named = inChain(failure, cause -> named(target, cause));
+        return named != null ? named : failedVerdict(failure);
+    }
+
+    /** The refusal a failure is or wraps, found with the depth limit {@link #judge} uses, or {@code null}. */
+    private static @Nullable SignalSourceRefusal refusalIn(@Nullable Throwable failure) {
+        return inChain(failure, cause -> cause instanceof SignalSourceRefusal refusal ? refusal : null);
+    }
+
+    /** The first answer {@code match} gives along the cause chain, to a bounded depth, or {@code null}. */
+    private static @Nullable <R> R inChain(@Nullable Throwable failure, Function<Throwable, R> match) {
         Throwable cause = failure;
         for (int depth = 0; cause != null && depth < MAX_CAUSE_DEPTH; depth++) {
-            Verdict named = named(target, cause);
-            if (named != null) {
-                return named;
+            R found = match.apply(cause);
+            if (found != null) {
+                return found;
             }
             Throwable next = cause.getCause();
             cause = next == cause ? null : next;
         }
-        return Verdict.of(Outcome.STAGE_FAILED, Fate.RETRY, typeOf(failure));
+        return null;
     }
 
     private static @Nullable Verdict named(Target<?> target, Throwable cause) {
@@ -358,6 +371,9 @@ final class SignalSourceRun<T> {
         }
         if (cause instanceof WorkflowSignalActorException) {
             return Verdict.of(Outcome.REFUSED_IDENTITY, Fate.TERMINAL, typeOf(cause));
+        }
+        if (cause instanceof EncodeException) {
+            return Verdict.of(Outcome.INVALID_INPUT, Fate.TERMINAL, typeOf(cause));
         }
         if (cause instanceof DatabaseException database
                 && database.getSqlState() != null
@@ -382,11 +398,7 @@ final class SignalSourceRun<T> {
 
     // --- ending a judgement: report it, log it when no command shows who attempted it, fold it ---
 
-    private @Nullable SourceDisposition stop(@Nullable Target<T> target, Verdict verdict) {
-        return conclude(target, verdict, false);
-    }
-
-    private SourceDisposition conclude(@Nullable Target<T> target, Verdict verdict, boolean reachedRecording) {
+    private SourceDisposition conclude(@Nullable Target<T> target, Verdict verdict) {
         delivery.report(new SignalSourceEvent(
                 plan.sourceName(),
                 envelope.transport(),
@@ -394,18 +406,19 @@ final class SignalSourceRun<T> {
                 target == null ? null : target.signalName(),
                 verdict.definitionId(),
                 verdict.outcome()));
-        if (reachedRecording && target != null) {
-            logNoCommand(target, verdict);
-        }
+        logNoCommand(target, verdict);
         return new SourceDisposition(verdict.fate(), verdict.fate() == Fate.DONE ? null : verdict.errorType());
     }
 
     /**
      * Records who attempted a delivery that left no command row, when the identity is not a system's.
-     * It names the actor, contract, signal and outcome, and nothing of the message.
+     * It names the actor, the contract and signal (none for an outcome before a signal is chosen) and the
+     * outcome, and nothing of the message. A recorded, deduplicated or ignored message needs none.
      */
-    private void logNoCommand(Target<T> target, Verdict verdict) {
-        if (verdict.outcome() == Outcome.APPLIED || verdict.outcome() == Outcome.DEDUPLICATED) {
+    private void logNoCommand(@Nullable Target<T> target, Verdict verdict) {
+        if (verdict.outcome() == Outcome.APPLIED
+                || verdict.outcome() == Outcome.DEDUPLICATED
+                || verdict.outcome() == Outcome.IGNORED) {
             return;
         }
         SecurityIdentity identity = effective.security().identity();
@@ -416,8 +429,8 @@ final class SignalSourceRun<T> {
                 "Source '{}' recorded no command for actor '{}': contract={}, signal={}, outcome={}",
                 plan.sourceName(),
                 ActorText.clean(identity.actor().id()),
-                target.contractName(),
-                target.signalName(),
+                target == null ? null : target.contractName(),
+                target == null ? null : target.signalName(),
                 verdict.outcome());
     }
 

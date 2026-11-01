@@ -8,6 +8,7 @@ import dev.vertique.security.SecurityContext;
 import dev.vertique.security.authz.InvocationOrigin;
 import dev.vertique.workflow.ops.SignalProvenance;
 import jakarta.annotation.Nullable;
+import java.util.Objects;
 import java.util.function.Function;
 
 /**
@@ -33,4 +34,18 @@ public record SourceEnvelope(
         @Nullable CorrelationContext correlation,
         InvocationOrigin origin,
         @Nullable String defaultDedupKey,
-        Function<String, SignalProvenance> provenance) {}
+        Function<String, SignalProvenance> provenance) {
+
+    /**
+     * Validates the components that are required.
+     *
+     * @throws NullPointerException if {@code transport}, {@code security}, {@code origin} or
+     *     {@code provenance} is {@code null}
+     */
+    public SourceEnvelope {
+        Objects.requireNonNull(transport, "transport");
+        Objects.requireNonNull(security, "security");
+        Objects.requireNonNull(origin, "origin");
+        Objects.requireNonNull(provenance, "provenance");
+    }
+}

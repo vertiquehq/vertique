@@ -147,8 +147,8 @@ A `SignalSourcePlan<T>` describes a transport-neutral signal source, and `Workfl
 | Duplicate receipt | `DEDUPLICATED` | `DONE` |
 | `when` rejects; a key that is null or empty, or a lookup answering empty | `IGNORED` | `DONE` |
 | `scope` answers empty | `SCOPE_EMPTY` | `DONE` |
-| Anonymous identity, `WorkflowSignalActorException`, or `SignalSourceRefusal` from `dispatchAs` | `REFUSED_IDENTITY` | `TERMINAL` |
-| A key, scope or payload the type or database refuses (blank, over 255 characters, NUL, SQLSTATE class `22`); a null or blank dedup key | `INVALID_INPUT` | `TERMINAL` |
+| Anonymous identity, whether the envelope carried it or `dispatchAs` answered it, `WorkflowSignalActorException`, or `SignalSourceRefusal` from `dispatchAs`, also when wrapped in another exception | `REFUSED_IDENTITY` | `TERMINAL` |
+| A key, scope or payload the type or database refuses (blank, over 255 characters, NUL, SQLSTATE class `22`); a payload that cannot be encoded as JSON; a null or blank dedup key | `INVALID_INPUT` | `TERMINAL` |
 | `WorkflowSignalLimitException` | `LIMITED` | `RETRY` |
 | `WorkflowInvalidPayloadException` (oversized payload) | `OVERSIZED` | `TERMINAL` |
 | A stage that throws before it returns | `STAGE_FAILED` | `TERMINAL` |
@@ -156,7 +156,7 @@ A `SignalSourcePlan<T>` describes a transport-neutral signal source, and `Workfl
 
 `UNDECODABLE` is raised and reported by a transport itself. A failed stage is forwarded by exception class only, a `SignalSourceRefusal` by its `errorType()` alone, a refused input by the refusing exception's class, and a blank dedup key as `BlankDedupKey`; a message, which can hold the key, is never logged, put in a disposition or put in an event.
 
-**Identity log.** When the identity in force is not a system identity and a recording ends without recording a command (no match, ambiguity, a limit, a refusal or a failure), `deliver` writes one log record naming the actor id, contract, signal and outcome, because no command row then shows who attempted it. The actor id has control and line-separator characters removed and is cut to 255 code points; the key and the message are never logged. A system identity writes none.
+**Identity log.** When the identity in force is not a system identity and a message ends without recording a command, at any stage and for any outcome except `APPLIED`, `DEDUPLICATED` and `IGNORED` (no match, ambiguity, a limit, a refusal, an empty scope, a refused key, scope or payload, or a failure), `deliver` writes one log record naming the actor id, contract, signal and outcome, because no command row then shows who attempted it. An outcome reached before a signal is chosen names no contract or signal. The actor id has control and line-separator characters removed and is cut to 255 code points; the key and the message are never logged. A system identity writes none.
 
 ---
 

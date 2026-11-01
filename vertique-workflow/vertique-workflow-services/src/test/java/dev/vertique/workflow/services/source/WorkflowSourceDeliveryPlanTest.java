@@ -20,11 +20,15 @@ import static dev.vertique.workflow.services.source.PlanFixture.shipments;
 import static dev.vertique.workflow.services.source.PlanFixture.twoSignalPlan;
 import static dev.vertique.workflow.services.source.PlanFixture.user;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import dev.vertique.core.context.ContextScopes;
+import dev.vertique.core.context.InboundContextInitializer;
 import dev.vertique.security.SecurityContext;
+import dev.vertique.security.SecurityContexts;
 import dev.vertique.security.SecurityIdentity;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import dev.vertique.workflow.exception.WorkflowSignalActorException;
@@ -52,6 +56,7 @@ import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.internal.ContextInternal;
+import io.vertx.core.json.EncodeException;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.sqlclient.DatabaseException;
 import java.util.ArrayList;
@@ -63,7 +68,9 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -1240,6 +1247,203 @@ class WorkflowSourceDeliveryPlanTest {
                 })
                 .payload(PlanFixture::confirmation)
                 .build();
+    }
+
+    @Test
+    @DisplayName("an anonymous envelope is refused before any match, whether or not its identity was contributed")
+    void anAnonymousEnvelopeIsRefusedBeforeAnyMatch(Vertx vertx) {
+        // Given envelopes that carry an anonymous identity, one contributed by the transport and one not
+        SecurityContext anonymous = SecurityContexts.unauthenticated(SecurityIdentity.anonymous());
+        SourceEnvelope plain = envelope();
+        SourceEnvelope contributed = contributedEnvelope();
+        Map<String, SourceEnvelope> rows = new LinkedHashMap<>();
+        rows.put("not contributed", withSecurity(plain, anonymous));
+        rows.put("contributed", withSecurity(contributed, anonymous));
+
+        rows.forEach((row, anonymousEnvelope) -> {
+            // and operations that would answer no-match
+            try (DeliveryRig rig = DeliveryRig.over(vertx)
+                    .operationsRaising(new WorkflowSignalNoMatchException("orders", SHIPMENT_DELIVERED))) {
+                // When the message is delivered
+                SourceDisposition disposition = rig.deliver(keyedPlan(), shipment(KEY), anonymousEnvelope);
+
+                // Then it is terminal with REFUSED_IDENTITY and no operations call was made
+                assertThat(disposition.fate()).as(row).isEqualTo(Fate.TERMINAL);
+                assertThat(rig.outcomes()).as(row).containsExactly(Outcome.REFUSED_IDENTITY);
+                assertThat(rig.calls()).as(row).isEmpty();
+            }
+        });
+    }
+
+    @Test
+    @DisplayName("a refused or failed stage under a non-system identity logs the actor and never the key")
+    void aRefusedOrFailedStageUnderANonSystemIdentityLogsTheActorAndNeverTheKey(Vertx vertx) {
+        // Given plans that run as alice and end at a key stage, a payload stage and a scope stage
+        String longKey = "K".repeat(256);
+        SignalSourcePlan<ShipmentDelivered> longKeyPlan =
+                ordersSignal(shipments().dispatchAs(message -> Future.succeededFuture(Optional.of(user("alice")))));
+        SignalSourcePlan<ShipmentDelivered> throwingPayload = shipments()
+                .dispatchAs(message -> Future.succeededFuture(Optional.of(user("alice"))))
+                .signal(OrdersContract.class, SHIPMENT_DELIVERED)
+                .key(ShipmentDelivered::carrierRef)
+                .payload(PlanFixture.<ShipmentDelivered, Object>throwing(
+                        new IllegalStateException("payload of " + KEY + " failed")))
+                .build();
+        SignalSourcePlan<ShipmentDelivered> emptyScope = ordersSignal(shipments()
+                .dispatchAs(message -> Future.succeededFuture(Optional.of(user("alice"))))
+                .scope(message -> Optional.empty()));
+        SignalSourcePlan<ShipmentDelivered> emptyKey =
+                ordersSignal(shipments().dispatchAs(message -> Future.succeededFuture(Optional.of(user("alice")))));
+
+        record Row(String name, SignalSourcePlan<ShipmentDelivered> plan, String carrierRef, Outcome outcome) {}
+        List<Row> rows = List.of(
+                new Row("an over-long key", longKeyPlan, longKey, Outcome.INVALID_INPUT),
+                new Row("a throwing payload", throwingPayload, KEY, Outcome.STAGE_FAILED),
+                new Row("an empty scope", emptyScope, KEY, Outcome.SCOPE_EMPTY));
+
+        for (Row row : rows) {
+            try (DeliveryRig rig = DeliveryRig.over(vertx)) {
+                // When the message is delivered
+                int mark = rig.logCount();
+                SourceDisposition disposition = rig.deliver(row.plan(), shipment(row.carrierRef()), envelope());
+
+                // Then one log record names alice and the outcome
+                assertThat(rig.logsSince(mark).stream().filter(text -> text.contains("alice")))
+                        .as(row.name())
+                        .hasSize(1)
+                        .allSatisfy(
+                                text -> assertThat(text).contains(row.outcome().name()));
+
+                // and no operations call was made, and nothing out holds the key
+                assertThat(rig.calls()).as(row.name()).isEmpty();
+                rig.assertNothingLeaked(disposition, row.carrierRef());
+            }
+        }
+
+        // and an empty key, which only drops the message, writes none
+        try (DeliveryRig rig = DeliveryRig.over(vertx)) {
+            int mark = rig.logCount();
+            rig.deliver(emptyKey, shipment(""), envelope());
+            assertThat(rig.logsSince(mark)).noneMatch(text -> text.contains("alice"));
+        }
+    }
+
+    @Test
+    @DisplayName("an infrastructure failure at a later signal keeps the fold and reports once per signal")
+    void anInfrastructureFailureAtALaterSignalKeepsTheFoldAndReportsOncePerSignal(Vertx vertx) {
+        // Given a context binding that fails from the fifth use on: the dedup key stage and the key, payload and
+        // recording of the first signal take four, so the second signal's key stage is the first to fail
+        AtomicInteger uses = new AtomicInteger();
+        InboundContextInitializer failingFromTheFifth = context -> {
+            if (uses.incrementAndGet() > 4) {
+                throw new IllegalStateException("binding unavailable");
+            }
+            return ContextScopes.noop();
+        };
+
+        try (DeliveryRig rig = DeliveryRig.initializing(vertx, failingFromTheFifth)
+                .operations(DeliveryRig.raising(new WorkflowSignalAmbiguousException("orders", SHIPMENT_DELIVERED)))) {
+            // When a message of two signals is delivered, the first ambiguous
+            SourceDisposition disposition = rig.deliver(twoSignalPlan(SignalNoMatch.IGNORE), shipment(KEY), envelope());
+
+            // Then the fate is the most severe, the ambiguity
+            assertThat(disposition.fate()).isEqualTo(Fate.TERMINAL);
+
+            // and each signal reported once, under its own names, with no event before a signal
+            assertThat(rig.outcomes()).containsExactly(Outcome.AMBIGUOUS, Outcome.STAGE_FAILED);
+            assertThat(rig.events())
+                    .extracting(SignalSourceEvent::contractName, SignalSourceEvent::signalName)
+                    .containsExactly(tuple("orders", SHIPMENT_DELIVERED), tuple("billing", INVOICE_SETTLED));
+        }
+    }
+
+    @Test
+    @DisplayName("a refusal wrapped in another exception is terminal")
+    void aRefusalWrappedInAnotherExceptionIsTerminal(Vertx vertx) {
+        // Given a dispatchAs that fails with the refusal marker inside a CompletionException
+        SignalSourcePlan<ShipmentDelivered> plan = ordersSignal(shipments()
+                .dispatchAs(message ->
+                        Future.failedFuture(new CompletionException(new SignalSourceRefusal("TokenRejected")))));
+
+        try (DeliveryRig rig = DeliveryRig.over(vertx)) {
+            // When the message is delivered
+            SourceDisposition disposition = rig.deliver(plan, shipment(KEY), envelope());
+
+            // Then it is terminal with the marker's error type
+            assertThat(disposition.fate()).isEqualTo(Fate.TERMINAL);
+            assertThat(disposition.errorType()).isEqualTo("TokenRejected");
+            assertThat(rig.outcomes()).containsExactly(Outcome.REFUSED_IDENTITY);
+            assertThat(rig.calls()).isEmpty();
+        }
+    }
+
+    @Test
+    @DisplayName("a payload that cannot be encoded is terminal and forwards the class only")
+    void aPayloadThatCannotBeEncodedIsTerminalAndForwardsTheClassOnly(Vertx vertx) {
+        // Given operations that fail with an encode failure, bare and wrapped
+        Map<String, Throwable> rows = new LinkedHashMap<>();
+        rows.put("bare", new EncodeException("Failed to encode as JSON for " + KEY));
+        rows.put("wrapped", new CompletionException(new EncodeException("Failed to encode as JSON for " + KEY)));
+
+        rows.forEach((row, failure) -> {
+            try (DeliveryRig rig = DeliveryRig.over(vertx).operationsRaising(failure)) {
+                // When the message is delivered
+                SourceDisposition disposition = rig.deliver(keyedPlan(), shipment(KEY), envelope());
+
+                // Then it is terminal as invalid input, with the exception class only
+                assertThat(disposition.fate()).as(row).isEqualTo(Fate.TERMINAL);
+                assertThat(disposition.errorType()).as(row).isEqualTo("EncodeException");
+                assertThat(rig.outcomes()).as(row).containsExactly(Outcome.INVALID_INPUT);
+                rig.assertNothingLeaked(disposition, KEY);
+            }
+        });
+    }
+
+    @Test
+    @DisplayName("a null argument fails the delivery future, and a null required component is refused at construction")
+    void aNullArgumentFailsTheDeliveryFutureAndANullComponentIsRefused(Vertx vertx) {
+        try (DeliveryRig rig = DeliveryRig.over(vertx);
+                DeliveryRig.Caller caller = rig.callerOnRoot()) {
+            // When each argument is null in turn
+            List<Future<SourceDisposition>> futures = List.of(
+                    caller.<ShipmentDelivered>deliver(null, shipment(), envelope()),
+                    caller.<ShipmentDelivered>deliver(keyedPlan(), null, envelope()),
+                    caller.<ShipmentDelivered>deliver(keyedPlan(), shipment(), null));
+
+            // Then each future has failed with a NullPointerException, and nothing was reported
+            assertThat(futures).allSatisfy(future -> {
+                assertThat(future.failed()).isTrue();
+                assertThat(future.cause()).isInstanceOf(NullPointerException.class);
+            });
+            assertThat(rig.events()).isEmpty();
+        }
+
+        // and the components a record requires are checked when it is made
+        SourceEnvelope base = envelope();
+        assertThatThrownBy(() -> new SourceDisposition(null, null)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> withSecurity(base, null)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() ->
+                        new SourceEnvelope(null, base.security(), false, null, base.origin(), null, base.provenance()))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(
+                        () -> new SourceEnvelope("kafka", base.security(), false, null, null, null, base.provenance()))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new SourceEnvelope("kafka", base.security(), false, null, base.origin(), null, null))
+                .isInstanceOf(NullPointerException.class);
+
+        // and a nullable component stays nullable
+        assertThat(new SourceDisposition(Fate.DONE, null).errorType()).isNull();
+    }
+
+    private static SourceEnvelope withSecurity(SourceEnvelope base, SecurityContext security) {
+        return new SourceEnvelope(
+                base.transport(),
+                security,
+                base.identityContributed(),
+                base.correlation(),
+                base.origin(),
+                base.defaultDedupKey(),
+                base.provenance());
     }
 
     /** Delivers three messages in turn, the operations answering one of the given answers to each. */

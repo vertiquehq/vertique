@@ -4,6 +4,7 @@
 package dev.vertique.workflow.services.source;
 
 import jakarta.annotation.Nullable;
+import java.util.Objects;
 
 /**
  * What a transport does with a message once a source has handled it.
@@ -16,6 +17,15 @@ import jakarta.annotation.Nullable;
  * @param errorType the type of the failure that decided the fate, or {@code null} when there is none
  */
 public record SourceDisposition(Fate fate, @Nullable String errorType) {
+
+    /**
+     * Validates the components that are required.
+     *
+     * @throws NullPointerException if {@code fate} is {@code null}
+     */
+    public SourceDisposition {
+        Objects.requireNonNull(fate, "fate");
+    }
 
     /** The transport's action on a message. */
     public enum Fate {

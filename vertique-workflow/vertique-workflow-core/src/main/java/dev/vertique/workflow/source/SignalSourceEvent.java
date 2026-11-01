@@ -7,7 +7,8 @@ import jakarta.annotation.Nullable;
 import java.util.Objects;
 
 /**
- * The outcome of one message received by a correlated signal source.
+ * The outcome of one signal of a message received by a correlated signal source, or of the message itself when it
+ * ended before a signal was chosen.
  *
  * <p>The event never carries a key, a header or a payload.
  *
