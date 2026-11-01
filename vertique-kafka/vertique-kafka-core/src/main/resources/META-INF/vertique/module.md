@@ -62,9 +62,10 @@ one that determines whether a record can be lost.
 | `CommitStrategy` | Semantics | Notes |
 |---|---|---|
 | `AUTO` (default) | At-most-once | Kafka auto-commits on an interval. A crash between commit and processing loses the record. Cannot be combined with `DEAD_LETTER` or `RETRY` |
-| `MANUAL` | At-least-once | Offsets commit only after a successful dispatch. Records may be reprocessed; none is lost after the partition's first committed offset. Required by `DEAD_LETTER` and `RETRY` |
+| `MANUAL` | At-least-once | The consumer commits a partition up to the longest run of records that have all finished, and no further. Records may be reprocessed; none is lost after the partition's first committed offset. Required by `DEAD_LETTER` and `RETRY` |
 
-Handlers must therefore be idempotent under `MANUAL`.
+Handlers must therefore be idempotent under `MANUAL`. See [How a `MANUAL` consumer settles
+records](#how-a-manual-consumer-settles-records).
 
 The at-least-once guarantee starts at a partition's **first committed offset**. The framework leaves
 `auto.offset.reset` at Kafka's default, `latest`, so a group's first-ever record that fails before
@@ -196,7 +197,7 @@ static KafkaConsumerBinding<?> orderBinding() {
 | `jsonProfile(JsonProfileId)` | `null` — framework default | JSON mapper profile for value deserialization |
 | `ignoreUndecodable(Runnable)` | off | Handler bindings: acknowledges a record that fails to decode, commits it when `MANUAL`, reports it `SKIP`, runs the callback, and skips the error strategy; a transient decode failure takes the error strategy |
 | `noHeaderContext()` | off | Handler bindings: installs no durable context from the record's headers for the handler |
-| `forceStrategies()` | off | Handler bindings, `commitStrategy(MANUAL)` required: registration fails unless the resolved configuration keeps the binding's `commitStrategy` and `errorStrategy` and a `DEAD_LETTER` `retry.exhaustedStrategy`, and resolves `maxInFlight` to `1` |
+| `forceStrategies()` | off | Handler bindings, `commitStrategy(MANUAL)` required: registration fails unless the resolved configuration keeps the binding's `commitStrategy` and `errorStrategy` and a `DEAD_LETTER` `retry.exhaustedStrategy`; a new group starts at the beginning of the topic |
 
 Use the durable operation id (`@ServiceOperation` value) in `dispatchTo` for stable-target-eligible
 operations so the binding survives a method rename.
@@ -228,35 +229,15 @@ exactly as it did before them.
 - **`forceStrategies`.** `kafka.consumers.{name}.*` cannot restore `AUTO` or `SKIP`: the check runs
   at registration on the resolved configuration, and a `KafkaRegistrationException` violation names
   the consumer and the option (`commitStrategy`, `errorStrategy` or `retry.exhaustedStrategy`).
-  The binding also handles **one record at a time**: `maxInFlight` resolves to `1` and
-  `max.poll.records` to `1`, so a poll never hands the consumer a second record while the first is
-  being handled. A configured `maxInFlight` other than `1` fails registration naming
-  `maxInFlight`; a configured `max.poll.records` is replaced. A new group starts at the beginning of
-  the topic unless `auto.offset.reset` is configured. With several records in flight, two
-  failures in one partition could leave the consumer positioned past the earlier one, which a later
-  success then commits past. **Throughput consequence:** each consumer instance runs one handler at a
-  time, so its throughput is the inverse of one handler run per record; raise `instances` to add
-  consumers. The default `256` cannot be told from an unset value and resolves to `1`.
-  A dead-letter publish that fails does not leave the record behind: the consumer pauses, seeks back
-  to the record and resumes after the retry backoff, which grows with the failures of that record,
-  and the record is delivered again. A failed record keeps its slot until its error handling has
-  settled, including a dead-letter publish still in flight, and the consumer stays paused through the
-  backoff, so no later record is delivered, handled or committed ahead of it. A binding without
-  `forceStrategies` leaves the record uncommitted and goes on.
-  The slot resumes the consumer only after a **confirmed disposition**: a retry scheduled behind a
-  confirmed seek, a published dead letter, a skip, or a confirmed seek back to the record. A throw
-  or an `Error` anywhere in the failure handling, including a dead-letter producer that throws when
-  it is built, counts as a failed publish and seeks back. A seek that cannot be confirmed is tried
-  once more; if that fails too, the consumer **stays paused**, the record uncommitted and the slot
-  held, and an error is logged. A seek fails when the consumer no longer owns the partition (it was
-  revoked in a rebalance) or the consumer is closed. When the partition is no longer assigned at
-  that point, the slot is released and the consumer resumes, because the record is delivered to the
-  partition's new owner. Any other held slot is not released: a consumer stalled on an unconfirmed
-  seek does not poll, so it never sees a later rebalance and stays paused until it is restarted. A
-  stop reports the record still pending, closes the consumer without committing it, and the next
-  run delivers it. A stalled consumer needs a restart; watch for the error log.
-  A handler that fails with `KafkaRedeliverFailure` takes the same pause, seek back and backoff
-  without spending a retry (see `KafkaRedeliverFailure`).
+  A new group starts at the beginning of the topic unless `auto.offset.reset` is configured. The binding
+  runs records concurrently up to `maxInFlight`, like any other `MANUAL` binding, and keeps the
+  binding's `maxInFlight` and `max.poll.records`. A dead-letter publish that fails does not leave the
+  record behind: the record stays uncommitted, holds the commit of every record after it, and its
+  publish is made again after the retry backoff, which grows with the failures of that record.
+  A handler that fails with `KafkaRedeliverFailure` returns the record to the queue without spending a
+  retry (see `KafkaRedeliverFailure`). A binding without `forceStrategies` also keeps its strategies,
+  retry counts and delays; it differs in that `kafka.consumers.{name}.*` may change them, and in that
+  a retry waiting stops its partition from fetching (see [How `RETRY` works](#how-retry-works)).
 
 ### Model 3 — `@KafkaListener` routing interface
 
@@ -643,6 +624,8 @@ build time.
         "deadLetterTopic": "order.created.dlq",
         "eventBusTimeoutMs": 30000,
         "maxInFlight": 256,
+        "maxRetainedRecords": 4096,
+        "maxRetainedBytes": 67108864,
         "instances": 2,
         "worker": false,
         "format": "avro",
@@ -687,7 +670,9 @@ build time.
 | `errorStrategy` | annotation value (`SKIP`) | `SKIP`, `DEAD_LETTER`, or `RETRY` |
 | `deadLetterTopic` | `"{topic}.dlq"` | Used by `DEAD_LETTER` |
 | `eventBusTimeoutMs` | `30000` | Must be `> 0` |
-| `maxInFlight` | `256` | Must be `>= 1`. The consumer pauses at this many in-flight dispatches and resumes as the queue drains, unless another reason still holds it paused (see below) |
+| `maxInFlight` | `256` | Must be `>= 1`. The most records a consumer runs at once. A `MANUAL` consumer holds the rest in memory; an `AUTO` consumer pauses at this many in-flight dispatches and resumes as they finish |
+| `maxRetainedRecords` | `4096` | Must be `>= 1`. The records a `MANUAL` consumer keeps in memory before its partitions stop fetching. One partition may keep a quarter of it. Never less than `maxInFlight` |
+| `maxRetainedBytes` | `67108864` | Must be `>= 1`. The estimated bytes of the records a `MANUAL` consumer keeps in memory before its partitions stop fetching. One partition may keep a quarter of it |
 | `instances` | `1` | Must be `>= 1` |
 | `worker` | unset | Event-loop threading unless a `mayBlock()` serde forces worker; see below |
 | `format` | per-endpoint, else `kafka.format`, else auto-detect, else `json` | Any registered provider format |
@@ -781,20 +766,20 @@ at build time.
 | Value | Requires | Behavior |
 |---|---|---|
 | `SKIP` | any commit strategy | Log the error and commit, dropping the record |
-| `DEAD_LETTER` | `MANUAL` | Publish the original bytes and headers to the DLQ topic, then commit. If the DLQ publish fails the offset is **not** committed and Kafka redelivers |
-| `RETRY` | `MANUAL` | Pause the consumer for a backoff, then resume; Kafka redelivers the uncommitted record. After `maxRetries` redeliveries, fall back to `exhaustedStrategy` |
+| `DEAD_LETTER` | `MANUAL` | Publish the original bytes and headers to the DLQ topic, and settle the record once the publish is acknowledged. A publish that fails is made again after a backoff, and the record stays uncommitted, with every record after it, until one is acknowledged |
+| `RETRY` | `MANUAL` | Keep the record in memory and run it through the whole pipeline again after a backoff. After `maxRetries` retries, fall back to `exhaustedStrategy` |
 
 ### How `RETRY` works
 
-`RETRY` uses Kafka's native redelivery, not an application-level retry loop. On failure the offset is
-not committed, the consumer pauses, and after the backoff it resumes and Kafka redelivers from the
-uncommitted offset. The record then re-enters the full pipeline, including any service-level
-`@Retry`, `@Timeout`, and `@CircuitBreaker` policies.
+`RETRY` is an in-memory retry, not a Kafka redelivery and not a seek. On failure the consumer keeps the
+record, waits for the backoff, and runs the record through the full pipeline again, including any
+service-level `@Retry`, `@Timeout`, and `@CircuitBreaker` policies. The record stays uncommitted until it
+settles, and so does every record after it in its partition, so a restart reads them again.
 
-A consumer is paused for as long as any reason holds it, and it resumes only when none remains. The reasons are tracked
-separately: reaching `maxInFlight` is one, and each retried record's backoff is another. A dispatch that finishes while a record waits
-out its backoff therefore does not resume the consumer, a backoff that ends while the consumer is at `maxInFlight` does not resume
-it, and two overlapping retries keep it paused until both have ended.
+A retry waiting holds no permit: other records of the consumer keep running while it waits. A binding
+that does not force its strategies also stops its partition from fetching for as long as one of its
+records waits for a retry, and two overlapping retries keep it stopped until both have ended; the consumer
+keeps polling, so it stays in its group. A binding that forces its strategies has no partition backoff.
 
 Retry delays use the shared `vertique-resilience` exponential backoff policy with zero jitter. The
 configured `backoffMs`, `backoffMultiplier`, and `maxBackoffMs` therefore retain deterministic Kafka
@@ -803,8 +788,8 @@ timing while using the canonical retry-count validation and capped delay calcula
 ```
 Record B fails (attempt 1/3)
   → offset not committed
-  → pause consumer, resume in 1s
-  → Kafka redelivers B, full pipeline re-runs
+  → held in memory, run again in 1s
+  → B's full pipeline re-runs
   → fails again (2/3) → backoff 2s
   → fails again (3/3) → backoff 4s
   → fails again (exhausted):
@@ -816,9 +801,9 @@ Kafka `RETRY` and a service operation's `@Retry` compose multiplicatively. A ser
 `@Retry(maxRetries = 3)` behind a consumer with `RETRY(maxRetries = 3)` gives a persistently failing
 record up to twelve dispatch attempts before the exhausted strategy applies.
 
-**`RETRY` blocks the partition.** No other record from that partition is delivered during the
-backoff. That is appropriate for failures measured in seconds; for failures measured in hours use
-`DEAD_LETTER` and reprocess from the DLQ.
+**`RETRY` holds the commit.** The offset of a partition does not pass a retrying record for the whole
+backoff, and an ordinary binding fetches no more of the partition meanwhile. That is appropriate for
+failures measured in seconds; for failures measured in hours use `DEAD_LETTER` and reprocess from the DLQ.
 
 ### `KafkaTerminalFailure`
 
@@ -828,7 +813,7 @@ strategy at once: `retry.exhaustedStrategy` for a `RETRY` binding, otherwise the
 
 | Exhausted strategy | Behavior |
 |---|---|
-| `DEAD_LETTER` | Publish the original value, key and headers to the DLQ topic, then commit. Outcome `DLQ_PUBLISHED`, or `DLQ_FAILED` with no commit; a `forceStrategies` binding then seeks back and delivers the record again after a backoff |
+| `DEAD_LETTER` | Publish the original value, key and headers to the DLQ topic, then settle the record. Outcome `DLQ_PUBLISHED`, or `DLQ_FAILED` with no commit; the publish is then made again after a backoff |
 | `SKIP` | Commit and log the skip with the consumer and the error type. Outcome `SKIP` |
 
 The error type must be a simple token (a letter, `_` or `$`, then up to 127 letters, digits and
@@ -840,17 +825,13 @@ earlier failure of the same record is removed.
 ### `KafkaRedeliverFailure`
 
 A handler fails a record with `new KafkaRedeliverFailure(errorType)` when the record is fine and must
-be delivered again later, such as when the system is busy. It applies on a `forceStrategies` binding:
-the consumer pauses, seeks back to the record and resumes after a backoff that grows with the
-redeliveries of that record up to `retry.maxBackoffMs` and never past half of `max.poll.interval.ms`, so the consumer keeps its group membership, and the outcome is `RETRY_SCHEDULED`. The
-record stays uncommitted and keeps its slot until the seek back is confirmed, a seek that cannot be
-confirmed is handled as for a failed dead-letter publish, and no later record is delivered ahead of
-it. It spends no retry: the record's retry count does not change, the number of redeliveries has no
-limit, and the record is never dead-lettered because of it. A handler that raises it for a failure
-that never clears stalls the consumer and lets its lag grow. Keep handling a record under half of
-`max.poll.interval.ms`: a longer handler plus the pause can pass the interval, and the group then
-rebalances and the record is delivered again. A value only the client can read, such as a config
-provider expression, counts as Kafka's default of five minutes here.
+be run again later, such as when the system is busy. It applies on a `forceStrategies` binding: the
+record goes back to the queue, holding no permit, with its attempts unchanged, and the outcome is
+`RETRY_SCHEDULED`. The consumer then starts no record and fetches no partition until it asks again, one
+second later or as often as its `KafkaDispatchGate` says, and finds the gate open. It spends no retry: the
+record's retry count does not change, the number of times it is returned has no limit, and the record is
+never dead-lettered because of it. The record stays uncommitted, with every record after it. A handler
+that raises it for a failure that never clears stalls the consumer and lets its lag grow.
 
 On any other binding it is an ordinary failure, handled by the binding's error strategy. The error
 type follows the rules of `KafkaTerminalFailure`, and the failure carries the error type only.
@@ -869,6 +850,38 @@ With the defaults (3 retries, 1s base, ×2, 60s cap) the worst case is 1s + 2s +
 `RetryConfig.DEFAULT` — `maxRetries = 3`, `backoffMs = 1000`, `backoffMultiplier = 2.0`,
 `exhaustedStrategy = DEAD_LETTER`, `maxBackoffMs = 60000` — applies when `errorStrategy = RETRY` and
 no `retry` block is configured.
+
+---
+
+## How a `MANUAL` consumer settles records
+
+A `MANUAL` consumer registers every record it receives, runs records concurrently, and commits only what has
+finished.
+
+- **Concurrency.** Up to `maxInFlight` records run at once, across all partitions of the consumer and in any
+  order. There is no order of any kind: a later record of a partition, or of a key, can finish and even run before
+  an earlier one. Set `maxInFlight` to `1` when a consumer needs one record at a time. A record that waits for a
+  retry, for the acknowledgment of its dead letter or for its dispatch gate holds no permit.
+- **The commit.** For each partition the consumer commits the offset after the longest run of records that have all
+  finished, whatever finished in the meantime. A record that is running, waiting for a retry or waiting for its dead
+  letter holds the commit of every record after it. Offsets that carry no record, such as a compacted gap or a
+  transaction marker, do not hold it. One commit is in flight per partition; one that fails is submitted again with the
+  offset of that moment. Every commit comes from here: the consumer never commits the position it has read to.
+- **Nothing seeks.** A retry runs from memory, so a record the client already fetched is never dropped by a seek.
+- **Fetching.** A partition stops fetching, and the consumer keeps polling, while it holds as many records as
+  `maxRetainedRecords` or `maxRetainedBytes` allow, while a retry of an ordinary binding waits, while the dispatch
+  gate is closed and while the consumer stops. Polling never stops, so the consumer keeps its group membership
+  however long its handlers take. A fetch already under way can overshoot a bound by one batch, and a partition
+  fetches again once it holds half of the bound. The records a consumer keeps are those not yet committed:
+  settled records above a record that has not finished count too, although their payload is released at once. A
+  slow record therefore costs memory, and then fetching, while the broker's lag grows.
+- **Rebalances.** Each assignment of a partition has its own state. When a partition is revoked the consumer
+  commits its finished prefix as a best effort and drops the rest; a handler that is still running finishes into
+  nothing and keeps its permit until it does. A partition that returns to the same consumer starts afresh with
+  its retries counted from zero, and the records after the committed offset run again.
+- **Stopping.** A stop starts no record and no retry, stops all fetching, waits for the running records, dead-letter
+  publishes and commits for a drain period, then commits the finished prefix of each partition and closes. A record
+  that did not finish stays uncommitted and runs again at the next start.
 
 ---
 
@@ -1068,10 +1081,10 @@ public interface KafkaConsumerRecordView {
 ```
 
 **When it runs.** Exactly once per delivered record, when the disposition is final and all async
-work — DLQ publish, seek, recovery, `afterDispatch` — has settled. It runs on every path: filtered
+work — DLQ publish, recovery, `afterDispatch` — has settled. It runs on every path: filtered
 before deserialization, rejected by a filter that throws, no matching route, deserialization
 failure, filtered or failed in `beforeDispatch`, dispatched, recovered, or handed to the error
-strategy. A record redelivered for a retry completes once per delivery; `retryCount` is the number
+strategy. A record that runs again for a retry completes once per run; `retryCount` is the number
 of retries before that attempt. The one limit: an asynchronous interceptor or handler future that
 never completes, or a throw from inside an asynchronous continuation, leaves the record without a
 completion.
@@ -1155,10 +1168,10 @@ public void onRecordCompleted(KafkaConsumerCompletedEvent event, KafkaConsumerRe
 | `SUCCESS` | The handler completed successfully |
 | `SKIP` | Skipped per `ErrorStrategy.SKIP`, filtered, or no matching route |
 | `RECOVERED` | An interceptor's `recoverError` handled the error |
-| `RETRY_SCHEDULED` | Consumer paused, offset not committed, Kafka will redeliver. A `forceStrategies` binding reports it also for a `KafkaRedeliverFailure` |
+| `RETRY_SCHEDULED` | The offset is not committed and the record will run again. A `forceStrategies` binding reports it also for a `KafkaRedeliverFailure` |
 | `DLQ_PUBLISHED` | Forwarded to the dead-letter topic |
-| `DLQ_FAILED` | The DLQ publish failed; the offset was not committed. A `forceStrategies` binding is paused, seeks back and resumes after a backoff |
-| `ERROR_HANDLER_FAILED` | The error handler's own future failed; the record's disposition is unknown. A `forceStrategies` binding then seeks back once more, and stays paused with the record uncommitted when that is not confirmed |
+| `DLQ_FAILED` | The DLQ publish failed; the offset was not committed and the publish is made again after a backoff |
+| `ERROR_HANDLER_FAILED` | No longer reported: a failure handled by the settlement always has a disposition |
 
 > **Breaking change (core 0.3.0).** The separate consumer capture-hook SPI, its terminal and
 > raw-disposition records, and its `Set` multibinding are removed. Implement
@@ -1281,8 +1294,11 @@ default accepts every producer interface.
   `AUTO` has already committed. Use `MANUAL`.
 - **Non-idempotent handlers under `MANUAL`.** At-least-once means redelivery is normal, not
   exceptional.
-- **Using `RETRY` for a long outage.** The retrying partition is blocked for the whole backoff. Use
-  `DEAD_LETTER` and reprocess.
+- **Using `RETRY` for a long outage.** The commit of the retrying partition is held for the whole
+  backoff. Use `DEAD_LETTER` and reprocess.
+- **Relying on the order of records.** A `MANUAL` consumer runs records of a partition concurrently, up to
+  `maxInFlight`, and promises no order, not even for one key. Set `maxInFlight` to `1` for a consumer that
+  needs it.
 - **Dropping the context returned by `beforeDispatch`.** `KafkaDispatchContext` is immutable;
   `withFiltered(true)` has no effect unless the returned future carries the new instance.
 - **Retaining a `PayloadSource` across threads.** It is a no-copy view of the record buffer — copy

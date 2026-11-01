@@ -371,7 +371,6 @@ final class KafkaConsumerScanner {
             if (!checkForcedStrategies(binding, config, violations)) {
                 return;
             }
-            // One record at a time: with several in flight a later record could commit past a failed one.
             config = config.forced();
         }
 
@@ -395,7 +394,7 @@ final class KafkaConsumerScanner {
                 violations);
 
         if (entry != null) {
-            entries.add(entry);
+            entries.add(entry.withDispatchGate(binding.dispatchGate()));
         }
     }
 
@@ -403,9 +402,7 @@ final class KafkaConsumerScanner {
      * Checks a binding that forces its strategies against the configuration it resolved to: the
      * commit and error strategies must equal the binding's, and the exhausted strategy, taken from
      * {@code retry.exhaustedStrategy} or, without retry, from the error strategy, must be
-     * {@link ErrorStrategy#DEAD_LETTER}. The binding also handles one record at a time, so
-     * {@code maxInFlight} must be {@code 1}; the default, which cannot be told from an unset value,
-     * counts as unset. A violation names the consumer and the option.
+     * {@link ErrorStrategy#DEAD_LETTER}. A violation names the consumer and the option.
      *
      * @param binding the binding that forces its strategies
      * @param config the configuration the binding resolved to
@@ -416,12 +413,6 @@ final class KafkaConsumerScanner {
             KafkaConsumerBinding<?> binding, ResolvedKafkaConsumerConfig config, List<String> violations) {
         String name = binding.name();
         boolean satisfied = true;
-        if (config.maxInFlight() != 1 && config.maxInFlight() != ResolvedKafkaConsumerConfig.DEFAULT_MAX_IN_FLIGHT) {
-            violations.add("Consumer '" + name + "': forceStrategies() requires maxInFlight 1 but the resolved"
-                    + " configuration has " + config.maxInFlight() + " (remove kafka.consumers." + name
-                    + ".maxInFlight)");
-            satisfied = false;
-        }
         if (config.commitStrategy() != binding.commitStrategy()) {
             violations.add("Consumer '" + name + "': forceStrategies() requires commitStrategy "
                     + binding.commitStrategy() + " but the resolved configuration has " + config.commitStrategy()

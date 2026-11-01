@@ -461,7 +461,8 @@ final class KafkaConsumerValidation {
                 valueFormat,
                 ignoreUndecodable,
                 noHeaderContext,
-                forceStrategies);
+                forceStrategies,
+                null);
     }
 
     /**

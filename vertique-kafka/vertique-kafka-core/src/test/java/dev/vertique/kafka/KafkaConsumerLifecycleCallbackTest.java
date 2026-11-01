@@ -5,6 +5,7 @@ package dev.vertique.kafka;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -16,6 +17,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -43,8 +45,10 @@ import io.vertx.core.buffer.Buffer;
 import io.vertx.core.internal.ContextInternal;
 import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
+import io.vertx.kafka.client.common.TopicPartition;
 import io.vertx.kafka.client.consumer.KafkaConsumer;
 import io.vertx.kafka.client.consumer.KafkaConsumerRecord;
+import io.vertx.kafka.client.consumer.OffsetAndMetadata;
 import io.vertx.kafka.client.producer.KafkaHeader;
 import io.vertx.kafka.client.producer.RecordMetadata;
 import jakarta.annotation.Nullable;
@@ -60,7 +64,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -139,12 +142,27 @@ class KafkaConsumerLifecycleCallbackTest {
     record Fixture(KafkaConsumerVerticle verticle, KafkaConsumer<String, byte[]> consumer, KafkaErrorHandler errors) {
 
         void process(KafkaConsumerRecord<String, byte[]> record) throws ReflectiveOperationException {
+            KafkaSettlement settlement = settlement();
+            if (settlement != null && !settlement.hasLedger(new TopicPartition(record.topic(), record.partition()))) {
+                settlement.assigned(List.of(new TopicPartition(record.topic(), record.partition())));
+            }
             Method method = KafkaConsumerVerticle.class.getDeclaredMethod("processRecord", KafkaConsumerRecord.class);
             method.setAccessible(true);
             method.invoke(verticle, record);
         }
 
+        @Nullable
+        KafkaSettlement settlement() throws ReflectiveOperationException {
+            Field field = KafkaConsumerVerticle.class.getDeclaredField("settlement");
+            field.setAccessible(true);
+            return (KafkaSettlement) field.get(verticle);
+        }
+
         int inFlight() throws ReflectiveOperationException {
+            KafkaSettlement settlement = settlement();
+            if (settlement != null) {
+                return settlement.permits();
+            }
             Field field = KafkaConsumerVerticle.class.getDeclaredField("inFlight");
             field.setAccessible(true);
             return ((AtomicInteger) field.get(verticle)).get();
@@ -311,17 +329,6 @@ class KafkaConsumerLifecycleCallbackTest {
         }
     }
 
-    /** Mocked error handler whose own future always fails. */
-    private static KafkaErrorHandler failingErrorHandler() throws ReflectiveOperationException {
-        KafkaErrorHandler handler = mock(KafkaErrorHandler.class);
-        Field retryCounts = KafkaErrorHandler.class.getDeclaredField("retryCounts");
-        retryCounts.setAccessible(true);
-        retryCounts.set(handler, new ConcurrentHashMap<String, Integer>());
-        when(handler.handleError(any(), any(), any(), any(), any()))
-                .thenReturn(Future.failedFuture(new RuntimeException("error handler boom")));
-        return handler;
-    }
-
     private static Fixture wire(Vertx vertx, ConsumerEntry entry, List<KafkaConsumerInterceptor> interceptors)
             throws ReflectiveOperationException {
         return wire(vertx, entry, interceptors, mock(KafkaProducerFactory.class), null, null);
@@ -355,7 +362,8 @@ class KafkaConsumerLifecycleCallbackTest {
 
         KafkaConsumer<String, byte[]> consumer = mock(KafkaConsumer.class);
         lenient().when(consumer.commit(anyMap())).thenReturn(Future.succeededFuture(Map.of()));
-        lenient().when(consumer.seek(any(), anyLong())).thenReturn(Future.succeededFuture());
+        lenient().when(consumer.pause(any(TopicPartition.class))).thenReturn(Future.succeededFuture());
+        lenient().when(consumer.resume(any(TopicPartition.class))).thenReturn(Future.succeededFuture());
         KafkaErrorHandler errors = errorHandler != null ? errorHandler : new KafkaErrorHandler(entry, producerFactory);
         setField(verticle, "consumer", consumer);
         setField(verticle, "errorHandler", errors);
@@ -367,7 +375,21 @@ class KafkaConsumerLifecycleCallbackTest {
     private static Fixture wireForShutdown(
             Vertx vertx, long drainTimeoutMs, long closeTimeoutMs, Future<Void> closeFuture)
             throws ReflectiveOperationException {
-        ConsumerEntry entry = failingHandlerEntry(ErrorStrategy.SKIP, null);
+        ConsumerEntry base = KafkaTerminalOutcomeTest.entryFor(ErrorStrategy.SKIP, null, CommitStrategy.AUTO);
+        ConsumerEntry entry = new ConsumerEntry(
+                base.name(),
+                base.config(),
+                ConsumerEntry.Kind.HANDLER,
+                Object.class,
+                null,
+                null,
+                false,
+                List.of(),
+                null,
+                null,
+                false,
+                null,
+                base.valueFormat());
         KafkaProducerFactory producerFactory = mock(KafkaProducerFactory.class);
         KafkaConsumerVerticle verticle = new KafkaConsumerVerticle(
                 entry,
@@ -500,6 +522,110 @@ class KafkaConsumerLifecycleCallbackTest {
         }
     }
 
+    // --- Settlement through the verticle ---
+
+    @Nested
+    @DisplayName("a MANUAL consumer stops through its settlement")
+    class ManualShutdown {
+
+        /** A handler that finishes when the test says so. */
+        private ConsumerEntry holdingEntry(Promise<Void> handled) {
+            return handlerEntry(ErrorStrategy.SKIP, null, message -> handled.future(), null, null);
+        }
+
+        private Fixture wireForStop(Vertx vertx, ConsumerEntry entry, long drainMs) throws Exception {
+            KafkaProducerFactory producerFactory = mock(KafkaProducerFactory.class);
+            KafkaConsumerVerticle verticle = new KafkaConsumerVerticle(
+                    entry,
+                    List.of(),
+                    producerFactory,
+                    mock(ServiceRequestSender.class),
+                    KafkaTestSupport.noOpTargetResolver(),
+                    KafkaTestSupport.eventBusClient(vertx),
+                    KafkaTestSupport.noOpInboundExecutionContextScope(),
+                    KafkaTestSupport.noOpEnvelopeBuilder(),
+                    KafkaTestSupport.jsonSerdeRegistry(),
+                    drainMs,
+                    1_000L);
+            verticle.init(vertx, vertx.getOrCreateContext());
+            KafkaConsumer<String, byte[]> consumer = mock(KafkaConsumer.class);
+            lenient().when(consumer.commit(anyMap())).thenReturn(Future.succeededFuture(Map.of()));
+            lenient().when(consumer.pause(any(TopicPartition.class))).thenReturn(Future.succeededFuture());
+            lenient().when(consumer.resume(any(TopicPartition.class))).thenReturn(Future.succeededFuture());
+            when(consumer.close()).thenReturn(Future.succeededFuture());
+            setField(verticle, "consumer", consumer);
+            KafkaErrorHandler errors = new KafkaErrorHandler(entry, producerFactory);
+            setField(verticle, "errorHandler", errors);
+            setField(verticle, "dispatcher", realDispatcher(vertx, entry));
+            setField(verticle, "interceptorChain", new KafkaConsumerInterceptorChain(entry.name(), List.of()));
+            return new Fixture(verticle, consumer, errors);
+        }
+
+        @Test
+        @DisplayName("a stop pauses the partition, waits for the running record, commits its offset and closes")
+        void stopWaitsForTheRunningRecordAndCommitsIt(Vertx vertx) throws Exception {
+            Promise<Void> handled = Promise.promise();
+            Fixture fixture = wireForStop(vertx, holdingEntry(handled), 5_000L);
+            fixture.process(record(4L, bytes("v")));
+            Promise<Void> stopPromise = Promise.promise();
+
+            fixture.verticle().stop(stopPromise);
+
+            verify(fixture.consumer(), timeout(2_000)).pause(any(TopicPartition.class));
+            assertFalse(stopPromise.future().isComplete(), "the record still runs");
+            verify(fixture.consumer(), never()).commit(anyMap());
+            verify(fixture.consumer(), never()).close();
+
+            handled.complete();
+            stopPromise.future().toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
+            verify(fixture.consumer()).commit(Map.of(new TopicPartition(TOPIC, 3), new OffsetAndMetadata(5L, "")));
+            verify(fixture.consumer()).close();
+        }
+
+        @Test
+        @DisplayName("past the deadline a stop reports the running record, commits nothing and still closes")
+        void stopPastTheDeadline(Vertx vertx) throws Exception {
+            Promise<Void> neverHandled = Promise.promise();
+            Fixture fixture = wireForStop(vertx, holdingEntry(neverHandled), 50L);
+            fixture.process(record(4L, bytes("v")));
+            Promise<Void> stopPromise = Promise.promise();
+
+            fixture.verticle().stop(stopPromise);
+
+            Throwable failure = awaitStopFailure(stopPromise);
+            assertEquals(TimeoutException.class, failure.getClass());
+            assertTrue(failure.getMessage().contains("1 in-flight record(s)"));
+            verify(fixture.consumer(), never()).commit(anyMap());
+            verify(fixture.consumer()).close();
+        }
+    }
+
+    @Nested
+    @DisplayName("an AUTO consumer is paused as a whole at its in-flight limit")
+    class AutoBackpressure {
+
+        @Test
+        @DisplayName("it pauses once at the limit and resumes once when a dispatch finishes")
+        void pausesAtTheLimit(Vertx vertx) throws Exception {
+            ConsumerEntry base = KafkaTerminalOutcomeTest.entryFor(ErrorStrategy.SKIP, null, CommitStrategy.AUTO);
+            Fixture fixture = wire(vertx, base, List.of());
+            int limit = base.config().maxInFlight();
+
+            for (int i = 0; i < limit; i++) {
+                fixture.verticle().incrementInFlight();
+            }
+            verify(fixture.consumer(), times(1)).pause();
+
+            fixture.verticle().incrementInFlight();
+            verify(fixture.consumer(), times(1)).pause();
+
+            fixture.verticle().decrementInFlight();
+            verify(fixture.consumer(), never()).resume();
+            fixture.verticle().decrementInFlight();
+            verify(fixture.consumer(), times(1)).resume();
+        }
+    }
+
     // --- Terminal paths ---
 
     @Nested
@@ -563,21 +689,6 @@ class KafkaConsumerLifecycleCallbackTest {
         }
 
         @Test
-        @DisplayName("a filter that throws and whose error handling fails completes with ERROR_HANDLER_FAILED")
-        void filterThrowsAndErrorHandlerFails(Vertx vertx) throws ReflectiveOperationException {
-            CompletionRecorder recorder = new CompletionRecorder();
-            ConsumerEntry entry = handlerEntry(ErrorStrategy.SKIP, null, null, null, (key, headers) -> {
-                throw new IllegalStateException("filter boom");
-            });
-            Fixture fixture = wire(
-                    vertx, entry, List.of(recorder), mock(KafkaProducerFactory.class), failingErrorHandler(), null);
-
-            fixture.process(record(1L, bytes("v")));
-
-            assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
-        }
-
-        @Test
         @DisplayName("a router with no matching route completes with SKIP and commits")
         void noMatchingRoute(Vertx vertx) throws ReflectiveOperationException {
             CompletionRecorder recorder = new CompletionRecorder();
@@ -605,26 +716,6 @@ class KafkaConsumerLifecycleCallbackTest {
         }
 
         @Test
-        @DisplayName("a route-resolution failure whose error handling fails completes with ERROR_HANDLER_FAILED")
-        void routeResolutionThrowsAndErrorHandlerFails(Vertx vertx) throws ReflectiveOperationException {
-            CompletionRecorder recorder = new CompletionRecorder();
-            KafkaRecordDispatcher dispatcher = mock(KafkaRecordDispatcher.class);
-            when(dispatcher.resolveRoute(any(), anyMap(), any(), anyString()))
-                    .thenThrow(new IllegalStateException("route"));
-            Fixture fixture = wire(
-                    vertx,
-                    routerEntry(),
-                    List.of(recorder),
-                    mock(KafkaProducerFactory.class),
-                    failingErrorHandler(),
-                    dispatcher);
-
-            fixture.process(record(1L, bytes("v")));
-
-            assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
-        }
-
-        @Test
         @DisplayName("a deserialization failure completes with the error handler's outcome")
         void deserializationFailure(Vertx vertx) throws ReflectiveOperationException {
             CompletionRecorder recorder = new CompletionRecorder();
@@ -637,19 +728,6 @@ class KafkaConsumerLifecycleCallbackTest {
         }
 
         @Test
-        @DisplayName("a deserialization failure whose error handling fails completes with ERROR_HANDLER_FAILED")
-        void deserializationFailureAndErrorHandlerFails(Vertx vertx) throws ReflectiveOperationException {
-            CompletionRecorder recorder = new CompletionRecorder();
-            ConsumerEntry entry = bindingEntry(ErrorStrategy.SKIP, null);
-            Fixture fixture = wire(
-                    vertx, entry, List.of(recorder), mock(KafkaProducerFactory.class), failingErrorHandler(), null);
-
-            fixture.process(record(1L, bytes("payload")));
-
-            assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
-        }
-
-        @Test
         @DisplayName("a failed beforeDispatch completes with the error handler's outcome")
         void beforeDispatchFailure(Vertx vertx) throws ReflectiveOperationException {
             CompletionRecorder recorder = new CompletionRecorder();
@@ -659,23 +737,6 @@ class KafkaConsumerLifecycleCallbackTest {
 
             assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.SKIP);
             verify(fixture.consumer()).commit(anyMap());
-        }
-
-        @Test
-        @DisplayName("a failed beforeDispatch whose error handling fails completes with ERROR_HANDLER_FAILED")
-        void beforeDispatchFailureAndErrorHandlerFails(Vertx vertx) throws ReflectiveOperationException {
-            CompletionRecorder recorder = new CompletionRecorder();
-            Fixture fixture = wire(
-                    vertx,
-                    succeedingHandlerEntry(),
-                    List.of(new FailingBeforeDispatch(), recorder),
-                    mock(KafkaProducerFactory.class),
-                    failingErrorHandler(),
-                    null);
-
-            fixture.process(record(1L, null));
-
-            assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
         }
 
         @Test
@@ -829,7 +890,8 @@ class KafkaConsumerLifecycleCallbackTest {
         }
 
         @Test
-        @DisplayName("a dispatch failure under RETRY completes with RETRY_SCHEDULED, seeks back and does not commit")
+        @DisplayName(
+                "a dispatch failure under RETRY completes with RETRY_SCHEDULED, holds the partition and does not commit")
         void dispatchFailureRetried(Vertx vertx) throws ReflectiveOperationException {
             CompletionRecorder recorder = new CompletionRecorder();
             Fixture fixture = wire(vertx, failingHandlerEntry(ErrorStrategy.RETRY, null), List.of(recorder));
@@ -837,26 +899,9 @@ class KafkaConsumerLifecycleCallbackTest {
             fixture.process(record(5L, null));
 
             assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.RETRY_SCHEDULED);
-            verify(fixture.consumer()).pause();
-            verify(fixture.consumer()).seek(any(), anyLong());
+            verify(fixture.consumer()).pause(any(TopicPartition.class));
+            verify(fixture.consumer(), never()).seek(any(TopicPartition.class), anyLong());
             verify(fixture.consumer(), never()).commit(anyMap());
-        }
-
-        @Test
-        @DisplayName("a dispatch failure whose error handling fails completes with ERROR_HANDLER_FAILED")
-        void dispatchFailureAndErrorHandlerFails(Vertx vertx) throws ReflectiveOperationException {
-            CompletionRecorder recorder = new CompletionRecorder();
-            Fixture fixture = wire(
-                    vertx,
-                    failingHandlerEntry(ErrorStrategy.SKIP, null),
-                    List.of(recorder),
-                    mock(KafkaProducerFactory.class),
-                    failingErrorHandler(),
-                    null);
-
-            fixture.process(record(1L, null));
-
-            assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
         }
 
         @Test
@@ -1731,7 +1776,6 @@ class KafkaConsumerLifecycleCallbackTest {
             CompletionRecorder.Completion completion =
                     assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.RETRY_SCHEDULED);
             assertEquals(0, completion.event().identity().retryCount());
-            assertEquals(1, fixture.errors().retryCounts.get(TOPIC + ":3:5"), "the retry must have been counted");
         }
 
         @Test
@@ -1741,14 +1785,31 @@ class KafkaConsumerLifecycleCallbackTest {
             Fixture fixture = wire(vertx, failingHandlerEntry(ErrorStrategy.RETRY, null), List.of(recorder));
 
             fixture.process(record(5L, null));
-            fixture.process(record(5L, null));
+            awaitCompletions(recorder, 2);
 
-            assertEquals(2, recorder.completions.size(), "each delivery completes once");
+            // Each run completes once, and a later retry may already have run by now
+            assertTrue(recorder.completions.size() >= 2, "each run completes once");
             assertEquals(0, recorder.completions.get(0).event().identity().retryCount());
             assertEquals(1, recorder.completions.get(1).event().identity().retryCount());
             assertEquals(
                     List.of(KafkaTerminalOutcome.RETRY_SCHEDULED, KafkaTerminalOutcome.RETRY_SCHEDULED),
-                    recorder.completions.stream().map(c -> c.event().outcome()).toList());
+                    recorder.completions.stream()
+                            .limit(2)
+                            .map(c -> c.event().outcome())
+                            .toList());
+        }
+    }
+
+    /** Waits for the retry timer to run the record again. */
+    private static void awaitCompletions(CompletionRecorder recorder, int count) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (recorder.completions.size() < count && System.nanoTime() < deadline) {
+            try {
+                Thread.sleep(10);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(e);
+            }
         }
     }
 

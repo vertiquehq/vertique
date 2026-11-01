@@ -33,7 +33,11 @@ import jakarta.annotation.Nullable;
  * @param errorStrategy the error-handling strategy, or {@code null} when not set
  * @param deadLetterTopic the dead-letter topic, or {@code null} when not set
  * @param eventBusTimeoutMs the event bus dispatch timeout in milliseconds (default {@code 30000})
- * @param maxInFlight the maximum number of in-flight records (default {@code 256})
+ * @param maxInFlight the maximum number of records handled at once (default {@code 256})
+ * @param maxRetainedRecords the records the consumer keeps in memory before its partitions stop fetching (default
+ *     {@code 4096})
+ * @param maxRetainedBytes the estimated bytes the consumer keeps in memory before its partitions stop fetching
+ *     (default 64 MiB)
  * @param instances the number of consumer verticle instances to deploy (default {@code 1})
  * @param worker {@code true} to run on the worker pool, or {@code null} to inherit (no default)
  * @param format the value format override, or {@code null} to inherit the top-level format (no default)
@@ -54,6 +58,8 @@ public record KafkaConsumerConfig(
         String deadLetterTopic,
         Long eventBusTimeoutMs,
         Integer maxInFlight,
+        Integer maxRetainedRecords,
+        Long maxRetainedBytes,
         Integer instances,
         Boolean worker,
         String format,
@@ -93,6 +99,12 @@ public record KafkaConsumerConfig(
         if (maxInFlight != null && maxInFlight < 1) {
             throw new ConfigurationException(path + ".maxInFlight must be >= 1");
         }
+        if (maxRetainedRecords != null && maxRetainedRecords < 1) {
+            throw new ConfigurationException(path + ".maxRetainedRecords must be >= 1");
+        }
+        if (maxRetainedBytes != null && maxRetainedBytes < 1) {
+            throw new ConfigurationException(path + ".maxRetainedBytes must be >= 1");
+        }
         if (instances != null && instances < 1) {
             throw new ConfigurationException(path + ".instances must be >= 1");
         }
@@ -130,7 +142,8 @@ public record KafkaConsumerConfig(
 
     /**
      * Jackson factory filling defaults for omitted properties. {@code enabled=true},
-     * {@code eventBusTimeoutMs=30000}, {@code maxInFlight=256}, {@code instances=1}, and
+     * {@code eventBusTimeoutMs=30000}, {@code maxInFlight=256}, {@code maxRetainedRecords=4096},
+     * {@code maxRetainedBytes=67108864}, {@code instances=1}, and
      * {@code retry=}{@link KafkaConsumerRetryConfig#defaults()} are applied when absent;
      * {@code worker} and {@code format} stay {@code null} (inherited from a higher level).
      *
@@ -142,7 +155,9 @@ public record KafkaConsumerConfig(
      * @param errorStrategy the error strategy; passed through (nullable)
      * @param deadLetterTopic the dead-letter topic; passed through (nullable)
      * @param eventBusTimeoutMs the event bus timeout in ms; defaults to {@code 30000} when {@code null}
-     * @param maxInFlight the max in-flight records; defaults to {@code 256} when {@code null}
+     * @param maxInFlight the max records handled at once; defaults to {@code 256} when {@code null}
+     * @param maxRetainedRecords the records kept in memory; defaults to {@code 4096} when {@code null}
+     * @param maxRetainedBytes the bytes kept in memory; defaults to 64 MiB when {@code null}
      * @param instances the instance count; defaults to {@code 1} when {@code null}
      * @param worker the worker flag; passed through (nullable — inherited when absent)
      * @param format the format override; passed through (nullable — inherited when absent)
@@ -165,6 +180,8 @@ public record KafkaConsumerConfig(
             @JsonProperty("deadLetterTopic") @Nullable String deadLetterTopic,
             @JsonProperty("eventBusTimeoutMs") @Nullable Long eventBusTimeoutMs,
             @JsonProperty("maxInFlight") @Nullable Integer maxInFlight,
+            @JsonProperty("maxRetainedRecords") @Nullable Integer maxRetainedRecords,
+            @JsonProperty("maxRetainedBytes") @Nullable Long maxRetainedBytes,
             @JsonProperty("instances") @Nullable Integer instances,
             @JsonProperty("worker") @Nullable Boolean worker,
             @JsonProperty("format") @Nullable String format,
@@ -183,6 +200,8 @@ public record KafkaConsumerConfig(
                 deadLetterTopic,
                 eventBusTimeoutMs != null ? eventBusTimeoutMs : d.eventBusTimeoutMs,
                 maxInFlight != null ? maxInFlight : d.maxInFlight,
+                maxRetainedRecords != null ? maxRetainedRecords : d.maxRetainedRecords,
+                maxRetainedBytes != null ? maxRetainedBytes : d.maxRetainedBytes,
                 instances != null ? instances : d.instances,
                 worker,
                 format,
@@ -212,6 +231,8 @@ public record KafkaConsumerConfig(
                 null,
                 30_000L,
                 256,
+                4096,
+                64L * 1024 * 1024,
                 1,
                 null,
                 null,
@@ -232,7 +253,8 @@ public record KafkaConsumerConfig(
         return "KafkaConsumerConfig[name=" + name + ", topic=" + topic + ", groupId=" + groupId + ", enabled="
                 + enabled + ", commitStrategy=" + commitStrategy + ", errorStrategy=" + errorStrategy
                 + ", deadLetterTopic=" + deadLetterTopic + ", eventBusTimeoutMs=" + eventBusTimeoutMs + ", maxInFlight="
-                + maxInFlight + ", instances=" + instances + ", worker=" + worker + ", format=" + format
+                + maxInFlight + ", maxRetainedRecords=" + maxRetainedRecords + ", maxRetainedBytes="
+                + maxRetainedBytes + ", instances=" + instances + ", worker=" + worker + ", format=" + format
                 + ", properties=" + KafkaSecretKeys.scrubToString(properties) + ", serdeProperties="
                 + KafkaSecretKeys.scrubToString(serdeProperties) + ", retry=" + retry
                 + ", jsonProfile=" + jsonProfile + "]";

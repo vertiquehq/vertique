@@ -6,13 +6,13 @@ package dev.vertique.kafka;
 import dev.vertique.core.util.Strings;
 
 /**
- * Failure a {@link KafkaRecordHandler} raises to say that the record is fine and must be delivered
- * again later, without spending a retry. It applies on a binding that forces its strategies: the
- * record stays uncommitted, the consumer pauses, seeks back to the record and resumes after a
- * backoff that grows with the repeated redeliveries of that record, and the record's slot is held
- * until the seek back is confirmed. The record's retry count does not change, the record is never
- * published to the dead-letter topic because of this failure, and the number of redeliveries has no
- * limit.
+ * Failure a {@link KafkaRecordHandler} raises to say that the record is fine and must be run again
+ * later, without spending a retry. It applies on a binding that forces its strategies: the record
+ * goes back to the queue, holding no permit and keeping its attempts, and stays uncommitted, with
+ * every record after it. The consumer starts no record and fetches no partition until it asks its
+ * {@link KafkaDispatchGate} again and finds it open, and the record then runs again. The record is
+ * never published to the dead-letter topic because of this failure, and the number of times it is
+ * returned has no limit.
  *
  * <p>On any other binding it is an ordinary failure, handled by the binding's strategy.
  *

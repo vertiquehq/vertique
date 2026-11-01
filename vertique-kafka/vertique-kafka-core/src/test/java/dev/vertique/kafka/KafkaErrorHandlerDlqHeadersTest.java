@@ -18,9 +18,7 @@ import dev.vertique.core.context.DispatchBoundary;
 import dev.vertique.core.context.DurableContextMetadataEncoder;
 import dev.vertique.core.context.DurableEncodeContext;
 import dev.vertique.core.context.DurableMetadata;
-import dev.vertique.kafka.KafkaTerminalOutcomeTest.CapturingConsumerControl;
 import dev.vertique.kafka.config.KafkaConfig;
-import dev.vertique.kafka.interceptor.KafkaTerminalOutcome;
 import dev.vertique.kafka.producer.KafkaProducerCaptureHook;
 import dev.vertique.kafka.producer.KafkaProducerFactory;
 import dev.vertique.kafka.producer.KafkaProducerOperation;
@@ -85,7 +83,6 @@ class KafkaErrorHandlerDlqHeadersTest {
         KafkaRecordHeaders recordHeaders = new KafkaRecordHeaders(List.of(
                 KafkaRecordHeader.ofUtf8("vertique-correlation", RECORD_CORRELATION),
                 KafkaRecordHeader.ofUtf8("event-type", "order.created")));
-        CapturingConsumerControl control = new CapturingConsumerControl();
 
         ((ContextInternal) vertx.getOrCreateContext()).duplicate().runOnContext(v -> {
             try (ContextHolder.Scope correlation =
@@ -95,11 +92,8 @@ class KafkaErrorHandlerDlqHeadersTest {
                 DurableMetadata ambient = propagator.capture(DispatchBoundary.KAFKA);
                 assertEquals(Set.of("correlation", "tenant"), ambient.namespaces());
 
-                handler.handleError(record, new byte[] {1, 2, 3}, recordHeaders, new RuntimeException("boom"), control)
-                        .onComplete(ctx.succeeding(outcome -> ctx.verify(() -> {
-                            assertEquals(KafkaTerminalOutcome.DLQ_PUBLISHED, outcome);
-                            assertTrue(control.commitCalled, "the offset is committed after the publish");
-
+                handler.publishToDlq(record, new byte[] {1, 2, 3}, recordHeaders, new RuntimeException("boom"))
+                        .onComplete(ctx.succeeding(published -> ctx.verify(() -> {
                             assertEquals(1, factory.wires.size(), "exactly one wire send");
                             assertEquals(
                                     new KafkaRecordHeaders(List.of(
@@ -162,11 +156,9 @@ class KafkaErrorHandlerDlqHeadersTest {
                 new KafkaRecordHeader("a", null),
                 KafkaRecordHeader.ofUtf8("empty", ""),
                 KafkaRecordHeader.ofUtf8("a", "1")));
-        CapturingConsumerControl control = new CapturingConsumerControl();
 
-        handler.handleError(record, new byte[] {1, 2, 3}, recordHeaders, new IllegalStateException("boom"), control)
-                .onComplete(ctx.succeeding(outcome -> ctx.verify(() -> {
-                    assertEquals(KafkaTerminalOutcome.DLQ_PUBLISHED, outcome);
+        handler.publishToDlq(record, new byte[] {1, 2, 3}, recordHeaders, new IllegalStateException("boom"))
+                .onComplete(ctx.succeeding(published -> ctx.verify(() -> {
                     assertEquals(1, factory.wires.size(), "exactly one wire send");
                     assertEquals(
                             new KafkaRecordHeaders(List.of(

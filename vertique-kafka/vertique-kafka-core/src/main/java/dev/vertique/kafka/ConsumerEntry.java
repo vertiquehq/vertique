@@ -50,6 +50,7 @@ import java.util.List;
  *     record's headers
  * @param forceStrategies {@code true} when registration required the resolved strategies to equal the
  *     binding's
+ * @param dispatchGate the gate that says whether a record may start, or {@code null} for none
  */
 record ConsumerEntry(
         String name,
@@ -67,7 +68,8 @@ record ConsumerEntry(
         String valueFormat,
         @Nullable Runnable ignoreUndecodable,
         boolean noHeaderContext,
-        boolean forceStrategies) {
+        boolean forceStrategies,
+        @Nullable KafkaDispatchGate dispatchGate) {
 
     /**
      * Creates an entry that ignores no undecodable record, installs the header context and does not
@@ -117,7 +119,35 @@ record ConsumerEntry(
                 valueFormat,
                 null,
                 false,
-                false);
+                false,
+                null);
+    }
+
+    /**
+     * Returns this entry with the given dispatch gate.
+     *
+     * @param gate the gate, or {@code null} for none
+     * @return the entry with the gate
+     */
+    ConsumerEntry withDispatchGate(@Nullable KafkaDispatchGate gate) {
+        return new ConsumerEntry(
+                name,
+                config,
+                kind,
+                valueType,
+                targetAddress,
+                stableTargetId,
+                targetOneWay,
+                routes,
+                handler,
+                deserializer,
+                frameworkOwnedDeserializer,
+                filter,
+                valueFormat,
+                ignoreUndecodable,
+                noHeaderContext,
+                forceStrategies,
+                gate);
     }
 
     // --- Nested Types ---

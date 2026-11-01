@@ -8,14 +8,13 @@ package dev.vertique.kafka.interceptor;
  * (interceptors, handler, recovery, and error strategy) has settled.
  *
  * <p>Exactly one outcome is emitted per record at the terminal point — after all async work
- * (DLQ publish, seek, etc.) completes — and passed to every registered
+ * (DLQ publish, recovery, etc.) completes — and passed to every registered
  * {@link KafkaConsumerInterceptor#onRecordCompleted} as
  * {@link KafkaConsumerCompletedEvent#outcome()}. Observers MUST NOT use this value to affect
  * commit, retry, or delivery behaviour; it is a read-only observability signal.
  *
- * <p>Error-path outcomes are produced by {@link dev.vertique.kafka.KafkaErrorHandler};
- * success-path and recovery outcomes are produced by
- * {@link dev.vertique.kafka.KafkaConsumerVerticle}.
+ * <p>Error-path outcomes are produced by the consumer's settlement; success-path and recovery
+ * outcomes are produced by {@link dev.vertique.kafka.KafkaConsumerVerticle}.
  */
 public enum KafkaTerminalOutcome {
 
@@ -42,8 +41,9 @@ public enum KafkaTerminalOutcome {
 
     /**
      * A retry was scheduled for the record using the
-     * {@link dev.vertique.kafka.ErrorStrategy#RETRY} strategy. The consumer is paused, seeked
-     * back to the failed offset, and scheduled to resume after the backoff delay.
+     * {@link dev.vertique.kafka.ErrorStrategy#RETRY} strategy, or a handler asked for the record to
+     * run again without a retry. The offset is not committed, and the consumer runs the record again
+     * after the backoff, from memory.
      */
     RETRY_SCHEDULED,
 
@@ -56,14 +56,14 @@ public enum KafkaTerminalOutcome {
 
     /**
      * A DLQ publish was attempted ({@link dev.vertique.kafka.ErrorStrategy#DEAD_LETTER}) but the
-     * publish failed. The offset is NOT committed; the record remains uncommitted.
+     * publish failed. The offset is NOT committed; the record remains uncommitted and the publish is
+     * made again after a backoff.
      */
     DLQ_FAILED,
 
     /**
-     * The error handler itself failed while handling a dispatch error — the record's disposition
-     * (commit, DLQ, retry) is unknown. Analogous to {@link #DLQ_FAILED}, but for a failure of the
-     * error-handling future itself rather than a failed DLQ publish.
+     * The error handler itself failed while handling a dispatch error. A {@code MANUAL} consumer no
+     * longer reports it: a failure is always settled by its strategy.
      */
     ERROR_HANDLER_FAILED,
 }

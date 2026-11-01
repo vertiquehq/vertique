@@ -60,7 +60,7 @@ class KafkaForcedStrategiesTest {
                         new JsonObject().put("retry", new JsonObject().put("exhaustedStrategy", "DEAD_LETTER")),
                         null),
                 new Row("maxInFlight=1", new JsonObject().put("maxInFlight", 1), null),
-                new Row("maxInFlight=2", new JsonObject().put("maxInFlight", 2), "maxInFlight"),
+                new Row("maxInFlight=2", new JsonObject().put("maxInFlight", 2), null),
                 new Row("commitStrategy=AUTO", new JsonObject().put("commitStrategy", "AUTO"), "commitStrategy"),
                 new Row("errorStrategy=SKIP", new JsonObject().put("errorStrategy", "SKIP"), "errorStrategy"),
                 new Row(
@@ -108,13 +108,14 @@ class KafkaForcedStrategiesTest {
                         StrategyRig.register(forcing, row.consumerConfig()).entries());
                 assertEquals(1, registered.size(), "a forcing binding must register with " + row.label());
                 assertEquals(
-                        1,
+                        row.consumerConfig()
+                                .getInteger("maxInFlight", ResolvedKafkaConsumerConfig.DEFAULT_MAX_IN_FLIGHT),
                         registered.get(0).config().maxInFlight(),
-                        "a forcing binding must handle one record at a time with " + row.label());
+                        "a forcing binding must keep the configured maxInFlight with " + row.label());
                 assertEquals(
-                        "1",
+                        null,
                         registered.get(0).config().kafkaProperties().get("max.poll.records"),
-                        "a forcing binding must poll one record at a time with " + row.label());
+                        "a forcing binding must not change max.poll.records with " + row.label());
             } else {
                 KafkaRegistrationException failure = assertThrows(
                         KafkaRegistrationException.class,

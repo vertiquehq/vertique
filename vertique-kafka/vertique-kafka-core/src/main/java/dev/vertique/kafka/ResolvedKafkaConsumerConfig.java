@@ -34,7 +34,9 @@ import java.util.Map;
  * @param retryConfig retry configuration (non-null when errorStrategy is {@link ErrorStrategy#RETRY})
  * @param deadLetterTopic effective DLQ topic (resolved default: {@code {topic}.dlq})
  * @param eventBusTimeoutMs event bus send timeout in milliseconds
- * @param maxInFlight max concurrent dispatches before pausing the consumer
+ * @param maxInFlight max concurrent dispatches
+ * @param maxRetainedRecords the records a consumer keeps in memory before its partitions stop fetching
+ * @param maxRetainedBytes the estimated bytes a consumer keeps in memory before its partitions stop fetching
  * @param deploymentOptions Vert.x deployment options (instances, worker threading model)
  * @param kafkaProperties native Kafka consumer properties merged from global and per-consumer config
  * @param endpointFormat the endpoint-level format override from
@@ -60,6 +62,8 @@ record ResolvedKafkaConsumerConfig(
         String deadLetterTopic,
         long eventBusTimeoutMs,
         int maxInFlight,
+        int maxRetainedRecords,
+        long maxRetainedBytes,
         DeploymentOptions deploymentOptions,
         Map<String, String> kafkaProperties,
         @Nullable String endpointFormat,
@@ -70,6 +74,12 @@ record ResolvedKafkaConsumerConfig(
 
     /** The number of in-flight records a consumer allows when {@code maxInFlight} is not configured. */
     static final int DEFAULT_MAX_IN_FLIGHT = 256;
+
+    /** The records a consumer keeps in memory when {@code maxRetainedRecords} is not configured. */
+    static final int DEFAULT_MAX_RETAINED_RECORDS = 4096;
+
+    /** The estimated bytes a consumer keeps in memory when {@code maxRetainedBytes} is not configured: 64 MiB. */
+    static final long DEFAULT_MAX_RETAINED_BYTES = 64L * 1024 * 1024;
 
     // --- Factory ---
 
@@ -130,6 +140,12 @@ record ResolvedKafkaConsumerConfig(
         int maxInFlight = consumerConfig != null && consumerConfig.maxInFlight() != null
                 ? consumerConfig.maxInFlight()
                 : DEFAULT_MAX_IN_FLIGHT;
+        int maxRetainedRecords = consumerConfig != null && consumerConfig.maxRetainedRecords() != null
+                ? consumerConfig.maxRetainedRecords()
+                : DEFAULT_MAX_RETAINED_RECORDS;
+        long maxRetainedBytes = consumerConfig != null && consumerConfig.maxRetainedBytes() != null
+                ? consumerConfig.maxRetainedBytes()
+                : DEFAULT_MAX_RETAINED_BYTES;
 
         CommitStrategy commitStrategy = resolveEnum(
                 consumerConfig != null ? consumerConfig.commitStrategy() : null,
@@ -192,6 +208,8 @@ record ResolvedKafkaConsumerConfig(
                 deadLetterTopic,
                 eventBusTimeoutMs,
                 maxInFlight,
+                maxRetainedRecords,
+                maxRetainedBytes,
                 deploymentOptions,
                 kafkaProperties,
                 endpointFormat,
@@ -202,17 +220,15 @@ record ResolvedKafkaConsumerConfig(
     }
 
     /**
-     * Returns this configuration as a binding that forces its strategies needs it. It handles one
-     * record at a time: {@code maxInFlight} is {@code 1}, and {@code max.poll.records} is {@code 1} so
-     * that a poll never hands the consumer a second record while the first is still being handled. A
-     * new group starts at the beginning of the topic unless {@code auto.offset.reset} is configured,
-     * so a first record that fails before any commit is not skipped after a restart.
+     * Returns this configuration as a binding that forces its strategies needs it. A new group starts at the
+     * beginning of the topic unless {@code auto.offset.reset} is configured, so a first record that fails before any
+     * commit is not skipped after a restart. Nothing else changes: the binding runs records concurrently up to
+     * {@code maxInFlight}, like any other.
      *
      * @return the changed configuration
      */
     ResolvedKafkaConsumerConfig forced() {
         Map<String, String> properties = new HashMap<>(kafkaProperties);
-        properties.put("max.poll.records", "1");
         properties.putIfAbsent("auto.offset.reset", "earliest");
         return new ResolvedKafkaConsumerConfig(
                 topic,
@@ -223,7 +239,9 @@ record ResolvedKafkaConsumerConfig(
                 retryConfig,
                 deadLetterTopic,
                 eventBusTimeoutMs,
-                1,
+                maxInFlight,
+                maxRetainedRecords,
+                maxRetainedBytes,
                 deploymentOptions,
                 Map.copyOf(properties),
                 endpointFormat,

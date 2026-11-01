@@ -74,8 +74,8 @@ import org.testcontainers.kafka.KafkaContainer;
  *       alone.</li>
  *   <li>Under {@code SKIP} the record is skipped with a log that names the consumer and the error
  *       type, and the dead-letter topic stays empty.</li>
- *   <li>A forcing binding handles one record at a time: two records of one partition that fail
- *       together are both delivered again, and none is lost.</li>
+ *   <li>A forcing binding handles records of one partition concurrently: two records that fail
+ *       together are both run again, and none is lost.</li>
  *   <li>Neither path retries, and neither pauses the consumer: the next record is handled long
  *       before the configured backoff would end. Nothing the error handler logs holds the record's
  *       value.</li>
@@ -290,7 +290,7 @@ public class KafkaTerminalFailureIT {
     }
 
     @Test
-    @DisplayName("two records of one partition that fail together are both delivered again and none is lost")
+    @DisplayName("two records of one partition that fail together are both run again and none is lost")
     void twoRecordsOfOnePartitionThatFailTogetherAreBothDeliveredAgain(Vertx vertx) throws Exception {
         // Given: a forcing binding on a short backoff, and a handler that fails each record once after a delay
         // long enough for both to be in flight together if the binding allowed it
@@ -327,8 +327,8 @@ public class KafkaTerminalFailureIT {
             assertTrue(attempts.get("evt-1").get() >= 2, "the first record should be delivered again");
             assertTrue(attempts.get("evt-2").get() >= 2, "the second record should be delivered again");
 
-            // And: the binding handled one record at a time, and nothing was dead-lettered
-            assertEquals(1, mostRunning.get(), "a forcing binding should run one handler at a time");
+            // And: the binding ran both records at once, and nothing was dead-lettered
+            assertEquals(2, mostRunning.get(), "a forcing binding should run records of a partition concurrently");
             assertTrue(rig.readDeadLetters(1, 3_000L).isEmpty(), "nothing should be dead-lettered");
         } finally {
             rig.close();

@@ -52,6 +52,7 @@ public class KafkaConsumerBinding<V> {
     private final Runnable ignoreUndecodable;
     private final boolean noHeaderContext;
     private final boolean forceStrategies;
+    private final KafkaDispatchGate dispatchGate;
 
     private KafkaConsumerBinding(Builder<V> builder) {
         this.name = builder.name;
@@ -72,6 +73,7 @@ public class KafkaConsumerBinding<V> {
         this.ignoreUndecodable = builder.ignoreUndecodable;
         this.noHeaderContext = builder.noHeaderContext;
         this.forceStrategies = builder.forceStrategies;
+        this.dispatchGate = builder.dispatchGate;
     }
 
     // --- Accessors ---
@@ -241,13 +243,22 @@ public class KafkaConsumerBinding<V> {
 
     /**
      * Returns whether registration requires the resolved commit and error strategies to equal this
-     * binding's, the resolved exhausted strategy to be {@link ErrorStrategy#DEAD_LETTER} and
-     * {@code maxInFlight} to be {@code 1}.
+     * binding's and the resolved exhausted strategy to be {@link ErrorStrategy#DEAD_LETTER}.
      *
      * @return {@code true} if the strategies are forced
      */
     public boolean forceStrategies() {
         return forceStrategies;
+    }
+
+    /**
+     * Returns the gate that says whether a record may start.
+     *
+     * @return the gate, or {@code null} for none
+     */
+    @Nullable
+    public KafkaDispatchGate dispatchGate() {
+        return dispatchGate;
     }
 
     /**
@@ -287,6 +298,7 @@ public class KafkaConsumerBinding<V> {
         private Runnable ignoreUndecodable;
         private boolean noHeaderContext;
         private boolean forceStrategies;
+        private KafkaDispatchGate dispatchGate;
 
         private Builder(String name, Class<V> valueType) {
             this.name = name;
@@ -477,19 +489,30 @@ public class KafkaConsumerBinding<V> {
          * Makes registration fail, naming this consumer and the option, unless the resolved
          * {@code commitStrategy} and {@code errorStrategy} equal this binding's and the resolved
          * {@code retry.exhaustedStrategy} is {@link ErrorStrategy#DEAD_LETTER}, so that
-         * {@code kafka.consumers.{name}.*} cannot change them. The consumer also handles one record
-         * at a time: {@code maxInFlight} and {@code max.poll.records} resolve to {@code 1}, and
-         * registration fails, naming the option, when a {@code maxInFlight} other than {@code 1} is
-         * configured. Without that limit a later record
-         * of a partition could commit past an earlier one whose retry or dead-letter publish is still
-         * pending. The binding also needs {@link CommitStrategy#MANUAL}: the default
-         * {@link CommitStrategy#AUTO} could commit past a record whose failure is still unsettled, when
-         * the consumer closes. Applies to a binding with a {@link #handler(KafkaRecordHandler) handler}.
+         * {@code kafka.consumers.{name}.*} cannot change them. A new consumer group starts at the beginning of the
+         * topic unless {@code auto.offset.reset} is configured. The consumer handles records concurrently, up to
+         * {@code maxInFlight} at once, like any other {@link CommitStrategy#MANUAL} consumer. The binding also needs
+         * {@link CommitStrategy#MANUAL}: the default {@link CommitStrategy#AUTO} could commit past a record whose
+         * failure is unsettled. Applies to a binding with a {@link #handler(KafkaRecordHandler) handler}.
          *
          * @return this builder
          */
         public Builder<V> forceStrategies() {
             this.forceStrategies = true;
+            return this;
+        }
+
+        /**
+         * Sets the gate that says whether a record may start. While the gate is closed no record starts, no partition
+         * fetches and the consumer keeps polling; a record the gate held back has not been attempted, so no retry is
+         * spent. The binding needs {@link CommitStrategy#MANUAL}.
+         *
+         * @param dispatchGate the gate
+         * @return this builder
+         * @see KafkaDispatchGate
+         */
+        public Builder<V> dispatchGate(KafkaDispatchGate dispatchGate) {
+            this.dispatchGate = Objects.requireNonNull(dispatchGate, "dispatchGate");
             return this;
         }
 
@@ -500,7 +523,7 @@ public class KafkaConsumerBinding<V> {
          * @throws IllegalStateException if the binding names both a {@link #handler handler} and a
          *     {@link #dispatchTo(Class, String) dispatchTo} target, or names no handler and sets
          *     {@link #ignoreUndecodable}, {@link #noHeaderContext} or {@link #forceStrategies}, or
-         *     sets {@link #forceStrategies} without {@link CommitStrategy#MANUAL}
+         *     sets {@link #forceStrategies} or {@link #dispatchGate} without {@link CommitStrategy#MANUAL}
          */
         public KafkaConsumerBinding<V> build() {
             if (handler != null && targetService != null) {
@@ -516,6 +539,10 @@ public class KafkaConsumerBinding<V> {
                 throw new IllegalStateException("KafkaConsumerBinding '" + name
                         + "' sets forceStrategies, which needs commitStrategy MANUAL but has " + commitStrategy
                         + "; close-time auto-commit could pass a record whose failure is unsettled");
+            }
+            if (dispatchGate != null && commitStrategy != CommitStrategy.MANUAL) {
+                throw new IllegalStateException("KafkaConsumerBinding '" + name
+                        + "' sets a dispatchGate, which needs commitStrategy MANUAL but has " + commitStrategy);
             }
             return new KafkaConsumerBinding<>(this);
         }
