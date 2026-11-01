@@ -3,9 +3,11 @@
 
 package dev.vertique.workflow.kafka;
 
+import dev.vertique.workflow.contract.IdempotencyKey;
 import dev.vertique.workflow.contract.SignalDedupKey;
 import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.contract.WorkflowSignal;
+import dev.vertique.workflow.contract.WorkflowStart;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import io.vertx.core.Future;
 import java.time.Instant;
@@ -26,10 +28,21 @@ public final class ShipmentSignals {
     /** A contract whose one signal takes {@link DeliveryConfirmed}. */
     @WorkflowContract("orders")
     public interface OrdersContract {
+        @WorkflowStart
+        Future<WorkflowInstanceId> start(StartWatch payload, @IdempotencyKey String idempotencyKey);
+
         @WorkflowSignal(SHIPMENT_DELIVERED)
         Future<Void> shipmentDelivered(
                 WorkflowInstanceId instanceId, @SignalDedupKey String dedupKey, DeliveryConfirmed payload);
     }
+
+    /**
+     * What starts a workflow of the contract.
+     *
+     * @param watchId the id of the watch
+     * @param carrierRef the reference the workflow waits for
+     */
+    public record StartWatch(String watchId, String carrierRef) {}
 
     /**
      * What the signal carries.

@@ -18,9 +18,11 @@ import dev.vertique.kafka.test.KafkaTestContainers;
 import dev.vertique.security.PrincipalRef;
 import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityIdentity;
+import dev.vertique.workflow.contract.IdempotencyKey;
 import dev.vertique.workflow.contract.SignalDedupKey;
 import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.contract.WorkflowSignal;
+import dev.vertique.workflow.contract.WorkflowStart;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.intake.IntakePressureSampler;
@@ -111,6 +113,9 @@ final class SourceScenario implements AutoCloseable {
     /** The contract of {@link OrderShipping}. */
     @WorkflowContract("orders")
     interface OrdersContract {
+        @WorkflowStart
+        Future<WorkflowInstanceId> start(StartShipping payload, @IdempotencyKey String idempotencyKey);
+
         @WorkflowSignal(SHIPMENT_DELIVERED)
         Future<Void> shipmentDelivered(
                 WorkflowInstanceId instanceId, @SignalDedupKey String dedupKey, DeliveryConfirmed payload);
@@ -119,6 +124,9 @@ final class SourceScenario implements AutoCloseable {
     /** The contract of {@link ReturnShipping}. */
     @WorkflowContract("returns")
     interface ReturnsContract {
+        @WorkflowStart
+        Future<WorkflowInstanceId> start(StartShipping payload, @IdempotencyKey String idempotencyKey);
+
         @WorkflowSignal(PARCEL_DELIVERED)
         Future<Void> parcelDelivered(
                 WorkflowInstanceId instanceId, @SignalDedupKey String dedupKey, DeliveryConfirmed payload);

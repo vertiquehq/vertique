@@ -20,9 +20,11 @@ import dev.vertique.kafka.json.JsonSerdeProvider;
 import dev.vertique.kafka.serialization.KafkaSerdeRegistry;
 import dev.vertique.services.ServiceContractRegistry;
 import dev.vertique.services.ServiceTargetResolver;
+import dev.vertique.workflow.contract.IdempotencyKey;
 import dev.vertique.workflow.contract.SignalDedupKey;
 import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.contract.WorkflowSignal;
+import dev.vertique.workflow.contract.WorkflowStart;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.services.source.WorkflowSignalSourceDelivery;
 import dev.vertique.workflow.source.SignalSourceEvent;
@@ -53,10 +55,16 @@ final class SourceFixture {
     /** A contract whose one signal takes {@link DeliveryConfirmed}. */
     @WorkflowContract("orders")
     interface OrdersContract {
+        @WorkflowStart
+        Future<WorkflowInstanceId> start(StartShipping payload, @IdempotencyKey String idempotencyKey);
+
         @WorkflowSignal(SHIPMENT_DELIVERED)
         Future<Void> shipmentDelivered(
                 WorkflowInstanceId instanceId, @SignalDedupKey String dedupKey, DeliveryConfirmed payload);
     }
+
+    /** What starts a workflow of the contract. */
+    record StartShipping(String carrierRef) {}
 
     /** What the contract's signal takes. */
     record DeliveryConfirmed(String carrierRef, String note) {}

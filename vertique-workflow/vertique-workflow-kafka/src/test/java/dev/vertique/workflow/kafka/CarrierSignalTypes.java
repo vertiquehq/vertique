@@ -3,9 +3,11 @@
 
 package dev.vertique.workflow.kafka;
 
+import dev.vertique.workflow.contract.IdempotencyKey;
 import dev.vertique.workflow.contract.SignalDedupKey;
 import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.contract.WorkflowSignal;
+import dev.vertique.workflow.contract.WorkflowStart;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
@@ -27,6 +29,9 @@ final class CarrierSignalTypes {
     /** A contract whose one signal takes {@link ShipmentDelivered}, the message of the carriers' topic. */
     @WorkflowContract("carrier-orders")
     interface OrdersContract {
+        @WorkflowStart
+        Future<WorkflowInstanceId> start(StartShipping payload, @IdempotencyKey String idempotencyKey);
+
         @WorkflowSignal(SHIPMENT_DELIVERED)
         Future<Void> shipmentDelivered(
                 WorkflowInstanceId instanceId, @SignalDedupKey String dedupKey, ShipmentDelivered payload);
