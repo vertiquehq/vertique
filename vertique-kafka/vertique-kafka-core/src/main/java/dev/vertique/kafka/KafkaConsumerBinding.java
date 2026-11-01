@@ -8,7 +8,8 @@ import dev.vertique.kafka.serialization.KafkaDeserializer;
 import jakarta.annotation.Nullable;
 
 /**
- * Immutable Kafka consumer binding (Model 2) that maps a topic to a service operation.
+ * Immutable Kafka consumer binding (Model 2) that maps a topic to a service operation, or to a
+ * {@link KafkaRecordHandler} that receives each decoded record.
  *
  * <p>Contributed via Dagger multibinding:
  * <pre>{@code
@@ -22,6 +23,10 @@ import jakarta.annotation.Nullable;
  * }
  * }</pre>
  *
+ * <p>A binding delivers to a {@code dispatchTo} target service or to a {@link Builder#handler
+ * handler}, never both: {@link Builder#build()} refuses a binding that names both. A binding that
+ * names neither builds, and the consumer scanner refuses it at registration.
+ *
  * @param <V> the value type for deserialization
  */
 public class KafkaConsumerBinding<V> {
@@ -34,6 +39,7 @@ public class KafkaConsumerBinding<V> {
     private final String groupId;
     private final Class<?> targetService;
     private final String targetOperation;
+    private final KafkaRecordHandler<V> handler;
     private final ErrorStrategy errorStrategy;
     private final CommitStrategy commitStrategy;
     private final String deadLetterTopic;
@@ -50,6 +56,7 @@ public class KafkaConsumerBinding<V> {
         this.groupId = builder.groupId;
         this.targetService = builder.targetService;
         this.targetOperation = builder.targetOperation;
+        this.handler = builder.handler;
         this.errorStrategy = builder.errorStrategy;
         this.commitStrategy = builder.commitStrategy;
         this.deadLetterTopic = builder.deadLetterTopic;
@@ -114,6 +121,17 @@ public class KafkaConsumerBinding<V> {
      */
     public String targetOperation() {
         return targetOperation;
+    }
+
+    /**
+     * Returns the record handler that receives each decoded record, or {@code null} when the
+     * binding dispatches to a target service instead.
+     *
+     * @return the handler, or {@code null}
+     */
+    @Nullable
+    public KafkaRecordHandler<V> handler() {
+        return handler;
     }
 
     /**
@@ -218,6 +236,7 @@ public class KafkaConsumerBinding<V> {
         private String groupId;
         private Class<?> targetService;
         private String targetOperation;
+        private KafkaRecordHandler<V> handler;
         private ErrorStrategy errorStrategy = ErrorStrategy.SKIP;
         private CommitStrategy commitStrategy = CommitStrategy.AUTO;
         private String deadLetterTopic = "";
@@ -272,6 +291,25 @@ public class KafkaConsumerBinding<V> {
         public Builder<V> dispatchTo(Class<?> service, String operation) {
             this.targetService = service;
             this.targetOperation = operation;
+            return this;
+        }
+
+        /**
+         * Sets a record handler as the delivery target, as an alternative to
+         * {@link #dispatchTo(Class, String)}. The record is decoded to {@code V} and passed to the
+         * handler as a {@link KafkaMessage} carrying its key, topic, partition, offset, timestamp and
+         * headers. The binding keeps its filter, commit strategy, error and retry strategy,
+         * dead-letter topic and interceptors, and the handler runs with the record's durable context
+         * installed.
+         *
+         * <p>A handler and a {@code dispatchTo} target are mutually exclusive: {@link #build()}
+         * refuses a binding that names both.
+         *
+         * @param handler the handler that receives each decoded record
+         * @return this builder
+         */
+        public Builder<V> handler(KafkaRecordHandler<V> handler) {
+            this.handler = handler;
             return this;
         }
 
@@ -369,8 +407,14 @@ public class KafkaConsumerBinding<V> {
          * Builds the binding.
          *
          * @return the immutable binding
+         * @throws IllegalStateException if the binding names both a {@link #handler handler} and a
+         *     {@link #dispatchTo(Class, String) dispatchTo} target
          */
         public KafkaConsumerBinding<V> build() {
+            if (handler != null && targetService != null) {
+                throw new IllegalStateException("KafkaConsumerBinding '" + name
+                        + "' names both a handler and a dispatchTo target; name one or the other");
+            }
             return new KafkaConsumerBinding<>(this);
         }
     }

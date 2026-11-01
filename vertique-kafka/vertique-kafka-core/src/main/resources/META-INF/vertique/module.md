@@ -177,7 +177,8 @@ static KafkaConsumerBinding<?> orderBinding() {
 | `builder(String name, Class<V> valueType)` | required | Binding name and deserialization target |
 | `topic(String)` | required | Topic |
 | `groupId(String)` | required | Consumer group id |
-| `dispatchTo(Class<?> service, String operation)` | required | Target service contract and operation |
+| `dispatchTo(Class<?> service, String operation)` | required unless `handler` is set | Target service contract and operation |
+| `handler(KafkaRecordHandler<V>)` | none | Delivers each decoded record to the handler as a `KafkaMessage<V>` instead of dispatching to a service |
 | `errorStrategy(ErrorStrategy)` | `SKIP` | Failure handling |
 | `commitStrategy(CommitStrategy)` | `AUTO` | Offset commit timing |
 | `deadLetterTopic(String)` | `"{topic}.dlq"` | DLQ topic |
@@ -189,6 +190,14 @@ static KafkaConsumerBinding<?> orderBinding() {
 
 Use the durable operation id (`@ServiceOperation` value) in `dispatchTo` for stable-target-eligible
 operations so the binding survives a method rename.
+
+A binding names a `handler` or a `dispatchTo` target, not both: `build()` throws
+`IllegalStateException`, naming the binding, when both are set. A binding that names neither builds,
+and the registrar refuses it at startup. A handler binding is registered as a handler-kind consumer
+(see Model 4): it receives the decoded `KafkaMessage<V>` with key, topic, partition, offset,
+timestamp and headers, runs with the record's durable context installed, and keeps the binding's
+filter, commit strategy, error and retry strategy, dead-letter topic, custom deserializer and
+interceptors. No service is resolved for it.
 
 ### Model 3 — `@KafkaListener` routing interface
 

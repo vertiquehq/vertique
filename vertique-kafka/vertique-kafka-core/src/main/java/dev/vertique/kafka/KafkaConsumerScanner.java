@@ -216,7 +216,9 @@ final class KafkaConsumerScanner {
 
     /**
      * Processes declarative {@link KafkaConsumerBinding} instances contributed via Dagger multibinding.
-     * Validates that the target service and operation exist in the registry.
+     * Validates that the target service and operation exist in the registry. A binding that carries a
+     * {@link KafkaRecordHandler} is registered as a handler-kind consumer instead, with no target
+     * resolution.
      *
      * <p>Address resolution uses {@link ServiceTargetResolver#resolve(Class, String)} first (treating
      * {@link KafkaConsumerBinding#targetOperation()} as a durable operation id). If the resolver throws
@@ -241,6 +243,11 @@ final class KafkaConsumerScanner {
 
         for (KafkaConsumerBinding<?> binding : bindings) {
             String name = binding.name();
+
+            if (binding.handler() != null) {
+                processHandlerBinding(binding, kafkaConfig, entries, usedNames, violations);
+                continue;
+            }
 
             // Validate target service exists
             ContractEntry<?> contractEntry;
@@ -323,6 +330,60 @@ final class KafkaConsumerScanner {
             if (entry != null) {
                 entries.add(entry);
             }
+        }
+    }
+
+    /**
+     * Builds a handler-kind entry for a {@link KafkaConsumerBinding} that carries a
+     * {@link KafkaRecordHandler}. No target service is resolved and no operation is looked up; the
+     * entry takes the binding's value type, custom deserializer, filter and defaults.
+     *
+     * @param binding the binding with a non-null handler
+     * @param kafkaConfig the typed {@code kafka} config
+     * @param entries mutable list to add the new entry into
+     * @param usedNames mutable set of already-claimed binding names (updated in place)
+     * @param violations mutable list to collect violation messages
+     */
+    private void processHandlerBinding(
+            KafkaConsumerBinding<?> binding,
+            KafkaConfig kafkaConfig,
+            List<ConsumerEntry> entries,
+            Set<String> usedNames,
+            List<String> violations) {
+
+        String name = binding.name();
+        log.info("Processing KafkaConsumerBinding '{}' with a record handler", name);
+
+        ResolvedKafkaConsumerConfig config = ResolvedKafkaConsumerConfig.resolve(
+                name,
+                binding.topic(),
+                binding.groupId(),
+                binding.enabled(),
+                binding.commitStrategy(),
+                binding.errorStrategy(),
+                binding.deadLetterTopic(),
+                binding.eventBusTimeoutMs(),
+                binding.jsonProfile() != null ? binding.jsonProfile().value() : null,
+                kafkaConfig,
+                consumerIndex.get(name));
+
+        ConsumerEntry entry = validateAndBuild(
+                name,
+                config,
+                ConsumerEntry.Kind.HANDLER,
+                binding.valueType(),
+                null,
+                null,
+                false,
+                List.of(),
+                binding.handler(),
+                binding.deserializer(),
+                binding.filter(),
+                usedNames,
+                violations);
+
+        if (entry != null) {
+            entries.add(entry);
         }
     }
 

@@ -33,7 +33,8 @@ import java.util.List;
  *     and {@link Kind#HANDLER} entries
  * @param targetOneWay {@code true} if the target operation is fire-and-forget
  * @param routes route entries for {@link Kind#ROUTER}; empty for other kinds
- * @param handler custom record handler for {@link Kind#HANDLER}; {@code null} for other kinds
+ * @param handler custom record handler for {@link Kind#HANDLER}, from {@code @KafkaConsumers} or
+ *     from a {@link KafkaConsumerBinding}; {@code null} for other kinds
  * @param deserializer effective deserializer selected by {@link KafkaConsumerValidation};
  *     {@code null} for {@link Kind#ROUTER} and for consumers with no value type
  * @param frameworkOwnedDeserializer {@code true} when {@code deserializer} was built by the serde
@@ -69,7 +70,10 @@ record ConsumerEntry(
         BINDING,
         /** Model 3: declarative routing interface with {@link KafkaHandler}-annotated methods. */
         ROUTER,
-        /** Model 4: custom {@link KafkaRecordHandler} implementation. */
+        /**
+         * Model 4: custom {@link KafkaRecordHandler} implementation, contributed through
+         * {@code @KafkaConsumers} or carried by a {@link KafkaConsumerBinding}.
+         */
         HANDLER
     }
 
