@@ -1,0 +1,10 @@
+{
+  "name": "smoke-db-down",
+  "set": "smoke",
+  "diagnostic": true,
+  "arm": "ON",
+  "nodes": 2,
+  "load": {"kind": "fixed", "ratePerSec": 30, "warmupSec": 3, "windowSec": 14},
+  "timeline": {"settleSec": 6, "recoverySec": 3, "drainDeadlineSec": 10},
+  "injections": [{"kind": "DB_CONTAINER_STOP", "atSec": 9, "durationSec": 3600}]
+}
