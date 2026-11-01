@@ -49,6 +49,7 @@ public class ScopeMigrationIT {
     private static final String RETIRED_V002_SCRIPT = "V002__create_workflow_definitions_and_tenant_key.sql";
     private static final String V003_SCRIPT = "V003__recorded_execution.sql";
     private static final String V004_SCRIPT = "V004__signal_correlation.sql";
+    private static final String V005_SCRIPT = "V005__business_key_lookup_index.sql";
 
     private static final UUID FIRST_INSTANCE = UUID.fromString("00000000-0000-0000-0000-0000000000a1");
     private static final UUID SECOND_INSTANCE = UUID.fromString("00000000-0000-0000-0000-0000000000a2");
@@ -216,7 +217,7 @@ public class ScopeMigrationIT {
                     .containsExactly(MigrationVersion.fromVersion("1"), MigrationVersion.fromVersion("2"));
             assertThat(latest.info().all())
                     .extracting(MigrationInfo::getScript)
-                    .containsExactly(V1_SCRIPT, V002_SCRIPT, V003_SCRIPT, V004_SCRIPT)
+                    .containsExactly(V1_SCRIPT, V002_SCRIPT, V003_SCRIPT, V004_SCRIPT, V005_SCRIPT)
                     .doesNotContain(RETIRED_V002_SCRIPT);
 
             // And the first migration keeps its recorded checksum and the new one records the shipped file's

@@ -55,6 +55,8 @@ public class SignalCorrelationMigrationIT {
             "V002__workflow_definitions_and_scopes.sql",
             "V003__recorded_execution.sql");
     private static final String SIGNAL_CORRELATION_SCRIPT = "V004__signal_correlation.sql";
+    private static final String BUSINESS_KEY_INDEX_SCRIPT = "V005__business_key_lookup_index.sql";
+    private static final String BUSINESS_KEY_INDEX = "idx_workflow_instances_business_key_scope_key_definition_id";
 
     private static final String INSTANCE_ID = "00000000-0000-0000-0000-0000000000a1";
     private static final String PENDING_INSTANCE_ID = "00000000-0000-0000-0000-0000000000a2";
@@ -342,7 +344,7 @@ public class SignalCorrelationMigrationIT {
     void indexBuiltAheadOfTheUpgradeIsKeptAndTheScriptRerunsCleanly() throws Exception {
         // Given a reference run that records the index the migration adds to the instance table and the instance
         // indexes after the latest migration
-        String addedIndexDefinition = indexDefinitionAddedBy("4");
+        String addedIndexDefinition = indexDefinitionAddedBy("5");
         flyway().load().migrate();
         List<String> referenceIndexes = indexNamesOf("workflow_instances");
 
@@ -367,10 +369,34 @@ public class SignalCorrelationMigrationIT {
         assertThat(latest.info().pending()).isEmpty();
         assertThat(indexNamesOf("workflow_instances")).containsExactlyElementsOf(referenceIndexes);
 
-        // And running the text of the script a second time in one transaction raises no error and adds nothing
+        // And running the text of each script a second time in one transaction raises no error and adds nothing
         List<String> catalogBefore = catalogSnapshot();
         assertDoesNotThrow(() -> executeScript(SIGNAL_CORRELATION_SCRIPT));
+        assertDoesNotThrow(() -> executeScript(BUSINESS_KEY_INDEX_SCRIPT));
         assertThat(catalogSnapshot()).containsExactlyElementsOf(catalogBefore);
+    }
+
+    @Test
+    @DisplayName("The instance index builds in a migration of its own, so the build holds no lock on the command log")
+    void instanceIndexBuildsInAMigrationOfItsOwn() throws Exception {
+        // Given a database at the version that adds the command log column
+        migrateTo("4");
+        try (Connection connection = connection()) {
+            assertThat(rows(connection, """
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_schema = current_schema() AND table_name = 'workflow_commands'
+                      AND column_name = 'provenance_json'
+                    """)).containsExactly("provenance_json");
+        }
+
+        // And that version has not built the instance index
+        assertThat(indexNamesOf("workflow_instances")).doesNotContain(BUSINESS_KEY_INDEX);
+
+        // When the next version applies, in a transaction of its own
+        migrateTo("5");
+
+        // Then the instance index is built
+        assertThat(indexNamesOf("workflow_instances")).contains(BUSINESS_KEY_INDEX);
     }
 
     /**

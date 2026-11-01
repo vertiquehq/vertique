@@ -2,24 +2,19 @@
 -- SPDX-License-Identifier: EUPL-1.2
 
 -- Adds the signal correlation schema: the table of open wait records, one per wait entry of a computed correlation
--- key; the nullable provenance column on the command log; and an index that serves business-key lookup without a
--- definition or a scope. No existing row changes, and no existing column, constraint or index changes.
+-- key, and the nullable provenance column on the command log. No existing row changes, and no existing column,
+-- constraint or index changes. V005 adds the index for business-key lookup in a transaction of its own, so that this
+-- script's lock on workflow_commands is not held for the build.
 --
--- The ALTER TABLE statement takes an ACCESS EXCLUSIVE lock and the index build takes a SHARE lock on
--- workflow_instances, which blocks its writers, until the migration commits. Bound the wait for those locks: while a
--- statement waits, new statements on that table queue behind it for up to the timeout, then the migration fails and
--- can be rerun.
+-- The foreign key takes a SHARE ROW EXCLUSIVE lock on workflow_instances, which blocks its writers, and the ALTER TABLE
+-- statement an ACCESS EXCLUSIVE lock on workflow_commands, until the migration commits. Neither rewrites a table, so
+-- the script is short once it holds them. Bound the wait for those locks: while a statement waits, new statements on
+-- that table queue behind it for up to the timeout, then the migration fails and can be rerun.
 -- Run the script in one transaction (Flyway does), or SET LOCAL has no effect.
--- Every statement is IF [NOT] EXISTS, so the script can be rerun after a failure and is a no-op for an object built
--- ahead of the upgrade.
--- An operator of a large installation can build the workflow_instances index ahead of the upgrade, without blocking
--- writers, on an autocommit connection:
---   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_workflow_instances_business_key_scope_key_definition_id
---       ON workflow_instances (business_key, scope_key, definition_id) WHERE business_key IS NOT NULL;
--- The migration then finds the index and keeps it.
--- Apply the script before the first node of this release starts; nodes of the previous release keep running while it
--- applies and afterwards. They do not know the new table or column, and no read of workflow_commands selects every
--- column, so they need no stop. Nodes of this release may start in any order once it has applied.
+-- Every statement is IF [NOT] EXISTS, so the script can be rerun after a failure.
+-- Apply V004 and V005 before the first node of this release starts; nodes of the previous release keep running while
+-- they apply and afterwards. They do not know the new table or column, and no read of workflow_commands selects every
+-- column, so they need no stop. Nodes of this release may start in any order once both have applied.
 SET LOCAL lock_timeout = '30s';
 
 -- One open row per wait entry of a computed key. The engine generates wait_id (a version 7 UUID), so the column has
@@ -45,8 +40,3 @@ CREATE INDEX IF NOT EXISTS idx_workflow_signal_waits_contract_signal_key
 
 -- Commands: where a signal command came from, null for every existing row and for commands that record none.
 ALTER TABLE workflow_commands ADD COLUMN IF NOT EXISTS provenance_json JSONB NULL;
-
--- Business-key lookup without a definition or a scope. Not unique: a business key is unique only per scope and
--- definition id, which idx_workflow_instances_business_key already enforces.
-CREATE INDEX IF NOT EXISTS idx_workflow_instances_business_key_scope_key_definition_id
-    ON workflow_instances (business_key, scope_key, definition_id) WHERE business_key IS NOT NULL;

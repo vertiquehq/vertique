@@ -38,7 +38,8 @@ import java.util.UUID;
  * error when no row is held.
  *
  * <p>{@link #findOpen} joins {@code workflow_instances} and leaves out the records of instances that have ended. The
- * index on {@code (contract_name, signal_name, correlation_key)} serves it.
+ * index on {@code (contract_name, signal_name, correlation_key)} serves it. It sets no order: the caller acts only on
+ * the count or on a single record, and sorting would read every record of a shared key.
  */
 @Singleton
 public final class PgWorkflowSignalWaitRepository extends PgSqlRepository
@@ -115,7 +116,7 @@ public final class PgWorkflowSignalWaitRepository extends PgSqlRepository
                         + " AND ($4::varchar IS NULL OR w.definition_id = $4)"
                         + " AND ($5::varchar IS NULL OR w.scope_key = $5)"
                         + " AND i.status NOT IN ('COMPLETED', 'COMPENSATED', 'CANCELLED', 'EXPIRED')"
-                        + " ORDER BY w.created_at, w.wait_id LIMIT " + MATCH_LIMIT;
+                        + " LIMIT " + MATCH_LIMIT;
 
         this.sqlFindById = "SELECT " + COLUMNS + " FROM " + waits + " w WHERE w.wait_id = $1";
 
