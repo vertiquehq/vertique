@@ -5,6 +5,7 @@ package dev.vertique.kafka;
 
 import static dev.vertique.kafka.KafkaTestSupport.configParser;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.eventbus.LocalMessageCodec;
@@ -228,6 +229,15 @@ public class KafkaSettlementIT {
             return committed == null ? -1L : committed.offset();
         }
 
+        /** The offset after the last record of a partition. */
+        long endOffset(int partition) throws Exception {
+            TopicPartition tp = new TopicPartition(topic, partition);
+            return admin.listOffsets(Map.of(tp, org.apache.kafka.clients.admin.OffsetSpec.latest()))
+                    .partitionResult(tp)
+                    .get(10, TimeUnit.SECONDS)
+                    .offset();
+        }
+
         long awaitCommitted(int partition, long expected) throws Exception {
             long deadline = System.currentTimeMillis() + AWAIT_MS;
             long last = committed(partition);
@@ -328,13 +338,14 @@ public class KafkaSettlementIT {
     @DisplayName("a partition that moves away and comes back to the same consumer loses no record")
     void revokeAndReassignToTheSameConsumer(Vertx vertx) throws Exception {
         try (Rig rig = new Rig(vertx, 2)) {
-            // Given: a first consumer that owns both partitions, and a handler that holds the first record
+            // Given a first consumer that owns both partitions, and a handler that holds one record on each, so that
+            // whichever partition moves away leaves a handler of the old assignment running
             Map<String, AtomicInteger> handled = new ConcurrentHashMap<>();
             CountDownLatch release = new CountDownLatch(1);
-            KafkaRecordHandler<Event> handler = message -> {
+            KafkaRecordHandler<Event> first = message -> {
                 String id = message.value().id();
                 handled.computeIfAbsent(id, k -> new AtomicInteger()).incrementAndGet();
-                if (id.equals("held")) {
+                if (id.startsWith("held")) {
                     Promise<Void> done = Promise.promise();
                     vertx.executeBlocking(() -> {
                                 release.await();
@@ -346,30 +357,64 @@ public class KafkaSettlementIT {
                 return Future.succeededFuture();
             };
             JsonObject fast = new JsonObject().put("session.timeout.ms", "6000").put("heartbeat.interval.ms", "1000");
-            rig.deploy(handler, fast, 1_000L, 16);
-            rig.produce(0, "held");
-            for (int i = 0; i < 5; i++) {
-                rig.produce(0, "a" + i);
-                rig.produce(1, "b" + i);
-            }
-            await(() -> handled.containsKey("held") && handled.size() >= 11, "the first consumer reads everything");
+            rig.deploy(first, fast, 1_000L, 16);
+            rig.produce(0, "held0");
+            rig.produce(1, "held1");
+            await(() -> handled.containsKey("held0") && handled.containsKey("held1"), "both records are held");
 
-            // When: a second consumer joins, takes partitions, and leaves again, so they come back to the first
-            String second = rig.deploy(message -> Future.succeededFuture(), fast, 1_000L, 16);
-            Thread.sleep(8_000);
+            // When a second consumer joins: the partitions it takes are revoked from the first
+            Map<Integer, Set<String>> secondHandled = new ConcurrentHashMap<>();
+            String second = rig.deploy(
+                    message -> {
+                        secondHandled
+                                .computeIfAbsent(message.partition(), k -> ConcurrentHashMap.newKeySet())
+                                .add(message.value().id());
+                        return Future.succeededFuture();
+                    },
+                    fast,
+                    1_000L,
+                    16);
+            await(
+                    () -> {
+                        try {
+                            rig.produce(0, "during0-" + System.nanoTime());
+                            rig.produce(1, "during1-" + System.nanoTime());
+                            Thread.sleep(300);
+                        } catch (Exception e) {
+                            throw new IllegalStateException(e);
+                        }
+                        return !secondHandled.isEmpty();
+                    },
+                    "the second consumer is given a partition");
+            Set<Integer> moved = Set.copyOf(secondHandled.keySet());
+            assertFalse(moved.isEmpty(), "a partition was revoked from the first consumer");
+
+            // And: the second consumer leaves, so the partitions come back to the first
             rig.undeploy(second);
-            Thread.sleep(8_000);
+            await(
+                    () -> {
+                        try {
+                            for (int partition : moved) {
+                                rig.produce(partition, "probe" + partition + "-" + System.nanoTime());
+                            }
+                            Thread.sleep(300);
+                        } catch (Exception e) {
+                            throw new IllegalStateException(e);
+                        }
+                        return moved.stream().allMatch(partition -> handled.keySet().stream()
+                                .anyMatch(id -> id.startsWith("probe" + partition + "-")));
+                    },
+                    "the first consumer is given the partitions back and handles records produced after");
 
-            // And: the old handler finishes after the partition came back
+            // And: the handlers of the old assignment finish after the partitions came back
             release.countDown();
 
-            // Then: every record was handled at least once, and the committed offsets reach the end
-            for (int i = 0; i < 5; i++) {
-                final int n = i;
-                await(() -> handled.containsKey("a" + n) && handled.containsKey("b" + n), "record " + n + " handled");
-            }
-            assertEquals(6L, rig.awaitCommitted(0, 6L));
-            assertEquals(5L, rig.awaitCommitted(1, 5L));
+            // Then nothing is lost: the committed offsets reach the end of both partitions
+            long end0 = rig.endOffset(0);
+            long end1 = rig.endOffset(1);
+            assertEquals(end0, rig.awaitCommitted(0, end0));
+            assertEquals(end1, rig.awaitCommitted(1, end1));
+            assertTrue(handled.containsKey("held0") && handled.containsKey("held1"));
         }
     }
 
