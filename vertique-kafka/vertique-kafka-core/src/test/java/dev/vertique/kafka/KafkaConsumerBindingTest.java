@@ -35,21 +35,17 @@ class KafkaConsumerBindingTest {
         }
 
         @Test
-        @DisplayName("a gate needs MANUAL commit, and is kept on the binding")
-        void gateNeedsManualCommit() {
+        @DisplayName("a gate is kept on the binding")
+        void gateIsKept() {
             KafkaDispatchGate gate = () -> true;
-            KafkaConsumerBinding.Builder<TestEvent> builder = KafkaConsumerBinding.builder(
-                            "test-binding", TestEvent.class)
+            KafkaConsumerBinding<TestEvent> binding = KafkaConsumerBinding.builder("test-binding", TestEvent.class)
                     .topic("test.topic")
                     .groupId("test-group")
-                    .dispatchGate(gate);
+                    .commitStrategy(CommitStrategy.MANUAL)
+                    .dispatchGate(gate)
+                    .build();
 
-            IllegalStateException refused = assertThrows(IllegalStateException.class, builder::build);
-            assertTrue(refused.getMessage().contains("dispatchGate"));
-            assertTrue(refused.getMessage().contains("test-binding"));
-
-            assertSame(
-                    gate, builder.commitStrategy(CommitStrategy.MANUAL).build().dispatchGate());
+            assertSame(gate, binding.dispatchGate());
         }
     }
 

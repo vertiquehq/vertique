@@ -312,7 +312,7 @@ final class KafkaConsumerScanner {
                     kafkaConfig,
                     consumerIndex.get(name));
 
-            ConsumerEntry entry = validateAndBuild(
+            ConsumerEntry entry = KafkaConsumerValidation.validateAndBuild(
                     name,
                     config,
                     ConsumerEntry.Kind.BINDING,
@@ -322,13 +322,18 @@ final class KafkaConsumerScanner {
                     meta.oneWay(),
                     List.of(),
                     null,
+                    serdeRegistry,
                     binding.deserializer(),
                     binding.filter(),
+                    null,
+                    false,
+                    false,
+                    binding.dispatchGate(),
                     usedNames,
                     violations);
 
             if (entry != null && checkDispatchGate(binding, config, violations)) {
-                entries.add(entry.withDispatchGate(binding.dispatchGate()));
+                entries.add(entry);
             }
         }
     }
@@ -411,11 +416,12 @@ final class KafkaConsumerScanner {
                 binding.ignoreUndecodable(),
                 binding.noHeaderContext(),
                 binding.forceStrategies(),
+                binding.dispatchGate(),
                 usedNames,
                 violations);
 
         if (entry != null && checkDispatchGate(binding, config, violations)) {
-            entries.add(entry.withDispatchGate(binding.dispatchGate()));
+            entries.add(entry);
         }
     }
 

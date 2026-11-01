@@ -123,33 +123,6 @@ record ConsumerEntry(
                 null);
     }
 
-    /**
-     * Returns this entry with the given dispatch gate.
-     *
-     * @param gate the gate, or {@code null} for none
-     * @return the entry with the gate
-     */
-    ConsumerEntry withDispatchGate(@Nullable KafkaDispatchGate gate) {
-        return new ConsumerEntry(
-                name,
-                config,
-                kind,
-                valueType,
-                targetAddress,
-                stableTargetId,
-                targetOneWay,
-                routes,
-                handler,
-                deserializer,
-                frameworkOwnedDeserializer,
-                filter,
-                valueFormat,
-                ignoreUndecodable,
-                noHeaderContext,
-                forceStrategies,
-                gate);
-    }
-
     // --- Nested Types ---
 
     /**

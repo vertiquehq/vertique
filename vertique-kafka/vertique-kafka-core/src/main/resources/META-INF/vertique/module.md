@@ -830,7 +830,7 @@ A handler fails a record with `new KafkaRedeliverFailure(errorType)` when the re
 be run again later, such as when the system is busy. It applies on a `forceStrategies` binding: the
 record goes back to the queue, holding no permit, with its attempts unchanged, and the outcome is
 `RETRY_SCHEDULED`. The consumer then starts no record and fetches no partition until it asks again, one
-second later or as often as its `KafkaDispatchGate` says, and finds the gate open. It spends no retry: the
+quarter second later, and finds the gate open. It spends no retry: the
 record's retry count does not change, the number of times it is returned has no limit, and the record is
 never dead-lettered because of it. The record stays uncommitted, with every record after it. A handler
 that raises it for a failure that never clears stalls the consumer and lets its lag grow.

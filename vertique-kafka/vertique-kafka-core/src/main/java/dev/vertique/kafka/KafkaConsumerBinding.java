@@ -505,7 +505,8 @@ public class KafkaConsumerBinding<V> {
         /**
          * Sets the gate that says whether a record may start. While the gate is closed no record starts, no partition
          * fetches and the consumer keeps polling; a record the gate held back has not been attempted, so no retry is
-         * spent. The binding needs {@link CommitStrategy#MANUAL}.
+         * spent. The binding needs {@link CommitStrategy#MANUAL}; registration fails when it resolves to another
+         * commit strategy.
          *
          * @param dispatchGate the gate
          * @return this builder
@@ -523,7 +524,7 @@ public class KafkaConsumerBinding<V> {
          * @throws IllegalStateException if the binding names both a {@link #handler handler} and a
          *     {@link #dispatchTo(Class, String) dispatchTo} target, or names no handler and sets
          *     {@link #ignoreUndecodable}, {@link #noHeaderContext} or {@link #forceStrategies}, or
-         *     sets {@link #forceStrategies} or {@link #dispatchGate} without {@link CommitStrategy#MANUAL}
+         *     sets {@link #forceStrategies} without {@link CommitStrategy#MANUAL}
          */
         public KafkaConsumerBinding<V> build() {
             if (handler != null && targetService != null) {
@@ -539,10 +540,6 @@ public class KafkaConsumerBinding<V> {
                 throw new IllegalStateException("KafkaConsumerBinding '" + name
                         + "' sets forceStrategies, which needs commitStrategy MANUAL but has " + commitStrategy
                         + "; close-time auto-commit could pass a record whose failure is unsettled");
-            }
-            if (dispatchGate != null && commitStrategy != CommitStrategy.MANUAL) {
-                throw new IllegalStateException("KafkaConsumerBinding '" + name
-                        + "' sets a dispatchGate, which needs commitStrategy MANUAL but has " + commitStrategy);
             }
             return new KafkaConsumerBinding<>(this);
         }
