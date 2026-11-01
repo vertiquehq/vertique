@@ -25,6 +25,7 @@ import dev.vertique.config.parser.DefaultConfigParser;
 import dev.vertique.kafka.config.KafkaConfig;
 import dev.vertique.kafka.interceptor.KafkaConsumerInterceptor;
 import dev.vertique.kafka.interceptor.KafkaDispatchContext;
+import dev.vertique.kafka.interceptor.KafkaTerminalOutcome;
 import dev.vertique.kafka.producer.KafkaProducerFactory;
 import dev.vertique.kafka.serialization.KafkaSerdeRegistry;
 import dev.vertique.services.ServiceRequestSender;
