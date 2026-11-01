@@ -7,12 +7,17 @@ import com.palantir.javapoet.AnnotationSpec;
 import com.palantir.javapoet.ClassName;
 import com.palantir.javapoet.JavaFile;
 import com.palantir.javapoet.MethodSpec;
+import com.palantir.javapoet.ParameterizedTypeName;
+import com.palantir.javapoet.TypeName;
 import com.palantir.javapoet.TypeSpec;
+import com.palantir.javapoet.WildcardTypeName;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.TypeVisibility;
 import dev.vertique.codegen.dagger.processor.Registration;
 import dev.vertique.codegen.dagger.processor.support.FilerWriter;
+import java.util.Arrays;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import javax.lang.model.SourceVersion;
@@ -49,6 +54,9 @@ public final class RegistrationModuleEmitter {
      *
      * <p>Registrations whose implementation or target cannot be referenced from the resolved
      * output package are skipped with a mandatory warning, avoiding uncompilable generated source.
+     * The registration of a signal source, which is a class or a class generated for an interface, that cannot be
+     * referenced is an error naming the class instead, because a skipped source would never consume. The generated
+     * module includes the distinct transport modules of the registrations it emits, and no others.
      *
      * @param registrations the valid registrations to emit; must not be {@code null}
      * @param packageName   the package for the generated module; must not be {@code null}
@@ -59,9 +67,9 @@ public final class RegistrationModuleEmitter {
                 .addModifiers(Modifier.PUBLIC, Modifier.ABSTRACT)
                 .addAnnotation(AnnotationSpec.builder(GENERATED)
                         .addMember("value", "$S", "dev.vertique.codegen.dagger.processor.AutoWireProcessor")
-                        .build())
-                .addAnnotation(AnnotationSpec.builder(DAGGER_MODULE).build());
+                        .build());
         Set<String> methodNames = new HashSet<>();
+        Set<ClassName> includes = new LinkedHashSet<>();
         int emittedCount = 0;
 
         for (Registration registration : registrations) {
@@ -72,14 +80,21 @@ public final class RegistrationModuleEmitter {
             MethodSpec.Builder method = MethodSpec.methodBuilder(methodName)
                     .addModifiers(Modifier.ABSTRACT)
                     .addAnnotation(AnnotationSpec.builder(DAGGER_BINDS).build())
-                    .returns(ClassName.get(registration.target()))
+                    .returns(returnType(registration))
                     .addParameter(registration.implementation(), "implementation");
             if (registration.intoSet()) {
                 method.addAnnotation(AnnotationSpec.builder(DAGGER_INTO_SET).build());
             }
             module.addMethod(method.build());
+            if (registration.transportModule() != null) {
+                includes.add(ClassName.get(registration.transportModule()));
+            }
             emittedCount++;
         }
+
+        AnnotationSpec.Builder moduleAnnotation = AnnotationSpec.builder(DAGGER_MODULE);
+        includes.forEach(include -> moduleAnnotation.addMember("includes", "$T.class", include));
+        module.addAnnotation(moduleAnnotation.build());
 
         if (emittedCount == 0) {
             return;
@@ -87,18 +102,44 @@ public final class RegistrationModuleEmitter {
         FilerWriter.write(JavaFile.builder(packageName, module.build()).build(), ctx, moduleName.canonicalName());
     }
 
+    private static TypeName returnType(Registration registration) {
+        ClassName target = ClassName.get(registration.target());
+        int arguments = registration.target().getTypeParameters().size();
+        if (!registration.isSignalSource() || arguments == 0) {
+            return target;
+        }
+        TypeName[] wildcards = new TypeName[arguments];
+        Arrays.fill(wildcards, WildcardTypeName.subtypeOf(Object.class));
+        return ParameterizedTypeName.get(target, wildcards);
+    }
+
     private boolean isReferenceable(Registration registration, String packageName) {
         boolean implementationReferenceable = TypeVisibility.isReferenceableFrom(registration.origin(), packageName);
         boolean targetReferenceable = TypeVisibility.isReferenceableFrom(registration.target(), packageName);
-        if (implementationReferenceable && targetReferenceable) {
+        boolean moduleReferenceable = registration.transportModule() == null
+                || TypeVisibility.isReferenceableFrom(registration.transportModule(), packageName);
+        if (implementationReferenceable && targetReferenceable && moduleReferenceable) {
             return true;
+        }
+        String unreferenceable =
+                !implementationReferenceable ? "implementation" : !targetReferenceable ? "target" : "module";
+        if (registration.isSignalSource()) {
+            ctx.diagnostics()
+                    .error(
+                            registration.origin(),
+                            "Cannot register %s: its %s type is not referenceable from generated package %s;"
+                                    + " make the type public or set -Avertique.codegen.package",
+                            registration.origin().getQualifiedName(),
+                            unreferenceable,
+                            packageName);
+            return false;
         }
         ctx.diagnostics()
                 .mandatoryWarning(
                         registration.origin(),
                         "Skipping generic Dagger registration for %s: %s type is not referenceable from generated package %s",
                         registration.origin().getQualifiedName(),
-                        implementationReferenceable ? "target" : "implementation",
+                        unreferenceable,
                         packageName);
         return false;
     }

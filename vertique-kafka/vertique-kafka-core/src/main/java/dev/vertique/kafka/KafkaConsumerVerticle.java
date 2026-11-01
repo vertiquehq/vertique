@@ -19,8 +19,11 @@ import dev.vertique.kafka.serialization.KafkaDeserializer;
 import dev.vertique.services.ServiceRequestSender;
 import dev.vertique.services.ServiceTargetResolver;
 import io.vertx.core.AbstractVerticle;
+import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
+import io.vertx.core.Vertx;
+import io.vertx.core.internal.ContextInternal;
 import io.vertx.kafka.client.consumer.KafkaConsumer;
 import io.vertx.kafka.client.consumer.KafkaConsumerRecord;
 import io.vertx.kafka.client.producer.KafkaHeader;
@@ -41,19 +44,24 @@ import lombok.extern.slf4j.Slf4j;
  * and subscribes to the configured topic. If the consumer is disabled, start completes immediately
  * without creating a Kafka connection.
  *
- * <p>Backpressure is enforced via an {@link AtomicInteger} tracking in-flight dispatches. When
- * {@link ResolvedKafkaConsumerConfig#maxInFlight()} is reached, the consumer is paused. The in-flight count dropping
- * below the threshold releases that pause, and the consumer resumes once no other pause reason, such as the backoff of
- * a retried record, remains.
+ * <p>A {@link CommitStrategy#MANUAL} consumer hands every record to a {@link KafkaSettlement}. Records of a
+ * partition run concurrently, up to {@link ResolvedKafkaConsumerConfig#maxInFlight()} at once, and the consumer
+ * commits only the offset after the longest prefix of records that have finished. The consumer is never paused as a
+ * whole and nothing seeks: a partition stops fetching, and the client keeps polling, while it holds as many records as
+ * its retention bound allows, while a record of an ordinary binding waits out a retry backoff and while the dispatch
+ * gate is closed. A {@link CommitStrategy#AUTO} consumer is paused as a whole at {@code maxInFlight} dispatches and
+ * resumes as they finish.
  *
- * <p>Error handling follows the configured {@link ErrorStrategy}:
+ * <p>Error handling follows the configured {@link ErrorStrategy}, and applies to a {@code MANUAL} consumer only,
+ * because {@code RETRY} and {@code DEAD_LETTER} need it:
  *
  * <ul>
- *   <li>{@link ErrorStrategy#SKIP} — logs and commits the offset.
- *   <li>{@link ErrorStrategy#DEAD_LETTER} — publishes to the configured DLQ topic, then commits.
- *   <li>{@link ErrorStrategy#RETRY} — pauses the consumer, seeks back to the failed record's
- *       offset, waits for the backoff period, then resumes. The record is re-polled from the seeked
- *       offset. Retries up to {@link RetryConfig#maxRetries()} times; falls back to the exhausted
+ *   <li>{@link ErrorStrategy#SKIP} — logs and settles the record, so its offset is committed.
+ *   <li>{@link ErrorStrategy#DEAD_LETTER} — publishes to the configured DLQ topic and settles the record once the
+ *       publish is acknowledged. A publish that fails is made again after a backoff, and the record stays
+ *       uncommitted until it is acknowledged.
+ *   <li>{@link ErrorStrategy#RETRY} — keeps the record in memory and runs it through the whole pipeline again after
+ *       the backoff. Retries up to {@link RetryConfig#maxRetries()} times; falls back to the exhausted
  *       strategy thereafter.
  * </ul>
  *
@@ -119,11 +127,17 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
     private KafkaConsumer<String, byte[]> consumer;
     private final AtomicInteger inFlight = new AtomicInteger(0);
 
-    /**
-     * The reasons the consumer is paused: the in-flight limit and the backoff of each retried record. It resumes only
-     * when none remains.
-     */
-    private final KafkaPauseReasons pauses = new KafkaPauseReasons(() -> consumer.pause(), () -> consumer.resume());
+    /** Guards {@link #inFlightPaused}: dispatches of an {@code AUTO} consumer can finish on any thread. */
+    private final Object pauseLock = new Object();
+
+    /** Whether an {@code AUTO} consumer is paused as a whole at its in-flight limit. */
+    private boolean inFlightPaused;
+
+    /** Settles the records of a {@code MANUAL} consumer; {@code null} for an {@code AUTO} consumer. */
+    private final KafkaSettlement settlement;
+
+    /** The context the verticle runs on, once started: the one context every settlement call runs on. */
+    private ContextInternal ownerContext;
 
     // --- Collaborators (initialised in start()) ---
 
@@ -204,6 +218,9 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
         this.serdeRegistry = serdeRegistry;
         this.kafkaProps = buildKafkaProperties(entry.config());
         this.routeDeserializers = buildRouteDeserializers(entry, serdeRegistry);
+        this.settlement = entry.config().commitStrategy() == CommitStrategy.MANUAL
+                ? new KafkaSettlement(settlementSettings(entry), new SettlementPort())
+                : null;
     }
 
     // --- Lifecycle ---
@@ -224,8 +241,15 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
             return;
         }
 
+        ownerContext = (ContextInternal) context;
         consumer = KafkaConsumer.create(vertx, kafkaProps, String.class, byte[].class);
         consumer.handler(this::processRecord);
+        if (settlement != null) {
+            // Both run on the consumer's context, in the order the client saw them, after the records it returned
+            // before them. An assignment is a new ledger, and a revocation ends the ledger and commits its prefix.
+            consumer.partitionsAssignedHandler(partitions -> settlement.assigned(partitions));
+            consumer.partitionsRevokedHandler(partitions -> settlement.revoked(partitions));
+        }
         consumer.exceptionHandler(cause -> log.error("[{}] Kafka consumer exception", entry.name(), cause));
 
         // Collaborators require vertx, which is only available after injection by AbstractVerticle.
@@ -277,9 +301,11 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
     }
 
     /**
-     * Stops the consumer verticle. Pauses partition assignment to stop new records, waits up to
-     * {@value #SHUTDOWN_DRAIN_TIMEOUT_MS} milliseconds for in-flight dispatches to drain, then closes
-     * the consumer for at most {@value #KAFKA_CLOSE_TIMEOUT_MS} milliseconds.
+     * Stops the consumer verticle. A {@code MANUAL} consumer stops starting records and fetching, waits up to
+     * {@value #SHUTDOWN_DRAIN_TIMEOUT_MS} milliseconds for the records that run, the dead-letter publishes and the
+     * commits that are outstanding, and for the settled prefix of each partition to be committed; records that did not
+     * finish stay uncommitted for the next run. An {@code AUTO} consumer pauses its partitions and waits for its in-flight
+     * dispatches. Either then closes the consumer for at most {@value #KAFKA_CLOSE_TIMEOUT_MS} milliseconds.
      *
      * @param stopPromise the promise to complete when the verticle has stopped
      */
@@ -290,20 +316,25 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
             return;
         }
 
-        // Pause all assigned partitions so no new records arrive
-        consumer.assignment()
-                .onSuccess(partitions -> consumer.pause(partitions))
-                .onFailure(cause -> log.warn("[{}] Failed to pause partitions during shutdown", entry.name(), cause));
+        if (settlement != null) {
+            settlement.beginStop();
+        } else {
+            // Pause all assigned partitions so no new records arrive
+            consumer.assignment()
+                    .onSuccess(partitions -> consumer.pause(partitions))
+                    .onFailure(
+                            cause -> log.warn("[{}] Failed to pause partitions during shutdown", entry.name(), cause));
+        }
 
         // Reserve time within Vert.x's shutdown deadline for closing the Kafka consumer itself.
         Timeouts.awaitCondition(
                         vertx,
-                        () -> inFlight.get() <= 0,
+                        () -> settlement != null ? settlement.drained() : inFlight.get() <= 0,
                         100L,
                         shutdownDrainTimeoutMs,
                         "Kafka consumer '" + entry.name() + "' in-flight drain")
                 .onComplete(drainResult -> {
-                    int pending = inFlight.get();
+                    int pending = settlement != null ? settlement.running() : inFlight.get();
                     boolean drainTimedOut = drainResult.failed();
                     if (drainTimedOut && pending > 0) {
                         log.warn(
@@ -311,47 +342,81 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                                 entry.name(),
                                 shutdownDrainTimeoutMs,
                                 pending);
+                    } else if (drainTimedOut) {
+                        log.warn(
+                                "[{}] The final commit did not finish within {} ms; the records after it are read again",
+                                entry.name(),
+                                shutdownDrainTimeoutMs,
+                                drainResult.cause());
                     }
-                    if (errorHandler != null) {
-                        errorHandler.retryCounts.clear();
+                    if (settlement != null) {
+                        settlement.finishStop();
                     }
-                    closeRouteSerdes();
-                    Timeouts.withTimeout(
-                                    consumer.close(),
-                                    kafkaCloseTimeoutMs,
-                                    "Kafka consumer '" + entry.name() + "' close")
-                            .onSuccess(v -> log.info("[{}] Kafka consumer closed", entry.name()))
-                            .onFailure(cause -> log.warn("[{}] Error closing Kafka consumer", entry.name(), cause))
-                            .onComplete(closeResult -> {
-                                if (drainTimedOut && pending > 0) {
-                                    TimeoutException timeout = new TimeoutException("Kafka consumer '" + entry.name()
-                                            + "' stopped with " + pending + " in-flight record(s) after "
-                                            + shutdownDrainTimeoutMs + " ms");
-                                    if (closeResult.failed()) {
-                                        timeout.addSuppressed(closeResult.cause());
-                                    }
-                                    stopPromise.fail(timeout);
-                                } else if (closeResult.failed()) {
-                                    stopPromise.fail(closeResult.cause());
-                                } else {
-                                    stopPromise.complete();
-                                }
-                            });
+                    closeAfterDrain(stopPromise, drainTimedOut, pending);
+                });
+    }
+
+    private void closeAfterDrain(Promise<Void> stopPromise, boolean drainTimedOut, int pending) {
+        closeRouteSerdes();
+        Timeouts.withTimeout(consumer.close(), kafkaCloseTimeoutMs, "Kafka consumer '" + entry.name() + "' close")
+                .onSuccess(v -> log.info("[{}] Kafka consumer closed", entry.name()))
+                .onFailure(cause -> log.warn("[{}] Error closing Kafka consumer", entry.name(), cause))
+                .onComplete(closeResult -> {
+                    if (drainTimedOut && pending > 0) {
+                        TimeoutException timeout = new TimeoutException("Kafka consumer '" + entry.name()
+                                + "' stopped with " + pending + " in-flight record(s) after " + shutdownDrainTimeoutMs
+                                + " ms");
+                        if (closeResult.failed()) {
+                            timeout.addSuppressed(closeResult.cause());
+                        }
+                        stopPromise.fail(timeout);
+                    } else if (closeResult.failed()) {
+                        stopPromise.fail(closeResult.cause());
+                    } else {
+                        stopPromise.complete();
+                    }
                 });
     }
 
     // --- Record processing ---
 
     /**
-     * Main entry point for each incoming Kafka record. Enforces backpressure, runs the interceptor
-     * pipeline, deserializes, and dispatches.
+     * Main entry point for each incoming Kafka record. A {@code MANUAL} consumer registers the record with its
+     * {@link KafkaSettlement}, which runs and settles it. An {@code AUTO} consumer enforces backpressure and runs the
+     * record at once.
      *
      * @param record the incoming Kafka consumer record
      */
     private void processRecord(KafkaConsumerRecord<String, byte[]> record) {
+        if (settlement != null) {
+            settlement.register(record);
+            return;
+        }
         incrementInFlight();
+        runStages(record, 0).onComplete(ar -> {
+            decrementInFlight();
+            KafkaSettlement.Result result =
+                    ar.succeeded() ? ar.result() : KafkaSettlement.Result.failed(ar.cause(), null);
+            if (result.failure() == null) {
+                notifyCompleted(result.view(), result.outcome());
+            } else {
+                KafkaErrorHandler.logSkipped(
+                        entry.name(), record.topic(), record.partition(), record.offset(), result.failure());
+                notifyCompleted(result.view(), KafkaTerminalOutcome.SKIP);
+            }
+        });
+    }
 
-        // One faithful extraction per record. This one immutable instance is what the record view,
+    /**
+     * Runs one record through the whole pipeline: the filter, route resolution, deserialization, the interceptors and
+     * the dispatch. The future carries how the run ended and never fails.
+     *
+     * @param record the incoming Kafka consumer record
+     * @param retryCount the retries that have started for this record, for the dispatch context and the view
+     * @return the result of the run
+     */
+    private Future<KafkaSettlement.Result> runStages(KafkaConsumerRecord<String, byte[]> record, int retryCount) {
+        // One faithful extraction per run. This one immutable instance is what the record view,
         // the filter, the router, the deserializers, the dispatch context, the record context, the
         // handler's message and the error handler are given. The text projection is computed once
         // here and reused for the framework's own text reads: the correlation id, header routing and
@@ -365,23 +430,16 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
         // interceptor, and is what completion observers receive on every path. A dispatch context
         // handed back by an interceptor never replaces it. Without interceptors nothing can observe
         // it, so none is built.
-        KafkaConsumerRecordView view = interceptors.isEmpty() ? null : buildRecordView(record, rawBytes, headers);
+        KafkaConsumerRecordView view =
+                interceptors.isEmpty() ? null : buildRecordView(record, rawBytes, headers, retryCount);
 
         // Pre-deserialization filter. Only the filter call is guarded: a filter that throws is handled
-        // like a deserialization failure, so the record still completes and its slot is released.
+        // like a deserialization failure, so the record still completes.
         boolean accepted;
         try {
             accepted = entry.filter() == null || entry.filter().accept(record.key(), headers);
         } catch (Exception e) {
-            decrementInFlight();
-            errorHandler
-                    .handleError(record, rawBytes, headers, e, consumerControl())
-                    .onSuccess(outcome -> notifyCompleted(view, outcome))
-                    .onFailure(err -> {
-                        log.warn("[{}] Unexpected failure from handleError future", entry.name(), err);
-                        notifyCompleted(view, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
-                    });
-            return;
+            return Future.succeededFuture(KafkaSettlement.Result.failed(e, view));
         }
         if (!accepted) {
             log.debug(
@@ -390,27 +448,17 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                     record.topic(),
                     record.partition(),
                     record.offset());
-            decrementInFlight();
-            commitIfManual(record);
-            notifyCompleted(view, KafkaTerminalOutcome.SKIP);
-            return;
+            return Future.succeededFuture(KafkaSettlement.Result.settled(KafkaTerminalOutcome.SKIP, view));
         }
 
         // Deserialize and dispatch
+        Promise<KafkaSettlement.Result> done = Promise.promise();
         try {
-            dispatchRecord(record, rawBytes, headers, textHeaders, correlationId, view);
+            dispatchRecord(record, rawBytes, headers, textHeaders, correlationId, retryCount, view, done);
         } catch (Exception e) {
-            decrementInFlight();
-            errorHandler
-                    .handleError(record, rawBytes, headers, e, consumerControl())
-                    .onSuccess(outcome -> notifyCompleted(view, outcome))
-                    .onFailure(err -> {
-                        log.warn("[{}] Unexpected failure from handleError future", entry.name(), err);
-                        // The error handler's own future failed — the record's disposition is
-                        // unknown, but the record must still complete exactly once.
-                        notifyCompleted(view, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
-                    });
+            done.tryComplete(KafkaSettlement.Result.failed(e, view));
         }
+        return done.future();
     }
 
     /**
@@ -421,8 +469,10 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
      * @param headers the record's headers as received
      * @param textHeaders the text projection of {@code headers}, computed once per record
      * @param correlationId the correlation ID for tracing
+     * @param retryCount the retries that have started for this record
      * @param view the record's framework-owned view, handed to completion observers; {@code null}
      *     when the consumer has no interceptors
+     * @param done completed with how the run ended
      */
     private void dispatchRecord(
             KafkaConsumerRecord<String, byte[]> record,
@@ -430,7 +480,9 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
             KafkaRecordHeaders headers,
             Map<String, String> textHeaders,
             String correlationId,
-            @Nullable KafkaConsumerRecordView view) {
+            int retryCount,
+            @Nullable KafkaConsumerRecordView view,
+            Promise<KafkaSettlement.Result> done) {
 
         // For router kind, find the matching route before deserialization
         KafkaRecordDispatcher.RouteResult routeResult = null;
@@ -442,9 +494,7 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                         entry.name(),
                         record.topic(),
                         record.offset());
-                decrementInFlight();
-                commitIfManual(record);
-                notifyCompleted(view, KafkaTerminalOutcome.SKIP);
+                done.tryComplete(KafkaSettlement.Result.settled(KafkaTerminalOutcome.SKIP, view));
                 return;
             }
         }
@@ -456,22 +506,23 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
         try {
             deserialized = dispatcher.deserializeRecord(record, rawBytes, headers, resolvedRouteResult);
         } catch (Exception e) {
-            decrementInFlight();
-            errorHandler
-                    .handleError(record, rawBytes, headers, e, consumerControl())
-                    .onSuccess(outcome -> notifyCompleted(view, outcome))
-                    .onFailure(err -> {
-                        log.warn("[{}] Unexpected failure from handleError future", entry.name(), err);
-                        notifyCompleted(view, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
-                    });
+            Runnable onIgnored = entry.ignoreUndecodable();
+            if (onIgnored != null && !(e instanceof DeserializationException de && de.isTransient())) {
+                // An ignoring binding acknowledges the undecodable record: it is reported skipped and
+                // the callback runs; it does not go down the error strategy.
+                // A transient failure, such as an unreachable schema registry, is not the record's
+                // fault and does take the error strategy.
+                runIgnoreCallback(onIgnored);
+                done.tryComplete(KafkaSettlement.Result.settled(KafkaTerminalOutcome.SKIP, view));
+                return;
+            }
+            done.tryComplete(KafkaSettlement.Result.failed(e, view));
             return;
         }
 
         // Build initial dispatch context (raw — before interceptors).
         // A tombstone record carries a null value on the wire; guard against NPE in downstream
         // capture code by using PayloadSources.absent() rather than buffered(null, …).
-        String retryKey = record.topic() + ":" + record.partition() + ":" + record.offset();
-        int retryCount = errorHandler.retryCounts.getOrDefault(retryKey, 0);
         KafkaDispatchContext<Object> dispatchCtx = new KafkaDispatchContext<>(
                 entry.name(),
                 record.topic(),
@@ -490,14 +541,7 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
         interceptorChain.runOnRecordObservers(dispatchCtx);
         interceptorChain.runBeforeInterceptors(dispatchCtx).onComplete(interceptorResult -> {
             if (interceptorResult.failed()) {
-                decrementInFlight();
-                errorHandler
-                        .handleError(record, rawBytes, headers, interceptorResult.cause(), consumerControl())
-                        .onSuccess(outcome -> notifyCompleted(view, outcome))
-                        .onFailure(err -> {
-                            log.warn("[{}] Unexpected failure from handleError future", entry.name(), err);
-                            notifyCompleted(view, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
-                        });
+                done.tryComplete(KafkaSettlement.Result.failed(interceptorResult.cause(), view));
                 return;
             }
 
@@ -508,11 +552,10 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                         entry.name(),
                         record.topic(),
                         record.offset());
-                decrementInFlight();
-                interceptorChain.runAfterInterceptors(ctx).onComplete(v -> {
-                    commitIfManual(record);
-                    notifyCompleted(view, KafkaTerminalOutcome.SKIP);
-                });
+                interceptorChain
+                        .runAfterInterceptors(ctx)
+                        .onComplete(
+                                v -> done.tryComplete(KafkaSettlement.Result.settled(KafkaTerminalOutcome.SKIP, view)));
                 return;
             }
 
@@ -554,146 +597,172 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                     };
 
             dispatchFuture.onComplete(dispatchResult -> {
-                decrementInFlight();
                 if (dispatchResult.succeeded()) {
-                    // Remove any retry state accumulated for this record on clean success
-                    errorHandler.retryCounts.remove(retryKey);
                     interceptorChain.runOnSuccessObservers(ctx);
-                    interceptorChain.runAfterInterceptors(ctx).onComplete(v -> {
-                        commitIfManual(record);
-                        notifyCompleted(view, KafkaTerminalOutcome.SUCCESS);
-                    });
+                    interceptorChain
+                            .runAfterInterceptors(ctx)
+                            .onComplete(v -> done.tryComplete(
+                                    KafkaSettlement.Result.settled(KafkaTerminalOutcome.SUCCESS, view)));
                 } else {
                     Throwable cause = dispatchResult.cause();
                     interceptorChain.runOnErrorObservers(ctx, cause);
                     interceptorChain
                             .runRecoverError(ctx, cause)
-                            .onSuccess(v -> {
-                                // Error was recovered by an interceptor — commit and move on
-                                commitIfManual(record);
-                                notifyCompleted(view, KafkaTerminalOutcome.RECOVERED);
-                            })
-                            .onFailure(e -> {
-                                // Not recovered — proceed with normal error strategy; complete the
-                                // record from the terminal-outcome future so observers run after all
-                                // async work (DLQ publish, seek, scheduleResume) has settled.
-                                errorHandler
-                                        .handleError(record, rawBytes, headers, e, consumerControl())
-                                        .onSuccess(outcome -> notifyCompleted(view, outcome))
-                                        .onFailure(err -> {
-                                            log.warn(
-                                                    "[{}] Unexpected failure from handleError future",
-                                                    entry.name(),
-                                                    err);
-                                            notifyCompleted(view, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
-                                        });
-                            });
+                            // Error was recovered by an interceptor — the record is settled
+                            .onSuccess(v -> done.tryComplete(
+                                    KafkaSettlement.Result.settled(KafkaTerminalOutcome.RECOVERED, view)))
+                            // Not recovered — the binding's error strategy decides
+                            .onFailure(e -> done.tryComplete(KafkaSettlement.Result.failed(e, view)));
                 }
             });
         });
     }
 
-    // --- ConsumerControl ---
-
     /**
-     * Builds a {@link KafkaErrorHandler.ConsumerControl} bound to this verticle's consumer instance.
-     * Called on each error path so the control always references the live consumer.
+     * Runs the callback of an ignored undecodable record. A callback that throws is logged by class
+     * and does not change the record's outcome.
      *
-     * @return a consumer control delegating to the current consumer and verticle state
+     * @param onIgnored the binding's ignore callback
      */
-    KafkaErrorHandler.ConsumerControl consumerControl() {
-        return new KafkaErrorHandler.ConsumerControl() {
-            // Each pause is ended by exactly one scheduleResume. Ending it releases the backoff hold only: a consumer
-            // that is also at its in-flight limit, or waiting out the backoff of another record, stays paused.
-            @Override
-            public void pause() {
-                pauses.hold(KafkaPauseReasons.Reason.ERROR_BACKOFF);
-            }
-
-            @Override
-            public void scheduleResume(long delayMs) {
-                if (delayMs <= 0) {
-                    pauses.release(KafkaPauseReasons.Reason.ERROR_BACKOFF);
-                } else {
-                    vertx.setTimer(delayMs, id -> pauses.release(KafkaPauseReasons.Reason.ERROR_BACKOFF));
-                }
-            }
-
-            @Override
-            public Future<Void> seekToOffset(String topic, int partition, long offset) {
-                io.vertx.kafka.client.common.TopicPartition tp =
-                        new io.vertx.kafka.client.common.TopicPartition(topic, partition);
-                return consumer.seek(tp, offset);
-            }
-
-            @Override
-            public void commitIfManual(KafkaConsumerRecord<String, byte[]> record) {
-                KafkaConsumerVerticle.this.commitIfManual(record);
-            }
-        };
-    }
-
-    // --- Commit ---
-
-    /**
-     * Commits the offset for the given record if the commit strategy is {@link CommitStrategy#MANUAL}.
-     *
-     * @param record the record whose offset should be committed when in manual mode
-     */
-    private void commitIfManual(KafkaConsumerRecord<String, byte[]> record) {
-        if (entry.config().commitStrategy() == CommitStrategy.MANUAL) {
-            commitOffset(record);
+    private void runIgnoreCallback(Runnable onIgnored) {
+        try {
+            onIgnored.run();
+        } catch (RuntimeException e) {
+            log.warn(
+                    "[{}] Ignore callback failed: {}",
+                    entry.name(),
+                    e.getClass().getName());
         }
     }
 
+    // --- Settlement (MANUAL) ---
+
     /**
-     * Commits the offset for the specific partition of the given record.
-     *
-     * <p>Uses per-partition commit ({@code offset + 1}) to avoid accidentally committing offsets for
-     * concurrently-dispatched records on other partitions.
-     *
-     * @param record the record whose offset should be committed
+     * Resolves the settings of the settlement from the entry: the permits, the strategies, the retention bounds and the
+     * dispatch gate.
      */
-    private void commitOffset(KafkaConsumerRecord<String, byte[]> record) {
-        io.vertx.kafka.client.common.TopicPartition tp =
-                new io.vertx.kafka.client.common.TopicPartition(record.topic(), record.partition());
-        io.vertx.kafka.client.consumer.OffsetAndMetadata om =
-                new io.vertx.kafka.client.consumer.OffsetAndMetadata(record.offset() + 1, "");
-        consumer.commit(Map.of(tp, om))
-                .onFailure(cause -> log.warn(
-                        "[{}] Failed to commit offset for partition={} offset={}",
-                        entry.name(),
-                        record.partition(),
-                        record.offset(),
-                        cause));
+    private static KafkaSettlement.Settings settlementSettings(ConsumerEntry entry) {
+        ResolvedKafkaConsumerConfig cfg = entry.config();
+        return new KafkaSettlement.Settings(
+                entry.name(),
+                cfg.maxInFlight(),
+                cfg.errorStrategy(),
+                cfg.retryConfig(),
+                entry.requireBindingStrategies(),
+                cfg.retentionLimit(),
+                entry.dispatchGate());
     }
 
-    // --- Backpressure ---
+    /** Runs the work on the consumer's owner context: inline when already there, queued otherwise. */
+    private void onOwner(Runnable task) {
+        ContextInternal owner = ownerContext;
+        if (owner == null) {
+            task.run();
+            return;
+        }
+        Context current = Vertx.currentContext();
+        if (current instanceof ContextInternal currentInternal && currentInternal.unwrap() == owner) {
+            task.run();
+        } else {
+            owner.runOnContext(v -> task.run());
+        }
+    }
+
+    /** What the settlement needs from this verticle's consumer, context and timers. */
+    private final class SettlementPort implements KafkaSettlement.Port {
+
+        @Override
+        public Future<KafkaSettlement.Result> run(KafkaConsumerRecord<String, byte[]> record, int attempt) {
+            ContextInternal owner = ownerContext;
+            if (owner == null) {
+                return runStages(record, attempt);
+            }
+            // Each run starts on a context of its own: the inbound scope binds a record's values on a duplicated
+            // context, and a retry or a record that waited for the gate does not start from a record's callback.
+            Promise<KafkaSettlement.Result> promise = Promise.promise();
+            owner.duplicate().runOnContext(v -> {
+                try {
+                    runStages(record, attempt).onComplete(promise);
+                } catch (Throwable thrown) {
+                    promise.tryFail(thrown);
+                }
+            });
+            return promise.future();
+        }
+
+        @Override
+        public Future<Void> publishDlq(KafkaConsumerRecord<String, byte[]> record, Throwable cause) {
+            return errorHandler.publishToDlq(record, record.value(), extractHeaders(record), cause);
+        }
+
+        @Override
+        public Future<Void> commit(io.vertx.kafka.client.common.TopicPartition partition, long offset) {
+            return consumer.commit(Map.of(partition, new io.vertx.kafka.client.consumer.OffsetAndMetadata(offset, "")))
+                    .mapEmpty();
+        }
+
+        @Override
+        public Future<Void> pause(io.vertx.kafka.client.common.TopicPartition partition) {
+            return consumer.pause(partition);
+        }
+
+        @Override
+        public Future<Void> resume(io.vertx.kafka.client.common.TopicPartition partition) {
+            return consumer.resume(partition);
+        }
+
+        @Override
+        public void schedule(long delayMs, Runnable task) {
+            vertx.setTimer(Math.max(1L, delayMs), timer -> task.run());
+        }
+
+        @Override
+        public void execute(Runnable task) {
+            onOwner(task);
+        }
+
+        @Override
+        public void completed(KafkaConsumerRecordView view, KafkaTerminalOutcome outcome) {
+            notifyCompleted(view, outcome);
+        }
+    }
+
+    // --- Backpressure (AUTO) ---
 
     /**
      * Increments the in-flight counter and pauses the consumer if the threshold is reached.
      */
     void incrementInFlight() {
         int current = inFlight.incrementAndGet();
-        if (current >= entry.config().maxInFlight() && !pauses.isHeld(KafkaPauseReasons.Reason.IN_FLIGHT)) {
-            pauses.hold(KafkaPauseReasons.Reason.IN_FLIGHT);
-            log.debug(
-                    "[{}] Paused consumer: inFlight={} maxInFlight={}",
-                    entry.name(),
-                    current,
-                    entry.config().maxInFlight());
+        if (current >= entry.config().maxInFlight()) {
+            synchronized (pauseLock) {
+                if (!inFlightPaused) {
+                    inFlightPaused = true;
+                    consumer.pause();
+                    log.debug(
+                            "[{}] Paused consumer: inFlight={} maxInFlight={}",
+                            entry.name(),
+                            current,
+                            entry.config().maxInFlight());
+                }
+            }
         }
     }
 
     /**
-     * Decrements the in-flight counter and releases the in-flight pause once the count has dropped below the
-     * max-in-flight threshold. The consumer resumes only if no other reason, such as a retry's backoff, still holds it.
+     * Decrements the in-flight counter and resumes the consumer once the count has dropped below the
+     * max-in-flight threshold.
      */
     void decrementInFlight() {
         int current = inFlight.decrementAndGet();
-        if (current < entry.config().maxInFlight() && pauses.isHeld(KafkaPauseReasons.Reason.IN_FLIGHT)) {
-            pauses.release(KafkaPauseReasons.Reason.IN_FLIGHT);
-            log.debug("[{}] Released the in-flight pause: inFlight={}", entry.name(), current);
+        if (current < entry.config().maxInFlight()) {
+            synchronized (pauseLock) {
+                if (inFlightPaused) {
+                    inFlightPaused = false;
+                    consumer.resume();
+                    log.debug("[{}] Released the in-flight pause: inFlight={}", entry.name(), current);
+                }
+            }
         }
     }
 
@@ -722,12 +791,11 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
      * @param record   the incoming consumer record
      * @param rawBytes the raw value bytes (may be null for tombstones)
      * @param headers  the headers extracted from the record
+     * @param retryCount the retries that have started for the record
      * @return the view; never null
      */
     private KafkaConsumerRecordView buildRecordView(
-            KafkaConsumerRecord<String, byte[]> record, byte[] rawBytes, KafkaRecordHeaders headers) {
-        String retryKey = record.topic() + ":" + record.partition() + ":" + record.offset();
-        int retryCount = errorHandler.retryCounts.getOrDefault(retryKey, 0);
+            KafkaConsumerRecord<String, byte[]> record, byte[] rawBytes, KafkaRecordHeaders headers, int retryCount) {
         KafkaConsumerRecordIdentity identity = new KafkaConsumerRecordIdentity(
                 entry.name(), record.topic(), record.partition(), record.offset(), record.timestamp(), retryCount);
         return new DefaultKafkaConsumerRecordView(identity, record.key(), headers, rawBytes);

@@ -216,7 +216,9 @@ final class KafkaConsumerScanner {
 
     /**
      * Processes declarative {@link KafkaConsumerBinding} instances contributed via Dagger multibinding.
-     * Validates that the target service and operation exist in the registry.
+     * Validates that the target service and operation exist in the registry. A binding that carries a
+     * {@link KafkaRecordHandler} is registered as a handler-kind consumer instead, with no target
+     * resolution.
      *
      * <p>Address resolution uses {@link ServiceTargetResolver#resolve(Class, String)} first (treating
      * {@link KafkaConsumerBinding#targetOperation()} as a durable operation id). If the resolver throws
@@ -241,6 +243,11 @@ final class KafkaConsumerScanner {
 
         for (KafkaConsumerBinding<?> binding : bindings) {
             String name = binding.name();
+
+            if (binding.handler() != null) {
+                processHandlerBinding(binding, kafkaConfig, entries, usedNames, violations);
+                continue;
+            }
 
             // Validate target service exists
             ContractEntry<?> contractEntry;
@@ -305,7 +312,7 @@ final class KafkaConsumerScanner {
                     kafkaConfig,
                     consumerIndex.get(name));
 
-            ConsumerEntry entry = validateAndBuild(
+            ConsumerEntry entry = KafkaConsumerValidation.validateAndBuild(
                     name,
                     config,
                     ConsumerEntry.Kind.BINDING,
@@ -315,15 +322,146 @@ final class KafkaConsumerScanner {
                     meta.oneWay(),
                     List.of(),
                     null,
+                    serdeRegistry,
                     binding.deserializer(),
                     binding.filter(),
+                    null,
+                    false,
+                    false,
+                    binding.dispatchGate(),
                     usedNames,
                     violations);
 
-            if (entry != null) {
+            if (entry != null && checkDispatchGate(binding, config, violations)) {
                 entries.add(entry);
             }
         }
+    }
+
+    /**
+     * Checks a binding that carries a dispatch gate against the commit strategy it resolved to. Only a
+     * {@code MANUAL} consumer settles its records, and so only it asks the gate, so a configuration that resolves the
+     * binding to {@code AUTO} would silently run it without the gate. A violation names the consumer and the option.
+     *
+     * @param binding the binding
+     * @param config the configuration the binding resolved to
+     * @param violations mutable list to collect violation messages
+     * @return {@code true} if the binding has no gate or its resolved configuration commits manually
+     */
+    private static boolean checkDispatchGate(
+            KafkaConsumerBinding<?> binding, ResolvedKafkaConsumerConfig config, List<String> violations) {
+        if (binding.dispatchGate() == null || config.commitStrategy() == CommitStrategy.MANUAL) {
+            return true;
+        }
+        violations.add("Consumer '" + binding.name() + "': dispatchGate() requires commitStrategy "
+                + CommitStrategy.MANUAL + " but the resolved configuration has " + config.commitStrategy()
+                + " (remove kafka.consumers." + binding.name() + ".commitStrategy)");
+        return false;
+    }
+
+    /**
+     * Builds a handler-kind entry for a {@link KafkaConsumerBinding} that carries a
+     * {@link KafkaRecordHandler}. No target service is resolved and no operation is looked up; the
+     * entry takes the binding's value type, custom deserializer, filter and defaults.
+     *
+     * @param binding the binding with a non-null handler
+     * @param kafkaConfig the typed {@code kafka} config
+     * @param entries mutable list to add the new entry into
+     * @param usedNames mutable set of already-claimed binding names (updated in place)
+     * @param violations mutable list to collect violation messages
+     */
+    private void processHandlerBinding(
+            KafkaConsumerBinding<?> binding,
+            KafkaConfig kafkaConfig,
+            List<ConsumerEntry> entries,
+            Set<String> usedNames,
+            List<String> violations) {
+
+        String name = binding.name();
+        log.info("Processing KafkaConsumerBinding '{}' with a record handler", name);
+
+        ResolvedKafkaConsumerConfig config = ResolvedKafkaConsumerConfig.resolve(
+                name,
+                binding.topic(),
+                binding.groupId(),
+                binding.enabled(),
+                binding.commitStrategy(),
+                binding.errorStrategy(),
+                binding.deadLetterTopic(),
+                binding.eventBusTimeoutMs(),
+                binding.jsonProfile() != null ? binding.jsonProfile().value() : null,
+                kafkaConfig,
+                consumerIndex.get(name));
+
+        if (binding.requireBindingStrategies()) {
+            if (!checkRequiredStrategies(binding, config, violations)) {
+                return;
+            }
+            config = config.forBindingRequiringStrategies();
+        }
+
+        ConsumerEntry entry = KafkaConsumerValidation.validateAndBuild(
+                name,
+                config,
+                ConsumerEntry.Kind.HANDLER,
+                binding.valueType(),
+                null,
+                null,
+                false,
+                List.of(),
+                binding.handler(),
+                serdeRegistry,
+                binding.deserializer(),
+                binding.filter(),
+                binding.ignoreUndecodable(),
+                binding.noHeaderContext(),
+                binding.requireBindingStrategies(),
+                binding.dispatchGate(),
+                usedNames,
+                violations);
+
+        if (entry != null && checkDispatchGate(binding, config, violations)) {
+            entries.add(entry);
+        }
+    }
+
+    /**
+     * Checks a binding that requires its strategies against the configuration it resolved to: the
+     * commit and error strategies must equal the binding's, and the exhausted strategy, taken from
+     * {@code retry.exhaustedStrategy} or, without retry, from the error strategy, must be
+     * {@link ErrorStrategy#DEAD_LETTER}. A violation names the consumer and the option.
+     *
+     * @param binding the binding that requires its strategies
+     * @param config the configuration the binding resolved to
+     * @param violations mutable list to collect violation messages
+     * @return {@code true} if the resolved configuration satisfies the binding
+     */
+    private static boolean checkRequiredStrategies(
+            KafkaConsumerBinding<?> binding, ResolvedKafkaConsumerConfig config, List<String> violations) {
+        String name = binding.name();
+        boolean satisfied = true;
+        if (config.commitStrategy() != binding.commitStrategy()) {
+            violations.add("Consumer '" + name + "': requireBindingStrategies() requires commitStrategy "
+                    + binding.commitStrategy() + " but the resolved configuration has " + config.commitStrategy()
+                    + " (remove kafka.consumers." + name + ".commitStrategy)");
+            satisfied = false;
+        }
+        if (config.errorStrategy() != binding.errorStrategy()) {
+            violations.add("Consumer '" + name + "': requireBindingStrategies() requires errorStrategy "
+                    + binding.errorStrategy() + " but the resolved configuration has " + config.errorStrategy()
+                    + " (remove kafka.consumers." + name + ".errorStrategy)");
+            satisfied = false;
+        } else {
+            ErrorStrategy exhausted =
+                    config.retryConfig() != null ? config.retryConfig().exhaustedStrategy() : config.errorStrategy();
+            if (exhausted != ErrorStrategy.DEAD_LETTER) {
+                violations.add("Consumer '" + name + "': requireBindingStrategies() requires retry.exhaustedStrategy "
+                        + ErrorStrategy.DEAD_LETTER + " but the resolved configuration has " + exhausted
+                        + " (set kafka.consumers." + name + ".retry.exhaustedStrategy to DEAD_LETTER or remove it)");
+                satisfied = false;
+            }
+        }
+        return satisfied;
     }
 
     // --- Models 3 and 4: @KafkaListener handlers ---

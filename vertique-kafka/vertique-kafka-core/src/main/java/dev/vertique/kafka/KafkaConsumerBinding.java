@@ -6,9 +6,11 @@ package dev.vertique.kafka;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.kafka.serialization.KafkaDeserializer;
 import jakarta.annotation.Nullable;
+import java.util.Objects;
 
 /**
- * Immutable Kafka consumer binding (Model 2) that maps a topic to a service operation.
+ * Immutable Kafka consumer binding (Model 2) that maps a topic to a service operation, or to a
+ * {@link KafkaRecordHandler} that receives each decoded record.
  *
  * <p>Contributed via Dagger multibinding:
  * <pre>{@code
@@ -22,6 +24,10 @@ import jakarta.annotation.Nullable;
  * }
  * }</pre>
  *
+ * <p>A binding delivers to a {@code dispatchTo} target service or to a {@link Builder#handler
+ * handler}, never both: {@link Builder#build()} refuses a binding that names both. A binding that
+ * names neither builds, and the consumer scanner refuses it at registration.
+ *
  * @param <V> the value type for deserialization
  */
 public class KafkaConsumerBinding<V> {
@@ -34,6 +40,7 @@ public class KafkaConsumerBinding<V> {
     private final String groupId;
     private final Class<?> targetService;
     private final String targetOperation;
+    private final KafkaRecordHandler<V> handler;
     private final ErrorStrategy errorStrategy;
     private final CommitStrategy commitStrategy;
     private final String deadLetterTopic;
@@ -42,6 +49,10 @@ public class KafkaConsumerBinding<V> {
     private final boolean enabled;
     private final long eventBusTimeoutMs;
     private final JsonProfileId jsonProfile;
+    private final Runnable ignoreUndecodable;
+    private final boolean noHeaderContext;
+    private final boolean requireBindingStrategies;
+    private final KafkaDispatchGate dispatchGate;
 
     private KafkaConsumerBinding(Builder<V> builder) {
         this.name = builder.name;
@@ -50,6 +61,7 @@ public class KafkaConsumerBinding<V> {
         this.groupId = builder.groupId;
         this.targetService = builder.targetService;
         this.targetOperation = builder.targetOperation;
+        this.handler = builder.handler;
         this.errorStrategy = builder.errorStrategy;
         this.commitStrategy = builder.commitStrategy;
         this.deadLetterTopic = builder.deadLetterTopic;
@@ -58,6 +70,10 @@ public class KafkaConsumerBinding<V> {
         this.enabled = builder.enabled;
         this.eventBusTimeoutMs = builder.eventBusTimeoutMs;
         this.jsonProfile = builder.jsonProfile;
+        this.ignoreUndecodable = builder.ignoreUndecodable;
+        this.noHeaderContext = builder.noHeaderContext;
+        this.requireBindingStrategies = builder.requireBindingStrategies;
+        this.dispatchGate = builder.dispatchGate;
     }
 
     // --- Accessors ---
@@ -114,6 +130,17 @@ public class KafkaConsumerBinding<V> {
      */
     public String targetOperation() {
         return targetOperation;
+    }
+
+    /**
+     * Returns the record handler that receives each decoded record, or {@code null} when the
+     * binding dispatches to a target service instead.
+     *
+     * @return the handler, or {@code null}
+     */
+    @Nullable
+    public KafkaRecordHandler<V> handler() {
+        return handler;
     }
 
     /**
@@ -194,6 +221,47 @@ public class KafkaConsumerBinding<V> {
     }
 
     /**
+     * Returns the callback that runs when a record fails to decode and is ignored, or {@code null}
+     * when an undecodable record goes down the error strategy.
+     *
+     * @return the callback, or {@code null}
+     */
+    @Nullable
+    public Runnable ignoreUndecodable() {
+        return ignoreUndecodable;
+    }
+
+    /**
+     * Returns whether the handler runs without a durable context installed from the record's
+     * headers.
+     *
+     * @return {@code true} if no header context is installed
+     */
+    public boolean noHeaderContext() {
+        return noHeaderContext;
+    }
+
+    /**
+     * Returns whether registration requires the resolved commit and error strategies to equal this
+     * binding's and the resolved exhausted strategy to be {@link ErrorStrategy#DEAD_LETTER}.
+     *
+     * @return {@code true} if the binding requires its strategies
+     */
+    public boolean requireBindingStrategies() {
+        return requireBindingStrategies;
+    }
+
+    /**
+     * Returns the gate that says whether a record may start.
+     *
+     * @return the gate, or {@code null} for none
+     */
+    @Nullable
+    public KafkaDispatchGate dispatchGate() {
+        return dispatchGate;
+    }
+
+    /**
      * Creates a new builder.
      *
      * @param name the binding name (used as config reference key)
@@ -218,6 +286,7 @@ public class KafkaConsumerBinding<V> {
         private String groupId;
         private Class<?> targetService;
         private String targetOperation;
+        private KafkaRecordHandler<V> handler;
         private ErrorStrategy errorStrategy = ErrorStrategy.SKIP;
         private CommitStrategy commitStrategy = CommitStrategy.AUTO;
         private String deadLetterTopic = "";
@@ -226,6 +295,10 @@ public class KafkaConsumerBinding<V> {
         private boolean enabled = true;
         private long eventBusTimeoutMs = 30_000L;
         private JsonProfileId jsonProfile;
+        private Runnable ignoreUndecodable;
+        private boolean noHeaderContext;
+        private boolean requireBindingStrategies;
+        private KafkaDispatchGate dispatchGate;
 
         private Builder(String name, Class<V> valueType) {
             this.name = name;
@@ -272,6 +345,25 @@ public class KafkaConsumerBinding<V> {
         public Builder<V> dispatchTo(Class<?> service, String operation) {
             this.targetService = service;
             this.targetOperation = operation;
+            return this;
+        }
+
+        /**
+         * Sets a record handler as the delivery target, as an alternative to
+         * {@link #dispatchTo(Class, String)}. The record is decoded to {@code V} and passed to the
+         * handler as a {@link KafkaMessage} carrying its key, topic, partition, offset, timestamp and
+         * headers. The binding keeps its filter, commit strategy, error and retry strategy,
+         * dead-letter topic and interceptors, and the handler runs with the record's durable context
+         * installed.
+         *
+         * <p>A handler and a {@code dispatchTo} target are mutually exclusive: {@link #build()}
+         * refuses a binding that names both.
+         *
+         * @param handler the handler that receives each decoded record
+         * @return this builder
+         */
+        public Builder<V> handler(KafkaRecordHandler<V> handler) {
+            this.handler = handler;
             return this;
         }
 
@@ -366,11 +458,89 @@ public class KafkaConsumerBinding<V> {
         }
 
         /**
+         * Makes the consumer ignore a record that fails to decode. The record is acknowledged,
+         * its offset is committed when the commit strategy is {@link CommitStrategy#MANUAL}, its
+         * outcome is reported as skipped, and the callback runs; the record does not go down the
+         * error strategy. Every deserializer failure is ignored, and nothing else: a handler
+         * failure on a decodable record is handled as usual. A callback that throws is logged by
+         * class and does not change the outcome. Applies to a binding with a
+         * {@link #handler(KafkaRecordHandler) handler}.
+         *
+         * @param onIgnored the callback to run for each ignored record
+         * @return this builder
+         */
+        public Builder<V> ignoreUndecodable(Runnable onIgnored) {
+            this.ignoreUndecodable = Objects.requireNonNull(onIgnored, "onIgnored");
+            return this;
+        }
+
+        /**
+         * Makes the handler run without a durable context installed from the record's headers.
+         * Applies to a binding with a {@link #handler(KafkaRecordHandler) handler}.
+         *
+         * @return this builder
+         */
+        public Builder<V> noHeaderContext() {
+            this.noHeaderContext = true;
+            return this;
+        }
+
+        /**
+         * Makes registration fail, naming this consumer and the option, unless the resolved
+         * {@code commitStrategy} and {@code errorStrategy} equal this binding's and the resolved
+         * {@code retry.exhaustedStrategy} is {@link ErrorStrategy#DEAD_LETTER}, so that
+         * {@code kafka.consumers.{name}.*} cannot change them. A new consumer group starts at the beginning of the
+         * topic unless {@code auto.offset.reset} is configured. The consumer handles records concurrently, up to
+         * {@code maxInFlight} at once, like any other {@link CommitStrategy#MANUAL} consumer. The binding also needs
+         * {@link CommitStrategy#MANUAL}: the default {@link CommitStrategy#AUTO} could commit past a record whose
+         * failure is unsettled. Applies to a binding with a {@link #handler(KafkaRecordHandler) handler}.
+         *
+         * @return this builder
+         */
+        public Builder<V> requireBindingStrategies() {
+            this.requireBindingStrategies = true;
+            return this;
+        }
+
+        /**
+         * Sets the gate that says whether a record may start. While the gate is closed no record starts, no partition
+         * fetches and the consumer keeps polling; a record the gate held back has not been attempted, so no retry is
+         * spent. The binding needs {@link CommitStrategy#MANUAL}; registration fails when it resolves to another
+         * commit strategy.
+         *
+         * @param dispatchGate the gate
+         * @return this builder
+         * @see KafkaDispatchGate
+         */
+        public Builder<V> dispatchGate(KafkaDispatchGate dispatchGate) {
+            this.dispatchGate = Objects.requireNonNull(dispatchGate, "dispatchGate");
+            return this;
+        }
+
+        /**
          * Builds the binding.
          *
          * @return the immutable binding
+         * @throws IllegalStateException if the binding names both a {@link #handler handler} and a
+         *     {@link #dispatchTo(Class, String) dispatchTo} target, or names no handler and sets
+         *     {@link #ignoreUndecodable}, {@link #noHeaderContext} or {@link #requireBindingStrategies}, or
+         *     sets {@link #requireBindingStrategies} without {@link CommitStrategy#MANUAL}
          */
         public KafkaConsumerBinding<V> build() {
+            if (handler != null && targetService != null) {
+                throw new IllegalStateException("KafkaConsumerBinding '" + name
+                        + "' names both a handler and a dispatchTo target; name one or the other");
+            }
+            if (handler == null && (ignoreUndecodable != null || noHeaderContext || requireBindingStrategies)) {
+                throw new IllegalStateException("KafkaConsumerBinding '" + name
+                        + "' sets ignoreUndecodable, noHeaderContext or requireBindingStrategies, which apply to a handler"
+                        + " only; name a handler");
+            }
+            if (requireBindingStrategies && commitStrategy != CommitStrategy.MANUAL) {
+                throw new IllegalStateException("KafkaConsumerBinding '" + name
+                        + "' sets requireBindingStrategies, which needs commitStrategy MANUAL but has " + commitStrategy
+                        + "; close-time auto-commit could pass a record whose failure is unsettled");
+            }
             return new KafkaConsumerBinding<>(this);
         }
     }

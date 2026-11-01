@@ -7,5 +7,7 @@
  * <p>Every mutating workflow task operation requires a {@link dev.vertique.workflow.actor.WorkflowActor}
  * so that the append-only history can answer "who initiated this change?" The actor is strictly
  * audit metadata — the runtime never gates a call on the actor identity.
+ *
+ * <p>{@code ActorText} is the internal text rule that keeps an actor id safe to log.
  */
 package dev.vertique.workflow.actor;

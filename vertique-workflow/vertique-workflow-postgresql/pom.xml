@@ -25,6 +25,10 @@ SPDX-License-Identifier: EUPL-1.2
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
+                <configuration>
+                    <!-- The largest IT suite in the reactor; it runs past the parent's 15-minute fork cap. -->
+                    <forkedProcessTimeoutInSeconds>1500</forkedProcessTimeoutInSeconds>
+                </configuration>
             </plugin>
         </plugins>
     </build>

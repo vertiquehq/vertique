@@ -150,7 +150,7 @@ Registry-call bounding (NFR-AVRO-002): the JDK client adapter applies a 30s conn
 
 - The router-routing deserializer (`routingDeserializer(endpointConfig)`) is built once per router consumer (held by the dispatcher) from the consumer's merged `endpointConfig`, so endpoint `serdeProperties` + `schemaRegistry` apply during route selection. It is type-agnostic: the wire schema-id resolves the concrete `SpecificRecord` with no caller-supplied type.
 - `matchValue` reads the discriminator field from the deserialized `GenericRecord` using `record.get(property)`. A non-Avro value or a missing field returns `null` (unmatched route, not an error).
-- Serialization failures (missing schema, registry unreachable) surface as `DeserializationException` / failed `Future` and flow through the configured `ErrorStrategy` — never as an uncaught throw.
+- Serialization failures (missing schema, registry unreachable) surface as `DeserializationException` / failed `Future` and flow through the configured `ErrorStrategy` — never as an uncaught throw. A failure whose cause is an I/O error, or a registry answer of 5xx, 401, 403, 408 or 429, is marked `isTransient()`; a binding that ignores undecodable records ignores only the others.
 
 ---
 

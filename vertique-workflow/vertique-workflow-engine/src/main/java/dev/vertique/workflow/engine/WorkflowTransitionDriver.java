@@ -112,6 +112,7 @@ final class WorkflowTransitionDriver {
     private final ForkJoinCoordinator forkJoin;
     private final Clock clock;
     private final DecisionLog decisions;
+    private final SignalWaits signalWaits;
 
     /**
      * Lazy back-edge to {@link TimerLifecycleService} for the {@code resolveFireAt} helper used by
@@ -170,6 +171,7 @@ final class WorkflowTransitionDriver {
      *     (the coordinator holds the lazy {@code Provider<WorkflowTransitionDriver>} back-edge)
      * @param clock the clock used to timestamp entries and state updates
      * @param decisions the decision log that records each step the driver takes
+     * @param signalWaits the open wait records written when an instance enters a signal wait that declares a key
      * @param timerPvd lazy provider of the timer-lifecycle service, used for the {@code resolveFireAt}
      *     helper when handling a timer node, a wait-signal node with a timeout, or a human-task node
      *     with a due date; lazy to break the driver↔timer constructor cycle, dereferenced only at
@@ -191,6 +193,7 @@ final class WorkflowTransitionDriver {
             ForkJoinCoordinator forkJoin,
             Clock clock,
             DecisionLog decisions,
+            SignalWaits signalWaits,
             Provider<TimerLifecycleService> timerPvd,
             Provider<TaskLifecycleService> taskPvd) {
         this.instances = instances;
@@ -204,6 +207,7 @@ final class WorkflowTransitionDriver {
         this.forkJoin = forkJoin;
         this.clock = clock;
         this.decisions = decisions;
+        this.signalWaits = signalWaits;
         this.timerPvd = timerPvd;
         this.taskPvd = taskPvd;
     }
@@ -421,6 +425,9 @@ final class WorkflowTransitionDriver {
      * is recorded first. The timer id is stored in {@code waitAuxId} so
      * the engine can cancel the timer if the expected signal arrives before the deadline.
      *
+     * <p>When the node declares a correlation key, its open wait record is written in the same transaction, after
+     * the instance reaches {@code WAITING}.
+     *
      * @param inst the current instance
      * @param wsn the node to process
      * @param rw the resolved runtime workflow (needed for timer-resolver callbacks)
@@ -446,7 +453,9 @@ final class WorkflowTransitionDriver {
                         new WorkflowConflictException("Optimistic concurrency conflict for instance '"
                                 + inst.id().value() + "' at WaitSignalNode '" + wsn.stepId() + "'"));
             }
-            return decisions.record(inst, waiting, wsn.stepId(), "wait-signal", tx);
+            return signalWaits
+                    .open(inst, wsn, rw, tx)
+                    .compose(opened -> decisions.record(inst, waiting, wsn.stepId(), "wait-signal", tx));
         });
     }
 
@@ -510,7 +519,10 @@ final class WorkflowTransitionDriver {
                                                         + "' at WaitSignalNode '"
                                                         + wsn.stepId() + "' (timeout branch)"));
                                     }
-                                    return decisions.record(inst, waiting, wsn.stepId(), "wait-signal", tx);
+                                    return signalWaits
+                                            .open(inst, wsn, rw, tx)
+                                            .compose(opened ->
+                                                    decisions.record(inst, waiting, wsn.stepId(), "wait-signal", tx));
                                 });
                     });
         });
@@ -579,6 +591,8 @@ final class WorkflowTransitionDriver {
                 .updateOptimistic(completed, prevVersion, tx)
                 .compose(rowCount -> WorkflowPayloads.requireRowUpdated(
                         rowCount, "instance '" + inst.id().value() + "' at CompleteNode '" + cn.stepId() + "'"))
+                // The instance ends: no wait record outlives it, the records of branches left open included.
+                .compose(v -> signalWaits.closeAll(inst.id(), tx))
                 .compose(v -> decisions.record(inst, completed, cn.stepId(), "completed", tx))
                 .compose(v -> history.nextSequence(inst.id(), tx))
                 .compose(seq -> {

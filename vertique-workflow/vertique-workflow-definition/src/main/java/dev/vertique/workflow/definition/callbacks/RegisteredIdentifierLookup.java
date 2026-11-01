@@ -10,16 +10,17 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 /**
- * Facade that exposes all 10 named callback registries as named accessors and provides a static
+ * Facade that exposes all 11 named callback registries as named accessors and provides a static
  * Levenshtein-distance utility for generating "did you mean?" suggestions in validation error
  * messages.
  *
  * <p>Slice D's validator uses this class to check whether ids referenced in a definition document
  * are registered before the document is compiled.
  *
- * <p>This class is intentionally dumb — it only exposes the 10 registries as named accessors and
+ * <p>This class is intentionally dumb — it only exposes the 11 registries as named accessors and
  * delegates all logic (lookup, contains, ids) to each registry. No additional routing or
  * caching is performed.
  */
@@ -38,11 +39,13 @@ public final class RegisteredIdentifierLookup {
     private final TaskAssignmentResolverRegistry taskAssignmentResolvers;
     private final BranchResultReducerRegistry branchResultReducers;
     private final NamedConditionRegistry namedConditions;
+    private final CorrelationKeyResolverRegistry correlationKeyResolvers;
 
     // --- Construction ---
 
     /**
-     * Constructs the lookup facade with all 10 registries.
+     * Constructs the lookup facade with the ten registries that precede the correlation-key
+     * resolvers, and an empty {@link CorrelationKeyResolverRegistry}.
      *
      * @param payloadMappers the {@link PayloadMapperRegistry}; non-null
      * @param startStateMappers the {@link StartStateMapperRegistry}; non-null
@@ -55,7 +58,6 @@ public final class RegisteredIdentifierLookup {
      * @param branchResultReducers the {@link BranchResultReducerRegistry}; non-null
      * @param namedConditions the {@link NamedConditionRegistry}; non-null
      */
-    @Inject
     public RegisteredIdentifierLookup(
             PayloadMapperRegistry payloadMappers,
             StartStateMapperRegistry startStateMappers,
@@ -67,6 +69,48 @@ public final class RegisteredIdentifierLookup {
             TaskAssignmentResolverRegistry taskAssignmentResolvers,
             BranchResultReducerRegistry branchResultReducers,
             NamedConditionRegistry namedConditions) {
+        this(
+                payloadMappers,
+                startStateMappers,
+                stateReducers,
+                stateMutators,
+                timerResolvers,
+                failMessageFactories,
+                subjectResolvers,
+                taskAssignmentResolvers,
+                branchResultReducers,
+                namedConditions,
+                new DefaultCorrelationKeyResolverRegistry(Set.of()));
+    }
+
+    /**
+     * Constructs the lookup facade with all 11 registries.
+     *
+     * @param payloadMappers the {@link PayloadMapperRegistry}; non-null
+     * @param startStateMappers the {@link StartStateMapperRegistry}; non-null
+     * @param stateReducers the {@link StateReducerRegistry}; non-null
+     * @param stateMutators the {@link StateMutatorRegistry}; non-null
+     * @param timerResolvers the {@link TimerResolverRegistry}; non-null
+     * @param failMessageFactories the {@link FailMessageFactoryRegistry}; non-null
+     * @param subjectResolvers the {@link SubjectResolverRegistry}; non-null
+     * @param taskAssignmentResolvers the {@link TaskAssignmentResolverRegistry}; non-null
+     * @param branchResultReducers the {@link BranchResultReducerRegistry}; non-null
+     * @param namedConditions the {@link NamedConditionRegistry}; non-null
+     * @param correlationKeyResolvers the {@link CorrelationKeyResolverRegistry}; non-null
+     */
+    @Inject
+    public RegisteredIdentifierLookup(
+            PayloadMapperRegistry payloadMappers,
+            StartStateMapperRegistry startStateMappers,
+            StateReducerRegistry stateReducers,
+            StateMutatorRegistry stateMutators,
+            TimerResolverRegistry timerResolvers,
+            FailMessageFactoryRegistry failMessageFactories,
+            SubjectResolverRegistry subjectResolvers,
+            TaskAssignmentResolverRegistry taskAssignmentResolvers,
+            BranchResultReducerRegistry branchResultReducers,
+            NamedConditionRegistry namedConditions,
+            CorrelationKeyResolverRegistry correlationKeyResolvers) {
         this.payloadMappers = Objects.requireNonNull(payloadMappers, "payloadMappers");
         this.startStateMappers = Objects.requireNonNull(startStateMappers, "startStateMappers");
         this.stateReducers = Objects.requireNonNull(stateReducers, "stateReducers");
@@ -77,6 +121,7 @@ public final class RegisteredIdentifierLookup {
         this.taskAssignmentResolvers = Objects.requireNonNull(taskAssignmentResolvers, "taskAssignmentResolvers");
         this.branchResultReducers = Objects.requireNonNull(branchResultReducers, "branchResultReducers");
         this.namedConditions = Objects.requireNonNull(namedConditions, "namedConditions");
+        this.correlationKeyResolvers = Objects.requireNonNull(correlationKeyResolvers, "correlationKeyResolvers");
     }
 
     // --- Registry accessors ---
@@ -170,6 +215,15 @@ public final class RegisteredIdentifierLookup {
      */
     public NamedConditionRegistry namedConditions() {
         return namedConditions;
+    }
+
+    /**
+     * Returns the {@link CorrelationKeyResolverRegistry} (state → signal-wait correlation key).
+     *
+     * @return the correlation-key resolver registry; never null
+     */
+    public CorrelationKeyResolverRegistry correlationKeyResolvers() {
+        return correlationKeyResolvers;
     }
 
     // --- Levenshtein nearest-id utility ---

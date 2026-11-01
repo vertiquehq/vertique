@@ -18,6 +18,9 @@ import jakarta.annotation.Nullable;
  *       current state.
  *   <li>{@code next} — id of the step to transition to after receiving the signal.
  *   <li>{@code timeout} — optional timeout configuration; {@code null} if no timeout is defined.
+ *   <li>{@code correlationKey} — optional registered correlation-key resolver id that computes the
+ *       value identifying this wait from the workflow state; {@code null} if the wait declares no
+ *       key. An absent field reads as {@code null}.
  * </ul>
  */
 public record WaitSignalStep(
@@ -26,7 +29,29 @@ public record WaitSignalStep(
         String payloadType,
         String stateReducer,
         String next,
-        @Nullable TimeoutBlock timeout) implements StepNode {
+        @Nullable TimeoutBlock timeout,
+        @Nullable String correlationKey)
+        implements StepNode {
+
+    /**
+     * Creates a step that declares no correlation key.
+     *
+     * @param id unique step identifier within the workflow
+     * @param signal name of the expected signal event
+     * @param payloadType fully-qualified class name of the signal payload type
+     * @param stateReducer registered state reducer id
+     * @param next id of the step to transition to after receiving the signal
+     * @param timeout optional timeout configuration; {@code null} if none
+     */
+    public WaitSignalStep(
+            String id,
+            String signal,
+            String payloadType,
+            String stateReducer,
+            String next,
+            @Nullable TimeoutBlock timeout) {
+        this(id, signal, payloadType, stateReducer, next, timeout, null);
+    }
 
     /**
      * Optional timeout configuration for a {@link WaitSignalStep}.

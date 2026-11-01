@@ -34,7 +34,7 @@ import java.util.Map;
  * @param retryConfig retry configuration (non-null when errorStrategy is {@link ErrorStrategy#RETRY})
  * @param deadLetterTopic effective DLQ topic (resolved default: {@code {topic}.dlq})
  * @param eventBusTimeoutMs event bus send timeout in milliseconds
- * @param maxInFlight max concurrent dispatches before pausing the consumer
+ * @param maxInFlight max concurrent dispatches
  * @param deploymentOptions Vert.x deployment options (instances, worker threading model)
  * @param kafkaProperties native Kafka consumer properties merged from global and per-consumer config
  * @param endpointFormat the endpoint-level format override from
@@ -67,6 +67,12 @@ record ResolvedKafkaConsumerConfig(
         @Nullable Boolean workerConfigured,
         JsonObject serdeConfig,
         @Nullable String jsonProfile) {
+
+    /** The number of in-flight records a consumer allows when {@code maxInFlight} is not configured. */
+    static final int DEFAULT_MAX_IN_FLIGHT = 256;
+
+    /** Kafka's default for {@code max.poll.records}. */
+    static final int DEFAULT_MAX_POLL_RECORDS = 500;
 
     // --- Factory ---
 
@@ -124,8 +130,9 @@ record ResolvedKafkaConsumerConfig(
         long eventBusTimeoutMs = consumerConfig != null && consumerConfig.eventBusTimeoutMs() != null
                 ? consumerConfig.eventBusTimeoutMs()
                 : defaultEventBusTimeoutMs;
-        int maxInFlight =
-                consumerConfig != null && consumerConfig.maxInFlight() != null ? consumerConfig.maxInFlight() : 256;
+        int maxInFlight = consumerConfig != null && consumerConfig.maxInFlight() != null
+                ? consumerConfig.maxInFlight()
+                : DEFAULT_MAX_IN_FLIGHT;
 
         CommitStrategy commitStrategy = resolveEnum(
                 consumerConfig != null ? consumerConfig.commitStrategy() : null,
@@ -195,6 +202,60 @@ record ResolvedKafkaConsumerConfig(
                 workerConfigured,
                 serdeConfig,
                 jsonProfile);
+    }
+
+    /**
+     * Returns this configuration as a binding that requires its strategies needs it: the binding rejects configuration that changes them. A new group starts at the
+     * beginning of the topic unless {@code auto.offset.reset} is configured, so a first record that fails before any
+     * commit is not skipped after a restart. Nothing else changes: the binding runs records concurrently up to
+     * {@code maxInFlight}, like any other.
+     *
+     * @return the changed configuration
+     */
+    ResolvedKafkaConsumerConfig forBindingRequiringStrategies() {
+        Map<String, String> properties = new HashMap<>(kafkaProperties);
+        properties.putIfAbsent("auto.offset.reset", "earliest");
+        return new ResolvedKafkaConsumerConfig(
+                topic,
+                groupId,
+                enabled,
+                commitStrategy,
+                errorStrategy,
+                retryConfig,
+                deadLetterTopic,
+                eventBusTimeoutMs,
+                maxInFlight,
+                deploymentOptions,
+                Map.copyOf(properties),
+                endpointFormat,
+                globalFormat,
+                workerConfigured,
+                serdeConfig,
+                jsonProfile);
+    }
+
+    /**
+     * The records a {@code MANUAL} consumer may keep for one partition before the partition stops fetching: twice the
+     * larger of {@code max.poll.records} and {@code maxInFlight}. The whole consumer stops at twice this limit, and
+     * fetching resumes at half the limit. A value of {@code max.poll.records} that is not a number, such as a config
+     * provider expression only the client resolves, counts as Kafka's default of {@value #DEFAULT_MAX_POLL_RECORDS}.
+     *
+     * @return the per-partition limit
+     */
+    int retentionLimit() {
+        return 2 * Math.max(maxPollRecords(), maxInFlight);
+    }
+
+    private int maxPollRecords() {
+        String configured = kafkaProperties.get("max.poll.records");
+        if (configured == null) {
+            return DEFAULT_MAX_POLL_RECORDS;
+        }
+        try {
+            return Math.max(1, Integer.parseInt(configured.trim()));
+        } catch (NumberFormatException notANumber) {
+            return DEFAULT_MAX_POLL_RECORDS;
+        }
     }
 
     // --- Private helpers ---

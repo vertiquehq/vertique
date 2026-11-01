@@ -348,14 +348,18 @@ must be included explicitly by the owning Dagger component or aggregate module.
 
 ### Framework seams
 
-Nineteen public types — `CodegenContext`, `AnnotationMirrors`, `AnnotationLiteralEmitter`,
+Twenty public types — `CodegenContext`, `AnnotationMirrors`, `AnnotationLiteralEmitter`,
 `Conditions`, `Constructors`, `DaggerModuleWriter`, `Diagnostics`, `Identifiers`,
 `InjectConstructorValidator`, `JaxRsAnnotations`, `JaxRsBeanScanner`, `MetadataEmitter`,
 `MethodOverrides`, `PackageResolver`, `PathPlaceholders`, `ProxyabilityValidator`,
-`SelectorPathValidator`, `TypeResolver`, and `TypeVisibility` — are the processor-authoring
+`SelectorPathValidator`, `SignalSourceNaming`, `TypeResolver`, and `TypeVisibility` — are the processor-authoring
 substrate. They are public because sibling framework processors in other artifacts call them across
 package boundaries, and their Javadoc marks them INTERNAL. They are outside this module's
 compatibility promise.
+
+`SignalSourceNaming` is an **INTERNAL** seam that holds the one rule that names the class a signal source processor
+generates for an interface, `<Interface>_SignalSource` in the interface's package and `Outer_Inner_SignalSource` for a
+nested interface, so the generating processor and `AutoWireProcessor`, which registers the class by name, agree on it.
 
 Within this internal namespace, `JaxRsAnnotations.AUTHORIZED` identifies
 `dev.vertique.security.authz.Authorized`, owned by `vertique-security-core`.

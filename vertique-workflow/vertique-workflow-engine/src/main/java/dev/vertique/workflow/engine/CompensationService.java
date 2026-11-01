@@ -73,6 +73,9 @@ final class CompensationService {
     private final Clock clock;
     private final DecisionLog decisions;
 
+    /** Deletes the records of the waits of an instance that ends compensated. */
+    private final SignalWaits signalWaits;
+
     /**
      * Constructs a new compensation service.
      *
@@ -82,6 +85,7 @@ final class CompensationService {
      * @param eventEmitter the event emitter used to emit lifecycle events on state transitions
      * @param clock the clock used to timestamp entries and state updates
      * @param decisions the decision log that records each compensation transition
+     * @param signalWaits deletes the records of the waits of an instance that ends compensated
      */
     @Inject
     CompensationService(
@@ -90,7 +94,9 @@ final class CompensationService {
             RecorderRouter recorders,
             WorkflowEventEmitter eventEmitter,
             Clock clock,
-            DecisionLog decisions) {
+            DecisionLog decisions,
+            SignalWaits signalWaits) {
+        this.signalWaits = signalWaits;
         this.decisions = decisions;
         this.instances = instances;
         this.history = history;
@@ -191,6 +197,8 @@ final class CompensationService {
                     .updateOptimistic(compensated, prevVersion, tx)
                     .compose(rowCount -> WorkflowPayloads.requireRowUpdated(
                             rowCount, "instance '" + currentInst.id().value() + "' transitioning to COMPENSATED"))
+                    // The instance ends: no wait record outlives it, the records of branches left open included.
+                    .compose(v -> closeAllWaits(currentInst, tx))
                     .compose(v -> decisions.record(currentInst, compensated, stepOf(currentInst), "compensated", tx))
                     .compose(v -> history.nextSequence(currentInst.id(), tx))
                     .compose(seq -> {
@@ -293,6 +301,11 @@ final class CompensationService {
                                         .map(done -> logged));
                     });
         });
+    }
+
+    /** Deletes every wait record of the instance. */
+    private Future<Void> closeAllWaits(WorkflowInstance inst, SqlClient tx) {
+        return signalWaits.closeAll(inst.id(), tx);
     }
 
     /** The step an instance is at, or the start when it has none. */

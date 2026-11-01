@@ -33,7 +33,8 @@ import java.util.List;
  *     and {@link Kind#HANDLER} entries
  * @param targetOneWay {@code true} if the target operation is fire-and-forget
  * @param routes route entries for {@link Kind#ROUTER}; empty for other kinds
- * @param handler custom record handler for {@link Kind#HANDLER}; {@code null} for other kinds
+ * @param handler custom record handler for {@link Kind#HANDLER}, from {@code @KafkaConsumers} or
+ *     from a {@link KafkaConsumerBinding}; {@code null} for other kinds
  * @param deserializer effective deserializer selected by {@link KafkaConsumerValidation};
  *     {@code null} for {@link Kind#ROUTER} and for consumers with no value type
  * @param frameworkOwnedDeserializer {@code true} when {@code deserializer} was built by the serde
@@ -43,6 +44,13 @@ import java.util.List;
  * @param valueFormat the effective resolved value format (e.g. {@code "json"} or {@code "avro"})
  *     as determined by {@link KafkaConsumerValidation#validateAndBuild}; the single format resolved
  *     across a router's non-{@code Void} routes for {@link Kind#ROUTER}
+ * @param ignoreUndecodable callback that runs when a record fails to decode and is ignored; {@code null}
+ *     when an undecodable record goes down the error strategy
+ * @param noHeaderContext {@code true} when the handler path installs no durable context from the
+ *     record's headers
+ * @param requireBindingStrategies {@code true} when registration required the resolved strategies to equal the
+ *     binding's
+ * @param dispatchGate the gate that says whether a record may start, or {@code null} for none
  */
 record ConsumerEntry(
         String name,
@@ -57,7 +65,63 @@ record ConsumerEntry(
         @Nullable KafkaDeserializer<?> deserializer,
         boolean frameworkOwnedDeserializer,
         @Nullable KafkaRecordFilter filter,
-        String valueFormat) {
+        String valueFormat,
+        @Nullable Runnable ignoreUndecodable,
+        boolean noHeaderContext,
+        boolean requireBindingStrategies,
+        @Nullable KafkaDispatchGate dispatchGate) {
+
+    /**
+     * Creates an entry that ignores no undecodable record, installs the header context and does not
+     * require its strategies.
+     *
+     * @param name binding name used as the config reference key and deployment identifier
+     * @param config resolved runtime configuration for this consumer
+     * @param kind the consumption model kind
+     * @param valueType the deserialization target type; {@code null} for {@link Kind#ROUTER}
+     * @param targetAddress event bus address to dispatch records to
+     * @param stableTargetId durable stable target id, or {@code null}
+     * @param targetOneWay {@code true} if the target operation is fire-and-forget
+     * @param routes route entries for {@link Kind#ROUTER}; empty for other kinds
+     * @param handler custom record handler for {@link Kind#HANDLER}; {@code null} for other kinds
+     * @param deserializer effective deserializer, or {@code null}
+     * @param frameworkOwnedDeserializer {@code true} when the registry built the deserializer
+     * @param filter pre-deserialization filter; {@code null} means accept-all
+     * @param valueFormat the effective resolved value format
+     */
+    ConsumerEntry(
+            String name,
+            ResolvedKafkaConsumerConfig config,
+            Kind kind,
+            @Nullable Class<?> valueType,
+            @Nullable String targetAddress,
+            @Nullable String stableTargetId,
+            boolean targetOneWay,
+            List<RouteEntry> routes,
+            @Nullable KafkaRecordHandler<?> handler,
+            @Nullable KafkaDeserializer<?> deserializer,
+            boolean frameworkOwnedDeserializer,
+            @Nullable KafkaRecordFilter filter,
+            String valueFormat) {
+        this(
+                name,
+                config,
+                kind,
+                valueType,
+                targetAddress,
+                stableTargetId,
+                targetOneWay,
+                routes,
+                handler,
+                deserializer,
+                frameworkOwnedDeserializer,
+                filter,
+                valueFormat,
+                null,
+                false,
+                false,
+                null);
+    }
 
     // --- Nested Types ---
 
@@ -69,7 +133,10 @@ record ConsumerEntry(
         BINDING,
         /** Model 3: declarative routing interface with {@link KafkaHandler}-annotated methods. */
         ROUTER,
-        /** Model 4: custom {@link KafkaRecordHandler} implementation. */
+        /**
+         * Model 4: custom {@link KafkaRecordHandler} implementation, contributed through
+         * {@code @KafkaConsumers} or carried by a {@link KafkaConsumerBinding}.
+         */
         HANDLER
     }
 

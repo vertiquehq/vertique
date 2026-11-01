@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 
 import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
+import dev.vertique.workflow.engine.testsupport.EmptySignalWaits;
 import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowSignalRejectedException;
@@ -145,7 +146,12 @@ class BoundedEchoTest {
                 new EmptyCommandRepository(),
                 WorkflowContextBinder.noop(),
                 null,
-                null);
+                null,
+                new SignalWaits(
+                        EmptySignalWaits.create(),
+                        new EmptyCommandRepository(),
+                        mock(WorkflowHistoryRecorder.class),
+                        Clock.fixed(NOW, ZoneOffset.UTC)));
     }
 
     private static Throwable failureOf(Future<?> future) {

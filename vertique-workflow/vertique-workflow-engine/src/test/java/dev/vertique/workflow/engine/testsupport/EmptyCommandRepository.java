@@ -65,6 +65,7 @@ public final class EmptyCommandRepository implements WorkflowCommandRepository<S
     private final List<RecordedMigration> recordedMigrations = new CopyOnWriteArrayList<>();
     private final List<WorkflowInstanceId> cancelledInstances = new CopyOnWriteArrayList<>();
     private volatile boolean deadLetters;
+    private volatile Optional<List<String>> declaredSignalNames = Optional.empty();
 
     /**
      * The retries recorded through this repository, oldest first.
@@ -100,6 +101,15 @@ public final class EmptyCommandRepository implements WorkflowCommandRepository<S
      */
     public void deadLetters(boolean deadLetters) {
         this.deadLetters = deadLetters;
+    }
+
+    /**
+     * Makes {@link #declaredSignalNames} answer the given names for every wait, as a definition row that stores them.
+     *
+     * @param names the signal names every pinned definition declares
+     */
+    public void declaredSignalNames(List<String> names) {
+        this.declaredSignalNames = Optional.of(List.copyOf(names));
     }
 
     @Override
@@ -315,7 +325,7 @@ public final class EmptyCommandRepository implements WorkflowCommandRepository<S
     @Override
     public Future<Optional<List<String>>> declaredSignalNames(
             DefinitionKey pin, @Nullable String forkStepId, @Nullable String branchId, SqlClient tx) {
-        return Future.succeededFuture(Optional.empty());
+        return Future.succeededFuture(declaredSignalNames);
     }
 
     @Override
@@ -346,9 +356,11 @@ public final class EmptyCommandRepository implements WorkflowCommandRepository<S
             String signalName,
             @Nullable String forkStepId,
             @Nullable String branchId,
+            @Nullable String waitId,
             String dedupKey,
             @Nullable String payloadJson,
             @Nullable String explicitCarrierJson,
+            @Nullable String provenanceJson,
             CommandActor actor,
             SqlClient tx) {
         recordedSignals.add(new RecordedSignal(

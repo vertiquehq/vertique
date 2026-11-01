@@ -399,9 +399,9 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 "UPDATE " + queues + " SET open_signals = open_signals - 1 WHERE workflow_id = $1 AND open_signals > 0";
         this.insertSignal = "WITH recorded AS (SELECT clock_timestamp() AS at) INSERT INTO " + commands
                 + " (workflow_id, seq, kind, state, recorded_at, available_at, payload_json, dedup_key, target_json,"
-                + " explicit_carrier_json, context_json, " + ACTOR_COLUMNS + ") SELECT $1, $2, 'SIGNAL', 'PENDING',"
-                + " recorded.at, recorded.at, $3::jsonb, $4, $5::jsonb, $6::jsonb, $7::jsonb, " + actorValues(8)
-                + " FROM recorded RETURNING id";
+                + " explicit_carrier_json, context_json, " + ACTOR_COLUMNS + ", provenance_json) SELECT $1, $2,"
+                + " 'SIGNAL', 'PENDING', recorded.at, recorded.at, $3::jsonb, $4, $5::jsonb, $6::jsonb, $7::jsonb, "
+                + actorValues(8) + ", $13::jsonb FROM recorded RETURNING id";
         this.insertCompletion = "WITH recorded AS (SELECT clock_timestamp() AS at) INSERT INTO " + commands
                 + " (workflow_id, seq, kind, state, recorded_at, available_at, task_id, payload_json, dedup_key,"
                 + " target_json, context_json, " + ACTOR_COLUMNS + ") SELECT $1, $2, 'COMPLETION', 'PENDING',"
@@ -510,7 +510,8 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 + PgTableNames.qualify(schemas, "workflow", "workflow_definitions")
                 + " WHERE scope_key = $1 AND definition_id = $2 AND definition_version = $3";
         String parked = "SELECT c.id, c.seq, c.target_json->>'name' AS signal_name, c.target_json->>'forkStepId' AS"
-                + " fork_step_id, c.target_json->>'branchId' AS branch_id, c.recorded_at FROM " + commands
+                + " fork_step_id, c.target_json->>'branchId' AS branch_id, c.target_json->>'waitId' AS wait_id,"
+                + " c.recorded_at FROM " + commands
                 + " c WHERE c.workflow_id = $1 AND c.kind = 'SIGNAL' AND c.state = 'PARKED'";
         this.parkedAt =
                 parked + " AND c.target_json->>'name' = $2 AND c.target_json->>'forkStepId' IS NOT DISTINCT FROM $3"
@@ -1075,9 +1076,11 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
             String signalName,
             @Nullable String forkStepId,
             @Nullable String branchId,
+            @Nullable String waitId,
             String dedupKey,
             @Nullable String payloadJson,
             @Nullable String explicitCarrierJson,
+            @Nullable String provenanceJson,
             CommandActor actor,
             SqlClient tx) {
         JsonObject target = new JsonObject().put("name", signalName);
@@ -1087,18 +1090,22 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
         if (branchId != null) {
             target.put("branchId", branchId);
         }
+        if (waitId != null) {
+            target.put("waitId", waitId);
+        }
         return nextQueueSequence(instance, tx)
                 .compose(seq -> tx.preparedQuery(insertSignal)
                         .execute(withActor(
-                                Tuple.of(
-                                        instance.value(),
-                                        seq,
-                                        jsonValue(payloadJson),
-                                        dedupKey,
-                                        target,
-                                        jsonValue(explicitCarrierJson),
-                                        capturedContext(instance, seq)),
-                                actor)))
+                                        Tuple.of(
+                                                instance.value(),
+                                                seq,
+                                                jsonValue(payloadJson),
+                                                dedupKey,
+                                                target,
+                                                jsonValue(explicitCarrierJson),
+                                                capturedContext(instance, seq)),
+                                        actor)
+                                .addValue(jsonValue(provenanceJson))))
                 .map(rows -> rows.iterator().next().getLong("id"))
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands recordSignal")));
     }
@@ -1584,7 +1591,8 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                     row.getString("signal_name"),
                     row.getString("fork_step_id"),
                     row.getString("branch_id"),
-                    row.getOffsetDateTime("recorded_at").toInstant()));
+                    row.getOffsetDateTime("recorded_at").toInstant(),
+                    row.getString("wait_id")));
         }
         return result;
     }

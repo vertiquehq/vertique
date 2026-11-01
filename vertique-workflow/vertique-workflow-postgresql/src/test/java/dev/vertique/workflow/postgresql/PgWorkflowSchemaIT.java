@@ -211,7 +211,8 @@ public class PgWorkflowSchemaIT {
             "workflow_definitions",
             "workflow_definition_activations",
             "workflow_commands",
-            "workflow_command_queues");
+            "workflow_command_queues",
+            "workflow_signal_waits");
     private static final Set<String> TRANSACTION_DECOY_TABLES = with(WORKFLOW_TABLES, "outbox", "inbox", "orders");
 
     private static final Set<String> MIGRATED_INDEXES = Set.of(
@@ -241,7 +242,9 @@ public class PgWorkflowSchemaIT {
             "idx_workflow_branch_tokens_recovery",
             "idx_workflow_branch_tokens_wait",
             "idx_workflow_join_states_status",
-            "idx_workflow_definitions_id");
+            "idx_workflow_definitions_id",
+            "idx_workflow_signal_waits_contract_signal_key",
+            "idx_workflow_instances_business_key_scope_key_definition_id");
     private static final Set<String> MIGRATED_CONSTRAINTS =
             Set.of("fk_workflow_dedup_workflow_id", "ck_workflow_timers_task_id_purpose");
 
@@ -753,7 +756,7 @@ public class PgWorkflowSchemaIT {
     }
 
     private static void assertWorkflowObjectsLiveOnlyInMappedSchema() throws SQLException {
-        // The mapped schema holds the history, the eleven tables, their indexes and named constraints, and
+        // The mapped schema holds the history, the twelve tables, their indexes and named constraints, and
         // nothing that the packaged scripts do not create
         assertEquals(with(WORKFLOW_TABLES, WORKFLOW_HISTORY), tablesIn(MAPPED_SCHEMA));
         assertTrue(

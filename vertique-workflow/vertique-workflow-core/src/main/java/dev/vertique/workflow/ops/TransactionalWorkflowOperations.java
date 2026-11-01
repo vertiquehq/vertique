@@ -30,6 +30,18 @@ import jakarta.annotation.Nullable;
 public interface TransactionalWorkflowOperations<TX> {
 
     /**
+     * Whether this node accepts new starts and signals from outside now. A transport that can hold a message back
+     * before it records anything, such as a Kafka signal source, asks first, instead of recording the message and
+     * having it refused. The answer reads node-local state only, takes no lock and may be read from any thread. A
+     * {@code true} answer does not promise that the next call is accepted: the node can start refusing in between.
+     *
+     * @return {@code true} unless this node refuses new starts and signals; the default accepts
+     */
+    default boolean admitting() {
+        return true;
+    }
+
+    /**
      * Starts a new workflow instance within the given transaction.
      *
      * <p>As {@link WorkflowOperations#start(StartCommand)}, a start that creates an instance fails with
@@ -207,5 +219,42 @@ public interface TransactionalWorkflowOperations<TX> {
                 "migrate() is not implemented by this TransactionalWorkflowOperations binding;"
                         + " install vertique-workflow-postgresql + WorkflowMigrationModule"
                         + " (or another binding that implements migrate)"));
+    }
+
+    /**
+     * Records a signal for the one open instance that waits on a key, within the given transaction. The signal is
+     * applied later, by an executor, in the order the instance's commands were recorded.
+     *
+     * <p>The delivery finds the open wait of the signal's contract, signal name and key, narrowed by the signal's
+     * definition id and scope when it names them, and records the signal for that wait's instance. It fails with
+     * {@link dev.vertique.workflow.exception.WorkflowIntakeRefusedException} while the node refuses new intake, and
+     * writes nothing then.
+     *
+     * <p>This default implementation fails the returned future with {@link UnsupportedOperationException}.
+     *
+     * @param signal the signal, addressed by contract, signal name and key
+     * @param tx the active transaction context
+     * @return a {@link Future} that completes when the signal has been recorded, not when it has been applied
+     */
+    default Future<CorrelatedSignalReceipt> signalByKey(CorrelatedSignal signal, TX tx) {
+        return Future.failedFuture(new UnsupportedOperationException(
+                "signalByKey() is not implemented by this TransactionalWorkflowOperations binding"));
+    }
+
+    /**
+     * Records a signal for the one live instance that carries a business key, within the given transaction. The signal
+     * is applied later, by an executor, in the order the instance's commands were recorded. It fails with
+     * {@link dev.vertique.workflow.exception.WorkflowIntakeRefusedException} while the node refuses new intake, and
+     * writes nothing then.
+     *
+     * <p>This default implementation fails the returned future with {@link UnsupportedOperationException}.
+     *
+     * @param signal the signal; its key is the business key of the instance
+     * @param tx the active transaction context
+     * @return a {@link Future} that completes when the signal has been recorded, not when it has been applied
+     */
+    default Future<CorrelatedSignalReceipt> signalByBusinessKey(CorrelatedSignal signal, TX tx) {
+        return Future.failedFuture(new UnsupportedOperationException(
+                "signalByBusinessKey() is not implemented by this TransactionalWorkflowOperations binding"));
     }
 }

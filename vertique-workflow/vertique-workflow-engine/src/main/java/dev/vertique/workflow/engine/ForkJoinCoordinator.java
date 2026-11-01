@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.engine;
 
+import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
 import dev.vertique.workflow.engine.history.DecisionLog;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
@@ -98,6 +99,7 @@ final class ForkJoinCoordinator {
 
     private final Clock clock;
     private final DecisionLog decisions;
+    private final SignalWaits signalWaits;
 
     /**
      * Constructs a new fork/join coordinator.
@@ -119,6 +121,7 @@ final class ForkJoinCoordinator {
      *     {@code null} for legacy test constructors
      * @param clock the clock used to timestamp entries and state updates
      * @param decisions the decision log that records the dispatch and the decision of a join
+     * @param signalWaits deletes the record of the signal wait of a branch a race supersedes
      */
     @Inject
     ForkJoinCoordinator(
@@ -133,7 +136,9 @@ final class ForkJoinCoordinator {
             @Nullable BranchCompensationOrchestrator branchCompensation,
             @Nullable dev.vertique.context.DurableContextPropagator propagator,
             Clock clock,
-            DecisionLog decisions) {
+            DecisionLog decisions,
+            SignalWaits signalWaits) {
+        this.signalWaits = signalWaits;
         this.decisions = decisions;
         this.driverPvd = driverPvd;
         this.enginePvd = enginePvd;
@@ -474,7 +479,13 @@ final class ForkJoinCoordinator {
                         });
             }));
         }
-        return chain;
+        // A sibling driven after an earlier branch's join decision ended the instance enters its wait after the end
+        // and writes its record there; an ended instance has no record, so the ones written since go with the end.
+        return chain.compose(v -> instances.findById(inst.id(), tx)).compose(opt -> {
+            boolean ended =
+                    opt.isPresent() && EndedInstanceOutcomes.isEnded(opt.get().status());
+            return ended ? signalWaits.closeAll(inst.id(), tx) : Future.<Void>succeededFuture();
+        });
     }
 
     /**
@@ -713,6 +724,9 @@ final class ForkJoinCoordinator {
             final BranchToken loser = b;
             BranchToken superseded = supersededWithClearedWait(b, now);
             chain = chain.compose(v -> enginePvd.get().cancelBranchOwnedWaits(loser, tx))
+                    // The loser's signal wait ends with it: its record goes in the transaction that supersedes it.
+                    .compose(v -> signalWaits.close(
+                            loser.workflowId(), loser.currentStepId(), loser.forkStepId(), loser.branchId(), null, tx))
                     .compose(v -> branchTokens
                             .updateOptimistic(superseded, loser.version(), tx)
                             .mapEmpty());

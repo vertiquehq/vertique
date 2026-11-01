@@ -4,6 +4,8 @@
 package dev.vertique.core.util;
 
 import jakarta.annotation.Nullable;
+import java.util.Objects;
+import java.util.regex.Pattern;
 
 /**
  * Shared string-manipulation utilities used across multiple framework modules.
@@ -15,6 +17,11 @@ import jakarta.annotation.Nullable;
  * <p>This class is a final utility class and cannot be instantiated.
  */
 public final class Strings {
+
+    /** The error type that stands in for one that is not a simple token. */
+    public static final String INVALID_ERROR_TYPE = "InvalidErrorType";
+
+    private static final Pattern ERROR_TYPE_TOKEN = Pattern.compile("[A-Za-z_$][A-Za-z0-9_$.\\-]{0,127}");
 
     private Strings() {}
 
@@ -49,5 +56,21 @@ public final class Strings {
             }
         }
         return null;
+    }
+
+    /**
+     * Returns the error type when it is a simple token, and {@value #INVALID_ERROR_TYPE} otherwise, so
+     * that a value which arrives from outside cannot reach a log line, a header or an audit field.
+     *
+     * <p>A simple token is a letter, {@code _} or {@code $} followed by up to 127 letters, digits and
+     * {@code _ $ . -}. Text with a space or a control character, an empty text and a longer text are not.
+     *
+     * @param errorType the error type to check
+     * @return {@code errorType} itself when it is a simple token, otherwise {@value #INVALID_ERROR_TYPE}
+     * @throws NullPointerException if {@code errorType} is {@code null}
+     */
+    public static String errorTypeToken(String errorType) {
+        Objects.requireNonNull(errorType, "errorType");
+        return ERROR_TYPE_TOKEN.matcher(errorType).matches() ? errorType : INVALID_ERROR_TYPE;
     }
 }

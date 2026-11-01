@@ -442,7 +442,7 @@ public interface WorkflowCommandRepository<TX> {
     /**
      * Records a {@code SIGNAL} command in the caller's transaction: the next position of the instance's queue, state
      * {@code PENDING}, recorded and available at the database clock now, with the payload and the explicit carrier
-     * stored as recorded and the name and address stored as the command's target.
+     * stored as recorded and the name, the address and the wait id stored as the command's target.
      *
      * <p>The caller must hold the instance's execution lock and have raised the open-signal count.
      *
@@ -450,9 +450,13 @@ public interface WorkflowCommandRepository<TX> {
      * @param signalName          the signal's name
      * @param forkStepId          the fork step of a branch-addressed signal, or {@code null}
      * @param branchId            the branch of a branch-addressed signal, or {@code null}
+     * @param waitId              the id of the wait entry a delivery by key matched, stored in the target only when set,
+     *                            or {@code null}
      * @param dedupKey            the caller's idempotency key, kept for display
      * @param payloadJson         the payload as JSON, or {@code null} when the signal has none
      * @param explicitCarrierJson the sanitized explicit durable-context carrier as JSON, or {@code null}
+     * @param provenanceJson      where a correlated signal came from, as JSON, stored in a column of its own and never
+     *                            in the target, or {@code null} to store SQL null
      * @param actor               who sent the signal, stored on the command
      * @param tx                  the caller's transaction handle
      * @return a {@link Future} containing the command's row id
@@ -462,45 +466,13 @@ public interface WorkflowCommandRepository<TX> {
             String signalName,
             @Nullable String forkStepId,
             @Nullable String branchId,
+            @Nullable String waitId,
             String dedupKey,
             @Nullable String payloadJson,
             @Nullable String explicitCarrierJson,
+            @Nullable String provenanceJson,
             CommandActor actor,
             TX tx);
-
-    /**
-     * Records a {@code SIGNAL} command for a caller with no identity, as {@link CommandActor#none()}.
-     *
-     * @param instance            the instance
-     * @param signalName          the signal's name
-     * @param forkStepId          the fork step of a branch-addressed signal, or {@code null}
-     * @param branchId            the branch of a branch-addressed signal, or {@code null}
-     * @param dedupKey            the caller's idempotency key, kept for display
-     * @param payloadJson         the payload as JSON, or {@code null} when the signal has none
-     * @param explicitCarrierJson the sanitized explicit durable-context carrier as JSON, or {@code null}
-     * @param tx                  the caller's transaction handle
-     * @return a {@link Future} containing the command's row id
-     */
-    default Future<Long> recordSignal(
-            WorkflowInstanceId instance,
-            String signalName,
-            @Nullable String forkStepId,
-            @Nullable String branchId,
-            String dedupKey,
-            @Nullable String payloadJson,
-            @Nullable String explicitCarrierJson,
-            TX tx) {
-        return recordSignal(
-                instance,
-                signalName,
-                forkStepId,
-                branchId,
-                dedupKey,
-                payloadJson,
-                explicitCarrierJson,
-                CommandActor.none(),
-                tx);
-    }
 
     /**
      * Records a {@code COMPLETION} command in the caller's transaction: the next position of the instance's queue,
@@ -632,7 +604,8 @@ public interface WorkflowCommandRepository<TX> {
      *
      * @param instance the instance
      * @param tx       the segment's transaction handle
-     * @return a {@link Future} containing the parked signals
+     * @return a {@link Future} containing the parked signals, each with the id of the wait entry it matched when it has
+     *     one
      */
     Future<List<ParkedSignal>> parkedSignals(WorkflowInstanceId instance, TX tx);
 

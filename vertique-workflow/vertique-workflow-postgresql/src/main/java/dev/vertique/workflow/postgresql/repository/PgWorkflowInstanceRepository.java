@@ -26,6 +26,7 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
+import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.OffsetDateTime;
@@ -34,6 +35,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * PostgreSQL-backed repository for {@link WorkflowInstance} persistence.
@@ -56,6 +58,35 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
     /** Name of the migration instance whose schema mapping places the workflow tables. */
     private static final String INSTANCE_NAME = "workflow";
 
+    /** The most instances {@link #findLiveByBusinessKey} returns: no match, one match and several matches. */
+    private static final int MATCH_LIMIT = 2;
+
+    /** The columns of an instance row, in the order {@link RowMappers#workflowInstance()} reads them by name. */
+    private static final List<String> INSTANCE_COLUMNS = List.of(
+            "id",
+            "definition_id",
+            "definition_version",
+            "plan_hash",
+            "version",
+            "status",
+            "business_key",
+            "subject_type",
+            "subject_id",
+            "subject_version",
+            "current_step_id",
+            "wait_type",
+            "wait_key",
+            "wait_aux_id",
+            "state_json",
+            "error_type",
+            "error_message",
+            "metadata",
+            "created_at",
+            "updated_at",
+            "completed_at",
+            "scope_key",
+            "definition_scope_key");
+
     // --- SQL statements ---
     //
     // The statements are built once at construction because every table reference is qualified with
@@ -71,6 +102,12 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
     private final String sqlCountNonTerminal;
 
     private final String sqlFindByBusinessKey;
+
+    /**
+     * Parameters: $1=business key, $2=contract name, $3=optional definition id, $4=optional scope, $5=signal name.
+     * Joins the definition row of the instance's pin.
+     */
+    private final String sqlFindLiveByBusinessKey;
 
     /**
      * Optimistic-concurrency UPDATE. Sets {@code completed_at} to {@code NOW()} on terminal-status
@@ -158,11 +195,7 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                 + " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16, $17,"
                 + " $18::jsonb, $19, $20, $21, $22)";
 
-        this.sqlSelectAllColumns = "SELECT id, definition_id, definition_version, plan_hash, version, status,"
-                + " business_key, subject_type, subject_id, subject_version,"
-                + " current_step_id, wait_type, wait_key, wait_aux_id, state_json,"
-                + " error_type, error_message, metadata, created_at, updated_at, completed_at, scope_key, definition_scope_key"
-                + " FROM " + instances;
+        this.sqlSelectAllColumns = "SELECT " + String.join(", ", INSTANCE_COLUMNS) + " FROM " + instances;
 
         this.sqlFindById = sqlSelectAllColumns + " WHERE id = $1";
 
@@ -174,6 +207,19 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
 
         this.sqlFindByBusinessKey =
                 sqlSelectAllColumns + " WHERE scope_key = $1 AND definition_id = $2 AND business_key = $3";
+
+        // The match joins the definition row on the instance's pin, so every instance column is qualified. The
+        // business-key index serves the equality on the key; the definition row is read by its primary key.
+        this.sqlFindLiveByBusinessKey = "SELECT "
+                + INSTANCE_COLUMNS.stream().map(column -> "i." + column).collect(Collectors.joining(", "))
+                + " FROM " + instances + " i JOIN " + definitionsTable + " d ON d.scope_key = i.definition_scope_key"
+                + " AND d.definition_id = i.definition_id AND d.definition_version = i.definition_version"
+                + " WHERE i.business_key = $1 AND d.contract_name = $2"
+                + " AND ($3::varchar IS NULL OR i.definition_id = $3)"
+                + " AND ($4::varchar IS NULL OR i.scope_key = $4)"
+                + " AND i.status NOT IN ('COMPLETED', 'COMPENSATED', 'CANCELLED', 'EXPIRED')"
+                + " AND (d.signal_names_json IS NULL OR d.signal_names_json -> 'instance' @> to_jsonb($5::text))"
+                + " LIMIT " + MATCH_LIMIT;
 
         this.sqlUpdateOptimistic = "UPDATE " + instances
                 + " SET version = $2, status = $3, current_step_id = $4,"
@@ -553,6 +599,51 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                 })
                 .recover(
                         t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_instances findByBusinessKey")));
+    }
+
+    /**
+     * Finds the live instances that carry a business key and can accept a signal addressed to the instance, across
+     * scopes and definitions.
+     *
+     * <p>The statement joins the definition row of the instance's pin and keeps the instances whose definition names
+     * the contract, whose status is not {@code COMPLETED}, {@code COMPENSATED}, {@code CANCELLED} or {@code EXPIRED},
+     * and whose definition row either holds no list of signal names or lists the signal among the names the instance
+     * itself awaits. Names a version awaits only inside a fork branch are not read. The partial index on
+     * {@code (business_key, scope_key, definition_id)} serves the key. At most two rows are returned.
+     *
+     * @param contractName the contract the pinned definition must implement
+     * @param signalName   the signal the version must declare for the instance
+     * @param businessKey  the business key the instance carries
+     * @param definitionId optional definition id, or {@code null} for any
+     * @param scopeKey     optional start scope of the instance, or {@code null} for any
+     * @param tx           the active transaction to use
+     * @return a {@link Future} of at most two live instances
+     */
+    @Override
+    public Future<List<WorkflowInstance>> findLiveByBusinessKey(
+            String contractName,
+            String signalName,
+            String businessKey,
+            @Nullable String definitionId,
+            @Nullable String scopeKey,
+            SqlClient tx) {
+        Tuple parameters = Tuple.tuple();
+        parameters.addValue(businessKey);
+        parameters.addValue(contractName);
+        parameters.addValue(definitionId);
+        parameters.addValue(scopeKey);
+        parameters.addValue(signalName);
+        return tx.preparedQuery(sqlFindLiveByBusinessKey)
+                .execute(parameters)
+                .<List<WorkflowInstance>>map(rs -> {
+                    List<WorkflowInstance> found = new ArrayList<>();
+                    for (Row row : rs) {
+                        found.add(RowMappers.workflowInstance().map(row));
+                    }
+                    return List.copyOf(found);
+                })
+                .recover(t ->
+                        Future.failedFuture(exceptionMapper.translate(t, "workflow_instances findLiveByBusinessKey")));
     }
 
     /**

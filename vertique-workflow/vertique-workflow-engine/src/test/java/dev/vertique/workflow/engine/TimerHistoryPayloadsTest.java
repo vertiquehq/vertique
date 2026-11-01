@@ -164,14 +164,16 @@ class TimerHistoryPayloadsTest {
     class CancelledCause {
 
         @Test
-        @DisplayName("has exactly SIGNAL_ARRIVED, WORKFLOW_CANCELLED, TASK_COMPLETED, and TASK_CLOSED constants")
+        @DisplayName(
+                "has exactly SIGNAL_ARRIVED, WORKFLOW_CANCELLED, TASK_COMPLETED, TASK_CLOSED, and WAIT_MIGRATED constants")
         void enumConstants() {
             TimerCancelledCause[] values = TimerCancelledCause.values();
-            assertEquals(4, values.length);
+            assertEquals(5, values.length);
             assertInstanceOf(TimerCancelledCause.class, TimerCancelledCause.SIGNAL_ARRIVED);
             assertInstanceOf(TimerCancelledCause.class, TimerCancelledCause.WORKFLOW_CANCELLED);
             assertInstanceOf(TimerCancelledCause.class, TimerCancelledCause.TASK_COMPLETED);
             assertInstanceOf(TimerCancelledCause.class, TimerCancelledCause.TASK_CLOSED);
+            assertInstanceOf(TimerCancelledCause.class, TimerCancelledCause.WAIT_MIGRATED);
         }
 
         @Test

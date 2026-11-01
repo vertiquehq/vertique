@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -35,17 +36,22 @@ import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.engine.testsupport.AcceptingTaskReservations;
 import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
+import dev.vertique.workflow.engine.testsupport.EmptySignalWaits;
 import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.engine.testsupport.TenantCtxCodec;
 import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.exception.WorkflowInstanceNotFoundException;
 import dev.vertique.workflow.exception.WorkflowIntakeRefusedException;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
+import dev.vertique.workflow.exception.WorkflowSignalAmbiguousException;
+import dev.vertique.workflow.exception.WorkflowSignalNoMatchException;
 import dev.vertique.workflow.exception.WorkflowSignalRejectedException;
 import dev.vertique.workflow.exception.WorkflowUnavailableException;
 import dev.vertique.workflow.history.WorkflowHistoryChange;
 import dev.vertique.workflow.history.WorkflowHistoryFailure;
 import dev.vertique.workflow.history.WorkflowHistoryListener;
+import dev.vertique.workflow.ops.CorrelatedSignal;
+import dev.vertique.workflow.ops.CorrelatedSignalReceipt;
 import dev.vertique.workflow.ops.RelayedSignals;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.registry.WorkflowRegistry;
@@ -136,6 +142,7 @@ class WorkflowEngineIntakeTest {
                 .instances(instances)
                 .history(history)
                 .dedup(dedup)
+                .signalWaits(EmptySignalWaits.create())
                 .branchTokens(mock(BranchTokenRepository.class))
                 .joinStates(mock(JoinStateRepository.class))
                 .timerStore(mock(TimerStore.class))
@@ -158,6 +165,16 @@ class WorkflowEngineIntakeTest {
     @Nested
     @DisplayName("the public signal forms")
     class PublicForms {
+
+        @Test
+        @DisplayName("the engine reports the admission of the node to a transport that can hold a message back")
+        void reportsTheAdmissionToATransport() {
+            refusing.set(true);
+            assertThat(engine.admitting()).isFalse();
+
+            refusing.set(false);
+            assertThat(engine.admitting()).isTrue();
+        }
 
         @Test
         @DisplayName("a refusing node refuses every form with the retryable 503 refusal and writes nothing")
@@ -222,6 +239,68 @@ class WorkflowEngineIntakeTest {
             assertThat(missing.cause()).isInstanceOf(WorkflowInstanceNotFoundException.class);
             assertThat(tooLarge.cause()).isInstanceOf(WorkflowInvalidPayloadException.class);
             assertThat(otherContract.cause()).isInstanceOf(WorkflowDefinitionContractMismatchException.class);
+            assertThat(commands.recordedSignals()).isEmpty();
+        }
+    }
+
+    @Nested
+    @DisplayName("a correlated delivery")
+    class CorrelatedDeliveries {
+
+        private interface Contract {}
+
+        private final CorrelatedSignal signal = CorrelatedSignal.of(Contract.class, "go", "K-1", Map.of(), "d-1");
+
+        private void matches(List<WorkflowInstance> found) {
+            when(dedup.findCorrelated(any(), any(), any())).thenReturn(Future.succeededFuture(Optional.empty()));
+            when(instances.findLiveByBusinessKey(any(), any(), any(), any(), any(), any()))
+                    .thenReturn(Future.succeededFuture(found));
+        }
+
+        @Test
+        @DisplayName("is refused by a refusing node with the retryable 503 refusal, and writes nothing")
+        void isRefusedAndWritesNothing() {
+            // Given one instance that carries the key
+            matches(List.of(waiting));
+            WorkflowCommandRepository<SqlClient> lockWatching = spy(commands);
+            WorkflowEngine watched = engine(
+                    true, WorkflowRecordingConfig.defaults(), lockWatching, WorkflowHistoryEventPublisher.disabled());
+
+            // When the signal is delivered to a refusing node
+            var refused = watched.signalByBusinessKey(signal, tx);
+
+            // Then the delivery is refused, without the key in the failure, and nothing is locked or recorded
+            assertThat(refused.cause())
+                    .isInstanceOf(WorkflowIntakeRefusedException.class)
+                    .hasMessageNotContaining("K-1");
+            assertThat(commands.recordedSignals()).isEmpty();
+            verify(lockWatching, never()).lockInstance(any(), any());
+            verify(dedup, never()).claimOrResolveCorrelated(any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("keeps a committed duplicate, a miss, an ambiguity and an oversized payload on a refusing node")
+        void keepsReplayAndTerminalRefusals() {
+            // Given a miss, an ambiguity, an oversized payload and a delivery recorded before the pressure rose
+            WorkflowEngine small = engine(false, new WorkflowRecordingConfig(5000L, 1024));
+            CorrelatedSignal oversized = CorrelatedSignal.of(Contract.class, "go", "K-1", "x".repeat(2048), "d-1");
+
+            // When each is delivered to a refusing node
+            matches(List.of());
+            var miss = engine.signalByBusinessKey(signal, tx);
+            matches(List.of(waiting, instance(WorkflowStatus.WAITING)));
+            var ambiguous = engine.signalByBusinessKey(signal, tx);
+            matches(List.of(waiting));
+            var tooLarge = small.signalByBusinessKey(oversized, tx);
+            when(dedup.findCorrelated(any(), any(), any()))
+                    .thenReturn(Future.succeededFuture(Optional.of(waiting.id())));
+            var replay = engine.signalByBusinessKey(signal, tx);
+
+            // Then each answers as it would on a node that admits
+            assertThat(miss.cause()).isInstanceOf(WorkflowSignalNoMatchException.class);
+            assertThat(ambiguous.cause()).isInstanceOf(WorkflowSignalAmbiguousException.class);
+            assertThat(tooLarge.cause()).isInstanceOf(WorkflowInvalidPayloadException.class);
+            assertThat(replay.result().outcome()).isEqualTo(CorrelatedSignalReceipt.Outcome.DUPLICATE);
             assertThat(commands.recordedSignals()).isEmpty();
         }
     }

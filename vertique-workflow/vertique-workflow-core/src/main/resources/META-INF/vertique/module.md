@@ -84,6 +84,41 @@ public final class OrderFulfillmentDefinition
 }
 ```
 
+### Signal Wait Key
+
+`waitForSignal(stepId, signalName, Payload.class)` returns a `SignalWaitBuilder`. Its optional `correlateBy(Function<S, String>)` declares the value that identifies the wait, computed from the workflow state:
+
+```java
+wf.waitForSignal("await-payment", "payment.captured", PaymentCaptured.class)
+  .correlateBy(OrderState::paymentReference)
+  .onSignal((state, event) -> state.withPaid(true))
+  .toStepOnSignal("ship");
+```
+
+The function is registered under the callback id `<stepId>.correlationKey`, and the resulting `WaitSignalNode` carries that id as `correlationKeyCallbackId` (the plan holds the id, never the function). The id is `null` when the wait declares no key, and the deprecated `waitFor` declares none. `WorkflowCallbackRegistry.correlationKeyResolver(CallbackId)` returns the function; like `timerResolver`, its default throws `UnsupportedOperationException`, and registration fails a plan whose node names a key callback the registry cannot resolve. The declaration is recorded in the plan; the engine computes the key each time an instance enters the wait (see `dev.vertique:vertique-workflow-engine`).
+
+`WaitSignalNode` has seven components and keeps its six-argument constructor, which leaves the key absent. A component added later is appended after `correlationKeyCallbackId`.
+
+A computed key is a non-blank string of at most 255 characters with no NUL. A key that is `null`, blank, too long or holds a NUL, or an accessor that throws, fails the wait's segment with `WorkflowCorrelationKeyException`, a final `WorkflowDefinitionException` (so a signal whose application reached the wait is rejected and the instance stays where it was). Its message names the definition, the step and the reason, never the key; it carries no cause, because an accessor's own message may hold the key.
+
+### Delivery By Key
+
+`TransactionalWorkflowOperations<TX>` has two delivery methods that address a signal by a key instead of an instance id:
+
+`TransactionalWorkflowOperations.admitting()` reports whether this node accepts new starts and signals now. A transport that can hold a message back, such as a Kafka signal source, asks before it dispatches one, so a node under the intake limit keeps the message in the transport and not in a retry. The default answer is `true`; the engine answers from its intake admission, which reads node-local state and may be read from any thread. A `true` answer does not promise that the next call is accepted.
+
+```java
+Future<CorrelatedSignalReceipt> signalByKey(CorrelatedSignal signal, TX tx);
+Future<CorrelatedSignalReceipt> signalByBusinessKey(CorrelatedSignal signal, TX tx);
+```
+
+Both are default methods that fail the returned future with `UnsupportedOperationException`, so an implementer written before them keeps compiling; a binding opts in by overriding. `dev.vertique:vertique-workflow-engine` overrides both.
+
+`CorrelatedSignal` is a record of `contract`, `signalName`, `key`, `payload`, `dedupKey`, `definitionId`, `scopeKey` and `provenance`. `CorrelatedSignal.of(contract, signalName, key, payload, dedupKey)` leaves `definitionId`, `scopeKey` and `provenance` null, so the delivery matches across definitions and scopes; `withDefinition`, `withScope` and `withProvenance` return a copy that differs in that one component. The key must be non-blank, at most 255 characters and free of NUL; the dedup key must be non-blank; `withScope` applies the scope key rules. A refusal names the component and never repeats the value, and `toString` prints the contract and signal name only, never the key, dedup key or payload.
+
+`CorrelatedSignalReceipt(outcome, definitionId)` reports `RECORDED` with the id of the definition of the matched instance, or `DUPLICATE` with a null definition id. A delivery that finds no open wait fails with `WorkflowSignalNoMatchException`, and one that finds more than one with `WorkflowSignalAmbiguousException` (narrow it with `withDefinition` or `withScope`); each exposes `contractName()` and `signalName()`, its message names those two and never the key, and a caller may deliver again later because a wait may open. `WorkflowDedupScopes.correlatedScope(contractName, signalName, scope)` and `correlatedKey(dedupKey)` encode the dedup row of a delivery by key: each is a 64-character lowercase SHA-256 hex digest, the first of the three parts joined by the unit separator `0x1F` with the empty string for an absent scope, the second of the dedup key, so a dedup key of any length fits and no key is stored. `SignalProvenance(transport, source, attributes)` names where a signal came from: `SignalProvenance.kafka(source, topic, partition, offset)` and `SignalProvenance.camel(source, triggerId, messageHash)` fill `transport` and `source` and put their other arguments in `attributes` (numbers as decimal strings); the map is copied immutably. Both delivery methods store the provenance with the command, in its own column and never in the command's target, and an executor does not read it. A delivery that carries a provenance and captures no actor (no identity bound, or an anonymous one), or whose identity the actor mapper refuses, fails with `WorkflowSignalActorException` and writes nothing, so a source never records a command that no actor stands behind; the exception exposes `contractName()` and `signalName()`, its message names those two and never the key, and it is neither a no-match nor an ambiguity, so a caller does not retry it as one. A delivery without provenance records with an absent actor as before.
+
+
 ### Parallel Branches
 
 `WorkflowBuilder.fork(stepId)` declares a fan-out into named branches, each with its own start step; `join(stepId)` declares the matching join step with a completion policy (`allRequired`, `firstSuccess`, or `firstFailure`) that reduces branch results back into workflow state. Each running branch executes against its own `BranchToken`; the fork's fan-in progress is tracked in a `JoinState`.
@@ -165,7 +200,7 @@ A `WorkflowMigrationHandler` is keyed by `(sourceScope, definitionId, fromDefini
 
 Two default methods carry the contract of the caller: `signal(id, contractName, signalName, payload, signalDedupKey)` and `query(id, contractName)`. A binding that checks contracts compares the name with the contract of the definition version the instance is pinned to and fails a mismatch with `WorkflowDefinitionContractMismatchException`; the engine's `query(id, contractName)` compares with the contract stored on the pinned definition row, read in the query's transaction, so it needs no plan or class on any node and a pinned row that no longer exists fails with `WorkflowVersionNotRunnableException`; the defaults delegate to the contract-less methods, which perform no check. Typed clients send their contract name through these overloads; direct callers of the four-argument `signal` and of `query(id)` keep today's behavior. A wrapper or decorator around a `WorkflowOperations` binding must forward both overloads to the wrapped binding; inheriting the defaults silently drops the caller-contract check. The check guards against developer error, such as a client built for the wrong contract; it is not an authorization boundary, because the caller supplies the contract name. A client proxy generated by an older annotation processor does not call these overloads and fails with `WorkflowClientProxyLinkageException` until it is rebuilt.
 
-**Intake limit.** `start` and the `signal` forms bring new work in from outside, so a node refuses them with `WorkflowIntakeRefusedException`, a retryable 503, while the cluster holds more due commands than its executors have run (see Intake Limit). The refusal is the last check before the execution lock, so a start or signal that committed earlier still returns its original outcome, and a missing or ended instance, an undeclared name, an unavailable version and an invalid payload keep their own refusal. A refusal writes nothing, and the same call can be sent again unchanged. `cancel`, `retry`, `migrate`, task completions and reassignments, timers and everything a segment records are never refused.
+**Intake limit.** `start`, the `signal` forms, `signalByKey` and `signalByBusinessKey` bring new work in from outside, so a node refuses them with `WorkflowIntakeRefusedException`, a retryable 503, while the cluster holds more due commands than its executors have run (see Intake Limit). The refusal is the last check before the execution lock, so a start or signal that committed earlier still returns its original outcome, and a missing or ended instance, an undeclared name, an unavailable version and an invalid payload keep their own refusal. A refusal writes nothing, and the same call can be sent again unchanged. `cancel`, `retry`, `migrate`, task completions and reassignments, timers and everything a segment records are never refused.
 
 The Postgres implementation opens its own transaction for each call. Code that already owns a transaction should use `TransactionalWorkflowOperations<TX>`.
 
@@ -220,7 +255,7 @@ Future<List<PendingCommand>> openCommands(WorkflowInstanceId id);
 
 `WorkflowInstance` ends with two non-null components, `String scopeKey` (the start scope) and `String definitionScopeKey` (the scope of the definition version the instance is pinned to). `TaskRecord` ends with a non-null `String scopeKey` followed by a nullable `Boolean requireVersionStability` and a nullable `Long reservationCommandId`, and `WorkflowInstanceQuery` and `TaskFilter` each end with a nullable `String scopeKey` filter component (after `includeArchived`). The previous constructors of all four records are retained: those of `WorkflowInstance` and `TaskRecord` delegate with `WorkflowScopes.DEFAULT` (and, for `TaskRecord`, a `null` stability flag and reservation), those of `WorkflowInstanceQuery` and `TaskFilter` with `null`, so existing callers keep compiling. `WorkflowInstanceQuery.withScopeKey(...)` and `TaskFilter.withScopeKey(...)` set the filter, and every other `with*` method preserves it. The instance has no scope setter and every instance updater passes both scopes through. Record patterns that deconstruct these four records by component list stop compiling and must add the components.
 
-The PostgreSQL store persists the values in `scope_key` and `definition_scope_key` columns that default to `default`, added by `V002__workflow_definitions_and_scopes.sql`. Existing rows read the default scope. The filters are exact-match; a task's scope is the start scope of its owning instance row, taken by the PostgreSQL store whatever the `TaskRecord` carries on insert. The engine stamps the start scope of the `StartCommand` on a new instance (the default scope when the command names none) and the scope of the definition version it resolved as the definition scope. A start scope written by another writer stays with the instance for life: tasks created afterwards carry it, and migration and resurrection keep it. A migration to another scope's definition changes only the definition scope.
+The PostgreSQL store persists the values in `scope_key` and `definition_scope_key` columns that default to `default`, added by `V002__definitions_scopes_recorded_execution_signal_correlation.sql`. Existing rows read the default scope. The filters are exact-match; a task's scope is the start scope of its owning instance row, taken by the PostgreSQL store whatever the `TaskRecord` carries on insert. The engine stamps the start scope of the `StartCommand` on a new instance (the default scope when the command names none) and the scope of the definition version it resolved as the definition scope. A start scope written by another writer stays with the instance for life: tasks created afterwards carry it, and migration and resurrection keep it. A migration to another scope's definition changes only the definition scope.
 
 The values and the filters are information and a filter, not an isolation or authorization boundary: a `null` filter matches every scope, so a caller must not pass an unresolved scope as `null` expecting scoping. Business keys and start idempotency keys are unique per start scope and definition id, whatever the contract of the definition; a start whose business key is already held fails with `WorkflowBusinessKeyConflictException`, a `ConflictException` that names the scope and definition id and not the key. No operation addressed by instance or task id (query, signal, cancel, retry, migrate, task complete or reassign) checks the scope, and timers, branch tokens and definition resolution are global: load the instance and compare its `scopeKey()` with the caller's scope before acting on a caller-supplied id.
 
@@ -403,7 +438,7 @@ Add the type catalog module that `vertique-codegen-workflow` generates (`Generat
 |---|---|
 | `WorkflowContributor` | Register workflow definitions with the registry |
 | `WorkflowSideEffectRecorder<TX>` | Persist workflow side-effect intents |
-| `TransactionalWorkflowOperations<TX>` | Drive workflows inside an existing transaction |
+| `TransactionalWorkflowOperations<TX>` | Drive workflows inside an existing transaction, including delivery by key |
 | `RelayedSignals<TX>` | Record a signal that is already durable, such as one the outbox relay delivers, without the intake limit |
 | `TaskStore<TX>` | Store human task rows |
 | `TransactionalTaskCallbacks<TX>` | Engine callback surface used by the task service |
@@ -1003,6 +1038,76 @@ observer must tolerate an event type it does not know: give its `switch` a `defa
 `try`: an exception it throws is caught and logged at warn level with the observer class and the event type, the other observers
 still receive the event, and command execution is unaffected.
 
+### Signal Source Observer
+
+`SignalSourceObserver` and `SignalSourceEvent` (package `dev.vertique.workflow.source`) report the outcome of each signal a correlated signal source records, once per signal, and of a message that ends before a signal is chosen, once for the message. An application or a bridge module contributes an observer into the `Set<SignalSourceObserver>` multibinding, which `WorkflowSourceModule` in `vertique-workflow-services` declares empty.
+
+```java
+public interface SignalSourceObserver {
+    void onOutcome(SignalSourceEvent event);
+}
+
+public record SignalSourceEvent(String source, String transport, @Nullable String contractName, @Nullable String signalName,
+        @Nullable String definitionId, Outcome outcome) { }
+```
+
+`Outcome` is `RECORDED`, `NO_MATCH`, `AMBIGUOUS`, `DEDUPLICATED`, `IGNORED`, `UNDECODABLE`, `SCOPE_EMPTY`, `REFUSED_IDENTITY`, `INVALID_INPUT`, `LIMITED`, `OVERSIZED` and `STAGE_FAILED`. `RECORDED` means the signal was recorded; the executor applies it afterwards. `contractName` and `signalName` are null only for an outcome reached before a signal is chosen. The event never carries a key, a header or a payload.
+
+`onOutcome` runs on the context of the delivery, may run concurrently for different messages, and must not block. Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the enclosing operation. `LinkageError`, `AssertionError` and `StackOverflowError` are swallowed the same way, and a `LinkageError` is reported at error level at a limited rate. The log names the observer class and the callback, never the observer's message. A throw never changes a message's fate, and the other observers still receive the event.
+
+### Signal Source Types
+
+A correlated signal source is described with three small types (and the two annotations below) in `dev.vertique.workflow.source`, shared by every transport. `SignalMessage<T>` is what a source's stages read: `body()` is the decoded message, `header(name)` a transport header, and `key()` the Kafka record key (always empty on Camel). `SignalNoMatch` is the policy for a message whose key matches no waiting instance: `IGNORE` finishes it, `RETRY` redelivers it.
+
+```java
+public interface SignalMessage<T> {
+    T body();
+    Optional<String> header(String name);
+    Optional<String> key();
+}
+
+public enum SignalNoMatch { IGNORE, RETRY }
+
+public final class SignalSourceRefusal extends RuntimeException {
+    public SignalSourceRefusal(String errorType);
+    public String errorType();
+}
+```
+
+A source's identity function (`dispatchAs`) fails with `SignalSourceRefusal` to refuse a message outright: the message is not retried and goes to the dead-letter path, or its exchange fails. The refusal carries its error type and nothing else (no cause, no stack trace, no message beyond the type), a null or blank error type is refused at construction, and the error type is the only detail that is forwarded, so keep it to a short name such as `TokenRejected` and never put a value from the message in it.
+
+Two annotations in the same package describe a source written as a class. `@WorkflowSignalSource` marks a concrete class with an `@Inject` constructor that implements an interface annotated `@SignalSourceType`, such as `KafkaSignalSource` of `vertique-workflow-kafka`; both have class retention. Generated wiring (`vertique-codegen-dagger`) registers the class into the `Set` of that interface, so no application `@Provides` method names it and the dependencies it needs come by constructor injection. `@SignalSourceType(module = ...)` names the transport module that consumes the `Set`, and the generated registrations module includes it, so an application names only the generated module. A class with no `@Inject` constructor, and a registration the generated module cannot reference, fail compilation naming the class. `@NoAutoWire` and `-Avertique.codegen.autoWire=false` turn the registration off.
+
+```java
+@Target(ElementType.TYPE) @Retention(RetentionPolicy.CLASS)
+public @interface WorkflowSignalSource { }
+
+@Target(ElementType.TYPE) @Retention(RetentionPolicy.CLASS)
+public @interface SignalSourceType {
+    Class<?> module();
+}
+```
+
+Three more annotations in the same package, all with class retention, let an interface be the source with no Dagger code. `@WorkflowSignalTarget` is repeatable (its container is `@WorkflowSignalTargets`) and goes on a method of an interface annotated with a transport's source annotation, such as `@KafkaSignalListener`: `contract` and `signal` name a signal a `@WorkflowContract` declares, `key` or `businessKey` (exactly one) names an accessor of the method's only parameter, the message, `dedupBy` names the accessor that yields the dedup key, and `onNoMatch` is the `SignalNoMatch` policy, `IGNORE` by default. An accessor is a record component or a no-argument method of the message type, and the generated source refers to it by method reference, so a misspelled name fails compilation naming it. The message type must be the signal's payload type, because this form maps no payload; a lookup, a payload mapping and a scope belong to the builder or to a source class. A message has one dedup key, so every target of an interface states the same `dedupBy` (an empty one included), and a target by `businessKey` must state it. `@SignalSourceForm(Interface.class)` marks an annotation that declares such an interface, such as a transport's own source annotation: generated wiring binds `<Interface>_SignalSource` into the `Set` of the named source interface, by name, with no code generator naming a transport type.
+
+```java
+@Target(ElementType.METHOD) @Retention(RetentionPolicy.CLASS)
+@Repeatable(WorkflowSignalTargets.class)
+public @interface WorkflowSignalTarget {
+    Class<?> contract();
+    String signal();
+    String key() default "";
+    String businessKey() default "";
+    String dedupBy() default "";
+    SignalNoMatch onNoMatch() default SignalNoMatch.IGNORE;
+}
+
+@Target(ElementType.ANNOTATION_TYPE) @Retention(RetentionPolicy.CLASS)
+public @interface SignalSourceForm {
+    Class<?> value();
+}
+```
+
 `WorkflowDefinitionLifecycleException` reports a typed `reason()` and `key()` for lifecycle refusals,
 including stale claims, unavailable code, missing loaders, and plan drift. Asynchronous entrypoints
 report invalid arguments through failed Futures.
@@ -1018,6 +1123,9 @@ report invalid arguments through failed Futures.
 | `WorkflowException` | `BusinessRuleException` | 400 |
 | `WorkflowInvalidPayloadException` | leaf of `WorkflowException`; implements `ViolationCarrier` | 400 |
 | `WorkflowSignalLimitException` | leaf of `WorkflowException`; not retryable | 400 |
+| `WorkflowSignalNoMatchException` | final leaf of `WorkflowException`; names the contract and the signal | 400 |
+| `WorkflowSignalAmbiguousException` | final leaf of `WorkflowConflictException`; names the contract and the signal | 409 |
+| `WorkflowSignalActorException` | final leaf of `WorkflowException`; a delivery that carries a provenance captured no actor or the actor mapper refused it; names the contract and the signal | 400 |
 | `WorkflowConflictException` | `ConflictException` | 409 |
 | `WorkflowNotFoundException` | `NotFoundException` | 404 |
 | `WorkflowConfigurationException` | `ConfigurationException` | — |
@@ -1032,7 +1140,7 @@ report invalid arguments through failed Futures.
 command, history entry or deduplication key, so the same signal can be sent again once an open signal has settled. `instanceId()`
 and `limit()` expose what the message names; the message never contains a payload.
 
-`WorkflowIntakeRefusedException` is thrown by `start` and the `signal` forms while the node refuses new intake (see Intake Limit). It writes nothing, so the same request can be sent again and the refused key stays free, and its message names no payload, instance or key. A source of records waits and keeps them instead of spending retries on it.
+`WorkflowIntakeRefusedException` is thrown by `start`, the `signal` forms, `signalByKey` and `signalByBusinessKey` while the node refuses new intake (see Intake Limit). It writes nothing, so the same request can be sent again and the refused key stays free, and its message names no payload, instance or key. A source of records waits and keeps them instead of spending retries on it.
 
 `WorkflowNodeRoleException` extends `WorkflowConfigurationException` and refuses an operation that needs a workflow build on a recording-only node (`workflow.executor.enabled=false`): document load, publication and reinstatement, `WorkflowRegistry.load` and the `WorkflowPayloadSchemas` methods. Its message names the operation and the setting and never any document content.
 
@@ -1077,6 +1185,7 @@ Behaviors that are load-bearing for correct use and not obvious from method sign
 - **Definition rows can carry the declared signal names and the start schema.** `WorkflowDefinitionRecord` has two trailing nullable components, `signalNames` (`{"instance": [names], "branches": {"<forkStep>/<branch>": [names]}}`, names sorted and de-duplicated, `branches` empty without a fork) and `startSchema` (the JSON Schema of the start payload). A store writes them in the same statement as the plan hash and leaves them as they are when the hash is unchanged; the previous twelve-argument constructor still exists and passes null for both. They are null when the row was written by a node without schema production, and for a row written before they were stored until a node with schema production next builds its plan. `WorkflowDefinitionRegistryStore.fillSignalSchemas(key, planHash, signalNames, startSchema)` writes them to a row whose `signalNames` is still null and whose plan hash is still `planHash`, without touching the plan hash; its default does nothing.
 - **`WorkflowPlanSchemaProducer` is an internal seam.** `dev.vertique.workflow.plan.WorkflowPlanSchemaProducer` produces the start schema and the decision schemas of a plan; `vertique-workflow-schema` binds it, and `WorkflowCoreModule` declares the binding optional (`Optional<WorkflowPlanSchemaProducer>`). Applications do not implement it. Without a binding nothing fails and rows keep null columns.
 - **New states and links exist as types before every writer is in place.** `WorkflowStatus.PENDING` (accepted, not initialized; not terminal, so a `PENDING` instance has a null `stateJson`, `currentStepId` and `subjectRef`), `TaskStatus.COMPLETING` (a recorded completion reserves the task; it cannot be reassigned or completed again, and returns to `OPEN` if that completion is rejected), `TimerRecord.commandId` (a nullable trailing component) and `TaskDecisionDescriptor.payloadSchema` (nullable; the three-argument constructors are kept) are appended, as are thirteen `WorkflowEntryType` constants for recorded commands, parked signals, decisions and state baselines. Exhaustive switches over `WorkflowStatus` and `TaskStatus` need a branch for the new constants. A new task stores each decision's payload schema in `payloadSchema` when a schema module is installed, and `TaskRecord.requireVersionStability` records the plan's version-stability requirement; both are `null`/absent on a task created by an earlier version, which the executor validates from the plan alone. `TaskRecord.reservationCommandId` names the recorded completion that reserves a `COMPLETING` task.
+- **A declared key moves the plan hash; an undeclared one does not.** The hash writes `correlationKeyCallbackId` after the timeout branch, and only when it is non-null. A plan whose waits declare no key hashes as it did before the key existed, and adding `.correlateBy(...)` to a wait changes the hash of the version that declares it.
 - **`WorkflowBuilder.init(payloadType, initialState)` is mandatory and may be called only once.** It must be the first builder call in a definition. Missing or duplicate `init` is rejected at registration with `WorkflowDefinitionException`.
 - **Logical names move the hash.** The plan hash digests logical type names. A class without `@WorkflowType` keeps its binary name and its hash; adding `@WorkflowType` with a value that differs from the binary name changes the hash of every version first published afterwards. With a durable registry store, versions published earlier keep the names recorded with their hash (see Name bindings).
 - **Plan hash pinning.** Each `WorkflowInstance` records the `definitionId`, `definitionVersion`, and `planHash` it started under. Resumes execute against that pinned plan, not the currently registered "latest" version. Use `WorkflowOperations.migrate(...)` plus a `WorkflowMigrationHandler` to move an in-flight instance to a newer version.

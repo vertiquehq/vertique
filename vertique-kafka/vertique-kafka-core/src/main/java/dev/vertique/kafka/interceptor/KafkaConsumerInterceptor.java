@@ -114,7 +114,7 @@ public interface KafkaConsumerInterceptor extends OrderedExtension {
 
     /**
      * Synchronous observer called exactly once per record when its disposition is final, after all
-     * asynchronous work (dead-letter publish, seek, recovery, {@link #afterDispatch}) has settled.
+     * asynchronous work (dead-letter publish, recovery, {@link #afterDispatch}) has settled.
      *
      * <p>It is called for every record the consumer received, on every path: filtered before
      * deserialization, rejected by a filter that throws, matching no route, failing to deserialize,

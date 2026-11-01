@@ -27,6 +27,7 @@ import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.engine.testsupport.AcceptingTaskReservations;
 import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
+import dev.vertique.workflow.engine.testsupport.EmptySignalWaits;
 import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.engine.testsupport.TenantCtx;
 import dev.vertique.workflow.engine.testsupport.TenantCtxCodec;
@@ -142,15 +143,24 @@ class WorkflowEngineStartTenantTest {
         WorkflowHistoryRecorder historyRecorder =
                 new WorkflowHistoryRecorder(history, eventEmitter, FIXED_CLOCK, decisionLog);
         EmptyCommandRepository commands = new EmptyCommandRepository();
+        SignalWaits signalWaits = new SignalWaits(EmptySignalWaits.create(), commands, historyRecorder, FIXED_CLOCK);
         ReminderScheduler reminderScheduler = new ReminderScheduler(history, commands, timerStore, FIXED_CLOCK);
-        CompensationService compensationService =
-                new CompensationService(instances, history, recorderRouter, eventEmitter, FIXED_CLOCK, decisionLog);
+        CompensationService compensationService = new CompensationService(
+                instances, history, recorderRouter, eventEmitter, FIXED_CLOCK, decisionLog, signalWaits);
         InboundExecutionContextScope inboundExecScope = propagator == null
                 ? null
                 : new InboundExecutionContextScope(new InboundDispatchScope(), propagator, Set.of());
         BranchTransitionEngine branchEngine = inboundExecScope == null
                 ? new BranchTransitionEngine(
-                        branchTokens, dedup, history, recorderRouter, commands, taskStore, FIXED_CLOCK, propagator)
+                        branchTokens,
+                        dedup,
+                        history,
+                        recorderRouter,
+                        commands,
+                        taskStore,
+                        FIXED_CLOCK,
+                        propagator,
+                        signalWaits)
                 : new BranchTransitionEngine(
                         branchTokens,
                         dedup,
@@ -160,7 +170,8 @@ class WorkflowEngineStartTenantTest {
                         taskStore,
                         FIXED_CLOCK,
                         propagator,
-                        inboundExecScope);
+                        inboundExecScope,
+                        signalWaits);
         BranchCompensationOrchestrator branchCompensation =
                 new BranchCompensationOrchestrator(history, recorderRouter, FIXED_CLOCK);
 
@@ -173,6 +184,7 @@ class WorkflowEngineStartTenantTest {
                 instances,
                 history,
                 dedup,
+                mock(dev.vertique.workflow.engine.spi.WorkflowSignalWaitRepository.class),
                 recorderRouter,
                 timerStore,
                 taskStore,

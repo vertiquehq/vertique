@@ -30,6 +30,39 @@ repeatable, so one implementation may be registered under multiple explicit targ
 processor emits `GeneratedRegistrationsModule` only when at least one valid registration exists;
 the owning Dagger component or aggregate module must include it explicitly.
 
+A class annotated `@WorkflowSignalSource` (package `dev.vertique.workflow.source`) is registered the same way, with
+no application `@Provides` method. The class implements an interface annotated `@SignalSourceType`, such as
+`KafkaSignalSource`, and has an `@Inject` constructor. The generated module gets an abstract
+`@Binds @IntoSet` method that returns that interface parameterized with wildcards (`KafkaSignalSource<?>`), so the
+`Set` the transport consumes is the one filled whatever the class's type argument. The processor identifies both
+annotations by fully qualified name and takes no compile dependency on the workflow modules.
+
+- **The transport module is included.** `@SignalSourceType(module = ...)` names the interface's transport module, and
+  the generated registrations module lists the distinct modules of the sources it registers in
+  `@Module(includes = {...})`. An application names only the generated module, and a source cannot be left unconsumed
+  by forgetting the transport module. A module with no source registration carries no `includes`.
+- **A source registration is required.** A source class with no `@Inject` constructor, a class that is not concrete,
+  a class that implements no `@SignalSourceType` interface, and a source the generated module cannot reference (a
+  package-private class outside the output package, for example) each fail compilation, naming the class. An
+  `@RegisterAs` or `@RegisterIntoSet` registration it cannot reference keeps its warning and is skipped.
+- **A forgotten module leaves no source.** The generated registrations module carries both the sources and the transport
+  module that consumes them, so a component that leaves it out builds and consumes nothing, as with any generated module.
+  Name it in the component.
+- **Opt-out.** `@NoAutoWire` and `-Avertique.codegen.autoWire=false` disable this registration like every other.
+
+A class that another processor generates is registered the same way, by name, in the round in which this processor sees
+the interface: an interface annotated with an annotation that carries `@SignalSourceForm` (`@KafkaSignalListener` of
+`vertique-workflow-kafka`, `@CamelSignalListener` of the Camel module) has its `<Interface>_SignalSource` bound into the
+`Set` of the form's interface. The class name comes from `vertique-codegen-core` (`SignalSourceNaming`), the same code
+the generating processor calls, and the transport module is the one `@SignalSourceType` names on the target, so this
+module names no transport type and every transport takes this one path.
+
+- **A missing generator is an error.** In the final round the processor looks up every class it predicted. One that no
+  processor generated is an error on its interface naming the class and the annotation whose processor to add, because
+  Dagger would otherwise fail with a missing-type message that points away from the cause. The report is skipped when an
+  earlier round already raised an error, which is then the cause: a misspelled signal makes the generating processor
+  generate nothing, and the compilation reports that error alone.
+
 The processor uses `@SupportedAnnotationTypes("*")` so it runs every round regardless of which annotations are present. It always returns `false` from `process()` so Dagger, Lombok, and other processors see the same elements unmodified.
 
 ---
@@ -39,7 +72,7 @@ The processor uses `@SupportedAnnotationTypes("*")` so it runs every round regar
 | Package | Contents |
 |---------|----------|
 | `dev.vertique.codegen.dagger.processor` | `AutoWireProcessor`, `Qualifier` (enum), `Binding` (record) |
-| `dev.vertique.codegen.dagger.processor.collect` | `AnnotationRootedCollector` (shared base), `RestClientCollector`, `KafkaConsumerCollector`, `DelayedJobExecutorScanner`, `RegistrationCollector` |
+| `dev.vertique.codegen.dagger.processor.collect` | `AnnotationRootedCollector` (shared base), `RestClientCollector`, `KafkaConsumerCollector`, `DelayedJobExecutorScanner`, `RegistrationCollector`, `SignalSourceCollector`, `GeneratedSignalSourceCollector` |
 | `dev.vertique.codegen.dagger.processor.emit` | `MultibindingModuleEmitter`, `RestClientModuleEmitter`, `RegistrationModuleEmitter` |
 | `dev.vertique.codegen.dagger.processor.support` | `Filters`, `FilerWriter` |
 
@@ -118,8 +151,24 @@ Root-element scan: loads `dev.vertique.job.delayed.DelayedJobExecutor` via `Elem
 requires exactly one Jakarta or Javax `@Inject` constructor, and checks implementation
 assignability to every declared target. `RegistrationModuleEmitter` writes valid registrations as
 abstract `@Binds` methods in `GeneratedRegistrationsModule`, adding `@IntoSet` for set
-registrations. Duplicate direct bindings remain Dagger's normal diagnostic; multiple set
+registrations. A required registration (a signal source class) is bound as its target parameterized with wildcards,
+adds its transport module to the module's `includes` once, and is an error rather than a skipped warning when the
+generated package cannot reference it. Duplicate direct bindings remain Dagger's normal diagnostic; multiple set
 contributions are supported.
+
+### `SignalSourceCollector`
+
+Collects classes annotated `@WorkflowSignalSource` and turns each into a required `Registration` per
+`@SignalSourceType` interface it implements, directly or through a supertype, carrying that marker's `module()`. It
+honors `@NoAutoWire`, rejects a class that is not concrete, requires exactly one `@Inject` constructor, and reports an
+error naming a class that implements no marked interface.
+
+### `GeneratedSignalSourceCollector`
+
+Predicts the class generated for a form-annotated interface and turns it into a required
+`Registration` that carries the target's `@SignalSourceType` module. It keeps the predicted names so the final round can
+report each one no processor generated, unless `RoundEnvironment.errorRaised()` is true. It honors `@NoAutoWire` and
+reads the form from the annotation types present in the round.
 
 ### `MultibindingModuleEmitter`
 

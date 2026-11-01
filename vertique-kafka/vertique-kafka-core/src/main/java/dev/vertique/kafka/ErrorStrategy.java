@@ -12,7 +12,7 @@ public enum ErrorStrategy {
     /** Publish the original record to a dead-letter topic, then commit. */
     DEAD_LETTER,
     /**
-     * Pause the consumer and retry via Kafka redelivery. Requires {@link CommitStrategy#MANUAL}.
+     * Keep the record in memory and run it again after a backoff. Requires {@link CommitStrategy#MANUAL}.
      * After {@link RetryConfig#maxRetries()} exhausted, falls back to
      * {@link RetryConfig#exhaustedStrategy()}.
      */

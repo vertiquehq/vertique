@@ -10,6 +10,8 @@ import dev.vertique.workflow.query.WorkflowInstanceQuery;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.state.WorkflowInstance;
 import io.vertx.core.Future;
+import jakarta.annotation.Nullable;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -125,6 +127,39 @@ public interface WorkflowInstanceRepository<TX> {
      * @return a {@link Future} containing the instance if found, or {@link Optional#empty()}
      */
     Future<Optional<WorkflowInstance>> findByBusinessKey(String scopeKey, String defId, String bk, TX tx);
+
+    /**
+     * Finds the live instances that carry a business key and can accept a signal addressed to the instance, across
+     * scopes and definitions, within the given transaction. An instance matches when the definition version it is
+     * pinned to names {@code contractName}, when that version declares {@code signalName} among the signals the
+     * instance itself awaits (a definition row that holds no list of signal names counts as declaring it, as recording
+     * does), and when the instance has not ended: any status other than {@code COMPLETED}, {@code COMPENSATED},
+     * {@code CANCELLED} and {@code EXPIRED} is live. A signal that a version awaits only inside a fork branch does not
+     * match.
+     *
+     * <p>At most two instances are returned, which is enough to tell no match, one match and several matches apart.
+     * The business key is a lookup value and is never echoed.
+     *
+     * @param contractName the name of the contract the pinned definition must implement
+     * @param signalName the signal the version must declare for the instance
+     * @param businessKey the business key the instance carries
+     * @param definitionId optional definition id the instance must be of, or {@code null} for any
+     * @param scopeKey optional start scope the instance must have been created in, or {@code null} for any
+     * @param tx the active transaction to use
+     * @return a {@link Future} of at most two live instances; the default implementation returns a failed future
+     *     holding an {@link UnsupportedOperationException}, for a repository that does not support signals delivered by
+     *     business key
+     */
+    default Future<List<WorkflowInstance>> findLiveByBusinessKey(
+            String contractName,
+            String signalName,
+            String businessKey,
+            @Nullable String definitionId,
+            @Nullable String scopeKey,
+            TX tx) {
+        return Future.failedFuture(new UnsupportedOperationException(
+                "This instance repository does not support signals delivered by business key"));
+    }
 
     /**
      * Returns a keyset-paginated, filtered list of workflow instances. Executes read-only (no row

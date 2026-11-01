@@ -23,6 +23,7 @@ Install this module when workflows dispatch service work or when service consume
 | Service side-effect recorder | Persists `SERVICE` workflow intents to the outbox inside the workflow transaction |
 | Signal service contributor | Registers the `workflow.signals.post` service contract |
 | Composition validator | Fails startup when workflow service targets or outbox handlers are miswired |
+| Source delivery bean | `WorkflowSignalSourceDelivery` records a correlated signal for a signal source, under the identity its envelope names, and runs a whole source plan to one disposition per message (see "Source Delivery" and "Source Plans") |
 
 This module does not compile-depend on `workflow-postgresql` or `inbox-outbox-services`. The application composes those modules at the Dagger boundary.
 
@@ -106,6 +107,75 @@ the caller's identity — a future revision may derive the tenant namespace from
 
 ---
 
+## Source Delivery
+
+`WorkflowSignalSourceDelivery` is a singleton bean that records one correlated signal for a signal source, in process. It is added to the graph by `WorkflowSourceModule`, which `WorkflowServicesModule` includes. A node that only receives signals installs `WorkflowSourceModule` alone: the module needs `TransactionalWorkflowOperations<SqlClient>`, an `InboxService`, `Pool`, `Vertx` and `InboundExecutionContextScope`, and no outbox module. The inbox is required on every node that runs a source, a recording-only node included: install the inbox module with its migration and its cleanup job (`vertique-inbox-outbox-postgresql`). A graph without an `InboxService` does not compile.
+
+**INTERNAL.** `WorkflowSignalSourceDelivery`, `SourceEnvelope`, `SourceDisposition`, `SignalSourcePlan` and `AbstractSignalSourceBuilder` are internal seams, outside the maturity promise of `vertique-workflow-services`. They are public only because a transport in another repository needs them; application code does not depend on them. The stage interfaces (`SignalStages`, `SourceStages`, `SignalTargetStage`, `KeyedTargetStage`) carry no such mark: they are the surface a transport's own builder exposes.
+
+The caller passes resolved values only, in a `SourceEnvelope`: the transport (`kafka` or `camel`), the `SecurityContext` to record under, an optional `CorrelationContext`, the `InvocationOrigin`, and a function from a signal's resolved dedup key to its `SignalProvenance`. For each signal the bean:
+
+- creates its own duplicated Vert.x context, from the root of the context it was called on, so a value bound on the caller's context never reaches the recording;
+- installs exactly the envelope's security context, correlation (when there is one) and origin on that context through `InboundExecutionContextScope.installDispatch`, so the recorded command's actor comes from the envelope's security context, as it does for every recording, and two deliveries in flight never see each other's values;
+- runs `signalByKey` or `signalByBusinessKey` in its own transaction, with the provenance built for the signal's own dedup key;
+- closes the binding when the recording's future completes, whether it succeeded or failed, and also when the operations throw synchronously.
+
+**Idempotency.** Each target of a message, one signal with its contract, signal name and narrowing scope, writes one inbox row in the transaction that records it, so a message that runs again ends as it did the first time. The identity is a 64-character digest of the logical contract, the signal, the narrowing scope and the message's dedup key. It leaves out the instance or key the signal resolved to, the position of the target in the source and the source's name, so a replay from a dead-letter topic meets the same identity.
+
+- A target whose row exists is done: nothing is recorded and the outcome is `DEDUPLICATED`.
+- Otherwise the row is inserted and the signal recorded in the same transaction. A delivery that fails, or that the node refuses, rolls the transaction back with its row, so a failed target leaves no row and its next attempt runs normally.
+- A target that recorded nothing and is done, a no-match under a policy that ignores it or an empty key or lookup, commits its row in a transaction of its own, so a replay stays ignored and a later wait cannot make it record a signal. A crash between the rolled-back recording and that row leaves the message to run again; if the row cannot be written the target is retried.
+- A message that `when` excludes, or whose `scope` answers empty, addresses no target and writes no row; both stages run again on a replay.
+- The inbox retention (30 days by default) bounds the window: an ignored message replayed after it is treated as new. `when`, the key and payload functions, `dedupBy`, `dispatchAs` and the lookups run again on a replay, so they must have no side effects.
+
+The returned future completes on the context the caller delivered from, after the binding is closed, and a failure from the operations reaches the caller as the same exception instance. Nothing blocks, and the bean logs no key, header or payload.
+
+`admitting()` answers whether this node accepts new signals now, from the transactional operations. A transport that can hold a message back asks it before it delivers one: the Kafka source's dispatch gate does, so a node that refuses intake keeps its records in the topic and spends no retry.
+
+`report(SignalSourceEvent)` tells every `SignalSourceObserver` in the `Set<SignalSourceObserver>` multibinding about an outcome. It isolates each observer: an `Exception`, `LinkageError`, `AssertionError` or `StackOverflowError` from one observer is reported by observer class and callback name, never by its message, and does not stop the others or reach the caller. A transport reports its own outcomes through it. `WorkflowSourceModule` declares the set, so an application with no observer still resolves the bean.
+
+The bean adds no service operation and no event-bus address: only code in the application's JVM can call it. The only service entry of this module stays `workflow.signals.post`.
+
+---
+
+## Source Plans
+
+A `SignalSourcePlan<T>` describes a transport-neutral signal source, and `WorkflowSignalSourceDelivery.deliver(plan, message, envelope)` runs it for one message and answers one `SourceDisposition` (`DONE`, `RETRY`, `DEFER` or `TERMINAL`, with the type of the failure that decided it). A plan is immutable. Obtain a plan builder from `SignalSourcePlan.builder(sourceName, messageType)`; a transport instead extends `AbstractSignalSourceBuilder<T, SELF, R>` with its own builder as `SELF`, adds only its own stages, and implements `build()` as `plan(sourceName)`, so every transport applies one set of construction checks. The plan exposes `sourceName()`, `lookupTimeoutMs()` and `restoresCorrelationFromHeaders()` for a transport that builds the envelope.
+
+**Stages.** `SignalStages<T, SELF, R>` declares `when`, `scope`, `anyScope`, `dedupBy`, `lookupTimeoutMs`, `dispatchAs`, `restoreCorrelationFromHeaders`, `signal(contract, name)` and `build()`. `SourceStages` adds `onNoMatch(policy)`, the source's default. Each `signal` is followed by exactly one key source (`key`, `keyFrom`, `businessKey`, `businessKeyFrom`) and an optional `payload`; the `KeyedTargetStage` that follows offers no second key source and declares its own `onNoMatch` for that signal alone. A stage written after the first `signal` applies to the whole source.
+
+**Construction rules.** `build()` fails with an `IllegalStateException` that names the source, never a key, for a signal with no key source, a message type that differs from the signal's parameter type with no `payload`, a business-key signal with no `dedupBy`, `scope` beside `anyScope`, a `lookupTimeoutMs` below 1 (the default is 5000), and a signal the contract does not declare. A source with no stated message type needs a `payload` on every signal. `build()` is idempotent: it returns the same plan, and a stage called after it fails.
+
+**Per-message order.** `deliver` runs `when`, then the dedup key (`dedupBy`, else the envelope's default), so an excluded or blank-keyed message never reaches identity; then `dispatchAs` unless the envelope's identity was contributed (an empty answer keeps the envelope's identity); then `scope`; then each signal in turn: its key, its payload, and its recording. A message's signals run one at a time, every signal is attempted, and the message's fate is the most severe of them: `DEFER` over `TERMINAL` over `RETRY` over `DONE`. A refused target (`DEFER`) outranks every failure, so a message with a refused target goes back unattempted, spends no retry and dead-letters no target; its failed targets run again and decide on a later run, once none is refused.
+
+**Threading.** `deliver` captures its calling context once and completes on it. Every synchronous stage (`when`, `scope`, `key`, `businessKey`, `dedupBy`, `payload`) and every lookup (`keyFrom`, `businessKeyFrom`) runs on a fresh duplicate of that context with the envelope's correlation and origin bound, and the scope bound for the key stages, and no identity. `dispatchAs` runs on its own duplicate and binds nothing. An application future may complete on another context, so `deliver` returns to the captured context before it starts the next stage. `dispatchAs` and each lookup are bounded by `lookupTimeoutMs`, and a timeout counts as a failed stage. Stage functions run on the event loop and must not block.
+
+**Outcomes and fates.** Each signal reports one `SignalSourceEvent` through `report`, and a stage that ends the message before a signal is chosen reports once with null contract and signal names.
+
+| Cause | Outcome | Fate |
+|---|---|---|
+| Recorded | `RECORDED` | `DONE` |
+| No match | `NO_MATCH` | `DONE`, or `RETRY` under the signal's policy |
+| More than one match | `AMBIGUOUS` | `TERMINAL` |
+| Duplicate receipt | `DEDUPLICATED` | `DONE` |
+| `when` rejects; a key that is null or empty, or a lookup answering empty | `IGNORED` | `DONE` |
+| `scope` answers empty | `SCOPE_EMPTY` | `DONE` |
+| Anonymous identity, whether the envelope carried it or `dispatchAs` answered it, `WorkflowSignalActorException`, or `SignalSourceRefusal` from `dispatchAs`, also when wrapped in another exception | `REFUSED_IDENTITY` | `TERMINAL` |
+| A key, scope or payload the type or database refuses (blank, over 255 characters, NUL, SQLSTATE class `22`); a payload that cannot be encoded as JSON; a null or blank dedup key | `INVALID_INPUT` | `TERMINAL` |
+| `WorkflowSignalLimitException` | `LIMITED` | `RETRY` |
+| `WorkflowIntakeRefusedException` | `LIMITED` | `DEFER` |
+| `WorkflowInvalidPayloadException` (oversized payload) | `OVERSIZED` | `TERMINAL` |
+| A stage that throws before it returns | `STAGE_FAILED` | `TERMINAL` |
+| A lookup or `dispatchAs` future that fails or times out; any other failure, such as a database outage | `STAGE_FAILED` | `RETRY` |
+
+`DEFER` means the message is fine and the system is busy: a transport delivers it again without spending a retry, or treats it as `RETRY` when it has no way to wait.
+
+`UNDECODABLE` is raised and reported by a transport itself. A failed stage is forwarded by exception class only, a `SignalSourceRefusal` by its `errorType()` alone, a refused input by the refusing exception's class, and a blank dedup key as `BlankDedupKey`; a message, which can hold the key, is never logged, put in a disposition or put in an event.
+
+**Identity log.** When the identity in force is not a system identity and a message ends without recording a command, at any stage and for any outcome except `RECORDED`, `DEDUPLICATED` and `IGNORED` (no match, ambiguity, a limit, a refusal, an empty scope, a refused key, scope or payload, or a failure), `deliver` writes one log record naming the actor id, contract, signal and outcome, because no command row then shows who attempted it. An outcome reached before a signal is chosen names no contract or signal. The actor id has control and line-separator characters removed and is cut to 255 code points; the key and the message are never logged. A system identity writes none.
+
+---
+
 ## Required App Wiring
 
 An app that uses service-dispatch workflows needs the workflow services module plus transactional messaging modules:
@@ -158,5 +228,5 @@ Applications normally provide service contracts and destination handlers; this m
 
 - **workflow-core** - workflow side-effect recorder SPI and transactional signal operations.
 - **services** - service contract contribution and target resolution.
-- **inbox-outbox-core** - outbox and inbox APIs.
+- **inbox-outbox-core** - outbox and inbox APIs; a signal source writes its inbox rows through `InboxService`.
 - **vertx-sql-client** - `SqlClient` appears in public integration signatures.

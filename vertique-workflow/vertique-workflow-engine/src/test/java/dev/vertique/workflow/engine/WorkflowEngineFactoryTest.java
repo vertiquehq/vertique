@@ -143,6 +143,7 @@ class WorkflowEngineFactoryTest {
                 .instances(fixture.instances())
                 .history(fixture.history())
                 .dedup(fixture.dedup())
+                .signalWaits(org.mockito.Mockito.mock())
                 .branchTokens(mock(BranchTokenRepository.class))
                 .joinStates(mock(JoinStateRepository.class))
                 .timerStore(mock(TimerStore.class))

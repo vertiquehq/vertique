@@ -26,7 +26,7 @@ import java.util.UUID;
  * PostgreSQL-backed repository for workflow deduplication records.
  *
  * <p>The {@code workflow_dedup} table has a composite primary key {@code (kind, scope_key, dedup_namespace, key)}
- * and covers two deduplication concerns; every statement here addresses the default scope:
+ * and covers several deduplication concerns; every statement here addresses the default scope:
  *
  * <ul>
  *   <li>{@code kind='start'}, {@code scope_key=startScope}, {@code dedup_namespace=definitionId},
@@ -34,6 +34,9 @@ import java.util.UUID;
  *       within a start scope and definition.
  *   <li>{@code kind='signal'}, {@code dedup_namespace=workflowInstanceId::text}, {@code key=signalDedupKey}
  *       — prevents the same signal from being applied twice to the same instance.
+ *   <li>{@code kind='correlated'}, {@code dedup_namespace=hash}, {@code key=hash} — prevents one correlated
+ *       delivery from being recorded twice, across instances; both columns hold SHA-256 hex digests, so no key is
+ *       stored.
  * </ul>
  *
  * <p>The {@link #claimOrResolveStart} method uses an {@code INSERT ... ON CONFLICT DO UPDATE
@@ -57,6 +60,9 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
 
     /** Kind value for signal dedup rows: {@code (kind='signal', dedup_namespace=instanceId::text, key=signalDedupKey)}. */
     private static final String DEDUP_KIND_SIGNAL = "signal";
+
+    /** Kind value for correlated signal dedup rows: {@code (kind='correlated', dedup_namespace=hash, key=hash)}. */
+    private static final String DEDUP_KIND_CORRELATED = "correlated";
 
     /** Kind value for task-completion dedup rows: {@code (kind='task-complete', dedup_namespace=taskId::text, key=idempotencyKey)}. */
     private static final String DEDUP_KIND_TASK_COMPLETE = "task-complete";
@@ -101,6 +107,15 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
      * gets back {@code (xmax = 0)} which is {@code true} iff this transaction won the race.
      */
     private final String sqlClaimOrResolveSignal;
+
+    /** Read-only lookup of a correlated dedup row: $1=dedup_namespace (hash), $2=key (hash). */
+    private final String sqlFindCorrelated;
+
+    /**
+     * Race-safe upsert for correlated dedup, unique across instances. Same shape as {@link #sqlClaimOrResolveSignal}:
+     * parameters $1=dedup_namespace (hash), $2=key (hash), $3=workflow_id.
+     */
+    private final String sqlClaimOrResolveCorrelated;
 
     /**
      * Race-safe upsert for task-completion dedup. Includes the {@code fingerprint} column so the
@@ -172,6 +187,16 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
 
         this.sqlClaimOrResolveSignal = "INSERT INTO " + dedup + " (kind, scope_key, dedup_namespace, key, workflow_id)"
                 + " VALUES ('" + DEDUP_KIND_SIGNAL + "', '" + WorkflowScopes.DEFAULT + "', $1, $2, $3)"
+                + " ON CONFLICT (kind, scope_key, dedup_namespace, key) DO UPDATE"
+                + " SET workflow_id = workflow_dedup.workflow_id"
+                + " RETURNING (xmax = 0) AS inserted";
+
+        this.sqlFindCorrelated = "SELECT workflow_id FROM " + dedup + " WHERE kind = '" + DEDUP_KIND_CORRELATED
+                + "' AND scope_key = '" + WorkflowScopes.DEFAULT + "' AND dedup_namespace = $1 AND key = $2";
+
+        this.sqlClaimOrResolveCorrelated = "INSERT INTO " + dedup
+                + " (kind, scope_key, dedup_namespace, key, workflow_id)"
+                + " VALUES ('" + DEDUP_KIND_CORRELATED + "', '" + WorkflowScopes.DEFAULT + "', $1, $2, $3)"
                 + " ON CONFLICT (kind, scope_key, dedup_namespace, key) DO UPDATE"
                 + " SET workflow_id = workflow_dedup.workflow_id"
                 + " RETURNING (xmax = 0) AS inserted";
@@ -329,6 +354,51 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
                 .execute(Tuple.of(scope, signalDedupKey, workflowId.value()))
                 .<Void>mapEmpty()
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_dedup insertSignal")));
+    }
+
+    // --- Correlated dedup ---
+
+    /**
+     * Reads, without writing, the {@code correlated} dedup row of a namespace and key.
+     *
+     * @param namespace the hashed namespace of the contract, signal name and scope
+     * @param key       the hashed dedup key
+     * @param tx        the active transaction to use
+     * @return a {@link Future} containing the id of the instance the row names, or {@link Optional#empty()} when no
+     *         row is visible
+     */
+    @Override
+    public Future<Optional<WorkflowInstanceId>> findCorrelated(String namespace, String key, SqlClient tx) {
+        return tx.preparedQuery(sqlFindCorrelated)
+                .execute(Tuple.of(namespace, key))
+                .map(rs -> {
+                    var it = rs.iterator();
+                    if (it.hasNext()) {
+                        return Optional.of(new WorkflowInstanceId(it.next().getUUID("workflow_id")));
+                    }
+                    return Optional.<WorkflowInstanceId>empty();
+                })
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_dedup findCorrelated")));
+    }
+
+    /**
+     * Atomically claims a {@code correlated} dedup slot or resolves an existing one. Like the signal claim it waits
+     * for a concurrent transaction that holds the same row, so a lost claim observes the committed winner.
+     *
+     * @param namespace  the hashed namespace of the contract, signal name and scope
+     * @param key        the hashed dedup key
+     * @param workflowId the matched instance; stored as the FK reference
+     * @param tx         the active transaction to use
+     * @return a {@link Future} of {@code true} when this call inserted the row, {@code false} when it already existed
+     */
+    @Override
+    public Future<Boolean> claimOrResolveCorrelated(
+            String namespace, String key, WorkflowInstanceId workflowId, SqlClient tx) {
+        return tx.preparedQuery(sqlClaimOrResolveCorrelated)
+                .execute(Tuple.of(namespace, key, workflowId.value()))
+                .map(rs -> Boolean.TRUE.equals(rs.iterator().next().getBoolean("inserted")))
+                .recover(t ->
+                        Future.failedFuture(exceptionMapper.translate(t, "workflow_dedup claimOrResolveCorrelated")));
     }
 
     // --- Task dedup ---

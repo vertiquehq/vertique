@@ -4,8 +4,8 @@
 package dev.vertique.kafka;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -17,16 +17,14 @@ import dev.vertique.kafka.producer.KafkaProducerFactory;
 import io.vertx.core.Future;
 import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
-import io.vertx.junit5.VertxTestContext;
 import io.vertx.kafka.client.consumer.KafkaConsumerRecord;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
+import org.mockito.ArgumentCaptor;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
@@ -34,9 +32,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
  *
  * <ul>
  *   <li>{@link KafkaTerminalOutcome} enum constants exist and are correctly named</li>
- *   <li>{@link KafkaErrorHandler#handleError} returns the correct {@link KafkaTerminalOutcome} for
- *       each {@link ErrorStrategy} — and all existing side-effects (commit / seek / resume / DLQ
- *       publish) are still invoked exactly as before</li>
+ *   <li>the error type of a terminal failure is kept when it is a token, and reaches the dead-letter
+ *       header as a fixed name when it is not</li>
  * </ul>
  *
  * <p>How {@link KafkaConsumerVerticle} reports each outcome to interceptors is covered in
@@ -48,43 +45,13 @@ class KafkaTerminalOutcomeTest {
 
     // --- Test doubles ---
 
-    /**
-     * Minimal {@link KafkaErrorHandler.ConsumerControl} that records whether
-     * {@code commitIfManual} and {@code scheduleResume} were called.
-     */
-    static final class CapturingConsumerControl implements KafkaErrorHandler.ConsumerControl {
-
-        boolean commitCalled = false;
-        boolean pauseCalled = false;
-        boolean scheduleResumeCalled = false;
-        long lastDelayMs = -1;
-        List<long[]> seekCalls = new ArrayList<>();
-
-        @Override
-        public void pause() {
-            pauseCalled = true;
-        }
-
-        @Override
-        public void scheduleResume(long delayMs) {
-            scheduleResumeCalled = true;
-            lastDelayMs = delayMs;
-        }
-
-        @Override
-        public Future<Void> seekToOffset(String topic, int partition, long offset) {
-            seekCalls.add(new long[] {partition, offset});
-            return Future.succeededFuture();
-        }
-
-        @Override
-        public void commitIfManual(KafkaConsumerRecord<String, byte[]> record) {
-            commitCalled = true;
-        }
-    }
-
     /** Builds a minimal {@link ConsumerEntry} for the given strategy. */
     static ConsumerEntry entryFor(ErrorStrategy strategy, String dlqTopic) {
+        return entryFor(strategy, dlqTopic, CommitStrategy.MANUAL);
+    }
+
+    /** Builds a minimal {@link ConsumerEntry} for the given strategy and commit strategy. */
+    static ConsumerEntry entryFor(ErrorStrategy strategy, String dlqTopic, CommitStrategy commitStrategy) {
         JsonObject cfg = new JsonObject()
                 .put(
                         "consumers",
@@ -94,7 +61,12 @@ class KafkaTerminalOutcomeTest {
                                         new JsonObject()
                                                 .put("topic", "src.topic")
                                                 .put("groupId", "grp")
-                                                .put("enabled", true)));
+                                                .put("enabled", true)
+                                                .put(
+                                                        "retry",
+                                                        new JsonObject()
+                                                                .put("backoffMs", 10)
+                                                                .put("maxBackoffMs", 10))));
         KafkaConfig kafkaConfig = KafkaConfig.fromConfig(
                 new JsonObject().put("kafka", cfg), new DefaultConfigParser(DefaultConfigMapper.lenient()));
         ResolvedKafkaConsumerConfig consumerConfig = ResolvedKafkaConsumerConfig.resolve(
@@ -102,7 +74,7 @@ class KafkaTerminalOutcomeTest {
                 "src.topic",
                 "grp",
                 true,
-                CommitStrategy.MANUAL,
+                commitStrategy,
                 strategy,
                 dlqTopic != null ? dlqTopic : "",
                 0L,
@@ -169,106 +141,50 @@ class KafkaTerminalOutcomeTest {
     // --- KafkaErrorHandler outcome values ---
 
     @Nested
-    @DisplayName("KafkaErrorHandler.handleError outcomes")
-    class HandleErrorOutcomes {
-
-        private final RuntimeException cause = new RuntimeException("test-error");
+    @DisplayName("the error type of a terminal failure")
+    class TerminalFailureErrorType {
 
         @Test
-        @DisplayName("SKIP strategy → SKIP outcome and commitIfManual is called")
-        void skipStrategyOutcome(VertxTestContext ctx) {
-            ConsumerEntry entry = entryFor(ErrorStrategy.SKIP, null);
+        @DisplayName("is kept when it is a simple token and replaced when it is not")
+        void keptWhenATokenAndReplacedOtherwise() {
+            // Given / When / Then: tokens are kept as they are
+            for (String token : List.of("AmbiguousSignal", "a.b-c_d$e", "_x", "$y", "a".repeat(128))) {
+                assertEquals(token, new KafkaTerminalFailure(token).errorType());
+                assertEquals(token, new KafkaTerminalFailure(token).getMessage());
+            }
+
+            // And: anything else is replaced by a fixed name, in the type and in the message
+            for (String other :
+                    List.of("", "has space", "line\nbreak", "1starts-with-digit", "a".repeat(129), "caf\u00e9")) {
+                KafkaTerminalFailure failure = new KafkaTerminalFailure(other);
+                assertEquals("InvalidErrorType", failure.errorType(), "for '" + other + "'");
+                assertEquals("InvalidErrorType", failure.getMessage(), "for '" + other + "'");
+            }
+        }
+
+        @Test
+        @DisplayName("reaches the x-dlq-error header as the fixed name when it is not a token")
+        void reachesTheHeaderAsTheFixedNameWhenNotAToken() {
+            // Given: an entry that dead-letters and a send that captures the headers
             KafkaProducerFactory factory = mock(KafkaProducerFactory.class);
-            KafkaErrorHandler handler = new KafkaErrorHandler(entry, factory);
+            ArgumentCaptor<KafkaRecordHeaders> headers = ArgumentCaptor.forClass(KafkaRecordHeaders.class);
+            when(factory.sendForDlq(any(), any(), any(), headers.capture())).thenReturn(Future.succeededFuture());
+            KafkaErrorHandler handler = new KafkaErrorHandler(entryFor(ErrorStrategy.DEAD_LETTER, "dlq"), factory);
 
-            KafkaConsumerRecord<String, byte[]> rec = fakeRecord("t", 0, 0L);
-            CapturingConsumerControl control = new CapturingConsumerControl();
+            // When: a record fails with an error type that carries a line break
+            handler.publishToDlq(
+                    fakeRecord("t", 0, 1L),
+                    new byte[0],
+                    KafkaRecordHeaders.empty(),
+                    new KafkaTerminalFailure("evil\nx-dlq-error: forged"));
 
-            handler.handleError(rec, new byte[0], KafkaRecordHeaders.empty(), cause, control)
-                    .onComplete(ctx.succeeding(outcome -> {
-                        ctx.verify(() -> {
-                            assertEquals(KafkaTerminalOutcome.SKIP, outcome);
-                            assertTrue(control.commitCalled, "commitIfManual must be called on SKIP");
-                        });
-                        ctx.completeNow();
-                    }));
-        }
-
-        @Test
-        @DisplayName("DEAD_LETTER strategy + successful DLQ publish → DLQ_PUBLISHED outcome and commit called")
-        void dlqSuccessOutcome(VertxTestContext ctx, @Mock KafkaProducerFactory factory) {
-            when(factory.sendForDlq(
-                            org.mockito.ArgumentMatchers.anyString(),
-                            org.mockito.ArgumentMatchers.any(),
-                            org.mockito.ArgumentMatchers.any(),
-                            org.mockito.ArgumentMatchers.any()))
-                    .thenReturn(Future.succeededFuture());
-
-            ConsumerEntry entry = entryFor(ErrorStrategy.DEAD_LETTER, "dlq-topic");
-            KafkaErrorHandler handler = new KafkaErrorHandler(entry, factory);
-
-            KafkaConsumerRecord<String, byte[]> rec = fakeRecord("t", 0, 0L);
-            CapturingConsumerControl control = new CapturingConsumerControl();
-
-            handler.handleError(rec, new byte[0], KafkaRecordHeaders.empty(), cause, control)
-                    .onComplete(ctx.succeeding(outcome -> {
-                        ctx.verify(() -> {
-                            assertEquals(KafkaTerminalOutcome.DLQ_PUBLISHED, outcome);
-                            assertTrue(
-                                    control.commitCalled, "commitIfManual must be called after successful DLQ publish");
-                        });
-                        ctx.completeNow();
-                    }));
-        }
-
-        @Test
-        @DisplayName("DEAD_LETTER strategy + failed DLQ publish → DLQ_FAILED outcome and commit NOT called")
-        void dlqFailureOutcome(VertxTestContext ctx, @Mock KafkaProducerFactory factory) {
-            when(factory.sendForDlq(
-                            org.mockito.ArgumentMatchers.anyString(),
-                            org.mockito.ArgumentMatchers.any(),
-                            org.mockito.ArgumentMatchers.any(),
-                            org.mockito.ArgumentMatchers.any()))
-                    .thenReturn(Future.failedFuture(new RuntimeException("kafka-unavailable")));
-
-            ConsumerEntry entry = entryFor(ErrorStrategy.DEAD_LETTER, "dlq-topic");
-            KafkaErrorHandler handler = new KafkaErrorHandler(entry, factory);
-
-            KafkaConsumerRecord<String, byte[]> rec = fakeRecord("t", 0, 0L);
-            CapturingConsumerControl control = new CapturingConsumerControl();
-
-            handler.handleError(rec, new byte[0], KafkaRecordHeaders.empty(), cause, control)
-                    .onComplete(ctx.succeeding(outcome -> {
-                        ctx.verify(() -> {
-                            assertEquals(KafkaTerminalOutcome.DLQ_FAILED, outcome);
-                            assertFalse(
-                                    control.commitCalled, "commitIfManual must NOT be called when DLQ publish fails");
-                        });
-                        ctx.completeNow();
-                    }));
-        }
-
-        @Test
-        @DisplayName(
-                "RETRY strategy (within max retries) → RETRY_SCHEDULED outcome, pause + seek + scheduleResume called")
-        void retryStrategyOutcome(VertxTestContext ctx) {
-            ConsumerEntry entry = entryFor(ErrorStrategy.RETRY, null);
-            KafkaProducerFactory factory = mock(KafkaProducerFactory.class);
-            KafkaErrorHandler handler = new KafkaErrorHandler(entry, factory);
-
-            KafkaConsumerRecord<String, byte[]> rec = fakeRecord("t", 0, 42L);
-            CapturingConsumerControl control = new CapturingConsumerControl();
-
-            handler.handleError(rec, new byte[0], KafkaRecordHeaders.empty(), cause, control)
-                    .onComplete(ctx.succeeding(outcome -> {
-                        ctx.verify(() -> {
-                            assertEquals(KafkaTerminalOutcome.RETRY_SCHEDULED, outcome);
-                            assertTrue(control.pauseCalled, "pause must be called for RETRY");
-                            assertFalse(control.seekCalls.isEmpty(), "seekToOffset must be called for RETRY");
-                            assertTrue(control.scheduleResumeCalled, "scheduleResume must be called for RETRY");
-                        });
-                        ctx.completeNow();
-                    }));
+            // Then: the header holds the fixed name alone
+            assertEquals(
+                    "InvalidErrorType",
+                    headers.getValue()
+                            .lastHeader(KafkaDlqHeaders.ERROR)
+                            .orElseThrow()
+                            .valueAsUtf8());
         }
     }
 }

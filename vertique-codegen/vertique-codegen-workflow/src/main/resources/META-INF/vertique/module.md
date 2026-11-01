@@ -6,7 +6,7 @@ SPDX-License-Identifier: EUPL-1.2
 # Codegen Workflow Client Proxy Module
 
 > **Status:** Stable
-> **Package:** `dev.vertique.codegen.workflow.processor`
+> **Package:** `dev.vertique.codegen.workflow.processor`, `dev.vertique.codegen.workflow.signal`
 > **Artifact:** `vertique-codegen-workflow`
 > **Depends on:** codegen-core; workflow-core (test-scope in this processor module — but a consuming app needs it on its normal runtime classpath)
 
@@ -183,6 +183,26 @@ static WorkflowTypeCatalog workflowTypeCatalog() {
 
 ---
 
+## Signal source processors
+
+Package `dev.vertique.codegen.workflow.signal` holds the compile-time side of the annotated signal source forms. It is registered next to the contract processor, so one processor path entry serves both.
+
+- **`KafkaSignalListenerProcessor`** generates `<Interface>_SignalSource` for each interface annotated `@KafkaSignalListener` (package `dev.vertique.workflow.kafka`, in `vertique-workflow-kafka`) whose methods carry `@WorkflowSignalTarget`. The class is a `KafkaSignalSource<T>` with an `@Inject` constructor and no other dependency; its `define` calls the same builder as a source written by hand: the topic, group and name the annotation states, the `dedupBy` accessor and, per target, the signal, the key accessor and the no-match policy. It names no key value and builds no payload mapping, and every accessor is a method reference, so the generated class compiles only when the message type has it. The annotation carries `@SignalSourceForm`, so `AutoWireProcessor` of `vertique-codegen-dagger` binds the generated class by name into `Set<KafkaSignalSource<?>>`; this processor names no Dagger type. A `@KafkaListener` interface or class that carries a target is an error that names `@KafkaSignalListener`, because the Kafka listener processor would leave its target without a source. `SignalListenerValidator` adds the Kafka-only rules: a blank `name`, `topic` or `groupId`, a `@JsonProfile` on the interface or a method, and a `@KafkaHandler` method beside a target.
+- **`SignalTargetScan`** is the one scan of `@WorkflowSignalTarget` and its container on the methods of an interface, and the compile rules every transport shares: an undeclared signal, an accessor the message type lacks or one that does not return `String` (the no-argument method named like the property, else `getX()` or `isX()`), a generic message type, a message type that differs from the signal's type, targets that disagree on `dedupBy`, a target inherited from a super-interface, two message types on one interface, a target method with other than one parameter, both or neither of `key` and `businessKey`, and targets on a concrete class. Each is reported on the offending element, naming it. Its `DedupRequirement` parameter states whether `dedupBy` is required on a business-key target only (Kafka) or on every target (a transport with no offset to default to). It is an **INTERNAL** seam, outside the maturity promise of this module, public only because the Camel processor of another repository calls it, so that every transport applies one rule set and none copies one. The annotations are identified by fully qualified name.
+- **`SignalTargetHostProcessor`** reports, on its type, a type that declares a target and that is neither annotated `@KafkaListener` nor annotated with an annotation that carries `@SignalSourceForm`, because no processor turns it into a source and its targets would never run.
+
+The name of a generated source class comes from `SignalSourceNaming` in `vertique-codegen-core`, the one rule the generating processors and `AutoWireProcessor` both call.
+
+| Violation | Level | Example message |
+|-----------|-------|----------------|
+| A signal the contract does not declare, an accessor the message type lacks or one that does not return `String`, a generic message type, a message type that is not the signal's, a business-key target with no `dedupBy`, targets that disagree on `dedupBy`, a target inherited from a super-interface, a target method without exactly one parameter, both or neither of `key` and `businessKey`, two message types on one interface | ERROR | `CarrierSignals.delivered names signal 'shipment-delivred', which contract OrdersContract does not declare` |
+| `@KafkaSignalListener` on a class, or a blank `name`, `topic` or `groupId` | ERROR | `CarrierSignals sets a blank groupId on @KafkaSignalListener, but the signal source generated for it names its consumer by it; write a non-blank groupId` |
+| A `@JsonProfile` or a `@KafkaHandler` method on a `@KafkaSignalListener` interface | ERROR | `CarrierSignals.onOther is a @KafkaHandler method, but CarrierSignals is a @KafkaSignalListener: the signal source generated for it consumes the topic, so a @KafkaHandler method beside a target would never receive a record` |
+| A `@KafkaListener` type that carries a target | ERROR | `CarrierSignals carries @WorkflowSignalTarget but is annotated @KafkaListener, which generates no signal source, so its targets would never run; annotate the interface @KafkaSignalListener instead` |
+| A target on a type that is neither `@KafkaListener` nor annotated with a `@SignalSourceForm` annotation | ERROR | `PlainClass carries @WorkflowSignalTarget, but it is not annotated with an annotation that carries @SignalSourceForm, such as @KafkaSignalListener, so no signal source is generated for it and its targets would never run` |
+
+---
+
 ## Adoption
 
 ### Step 1 — use the application processor boundary
@@ -221,7 +241,7 @@ Generated proxies are discovered at runtime via `Class.forName` inside `Workflow
 
 ## Dependencies
 
-- `dev.vertique:vertique-codegen-core` — `CodegenContext`, `TypeResolver`, `AnnotationMirrors`, `Diagnostics`, `DaggerModuleWriter`, `Identifiers`, `PackageResolver`
+- `dev.vertique:vertique-codegen-core` — `CodegenContext`, `TypeResolver`, `AnnotationMirrors`, `Diagnostics`, `DaggerModuleWriter`, `Identifiers`, `PackageResolver`, `SignalSourceNaming`
 - `dev.vertique:vertique-workflow-core` — `@WorkflowContract`, `@WorkflowStart`, `@WorkflowSignal`, `@WorkflowQuery`, `@IdempotencyKey`, `@BusinessKey`, `@SubjectRef`, `@SignalDedupKey`, `IdempotencyKeyed`, `BusinessKeyed`, `SubjectReferenced`, `SignalDedupKeyed`, `WorkflowInstanceId`, `WorkflowView`, `WorkflowSubjectRef`, `WorkflowOperations`, `WorkflowClientBinding`. **Test-scope in this processor module** (the processor only needs these types to compile its own tests, not at processing time). A **consuming application** needs `vertique-workflow-core` on its normal compile/runtime classpath regardless — it owns the contract annotations the app authors against, and the generated proxy references `WorkflowOperations`/`WorkflowClientBinding` — so adding the processor never introduces a new runtime dependency.
 - `com.palantir.javapoet:javapoet` — source generation (compile-only; not on runtime classpath)
 - `javax.annotation.processing` APIs — part of the JDK; not a separate Maven dependency

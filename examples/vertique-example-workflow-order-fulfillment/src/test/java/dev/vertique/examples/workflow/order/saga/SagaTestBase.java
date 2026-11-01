@@ -38,7 +38,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.AdminClientConfig;
+import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.serialization.StringSerializer;
 import org.flywaydb.core.Flyway;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -108,6 +116,9 @@ public abstract class SagaTestBase {
     /** Vert.x instance captured during {@link #setUpComponent(Vertx)} for re-entry on a duplicated context. */
     static Vertx vertxRef;
 
+    /** The producer behind {@link #produceJson}, created on first use and closed with the component. */
+    private static KafkaProducer<String, String> kafkaProducer;
+
     /**
      * Builds the Dagger component wired to the test Postgres container.
      *
@@ -118,6 +129,24 @@ public abstract class SagaTestBase {
      * @return a Future that completes once the component is ready and migrations have run
      */
     protected static Future<Void> setUpComponent(Vertx vertx) {
+        return setUpComponent(vertx, null);
+    }
+
+    /**
+     * Builds the Dagger component like {@link #setUpComponent(Vertx)} and points the application's Kafka client at a
+     * broker.
+     *
+     * <p>The {@code payment-events} consumer reads its topic from the beginning, so a record produced before the
+     * consumer holds its partition is still read. Nothing starts the consumers here: a test that needs them deploys
+     * them with {@code component.kafkaConsumerDeploymentManager().deployAll()}, and the other saga tests meet no
+     * broker.
+     *
+     * @param vertx          the Vert.x instance from the extension
+     * @param kafkaBootstrap the broker's {@code host:port} list, or {@code null} for a component with no Kafka
+     *                       configuration
+     * @return a Future that completes once the component is ready and migrations have run
+     */
+    protected static Future<Void> setUpComponent(Vertx vertx, String kafkaBootstrap) {
         vertxRef = vertx;
         // Start the container and run migrations once across all test classes.
         if (dbStarted.compareAndSet(false, true)) {
@@ -199,6 +228,22 @@ public abstract class SagaTestBase {
                                 .put("workflow", new JsonObject().put("signals", new JsonObject().put("instances", 1))))
                 .put("workflow", new JsonObject().put("executor", new JsonObject().put("pollIntervalMs", 100)))
                 .put("management", new JsonObject().put("port", 0).put("host", "127.0.0.1"));
+        if (kafkaBootstrap != null) {
+            config.put(
+                    "kafka",
+                    new JsonObject()
+                            .put("bootstrap.servers", kafkaBootstrap)
+                            .put(
+                                    "consumers",
+                                    new JsonObject()
+                                            .put(
+                                                    "payment-events",
+                                                    new JsonObject()
+                                                            .put(
+                                                                    "properties",
+                                                                    new JsonObject()
+                                                                            .put("auto.offset.reset", "earliest")))));
+        }
 
         component = DaggerAppComponent.builder()
                 .vertxModule(new VertxModule(vertx, config))
@@ -234,6 +279,10 @@ public abstract class SagaTestBase {
         AppComponent closing = component;
         WorkflowExecutorHarness deployed = executor;
         executor = null;
+        if (kafkaProducer != null) {
+            kafkaProducer.close(Duration.ofSeconds(5));
+            kafkaProducer = null;
+        }
         if (closing == null || closing.pgInboxOutboxRepository() == null) {
             return;
         }
@@ -326,6 +375,87 @@ public abstract class SagaTestBase {
                     })
                     .compose(v -> pollStatus(id, expected, start, deadlineMs));
         });
+    }
+
+    /**
+     * Polls the instance until it waits at {@code stepId}, then waits until the engine has run all the work recorded
+     * for it. The step is reached by a Kafka record, so it can arrive after the record is produced.
+     *
+     * @param id         the workflow instance to poll
+     * @param stepId     the step the instance is expected to reach
+     * @param deadlineMs maximum time to wait in milliseconds
+     * @return a Future resolving to the same instance id once it waits at the step and is idle, or failing when the
+     *         deadline elapses first
+     */
+    protected static Future<WorkflowInstanceId> awaitStep(WorkflowInstanceId id, String stepId, long deadlineMs) {
+        return pollStep(id, stepId, System.currentTimeMillis(), deadlineMs).compose(reached -> awaitIdle(id));
+    }
+
+    private static Future<WorkflowInstanceId> pollStep(
+            WorkflowInstanceId id, String stepId, long start, long deadlineMs) {
+        return component.workflowOperations().query(id).compose(view -> {
+            if (stepId.equals(view.instance().currentStepId())) {
+                return Future.succeededFuture(id);
+            }
+            long elapsed = System.currentTimeMillis() - start;
+            if (elapsed >= deadlineMs) {
+                return Future.failedFuture(new AssertionError("Timed out after " + elapsed + " ms waiting for step "
+                        + stepId + "; actual=" + view.instance().currentStepId()));
+            }
+            return vertxRef.timer(100).compose(tick -> pollStep(id, stepId, start, deadlineMs));
+        });
+    }
+
+    /**
+     * Creates a topic with one partition on the broker. Blocks, so call it from a test lifecycle method, not from an
+     * event loop.
+     *
+     * @param kafkaBootstrap the broker's {@code host:port} list
+     * @param topic          the topic to create
+     */
+    protected static void createTopic(String kafkaBootstrap, String topic) {
+        try (AdminClient admin = AdminClient.create(Map.of(
+                AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaBootstrap,
+                AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, "10000",
+                AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, "30000"))) {
+            admin.createTopics(List.of(new NewTopic(topic, 1, (short) 1))).all().get(30, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while creating topic " + topic, e);
+        } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException e) {
+            throw new IllegalStateException("Topic " + topic + " was not created", e);
+        }
+    }
+
+    /**
+     * Produces one JSON record to the broker the component was set up with, off the event loop.
+     *
+     * @param kafkaBootstrap the broker's {@code host:port} list
+     * @param topic          the topic to produce to
+     * @param key            the record key
+     * @param value          the record value, sent as JSON text
+     * @return a Future that completes once the broker acknowledged the record
+     */
+    protected static Future<Void> produceJson(String kafkaBootstrap, String topic, String key, JsonObject value) {
+        return vertxRef.executeBlocking(() -> {
+            producer(kafkaBootstrap)
+                    .send(new ProducerRecord<>(topic, key, value.encode()))
+                    .get(20, TimeUnit.SECONDS);
+            return null;
+        });
+    }
+
+    private static synchronized KafkaProducer<String, String> producer(String kafkaBootstrap) {
+        if (kafkaProducer == null) {
+            kafkaProducer = new KafkaProducer<>(
+                    Map.of(
+                            ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaBootstrap,
+                            ProducerConfig.ACKS_CONFIG, "all",
+                            ProducerConfig.LINGER_MS_CONFIG, "0"),
+                    new StringSerializer(),
+                    new StringSerializer());
+        }
+        return kafkaProducer;
     }
 
     /**

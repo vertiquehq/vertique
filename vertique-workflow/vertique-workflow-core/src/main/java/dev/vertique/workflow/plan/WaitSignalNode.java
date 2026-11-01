@@ -34,6 +34,10 @@ import jakarta.annotation.Nullable;
  * @param nextStepId step to advance to after the signal is processed
  * @param timeout optional timeout branch; {@code null} means no timeout is configured and the
  *     node waits indefinitely for the signal
+ * @param correlationKeyCallbackId optional callback id for the {@code Function<S, String>} that
+ *     computes the value identifying this wait from the workflow state; looked up via
+ *     {@link dev.vertique.workflow.registry.WorkflowCallbackRegistry#correlationKeyResolver(CallbackId)};
+ *     {@code null} means the wait declares no key. Components added later are appended after this one
  */
 public record WaitSignalNode(
         String stepId,
@@ -41,8 +45,29 @@ public record WaitSignalNode(
         String payloadTypeName,
         CallbackId stateUpdaterCallbackId,
         String nextStepId,
-        @Nullable TimeoutBranch timeout)
+        @Nullable TimeoutBranch timeout,
+        @Nullable CallbackId correlationKeyCallbackId)
         implements WorkflowNode {
+
+    /**
+     * Creates a node that declares no correlation key.
+     *
+     * @param stepId unique step identifier within the plan
+     * @param signalName name of the signal this node waits for; must be unique within the plan
+     * @param payloadTypeName logical type name of the expected signal payload type
+     * @param stateUpdaterCallbackId callback id for the signal payload merger
+     * @param nextStepId step to advance to after the signal is processed
+     * @param timeout optional timeout branch; {@code null} means no timeout is configured
+     */
+    public WaitSignalNode(
+            String stepId,
+            String signalName,
+            String payloadTypeName,
+            CallbackId stateUpdaterCallbackId,
+            String nextStepId,
+            @Nullable TimeoutBranch timeout) {
+        this(stepId, signalName, payloadTypeName, stateUpdaterCallbackId, nextStepId, timeout, null);
+    }
 
     /**
      * Specifies the timeout behaviour for a {@link WaitSignalNode}.

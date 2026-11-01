@@ -17,6 +17,38 @@ class KafkaConsumerBindingTest {
 
     record TestEvent(String name) {}
 
+    // --- Dispatch gate ---
+
+    @Nested
+    @DisplayName("Dispatch gate")
+    class DispatchGate {
+
+        @Test
+        @DisplayName("a binding has no gate unless one is set")
+        void noGateByDefault() {
+            KafkaConsumerBinding<TestEvent> binding = KafkaConsumerBinding.builder("test-binding", TestEvent.class)
+                    .topic("test.topic")
+                    .groupId("test-group")
+                    .build();
+
+            assertNull(binding.dispatchGate());
+        }
+
+        @Test
+        @DisplayName("a gate is kept on the binding")
+        void gateIsKept() {
+            KafkaDispatchGate gate = () -> true;
+            KafkaConsumerBinding<TestEvent> binding = KafkaConsumerBinding.builder("test-binding", TestEvent.class)
+                    .topic("test.topic")
+                    .groupId("test-group")
+                    .commitStrategy(CommitStrategy.MANUAL)
+                    .dispatchGate(gate)
+                    .build();
+
+            assertSame(gate, binding.dispatchGate());
+        }
+    }
+
     // --- Default values ---
 
     @Nested

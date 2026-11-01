@@ -12,7 +12,7 @@ import java.util.UUID;
 
 /**
  * Raw SQL rows in the shape the first released schema created: no scope columns, and a dedup table that still calls
- * its namespace column {@code scope}. Use them only on a database migrated to the first or second version; the timer, join and branch rows are
+ * its namespace column {@code scope}. Use them only on a database migrated to the first version only; the timer, join and branch rows are
  * written in the shape the previous release stored them.
  */
 final class ReleasedRows {

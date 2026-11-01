@@ -28,6 +28,13 @@ import java.security.NoSuchAlgorithmException;
  *       dedup row in {@code BranchTransitionEngine} BEFORE invoking {@code RecorderRouter}; on
  *       conflict the dispatch is treated as already-recorded and not re-emitted
  *       (FR-WF-PAR-038).</li>
+ *   <li><b>correlated</b> — kind {@code 'correlated'}. The namespace is a 64-char SHA-256 hex digest of
+ *       {@code (contract name, signal name, scope or empty)} and the key a 64-char digest of the caller's
+ *       dedup key, so one event is unique across instances and no name, scope or key is stored in clear.</li>
+ *   <li><b>signalSourceInboxId</b> — the inbox-message-id of one target of a signal source: the 64-char SHA-256 hex
+ *       digest of {@code (contract name, signal name, scope or empty, message dedup key)}. It holds neither
+ *       the resolved workflow or key, nor the declaration position of the target, nor the name of the
+ *       source, so a replay of the same message meets the same identity.</li>
  *   <li><b>signalInboxId</b> — composite id used by {@code WorkflowSignalContributor} for the
  *       inbox-message-id ({@code inbox.message_id VARCHAR(255)}). For non-branch signals it
  *       reproduces today's {@code workflowId + ":" + dedupKey} string so existing inbox rows
@@ -143,6 +150,54 @@ public final class WorkflowDedupScopes {
     public static String dispatchKey(
             String forkStepId, String branchId, String stepId, String targetId, String operation) {
         return sha256Hex(forkStepId, branchId, stepId, targetId, operation);
+    }
+
+    // --- Correlated scopes ---
+
+    /**
+     * Returns the {@code workflow_dedup.dedup_namespace} string for a correlated signal claim: the 64-char SHA-256 hex
+     * digest of {@code (contractName, signalName, scope)}, with the empty string for an absent scope. The namespace
+     * holds no instance id, so one event is unique across instances, and no name or scope in clear.
+     *
+     * @param contractName the logical name of the contract the signal is addressed to
+     * @param signalName the name of the signal
+     * @param scope the scope the delivery is narrowed to, or {@code null} when it serves every scope
+     * @return 64-char SHA-256 hex digest
+     */
+    public static String correlatedScope(String contractName, String signalName, @Nullable String scope) {
+        return sha256Hex(contractName, signalName, scope == null ? "" : scope);
+    }
+
+    /**
+     * Returns the {@code workflow_dedup.key} string for a correlated signal claim: the 64-char SHA-256 hex digest of
+     * the dedup key, so a key of any length fits and no key is stored in clear.
+     *
+     * @param dedupKey the caller-supplied dedup key
+     * @return 64-char SHA-256 hex digest
+     */
+    public static String correlatedKey(String dedupKey) {
+        return sha256Hex(dedupKey);
+    }
+
+    // --- Source inbox identity ---
+
+    /**
+     * Returns the inbox-message-id of one target of a signal source: the 64-char SHA-256 hex digest of
+     * {@code (contractName, signalName, scope, dedupKey)}, with the empty string for an absent scope. It fits
+     * {@code inbox.message_id VARCHAR(255)} whatever the lengths, and holds no name, scope or key in clear. It
+     * leaves out the instance or key the target resolved to, the declaration position of the target and the name of
+     * the source, so a message replayed from a dead-letter topic, or read again after a restart, meets the same
+     * identity as its first delivery.
+     *
+     * @param contractName the logical name of the contract the signal is addressed to
+     * @param signalName the name of the signal
+     * @param scope the scope the delivery is narrowed to, or {@code null} when it serves every scope
+     * @param dedupKey the message's dedup key
+     * @return 64-char SHA-256 hex digest
+     */
+    public static String signalSourceInboxId(
+            String contractName, String signalName, @Nullable String scope, String dedupKey) {
+        return sha256Hex(contractName, signalName, scope == null ? "" : scope, dedupKey);
     }
 
     // --- Helpers ---

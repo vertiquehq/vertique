@@ -26,6 +26,7 @@ SPDX-License-Identifier: EUPL-1.2
         <module>vertique-workflow-engine</module>
         <module>vertique-workflow-postgresql</module>
         <module>vertique-workflow-services</module>
+        <module>vertique-workflow-kafka</module>
         <module>vertique-workflow-tasks</module>
         <module>vertique-workflow-events</module>
         <module>vertique-workflow-definition</module>

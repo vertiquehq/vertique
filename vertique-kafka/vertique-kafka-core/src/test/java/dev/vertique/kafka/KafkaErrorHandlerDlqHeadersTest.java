@@ -18,9 +18,7 @@ import dev.vertique.core.context.DispatchBoundary;
 import dev.vertique.core.context.DurableContextMetadataEncoder;
 import dev.vertique.core.context.DurableEncodeContext;
 import dev.vertique.core.context.DurableMetadata;
-import dev.vertique.kafka.KafkaTerminalOutcomeTest.CapturingConsumerControl;
 import dev.vertique.kafka.config.KafkaConfig;
-import dev.vertique.kafka.interceptor.KafkaTerminalOutcome;
 import dev.vertique.kafka.producer.KafkaProducerCaptureHook;
 import dev.vertique.kafka.producer.KafkaProducerFactory;
 import dev.vertique.kafka.producer.KafkaProducerOperation;
@@ -85,7 +83,6 @@ class KafkaErrorHandlerDlqHeadersTest {
         KafkaRecordHeaders recordHeaders = new KafkaRecordHeaders(List.of(
                 KafkaRecordHeader.ofUtf8("vertique-correlation", RECORD_CORRELATION),
                 KafkaRecordHeader.ofUtf8("event-type", "order.created")));
-        CapturingConsumerControl control = new CapturingConsumerControl();
 
         ((ContextInternal) vertx.getOrCreateContext()).duplicate().runOnContext(v -> {
             try (ContextHolder.Scope correlation =
@@ -95,11 +92,8 @@ class KafkaErrorHandlerDlqHeadersTest {
                 DurableMetadata ambient = propagator.capture(DispatchBoundary.KAFKA);
                 assertEquals(Set.of("correlation", "tenant"), ambient.namespaces());
 
-                handler.handleError(record, new byte[] {1, 2, 3}, recordHeaders, new RuntimeException("boom"), control)
-                        .onComplete(ctx.succeeding(outcome -> ctx.verify(() -> {
-                            assertEquals(KafkaTerminalOutcome.DLQ_PUBLISHED, outcome);
-                            assertTrue(control.commitCalled, "the offset is committed after the publish");
-
+                handler.publishToDlq(record, new byte[] {1, 2, 3}, recordHeaders, new RuntimeException("boom"))
+                        .onComplete(ctx.succeeding(published -> ctx.verify(() -> {
                             assertEquals(1, factory.wires.size(), "exactly one wire send");
                             assertEquals(
                                     new KafkaRecordHeaders(List.of(
@@ -135,7 +129,7 @@ class KafkaErrorHandlerDlqHeadersTest {
 
     @Test
     @DisplayName("a dead-lettered record keeps repeated and binary headers in order, omits a null-valued "
-            + "header, drops inbound dead-letter headers and ends with the five new ones")
+            + "header, drops inbound consumer and error headers and keeps the source position it already names")
     void deadLettersHeadersAsReceived(Vertx vertx, VertxTestContext ctx) {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = new DurableContextPropagator(
@@ -162,11 +156,9 @@ class KafkaErrorHandlerDlqHeadersTest {
                 new KafkaRecordHeader("a", null),
                 KafkaRecordHeader.ofUtf8("empty", ""),
                 KafkaRecordHeader.ofUtf8("a", "1")));
-        CapturingConsumerControl control = new CapturingConsumerControl();
 
-        handler.handleError(record, new byte[] {1, 2, 3}, recordHeaders, new IllegalStateException("boom"), control)
-                .onComplete(ctx.succeeding(outcome -> ctx.verify(() -> {
-                    assertEquals(KafkaTerminalOutcome.DLQ_PUBLISHED, outcome);
+        handler.publishToDlq(record, new byte[] {1, 2, 3}, recordHeaders, new IllegalStateException("boom"))
+                .onComplete(ctx.succeeding(published -> ctx.verify(() -> {
                     assertEquals(1, factory.wires.size(), "exactly one wire send");
                     assertEquals(
                             new KafkaRecordHeaders(List.of(
@@ -179,9 +171,9 @@ class KafkaErrorHandlerDlqHeadersTest {
                                             "x-dlq-error-detail", "not a dead-letter header of the framework"),
                                     KafkaRecordHeader.ofUtf8("empty", ""),
                                     KafkaRecordHeader.ofUtf8("a", "1"),
-                                    KafkaRecordHeader.ofUtf8("x-dlq-source-topic", "src.topic"),
-                                    KafkaRecordHeader.ofUtf8("x-dlq-source-partition", "3"),
-                                    KafkaRecordHeader.ofUtf8("x-dlq-source-offset", "42"),
+                                    KafkaRecordHeader.ofUtf8("x-dlq-source-topic", "older.topic"),
+                                    KafkaRecordHeader.ofUtf8("x-dlq-source-partition", "9"),
+                                    KafkaRecordHeader.ofUtf8("x-dlq-source-offset", "999"),
                                     KafkaRecordHeader.ofUtf8("x-dlq-consumer", "test"),
                                     KafkaRecordHeader.ofUtf8("x-dlq-error", "IllegalStateException: boom"))),
                             factory.wires.get(0));
@@ -190,6 +182,70 @@ class KafkaErrorHandlerDlqHeadersTest {
                     assertEquals(factory.wires.get(0), hook.sends.get(0).headers());
                     ctx.completeNow();
                 })));
+    }
+
+    @Test
+    @DisplayName("a record dead-lettered again and again keeps the position of the record it started as")
+    void positionSurvivesAnyNumberOfDeadLetterings(Vertx vertx, VertxTestContext ctx) {
+        WireCapturingFactory factory =
+                new WireCapturingFactory(vertx, KafkaTestSupport.noOpPropagator(), new RecordingHook());
+        KafkaErrorHandler handler = new KafkaErrorHandler(
+                KafkaTerminalOutcomeTest.entryFor(ErrorStrategy.DEAD_LETTER, "dlq-topic"), factory);
+        KafkaConsumerRecord<String, byte[]> original = KafkaTerminalOutcomeTest.fakeRecord("src.topic", 3, 42L);
+
+        // When the record is dead-lettered, and its dead letter, read at its own position, is dead-lettered
+        // twice more
+        handler.publishToDlq(original, new byte[] {1}, KafkaRecordHeaders.empty(), new RuntimeException("one"))
+                .compose(first -> handler.publishToDlq(
+                        KafkaTerminalOutcomeTest.fakeRecord("dlq-topic", 0, 7L),
+                        new byte[] {1},
+                        factory.wires.get(0),
+                        new RuntimeException("two")))
+                .compose(second -> handler.publishToDlq(
+                        KafkaTerminalOutcomeTest.fakeRecord("dlq-topic", 0, 19L),
+                        new byte[] {1},
+                        factory.wires.get(1),
+                        new RuntimeException("three")))
+                .onComplete(ctx.succeeding(done -> ctx.verify(() -> {
+                    // Then each dead letter names the original position, once, and the newest failure
+                    for (KafkaRecordHeaders wire : factory.wires) {
+                        assertEquals(List.of("src.topic"), texts(wire, "x-dlq-source-topic"));
+                        assertEquals(List.of("3"), texts(wire, "x-dlq-source-partition"));
+                        assertEquals(List.of("42"), texts(wire, "x-dlq-source-offset"));
+                        assertEquals(1, wire.headers("x-dlq-consumer").size());
+                        assertEquals(1, wire.headers("x-dlq-error").size());
+                    }
+                    assertEquals(List.of("RuntimeException: three"), texts(factory.wires.get(2), "x-dlq-error"));
+                    ctx.completeNow();
+                })));
+    }
+
+    @Test
+    @DisplayName("a record that names only part of a source position is given the position it is read at")
+    void partialPositionIsReplaced(Vertx vertx, VertxTestContext ctx) {
+        WireCapturingFactory factory =
+                new WireCapturingFactory(vertx, KafkaTestSupport.noOpPropagator(), new RecordingHook());
+        KafkaErrorHandler handler = new KafkaErrorHandler(
+                KafkaTerminalOutcomeTest.entryFor(ErrorStrategy.DEAD_LETTER, "dlq-topic"), factory);
+        KafkaRecordHeaders partial = new KafkaRecordHeaders(List.of(
+                KafkaRecordHeader.ofUtf8("x-dlq-source-topic", "older.topic"),
+                KafkaRecordHeader.ofUtf8("x-dlq-source-partition", "9")));
+
+        handler.publishToDlq(
+                        KafkaTerminalOutcomeTest.fakeRecord("src.topic", 3, 42L),
+                        new byte[] {1},
+                        partial,
+                        new RuntimeException("boom"))
+                .onComplete(ctx.succeeding(done -> ctx.verify(() -> {
+                    assertEquals(List.of("src.topic"), texts(factory.wires.get(0), "x-dlq-source-topic"));
+                    assertEquals(List.of("3"), texts(factory.wires.get(0), "x-dlq-source-partition"));
+                    assertEquals(List.of("42"), texts(factory.wires.get(0), "x-dlq-source-offset"));
+                    ctx.completeNow();
+                })));
+    }
+
+    private static List<String> texts(KafkaRecordHeaders headers, String key) {
+        return headers.headers(key).stream().map(KafkaRecordHeader::valueAsUtf8).toList();
     }
 
     private static <T extends ContextValue> DurableContextMetadataEncoder<T> encoder(

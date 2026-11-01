@@ -27,7 +27,7 @@ import jakarta.inject.Singleton;
  *     → reserve-inventory (SERVICE, compensable: release-inventory)
  *     → wait-inventory (waits for inventory.reserved)
  *     → authorize-payment (SERVICE, compensable: void-authorization)
- *     → wait-payment (waits for payment.captured)
+ *     → wait-payment (waits for payment.captured, matched to the order by its order id)
  *     → create-shipment (SERVICE)
  *     → wait-shipment (waits for shipment.created)
  *     → completed (CompleteNode)
@@ -96,12 +96,11 @@ public final class OrderFulfillmentDefinition implements WorkflowDefinition<Orde
                         state -> new AuthorizePayment(state.orderId(), state.customerId(), state.totalCents()),
                         "void-authorization",
                         "wait-payment")
-                .waitFor(
-                        "wait-payment",
-                        "payment.captured",
-                        PaymentCaptured.class,
-                        (s, sig) -> s.withPayment(sig.chargeId()),
-                        "create-shipment")
+                .waitForSignal("wait-payment", "payment.captured", PaymentCaptured.class)
+                .correlateBy(OrderState::orderId)
+                .onSignal((s, sig) -> s.withPayment(sig.chargeId()))
+                .toStepOnSignal("create-shipment")
+                .build()
                 .dispatch(
                         "create-shipment",
                         "shipping.create-shipment",

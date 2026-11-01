@@ -10,7 +10,10 @@ import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
 import dev.vertique.workflow.definition.callbacks.BranchResultReducerContributor;
 import dev.vertique.workflow.definition.callbacks.BranchResultReducerRegistry;
+import dev.vertique.workflow.definition.callbacks.CorrelationKeyResolverContributor;
+import dev.vertique.workflow.definition.callbacks.CorrelationKeyResolverRegistry;
 import dev.vertique.workflow.definition.callbacks.DefaultBranchResultReducerRegistry;
+import dev.vertique.workflow.definition.callbacks.DefaultCorrelationKeyResolverRegistry;
 import dev.vertique.workflow.definition.callbacks.DefaultFailMessageFactoryRegistry;
 import dev.vertique.workflow.definition.callbacks.DefaultNamedConditionRegistry;
 import dev.vertique.workflow.definition.callbacks.DefaultPayloadMapperRegistry;
@@ -176,6 +179,14 @@ public abstract class WorkflowDefinitionModule {
     @Multibinds
     abstract Set<TimerResolverContributor> timerResolverContributors();
 
+    /**
+     * Declares the empty-set default for {@link CorrelationKeyResolverContributor} multibinding.
+     *
+     * @return empty set (Dagger-generated)
+     */
+    @Multibinds
+    abstract Set<CorrelationKeyResolverContributor> correlationKeyResolverContributors();
+
     // --- Binds (interface → implementation) ---
 
     /**
@@ -291,6 +302,16 @@ public abstract class WorkflowDefinitionModule {
     @Binds
     @Singleton
     abstract TimerResolverRegistry timerResolverRegistry(DefaultTimerResolverRegistry impl);
+
+    /**
+     * Binds {@link DefaultCorrelationKeyResolverRegistry} to {@link CorrelationKeyResolverRegistry}.
+     *
+     * @param impl the singleton implementation; non-null
+     * @return the registry interface
+     */
+    @Binds
+    @Singleton
+    abstract CorrelationKeyResolverRegistry correlationKeyResolverRegistry(DefaultCorrelationKeyResolverRegistry impl);
 
     /**
      * Binds {@link DefaultWorkflowDefinitionService} as the singleton

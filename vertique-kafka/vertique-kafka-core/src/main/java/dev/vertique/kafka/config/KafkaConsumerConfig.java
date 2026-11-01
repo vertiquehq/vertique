@@ -33,7 +33,7 @@ import jakarta.annotation.Nullable;
  * @param errorStrategy the error-handling strategy, or {@code null} when not set
  * @param deadLetterTopic the dead-letter topic, or {@code null} when not set
  * @param eventBusTimeoutMs the event bus dispatch timeout in milliseconds (default {@code 30000})
- * @param maxInFlight the maximum number of in-flight records (default {@code 256})
+ * @param maxInFlight the maximum number of records handled at once (default {@code 256})
  * @param instances the number of consumer verticle instances to deploy (default {@code 1})
  * @param worker {@code true} to run on the worker pool, or {@code null} to inherit (no default)
  * @param format the value format override, or {@code null} to inherit the top-level format (no default)
@@ -142,7 +142,7 @@ public record KafkaConsumerConfig(
      * @param errorStrategy the error strategy; passed through (nullable)
      * @param deadLetterTopic the dead-letter topic; passed through (nullable)
      * @param eventBusTimeoutMs the event bus timeout in ms; defaults to {@code 30000} when {@code null}
-     * @param maxInFlight the max in-flight records; defaults to {@code 256} when {@code null}
+     * @param maxInFlight the max records handled at once; defaults to {@code 256} when {@code null}
      * @param instances the instance count; defaults to {@code 1} when {@code null}
      * @param worker the worker flag; passed through (nullable — inherited when absent)
      * @param format the format override; passed through (nullable — inherited when absent)

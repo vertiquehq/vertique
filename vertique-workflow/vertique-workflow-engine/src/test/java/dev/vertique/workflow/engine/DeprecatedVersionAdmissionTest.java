@@ -284,6 +284,7 @@ class DeprecatedVersionAdmissionTest {
                 .instances(instances)
                 .history(history)
                 .dedup(dedup)
+                .signalWaits(dev.vertique.workflow.engine.testsupport.EmptySignalWaits.create())
                 .branchTokens(branchTokens)
                 .joinStates(joinStates)
                 .timerStore(timerStore)

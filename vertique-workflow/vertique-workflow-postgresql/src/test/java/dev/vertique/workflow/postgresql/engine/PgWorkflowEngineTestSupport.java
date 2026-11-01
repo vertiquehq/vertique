@@ -37,6 +37,7 @@ import dev.vertique.workflow.postgresql.repository.PgJoinStateRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
+import dev.vertique.workflow.postgresql.repository.PgWorkflowSignalWaitRepository;
 import dev.vertique.workflow.postgresql.tasks.PgTaskReservations;
 import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
@@ -255,6 +256,7 @@ public final class PgWorkflowEngineTestSupport {
                         .instances(instances)
                         .history(history)
                         .dedup(dedup)
+                        .signalWaits(new PgWorkflowSignalWaitRepository(pool, new PgDbExceptionMapper()))
                         .branchTokens(standIn(branchTokens, BranchTokenRepository.class))
                         .joinStates(standIn(joinStates, JoinStateRepository.class))
                         .timerStore(timerStore)
@@ -315,6 +317,7 @@ public final class PgWorkflowEngineTestSupport {
                         .instances(instances)
                         .history(history)
                         .dedup(dedup)
+                        .signalWaits(new PgWorkflowSignalWaitRepository(pool, new PgDbExceptionMapper()))
                         .branchTokens(standIn(branchTokens, BranchTokenRepository.class))
                         .joinStates(standIn(joinStates, JoinStateRepository.class))
                         .timerStore(timerStore)
@@ -354,6 +357,7 @@ public final class PgWorkflowEngineTestSupport {
                         .instances(instances)
                         .history(history)
                         .dedup(dedup)
+                        .signalWaits(new PgWorkflowSignalWaitRepository(pool, new PgDbExceptionMapper()))
                         .branchTokens(standIn(null, BranchTokenRepository.class))
                         .joinStates(standIn(null, JoinStateRepository.class))
                         .timerStore(timerStore)
@@ -746,6 +750,7 @@ public final class PgWorkflowEngineTestSupport {
                     .instances(new PgWorkflowInstanceRepository(pool, ex))
                     .history(history)
                     .dedup(new PgWorkflowDedupRepository(pool, ex))
+                    .signalWaits(new PgWorkflowSignalWaitRepository(pool, ex))
                     .branchTokens(new PgBranchTokenRepository(pool, ex))
                     .joinStates(new PgJoinStateRepository(pool, ex))
                     .timerStore(new PgTimerStore(ex))

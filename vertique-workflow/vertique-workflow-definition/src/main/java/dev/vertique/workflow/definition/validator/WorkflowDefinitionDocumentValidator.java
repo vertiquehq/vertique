@@ -857,6 +857,29 @@ public final class WorkflowDefinitionDocumentValidator {
                 "STATE_REDUCER_STATE_TYPE_MISMATCH",
                 "`stateReducer`",
                 violations);
+        checkRegistryId(
+                definitionId,
+                definitionVersion,
+                sid,
+                null,
+                step.correlationKey(),
+                lookup.correlationKeyResolvers().ids(),
+                "CORRELATION_KEY_RESOLVER_UNKNOWN",
+                "`correlationKey`",
+                violations);
+        checkCallbackStateTypeCompat(
+                definitionId,
+                definitionVersion,
+                sid,
+                null,
+                step.correlationKey(),
+                resolvedStateType,
+                () -> lookup.correlationKeyResolvers()
+                        .lookup(step.correlationKey())
+                        .stateType(),
+                "CORRELATION_KEY_RESOLVER_STATE_TYPE_MISMATCH",
+                "`correlationKey`",
+                violations);
         checkStepReference(
                 definitionId,
                 definitionVersion,

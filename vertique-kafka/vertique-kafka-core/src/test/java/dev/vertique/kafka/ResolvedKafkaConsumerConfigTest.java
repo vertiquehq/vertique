@@ -251,6 +251,58 @@ class ResolvedKafkaConsumerConfigTest {
         }
     }
 
+    // --- Retention limit ---
+
+    @Nested
+    @DisplayName("the retention limit")
+    class RetentionLimit {
+
+        private int limitOf(String maxPollRecords, Integer maxInFlight) {
+            JsonObject consumer = new JsonObject();
+            if (maxPollRecords != null) {
+                consumer.put("properties", new JsonObject().put("max.poll.records", maxPollRecords));
+            }
+            if (maxInFlight != null) {
+                consumer.put("maxInFlight", maxInFlight);
+            }
+            JsonObject kafkaConfig = new JsonObject().put("consumers", new JsonObject().put("consumer", consumer));
+            return resolveDefault("consumer", "topic", "group", kafkaConfig).retentionLimit();
+        }
+
+        @Test
+        @DisplayName("is twice the larger of max.poll.records and maxInFlight, with Kafka's 500 for an unset poll size")
+        void twiceTheLargerOfPollRecordsAndMaxInFlight() {
+            assertEquals(1000, limitOf(null, null), "500 poll records against 256 in flight");
+            assertEquals(512, limitOf("100", null), "100 poll records against 256 in flight");
+            assertEquals(2000, limitOf("1000", 8), "1000 poll records against 8 in flight");
+            assertEquals(2000, limitOf("10", 1000), "10 poll records against 1000 in flight");
+        }
+
+        @Test
+        @DisplayName("counts a max.poll.records that is not a number as Kafka's default")
+        void aPollSizeThatIsNotANumberCountsAsKafkasDefault() {
+            assertEquals(1000, limitOf("${env:POLL}", null));
+        }
+
+        @Test
+        @DisplayName("is not a configuration option: the retention options of an earlier shape are ignored")
+        void noRetentionOption() {
+            JsonObject kafkaConfig = new JsonObject()
+                    .put(
+                            "consumers",
+                            new JsonObject()
+                                    .put(
+                                            "consumer",
+                                            new JsonObject()
+                                                    .put("maxRetainedRecords", 2)
+                                                    .put("maxRetainedBytes", 1)));
+
+            assertEquals(
+                    1000,
+                    resolveDefault("consumer", "topic", "group", kafkaConfig).retentionLimit());
+        }
+    }
+
     // --- SASL auto-construction ---
 
     @Nested

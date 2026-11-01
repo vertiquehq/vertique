@@ -3,23 +3,21 @@
 
 package dev.vertique.kafka;
 
-import dev.vertique.kafka.interceptor.KafkaTerminalOutcome;
 import dev.vertique.kafka.producer.KafkaProducerFactory;
 import io.vertx.core.Future;
 import io.vertx.kafka.client.consumer.KafkaConsumerRecord;
+import jakarta.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * Handles record processing errors using the configured {@link ErrorStrategy}: SKIP, DEAD_LETTER,
- * or RETRY.
+ * Publishes a failed record to its dead-letter topic and logs a skipped one.
  *
- * <p>Consumer lifecycle operations (pause, resume, seek, commit) are delegated back to
- * {@link ConsumerControl} so this class remains decoupled from the Kafka consumer instance.
+ * <p>What happens to a failed record, whether it is retried, skipped or dead-lettered, and when its offset is
+ * committed, is decided by {@link KafkaSettlement}. This class holds the two side effects that do not depend on the
+ * consumer's state.
  */
 @Slf4j
 final class KafkaErrorHandler {
@@ -38,49 +36,9 @@ final class KafkaErrorHandler {
     private final KafkaProducerFactory producerFactory;
 
     /**
-     * Tracks per-record retry counts keyed by {@code "{topic}:{partition}:{offset}"}. Populated
-     * only when {@link ErrorStrategy#RETRY} is active.
-     */
-    final Map<String, Integer> retryCounts = new ConcurrentHashMap<>();
-
-    /**
-     * Callback interface for consumer operations needed by error handling. Implemented by
-     * {@link KafkaConsumerVerticle} to decouple from the Kafka consumer instance.
-     */
-    interface ConsumerControl {
-
-        /** Pauses the consumer stream. */
-        void pause();
-
-        /**
-         * Resumes the consumer stream after the given delay.
-         *
-         * @param delayMs delay in milliseconds before resuming
-         */
-        void scheduleResume(long delayMs);
-
-        /**
-         * Seeks the consumer to a specific partition offset.
-         *
-         * @param topic the topic name
-         * @param partition the partition number
-         * @param offset the target offset
-         * @return a future that completes when the seek has finished
-         */
-        Future<Void> seekToOffset(String topic, int partition, long offset);
-
-        /**
-         * Commits the record offset if the commit strategy is {@link CommitStrategy#MANUAL}.
-         *
-         * @param record the record whose offset should be committed
-         */
-        void commitIfManual(KafkaConsumerRecord<String, byte[]> record);
-    }
-
-    /**
      * Creates a new error handler for the given consumer entry.
      *
-     * @param entry the consumer entry describing error strategy, retry config, and DLQ topic
+     * @param entry the consumer entry describing the consumer name and the DLQ topic
      * @param producerFactory the shared Kafka producer factory used for DLQ publishing
      */
     KafkaErrorHandler(ConsumerEntry entry, KafkaProducerFactory producerFactory) {
@@ -88,179 +46,34 @@ final class KafkaErrorHandler {
         this.producerFactory = producerFactory;
     }
 
-    // --- Error routing ---
-
     /**
-     * Handles a dispatch error according to the configured {@link ErrorStrategy} and returns a
-     * future that resolves with the terminal outcome once all async work (DLQ publish, seek, etc.)
-     * has settled.
+     * Logs a record that was skipped after a failure. Only the error type of a terminal failure reaches the log.
      *
-     * <p>Every existing side effect — {@code commitIfManual}, seek, {@code scheduleResume}, DLQ
-     * publish, and logging — is preserved byte-for-byte. The only addition is the returned
-     * {@link KafkaTerminalOutcome} value.
-     *
-     * @param record   the failed consumer record
-     * @param rawBytes the raw record bytes (for DLQ publishing)
-     * @param headers  the record's headers as received; forwarded to the dead-letter topic
-     * @param cause    the error that occurred
-     * @param control  consumer control callbacks for pause/resume/seek/commit
-     * @return a future that resolves with the terminal outcome after all async operations settle;
-     *         the future itself always succeeds — errors during DLQ publish are mapped to
-     *         {@link KafkaTerminalOutcome#DLQ_FAILED} rather than failing the future
+     * @param consumer the consumer's name
+     * @param topic the record's topic
+     * @param partition the record's partition
+     * @param offset the record's offset
+     * @param cause the failure
      */
-    Future<KafkaTerminalOutcome> handleError(
-            KafkaConsumerRecord<String, byte[]> record,
-            byte[] rawBytes,
-            KafkaRecordHeaders headers,
-            Throwable cause,
-            ConsumerControl control) {
-
-        ErrorStrategy strategy = entry.config().errorStrategy();
-        return switch (strategy) {
-            case SKIP -> {
-                log.warn(
-                        "[{}] Skipping record topic={} partition={} offset={}: {}",
-                        entry.name(),
-                        record.topic(),
-                        record.partition(),
-                        record.offset(),
-                        cause.getMessage(),
-                        cause);
-                control.commitIfManual(record);
-                yield Future.succeededFuture(KafkaTerminalOutcome.SKIP);
-            }
-            case DEAD_LETTER ->
-                publishToDlq(record, rawBytes, headers, cause)
-                        .map(v -> {
-                            control.commitIfManual(record);
-                            return KafkaTerminalOutcome.DLQ_PUBLISHED;
-                        })
-                        .recover(dlqCause -> {
-                            log.error(
-                                    "[{}] Failed to publish to DLQ, record will not be committed",
-                                    entry.name(),
-                                    dlqCause);
-                            return Future.succeededFuture(KafkaTerminalOutcome.DLQ_FAILED);
-                        });
-            case RETRY -> handleRetry(record, rawBytes, headers, cause, control);
-        };
-    }
-
-    // --- Retry strategy ---
-
-    /**
-     * Handles the RETRY error strategy using seek-based redelivery.
-     *
-     * <p>After a dispatch failure, this method pauses the consumer stream via {@link ConsumerControl}
-     * and seeks back to the failed record's offset. The seek is necessary because the Kafka client's
-     * internal fetch position has already advanced past the failed record. After the backoff period,
-     * the consumer resumes and polls from the seeked offset, re-delivering the record through the
-     * normal pipeline.
-     *
-     * <p>After {@link RetryConfig#maxRetries()} redeliveries, the record is routed to the
-     * {@link RetryConfig#exhaustedStrategy()} (typically {@link ErrorStrategy#SKIP} or
-     * {@link ErrorStrategy#DEAD_LETTER}).
-     *
-     * <p>All existing side effects (pause, seek, scheduleResume, commitIfManual, DLQ publish) are
-     * preserved exactly. The return value threads out the terminal outcome once all async work
-     * settles.
-     *
-     * @param record   the failed consumer record
-     * @param rawBytes the raw record bytes (for DLQ publishing on exhaustion)
-     * @param headers  the record's headers as received; forwarded on exhaustion to the dead-letter
-     *                 topic
-     * @param cause    the dispatch error
-     * @param control  consumer control callbacks for pause/resume/seek/commit
-     * @return a future that resolves with the terminal outcome once all async operations settle
-     */
-    private Future<KafkaTerminalOutcome> handleRetry(
-            KafkaConsumerRecord<String, byte[]> record,
-            byte[] rawBytes,
-            KafkaRecordHeaders headers,
-            Throwable cause,
-            ConsumerControl control) {
-
-        RetryConfig retryConfig = entry.config().retryConfig();
-        if (retryConfig == null) {
-            retryConfig = RetryConfig.DEFAULT;
-        }
-        String retryKey = record.topic() + ":" + record.partition() + ":" + record.offset();
-        int attempts = retryCounts.merge(retryKey, 1, Integer::sum);
-
-        if (attempts > retryConfig.maxRetries()) {
+    static void logSkipped(String consumer, String topic, int partition, long offset, Throwable cause) {
+        if (cause instanceof KafkaTerminalFailure terminal) {
             log.warn(
-                    "[{}] Retry exhausted ({}/{}) for topic={} partition={} offset={}, applying exhausted strategy",
-                    entry.name(),
-                    attempts - 1,
-                    retryConfig.maxRetries(),
-                    record.topic(),
-                    record.partition(),
-                    record.offset());
-            retryCounts.remove(retryKey);
-
-            // Apply exhausted strategy — delegate to the same outcome-bearing paths
-            ErrorStrategy exhausted = retryConfig.exhaustedStrategy();
-            return switch (exhausted) {
-                case SKIP -> {
-                    log.warn("[{}] Retry exhausted — skipping record", entry.name());
-                    control.commitIfManual(record);
-                    yield Future.succeededFuture(KafkaTerminalOutcome.SKIP);
-                }
-                case DEAD_LETTER ->
-                    publishToDlq(record, rawBytes, headers, cause)
-                            .map(v -> {
-                                control.commitIfManual(record);
-                                return KafkaTerminalOutcome.DLQ_PUBLISHED;
-                            })
-                            .recover(dlqCause -> {
-                                log.error(
-                                        "[{}] Failed to publish exhausted-retry record to DLQ,"
-                                                + " record will not be committed",
-                                        entry.name(),
-                                        dlqCause);
-                                return Future.succeededFuture(KafkaTerminalOutcome.DLQ_FAILED);
-                            });
-                default -> {
-                    log.error("[{}] Invalid exhausted strategy: {}", entry.name(), exhausted);
-                    yield Future.succeededFuture(KafkaTerminalOutcome.SKIP);
-                }
-            };
+                    "[{}] Skipping record topic={} partition={} offset={} after terminal failure {}",
+                    consumer,
+                    topic,
+                    partition,
+                    offset,
+                    terminal.errorType());
+        } else {
+            log.warn(
+                    "[{}] Skipping record topic={} partition={} offset={}: {}",
+                    consumer,
+                    topic,
+                    partition,
+                    offset,
+                    cause.getMessage(),
+                    cause);
         }
-
-        long delayMs = retryConfig.delayMs(attempts - 1);
-        log.warn(
-                "[{}] Will retry via Kafka redelivery ({}/{}) topic={} partition={} offset={} in {}ms: {}",
-                entry.name(),
-                attempts,
-                retryConfig.maxRetries(),
-                record.topic(),
-                record.partition(),
-                record.offset(),
-                delayMs,
-                cause.getMessage());
-
-        // Pause the stream to prevent further records from being dispatched during backoff.
-        control.pause();
-
-        // Seek back to the failed record's offset so the next poll re-delivers it.
-        // The Kafka client's internal fetch position has already advanced past this offset;
-        // seeking back is required to ensure the record is redelivered on resume.
-        return control.seekToOffset(record.topic(), record.partition(), record.offset())
-                .map(v -> {
-                    // Resume after backoff — Kafka re-delivers from the seeked offset
-                    control.scheduleResume(delayMs);
-                    return KafkaTerminalOutcome.RETRY_SCHEDULED;
-                })
-                .recover(seekCause -> {
-                    log.error(
-                            "[{}] Failed to seek back to offset {} for retry — skipping record",
-                            entry.name(),
-                            record.offset(),
-                            seekCause);
-                    retryCounts.remove(retryKey);
-                    control.scheduleResume(0);
-                    return Future.succeededFuture(KafkaTerminalOutcome.RETRY_SCHEDULED);
-                });
     }
 
     // --- DLQ publishing ---
@@ -292,7 +105,7 @@ final class KafkaErrorHandler {
                 record.topic(),
                 record.partition(),
                 record.offset(),
-                cause.getMessage());
+                cause instanceof KafkaTerminalFailure terminal ? terminal.errorType() : cause.getMessage());
 
         // The header objects are immutable, so the forwarded ones are reused rather than copied.
         List<KafkaRecordHeader> dlqHeaders = new ArrayList<>(headers.entries().size() + DLQ_HEADER_KEYS.size());
@@ -301,17 +114,46 @@ final class KafkaErrorHandler {
                 dlqHeaders.add(header);
             }
         }
-        dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.SOURCE_TOPIC, record.topic()));
-        dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.SOURCE_PARTITION, String.valueOf(record.partition())));
-        dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.SOURCE_OFFSET, String.valueOf(record.offset())));
+        // A record that already names where it came from keeps that position: a dead letter dead-lettered again still
+        // points at the record it started as, so whatever identifies a record by its source position, such as the
+        // replay of a dead letter, sees the same position however many times it is dead-lettered.
+        KafkaRecordHeader sourceTopic = lastValued(headers, KafkaDlqHeaders.SOURCE_TOPIC);
+        KafkaRecordHeader sourcePartition = lastValued(headers, KafkaDlqHeaders.SOURCE_PARTITION);
+        KafkaRecordHeader sourceOffset = lastValued(headers, KafkaDlqHeaders.SOURCE_OFFSET);
+        if (sourceTopic != null && sourcePartition != null && sourceOffset != null) {
+            dlqHeaders.add(sourceTopic);
+            dlqHeaders.add(sourcePartition);
+            dlqHeaders.add(sourceOffset);
+        } else {
+            dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.SOURCE_TOPIC, record.topic()));
+            dlqHeaders.add(
+                    KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.SOURCE_PARTITION, String.valueOf(record.partition())));
+            dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.SOURCE_OFFSET, String.valueOf(record.offset())));
+        }
         dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.CONSUMER, entry.name()));
-        String msg = cause.getMessage();
-        String errorDetail = cause.getClass().getSimpleName()
-                + (msg != null ? ": " + msg.substring(0, Math.min(msg.length(), 200)) : "");
+        String errorDetail;
+        if (cause instanceof KafkaTerminalFailure terminal) {
+            errorDetail = terminal.errorType();
+        } else {
+            String msg = cause.getMessage();
+            errorDetail = cause.getClass().getSimpleName()
+                    + (msg != null ? ": " + msg.substring(0, Math.min(msg.length(), 200)) : "");
+        }
         dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.ERROR, errorDetail));
 
         return producerFactory
                 .sendForDlq(dlqTopic, record.key(), rawBytes, new KafkaRecordHeaders(dlqHeaders))
                 .mapEmpty();
+    }
+
+    /** The last header of the key that carries a value, or {@code null}. */
+    private static @Nullable KafkaRecordHeader lastValued(KafkaRecordHeaders headers, String key) {
+        KafkaRecordHeader found = null;
+        for (KafkaRecordHeader header : headers.headers(key)) {
+            if (header.hasValue()) {
+                found = header;
+            }
+        }
+        return found;
     }
 }
