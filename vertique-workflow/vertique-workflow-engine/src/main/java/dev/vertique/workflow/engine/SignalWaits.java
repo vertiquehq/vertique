@@ -157,8 +157,8 @@ final class SignalWaits {
      * Deletes the record of one wait, in the transaction that leaves it, and settles as stale the signals parked on the
      * entry it closes.
      *
-     * <p>Deleting a record that is not there is not an error: a wait that declares no key has none, an older node's
-     * cancel may have left one, and a wait entered again may have replaced one. When no record was held, no signal is
+     * <p>Deleting a record that is not there is not an error: a wait that declares no key has none, and a wait
+     * entered again may have replaced one. When no record was held, no signal is
      * parked on the entry and nothing is settled.
      *
      * <p>Each parked signal that carries the id of an entry whose record is no longer held is settled {@code STALE}

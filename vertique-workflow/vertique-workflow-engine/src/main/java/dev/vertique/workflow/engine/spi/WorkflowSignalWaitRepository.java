@@ -38,8 +38,8 @@ public interface WorkflowSignalWaitRepository<TX> {
     /**
      * Deletes the record held at an address, if there is one.
      *
-     * <p>Deleting a record that is not there is not an error: an older node's cancel may have left a record, and a wait
-     * entered again may have replaced one.
+     * <p>Deleting a record that is not there is not an error: a wait that declares no key has none, and a wait entered
+     * again may have replaced one.
      *
      * @param instanceId the instance that owns the wait
      * @param stepId     the step of the wait

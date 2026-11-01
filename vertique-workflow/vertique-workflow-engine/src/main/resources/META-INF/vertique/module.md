@@ -1320,7 +1320,6 @@ A signal recorded at or after a timeout's fire time never applies at that wait: 
 
 The command addresses the instance, never a branch, and keeps the target `{"name": ...}` with no `waitId`, so the ordinary parking rules apply: a signal for an instance that is still `PENDING`, or not yet at the wait that awaits the signal, is recorded and parks until the wait is reached, then applies. An instance that ended between the match and the lock answers no-match. Nothing is written by a no-match, an ambiguity or a duplicate, and no error, log line or history entry carries the business key.
 
-An executor older than this feature needs nothing special during a rolling upgrade. A signal delivered by business key keeps the target every version reads, so any executor applies it. A signal delivered by a wait's key pins a plan that includes the key, so an older executor treats it as not runnable and defers it until an upgraded executor takes it.
 
 ### WorkflowExceptionMapper
 
