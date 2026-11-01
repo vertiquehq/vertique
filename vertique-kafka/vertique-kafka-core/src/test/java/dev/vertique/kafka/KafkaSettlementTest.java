@@ -865,17 +865,7 @@ class KafkaSettlementTest {
         }
 
         private KafkaDispatchGate gateOf(AtomicBoolean open) {
-            return new KafkaDispatchGate() {
-                @Override
-                public boolean open() {
-                    return open.get();
-                }
-
-                @Override
-                public long recheckMs() {
-                    return 50L;
-                }
-            };
+            return open::get;
         }
     }
 

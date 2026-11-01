@@ -474,17 +474,7 @@ public class KafkaSettlementIT {
                         return Future.succeededFuture();
                     },
                     shortPoll,
-                    new KafkaDispatchGate() {
-                        @Override
-                        public boolean open() {
-                            return open.get();
-                        }
-
-                        @Override
-                        public long recheckMs() {
-                            return 100L;
-                        }
-                    });
+                    open::get);
             for (int i = 0; i < 6; i++) {
                 rig.produce(i % 2, "g" + i);
             }

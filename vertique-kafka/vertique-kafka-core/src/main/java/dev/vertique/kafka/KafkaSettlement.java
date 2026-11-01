@@ -48,6 +48,9 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 final class KafkaSettlement {
 
+    /** How long a consumer waits before it asks a closed gate, or a refusing handler, again. */
+    private static final long RECHECK_MS = 250L;
+
     /** A pending timer. */
     interface Timer {
 
@@ -493,9 +496,7 @@ final class KafkaSettlement {
         if (recheck != null || lifecycle != Lifecycle.RUNNING) {
             return;
         }
-        KafkaDispatchGate gate = settings.gate();
-        long waitMs = gate == null ? KafkaDispatchGate.DEFAULT_RECHECK_MS : Math.max(1L, gate.recheckMs());
-        recheck = port.schedule(waitMs, () -> {
+        recheck = port.schedule(RECHECK_MS, () -> {
             recheck = null;
             refused = false;
             pump();

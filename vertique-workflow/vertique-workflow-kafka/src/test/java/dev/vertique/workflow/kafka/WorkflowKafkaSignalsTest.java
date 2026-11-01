@@ -380,12 +380,11 @@ class WorkflowKafkaSignalsTest {
         KafkaConsumerBinding<ShipmentDelivered> binding = keyedByCarrier(carriers.source());
 
         // When the binding's gate is asked three times
-        // Then it follows the node, and asks again within the sampling of the node's pressure
+        // Then it follows the node
         assertThat(binding.dispatchGate()).isNotNull();
         assertThat(binding.dispatchGate().open()).isTrue();
         assertThat(binding.dispatchGate().open()).isFalse();
         assertThat(binding.dispatchGate().open()).isTrue();
-        assertThat(binding.dispatchGate().recheckMs()).isLessThanOrEqualTo(1_000L);
     }
 
     @Test

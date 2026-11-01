@@ -909,8 +909,8 @@ KafkaConsumerBinding.builder("orders", Order.class)
 While the gate answers closed the consumer starts no record, every assigned partition stops fetching, and the
 consumer keeps polling, so it keeps its group membership however long the gate stays closed. Records that run finish,
 and records already received stay queued in memory. A record the gate held back has not been attempted: no retry is
-spent, nothing is dead-lettered and nothing is committed past it. The consumer asks a closed gate again after
-`recheckMs()` (default `1000`); when it opens, the queued records start in the order they were read and the partitions
+spent, nothing is dead-lettered and nothing is committed past it. The consumer asks a closed gate again every 250
+milliseconds; when it opens, the queued records start in the order they were read and the partitions
 fetch again. `open()` is called on the consumer's own context, often, so it must be cheap and must not block.
 
 A gate that closes after a record started can be met with a `KafkaRedeliverFailure` from the handler (on a binding

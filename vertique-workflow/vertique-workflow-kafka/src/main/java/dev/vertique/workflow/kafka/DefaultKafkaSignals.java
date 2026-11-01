@@ -7,7 +7,6 @@ import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.kafka.CommitStrategy;
 import dev.vertique.kafka.ErrorStrategy;
 import dev.vertique.kafka.KafkaConsumerBinding;
-import dev.vertique.kafka.KafkaDispatchGate;
 import dev.vertique.kafka.KafkaRecordFilter;
 import dev.vertique.kafka.KafkaTerminalFailure;
 import dev.vertique.workflow.services.source.AbstractSignalSourceBuilder;
@@ -100,7 +99,7 @@ final class DefaultKafkaSignals<T> extends AbstractSignalSourceBuilder<T, KafkaS
                 .commitStrategy(CommitStrategy.MANUAL)
                 .errorStrategy(ErrorStrategy.RETRY)
                 .forceStrategies()
-                .dispatchGate(new IntakeGate(delivery))
+                .dispatchGate(delivery::admitting)
                 .noHeaderContext()
                 .ignoreUndecodable(() -> report(sourceName, Outcome.UNDECODABLE))
                 .handler(new KafkaSignalHandler<>(
@@ -110,25 +109,6 @@ final class DefaultKafkaSignals<T> extends AbstractSignalSourceBuilder<T, KafkaS
             binding.filter(reporting(sourceName, given));
         }
         return binding.build();
-    }
-
-    /**
-     * Keeps the consumer from starting a record while this node refuses intake. The consumer then fetches nothing and
-     * spends no retry, and it asks again a quarter second later, which is within the sampling of the node's pressure.
-     */
-    private record IntakeGate(WorkflowSourceDelivery delivery) implements KafkaDispatchGate {
-
-        private static final long RECHECK_MS = 250L;
-
-        @Override
-        public boolean open() {
-            return delivery.admitting();
-        }
-
-        @Override
-        public long recheckMs() {
-            return RECHECK_MS;
-        }
     }
 
     /** Wraps a filter so that a rejection is reported and a throw is terminal and carries its class only. */

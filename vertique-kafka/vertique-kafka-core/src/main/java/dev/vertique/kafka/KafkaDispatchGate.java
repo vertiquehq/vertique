@@ -25,22 +25,10 @@ package dev.vertique.kafka;
  */
 public interface KafkaDispatchGate {
 
-    /** How long a consumer waits before it asks a closed gate again, in milliseconds. */
-    long DEFAULT_RECHECK_MS = 1_000L;
-
     /**
      * Whether a record may start now.
      *
      * @return {@code true} when the consumer may start records, {@code false} to make it hold them
      */
     boolean open();
-
-    /**
-     * How long the consumer waits before it asks again after the gate answered closed, in milliseconds.
-     *
-     * @return the wait; the default is {@value #DEFAULT_RECHECK_MS}
-     */
-    default long recheckMs() {
-        return DEFAULT_RECHECK_MS;
-    }
 }
