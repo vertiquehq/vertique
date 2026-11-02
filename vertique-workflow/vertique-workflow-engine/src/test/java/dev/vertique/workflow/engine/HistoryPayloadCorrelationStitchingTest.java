@@ -194,7 +194,12 @@ class HistoryPayloadCorrelationStitchingTest {
                 null,
                 false);
         WaitSignalNode branchWaitSignal = new WaitSignalNode(
-                BRANCH_WAIT_STEP, "next-signal", Object.class.getName(), new CallbackId("state-updater"), null, null);
+                BRANCH_WAIT_STEP,
+                "next-signal",
+                Object.class.getName(),
+                new CallbackId("state-updater"),
+                BRANCH_WAIT_STEP,
+                null);
         List<WorkflowNode> nodes = List.of(branchHumanTask, branchWaitSignal);
         WorkflowPlan plan = new WorkflowPlan(
                 DEFINITION_ID, 1L, "plan-hash", Object.class.getName(), branchHumanTask.stepId(), nodes, null);

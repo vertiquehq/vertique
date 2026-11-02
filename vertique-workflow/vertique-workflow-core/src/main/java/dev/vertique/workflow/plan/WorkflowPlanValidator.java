@@ -81,7 +81,28 @@ public final class WorkflowPlanValidator {
         }
         String label = "plan '" + plan.definitionId() + "' v" + plan.definitionVersion();
 
+        Set<String> names = new HashSet<>();
         for (WorkflowNode n : plan.nodes()) {
+            if (n instanceof WaitSignalNode wait) {
+                for (String name : wait.acceptedSignalNames()) {
+                    if (name.length() > 255
+                            || !names.add(name)
+                            || (wait.reply() == null && ReplySignals.isReserved(name))) {
+                        throw new WorkflowDefinitionException(
+                                "Invalid signal name '" + name + "' at step '" + wait.stepId() + "'");
+                    }
+                }
+                if (wait.reply() != null) {
+                    var reply = wait.reply();
+                    WorkflowNode call = nodeById.get(reply.callStepId());
+                    if (!(call instanceof ServiceDispatchNode dispatch)
+                            || !dispatch.nextStepId().equals(wait.stepId())
+                            || wait.correlationKeyCallbackId() != null
+                            || (reply.completesLater() && wait.timeout() == null)) {
+                        throw new WorkflowDefinitionException("Invalid reply wait at step '" + wait.stepId() + "'");
+                    }
+                }
+            }
             if (n instanceof ForkNode fork) {
                 validateFork(fork, nodeById, label);
             } else if (n instanceof JoinNode join) {

@@ -14,7 +14,7 @@ SPDX-License-Identifier: EUPL-1.2
 execution kernel — the durable saga state machine, fork/join coordinator, task and timer lifecycle
 services, signal delivery, migration executor, and history recorder — decoupled from any specific SQL
 dialect. Persistence is injected at application composition time through seven `<TX>`-generic repository
-SPIs and a transaction-runner SPI.
+SPIs and a transaction-runner SPI. Plans supplied to the engine have a non-null next step on each signal wait.
 
 The module is the seam for DB portability: a second Vert.x SQL backend needs only dialect-specific
 implementations of those SPIs; the orchestration logic is reused verbatim. A maven-enforcer

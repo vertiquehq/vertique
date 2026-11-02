@@ -43,6 +43,84 @@ import org.junit.jupiter.api.Test;
  */
 class WorkflowPlanValidatorTest {
 
+    @org.junit.jupiter.params.ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.MethodSource("brokenReplyPlans")
+    @DisplayName("invalid reply waits are refused naming the wait")
+    void brokenReplyWaitIsRefusedNamingItsStep(String description, WorkflowPlan candidate, boolean valid) {
+        if (valid) {
+            assertThatCode(() -> emptyValidator().validate(candidate)).doesNotThrowAnyException();
+        } else {
+            assertThatThrownBy(() -> emptyValidator().validate(candidate))
+                    .isInstanceOf(WorkflowDefinitionException.class)
+                    .hasMessageContaining("wait");
+        }
+    }
+
+    private static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments> brokenReplyPlans() {
+        var reply = new WaitSignalNode.ReplyWait("call", "vertique.reply.failed.call", null, "done", false);
+        var good = replyNode("wait", "vertique.reply.ok.call", null, null, reply);
+        var badCall = replyNode(
+                "wait",
+                "vertique.reply.ok.call",
+                null,
+                null,
+                new WaitSignalNode.ReplyWait("missing", reply.failureSignalName(), null, "done", false));
+        var keyed = replyNode("wait", "vertique.reply.ok.call", new CallbackId("key"), null, reply);
+        var later = replyNode(
+                "wait",
+                "vertique.reply.ok.call",
+                null,
+                null,
+                new WaitSignalNode.ReplyWait("call", reply.failureSignalName(), null, "done", true));
+        var plainReserved = new WaitSignalNode(
+                "wait", "vertique.reply.other", "java.lang.String", new CallbackId("update"), "done", null);
+        var longName = replyNode("wait", "a".repeat(256), null, null, reply);
+        var duplicate = replyNode(
+                "wait2",
+                "other",
+                null,
+                null,
+                new WaitSignalNode.ReplyWait("call2", reply.failureSignalName(), null, "done", false));
+        return java.util.stream.Stream.of(
+                org.junit.jupiter.params.provider.Arguments.of(
+                        "missing call", plan("wait", List.of(badCall, complete("done"))), false),
+                org.junit.jupiter.params.provider.Arguments.of(
+                        "wrong successor",
+                        plan("call", List.of(dispatch("call", "svc", "done"), good, complete("done"))),
+                        false),
+                org.junit.jupiter.params.provider.Arguments.of("key", replyPlan(keyed), false),
+                org.junit.jupiter.params.provider.Arguments.of(
+                        "duplicate failure",
+                        plan(
+                                "call",
+                                List.of(
+                                        dispatch("call", "svc", "wait"),
+                                        good,
+                                        dispatch("call2", "svc", "wait2"),
+                                        duplicate,
+                                        complete("done"))),
+                        false),
+                org.junit.jupiter.params.provider.Arguments.of("later without timeout", replyPlan(later), false),
+                org.junit.jupiter.params.provider.Arguments.of(
+                        "reserved plain signal", plan("wait", List.of(plainReserved, complete("done"))), false),
+                org.junit.jupiter.params.provider.Arguments.of("long name", replyPlan(longName), false),
+                org.junit.jupiter.params.provider.Arguments.of("valid", replyPlan(good), true));
+    }
+
+    private static WaitSignalNode replyNode(
+            String id,
+            String signal,
+            CallbackId key,
+            WaitSignalNode.TimeoutBranch timeout,
+            WaitSignalNode.ReplyWait reply) {
+        return new WaitSignalNode(
+                id, signal, "java.lang.String", new CallbackId("update"), "done", timeout, key, reply);
+    }
+
+    private static WorkflowPlan replyPlan(WaitSignalNode wait) {
+        return plan("call", List.of(dispatch("call", "svc", "wait"), wait, complete("done")));
+    }
+
     private static final RaceSafetyTargetRegistry EMPTY_REGISTRY = new DefaultRaceSafetyTargetRegistry(Set.of());
 
     private static WorkflowPlanValidator validator(RaceSafetyTargetRegistry r) {

@@ -2064,6 +2064,19 @@ public final class WorkflowBuilder<S> {
                         if (n.correlationKeyCallbackId() != null) {
                             update(digest, n.correlationKeyCallbackId().value());
                         }
+                        if (n.reply() != null) {
+                            var reply = n.reply();
+                            update(digest, "reply");
+                            update(digest, reply.callStepId());
+                            update(digest, reply.failureSignalName());
+                            update(
+                                    digest,
+                                    reply.failureUpdaterCallbackId() == null
+                                            ? ""
+                                            : reply.failureUpdaterCallbackId().value());
+                            update(digest, reply.failureNextStepId());
+                            update(digest, Boolean.toString(reply.completesLater()));
+                        }
                     }
                     case TimerNode n -> {
                         update(digest, n.nextStepId());
