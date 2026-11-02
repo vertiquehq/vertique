@@ -21,6 +21,7 @@ import dev.vertique.workflow.ops.ServiceFailure;
 import dev.vertique.workflow.ops.SignalProvenance;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.plan.RaceSafety;
 import dev.vertique.workflow.postgresql.executor.ExecutorFixture.Node;
 import dev.vertique.workflow.postgresql.executor.ExecutorFixture.NodeSpec;
 import dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore;
@@ -66,7 +67,16 @@ final class ReplyStepFixture implements AutoCloseable {
         Future<Void> other(WorkflowInstanceId id, String payload, @SignalDedupKey String key);
     }
 
-    record WaitRecord(UUID waitId, String stepId, String contractName, String signalName, String correlationKey) {}
+    record WaitRecord(
+            UUID waitId,
+            String stepId,
+            String contractName,
+            String signalName,
+            String correlationKey,
+            String forkStepId,
+            String branchId) {}
+
+    record Branch(String status, String stepId) {}
 
     enum Mode {
         ORIGINAL,
@@ -74,7 +84,10 @@ final class ReplyStepFixture implements AutoCloseable {
         IDENTITY,
         TIMED,
         BROKEN_TIMEOUT,
-        COMPENSATION
+        COMPENSATION,
+        FORK,
+        FORK_LOOP,
+        FORK_FAILURE
     }
 
     final java.util.concurrent.atomic.AtomicBoolean timeoutBroken = new java.util.concurrent.atomic.AtomicBoolean(true);
@@ -120,7 +133,19 @@ final class ReplyStepFixture implements AutoCloseable {
                                                     "vertique.reply.ok.second",
                                                     "vertique.reply.failed.second",
                                                     "other")))
-                                    .put("branches", new JsonObject()),
+                                    .put(
+                                            "branches",
+                                            new JsonObject()
+                                                    .put(
+                                                            "fork/a",
+                                                            new JsonArray(List.of(
+                                                                    "vertique.reply.ok.first",
+                                                                    "vertique.reply.failed.first")))
+                                                    .put(
+                                                            "fork/b",
+                                                            new JsonArray(List.of(
+                                                                    "vertique.reply.ok.second",
+                                                                    "vertique.reply.failed.second")))),
                             null),
                     true));
             await(fixture.observer()
@@ -172,16 +197,62 @@ final class ReplyStepFixture implements AutoCloseable {
         List<WaitRecord> result = new ArrayList<>();
         for (Row row : await(fixture.observer()
                 .preparedQuery(
-                        "SELECT wait_id, step_id, contract_name, signal_name, correlation_key FROM workflow_signal_waits WHERE instance_id = $1")
+                        "SELECT wait_id, step_id, contract_name, signal_name, correlation_key, fork_step_id, branch_id FROM workflow_signal_waits WHERE instance_id = $1")
                 .execute(Tuple.of(id.value())))) {
             result.add(new WaitRecord(
                     row.getUUID("wait_id"),
                     row.getString("step_id"),
                     row.getString("contract_name"),
                     row.getString("signal_name"),
-                    row.getString("correlation_key")));
+                    row.getString("correlation_key"),
+                    row.getString("fork_step_id"),
+                    row.getString("branch_id")));
         }
         return result;
+    }
+
+    WorkflowInstanceId startForkOfTwoCalls(Node node) {
+        return startCall(node);
+    }
+
+    WaitRecord branchWait(WorkflowInstanceId id, String branchId) {
+        return waitRecords(id).stream()
+                .filter(record -> branchId.equals(record.branchId()))
+                .findFirst()
+                .orElseThrow();
+    }
+
+    Branch branch(WorkflowInstanceId id, String branchId) {
+        Row row = await(fixture.observer()
+                        .preparedQuery(
+                                "SELECT status, current_step_id FROM workflow_branch_tokens WHERE workflow_id = $1 AND branch_id = $2")
+                        .execute(Tuple.of(id.value(), branchId)))
+                .iterator()
+                .next();
+        return new Branch(row.getString("status"), row.getString("current_step_id"));
+    }
+
+    List<String> targets(WorkflowInstanceId id) {
+        return await(fixture.observer()
+                        .preparedQuery("SELECT target FROM reply_test_targets WHERE instance_id = $1 ORDER BY target")
+                        .execute(Tuple.of(id.value())))
+                .stream()
+                .map(row -> row.getString("target"))
+                .toList();
+    }
+
+    void expireWait(WorkflowInstanceId id, String branchId) {
+        Row row = await(fixture.observer()
+                        .preparedQuery(
+                                "UPDATE workflow_commands SET fire_at = clock_timestamp(), available_at = clock_timestamp() "
+                                        + "WHERE workflow_id = $1 AND kind = 'TIMER' AND timer_kind = 'TIMEOUT' "
+                                        + "AND state = 'PENDING' AND target_json->>'branchId' = $2 RETURNING id, fire_at")
+                        .execute(Tuple.of(id.value(), branchId)))
+                .iterator()
+                .next();
+        await(fixture.observer()
+                .preparedQuery("UPDATE workflow_timers SET fire_at = $2 WHERE command_id = $1")
+                .execute(Tuple.of(row.getLong("id"), row.getOffsetDateTime("fire_at"))));
     }
 
     List<UUID> intents(WorkflowInstanceId id) {
@@ -343,6 +414,10 @@ final class ReplyStepFixture implements AutoCloseable {
         @Override
         public void define(WorkflowBuilder<State> wf) {
             wf.init(Start.class, start -> new State(start.ref(), null));
+            if (mode == Mode.FORK || mode == Mode.FORK_LOOP || mode == Mode.FORK_FAILURE) {
+                defineFork(wf);
+                return;
+            }
             if (mode == Mode.COMPENSATION) {
                 wf.initialStep("first");
                 wf.call("first", "service.first", state -> state.ref())
@@ -407,6 +482,48 @@ final class ReplyStepFixture implements AutoCloseable {
                     .onSignal((state, value) -> state)
                     .toStepOnSignal("done")
                     .build();
+            wf.complete("done");
+        }
+
+        private void defineFork(WorkflowBuilder<State> wf) {
+            wf.initialStep("fork");
+            wf.fork("fork")
+                    .branch("a", "first", RaceSafety.IGNORE_LATE_RESULT_SAFE)
+                    .branch("b", "second", RaceSafety.IGNORE_LATE_RESULT_SAFE)
+                    .join("join");
+            var first = wf.call("first", "service.first", state -> state.ref());
+            if (mode == Mode.FORK_FAILURE) first.compensateWith("undo-first");
+            var wait = first.onReply(Reserved.class, (state, value) -> new State(state.ref(), value.reference()))
+                    .toStepOnReply("a-done")
+                    .onFailure((state, failure) -> new State(state.ref(), failure.reason() + ":" + failure.attempts()))
+                    .toStepOnFailure(mode == Mode.FORK_FAILURE ? "a-fail" : "a-failure");
+            if (mode == Mode.FORK_LOOP) {
+                wait.timeoutAfter(java.time.Duration.ofHours(1))
+                        .onTimeout(state -> state)
+                        .toStepOnTimeout("first");
+            } else {
+                wait.build();
+            }
+            wf.call("second", "service.second", state -> state.ref())
+                    .onReply(Reserved.class, (state, value) -> new State(state.ref(), value.reference()))
+                    .toStepOnReply("b-done")
+                    .onFailure((state, failure) -> new State(state.ref(), failure.reason() + ":" + failure.attempts()))
+                    .toStepOnFailure("b-failure")
+                    .build();
+            wf.complete("a-done");
+            wf.complete("b-done");
+            wf.complete("a-failure");
+            wf.complete("b-failure");
+            if (mode == Mode.FORK_FAILURE) {
+                wf.fail("a-fail", "FAILED", state -> "failed");
+                wf.compensate("undo-first", "first", "undo.first", state -> state.ref());
+            }
+            wf.join("join")
+                    .allRequired((state, results) -> state)
+                    .toStep("done")
+                    .onFailure("fork-failed")
+                    .endJoin();
+            wf.fail("fork-failed", "FORK_FAILED", state -> "fork failed");
             wf.complete("done");
         }
     }

@@ -128,6 +128,32 @@ final class SignalWaits {
                 tx);
     }
 
+    Future<Void> openBranchReply(
+            WorkflowInstanceId instanceId,
+            String scopeKey,
+            String definitionId,
+            String forkStepId,
+            String branchId,
+            WaitSignalNode node,
+            RuntimeWorkflow plan,
+            UUID waitId,
+            SqlClient tx) {
+        return waits.write(
+                new SignalWaitRecord(
+                        waitId,
+                        instanceId,
+                        node.stepId(),
+                        forkStepId,
+                        branchId,
+                        scopeKey,
+                        plan.contractName(),
+                        definitionId,
+                        node.signalName(),
+                        waitId.toString(),
+                        clock.instant()),
+                tx);
+    }
+
     /**
      * Writes the open record of a fork branch that enters a signal wait, when the wait declares a key.
      *

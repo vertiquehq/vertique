@@ -459,6 +459,27 @@ final class BranchTransitionEngine {
             RuntimeWorkflow rw,
             InstanceScope instanceScope,
             SqlClient tx) {
+        WorkflowNode next = rw.nodeById().get(sdn.nextStepId());
+        if (next instanceof WaitSignalNode wait
+                && wait.reply() != null
+                && wait.reply().callStepId().equals(sdn.stepId())) {
+            UUID waitId = UUID.randomUUID();
+            var reply = new WorkflowSideEffectIntent.Correlation.Reply(
+                    waitId, wait.reply().completesLater());
+            return signalWaits
+                    .openBranchReply(
+                            token.workflowId(),
+                            instanceScope.scopeKey(),
+                            rw.plan().definitionId(),
+                            token.forkStepId(),
+                            token.branchId(),
+                            wait,
+                            rw,
+                            waitId,
+                            tx)
+                    .compose(opened -> runBranchDispatch(
+                            token, sdn, parentStateJson, parentSubjectVersion, rw, instanceScope, reply, tx));
+        }
         // PRD-WF-002 §D6: dispatch-dedup gate runs FIRST so retried branch transitions skip
         // re-emission when an earlier attempt already recorded the intent.
         String scope = WorkflowDedupScopes.dispatchScope(token.workflowId());
@@ -471,7 +492,7 @@ final class BranchTransitionEngine {
                 return advanceBranchSkippingDispatch(
                         token, sdn, parentStateJson, parentSubjectVersion, rw, instanceScope, tx);
             }
-            return runBranchDispatch(token, sdn, parentStateJson, parentSubjectVersion, rw, instanceScope, tx);
+            return runBranchDispatch(token, sdn, parentStateJson, parentSubjectVersion, rw, instanceScope, null, tx);
         });
     }
 
@@ -482,6 +503,7 @@ final class BranchTransitionEngine {
             @Nullable String parentSubjectVersion,
             RuntimeWorkflow rw,
             InstanceScope instanceScope,
+            @Nullable WorkflowSideEffectIntent.Correlation.Reply reply,
             SqlClient tx) {
         // The branch's durable metadata is already bound by driveBranchTransitions (the public
         // entry point) for the entire drive lifetime — see driveBranchTransitions's
@@ -517,7 +539,8 @@ final class BranchTransitionEngine {
                             sdn.stepId(),
                             token.id(),
                             token.forkStepId(),
-                            token.branchId()));
+                            token.branchId(),
+                            reply));
             return recorders
                     .route(intent, tx)
                     .compose(result -> {
