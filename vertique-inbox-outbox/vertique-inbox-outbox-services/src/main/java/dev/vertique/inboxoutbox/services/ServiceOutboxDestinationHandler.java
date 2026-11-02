@@ -165,22 +165,22 @@ public class ServiceOutboxDestinationHandler implements OutboxDestinationHandler
         boolean reply = outboxEnvelope.headers() != null
                 && outboxEnvelope.headers().get(OutboxOutcomeConsumer.HANDLE_HEADER) != null;
         if (!reply) return publishEntry(outboxEnvelope);
+        String message = "Reply delivery failed for service target: " + outboxEnvelope.destination();
         try {
             return publishEntry(outboxEnvelope)
-                    .map(ServiceOutboxDestinationHandler::redactReplyFailure)
-                    .recover(ignored ->
-                            Future.succeededFuture(OutboxPublishResult.retryable("Reply delivery failed", null)));
-        } catch (Exception | LinkageError | AssertionError | StackOverflowError ignored) {
-            return Future.succeededFuture(OutboxPublishResult.retryable("Reply delivery failed", null));
+                    .map(result -> redactReplyFailure(result, message))
+                    .recover(cause -> Future.succeededFuture(OutboxPublishResult.retryable(message, cause)));
+        } catch (Exception | LinkageError | AssertionError | StackOverflowError cause) {
+            return Future.succeededFuture(OutboxPublishResult.retryable(message, cause));
         }
     }
 
-    private static OutboxPublishResult redactReplyFailure(OutboxPublishResult result) {
+    private static OutboxPublishResult redactReplyFailure(OutboxPublishResult result, String message) {
         return switch (result) {
-            case OutboxPublishResult.RetryableFailure ignored ->
-                OutboxPublishResult.retryable("Reply delivery failed", null);
-            case OutboxPublishResult.PermanentFailure ignored ->
-                OutboxPublishResult.permanent("Reply delivery failed", null);
+            case OutboxPublishResult.RetryableFailure failure ->
+                OutboxPublishResult.retryable(message, failure.cause());
+            case OutboxPublishResult.PermanentFailure failure ->
+                OutboxPublishResult.permanent(message, failure.cause());
             case OutboxPublishResult.Unresolvable ignored ->
                 OutboxPublishResult.unresolvable("Reply delivery unavailable");
             case OutboxPublishResult.Success success -> success;

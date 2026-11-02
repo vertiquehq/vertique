@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -275,8 +274,8 @@ class ServiceOutboxDestinationHandlerReplyTest {
                 OutboxPublishResult.RetryableFailure.class,
                 h.publish(row(0, true, false)).result());
         assertFalse(serviceFailure.message().contains(secret));
-        assertTrue(serviceFailure.cause() == null
-                || !String.valueOf(serviceFailure.cause()).contains(secret));
+        assertEquals("Reply delivery failed for service target: test.target", serviceFailure.message());
+        assertEquals(secret, serviceFailure.cause().getMessage());
 
         when(sender.send(any(), any())).thenReturn(Future.succeededFuture(Result.success("reply")));
         when(consumer.onOutcome(any())).thenReturn(Future.failedFuture(new IllegalStateException(secret)));
@@ -284,8 +283,7 @@ class ServiceOutboxDestinationHandlerReplyTest {
                 OutboxPublishResult.RetryableFailure.class,
                 h.publish(row(0, true, false)).result());
         assertFalse(recordingFailure.message().contains(secret));
-        assertTrue(recordingFailure.cause() == null
-                || !String.valueOf(recordingFailure.cause()).contains(secret));
+        assertEquals(secret, recordingFailure.cause().getMessage());
     }
 
     @Test
@@ -310,8 +308,7 @@ class ServiceOutboxDestinationHandlerReplyTest {
                 OutboxPublishResult.RetryableFailure.class,
                 h.publish(row(0, true, false)).result());
         assertFalse(resolverResult.message().contains(secret));
-        assertTrue(resolverResult.cause() == null
-                || !String.valueOf(resolverResult.cause()).contains(secret));
+        assertSame(resolverError, resolverResult.cause());
         assertSame(resolverError, assertThrows(AssertionError.class, () -> h.publish(row(0, false, false))));
 
         reset(resolver);
@@ -321,8 +318,7 @@ class ServiceOutboxDestinationHandlerReplyTest {
                 OutboxPublishResult.RetryableFailure.class,
                 h.publish(row(0, true, false)).result());
         assertFalse(waitResult.message().contains(secret));
-        assertTrue(waitResult.cause() == null
-                || !String.valueOf(waitResult.cause()).contains(secret));
+        assertEquals(secret, waitResult.cause().getMessage());
     }
 
     @Test

@@ -334,6 +334,14 @@ class ServiceReplyIT {
                             .equals(run.instance(id).getString("status")));
                     assertThat(ReplyGraph.json(run.instance(id), "state_json").getString("result"))
                             .isEqualTo(ref.equals("permanent") ? "PERMANENT:1" : "RETRIES_EXHAUSTED:2");
+                    if (ref.equals("decode")) {
+                        var row = run.row(id);
+                        assertThat(row.getInteger("attempt")).isEqualTo(1);
+                        assertThat(row.getString("last_error"))
+                                .isEqualTo("Reply delivery failed for service target: inventory.reserve");
+                        assertThat(row.getString("error_type")).isEqualTo(IllegalArgumentException.class.getName());
+                        assertThat(row.getString("last_error")).doesNotContain("SECRET-DECODE-77");
+                    }
                     assertThat(run
                                     .rows(
                                             "SELECT payload_json::text FROM workflow_history WHERE workflow_id = $1",

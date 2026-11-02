@@ -793,7 +793,7 @@ final class ReplyGraph implements AutoCloseable {
                 CREATE FUNCTION reply_limit_attempts() RETURNS trigger LANGUAGE plpgsql AS $$
                 BEGIN
                     NEW.max_attempts := 2;
-                    IF NEW.payload->>'reference' = 'decode' THEN NEW.payload := '{"reference":{}}'::jsonb; END IF;
+                    IF NEW.payload->>'reference' = 'decode' THEN NEW.payload := '{"reference":{"secret":"SECRET-DECODE-77"}}'::jsonb; END IF;
                     RETURN NEW;
                 END $$
                 """).execute());
