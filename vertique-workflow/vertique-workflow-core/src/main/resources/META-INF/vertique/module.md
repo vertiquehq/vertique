@@ -84,6 +84,10 @@ public final class OrderFulfillmentDefinition
 }
 ```
 
+### Service call reply plans
+
+`call(stepId, targetId, payloadFactory)` describes a dispatch followed by a reply wait. Chain `onReply(replyType, reducer).toStepOnReply(next)` and `onFailure(reducer).toStepOnFailure(next)`; `onFailure()` leaves the state unchanged. `compensateWith(stepId)` is optional. The returned wait stage accepts the same timeout methods as `waitForSignal`; `completesLater()` requires a timeout. The generated wait step is named `<stepId>.reply`, so that id must not be declared separately. The call and its failure route must be completed before building the plan. The reply plan fields describe authoring only; reply delivery requires runtime support.
+
 ### Signal Wait Key
 
 `waitForSignal(stepId, signalName, Payload.class)` returns a `SignalWaitBuilder`. Its optional `correlateBy(Function<S, String>)` declares the value that identifies the wait, computed from the workflow state:
