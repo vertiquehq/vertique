@@ -117,6 +117,10 @@ public final class ParkedSignals {
          */
         Future<Void> applied(SegmentCommand signal, SqlClient tx);
 
+        default Future<Void> failedReply(SegmentCommand signal, String reason, SqlClient tx) {
+            return Future.failedFuture(new UnsupportedOperationException("Reply failure handling is not supported"));
+        }
+
         /**
          * Writes the history of a parked signal that was rejected.
          *
@@ -303,8 +307,10 @@ public final class ParkedSignals {
                 case Savepoints.Attempt.Contained<Void> contained ->
                     contained.kind() == Savepoints.Containment.STEP_LIMIT
                             ? requeue(candidates, index, tx)
-                            : reject(instance, signal, contained.cause(), tx)
-                                    .compose(done -> candidates(instance, candidates, index + 1, nextWait, tx));
+                            : ReplySignals.isReserved(signal.signalName())
+                                    ? host.failedReply(command, CommandErrors.signalFailure(signal.signalName()), tx)
+                                    : reject(instance, signal, contained.cause(), tx)
+                                            .compose(done -> candidates(instance, candidates, index + 1, nextWait, tx));
             });
         });
     }

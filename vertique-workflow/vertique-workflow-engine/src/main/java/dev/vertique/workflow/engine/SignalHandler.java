@@ -20,6 +20,7 @@ import dev.vertique.workflow.engine.spi.SignalWaitRecord;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
+import dev.vertique.workflow.events.WorkflowEventType;
 import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
@@ -724,18 +725,55 @@ final class SignalHandler {
                                 .compose(done -> parkedSignals.drain(inst.id(), tx))
                                 .map(done -> WorkflowSegments.Outcome.APPLIED);
                     case Savepoints.Attempt.Contained<Void> contained -> {
+                        String reason = contained.kind() == Savepoints.Containment.STEP_LIMIT
+                                ? CommandErrors.signalStepLimit(signal.name(), driver.stepCap(tx))
+                                : CommandErrors.signalFailure(signal.name());
+                        if (ReplySignals.isReserved(signal.name())) {
+                            yield failReply(inst, reason, tx).compose(done -> park(claim, command, signal, tx));
+                        }
                         log.warn(
                                 "Signal '{}' (command {}) of instance {} failed and was rejected: {}",
                                 signal.name(),
                                 command.commandId(),
                                 inst.id().value(),
                                 contained.cause().getClass().getName());
-                        String reason = contained.kind() == Savepoints.Containment.STEP_LIMIT
-                                ? CommandErrors.signalStepLimit(signal.name(), driver.stepCap(tx))
-                                : CommandErrors.signalFailure(signal.name());
                         yield reject(claim, command, signal, reason, tx);
                     }
                 }));
+    }
+
+    private Future<Void> failReply(WorkflowInstance inst, String reason, SqlClient tx) {
+        String type = "SIGNAL_APPLICATION_FAILED";
+        long version = inst.version();
+        WorkflowInstance failed = inst.withVersion(version + 1)
+                .withStatus(WorkflowStatus.FAILED)
+                .withError(type, reason)
+                .withUpdatedAt(clock.instant());
+        return instances
+                .updateOptimistic(failed, version, tx)
+                .compose(rows -> WorkflowPayloads.requireRowUpdated(
+                        rows, "reply failure for instance '" + inst.id().value() + "'"))
+                .compose(done -> decisions.record(inst, failed, inst.currentStepId(), "failed", tx))
+                .compose(done -> history.nextSequence(inst.id(), tx))
+                .compose(seq -> history.append(
+                                new WorkflowHistoryEntry(
+                                        inst.id(),
+                                        seq,
+                                        WorkflowEntryType.FAILED,
+                                        Json.encode(new FailedHistoryPayload(inst.currentStepId(), type, reason)),
+                                        clock.instant()),
+                                tx)
+                        .compose(done -> recorderRouter == null
+                                ? Future.succeededFuture()
+                                : new WorkflowEventEmitter(recorderRouter, clock)
+                                        .emitEvent(
+                                                inst,
+                                                WorkflowEventType.WORKFLOW_FAILED,
+                                                seq,
+                                                null,
+                                                null,
+                                                WorkflowEventEmitter.attrs("errorType", type, "errorMessage", reason),
+                                                tx)));
     }
 
     /**
@@ -1040,6 +1078,15 @@ final class SignalHandler {
         /** Runs work whose routed intents belong to the command; without a router the work runs as it is. */
         private Future<Void> attributedTo(SegmentCommand command, SqlClient tx, Supplier<Future<Void>> work) {
             return recorderRouter == null ? work.get() : recorderRouter.executing(command, tx, work);
+        }
+
+        @Override
+        public Future<Void> failedReply(SegmentCommand command, String reason, SqlClient tx) {
+            return instances
+                    .findById(command.workflowId(), tx)
+                    .compose(found -> found.isEmpty()
+                            ? Future.failedFuture(new WorkflowInstanceNotFoundException(command.workflowId()))
+                            : failReply(found.get(), reason, tx));
         }
 
         @Override

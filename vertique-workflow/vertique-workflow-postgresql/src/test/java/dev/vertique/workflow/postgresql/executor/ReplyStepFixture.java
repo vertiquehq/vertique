@@ -87,10 +87,18 @@ final class ReplyStepFixture implements AutoCloseable {
         COMPENSATION,
         FORK,
         FORK_LOOP,
-        FORK_FAILURE
+        FORK_FAILURE,
+        APPLY_FAILURE,
+        NEXT_FAILURE,
+        STEP_LIMIT,
+        DRAIN_STEP_LIMIT,
+        FORK_APPLY_FAILURE
     }
 
     final java.util.concurrent.atomic.AtomicBoolean timeoutBroken = new java.util.concurrent.atomic.AtomicBoolean(true);
+    final java.util.concurrent.atomic.AtomicBoolean reducerBroken = new java.util.concurrent.atomic.AtomicBoolean();
+    final java.util.concurrent.atomic.AtomicInteger heavyVisits = new java.util.concurrent.atomic.AtomicInteger();
+    private Node immediateReplyNode;
     final ExecutorFixture fixture;
     final DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
     final PgWorkflowDefinitionRegistryStore store;
@@ -101,7 +109,7 @@ final class ReplyStepFixture implements AutoCloseable {
         try {
             store = new PgWorkflowDefinitionRegistryStore(
                     fixture.observer(), new PgDbExceptionMapper(), Optional.empty());
-            registry.register(new Definition(mode, timeoutBroken));
+            registry.register(new Definition(mode, timeoutBroken, reducerBroken, heavyVisits));
             var runtime = registry.codeDefinitions().stream()
                     .filter(r -> r.plan().definitionId().equals(DEFINITION))
                     .findFirst()
@@ -170,6 +178,22 @@ final class ReplyStepFixture implements AutoCloseable {
 
     static ReplyStepFixture open(DbPoolConfig db, Mode mode) {
         return new ReplyStepFixture(db, mode);
+    }
+
+    void parkReplyDuringDispatch(Node node) {
+        immediateReplyNode = node;
+    }
+
+    void breakReducer() {
+        reducerBroken.set(true);
+    }
+
+    void mendReducer() {
+        reducerBroken.set(false);
+    }
+
+    NodeSpec withStepCap(int cap) {
+        return node().maxStepsPerSegment(cap);
     }
 
     NodeSpec node() {
@@ -263,7 +287,7 @@ final class ReplyStepFixture implements AutoCloseable {
         return result;
     }
 
-    CorrelatedSignalReceipt signalWait(Node node, WorkflowInstanceId id, UUID waitId, Reserved value) {
+    CorrelatedSignalReceipt signalWait(Node node, WorkflowInstanceId id, UUID waitId, Object value) {
         return await(caller(() -> {
             ContextHolder.Scope scope = fixture.holder()
                     .bind(
@@ -386,9 +410,19 @@ final class ReplyStepFixture implements AutoCloseable {
         private final Mode mode;
         private final java.util.concurrent.atomic.AtomicBoolean timeoutBroken;
 
-        Definition(Mode mode, java.util.concurrent.atomic.AtomicBoolean timeoutBroken) {
+        private final java.util.concurrent.atomic.AtomicBoolean reducerBroken;
+
+        private final java.util.concurrent.atomic.AtomicInteger heavyVisits;
+
+        Definition(
+                Mode mode,
+                java.util.concurrent.atomic.AtomicBoolean timeoutBroken,
+                java.util.concurrent.atomic.AtomicBoolean reducerBroken,
+                java.util.concurrent.atomic.AtomicInteger heavyVisits) {
             this.mode = mode;
             this.timeoutBroken = timeoutBroken;
+            this.reducerBroken = reducerBroken;
+            this.heavyVisits = heavyVisits;
         }
 
         @Override
@@ -414,7 +448,10 @@ final class ReplyStepFixture implements AutoCloseable {
         @Override
         public void define(WorkflowBuilder<State> wf) {
             wf.init(Start.class, start -> new State(start.ref(), null));
-            if (mode == Mode.FORK || mode == Mode.FORK_LOOP || mode == Mode.FORK_FAILURE) {
+            if (mode == Mode.FORK
+                    || mode == Mode.FORK_LOOP
+                    || mode == Mode.FORK_FAILURE
+                    || mode == Mode.FORK_APPLY_FAILURE) {
                 defineFork(wf);
                 return;
             }
@@ -437,6 +474,81 @@ final class ReplyStepFixture implements AutoCloseable {
                 wf.fail("failed", "FAILED", state -> "failed");
                 wf.compensate("undo-first", "first", "undo.first", state -> state.ref());
                 wf.compensate("undo-second", "second", "undo.second", state -> state.ref());
+                wf.complete("done");
+                return;
+            }
+            if (mode == Mode.DRAIN_STEP_LIMIT) {
+                wf.initialStep("before-0");
+                for (int i = 0; i < 15; i++) {
+                    String next = i == 14 ? "reserve" : "before-" + (i + 1);
+                    wf.decide("before-" + i, state -> next);
+                }
+                wf.call("reserve", "inventory.reserve", state -> state.ref())
+                        .onReply(Reserved.class, (state, value) -> new State(state.ref(), value.reference()))
+                        .toStepOnReply("spin-0")
+                        .onFailure()
+                        .toStepOnFailure("done")
+                        .build();
+                for (int i = 0; i < 40; i++) {
+                    String next = i == 39 ? "after" : "spin-" + (i + 1);
+                    wf.decide("spin-" + i, state -> {
+                        heavyVisits.incrementAndGet();
+                        return next;
+                    });
+                }
+                wf.timer("after", java.time.Duration.ofHours(1)).toStep("done");
+                wf.complete("done");
+                return;
+            }
+            if (mode == Mode.APPLY_FAILURE || mode == Mode.NEXT_FAILURE || mode == Mode.STEP_LIMIT) {
+                wf.initialStep("first");
+                wf.call("first", "service.first", state -> state.ref())
+                        .compensateWith("undo-first")
+                        .onReply(Reserved.class, (state, value) -> state)
+                        .toStepOnReply("reserve")
+                        .onFailure()
+                        .toStepOnFailure("done")
+                        .build();
+                wf.compensate("undo-first", "first", "undo.first", state -> state.ref());
+                wf.call("reserve", "inventory.reserve", state -> state.ref())
+                        .onReply(Reserved.class, (state, value) -> {
+                            if (reducerBroken.get()) throw new IllegalStateException("SECRET-77");
+                            return new State(
+                                    state.ref(),
+                                    (state.reserved() == null ? "" : state.reserved()) + value.reference());
+                        })
+                        .toStepOnReply(
+                                mode == Mode.NEXT_FAILURE ? "next-call" : mode == Mode.STEP_LIMIT ? "spin-0" : "after")
+                        .onFailure((state, value) -> {
+                            if (reducerBroken.get()) throw new IllegalStateException("SECRET-77");
+                            return new State(
+                                    state.ref(),
+                                    (state.reserved() == null ? "" : state.reserved()) + value.reason() + ":"
+                                            + value.attempts());
+                        })
+                        .toStepOnFailure("failure-route")
+                        .build();
+                if (mode == Mode.NEXT_FAILURE) {
+                    wf.call("next-call", "service.next", state -> {
+                                throw new IllegalStateException("SECRET-77");
+                            })
+                            .onReply(Reserved.class, (state, value) -> state)
+                            .toStepOnReply("done")
+                            .onFailure()
+                            .toStepOnFailure("done")
+                            .build();
+                }
+                if (mode == Mode.STEP_LIMIT) {
+                    for (int i = 0; i < 60; i++) {
+                        String next = i == 59 ? "after" : "spin-" + (i + 1);
+                        wf.decide("spin-" + i, state -> {
+                            heavyVisits.incrementAndGet();
+                            return next;
+                        });
+                    }
+                }
+                wf.timer("after", java.time.Duration.ofHours(1)).toStep("done");
+                wf.timer("failure-route", java.time.Duration.ofHours(1)).toStep("done");
                 wf.complete("done");
                 return;
             }
@@ -495,7 +607,11 @@ final class ReplyStepFixture implements AutoCloseable {
             if (mode == Mode.FORK_FAILURE) first.compensateWith("undo-first");
             var wait = first.onReply(Reserved.class, (state, value) -> new State(state.ref(), value.reference()))
                     .toStepOnReply("a-done")
-                    .onFailure((state, failure) -> new State(state.ref(), failure.reason() + ":" + failure.attempts()))
+                    .onFailure((state, failure) -> {
+                        if (mode == Mode.FORK_APPLY_FAILURE && reducerBroken.get())
+                            throw new IllegalStateException("SECRET-77");
+                        return new State(state.ref(), failure.reason() + ":" + failure.attempts());
+                    })
                     .toStepOnFailure(mode == Mode.FORK_FAILURE ? "a-fail" : "a-failure");
             if (mode == Mode.FORK_LOOP) {
                 wait.timeoutAfter(java.time.Duration.ofHours(1))
@@ -528,7 +644,7 @@ final class ReplyStepFixture implements AutoCloseable {
         }
     }
 
-    private static final class Recorder implements WorkflowSideEffectRecorder<SqlClient> {
+    private final class Recorder implements WorkflowSideEffectRecorder<SqlClient> {
         @Override
         public IntentKind kind() {
             return IntentKind.SERVICE;
@@ -544,8 +660,47 @@ final class ReplyStepFixture implements AutoCloseable {
                                 .execute(Tuple.of(
                                         intent.correlation().workflowId().value(),
                                         intent.correlation().reply().waitId()))
-                                .map(rows -> RecorderResult.empty());
+                                .compose(rows -> immediateReplyNode == null
+                                        ? Future.succeededFuture(RecorderResult.empty())
+                                        : recordParkedReply(intent, tx));
                     });
+        }
+
+        private Future<RecorderResult> recordParkedReply(WorkflowSideEffectIntent intent, SqlClient tx) {
+            var id = intent.correlation().workflowId();
+            var waitId = intent.correlation().reply().waitId();
+            ContextHolder.Scope scope = fixture.holder()
+                    .bind(
+                            SecurityContext.class,
+                            SecurityContexts.unauthenticated(SystemIdentities.internal("outbox reply")));
+            try {
+                return ReplySignalsTestBridge.relayedSignals(immediateReplyNode.engine)
+                        .signalWait(
+                                id,
+                                waitId,
+                                new Reserved("applied"),
+                                SignalProvenance.outbox("inventory.reserve", 7L),
+                                tx)
+                        .compose(receipt -> {
+                            if (receipt.outcome() != CorrelatedSignalReceipt.Outcome.RECORDED)
+                                return Future.failedFuture("reply was not recorded");
+                            // Simulate a previously parked delivery after real admission and queue allocation.
+                            return tx.preparedQuery("UPDATE workflow_commands SET state = 'PARKED' "
+                                            + "WHERE workflow_id = $1 AND kind = 'SIGNAL' AND state = 'PENDING' "
+                                            + "AND target_json->>'waitId' = $2")
+                                    .execute(Tuple.of(id.value(), waitId.toString()))
+                                    .compose(rows -> rows.rowCount() == 1
+                                            ? Future.succeededFuture(RecorderResult.empty())
+                                            : Future.failedFuture("expected one recorded reply"));
+                        })
+                        .eventually(() -> {
+                            scope.close();
+                            return Future.succeededFuture();
+                        });
+            } catch (Throwable e) {
+                scope.close();
+                return Future.failedFuture(e);
+            }
         }
     }
 }
