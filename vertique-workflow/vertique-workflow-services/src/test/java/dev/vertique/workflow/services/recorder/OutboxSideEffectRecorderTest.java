@@ -497,7 +497,7 @@ class OutboxSideEffectRecorderTest {
         var parsed = ReplyHandle.parse(first.headers().get("x-outbox-reply-handle"));
         assertThat(parsed.instanceId()).isEqualTo(id.value());
         assertThat(parsed.waitId()).isEqualTo(waitId);
-        assertThat(first.aggregateId()).isNull();
+        assertThat(first.aggregateId()).isEqualTo(id.value().toString());
         assertThat(first.headers()).doesNotContainKey("x-outbox-reply-mode");
         assertThat(entries.getAllValues().get(1).headers())
                 .containsEntry("x-outbox-reply-handle", first.headers().get("x-outbox-reply-handle"))

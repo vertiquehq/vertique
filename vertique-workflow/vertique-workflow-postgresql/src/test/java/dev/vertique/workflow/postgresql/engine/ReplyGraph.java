@@ -66,6 +66,7 @@ final class ReplyGraph implements AutoCloseable {
         final java.util.concurrent.ConcurrentMap<String, AtomicInteger> perReference =
                 new java.util.concurrent.ConcurrentHashMap<>();
         volatile Promise<Reserved> held;
+        volatile Promise<Reserved> heldGood;
         volatile Promise<Reserved> heldSecond;
 
         final jakarta.inject.Provider<OutboxReplies> replies;
@@ -83,6 +84,7 @@ final class ReplyGraph implements AutoCloseable {
             int number = perReference
                     .computeIfAbsent(request.reference(), ignored -> new AtomicInteger())
                     .incrementAndGet();
+            if (heldGood != null && request.reference().equals("good")) return heldGood.future();
             if (held != null && heldSecond != null && number > 1) return heldSecond.future();
             if (held != null && (!request.reference().equals("failure-then-success") || number == 1))
                 return held.future();
@@ -367,6 +369,54 @@ final class ReplyGraph implements AutoCloseable {
         }
     }
 
+    static final class FailedForkDefinition implements WorkflowDefinition<State, Contract> {
+        public Class<Contract> contract() {
+            return Contract.class;
+        }
+
+        public Class<State> stateType() {
+            return State.class;
+        }
+
+        public String definitionId() {
+            return "service-reply-failed-fork";
+        }
+
+        public long definitionVersion() {
+            return 1;
+        }
+
+        public void define(WorkflowBuilder<State> wf) {
+            wf.init(Start.class, start -> new State(start.reference(), null)).initialStep("fork");
+            wf.fork("fork").branch("a", "bad").branch("b", "good").join("join");
+            wf.call("bad", "inventory.reserve", state -> new Start("permanent"))
+                    .onReply(Reserved.class, (state, reply) -> state)
+                    .toStepOnReply("a-done")
+                    .onFailure()
+                    .toStepOnFailure("a-fail")
+                    .build();
+            wf.call("good", "inventory.reserve", state -> new Start("good"))
+                    .compensateWith("undo-good")
+                    .onReply(Reserved.class, (state, reply) -> state)
+                    .toStepOnReply("b-done")
+                    .onFailure()
+                    .toStepOnFailure("b-fail")
+                    .build();
+            wf.complete("a-done");
+            wf.fail("a-fail", "FAILED", state -> "failed");
+            wf.complete("b-done");
+            wf.complete("b-fail");
+            wf.compensate("undo-good", "good", "inventory.ack", state -> new Start("undo"));
+            wf.join("join")
+                    .allRequired((state, results) -> state)
+                    .toStep("done")
+                    .onFailure("fork-failed")
+                    .endJoin();
+            wf.fail("fork-failed", "FORK_FAILED", state -> "fork failed");
+            wf.complete("done");
+        }
+    }
+
     static final class LaterDefinition implements WorkflowDefinition<State, Contract> {
         private final long version;
 
@@ -526,6 +576,7 @@ final class ReplyGraph implements AutoCloseable {
                 registry.register(new LaterDefinition(1));
                 registry.register(new LaterDefinition(2));
                 registry.register(new ForkDefinition());
+                registry.register(new FailedForkDefinition());
                 registry.register(new TimedDefinition());
                 registry.register(new LongTimedDefinition());
                 registry.register(new VoidDefinition());

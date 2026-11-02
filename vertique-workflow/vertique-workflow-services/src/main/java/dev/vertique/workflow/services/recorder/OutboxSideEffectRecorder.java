@@ -155,10 +155,7 @@ public final class OutboxSideEffectRecorder implements WorkflowSideEffectRecorde
                 .destination(target.targetId())
                 .eventType(target.operation())
                 .aggregateType("WorkflowInstance")
-                .aggregateId(
-                        intent.correlation().reply() == null
-                                ? intent.correlation().workflowId().value().toString()
-                                : null)
+                .aggregateId(intent.correlation().workflowId().value().toString())
                 .payload(intent.payload())
                 .headers(mergeHeaders(intentHeaders, intent.correlation()))
                 .scopeKey(intent.correlation().scopeKey())

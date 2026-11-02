@@ -74,7 +74,7 @@ All destination-type ids and target values are bound as prepared-statement param
 
 The read path uses `DestinationType.of(...)` (lenient factory) when mapping rows from the database — an unrecognised but well-formed `destination_type` value maps cleanly rather than throwing.
 
-**Aggregate head-of-line ordering:** When one entry for a given `aggregateId` is in `PROCESSING`, later entries for the same aggregate are excluded from claim. Different aggregates may proceed concurrently.
+**Aggregate ordering:** A row waits for every earlier `PENDING` or `PROCESSING` row of the same aggregate, except that two rows carrying `x-outbox-reply-handle` do not block each other. Thus reply rows run together, but wait behind earlier plain rows, and later plain rows wait for all earlier reply rows. Different aggregates and null aggregates may proceed concurrently. Availability and destination eligibility do not remove a blocker.
 
 **Sharp edge — unregistered destination types:** A destination type with no registered handler/scope stays `PENDING` indefinitely. Because of the per-aggregate head-of-line subquery, an unclaimable-type row at an aggregate HEAD (the lowest id among `PENDING`/`PROCESSING` for that `aggregate_id`) blocks younger claimable siblings of the same aggregate until that type's handler and claim scope are registered. This is intentional ordering behavior, not a bug.
 

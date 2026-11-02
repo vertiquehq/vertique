@@ -231,7 +231,7 @@ Applications normally provide service contracts and destination handlers; this m
 - **inbox-outbox-core** - outbox and inbox APIs; a signal source writes its inbox rows through `InboxService`.
 - **vertx-sql-client** - `SqlClient` appears in public integration signatures.
 
-When a service intent names a reply wait, the outbox recorder accepts a value-returning target, writes its opaque wait handle on the row, and leaves the aggregate ID empty so the row uses unordered claiming. A call that completes later also carries its completion mode. An ordinary dispatch continues to require a void target.
+When a service intent names a reply wait, the outbox recorder accepts a value-returning target, writes its opaque wait handle on the row, and uses the workflow instance ID as its aggregate ID. A call that completes later also carries its completion mode. An ordinary dispatch continues to require a void target. Reply rows of an instance run alongside each other, wait behind earlier plain rows, and hold later plain rows, including compensation, until they settle. A reply row deferred because no node has the consumer also holds later plain rows. This is a delivery barrier, not proof of business completion: a `completesLater` call releases it when accepted.
 
 A reply call is recorded by the in-process reply consumer in a separate transaction under the internal system identity, with the outbox correlation and provenance. A closed wait settles its row without another service call; a duplicate also settles without recording again. A reply that cannot be recorded as a payload takes the failure route with `REPLY_REFUSED`.
 

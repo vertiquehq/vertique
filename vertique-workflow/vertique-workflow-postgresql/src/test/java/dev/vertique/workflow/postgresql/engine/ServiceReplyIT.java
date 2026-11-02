@@ -89,6 +89,12 @@ class ServiceReplyIT {
             assertThat(ReplyGraph.json(run.instance(noValue), "state_json").getString("result"))
                     .isEqualTo("acknowledged");
             assertThat(run.graph.inventoryProbe().ackCalls).hasValue(1);
+        }
+    }
+
+    @Test
+    void siblingCallProceedsWhileOtherBranchRetries(Vertx vertx) {
+        try (ReplyGraph run = new ReplyGraph(vertx, db)) {
             WorkflowInstanceId fork = run.start("service-reply-fork", "fork");
             run.until("the healthy branch to complete while its sibling retries", () -> !run.rows(
                             "SELECT id FROM workflow_branch_tokens WHERE workflow_id = $1 AND branch_id = 'b' AND status = 'COMPLETED'",
@@ -103,9 +109,56 @@ class ServiceReplyIT {
                             fork.value().toString())
                     .getFirst();
             assertThat(failed.getLong("id")).isLessThan(healthy.getLong("id"));
+            assertThat(failed.getString("aggregate_id")).isEqualTo(fork.value().toString());
+            assertThat(healthy.getString("aggregate_id")).isEqualTo(fork.value().toString());
             assertThat(failed.getInteger("attempt")).isLessThan(failed.getInteger("max_attempts"));
             assertThat(healthy.getString("state")).isEqualTo("PUBLISHED");
             assertThat(run.signals(fork)).hasSize(1);
+        }
+    }
+
+    @Test
+    void failedForkWaitsForForwardDeliveryBeforeCompensation(Vertx vertx) {
+        try (ReplyGraph run = new ReplyGraph(vertx, db, 60_000)) {
+            run.graph.inventoryProbe().heldGood = Promise.promise();
+            WorkflowInstanceId id = run.start("service-reply-failed-fork", "fork-barrier");
+            run.until(
+                    "good forward in flight",
+                    () -> run.graph
+                                    .inventoryProbe()
+                                    .perReference
+                                    .getOrDefault("good", new java.util.concurrent.atomic.AtomicInteger())
+                                    .get()
+                            > 0);
+            run.until("compensation recorded after failed join", () -> !run.rows(
+                            "SELECT id FROM outbox WHERE headers->>'x-workflow-id' = $1 AND destination = 'inventory.ack'",
+                            id.value().toString())
+                    .isEmpty());
+            assertThat(run.rows(
+                                    "SELECT status FROM workflow_branch_tokens WHERE workflow_id = $1 AND branch_id = 'a'",
+                                    id.value())
+                            .getFirst()
+                            .getString("status"))
+                    .isEqualTo("FAILED");
+            assertThat(run.rows("SELECT status FROM workflow_join_states WHERE workflow_id = $1", id.value())
+                            .getFirst()
+                            .getString("status"))
+                    .isEqualTo("FAILED");
+            var forward = run.rows(
+                            "SELECT state FROM outbox WHERE headers->>'x-workflow-id' = $1 AND payload->>'reference' = 'good'",
+                            id.value().toString())
+                    .getFirst();
+            assertThat(forward.getString("state")).isEqualTo("PROCESSING");
+            assertThat(run.graph.inventoryProbe().ackCalls).hasValue(0);
+            run.graph.inventoryProbe().heldGood.complete(new ReplyGraph.Reserved("ok"));
+            run.until("forward terminal", () -> "PUBLISHED"
+                    .equals(run.rows(
+                                    "SELECT state FROM outbox WHERE headers->>'x-workflow-id' = $1 AND payload->>'reference' = 'good'",
+                                    id.value().toString())
+                            .getFirst()
+                            .getString("state")));
+            run.until(
+                    "undo delivered", () -> run.graph.inventoryProbe().ackCalls.get() == 1);
         }
     }
 
