@@ -415,7 +415,7 @@ the operation, as described under `WorkflowContextBinder`.
   deterministically (an invalid payload, or a callback or definition failure), or when it runs more nodes than
   `workflow.executor.maxStepsPerSegment` (reason `STEP_LIMIT`). The savepoint is rolled back, so the instance, its version and its
   wait are unchanged;
-- a branch-addressed signal for a branch that was superseded or ended, or for an ended instance, is `STALE`.
+- a branch-addressed signal for a branch that was superseded or ended, or for an ended instance, is `STALE`; a recorded reply reaching a completed, compensated or expired instance is also `STALE`.
 - a signal delivered by key carries the `wait_id` of the wait entry it matched in its target, and is compared against the open wait records before
   the `FAILED` test: it applies only while that exact entry is open, and is `STALE` (reason `WAIT_ENTRY_CLOSED`) when no wait is open with that
   `wait_id`, on a live and on a `FAILED` instance alike. See "Wait Records And Delivery By Key".
@@ -489,13 +489,13 @@ settlement finds nothing to settle and writes nothing, and a deferral or a failu
 failing. A signal, completion or retry recorded while a cancel waits for the lock is refused once the lock is free, or was recorded
 first and is cancelled with the rest.
 
-`EndedInstanceOutcomes` is the one place that decides what becomes of a command that meets an instance that has ended or failed, in
-the executor's claim and in the segment of every kind:
+`EndedInstanceOutcomes` provides the common outcomes for a command that meets an instance that has ended or failed. The claim path also handles recorded replies:
 
 | Command | `FAILED` | `COMPLETED`, `COMPENSATED`, `EXPIRED` | `CANCELLED` |
 | --- | --- | --- | --- |
 | signal (instance-addressed) | parked | rejected | cancelled |
 | signal (branch-addressed) | stale if its branch ended, else parked | stale | cancelled |
+| recorded reply | parked while its wait is open, otherwise stale | stale | cancelled |
 | task completion | rejected, reservation reopened | rejected, task cancelled | cancelled, task cancelled |
 | retry | executes | rejected | cancelled |
 | migration | rejected | rejected | cancelled |
@@ -1158,7 +1158,7 @@ command it peeks on a live instance through `load`, so a node runs a document ve
 - **Pool use.** No transaction takes a second pooled connection for definition data: the loads happen before the claim, and
   the load itself holds a connection only for each short read, so a cold version runs on a pool of two connections.
 
-**Budget.** A resident plan is kept by reference, so `maxEntries` bounds the count of plans, not bytes. The largest plan of the order-fulfillment example, the fan-out definition with 15 nodes, retains about 2.4 KB of heap once built (the
+**Budget.** A resident plan is kept by reference, so `maxEntries` bounds the count of plans, not bytes. The largest plan of the order-fulfillment example, the fan-out definition with 16 nodes, retains about 2.4 KB of heap once built (the
 retained size of 2,000 builds after a full collection, shared classes and the type-name index excluded); the 9-node order definition
 retains about 1.9 KB. The default of 500 plans therefore budgets about 1.2 MB for plans of that size. Measure your own largest document
 the same way before raising the limit: a plan grows with its node count and with the callbacks and schemas it holds, and a plan that is

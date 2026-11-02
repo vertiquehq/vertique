@@ -440,7 +440,7 @@ A signal is recorded when `signal` returns and applied by a segment afterwards, 
 #### Reply steps
 
 A `.call` records a service dispatch and waits for the service result. It requires a reply route and a failure route;
-an optional timeout gives the wait a deadline. The service returns `Future<T>` where `T` is the reply type, or
+an optional timeout gives the wait an overall deadline. The service returns `Future<T>` where `T` is the reply type, or
 `Future<Void>` for a `Void` reply. For example:
 
 ```java
@@ -458,7 +458,8 @@ The node that runs a `.call` target must install `WorkflowServicesModule` and re
 handler records the reply in process. A node that completes a deferred call needs the same module and access.
 
 A plain call must finish within both the service `sendTimeoutMs` and the outbox relay lease. Each defaults to 30,000 ms;
-configure the operation's send timeout below the lease and allow time for recording. The relay defaults to 20 attempts.
+configure the operation's send timeout below the lease and allow time for recording. The relay defaults to 20 attempts,
+with retries running for about an hour. A shorter wait timeout takes the timeout route, not `onFailure`.
 Calls can be delivered more than once after a crash or lease expiry, so make them idempotent. `RETRIES_EXHAUSTED` does
 not prove the service had no effect. For a business result, return it as a value; for a permanent failure, throw an
 exception implementing `OutboxPermanentFailure`. The failure route receives a `ServiceFailure` reason and attempt count,
@@ -477,8 +478,10 @@ success observers alone do not prove delivery.
 
 If a reply cannot be applied, for example because its reducer throws, the instance becomes `FAILED` and the reply parks.
 Its timeout does not run while the instance is failed: an operator must fix the defect and retry the instance. A failed
-fork compensates its failed branch calls. After a failed join, sibling calls can keep running or retrying until their waits
-close or the instance is retried. On the post-join path, a failed or timed-out call is not compensated by the framework.
+fork compensates every non-superseded branch, including siblings whose calls are still running or retrying. A sibling row
+stops at its own outcome, when attempts run out, or when the instance ends, for example by cancellation. Its undo can run
+before its forward call finishes, so the undo must tolerate a late forward call. On the post-join path, a completed, failed
+or timed-out branch call is not compensated: branch application writes no `SIGNAL_RECEIVED` entry.
 
 #### Signals from events with a reference
 
@@ -693,6 +696,7 @@ What becomes of a command that meets an instance that has ended or failed:
 |---|---|---|---|
 | signal (instance-addressed) | parked | rejected | cancelled |
 | signal (branch-addressed) | stale if its branch ended, else parked | stale | cancelled |
+| recorded reply | parked while its wait is open, otherwise stale | stale | cancelled |
 | task completion | rejected, task reopened | rejected, task cancelled | cancelled, task cancelled |
 | retry | executes | rejected | cancelled |
 | migration | rejected | rejected | cancelled |
@@ -732,7 +736,7 @@ Every recorded command carries who asked for it (`actor_kind`, `actor_id`, `acto
 Any plan that the registry does not hold, which means every document version, is built by the engine's plan cache from its
 stored row the first time a command needs it. The cache is bounded by `workflow.definitions.cache.maximumEntries` (default 500; see the table below): it
 bounds the number of plans, not bytes, and a remembered failure counts as an entry. A resident plan is held by reference; the largest plan
-of the order-fulfillment example (15 nodes) retains about 2.4 KB, so the default budgets about 1.2 MB for plans of that size. A plan grows with its node count and
+of the order-fulfillment example (16 nodes) retains about 2.4 KB, so the default budgets about 1.2 MB for plans of that size. A plan grows with its node count and
 with the callbacks and schemas it holds, so measure your largest document before you raise the limit. The cache builds one plan per key however many commands ask for it, and the executor holds the plans of a segment until the segment ends so that a plan cannot be evicted under it.
 The cache is sized and expired by `workflow.definitions.cache`: `maximumEntries` (default 500, at least 1) bounds it, and a positive
 `ttlSeconds` drops a plan that long after it was built, so that the next request builds it again (default `0`: no expiry). A key you
