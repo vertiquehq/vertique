@@ -114,6 +114,14 @@ class ServiceReplyIT {
             assertThat(failed.getInteger("attempt")).isLessThan(failed.getInteger("max_attempts"));
             assertThat(healthy.getString("state")).isEqualTo("PUBLISHED");
             assertThat(run.signals(fork)).hasSize(1);
+
+            // Close the retrying wait and let the relay settle its row before the next graph starts.
+            ReplyGraph.await(run.pool.withTransaction(
+                    tx -> run.graph.transactionalOperations().cancel(fork, "test cleanup", tx)));
+            run.until("the fork's outbox rows to settle", () -> run.rows(
+                            "SELECT id FROM outbox WHERE headers->>'x-workflow-id' = $1 AND state IN ('PENDING', 'PROCESSING')",
+                            fork.value().toString())
+                    .isEmpty());
         }
     }
 
