@@ -176,7 +176,7 @@ Relay state machine for outbox rows.
 |-------|-------------|
 | `PENDING` | Waiting for relay to claim |
 | `PROCESSING` | Claimed by relay; publication in progress |
-| `PUBLISHED` | Successfully published to destination |
+| `PUBLISHED` | The handler settled successfully. A correlated service row whose wait closed settles without delivery. |
 | `DEAD_LETTER` | Exhausted attempts or permanent failure |
 
 ### `OutboxEnvelope`

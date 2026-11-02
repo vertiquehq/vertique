@@ -14,6 +14,8 @@ import dev.vertique.inboxoutbox.ClaimScope;
 import dev.vertique.inboxoutbox.DestinationType;
 import dev.vertique.inboxoutbox.OutboxDestinationHandler;
 import dev.vertique.inboxoutbox.OutboxEnvelope;
+import dev.vertique.inboxoutbox.OutboxOutcome;
+import dev.vertique.inboxoutbox.OutboxOutcomeConsumer;
 import dev.vertique.inboxoutbox.OutboxPermanentFailure;
 import dev.vertique.inboxoutbox.OutboxPublishResult;
 import dev.vertique.inboxoutbox.OutboxRelayControl;
@@ -98,6 +100,7 @@ public class ServiceOutboxDestinationHandler implements OutboxDestinationHandler
     private final ServiceRequestSender sender;
     private final DurableContextPropagator propagator;
     private final DispatchEnvelopeBuilder envelopeBuilder;
+    private final Optional<OutboxOutcomeConsumer> consumer;
 
     /**
      * Creates a new handler.
@@ -114,11 +117,13 @@ public class ServiceOutboxDestinationHandler implements OutboxDestinationHandler
             ServiceTargetResolver resolver,
             ServiceRequestSender sender,
             DurableContextPropagator propagator,
-            DispatchEnvelopeBuilder envelopeBuilder) {
+            DispatchEnvelopeBuilder envelopeBuilder,
+            Optional<OutboxOutcomeConsumer> consumer) {
         this.resolver = resolver;
         this.sender = sender;
         this.propagator = propagator;
         this.envelopeBuilder = envelopeBuilder;
+        this.consumer = consumer;
     }
 
     @Override
@@ -162,11 +167,43 @@ public class ServiceOutboxDestinationHandler implements OutboxDestinationHandler
         } catch (IllegalArgumentException e) {
             return Future.succeededFuture(
                     OutboxPublishResult.unresolvable("Unknown service target: " + outboxEnvelope.destination()));
+        } catch (RuntimeException e) {
+            return Future.succeededFuture(OutboxPublishResult.retryable(e.getMessage(), e));
         }
 
+        String handle = outboxEnvelope.headers() == null
+                ? null
+                : outboxEnvelope.headers().get(OutboxOutcomeConsumer.HANDLE_HEADER);
+        if (handle == null) {
+            try {
+                return deliver(outboxEnvelope, target, null);
+            } catch (RuntimeException e) {
+                return Future.succeededFuture(OutboxPublishResult.retryable(e.getMessage(), e));
+            }
+        }
+        if (consumer.isEmpty()) return Future.succeededFuture(OutboxPublishResult.unresolvable("No outcome consumer"));
+        try {
+            return consumer.orElseThrow()
+                    .awaits(handle)
+                    .compose(open -> open
+                            ? deliver(outboxEnvelope, target, handle)
+                            : Future.succeededFuture(OutboxPublishResult.success()))
+                    .recover(e -> Future.succeededFuture(OutboxPublishResult.retryable(e.getMessage(), e)));
+        } catch (RuntimeException e) {
+            return Future.succeededFuture(OutboxPublishResult.retryable(e.getMessage(), e));
+        }
+    }
+
+    private Future<OutboxPublishResult> deliver(
+            OutboxEnvelope outboxEnvelope, ResolvedServiceTarget target, String handle) {
         if (target.meta().oneWay()) {
-            return Future.succeededFuture(OutboxPublishResult.permanent(
-                    "@OneWay operation cannot be used as outbox destination: " + outboxEnvelope.destination(), null));
+            return forwardFailure(
+                    outboxEnvelope,
+                    handle,
+                    Map.of(),
+                    OutboxPublishResult.permanent(
+                            "@OneWay operation cannot be used as outbox destination: " + outboxEnvelope.destination(),
+                            null));
         }
 
         TransactionalMessageContext txCtx = new TransactionalMessageContext(
@@ -190,11 +227,15 @@ public class ServiceOutboxDestinationHandler implements OutboxDestinationHandler
                 deserializedPayload = outboxEnvelope.payload();
             }
         } catch (RuntimeException e) {
-            return Future.succeededFuture(OutboxPublishResult.retryable(
-                    "Outbox payload cannot be decoded to "
-                            + (payloadType != null ? payloadType.getName() : "its stored form")
-                            + " for service target: " + outboxEnvelope.destination(),
-                    e));
+            return forwardFailure(
+                    outboxEnvelope,
+                    handle,
+                    Map.of(),
+                    OutboxPublishResult.retryable(
+                            "Outbox payload cannot be decoded to "
+                                    + (payloadType != null ? payloadType.getName() : "its stored form")
+                                    + " for service target: " + outboxEnvelope.destination(),
+                            e));
         }
 
         // Decode the durable propagation context from the outbox metadata (not from headers) into
@@ -219,9 +260,14 @@ public class ServiceOutboxDestinationHandler implements OutboxDestinationHandler
                     .orElseGet(() -> propagator.decodeToDispatchContext(
                             outboxEnvelope.metadata().context(), BOUNDARY));
         } catch (RuntimeException e) {
-            return Future.succeededFuture(OutboxPublishResult.retryable(
-                    "Outbox dispatch context cannot be decoded for service target: " + outboxEnvelope.destination(),
-                    e));
+            return forwardFailure(
+                    outboxEnvelope,
+                    handle,
+                    Map.of(),
+                    OutboxPublishResult.retryable(
+                            "Outbox dispatch context cannot be decoded for service target: "
+                                    + outboxEnvelope.destination(),
+                            e));
         }
         Map<String, Object> callerOverrides = new java.util.HashMap<>(decodedDurable.size() + 2);
         callerOverrides.putAll(decodedDurable);
@@ -237,9 +283,63 @@ public class ServiceOutboxDestinationHandler implements OutboxDestinationHandler
 
         DispatchEnvelope<?> dispatchEnvelope = envelopeBuilder.build(deserializedPayload, callerOverrides, BOUNDARY);
 
-        return sender.send(target, dispatchEnvelope)
-                .map(this::classifyResult)
-                .recover(err -> Future.succeededFuture(OutboxPublishResult.retryable(err.getMessage(), err)));
+        Future<Result<?>> sent;
+        try {
+            sent = sender.send(target, dispatchEnvelope);
+        } catch (RuntimeException err) {
+            return forwardFailure(
+                    outboxEnvelope, handle, callerOverrides, OutboxPublishResult.retryable(err.getMessage(), err));
+        }
+        return sent.compose(result -> {
+                    OutboxPublishResult classified = classifyResult(result);
+                    if (handle != null
+                            && result.isSuccess()
+                            && !OutboxOutcomeConsumer.MODE_COMPLETES_LATER.equals(
+                                    outboxEnvelope.headers().get(OutboxOutcomeConsumer.MODE_HEADER))) {
+                        OutboxOutcome outcome = new OutboxOutcome.Success(
+                                outboxEnvelope.entryId(),
+                                outboxEnvelope.destination(),
+                                handle,
+                                callerOverrides,
+                                outboxEnvelope.attempt() + 1,
+                                result.get());
+                        try {
+                            return consumer.orElseThrow()
+                                    .onOutcome(outcome)
+                                    .map(classified)
+                                    .recover(err -> Future.succeededFuture(
+                                            OutboxPublishResult.retryable(err.getMessage(), err)));
+                        } catch (RuntimeException err) {
+                            return Future.succeededFuture(OutboxPublishResult.retryable(err.getMessage(), err));
+                        }
+                    }
+                    return forwardFailure(outboxEnvelope, handle, callerOverrides, classified);
+                })
+                .recover(err -> forwardFailure(
+                        outboxEnvelope, handle, callerOverrides, OutboxPublishResult.retryable(err.getMessage(), err)));
+    }
+
+    private Future<OutboxPublishResult> forwardFailure(
+            OutboxEnvelope row, String handle, Map<String, Object> context, OutboxPublishResult result) {
+        if (handle == null) return Future.succeededFuture(result);
+        OutboxOutcome.Failure.Kind kind;
+        if (result instanceof OutboxPublishResult.PermanentFailure) kind = OutboxOutcome.Failure.Kind.PERMANENT;
+        else if (result instanceof OutboxPublishResult.RetryableFailure
+                && row.metadata()
+                        .delivery()
+                        .outbox()
+                        .map(control -> OutboxRelayControl.lastAttempt(row.attempt(), control.maxAttempts()))
+                        .orElse(false)) kind = OutboxOutcome.Failure.Kind.RETRIES_EXHAUSTED;
+        else return Future.succeededFuture(result);
+        try {
+            return consumer.orElseThrow()
+                    .onOutcome(new OutboxOutcome.Failure(
+                            row.entryId(), row.destination(), handle, context, row.attempt() + 1, kind))
+                    .map(result)
+                    .recover(ignored -> Future.succeededFuture(result));
+        } catch (RuntimeException ignored) {
+            return Future.succeededFuture(result);
+        }
     }
 
     // --- Helpers ---

@@ -180,6 +180,94 @@ public class OutboxRelayIT {
                 .onFailure(ctx::failNow);
     }
 
+    @Test
+    void relayProjectsMaximumAttemptsAndDefersWithNoAttemptCost(Vertx vertx, VertxTestContext ctx) {
+        java.util.List<OutboxEnvelope> deliveries = new java.util.concurrent.CopyOnWriteArrayList<>();
+        OutboxDestinationHandler handler = new OutboxDestinationHandler() {
+            public DestinationType destinationType() {
+                return DestinationType.KAFKA;
+            }
+
+            public ClaimScope claimScope() {
+                return ClaimScope.all();
+            }
+
+            public Future<OutboxPublishResult> publish(OutboxEnvelope envelope) {
+                deliveries.add(envelope);
+                return Future.succeededFuture(
+                        deliveries.size() == 1
+                                ? OutboxPublishResult.unresolvable("defer")
+                                : OutboxPublishResult.retryable("retry", null));
+            }
+        };
+        var handlers = OutboxRelay.buildHandlerMap(Set.of(handler));
+        var config = OutboxRelayConfig.builder()
+                .pollingIntervalMs(100L)
+                .backoffBaseDelayMs(1L)
+                .backoffMaxDelayMs(1L)
+                .strategy(RelayStrategy.POLLING)
+                .build();
+        var relay = new OutboxRelay(
+                config,
+                repository,
+                handlers,
+                OutboxRelay.deriveCapabilities(handlers),
+                connectOptions,
+                "relay-it-node");
+        var entry = OutboxEntry.builder()
+                .destinationType(DestinationType.KAFKA)
+                .destination("topic")
+                .eventType("event")
+                .payload(new JsonObject())
+                .maxAttempts(3)
+                .build();
+        pool.withTransaction(tx -> repository.insert(entry, OutboxMetadata.empty(), UUID.randomUUID(), tx))
+                .compose(id -> vertx.deployVerticle(relay).map(deployment -> {
+                    deploymentId = deployment;
+                    return id;
+                }))
+                .onSuccess(id -> pollDeadLetter(vertx, ctx, id, deliveries, 0))
+                .onFailure(ctx::failNow);
+    }
+
+    private void pollDeadLetter(
+            Vertx vertx, VertxTestContext ctx, long id, java.util.List<OutboxEnvelope> deliveries, int polls) {
+        pool.preparedQuery("SELECT state FROM outbox WHERE id = $1")
+                .execute(Tuple.of(id))
+                .onFailure(ctx::failNow)
+                .onSuccess(rows -> {
+                    String state = rows.iterator().next().getString("state");
+                    if ("DEAD_LETTER".equals(state)) {
+                        ctx.verify(() -> {
+                            assertEquals(4, deliveries.size());
+                            assertEquals(
+                                    java.util.List.of(0, 0, 1, 2),
+                                    deliveries.stream()
+                                            .map(OutboxEnvelope::attempt)
+                                            .toList());
+                            for (var envelope : deliveries)
+                                assertEquals(
+                                        3,
+                                        envelope.metadata()
+                                                .delivery()
+                                                .outbox()
+                                                .orElseThrow()
+                                                .maxAttempts());
+                            assertEquals(
+                                    true,
+                                    dev.vertique.inboxoutbox.OutboxRelayControl.lastAttempt(
+                                            deliveries.get(3).attempt(), 3));
+                        });
+                        ctx.completeNow();
+                    } else if (polls >= 200) ctx.failNow("outbox did not reach dead letter");
+                    else
+                        pool.preparedQuery("UPDATE outbox SET available_at = NOW() WHERE id = $1 AND state = 'PENDING'")
+                                .execute(Tuple.of(id))
+                                .onComplete(ignored -> vertx.setTimer(
+                                        50, timer -> pollDeadLetter(vertx, ctx, id, deliveries, polls + 1)));
+                });
+    }
+
     // --- Helpers ---
 
     /**

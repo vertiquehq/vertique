@@ -593,7 +593,12 @@ public class OutboxRelay extends AbstractVerticle {
      */
     OutboxEnvelope buildEnvelope(OutboxRecord record) {
         OutboxRelayControl relayControl = new OutboxRelayControl(
-                record.id(), record.carrierId(), record.eventType(), record.aggregateType(), record.aggregateId());
+                record.id(),
+                record.carrierId(),
+                record.eventType(),
+                record.aggregateType(),
+                record.aggregateId(),
+                record.maxAttempts());
         OutboxDeliveryMetadata delivery = new OutboxDeliveryMetadata(
                 java.util.Optional.of(relayControl),
                 record.metadata().delivery().delayedJob());
@@ -741,7 +746,7 @@ public class OutboxRelay extends AbstractVerticle {
                 yield new Transition(OutboxPublishOutcome.SUCCESS, OutboxEntryDisposition.PUBLISHED, null, null);
             }
             case OutboxPublishResult.RetryableFailure failure -> {
-                boolean exhausted = record.attempt() + 1 >= record.maxAttempts();
+                boolean exhausted = OutboxRelayControl.lastAttempt(record.attempt(), record.maxAttempts());
                 if (exhausted) {
                     log.warn(
                             "OutboxRelay: entryId={} exhausted {} attempts, dead-lettering. Error: {}",
