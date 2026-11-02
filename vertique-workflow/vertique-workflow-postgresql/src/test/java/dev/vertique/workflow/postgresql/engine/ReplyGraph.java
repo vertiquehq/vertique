@@ -10,6 +10,8 @@ import dev.vertique.application.VertiqueApplicationHandle;
 import dev.vertique.core.VertxModule;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.inboxoutbox.OutboxOutcomeConsumer;
+import dev.vertique.inboxoutbox.OutboxReplies;
+import dev.vertique.inboxoutbox.TransactionalMessageContext;
 import dev.vertique.services.ServiceContractContributor;
 import dev.vertique.services.ServiceContractEntries;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamSource;
@@ -53,6 +55,8 @@ final class ReplyGraph implements AutoCloseable {
         Future<Reserved> reserve(Start request);
 
         Future<Void> ack(Start request);
+
+        Future<Void> later(Start request, TransactionalMessageContext context);
     }
 
     @Singleton
@@ -64,8 +68,14 @@ final class ReplyGraph implements AutoCloseable {
         volatile Promise<Reserved> held;
         volatile Promise<Reserved> heldSecond;
 
+        final jakarta.inject.Provider<OutboxReplies> replies;
+        final java.util.concurrent.ConcurrentMap<String, java.util.List<String>> handles =
+                new java.util.concurrent.ConcurrentHashMap<>();
+
         @Inject
-        InventoryProbe() {}
+        InventoryProbe(jakarta.inject.Provider<OutboxReplies> replies) {
+            this.replies = replies;
+        }
 
         @Override
         public Future<Reserved> reserve(Start request) {
@@ -83,6 +93,17 @@ final class ReplyGraph implements AutoCloseable {
             if (request.reference().equals("oversize"))
                 return Future.succeededFuture(new Reserved("x".repeat(300_000)));
             return Future.succeededFuture(new Reserved("reserved-" + request.reference()));
+        }
+
+        @Override
+        public Future<Void> later(Start request, TransactionalMessageContext context) {
+            handles.computeIfAbsent(request.reference(), ignored -> new java.util.concurrent.CopyOnWriteArrayList<>())
+                    .add(context.replyHandle());
+            if (request.reference().equals("early"))
+                return replies.get()
+                        .complete(context.replyHandle(), new Reserved("early"))
+                        .mapEmpty();
+            return Future.succeededFuture();
         }
 
         @Override
@@ -330,6 +351,75 @@ final class ReplyGraph implements AutoCloseable {
         }
     }
 
+    static final class LaterDefinition implements WorkflowDefinition<State, Contract> {
+        private final long version;
+
+        LaterDefinition(long version) {
+            this.version = version;
+        }
+
+        public Class<Contract> contract() {
+            return Contract.class;
+        }
+
+        public Class<State> stateType() {
+            return State.class;
+        }
+
+        public String definitionId() {
+            return "service-reply-later";
+        }
+
+        public long definitionVersion() {
+            return version;
+        }
+
+        public void define(WorkflowBuilder<State> wf) {
+            wf.init(Start.class, start -> new State(start.reference(), null)).initialStep("reserve");
+            wf.call("reserve", "inventory.later", state -> new Start(state.reference()))
+                    .completesLater()
+                    .onReply(Reserved.class, (state, reply) -> new State(state.reference(), reply.value()))
+                    .toStepOnReply("done")
+                    .onFailure((state, failure) ->
+                            new State(state.reference(), failure.reason() + ":" + failure.attempts()))
+                    .toStepOnFailure("failed")
+                    .timeoutAfter(Duration.ofHours(1))
+                    .onTimeout(state -> new State(state.reference(), "timeout"))
+                    .toStepOnTimeout("timed");
+            wf.complete("done");
+            wf.complete("failed");
+            wf.complete("timed");
+        }
+    }
+
+    static final class LaterMigration
+            implements dev.vertique.workflow.migration.WorkflowMigrationHandler<State, State> {
+        public String definitionId() {
+            return "service-reply-later";
+        }
+
+        public long fromDefinitionVersion() {
+            return 1L;
+        }
+
+        public long targetDefinitionVersion() {
+            return 2L;
+        }
+
+        public Class<State> sourceStateType() {
+            return State.class;
+        }
+
+        public Class<State> targetStateType() {
+            return State.class;
+        }
+
+        public dev.vertique.workflow.migration.MigrationResult<State> migrate(
+                State state, dev.vertique.workflow.migration.MigrationContext context) {
+            return dev.vertique.workflow.migration.MigrationResult.continueAt(state, "reserve.reply");
+        }
+    }
+
     @Singleton
     static final class ReplyProbe implements dev.vertique.workflow.ops.ReplyOutcomeObserver {
         final java.util.List<Outcome> outcomes = new java.util.concurrent.CopyOnWriteArrayList<>();
@@ -356,12 +446,20 @@ final class ReplyGraph implements AutoCloseable {
         static WorkflowContributor workflow() {
             return registry -> {
                 registry.register(new Definition());
+                registry.register(new LaterDefinition(1));
+                registry.register(new LaterDefinition(2));
                 registry.register(new ForkDefinition());
                 registry.register(new TimedDefinition());
                 registry.register(new LongTimedDefinition());
                 registry.register(new VoidDefinition());
                 registry.register(new LoopDefinition());
             };
+        }
+
+        @Provides
+        @IntoSet
+        static dev.vertique.workflow.migration.WorkflowMigrationHandler<?, ?> migration() {
+            return new LaterMigration();
         }
 
         @Provides
@@ -383,8 +481,23 @@ final class ReplyGraph implements AutoCloseable {
                     .returnType(Void.class)
                     .param("payload", ParamSource.PAYLOAD, Start.class)
                     .done()
+                    .operation("later")
+                    .method(laterMethod())
+                    .payloadType(Start.class)
+                    .returnType(Void.class)
+                    .param("payload", ParamSource.PAYLOAD, Start.class)
+                    .param("context", ParamSource.DISPATCH_CONTEXT, TransactionalMessageContext.class)
+                    .done()
                     .deploymentOptions(config, "services", "inventory")
                     .build());
+        }
+
+        private static java.lang.reflect.Method laterMethod() {
+            try {
+                return Inventory.class.getMethod("later", Start.class, TransactionalMessageContext.class);
+            } catch (NoSuchMethodException e) {
+                throw new ExceptionInInitializerError(e);
+            }
         }
 
         private static java.lang.reflect.Method ackMethod() {
@@ -411,6 +524,7 @@ final class ReplyGraph implements AutoCloseable {
                 RelayGraph.Shared.class,
                 RelayGraph.Infrastructure.class,
                 ReplyModule.class,
+                dev.vertique.workflow.migration.WorkflowMigrationModule.class,
                 dev.vertique.correlation.CorrelationContextModule.class
             })
     interface ComponentGraph extends RelayGraph.Graph {
@@ -427,6 +541,10 @@ final class ReplyGraph implements AutoCloseable {
         ReplyProbe replyProbe();
 
         Optional<OutboxOutcomeConsumer> outcomeConsumer();
+
+        OutboxReplies replies();
+
+        dev.vertique.workflow.ops.RelayedSignals<io.vertx.sqlclient.SqlClient> relayedSignals();
 
         @Component.Builder
         interface Builder {
@@ -486,6 +604,23 @@ final class ReplyGraph implements AutoCloseable {
         var command = new StartCommand(
                 definition, Contract.class.getName(), new Start(ref), ref, null, null, null, null, null);
         return await(pool.withTransaction(tx -> graph.transactionalOperations().start(command, tx)));
+    }
+
+    WorkflowInstanceId startLater(String ref) {
+        var command = new StartCommand(
+                "service-reply-later", Contract.class.getName(), new Start(ref), ref, null, null, 1L, null, null);
+        return await(pool.withTransaction(tx -> graph.transactionalOperations().start(command, tx)));
+    }
+
+    String storedHandle(String ref, int index) {
+        until(
+                "stored handle",
+                () -> graph.inventoryProbe()
+                                .handles
+                                .getOrDefault(ref, List.of())
+                                .size()
+                        > index);
+        return graph.inventoryProbe().handles.get(ref).get(index);
     }
 
     WorkflowInstanceId startCorrelated(String ref, dev.vertique.core.correlation.CorrelationContext correlation) {

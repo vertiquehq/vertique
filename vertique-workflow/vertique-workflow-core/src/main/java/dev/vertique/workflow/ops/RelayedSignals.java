@@ -6,6 +6,7 @@ package dev.vertique.workflow.ops;
 import dev.vertique.core.context.DurableMetadata;
 import io.vertx.core.Future;
 import jakarta.annotation.Nullable;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -109,5 +110,9 @@ public interface RelayedSignals<TX> {
      */
     default Future<Boolean> waitOpen(WorkflowInstanceId id, UUID waitId, TX tx) {
         return Future.failedFuture(new UnsupportedOperationException("Reply wait lookup is not supported"));
+    }
+    /** Returns the recorded reply outcome name, if this wait already has one. */
+    default Future<Optional<String>> recordedOutcomeName(WorkflowInstanceId id, UUID waitId, TX tx) {
+        return Future.failedFuture(new UnsupportedOperationException("Reply outcome lookup is not supported"));
     }
 }

@@ -285,6 +285,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /** The size and depth bounds a signal's payload and explicit carrier must meet to be recorded. */
     private final RecordTimePayloadValidator recordValidator;
 
+    private final int replyMaxPayloadBytes;
+
     /** The most signals an instance may hold open. */
     private final int maxOpenSignals;
 
@@ -339,6 +341,17 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                     null,
                     tx,
                     () -> recordReply(id, waitId, failure, provenance, true, tx));
+        }
+
+        @Override
+        public Future<java.util.Optional<String>> recordedOutcomeName(
+                WorkflowInstanceId id, java.util.UUID waitId, SqlClient tx) {
+            if (id == null || waitId == null)
+                return Future.failedFuture(new NullPointerException("id and waitId are required"));
+            Future<java.util.Optional<String>> invalid =
+                    WorkflowTransactionClientGuard.reject("recordedOutcomeName", tx);
+            if (invalid != null) return invalid;
+            return commands.recordedReplyName(id, waitId, WorkflowDedupScopes.correlatedKey(waitId.toString()), tx);
         }
 
         @Override
@@ -420,6 +433,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         this.actors = actors;
         this.recorderRouter = recorderRouter;
         this.recordValidator = new RecordTimePayloadValidator(recordingConfig);
+        this.replyMaxPayloadBytes = recordingConfig.maxPayloadBytes();
         this.startPayloadValidation = new StartPayloadValidation(recordValidator);
         this.maxOpenSignals = recordingConfig.maxOpenSignalsPerInstance();
         this.executionProbe = executionProbe;
@@ -701,6 +715,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         this.actors = actors;
         this.recorderRouter = recorders;
         this.recordValidator = new RecordTimePayloadValidator(recordingConfig);
+        this.replyMaxPayloadBytes = recordingConfig.maxPayloadBytes();
         this.startPayloadValidation = new StartPayloadValidation(recordValidator);
         this.definitionReads = definitionReads;
         this.maxOpenSignals = recordingConfig.maxOpenSignalsPerInstance();
@@ -2511,7 +2526,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 SignalWaitRecord wait = found.get();
                 String payloadJson;
                 try {
-                    recordValidator.validate(payload);
+                    dev.vertique.workflow.ops.ReplyPayloadBounds.validate(payload, replyMaxPayloadBytes);
                     payloadJson = payload == null ? null : Json.encode(payload);
                 } catch (WorkflowInvalidPayloadException e) {
                     return Future.failedFuture(e);

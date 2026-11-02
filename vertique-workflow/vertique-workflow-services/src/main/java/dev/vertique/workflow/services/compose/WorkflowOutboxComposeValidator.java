@@ -165,6 +165,10 @@ public final class WorkflowOutboxComposeValidator implements WorkflowDefinitionV
                     "Workflow definition '" + defId + "' v" + defVersion + " step '" + stepId + "' reply type "
                             + reply.payloadTypeName() + " differs from service return type " + rt.getTypeName());
         }
+        if (reply != null && reply.reply().completesLater() && !isVoid) {
+            throw new IllegalStateException("Workflow definition '" + defId + "' v" + defVersion + " step '" + stepId
+                    + "' completes later and must return Future<Void>; got " + rt.getTypeName());
+        }
         if (reply == null && !isVoid) {
             throw new IllegalStateException("Workflow definition '" + defId + "' v" + defVersion + " step '" + stepId
                     + "' references service target '" + targetId + "' which must return Future<Void>; got "

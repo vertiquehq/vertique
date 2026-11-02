@@ -8,18 +8,23 @@ import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.inboxoutbox.OutboxOutcome;
 import dev.vertique.inboxoutbox.OutboxOutcomeConsumer;
+import dev.vertique.inboxoutbox.OutboxReplies;
+import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContexts;
 import dev.vertique.security.SystemIdentities;
 import dev.vertique.security.authz.InvocationOrigin;
+import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import dev.vertique.workflow.exception.WorkflowSignalNoMatchException;
 import dev.vertique.workflow.ops.CorrelatedSignalReceipt;
 import dev.vertique.workflow.ops.RelayedSignals;
 import dev.vertique.workflow.ops.ReplyOutcomeObserver;
+import dev.vertique.workflow.ops.ReplyPayloadBounds;
 import dev.vertique.workflow.ops.ServiceFailure;
 import dev.vertique.workflow.ops.SignalProvenance;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.plan.ReplySignals;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
@@ -34,24 +39,30 @@ import java.util.function.Supplier;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
-final class WorkflowReplyConsumer implements OutboxOutcomeConsumer {
+final class WorkflowReplyConsumer implements OutboxOutcomeConsumer, OutboxReplies {
     private final Provider<RelayedSignals<SqlClient>> signals;
     private final Pool pool;
     private final Vertx vertx;
     private final InboundExecutionContextScope scope;
     private final Set<ReplyOutcomeObserver> observers;
+    private final ContextHolder contextHolder;
+    private final int maxPayloadBytes;
 
     WorkflowReplyConsumer(
             Provider<RelayedSignals<SqlClient>> signals,
             Pool pool,
             Vertx vertx,
             InboundExecutionContextScope scope,
-            Set<ReplyOutcomeObserver> observers) {
+            Set<ReplyOutcomeObserver> observers,
+            ContextHolder contextHolder,
+            WorkflowRecordingConfig recording) {
         this.signals = signals;
         this.pool = pool;
         this.vertx = vertx;
         this.scope = scope;
         this.observers = observers;
+        this.contextHolder = contextHolder;
+        this.maxPayloadBytes = recording.maxPayloadBytes();
     }
 
     @Override
@@ -130,6 +141,95 @@ final class WorkflowReplyConsumer implements OutboxOutcomeConsumer {
                 });
     }
 
+    @Override
+    public Future<Completion> complete(String handle, Object value) {
+        return completeOutcome(handle, value, false);
+    }
+
+    @Override
+    public Future<Completion> fail(String handle) {
+        return completeOutcome(handle, null, true);
+    }
+
+    private Future<Completion> completeOutcome(String text, Object value, boolean failure) {
+        ReplyHandle handle;
+        try {
+            handle = ReplyHandle.parse(text);
+        } catch (RuntimeException e) {
+            return Future.failedFuture(e);
+        }
+        Map<String, Object> values = new HashMap<>();
+        contextHolder
+                .current(SecurityContext.class)
+                .filter(security -> security.identity().actor().type() != PrincipalType.ANONYMOUS)
+                .ifPresent(security -> values.put(SecurityContext.class.getName(), security));
+        WorkflowInstanceId id = new WorkflowInstanceId(handle.instanceId());
+        return bound(
+                        values,
+                        () -> pool.withTransaction(tx -> {
+                            RelayedSignals<SqlClient> ops = signals.get();
+                            SignalProvenance provenance = SignalProvenance.completed();
+                            Future<CorrelatedSignalReceipt> recorded;
+                            try {
+                                if (!failure) ReplyPayloadBounds.validate(value, maxPayloadBytes);
+                                recorded = failure
+                                        ? ops.failWait(
+                                                id,
+                                                handle.waitId(),
+                                                new ServiceFailure(ServiceFailure.Reason.REPORTED, 0),
+                                                provenance,
+                                                tx)
+                                        : ops.signalWait(id, handle.waitId(), value, provenance, tx);
+                            } catch (WorkflowInvalidPayloadException refused) {
+                                recorded = Future.failedFuture(refused);
+                            }
+                            return recorded.compose(receipt -> {
+                                        if (receipt.outcome() == CorrelatedSignalReceipt.Outcome.RECORDED)
+                                            return Future.succeededFuture(new CompletionDecision(
+                                                    Completion.RECORDED, ReplyOutcomeObserver.Outcome.RECORDED));
+                                        return ops.recordedOutcomeName(id, handle.waitId(), tx)
+                                                .compose(name -> {
+                                                    if (name.isEmpty())
+                                                        return Future.failedFuture(new IllegalStateException(
+                                                                "Recorded reply outcome is missing"));
+                                                    boolean same = ReplySignals.isFailure(name.get()) == failure;
+                                                    return Future.succeededFuture(new CompletionDecision(
+                                                            same ? Completion.DUPLICATE : Completion.STALE,
+                                                            same
+                                                                    ? ReplyOutcomeObserver.Outcome.DUPLICATE
+                                                                    : ReplyOutcomeObserver.Outcome.STALE));
+                                                });
+                                    })
+                                    .recover(error -> {
+                                        if (error instanceof WorkflowSignalNoMatchException)
+                                            return Future.succeededFuture(new CompletionDecision(
+                                                    Completion.STALE, ReplyOutcomeObserver.Outcome.STALE));
+                                        if (!failure && error instanceof WorkflowInvalidPayloadException) {
+                                            return ops.failWait(
+                                                            id,
+                                                            handle.waitId(),
+                                                            new ServiceFailure(ServiceFailure.Reason.REPLY_REFUSED, 0),
+                                                            provenance,
+                                                            tx)
+                                                    .map(ignored -> new CompletionDecision(
+                                                            Completion.STALE, ReplyOutcomeObserver.Outcome.REFUSED))
+                                                    .recover(fail -> fail instanceof WorkflowSignalNoMatchException
+                                                            ? Future.succeededFuture(new CompletionDecision(
+                                                                    Completion.STALE,
+                                                                    ReplyOutcomeObserver.Outcome.STALE))
+                                                            : Future.failedFuture(fail));
+                                        }
+                                        return Future.failedFuture(error);
+                                    });
+                        }))
+                .map(result -> {
+                    report(result.outcome());
+                    return result.completion();
+                });
+    }
+
+    private record CompletionDecision(Completion completion, ReplyOutcomeObserver.Outcome outcome) {}
+
     private static ReplyOutcomeObserver.Outcome recordedOutcome(CorrelatedSignalReceipt receipt) {
         return receipt.outcome() == CorrelatedSignalReceipt.Outcome.DUPLICATE
                 ? ReplyOutcomeObserver.Outcome.DUPLICATE
@@ -142,7 +242,7 @@ final class WorkflowReplyConsumer implements OutboxOutcomeConsumer {
         ContextInternal duplicate = captured.unwrap().duplicate();
         duplicate.runOnContext(ignored -> {
             Map<String, Object> values = new HashMap<>(input);
-            values.put(
+            values.putIfAbsent(
                     SecurityContext.class.getName(),
                     SecurityContexts.system(SystemIdentities.internal("outbox reply")));
             values.put(InvocationOrigin.class.getName(), InvocationOrigin.of("outbox"));

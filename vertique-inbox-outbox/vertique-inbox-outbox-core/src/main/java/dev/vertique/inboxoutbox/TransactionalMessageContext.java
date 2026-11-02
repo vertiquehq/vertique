@@ -76,4 +76,8 @@ public record TransactionalMessageContext(
         headers = headers != null ? Map.copyOf(headers) : Map.of();
         scopeKey = ScopeKey.orDefault(scopeKey);
     }
+    /** Returns the opaque reply handle carried by the row, or null when it has none. */
+    public @Nullable String replyHandle() {
+        return headers.get(OutboxOutcomeConsumer.HANDLE_HEADER);
+    }
 }

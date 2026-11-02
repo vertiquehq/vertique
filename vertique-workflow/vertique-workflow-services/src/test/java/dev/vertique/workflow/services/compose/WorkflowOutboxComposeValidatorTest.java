@@ -244,6 +244,48 @@ class WorkflowOutboxComposeValidatorTest {
                 .isInstanceOf(IllegalStateException.class);
     }
 
+    @Test
+    void completesLaterRefusesAValueTarget() {
+        var names = new DefaultWorkflowTypeNames();
+        names.add(null, List.of(String.class));
+        var value = new WorkflowOutboxComposeValidator(
+                serviceHandlers(),
+                fixedResolver("test.target", buildTarget("test.target", false, String.class, 1)),
+                names);
+        var empty = new WorkflowOutboxComposeValidator(
+                serviceHandlers(),
+                fixedResolver("test.target", buildTarget("test.target", false, Void.class, 1)),
+                names);
+        var plan = planWithLaterReply(String.class);
+        assertThatThrownBy(() -> value.validate(candidate(plan)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("dispatch-step");
+        assertThatCode(() -> empty.validate(candidate(plan))).doesNotThrowAnyException();
+    }
+
+    private static WorkflowPlan planWithLaterReply(Class<?> type) {
+        return new WorkflowPlan(
+                "compose-test-def",
+                1L,
+                "00000000",
+                "java.lang.String",
+                "dispatch-step",
+                List.of(
+                        new ServiceDispatchNode("dispatch-step", "test.target", new CallbackId("p"), null, "wait"),
+                        new WaitSignalNode(
+                                "wait",
+                                "vertique.reply.ok.dispatch-step",
+                                type.getName(),
+                                new CallbackId("update"),
+                                "done",
+                                null,
+                                null,
+                                new WaitSignalNode.ReplyWait(
+                                        "dispatch-step", "vertique.reply.failed.dispatch-step", null, "done", true)),
+                        new CompleteNode("done")),
+                null);
+    }
+
     @WorkflowType("reservation")
     private record Reservation(String value) {}
 

@@ -1111,6 +1111,19 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     }
 
     @Override
+    public Future<Optional<String>> recordedReplyName(
+            WorkflowInstanceId instance, UUID waitId, String dedupKey, SqlClient tx) {
+        String sql = "SELECT target_json->>'name' AS name FROM " + eligibility.commandsTable()
+                + " WHERE workflow_id = $1 AND kind = 'SIGNAL' AND dedup_key = $2 AND target_json->>'waitId' = $3 LIMIT 1";
+        return tx.preparedQuery(sql)
+                .execute(Tuple.of(instance.value(), dedupKey, waitId.toString()))
+                .map(rows -> rows.iterator().hasNext()
+                        ? Optional.ofNullable(rows.iterator().next().getString("name"))
+                        : Optional.<String>empty())
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands recordedReplyName")));
+    }
+
+    @Override
     public Future<Long> recordRetry(WorkflowInstanceId instance, CommandActor actor, SqlClient tx) {
         return recordRecovery(instance, "RETRY", null, actor, tx, "recordRetry");
     }

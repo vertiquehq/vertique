@@ -1214,3 +1214,7 @@ Behaviors that are load-bearing for correct use and not obvious from method sign
 - **db-core** - `PageCursor` and `PagedResult` used by task and workflow query APIs.
 
 `ReplyOutcomeObserver` is an internal observer of recorded, duplicate, stale and refused reply outcomes. It carries no payload or handle.
+
+`RelayedSignals.recordedOutcomeName` reads the previously recorded name for a reply wait, including after it closes; its default fails with `UnsupportedOperationException`. `SignalProvenance.completed()` identifies an in-process completion without an outbox entry.
+
+`ReplyPayloadBounds` is an internal shared check for the configured encoded-size and depth bounds; it carries no submitted value in a refusal.

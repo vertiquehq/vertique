@@ -76,4 +76,8 @@ public record SignalProvenance(String transport, String source, Map<String, Stri
                 "reply",
                 Map.of("target", Objects.requireNonNull(targetId), "entryId", Long.toString(entryId)));
     }
+    /** Describes a completion submitted through the in-process reply API. */
+    public static SignalProvenance completed() {
+        return new SignalProvenance("outbox", "completed", Map.of());
+    }
 }

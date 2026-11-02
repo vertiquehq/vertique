@@ -315,7 +315,7 @@ The record is the canonical six-component form with `scopeKey` last; a public fi
 
 ### Framework seams
 
-`OutboxBackoff`, `RelayStrategy`, `OutboxDeliveryMetadata`, `OutboxPermanentFailure`,
+`OutboxBackoff`, `RelayStrategy`, `OutboxDeliveryMetadata`,
 `DelayedJobControl`, `OutboxRelayControl`, and `TransactionalMessagingModule` are public for the
 inbox-outbox adapters and sibling framework modules; their Javadoc marks them INTERNAL and they are
 outside this module's compatibility promise. Applications install the store adapter module
@@ -528,3 +528,11 @@ inbox-outbox-core  <--  inbox-outbox-postgresql  (persistence + relay verticle)
                    <--  inbox-outbox-delayed-job  (DELAYED_JOB adapter)
                    <--  inbox-outbox-kafka        (KAFKA adapter)
 ```
+
+### Completing an accepted service call
+
+A service handling a call that completes later reads `TransactionalMessageContext.replyHandle()` and stores the latest handle with its work. The handle is a bearer value: anyone holding it can complete that one wait, so protect it when sending or storing it outside the application. It survives a restart. A migration can issue a new handle; retain the latest one.
+
+Inject `OutboxReplies` and call `complete(handle, value)` or `fail(handle)` when the work ends. `RECORDED` means the outcome was recorded; `DUPLICATE` means the same outcome was already recorded, and `STALE` means the wait ended, a different outcome won, or the value was refused. An invalid handle fails with `IllegalArgumentException` without echoing the handle. A refused value records a `REPLY_REFUSED` failure when the wait remains open. The service's initial successful return settles the outbox row without completing the wait.
+
+A service exception implementing `OutboxPermanentFailure` is classified as permanent and dead-lettered without further attempts.
