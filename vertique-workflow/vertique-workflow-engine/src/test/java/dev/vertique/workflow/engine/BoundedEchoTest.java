@@ -147,6 +147,7 @@ class BoundedEchoTest {
                 WorkflowContextBinder.noop(),
                 null,
                 null,
+                null,
                 new SignalWaits(
                         EmptySignalWaits.create(),
                         new EmptyCommandRepository(),

@@ -37,8 +37,9 @@ class ReplyApplicationFailureIT {
 
     @Test
     void replyThatFailsToApplyParksAndRetryAppliesIt() throws Exception {
-        for (String variant : List.of("reply", "failure", "unbound")) {
-            try (ReplyStepFixture f = ReplyStepFixture.open(db.toPoolConfig(), Mode.APPLY_FAILURE)) {
+        for (String variant : List.of("reply", "failure", "unbound", "timed")) {
+            try (ReplyStepFixture f = ReplyStepFixture.open(
+                    db.toPoolConfig(), variant.equals("timed") ? Mode.TIMED_APPLY_FAILURE : Mode.APPLY_FAILURE)) {
                 Node node = f.node().build();
                 WorkflowInstanceId id = ready(f, node);
                 var before = f.fixture.instanceOf(id);
@@ -53,6 +54,7 @@ class ReplyApplicationFailureIT {
                 node.awaitIdle(id);
                 assertThat(f.targets(id)).doesNotContain("undo.first");
                 assertParked(f, id, wait, before, beforeWaitColumns);
+                if (variant.equals("timed")) assertThat(f.fixture.historyOf(id)).doesNotContain("TIMER_CANCELLED");
                 assertThat(f.fixture.workflowEvents)
                         .anyMatch(e -> e.workflowId().equals(id) && e.eventType() == WorkflowEventType.WORKFLOW_FAILED);
                 node.stopExecutor();
@@ -96,9 +98,23 @@ class ReplyApplicationFailureIT {
             node.startExecutor();
             node.awaitIdle(id);
             assertParked(f, id, wait, before, beforeWaitColumns);
+            await(f.fixture
+                    .observer()
+                    .preparedQuery(
+                            "UPDATE workflow_commands SET actor_kind = 'SYSTEM', actor_reason = 'reply test', attribution_status = 'VERIFIED' WHERE workflow_id = $1 AND kind = 'SIGNAL'")
+                    .execute(Tuple.of(id.value())));
             f.retry(node, id);
             node.awaitIdle(id);
             assertParked(f, id, wait, before, beforeWaitColumns);
+            Row failureActor = await(f.fixture
+                            .observer()
+                            .preparedQuery(
+                                    "SELECT actor_kind, actor_reason FROM workflow_history WHERE workflow_id = $1 AND entry_type = 'FAILED' ORDER BY sequence DESC LIMIT 1")
+                            .execute(Tuple.of(id.value())))
+                    .iterator()
+                    .next();
+            assertThat(failureActor.getString("actor_kind")).isEqualTo("SYSTEM");
+            assertThat(failureActor.getString("actor_reason")).isEqualTo("reply test");
             assertThat(f.fixture.workflowEvents.stream()
                             .filter(e ->
                                     e.workflowId().equals(id) && e.eventType() == WorkflowEventType.WORKFLOW_FAILED))
@@ -124,11 +140,7 @@ class ReplyApplicationFailureIT {
                 assertThat(f.targets(id)).containsExactlyInAnyOrder("service.first", "inventory.reserve");
                 assertThat(f.intents(id)).hasSize(2);
                 assertThat(f.fixture.historyTextsOf(id)).noneMatch(s -> s.contains("next-call") || s.contains("spin-"));
-                assertThat(error(f, id))
-                        .isEqualTo(
-                                mode == Mode.STEP_LIMIT
-                                        ? CommandErrors.signalStepLimit(ReplyStepFixture.REPLY, 50)
-                                        : CommandErrors.signalFailure(ReplyStepFixture.REPLY));
+                assertThat(error(f, id)).isEqualTo(CommandErrors.replyFailure());
             }
         }
     }
@@ -146,7 +158,7 @@ class ReplyApplicationFailureIT {
             node.startExecutor();
             node.awaitIdle(id);
             assertThat(f.fixture.instanceOf(id).status()).isEqualTo("FAILED");
-            assertThat(error(f, id)).isEqualTo(CommandErrors.signalFailure("vertique.reply.failed.reserve"));
+            assertThat(error(f, id)).isEqualTo(CommandErrors.replyFailure());
             assertThat(waitColumns(f, id)).isEqualTo(waitColumns);
             assertThat(f.fixture.historyTextsOf(id)).noneMatch(s -> s.contains("SECRET-77"));
             assertThat(f.fixture.logged(Level.INFO))
@@ -170,6 +182,26 @@ class ReplyApplicationFailureIT {
                     .map(row -> row.getString("entry"))
                     .toList();
             assertThat(history).noneMatch(entry -> entry.contains("SECRET-77") || entry.contains("\"reason\""));
+        }
+    }
+
+    @Test
+    void failMessageExceptionDoesNotExposeItsTextOnReplyRoute() {
+        try (ReplyStepFixture f = ReplyStepFixture.open(db.toPoolConfig(), Mode.FAIL_MESSAGE_THROWS)) {
+            Node node = f.node().build();
+            var id = f.startCall(node);
+            node.startExecutor();
+            node.awaitIdle(id);
+            node.stopExecutor();
+            f.failWait(node, id, f.waitRecords(id).getFirst().waitId(), FAILURE);
+            node.startExecutor();
+            node.awaitIdle(id);
+            assertThat(error(f, id)).contains("java.lang.IllegalStateException").doesNotContain("SECRET-77");
+            assertThat(f.fixture.historyTextsOf(id)).noneMatch(text -> text.contains("SECRET-77"));
+            assertThat(VertiqueJson.mapper()
+                            .valueToTree(f.fixture.workflowEvents)
+                            .toString())
+                    .doesNotContain("SECRET-77");
         }
     }
 

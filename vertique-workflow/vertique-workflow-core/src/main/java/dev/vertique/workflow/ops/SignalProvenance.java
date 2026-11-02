@@ -65,6 +65,11 @@ public record SignalProvenance(String transport, String source, Map<String, Stri
                         "messageHash", Objects.requireNonNull(messageHash, "messageHash")));
     }
 
+    /** Describes an outbox reply without its payload or headers.
+     * @param targetId service target
+     * @param entryId outbox entry id
+     * @return reply provenance
+     */
     public static SignalProvenance outbox(String targetId, long entryId) {
         return new SignalProvenance(
                 "outbox",

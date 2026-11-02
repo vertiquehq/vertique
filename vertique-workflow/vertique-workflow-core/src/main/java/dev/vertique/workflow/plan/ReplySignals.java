@@ -27,6 +27,10 @@ public final class ReplySignals {
         return name.startsWith(PREFIX);
     }
 
+    public static boolean isFailure(String name) {
+        return name.startsWith(FAILED);
+    }
+
     public static String failureNameFor(String name) {
         return FAILED + name.substring(OK.length());
     }

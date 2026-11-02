@@ -47,6 +47,7 @@ import java.security.NoSuchAlgorithmException;
  */
 public final class WorkflowDedupScopes {
 
+    /** Namespace shared by both outcomes of a reply wait. */
     public static final String REPLY_NAMESPACE = "workflow.reply";
 
     /** Persisted {@code workflow_dedup.kind} value for branch service-dispatch idempotency. */

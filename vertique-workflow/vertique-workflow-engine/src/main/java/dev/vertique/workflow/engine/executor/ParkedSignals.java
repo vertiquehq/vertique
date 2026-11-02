@@ -33,7 +33,7 @@ import org.slf4j.LoggerFactory;
  * <ul>
  *   <li>a signal that is deadline-blocked at the wait stays parked;</li>
  *   <li>a signal whose application fails in a way a retry repeats is rolled back to its savepoint and rejected, and the
- *       next one is tried;</li>
+ *       next one is tried; a reply instead stays parked and fails the instance;</li>
  *   <li>before each signal the segment's step count is checked; a signal is applied only while the count is at most half
  *       of the step cap. A signal that would start beyond that budget, and one whose application overruns the cap inside
  *       its savepoint, is not rejected: it is set back to {@code PENDING} with every other signal the wait accepts, at its
@@ -308,11 +308,22 @@ public final class ParkedSignals {
                     contained.kind() == Savepoints.Containment.STEP_LIMIT
                             ? requeue(candidates, index, tx)
                             : ReplySignals.isReserved(signal.signalName())
-                                    ? host.failedReply(command, CommandErrors.signalFailure(signal.signalName()), tx)
+                                    ? failedReply(instance, signal, command, contained.cause(), tx)
                                     : reject(instance, signal, contained.cause(), tx)
                                             .compose(done -> candidates(instance, candidates, index + 1, nextWait, tx));
             });
         });
+    }
+
+    private Future<Void> failedReply(
+            WorkflowInstanceId instance, ParkedSignal signal, SegmentCommand command, Throwable cause, SqlClient tx) {
+        log.warn(
+                "Reply '{}' (command {}) of instance {} failed to apply: {}",
+                signal.signalName(),
+                signal.commandId(),
+                instance.value(),
+                cause.getClass().getName());
+        return host.failedReply(command, CommandErrors.replyFailure(), tx);
     }
 
     private boolean overBudget(SqlClient tx) {

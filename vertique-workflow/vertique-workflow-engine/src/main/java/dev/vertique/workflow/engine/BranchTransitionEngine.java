@@ -944,7 +944,7 @@ final class BranchTransitionEngine {
             Object stateObj = decodeParentState(parentStateJson, rw);
             message = factory.apply(stateObj);
         } catch (Exception e) {
-            message = "fail-message factory threw: " + e.getMessage();
+            message = "fail-message factory threw " + e.getClass().getName();
         }
         Instant now = clock.instant();
         BranchToken failed = new BranchToken(

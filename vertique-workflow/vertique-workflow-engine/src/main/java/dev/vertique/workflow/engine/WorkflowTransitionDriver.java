@@ -641,7 +641,7 @@ final class WorkflowTransitionDriver {
                     rw.callbacks().failMessageFactory(fn.messageFactoryCallbackId());
             errorMessage = factory.apply(stateObj);
         } catch (Exception e) {
-            errorMessage = "failMessageFactory threw: " + e.getMessage();
+            errorMessage = "failMessageFactory threw " + e.getClass().getName();
         }
 
         long prevVersion = inst.version();

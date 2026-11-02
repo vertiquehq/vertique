@@ -89,6 +89,8 @@ final class ReplyStepFixture implements AutoCloseable {
         FORK_LOOP,
         FORK_FAILURE,
         APPLY_FAILURE,
+        TIMED_APPLY_FAILURE,
+        FAIL_MESSAGE_THROWS,
         NEXT_FAILURE,
         STEP_LIMIT,
         DRAIN_STEP_LIMIT,
@@ -500,7 +502,10 @@ final class ReplyStepFixture implements AutoCloseable {
                 wf.complete("done");
                 return;
             }
-            if (mode == Mode.APPLY_FAILURE || mode == Mode.NEXT_FAILURE || mode == Mode.STEP_LIMIT) {
+            if (mode == Mode.APPLY_FAILURE
+                    || mode == Mode.TIMED_APPLY_FAILURE
+                    || mode == Mode.NEXT_FAILURE
+                    || mode == Mode.STEP_LIMIT) {
                 wf.initialStep("first");
                 wf.call("first", "service.first", state -> state.ref())
                         .compensateWith("undo-first")
@@ -510,7 +515,7 @@ final class ReplyStepFixture implements AutoCloseable {
                         .toStepOnFailure("done")
                         .build();
                 wf.compensate("undo-first", "first", "undo.first", state -> state.ref());
-                wf.call("reserve", "inventory.reserve", state -> state.ref())
+                var replyWait = wf.call("reserve", "inventory.reserve", state -> state.ref())
                         .onReply(Reserved.class, (state, value) -> {
                             if (reducerBroken.get()) throw new IllegalStateException("SECRET-77");
                             return new State(
@@ -526,8 +531,15 @@ final class ReplyStepFixture implements AutoCloseable {
                                     (state.reserved() == null ? "" : state.reserved()) + value.reason() + ":"
                                             + value.attempts());
                         })
-                        .toStepOnFailure("failure-route")
-                        .build();
+                        .toStepOnFailure("failure-route");
+                if (mode == Mode.TIMED_APPLY_FAILURE) {
+                    replyWait
+                            .timeoutAfter(java.time.Duration.ofHours(1))
+                            .onTimeout(state -> state)
+                            .toStepOnTimeout("done");
+                } else {
+                    replyWait.build();
+                }
                 if (mode == Mode.NEXT_FAILURE) {
                     wf.call("next-call", "service.next", state -> {
                                 throw new IllegalStateException("SECRET-77");
@@ -577,7 +589,13 @@ final class ReplyStepFixture implements AutoCloseable {
                 } else {
                     wait.build();
                 }
-                wf.timer("failure-route", java.time.Duration.ofHours(1)).toStep("done");
+                if (mode == Mode.FAIL_MESSAGE_THROWS) {
+                    wf.fail("failure-route", "FAILED", state -> {
+                        throw new IllegalStateException("SECRET-77");
+                    });
+                } else {
+                    wf.timer("failure-route", java.time.Duration.ofHours(1)).toStep("done");
+                }
                 wf.timer("after", java.time.Duration.ofHours(1)).toStep("done");
                 wf.complete("done");
                 return;

@@ -123,6 +123,33 @@ class BranchReplyIT {
     }
 
     @Test
+    void failureRecordedBeforeFireHoldsBackDueBranchTimeout() {
+        try (ReplyStepFixture f = ReplyStepFixture.open(db.toPoolConfig(), Mode.FORK_LOOP)) {
+            var node = f.node().build();
+            var id = f.startForkOfTwoCalls(node);
+            node.startExecutor();
+            node.awaitIdle(id);
+            node.stopExecutor();
+            var wait = f.branchWait(id, "a");
+            assertThat(f.failWait(node, id, wait.waitId(), new ServiceFailure(ServiceFailure.Reason.REPORTED, 0))
+                            .outcome())
+                    .isEqualTo(Outcome.RECORDED);
+            var ordering = await(f.fixture
+                            .observer()
+                            .preparedQuery(
+                                    "SELECT s.recorded_at < t.fire_at AS before_fire FROM workflow_commands s JOIN workflow_commands t ON t.workflow_id = s.workflow_id WHERE s.workflow_id = $1 AND s.kind = 'SIGNAL' AND t.kind = 'TIMER' AND t.timer_kind = 'TIMEOUT'")
+                            .execute(Tuple.of(id.value())))
+                    .iterator()
+                    .next();
+            assertThat(ordering.getBoolean("before_fire")).isTrue();
+            f.expireWait(id, "a");
+            node.startExecutor();
+            node.awaitIdle(id);
+            assertThat(f.branch(id, "a")).isEqualTo(new ReplyStepFixture.Branch("COMPLETED", "a-failure"));
+        }
+    }
+
+    @Test
     void reEnteredCallDispatchesAnewAndItsReplyResumes() {
         try (ReplyStepFixture f = ReplyStepFixture.open(db.toPoolConfig(), Mode.FORK_LOOP)) {
             var node = f.node().build();
