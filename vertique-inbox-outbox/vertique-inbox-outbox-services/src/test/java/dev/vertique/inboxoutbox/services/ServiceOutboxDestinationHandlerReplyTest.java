@@ -5,6 +5,9 @@ package dev.vertique.inboxoutbox.services;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -258,6 +261,68 @@ class ServiceOutboxDestinationHandlerReplyTest {
                 OutboxPublishResult.Success.class,
                 h.publish(row(0, true, false)).result());
         verify(sender).send(any(), any());
+    }
+
+    @Test
+    void replyFailuresHideExceptionMessages() {
+        String secret = "SECRET-TOKEN-77";
+        ready();
+        var h = handler(Optional.of(consumer));
+
+        when(sender.send(any(), any()))
+                .thenReturn(Future.succeededFuture(Result.failure(new IllegalStateException(secret))));
+        var serviceFailure = assertInstanceOf(
+                OutboxPublishResult.RetryableFailure.class,
+                h.publish(row(0, true, false)).result());
+        assertFalse(serviceFailure.message().contains(secret));
+        assertTrue(serviceFailure.cause() == null
+                || !String.valueOf(serviceFailure.cause()).contains(secret));
+
+        when(sender.send(any(), any())).thenReturn(Future.succeededFuture(Result.success("reply")));
+        when(consumer.onOutcome(any())).thenReturn(Future.failedFuture(new IllegalStateException(secret)));
+        var recordingFailure = assertInstanceOf(
+                OutboxPublishResult.RetryableFailure.class,
+                h.publish(row(0, true, false)).result());
+        assertFalse(recordingFailure.message().contains(secret));
+        assertTrue(recordingFailure.cause() == null
+                || !String.valueOf(recordingFailure.cause()).contains(secret));
+    }
+
+    @Test
+    void ordinaryFailuresKeepTheirOriginalMessage() {
+        String secret = "SECRET-TOKEN-77";
+        ready();
+        when(sender.send(any(), any()))
+                .thenReturn(Future.succeededFuture(Result.failure(new IllegalStateException(secret))));
+        var ordinaryFailure = assertInstanceOf(
+                OutboxPublishResult.RetryableFailure.class,
+                handler(Optional.of(consumer)).publish(row(0, false, false)).result());
+        assertEquals(secret, ordinaryFailure.message());
+    }
+
+    @Test
+    void synchronousResolverAndWaitErrorsAreRedactedForReplyRows() {
+        String secret = "SECRET-SYNC-77";
+        var h = handler(Optional.of(consumer));
+        var resolverError = new AssertionError(secret);
+        when(resolver.resolve("test.target")).thenThrow(resolverError);
+        var resolverResult = assertInstanceOf(
+                OutboxPublishResult.RetryableFailure.class,
+                h.publish(row(0, true, false)).result());
+        assertFalse(resolverResult.message().contains(secret));
+        assertTrue(resolverResult.cause() == null
+                || !String.valueOf(resolverResult.cause()).contains(secret));
+        assertSame(resolverError, assertThrows(AssertionError.class, () -> h.publish(row(0, false, false))));
+
+        reset(resolver);
+        when(resolver.resolve("test.target")).thenReturn(target);
+        when(consumer.awaits("handle")).thenThrow(new AssertionError(secret));
+        var waitResult = assertInstanceOf(
+                OutboxPublishResult.RetryableFailure.class,
+                h.publish(row(0, true, false)).result());
+        assertFalse(waitResult.message().contains(secret));
+        assertTrue(waitResult.cause() == null
+                || !String.valueOf(waitResult.cause()).contains(secret));
     }
 
     @Test

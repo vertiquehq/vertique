@@ -74,6 +74,28 @@ class OutboxRepliesIT {
     }
 
     @Test
+    void oneShotIterableIsRecordedWithoutLosingItsValues(Vertx vertx) {
+        try (ReplyGraph run = new ReplyGraph(vertx, db)) {
+            WorkflowInstanceId id = run.startLater("one-shot");
+            String handle = run.storedHandle("one-shot", 0);
+            published(run, id);
+            run.pauseExecutor();
+            try {
+                java.util.Iterator<Integer> iterator = java.util.List.of(42).iterator();
+                Iterable<Integer> value = () -> iterator;
+                assertThat(complete(run, handle, value, null, false)).isEqualTo(Completion.RECORDED);
+                var rows = run.rows(
+                        "SELECT payload_json = '[42]'::jsonb AS matches FROM workflow_commands WHERE workflow_id = $1 AND kind = 'SIGNAL'",
+                        id.value());
+                assertThat(rows).singleElement().satisfies(row -> assertThat(row.getBoolean("matches"))
+                        .isTrue());
+            } finally {
+                run.resumeExecutor();
+            }
+        }
+    }
+
+    @Test
     void completionRecordsItsReasonAndItsIdentity(Vertx vertx) {
         try (ReplyGraph run = new ReplyGraph(vertx, db)) {
             WorkflowInstanceId reported = run.startLater("reported");

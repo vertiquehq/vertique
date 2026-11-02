@@ -186,3 +186,5 @@ Include alongside `TransactionalMessagingPostgresqlModule` and `DispatchModule`:
 })
 public interface AppComponent { ... }
 ```
+
+For a service row carrying a reply handle, the outbox handler returns fixed failure text without the exception message or cause; the retry or permanent disposition is unchanged. Ordinary rows retain their existing handler results.

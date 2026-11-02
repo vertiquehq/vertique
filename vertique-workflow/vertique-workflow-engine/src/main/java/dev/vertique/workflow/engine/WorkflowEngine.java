@@ -2526,8 +2526,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 SignalWaitRecord wait = found.get();
                 String payloadJson;
                 try {
-                    dev.vertique.workflow.ops.ReplyPayloadBounds.validate(payload, replyMaxPayloadBytes);
-                    payloadJson = payload == null ? null : Json.encode(payload);
+                    payloadJson = dev.vertique.workflow.ops.ReplyPayloadBounds.encode(payload, replyMaxPayloadBytes);
                 } catch (WorkflowInvalidPayloadException e) {
                     return Future.failedFuture(e);
                 } catch (RuntimeException e) {

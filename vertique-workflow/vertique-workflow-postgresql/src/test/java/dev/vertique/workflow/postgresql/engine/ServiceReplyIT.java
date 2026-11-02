@@ -4,10 +4,15 @@ package dev.vertique.workflow.postgresql.engine;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.inboxoutbox.DestinationType;
+import dev.vertique.inboxoutbox.OutboxEntry;
 import dev.vertique.inboxoutbox.OutboxOutcome;
 import dev.vertique.inboxoutbox.OutboxOutcomeConsumer;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
@@ -23,6 +28,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.slf4j.LoggerFactory;
 
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
@@ -270,6 +276,240 @@ class ServiceReplyIT {
                 run.removeAttemptLimit();
             }
         }
+    }
+
+    @Test
+    void failedReplyNeverLeaksItsHandleOrPayloadInRelayDiagnostics(Vertx vertx) {
+        Logger root = (Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
+        ListAppender<ILoggingEvent> captured = new ListAppender<>();
+        captured.start();
+        root.addAppender(captured);
+        try (ReplyGraph run = new ReplyGraph(vertx, db)) {
+            ReplyGraph.await(run.pool.query("""
+                    CREATE FUNCTION refuse_redaction_reply() RETURNS trigger LANGUAGE plpgsql AS $$
+                    BEGIN
+                        IF NEW.kind = 'SIGNAL' THEN RAISE EXCEPTION 'record interrupted'; END IF;
+                        RETURN NEW;
+                    END $$
+                    """).execute());
+            ReplyGraph.await(run.pool.query("""
+                    CREATE TRIGGER refuse_redaction_reply BEFORE INSERT ON workflow_commands
+                    FOR EACH ROW EXECUTE FUNCTION refuse_redaction_reply()
+                    """).execute());
+            try {
+                WorkflowInstanceId id = run.startLater("redaction");
+                String handle = run.storedHandle("redaction", 0);
+                run.until(
+                        "permanent failure to dead-letter",
+                        () -> run.row(id) != null
+                                && "DEAD_LETTER".equals(run.row(id).getString("state")));
+                assertThat(run.rows("SELECT wait_id FROM workflow_signal_waits WHERE instance_id = $1", id.value()))
+                        .hasSize(1);
+                String lastError = run.row(id).getString("last_error");
+                assertThat(lastError).isNotNull();
+                java.util.List<ILoggingEvent> snapshot;
+                synchronized (captured) {
+                    snapshot = java.util.List.copyOf(captured.list);
+                }
+                String logs = snapshot.stream()
+                        .map(ServiceReplyIT::logText)
+                        .collect(java.util.stream.Collectors.joining("\n"));
+                assertThat(lastError + "\n" + logs).doesNotContain("SECRET-77", handle);
+            } finally {
+                ReplyGraph.await(run.pool
+                        .query("DROP TRIGGER refuse_redaction_reply ON workflow_commands")
+                        .execute());
+                ReplyGraph.await(
+                        run.pool.query("DROP FUNCTION refuse_redaction_reply()").execute());
+            }
+        } finally {
+            root.detachAppender(captured);
+            captured.stop();
+        }
+    }
+
+    @Test
+    void fatalReplyNotifiesSupervisorWithoutLeakingHandleOrPayload(Vertx vertx) {
+        Logger root = (Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
+        ListAppender<ILoggingEvent> captured = new ListAppender<>();
+        captured.start();
+        root.addAppender(captured);
+        try (ReplyGraph run = new ReplyGraph(vertx, db)) {
+            run.startLater("fatal-redaction");
+            String handle = run.storedHandle("fatal-redaction", 0);
+            run.until("fatal error notification", () -> logSnapshot(captured).stream()
+                    .anyMatch(event -> event.getLoggerName().equals("dev.vertique.deploy.VerticleSupervisor")
+                            && event.getFormattedMessage().contains("Fatal error in verticle")));
+            String logs = logSnapshot(captured).stream()
+                    .map(ServiceReplyIT::logText)
+                    .collect(java.util.stream.Collectors.joining("\n"));
+            assertThat(logs).doesNotContain("SECRET-FATAL", handle);
+        } finally {
+            root.detachAppender(captured);
+            captured.stop();
+        }
+    }
+
+    @Test
+    void ordinaryFatalServiceErrorKeepsItsSupervisorNotification(Vertx vertx) {
+        Logger root = (Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
+        ListAppender<ILoggingEvent> captured = new ListAppender<>();
+        captured.start();
+        root.addAppender(captured);
+        try (ReplyGraph run = new ReplyGraph(vertx, db)) {
+            OutboxEntry entry = OutboxEntry.builder()
+                    .destinationType(DestinationType.SERVICE)
+                    .destination("inventory.later")
+                    .eventType("later")
+                    .payload(new ReplyGraph.Start("fatal-ordinary"))
+                    .maxAttempts(1)
+                    .build();
+            ReplyGraph.await(
+                    run.pool.withTransaction(tx -> run.graph.outboxService().publish(tx, entry)));
+            run.until("ordinary fatal error notification", () -> logSnapshot(captured).stream()
+                    .anyMatch(event -> event.getLoggerName().equals("dev.vertique.deploy.VerticleSupervisor")
+                            && event.getFormattedMessage().contains("Fatal error in verticle")));
+            assertThat(logSnapshot(captured).stream()
+                            .filter(event -> event.getLoggerName().equals("dev.vertique.deploy.VerticleSupervisor"))
+                            .map(ServiceReplyIT::logText))
+                    .anyMatch(text -> text.contains("SECRET-ORDINARY"));
+        } finally {
+            root.detachAppender(captured);
+            captured.stop();
+        }
+    }
+
+    @Test
+    void replyInterceptorFailureDoesNotLogHandleOrServiceMessage(Vertx vertx) {
+        Logger root = (Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
+        ListAppender<ILoggingEvent> captured = new ListAppender<>();
+        captured.start();
+        root.addAppender(captured);
+        try (ReplyGraph run = new ReplyGraph(vertx, db)) {
+            run.startLater("callback-reply");
+            String handle = run.storedHandle("callback-reply", 0);
+            run.until("failed interceptor diagnostic", () -> logSnapshot(captured).stream()
+                    .anyMatch(
+                            event -> event.getLoggerName().equals("dev.vertique.services.dispatch.ServiceMethodInvoker")
+                                    && event.getFormattedMessage().contains("afterDispatch interceptor")));
+            String logs = logSnapshot(captured).stream()
+                    .map(ServiceReplyIT::logText)
+                    .collect(java.util.stream.Collectors.joining("\n"));
+            assertThat(logs).doesNotContain("SECRET-CALLBACK", handle);
+        } finally {
+            root.detachAppender(captured);
+            captured.stop();
+        }
+    }
+
+    @Test
+    void ordinaryInterceptorFailureKeepsItsDiagnostic(Vertx vertx) {
+        Logger root = (Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
+        ListAppender<ILoggingEvent> captured = new ListAppender<>();
+        captured.start();
+        root.addAppender(captured);
+        try (ReplyGraph run = new ReplyGraph(vertx, db)) {
+            OutboxEntry entry = OutboxEntry.builder()
+                    .destinationType(DestinationType.SERVICE)
+                    .destination("inventory.later")
+                    .eventType("later")
+                    .payload(new ReplyGraph.Start("callback-ordinary"))
+                    .maxAttempts(1)
+                    .build();
+            ReplyGraph.await(
+                    run.pool.withTransaction(tx -> run.graph.outboxService().publish(tx, entry)));
+            run.until("ordinary failed interceptor diagnostic", () -> logSnapshot(captured).stream()
+                    .anyMatch(
+                            event -> event.getLoggerName().equals("dev.vertique.services.dispatch.ServiceMethodInvoker")
+                                    && event.getFormattedMessage().contains("afterDispatch interceptor")));
+            assertThat(logSnapshot(captured).stream()
+                            .filter(event ->
+                                    event.getLoggerName().equals("dev.vertique.services.dispatch.ServiceMethodInvoker"))
+                            .filter(event -> event.getFormattedMessage().contains("afterDispatch interceptor"))
+                            .map(ServiceReplyIT::logText))
+                    .anyMatch(text -> text.contains("SECRET-CALLBACK"));
+        } finally {
+            root.detachAppender(captured);
+            captured.stop();
+        }
+    }
+
+    @Test
+    void foreignTerminalFailureOnReplyDoesNotLeakValues(Vertx vertx) {
+        Logger root = (Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
+        ListAppender<ILoggingEvent> captured = new ListAppender<>();
+        captured.start();
+        root.addAppender(captured);
+        try (ReplyGraph run = new ReplyGraph(vertx, db)) {
+            run.startLater("foreign-terminal-reply");
+            String handle = run.storedHandle("foreign-terminal-reply", 0);
+            run.until(
+                    "foreign terminal callback",
+                    () -> run.graph.replyProbe().terminalContext.get() != null);
+            assertThat(run.graph.replyProbe().foreignContext.get())
+                    .isNotNull()
+                    .isNotSameAs(run.graph.replyProbe().dispatchContext.get());
+            assertThat(run.graph.replyProbe().terminalContext.get())
+                    .isSameAs(run.graph.replyProbe().dispatchContext.get());
+            run.until("terminal failure diagnostic", () -> logSnapshot(captured).stream()
+                    .anyMatch(event -> (event.getThrowableProxy() != null
+                                    && event.getThrowableProxy().getClassName().equals(AssertionError.class.getName()))
+                            || (event.getLoggerName().equals("dev.vertique.services.dispatch.ServiceMethodInvoker")
+                                    && event.getFormattedMessage().contains("onTerminalComplete interceptor"))));
+            String logs = logSnapshot(captured).stream()
+                    .map(ServiceReplyIT::logText)
+                    .collect(java.util.stream.Collectors.joining("\n"));
+            assertThat(logs).doesNotContain("SECRET-TERMINAL", handle);
+        } finally {
+            root.detachAppender(captured);
+            captured.stop();
+        }
+    }
+
+    @Test
+    void foreignTerminalFailureOnOrdinaryDispatchKeepsDiagnostics(Vertx vertx) {
+        Logger root = (Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
+        ListAppender<ILoggingEvent> captured = new ListAppender<>();
+        captured.start();
+        root.addAppender(captured);
+        try (ReplyGraph run = new ReplyGraph(vertx, db)) {
+            OutboxEntry entry = OutboxEntry.builder()
+                    .destinationType(DestinationType.SERVICE)
+                    .destination("inventory.later")
+                    .eventType("later")
+                    .payload(new ReplyGraph.Start("foreign-terminal-ordinary"))
+                    .maxAttempts(1)
+                    .build();
+            ReplyGraph.await(
+                    run.pool.withTransaction(tx -> run.graph.outboxService().publish(tx, entry)));
+            run.until("ordinary terminal failure diagnostic", () -> logSnapshot(captured).stream()
+                    .map(ServiceReplyIT::logText)
+                    .anyMatch(text -> text.contains("SECRET-TERMINAL")));
+            assertThat(run.graph.replyProbe().foreignContext.get())
+                    .isNotNull()
+                    .isNotSameAs(run.graph.replyProbe().dispatchContext.get());
+            assertThat(run.graph.replyProbe().terminalContext.get())
+                    .isSameAs(run.graph.replyProbe().dispatchContext.get());
+            assertThat(logSnapshot(captured).stream().map(ServiceReplyIT::logText))
+                    .anyMatch(text -> text.contains("SECRET-TERMINAL"));
+        } finally {
+            root.detachAppender(captured);
+            captured.stop();
+        }
+    }
+
+    private static java.util.List<ILoggingEvent> logSnapshot(ListAppender<ILoggingEvent> captured) {
+        synchronized (captured) {
+            return java.util.List.copyOf(captured.list);
+        }
+    }
+
+    private static String logText(ILoggingEvent event) {
+        StringBuilder text = new StringBuilder(event.getFormattedMessage());
+        for (var cause = event.getThrowableProxy(); cause != null; cause = cause.getCause()) {
+            text.append(' ').append(cause.getMessage());
+        }
+        return text.toString();
     }
 
     @Test

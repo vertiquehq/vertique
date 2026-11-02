@@ -22,6 +22,7 @@ public record ReplyHandle(UUID instanceId, UUID waitId) {
      */
     public static ReplyHandle parse(String text) {
         try {
+            if (text == null || text.length() > 73) throw new IllegalArgumentException();
             String[] parts = text.split(":", -1);
             if (parts.length != 2) throw new IllegalArgumentException();
             return new ReplyHandle(UUID.fromString(parts[0]), UUID.fromString(parts[1]));

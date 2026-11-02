@@ -169,24 +169,19 @@ final class WorkflowReplyConsumer implements OutboxOutcomeConsumer, OutboxReplie
                         () -> pool.withTransaction(tx -> {
                             RelayedSignals<SqlClient> ops = signals.get();
                             SignalProvenance provenance = SignalProvenance.completed();
-                            Future<CorrelatedSignalReceipt> recorded;
-                            try {
-                                if (!failure) ReplyPayloadBounds.validate(value, maxPayloadBytes);
-                                recorded = failure
-                                        ? ops.failWait(
-                                                id,
-                                                handle.waitId(),
-                                                new ServiceFailure(ServiceFailure.Reason.REPORTED, 0),
-                                                provenance,
-                                                tx)
-                                        : ops.signalWait(id, handle.waitId(), value, provenance, tx);
-                            } catch (WorkflowInvalidPayloadException refused) {
-                                recorded = Future.failedFuture(refused);
-                            }
+                            Future<CorrelatedSignalReceipt> recorded = failure
+                                    ? ops.failWait(
+                                            id,
+                                            handle.waitId(),
+                                            new ServiceFailure(ServiceFailure.Reason.REPORTED, 0),
+                                            provenance,
+                                            tx)
+                                    : ops.signalWait(id, handle.waitId(), value, provenance, tx);
                             return recorded.compose(receipt -> {
                                         if (receipt.outcome() == CorrelatedSignalReceipt.Outcome.RECORDED)
                                             return Future.succeededFuture(new CompletionDecision(
                                                     Completion.RECORDED, ReplyOutcomeObserver.Outcome.RECORDED));
+                                        if (!failure) ReplyPayloadBounds.validate(value, maxPayloadBytes);
                                         return ops.recordedOutcomeName(id, handle.waitId(), tx)
                                                 .compose(name -> {
                                                     if (name.isEmpty())

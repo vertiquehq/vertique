@@ -99,6 +99,15 @@ final class ReplyGraph implements AutoCloseable {
         public Future<Void> later(Start request, TransactionalMessageContext context) {
             handles.computeIfAbsent(request.reference(), ignored -> new java.util.concurrent.CopyOnWriteArrayList<>())
                     .add(context.replyHandle());
+            if (request.reference().equals("callback-reply")
+                    || request.reference().equals("callback-ordinary"))
+                return Future.failedFuture(new IllegalStateException("SECRET-CALLBACK " + context.replyHandle()));
+            if (request.reference().equals("fatal-redaction"))
+                return Future.failedFuture(new AssertionError("SECRET-FATAL " + context.replyHandle()));
+            if (request.reference().equals("fatal-ordinary"))
+                return Future.failedFuture(new AssertionError("SECRET-ORDINARY"));
+            if (request.reference().equals("redaction"))
+                return Future.failedFuture(new PermanentProblem("SECRET-77 " + context.replyHandle()));
             if (request.reference().equals("early"))
                 return replies.get()
                         .complete(context.replyHandle(), new Reserved("early"))
@@ -114,7 +123,13 @@ final class ReplyGraph implements AutoCloseable {
     }
 
     static final class PermanentProblem extends RuntimeException
-            implements dev.vertique.inboxoutbox.OutboxPermanentFailure {}
+            implements dev.vertique.inboxoutbox.OutboxPermanentFailure {
+        PermanentProblem() {}
+
+        PermanentProblem(String message) {
+            super(message);
+        }
+    }
 
     static final class Definition implements WorkflowDefinition<State, Contract> {
         @Override
@@ -423,6 +438,12 @@ final class ReplyGraph implements AutoCloseable {
     @Singleton
     static final class ReplyProbe implements dev.vertique.workflow.ops.ReplyOutcomeObserver {
         final java.util.List<Outcome> outcomes = new java.util.concurrent.CopyOnWriteArrayList<>();
+        final java.util.concurrent.atomic.AtomicReference<io.vertx.core.Context> dispatchContext =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        final java.util.concurrent.atomic.AtomicReference<io.vertx.core.Context> foreignContext =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        final java.util.concurrent.atomic.AtomicReference<io.vertx.core.Context> terminalContext =
+                new java.util.concurrent.atomic.AtomicReference<>();
 
         @Inject
         ReplyProbe() {}
@@ -435,6 +456,61 @@ final class ReplyGraph implements AutoCloseable {
 
     @Module
     static class ReplyModule {
+        @Provides
+        @IntoSet
+        static dev.vertique.services.interceptor.ServiceInterceptor failedCallback(ReplyProbe probe, Vertx vertx) {
+            io.vertx.core.Context foreign = vertx.getOrCreateContext();
+            return new dev.vertique.services.interceptor.ServiceInterceptor() {
+                private boolean terminalCase(dev.vertique.services.interceptor.ServiceDispatchContext ctx) {
+                    return ctx.envelope().payload() instanceof Start start
+                            && start.reference().startsWith("foreign-terminal-");
+                }
+
+                @Override
+                public void onComplete(
+                        dev.vertique.services.interceptor.ServiceDispatchContext ctx,
+                        dev.vertique.core.eventbus.Result<?> result,
+                        java.time.Instant start,
+                        java.time.Instant end) {
+                    if (terminalCase(ctx)) probe.dispatchContext.set(Vertx.currentContext());
+                }
+
+                @Override
+                public Future<Void> afterDispatch(
+                        dev.vertique.services.interceptor.ServiceDispatchContext ctx,
+                        dev.vertique.core.eventbus.Result<?> result) {
+                    if (terminalCase(ctx)) {
+                        Promise<Void> pending = Promise.promise();
+                        foreign.runOnContext(ignored -> vertx.setTimer(10, id -> {
+                            probe.foreignContext.set(Vertx.currentContext());
+                            pending.complete();
+                        }));
+                        return pending.future();
+                    }
+                    if (result.isFailure()
+                            && result.cause() != null
+                            && String.valueOf(result.cause().getMessage()).contains("SECRET-CALLBACK"))
+                        return Future.failedFuture(result.cause());
+                    return Future.succeededFuture();
+                }
+
+                @Override
+                public void onTerminalComplete(
+                        dev.vertique.services.interceptor.ServiceDispatchContext ctx,
+                        dev.vertique.core.eventbus.Result<?> result,
+                        java.time.Instant start,
+                        java.time.Instant end) {
+                    if (!terminalCase(ctx)) return;
+                    probe.terminalContext.set(Vertx.currentContext());
+                    var message = (TransactionalMessageContext) ctx.envelope()
+                            .metadata()
+                            .dispatchContext()
+                            .get(TransactionalMessageContext.class.getName());
+                    throw new AssertionError("SECRET-TERMINAL " + (message == null ? null : message.replyHandle()));
+                }
+            };
+        }
+
         @Provides
         @IntoSet
         static dev.vertique.workflow.ops.ReplyOutcomeObserver replyObserver(ReplyProbe probe) {

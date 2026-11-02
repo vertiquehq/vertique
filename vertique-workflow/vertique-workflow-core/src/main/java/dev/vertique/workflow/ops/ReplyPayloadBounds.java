@@ -5,17 +5,12 @@ package dev.vertique.workflow.ops;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.validation.ViolationDetail;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
-import io.vertx.core.json.JsonArray;
-import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.util.ArrayDeque;
-import java.util.Arrays;
-import java.util.Deque;
-import java.util.Iterator;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.Map;
 
 /** INTERNAL bounded JSON validation shared by reply recording and completion. */
 public final class ReplyPayloadBounds {
@@ -23,65 +18,29 @@ public final class ReplyPayloadBounds {
 
     private ReplyPayloadBounds() {}
 
-    public static void validate(@Nullable Object payload, int maxPayloadBytes) {
+    /** Encodes one value once, refusing output that exceeds the configured limits. */
+    public static @Nullable String encode(@Nullable Object payload, int maxPayloadBytes) {
         BoundedSink sink = new BoundedSink(maxPayloadBytes);
         try {
-            validateDepth(payload);
             VertiqueJson.mapper().writeValue(sink, payload);
-        } catch (DepthExceeded failure) {
-            throw invalid("payload exceeds depth " + MAX_DEPTH);
+            return payload == null ? null : sink.encoded();
         } catch (IOException | RuntimeException failure) {
-            if (sink.tooLarge) {
-                throw invalid("payload exceeds maxPayloadBytes " + maxPayloadBytes);
-            }
-            if (sink.tooDeep) {
-                throw invalid("payload exceeds depth " + MAX_DEPTH);
-            }
+            if (sink.tooLarge) throw invalid("payload exceeds maxPayloadBytes " + maxPayloadBytes);
+            if (sink.tooDeep) throw invalid("payload exceeds depth " + MAX_DEPTH);
             throw invalid("payload cannot be encoded as JSON");
         }
     }
 
-    /** Rejects deep JSON containers before a recursive codec can visit them; retains only the ancestor iterators. */
-    private static void validateDepth(@Nullable Object payload) {
-        Deque<Iterator<?>> ancestors = new ArrayDeque<>();
-        Object value = payload;
-        while (true) {
-            Iterator<?> children = children(value);
-            if (children != null) {
-                if (ancestors.size() >= MAX_DEPTH) {
-                    throw new DepthExceeded();
-                }
-                ancestors.push(children);
-            }
-            while (!ancestors.isEmpty() && !ancestors.peek().hasNext()) {
-                ancestors.pop();
-            }
-            if (ancestors.isEmpty()) {
-                return;
-            }
-            value = ancestors.peek().next();
-        }
+    /** Checks that a proposed duplicate value can be encoded within the limits. */
+    public static void validate(@Nullable Object payload, int maxPayloadBytes) {
+        encode(payload, maxPayloadBytes);
     }
-
-    /** Returns children without copying containers or normalizing their nested values. */
-    @Nullable
-    private static Iterator<?> children(@Nullable Object value) {
-        return switch (value) {
-            case JsonObject object -> object.getMap().values().iterator();
-            case JsonArray array -> array.getList().iterator();
-            case Map<?, ?> map -> map.values().iterator();
-            case Iterable<?> iterable -> iterable.iterator();
-            case Object[] array -> Arrays.asList(array).iterator();
-            case null, default -> null;
-        };
-    }
-
-    private static final class DepthExceeded extends RuntimeException {}
 
     /** Counts encoded bytes and the codec's actual containers as they are written, and refuses once a bound is crossed. */
     private static final class BoundedSink extends OutputStream {
 
         private final int maxBytes;
+        private final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         private long written;
         private int depth;
         private boolean inString;
@@ -100,6 +59,7 @@ public final class ReplyPayloadBounds {
                 throw new IOException("payload exceeds the size bound");
             }
             observe((byte) value);
+            bytes.write(value);
         }
 
         @Override
@@ -107,6 +67,10 @@ public final class ReplyPayloadBounds {
             for (int index = 0; index < length; index++) {
                 write(bytes[offset + index]);
             }
+        }
+
+        String encoded() {
+            return bytes.toString(StandardCharsets.UTF_8);
         }
 
         private void observe(byte value) throws IOException {
