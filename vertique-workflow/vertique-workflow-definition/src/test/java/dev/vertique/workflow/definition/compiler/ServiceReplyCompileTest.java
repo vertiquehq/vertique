@@ -51,7 +51,8 @@ class ServiceReplyCompileTest {
                 profile,
                 new DecisionRouteCompiler(profile, new DefaultNamedConditionRegistry(Set.of()), mapper));
         for (boolean later : new boolean[] {false, true}) {
-            String yaml = """
+            for (boolean failureReducer : new boolean[] {false, true}) {
+                String yaml = """
                 definitionId: wf
                 definitionVersion: 1
                 stateType: %s
@@ -64,43 +65,57 @@ class ServiceReplyCompileTest {
                     type: service
                     target: inventory.reserve
                     payloadMapper: payload
+                    compensation: undo
                     reply:
                       payloadType: %s
                       stateReducer: reducer
-                      next: done
+                      next: success
                       onFailure:
-                        stateReducer: reducer
-                        next: done
-                %s  - id: done
+                %s        next: failure
+                %s  - id: success
                     type: complete
+                  - id: failure
+                    type: complete
+                  - id: timed-out
+                    type: complete
+                  - id: undo
+                    type: compensation
+                    forwardStep: svc
+                    target: inventory.release
+                    payloadMapper: payload
                 """.formatted(
-                            State.class.getName(),
-                            Contract.class.getName(),
-                            Start.class.getName(),
-                            Reply.class.getName(),
-                            later
-                                    ? "      completesLater: true\n      timeout:\n        after: PT10M\n        onTimeoutMutator: mutator\n        next: done\n"
-                                    : "");
-            var doc =
-                    ProductionParserFixture.parser().parse(yaml.getBytes(StandardCharsets.UTF_8), DocumentFormat.YAML);
-            var fromDocument = new WorkflowBuilder<State>();
-            compiler.emit(fromDocument, State.class, Contract.class, doc);
-            var code = new WorkflowBuilder<State>();
-            code.init(Start.class, s -> new State(s.id())).initialStep("svc");
-            var call = code.call("svc", "inventory.reserve", s -> s.id());
-            if (later) call.completesLater();
-            var wait = call.onReply(Reply.class, (s, r) -> s)
-                    .toStepOnReply("done")
-                    .onFailure((s, f) -> s)
-                    .toStepOnFailure("done");
-            if (later)
-                wait.timeoutAfter(Duration.ofMinutes(10)).onTimeout(s -> s).toStepOnTimeout("done");
-            else wait.build();
-            code.complete("done");
-            var a = fromDocument.build("wf", 1L, State.class.getName());
-            var b = code.build("wf", 1L, State.class.getName());
-            assertThat(a.planHash()).isEqualTo(b.planHash());
-            assertThat(a.nodes()).isEqualTo(b.nodes());
+                                State.class.getName(),
+                                Contract.class.getName(),
+                                Start.class.getName(),
+                                Reply.class.getName(),
+                                failureReducer ? "        stateReducer: reducer\n" : "",
+                                (later ? "      completesLater: true\n" : "")
+                                        + "      timeout:\n        after: PT10M\n        onTimeoutMutator: mutator\n        next: timed-out\n");
+                var doc = ProductionParserFixture.parser()
+                        .parse(yaml.getBytes(StandardCharsets.UTF_8), DocumentFormat.YAML);
+                var fromDocument = new WorkflowBuilder<State>();
+                compiler.emit(fromDocument, State.class, Contract.class, doc);
+                var code = new WorkflowBuilder<State>();
+                code.init(Start.class, s -> new State(s.id())).initialStep("svc");
+                var call = code.call("svc", "inventory.reserve", s -> s.id());
+                call.compensateWith("undo");
+                if (later) call.completesLater();
+                var replyStage = call.onReply(Reply.class, (s, r) -> s).toStepOnReply("success");
+                var failureStage = failureReducer ? replyStage.onFailure((s, f) -> s) : replyStage.onFailure();
+                failureStage
+                        .toStepOnFailure("failure")
+                        .timeoutAfter(Duration.ofMinutes(10))
+                        .onTimeout(s -> s)
+                        .toStepOnTimeout("timed-out");
+                code.complete("success")
+                        .complete("failure")
+                        .complete("timed-out")
+                        .compensate("undo", "svc", "inventory.release", s -> s.id());
+                var a = fromDocument.build("wf", 1L, State.class.getName());
+                var b = code.build("wf", 1L, State.class.getName());
+                assertThat(a.planHash()).isEqualTo(b.planHash());
+                assertThat(a.nodes()).isEqualTo(b.nodes());
+            }
         }
     }
 }
