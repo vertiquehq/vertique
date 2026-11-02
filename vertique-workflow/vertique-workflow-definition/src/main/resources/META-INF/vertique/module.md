@@ -162,7 +162,7 @@ Each step has an `id` and `type`. Common step fields:
 
 | Type | Purpose | Important fields |
 |---|---|---|
-| `service` | Record a service-dispatch side effect | `target`, `payloadMapper`, `next`, optional `compensation` |
+| `service` | Record a service-dispatch side effect | `target`, `payloadMapper`, exactly one of `next` or `reply`, optional `compensation` |
 | `wait-signal` | Suspend until a named signal arrives | `signal`, `payloadType`, `stateReducer`, `next`, optional `timeout`, optional `correlationKey` |
 | `timer` | Suspend until a resolved time | `fireAt`, `next` |
 | `human-task` | Create a task and wait for a decision | `taskType`, `assignment`, `decisions`, optional `due`, `reminders`, `requireVersionStability` |
@@ -174,6 +174,8 @@ Each step has an `id` and `type`. Common step fields:
 | `fail` | End with failure and optional compensation | `errorType`, `messageFactory` |
 
 Callback-like fields are string identifiers resolved against registries contributed by the application. The document never embeds Java lambdas or scripts.
+
+A service may declare `reply` instead of `next`. Its `payloadType` names a catalog type, `stateReducer` names a registered reducer, and `next` selects the success path. The required `onFailure` block supplies `next` and may name a `stateReducer`. An optional `timeout` has the same shape as a signal wait. Set `completesLater: true` only with a timeout. The compiler emits the same dispatch and reply wait as the Java `call` builder; the generated wait id is `<service-id>.reply`. Declared steps cannot use that id, and declared signal waits cannot use the reserved `vertique.reply.` prefix. Generated reply signal names must fit 255 characters. All named callbacks and payload types resolve through the existing catalogs.
 
 A `wait-signal` step may declare `correlationKey: order.paymentReference`, the id of a registered correlation-key resolver (state -> key string). The compiler maps it to `correlateBy(...)` on the same `waitForSignal` chain a Java definition uses, so the document and the builder produce the same `WaitSignalNode`, with `correlationKeyCallbackId` set. An absent field leaves the id `null` and the plan hash unchanged. The engine evaluates the key when an instance enters the wait.
 

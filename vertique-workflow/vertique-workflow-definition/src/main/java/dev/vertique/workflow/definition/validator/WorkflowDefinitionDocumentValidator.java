@@ -19,6 +19,7 @@ import dev.vertique.workflow.definition.schema.StepNode;
 import dev.vertique.workflow.definition.schema.TimerStep;
 import dev.vertique.workflow.definition.schema.WaitSignalStep;
 import dev.vertique.workflow.definition.schema.WorkflowDefinitionDocument;
+import dev.vertique.workflow.plan.ReplySignals;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import jakarta.annotation.Nullable;
@@ -695,16 +696,140 @@ public final class WorkflowDefinitionDocumentValidator {
                 "PAYLOAD_MAPPER_STATE_TYPE_MISMATCH",
                 "`payloadMapper`",
                 violations);
-        checkStepReference(
+        boolean hasNext = step.next() != null;
+        var reply = step.reply();
+        if (hasNext == (reply != null)) {
+            violations.add(new Violation(
+                    definitionId,
+                    definitionVersion,
+                    sid,
+                    null,
+                    "SERVICE_NEXT_OR_REPLY",
+                    "service must have exactly one of `next` and `reply`"));
+        }
+        if (hasNext)
+            checkStepReference(
+                    definitionId,
+                    definitionVersion,
+                    sid,
+                    null,
+                    step.next(),
+                    "`next`",
+                    "STEP_NEXT_UNKNOWN",
+                    allStepIds,
+                    violations);
+        if (reply == null) return;
+        if (reply.payloadType() == null || reply.payloadType().isBlank())
+            violations.add(new Violation(
+                    definitionId,
+                    definitionVersion,
+                    sid,
+                    null,
+                    "PAYLOAD_TYPE_UNRESOLVABLE",
+                    "`reply.payloadType` is blank or missing"));
+        if (reply.stateReducer() == null || reply.stateReducer().isBlank())
+            violations.add(new Violation(
+                    definitionId,
+                    definitionVersion,
+                    sid,
+                    null,
+                    "STATE_REDUCER_UNKNOWN",
+                    "`reply.stateReducer` is blank or missing"));
+        if (reply.timeout() != null) {
+            if (reply.timeout().after() == null || reply.timeout().after().isBlank())
+                violations.add(new Violation(
+                        definitionId,
+                        definitionVersion,
+                        sid,
+                        null,
+                        "TIMER_RESOLVER_UNKNOWN",
+                        "`reply.timeout.after` is blank or missing"));
+            if (reply.timeout().onTimeoutMutator() == null
+                    || reply.timeout().onTimeoutMutator().isBlank())
+                violations.add(new Violation(
+                        definitionId,
+                        definitionVersion,
+                        sid,
+                        null,
+                        "STATE_MUTATOR_UNKNOWN",
+                        "`reply.timeout.onTimeoutMutator` is blank or missing"));
+        }
+        if (sid != null && !sid.isBlank()) {
+            if (allStepIds != null && allStepIds.contains(ReplySignals.waitStepId(sid)))
+                violations.add(new Violation(
+                        definitionId,
+                        definitionVersion,
+                        sid,
+                        null,
+                        "REPLY_STEP_ID_DUPLICATE",
+                        "generated reply step id is already declared"));
+            if (ReplySignals.replyName(sid).length() > 255
+                    || ReplySignals.failureName(sid).length() > 255)
+                violations.add(new Violation(
+                        definitionId,
+                        definitionVersion,
+                        sid,
+                        null,
+                        "REPLY_NAME_TOO_LONG",
+                        "generated reply signal name exceeds 255 characters"));
+        }
+        if (Boolean.TRUE.equals(reply.completesLater()) && reply.timeout() == null)
+            violations.add(new Violation(
+                    definitionId,
+                    definitionVersion,
+                    sid,
+                    null,
+                    "REPLY_TIMEOUT_MISSING",
+                    "a later reply requires a timeout"));
+        checkWaitSignalStep(
                 definitionId,
                 definitionVersion,
-                sid,
-                null,
-                step.next(),
-                "`next`",
-                "STEP_NEXT_UNKNOWN",
+                new WaitSignalStep(sid, null, reply.payloadType(), reply.stateReducer(), reply.next(), reply.timeout()),
                 allStepIds,
+                resolvedStateType,
                 violations);
+        var failure = reply.onFailure();
+        if (failure == null) {
+            violations.add(new Violation(
+                    definitionId,
+                    definitionVersion,
+                    sid,
+                    null,
+                    "REPLY_FAILURE_MISSING",
+                    "reply requires an onFailure block"));
+        } else {
+            checkRegistryId(
+                    definitionId,
+                    definitionVersion,
+                    sid,
+                    null,
+                    failure.stateReducer(),
+                    lookup.stateReducers().ids(),
+                    "STATE_REDUCER_UNKNOWN",
+                    "`onFailure.stateReducer`",
+                    violations);
+            checkCallbackStateTypeCompat(
+                    definitionId,
+                    definitionVersion,
+                    sid,
+                    null,
+                    failure.stateReducer(),
+                    resolvedStateType,
+                    () -> lookup.stateReducers().lookup(failure.stateReducer()).stateType(),
+                    "STATE_REDUCER_STATE_TYPE_MISMATCH",
+                    "`onFailure.stateReducer`",
+                    violations);
+            checkStepReference(
+                    definitionId,
+                    definitionVersion,
+                    sid,
+                    null,
+                    failure.next(),
+                    "`onFailure.next`",
+                    "STEP_NEXT_UNKNOWN",
+                    allStepIds,
+                    violations);
+        }
     }
 
     /**
@@ -827,6 +952,14 @@ public final class WorkflowDefinitionDocumentValidator {
             @Nullable Class<?> resolvedStateType,
             List<Violation> violations) {
         String sid = step.id();
+        if (step.signal() != null && ReplySignals.isReserved(step.signal()))
+            violations.add(new Violation(
+                    definitionId,
+                    definitionVersion,
+                    sid,
+                    null,
+                    "SIGNAL_NAME_RESERVED",
+                    "signal name uses the reserved reply prefix"));
         checkClassResolvable(
                 definitionId,
                 definitionVersion,

@@ -32,6 +32,8 @@ import dev.vertique.workflow.definition.callbacks.NamedTimerResolver;
 import dev.vertique.workflow.definition.callbacks.RegisteredIdentifierLookup;
 import dev.vertique.workflow.definition.expression.ExpressionProfile;
 import dev.vertique.workflow.definition.expression.cel.CelExpressionProfile;
+import dev.vertique.workflow.definition.parser.DocumentFormat;
+import dev.vertique.workflow.definition.parser.ProductionParserFixture;
 import dev.vertique.workflow.definition.parser.WorkflowDefinitionMapperFactory;
 import dev.vertique.workflow.definition.schema.CompensationStep;
 import dev.vertique.workflow.definition.schema.CompleteStep;
@@ -51,6 +53,7 @@ import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
 import dev.vertique.workflow.types.WorkflowTypeCatalogEntry.Kind;
 import dev.vertique.workflow.types.WorkflowTypeNames;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -1544,5 +1547,138 @@ class WorkflowDefinitionDocumentValidatorTest {
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("Expected violation with code '" + code + "' but found: "
                         + violations.toList().stream().map(Violation::code).toList()));
+    }
+
+    private ServiceStep.ReplyBlock reply(ServiceStep.FailureBlock failure, Boolean later, String reducer) {
+        return new ServiceStep.ReplyBlock(PAYLOAD_FQN, reducer, "done", failure, null, later);
+    }
+
+    private List<String> replyCodes(StepNode... steps) {
+        var doc = new WorkflowDefinitionDocument(
+                DEF_ID,
+                DEF_VER,
+                STATE_FQN,
+                CONTRACT_FQN,
+                PAYLOAD_FQN,
+                INIT_MAPPER_ID,
+                null,
+                steps[0].id(),
+                List.of(steps));
+        return new WorkflowDefinitionDocumentValidator(fullLookup)
+                .validate(doc).toList().stream().map(Violation::code).toList();
+    }
+
+    @Test
+    void serviceStepNeedsExactlyOneOfNextAndReply() {
+        var reply = reply(new ServiceStep.FailureBlock(null, "done"), false, STATE_REDUCER_ID);
+        for (var next : new String[] {null, "done"}) {
+            for (var block : new ServiceStep.ReplyBlock[] {null, reply}) {
+                var codes = replyCodes(
+                        new ServiceStep("svc", "target", PAYLOAD_MAPPER_ID, null, next, block),
+                        new CompleteStep("done"));
+                assertThat(codes.contains("SERVICE_NEXT_OR_REPLY")).isEqualTo((next == null) == (block == null));
+            }
+        }
+    }
+
+    @Test
+    void invalidReplyReportsItsCode() {
+        var failure = new ServiceStep.FailureBlock(null, "done");
+        assertThat(replyCodes(
+                        new ServiceStep(
+                                "svc", "target", PAYLOAD_MAPPER_ID, null, null, reply(null, false, STATE_REDUCER_ID)),
+                        new CompleteStep("done")))
+                .contains("REPLY_FAILURE_MISSING");
+        assertThat(replyCodes(
+                        new ServiceStep(
+                                "svc",
+                                "target",
+                                PAYLOAD_MAPPER_ID,
+                                null,
+                                null,
+                                reply(failure, false, STATE_REDUCER_ID)),
+                        new CompleteStep("svc.reply"),
+                        new CompleteStep("done")))
+                .contains("REPLY_STEP_ID_DUPLICATE");
+        assertThat(replyCodes(
+                        new ServiceStep(
+                                "x".repeat(250),
+                                "target",
+                                PAYLOAD_MAPPER_ID,
+                                null,
+                                null,
+                                reply(failure, false, STATE_REDUCER_ID)),
+                        new CompleteStep("done")))
+                .contains("REPLY_NAME_TOO_LONG");
+        assertThat(replyCodes(
+                        new ServiceStep(
+                                "svc", "target", PAYLOAD_MAPPER_ID, null, null, reply(failure, true, STATE_REDUCER_ID)),
+                        new CompleteStep("done")))
+                .contains("REPLY_TIMEOUT_MISSING");
+        assertThat(replyCodes(
+                        new WaitSignalStep("wait", "vertique.reply.ok.x", PAYLOAD_FQN, STATE_REDUCER_ID, "done", null),
+                        new CompleteStep("done")))
+                .contains("SIGNAL_NAME_RESERVED");
+        assertThat(replyCodes(
+                        new ServiceStep(
+                                "svc", "target", PAYLOAD_MAPPER_ID, null, null, reply(failure, false, "missing")),
+                        new CompleteStep("done")))
+                .contains("STATE_REDUCER_UNKNOWN");
+    }
+
+    @Test
+    void replyRequiresTypeReducerAndCompleteTimeout() {
+        var block = new ServiceStep.ReplyBlock(
+                null,
+                null,
+                "done",
+                new ServiceStep.FailureBlock(null, "done"),
+                new WaitSignalStep.TimeoutBlock(null, null, "done"),
+                true);
+        assertThat(replyCodes(
+                        new ServiceStep("svc", "target", PAYLOAD_MAPPER_ID, null, null, block),
+                        new CompleteStep("done")))
+                .contains(
+                        "PAYLOAD_TYPE_UNRESOLVABLE",
+                        "STATE_REDUCER_UNKNOWN",
+                        "TIMER_RESOLVER_UNKNOWN",
+                        "STATE_MUTATOR_UNKNOWN");
+    }
+
+    @Test
+    void parsedReplyWithoutFailureReachesValidatorAndUnknownPropertiesFail() {
+        String yaml = """
+                definitionId: test-wf
+                definitionVersion: 1
+                stateType: %s
+                contract: %s
+                startPayloadType: %s
+                initialStateMapper: %s
+                initialStep: svc
+                steps:
+                  - id: svc
+                    type: service
+                    target: target
+                    payloadMapper: %s
+                    reply:
+                      payloadType: %s
+                      stateReducer: %s
+                      next: done
+                  - id: done
+                    type: complete
+                """.formatted(
+                STATE_FQN, CONTRACT_FQN, PAYLOAD_FQN, INIT_MAPPER_ID, PAYLOAD_MAPPER_ID, PAYLOAD_FQN, STATE_REDUCER_ID);
+        var parser = ProductionParserFixture.parser();
+        var doc = parser.parse(yaml.getBytes(StandardCharsets.UTF_8), DocumentFormat.YAML);
+        assertThat(new WorkflowDefinitionDocumentValidator(fullLookup)
+                        .validate(doc)
+                        .toList())
+                .extracting(Violation::code)
+                .contains("REPLY_FAILURE_MISSING");
+        assertThatThrownBy(() -> parser.parse(
+                        yaml.replace("      next: done", "      surprise: true\n      next: done")
+                                .getBytes(StandardCharsets.UTF_8),
+                        DocumentFormat.YAML))
+                .isInstanceOf(RuntimeException.class);
     }
 }
