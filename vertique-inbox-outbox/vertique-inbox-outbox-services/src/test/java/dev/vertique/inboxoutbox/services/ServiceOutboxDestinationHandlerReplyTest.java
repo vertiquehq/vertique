@@ -2,20 +2,41 @@
 // SPDX-License-Identifier: EUPL-1.2
 package dev.vertique.inboxoutbox.services;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
-import dev.vertique.context.*;
+import dev.vertique.context.DispatchEnvelopeBuilder;
+import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.core.eventbus.Result;
-import dev.vertique.inboxoutbox.*;
-import dev.vertique.services.*;
+import dev.vertique.inboxoutbox.OutboxDeliveryMetadata;
+import dev.vertique.inboxoutbox.OutboxEnvelope;
+import dev.vertique.inboxoutbox.OutboxMetadata;
+import dev.vertique.inboxoutbox.OutboxOutcome;
+import dev.vertique.inboxoutbox.OutboxOutcomeConsumer;
+import dev.vertique.inboxoutbox.OutboxPermanentFailure;
+import dev.vertique.inboxoutbox.OutboxPublishResult;
+import dev.vertique.inboxoutbox.OutboxRelayControl;
+import dev.vertique.services.ResolvedServiceTarget;
+import dev.vertique.services.ServiceRequestSender;
+import dev.vertique.services.ServiceTargetResolver;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.json.JsonObject;
 import java.time.Instant;
-import java.util.*;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 class ServiceOutboxDestinationHandlerReplyTest {
@@ -112,7 +133,11 @@ class ServiceOutboxDestinationHandlerReplyTest {
                 h.publish(row(2, true, true)).result());
         var capture = org.mockito.ArgumentCaptor.forClass(OutboxOutcome.class);
         verify(consumer, times(2)).onOutcome(capture.capture());
-        assertEquals(OutboxOutcome.Failure.Kind.RETRIES_EXHAUSTED, ((OutboxOutcome.Failure) capture.getValue()).kind());
+        for (var forwarded : capture.getAllValues()) {
+            var failure = assertInstanceOf(OutboxOutcome.Failure.class, forwarded);
+            assertEquals(OutboxOutcome.Failure.Kind.RETRIES_EXHAUSTED, failure.kind());
+            assertEquals(3, failure.attempts());
+        }
         reset(consumer);
         when(consumer.awaits("handle")).thenReturn(Future.succeededFuture(true));
         when(consumer.onOutcome(any())).thenReturn(Future.succeededFuture());
@@ -122,6 +147,7 @@ class ServiceOutboxDestinationHandlerReplyTest {
                 h.publish(row(0, true, false)).result());
         verify(consumer).onOutcome(capture.capture());
         assertEquals(OutboxOutcome.Failure.Kind.PERMANENT, ((OutboxOutcome.Failure) capture.getValue()).kind());
+        assertEquals(1, capture.getValue().attempts());
         reset(consumer);
         when(consumer.awaits("handle")).thenReturn(Future.succeededFuture(true));
         when(consumer.onOutcome(any())).thenReturn(Future.succeededFuture());
@@ -131,6 +157,8 @@ class ServiceOutboxDestinationHandlerReplyTest {
                 h.publish(row(2, true, false)).result());
         verify(consumer).onOutcome(capture.capture());
         assertEquals(Map.of(), capture.getValue().dispatchContext());
+        assertEquals(OutboxOutcome.Failure.Kind.RETRIES_EXHAUSTED, ((OutboxOutcome.Failure) capture.getValue()).kind());
+        assertEquals(3, capture.getValue().attempts());
         reset(consumer);
         when(consumer.awaits("handle")).thenReturn(Future.succeededFuture(true));
         when(consumer.onOutcome(any())).thenReturn(Future.succeededFuture());
@@ -142,6 +170,8 @@ class ServiceOutboxDestinationHandlerReplyTest {
                 h.publish(row(2, true, false)).result());
         verify(consumer).onOutcome(capture.capture());
         assertEquals(Map.of(), capture.getValue().dispatchContext());
+        assertEquals(OutboxOutcome.Failure.Kind.RETRIES_EXHAUSTED, ((OutboxOutcome.Failure) capture.getValue()).kind());
+        assertEquals(3, capture.getValue().attempts());
         reset(consumer);
         when(consumer.awaits("handle")).thenReturn(Future.succeededFuture(true));
         when(consumer.onOutcome(any())).thenReturn(Future.succeededFuture());
@@ -151,6 +181,58 @@ class ServiceOutboxDestinationHandlerReplyTest {
                 h.publish(row(0, true, false)).result());
         verify(consumer).onOutcome(capture.capture());
         assertEquals(OutboxOutcome.Failure.Kind.PERMANENT, ((OutboxOutcome.Failure) capture.getValue()).kind());
+        assertEquals(1, capture.getValue().attempts());
+    }
+
+    @Test
+    void failedConsumerCannotChangeAServiceFailureDisposition() {
+        ready();
+        when(consumer.onOutcome(any())).thenReturn(Future.failedFuture("unavailable"));
+        var h = handler(Optional.of(consumer));
+        when(sender.send(any(), any())).thenReturn(Future.succeededFuture(Result.failure(new PermanentProblem())));
+        assertInstanceOf(
+                OutboxPublishResult.PermanentFailure.class,
+                h.publish(row(0, true, false)).result());
+        when(sender.send(any(), any())).thenReturn(Future.succeededFuture(Result.failure(new RuntimeException("bad"))));
+        assertInstanceOf(
+                OutboxPublishResult.RetryableFailure.class,
+                h.publish(row(2, true, false)).result());
+        var capture = org.mockito.ArgumentCaptor.forClass(OutboxOutcome.class);
+        verify(consumer, times(2)).onOutcome(capture.capture());
+        var permanent = assertInstanceOf(
+                OutboxOutcome.Failure.class, capture.getAllValues().get(0));
+        assertEquals(OutboxOutcome.Failure.Kind.PERMANENT, permanent.kind());
+        assertEquals(1, permanent.attempts());
+        var retryable = assertInstanceOf(
+                OutboxOutcome.Failure.class, capture.getAllValues().get(1));
+        assertEquals(OutboxOutcome.Failure.Kind.RETRIES_EXHAUSTED, retryable.kind());
+        assertEquals(3, retryable.attempts());
+    }
+
+    @Test
+    void failedSendFutureOnLastAttemptIsForwarded() {
+        ready();
+        when(consumer.onOutcome(any())).thenReturn(Future.succeededFuture());
+        when(sender.send(any(), any())).thenReturn(Future.failedFuture("unavailable"));
+        assertInstanceOf(
+                OutboxPublishResult.RetryableFailure.class,
+                handler(Optional.of(consumer)).publish(row(2, true, false)).result());
+        var capture = org.mockito.ArgumentCaptor.forClass(OutboxOutcome.class);
+        verify(consumer).onOutcome(capture.capture());
+        var failure = assertInstanceOf(OutboxOutcome.Failure.class, capture.getValue());
+        assertEquals(OutboxOutcome.Failure.Kind.RETRIES_EXHAUSTED, failure.kind());
+        assertEquals(3, failure.attempts());
+    }
+
+    @Test
+    void decodeFailureBeforeLastAttemptDoesNotForward() {
+        when(consumer.awaits("handle")).thenReturn(Future.succeededFuture(true));
+        when(meta.payloadType()).thenAnswer(ignored -> UUID.class);
+        assertInstanceOf(
+                OutboxPublishResult.RetryableFailure.class,
+                handler(Optional.of(consumer)).publish(row(1, true, false)).result());
+        verify(consumer, never()).onOutcome(any());
+        verifyNoInteractions(sender);
     }
 
     @Test
