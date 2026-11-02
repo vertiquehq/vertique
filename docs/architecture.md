@@ -75,6 +75,8 @@ module or configuration.
 `workflow-executor` deployment, which it contributes to the `SERVICES` phase like the outbox relay. Among Vertique
 modules `vertique-deploy` depends only on `vertique-core`, so the dependency adds no cycle.
 
+A service reply crosses from the outbox handler to workflow through an in-process consumer that records the fenced outcome.
+
 `vertique-workflow-schema` owns the schemas of workflow decision and start payloads. It consumes
 `vertique-workflow-core`, `vertique-json-schema` and `vertique-json-schema-validation`, and plugs
 into definition registration through the core validator set. The workflow engine, tasks,

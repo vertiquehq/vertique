@@ -313,6 +313,8 @@ The record is the canonical six-component form with `scopeKey` last; a public fi
 
 ---
 
+A service may implement `OutboxPermanentFailure` on an exception to stop retries for a permanent failure. A workflow reply target takes its failure route with reason `PERMANENT`, without the exception message.
+
 ### Framework seams
 
 `OutboxBackoff`, `RelayStrategy`, `OutboxDeliveryMetadata`,

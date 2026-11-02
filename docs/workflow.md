@@ -409,6 +409,7 @@ reported as stuck, and `retry` offers dead-lettered commands again.
 - **Signal sources on a recording-only node.** A [signal source](#signal-sources) only records signals, and recording needs no plan and no workflow class, so a source may run on a recording-only node while the executors run elsewhere. The source records the signal in a transaction of its own; an executor node applies it afterwards.
 - **What that node installs.** The workflow database and recording path in its JVM (`WorkflowPostgresqlModule` and the database modules); the contract and payload classes that the source's signals name; `JsonRuntimeModule`, with the same `json.systemProfile` as the executors, because the profile is a wire-format decision that reaches workflow state and payloads (`KafkaJsonModule` installs `JsonRuntimeModule`); and `WorkflowSourceModule`, which supplies the delivery bean `WorkflowSignalSourceDelivery`. `WorkflowServicesModule` includes `WorkflowSourceModule`, so a node that also dispatches service calls installs the services module; a node that only receives signals installs `WorkflowSourceModule` alone. A source needs no outbox module, but it needs the inbox module (`vertique-inbox-outbox-postgresql`) with its migration and its cleanup job, on a recording-only node as on any other: the delivery bean writes an inbox row per signal, and a graph without an `InboxService` does not compile. The node still needs no `WorkflowSchemaModule`.
 - **Rollout of correlated signals.** The schema that correlated signals need (the table of open wait records, the command provenance column and the business-key index) is part of the single `V002__` migration of `vertique-workflow-postgresql`, so it arrives with the upgrade from 0.3.0, which stops every node of the previous release first (see [Migrate the schema](#1-migrate-the-schema)). The migration builds the business-key index while it holds its locks, which blocks writers of `workflow_instances` until the migration commits, so a large installation builds that index ahead of the upgrade as the large-installations note of [Migrate the schema](#1-migrate-the-schema) shows. Deployments stay roll-forward only (see [Roll-forward only](#roll-forward-only)).
+- **Reply targets.** A node handling a reply-producing service call installs `WorkflowServicesModule` and reaches the workflow database, even when the executor runs elsewhere.
 - **Deployment.** The executor is deployed in the `SERVICES` phase with the application's other verticles. An application that is wired by hand and does not use a starter must include the deployer of `vertique-deploy` (`DeployerModule`) and deploy the phase through it. Without it no command executes and every start stays `PENDING`.
 
 | Key | Default | Meaning |
@@ -435,6 +436,49 @@ A signal is recorded when `signal` returns and applied by a segment afterwards, 
 - **Parked signals.** A signal the instance does not await yet is parked: it keeps its place, blocks nothing and spends no attempt, and it is applied when the instance reaches a wait that accepts it. A signal the plan never waits for, or that the contract does not declare, is refused or rejected.
 - **Open-signal cap.** An instance holds at most `workflow.recording.maxOpenSignalsPerInstance` signals that are pending, deferred, claimed or parked. A signal recorded beyond it fails with `WorkflowSignalLimitException` (a 400) and writes nothing, so the dedup key stays free. The cap holds under every isolation level.
 - **Re-queue beyond the segment budget.** After a segment reaches a wait, it applies the parked signals that wait accepts, in order, while it has run at most half of `maxStepsPerSegment` nodes. When the next one would start beyond that, or its application overruns the cap, every signal the wait accepts is set back to `PENDING` at its original place and the segment commits at the wait. Each of them then runs as the command of its own segment.
+
+#### Reply steps
+
+A `.call` records a service dispatch and waits for the service result. It requires a reply route and a failure route;
+an optional timeout gives the wait a deadline. The service returns `Future<T>` where `T` is the reply type, or
+`Future<Void>` for a `Void` reply. For example:
+
+```java
+.call("reserve-inventory", "inventory.reserve", s -> new ReserveInventory(s.orderId(), s.items()))
+    .compensateWith("release-inventory")
+    .onReply(InventoryReserved.class, (s, reply) -> s.withReservation(reply.reservationId()))
+    .toStepOnReply("authorize-payment")
+    .onFailure().toStepOnFailure("fail-order")
+    .timeoutAfter(Duration.ofMinutes(10)).toStepOnTimeout("fail-order")
+```
+
+The builder generates the wait step `reserve-inventory.reply`; that step id appears in history and the current step.
+The [order fulfillment example](../examples/vertique-example-workflow-order-fulfillment/) shows the full saga.
+The node that runs a `.call` target must install `WorkflowServicesModule` and reach the workflow database: the outbox
+handler records the reply in process. A node that completes a deferred call needs the same module and access.
+
+A plain call must finish within both the service `sendTimeoutMs` and the outbox relay lease. Each defaults to 30,000 ms;
+configure the operation's send timeout below the lease and allow time for recording. The relay defaults to 20 attempts.
+Calls can be delivered more than once after a crash or lease expiry, so make them idempotent. `RETRIES_EXHAUSTED` does
+not prove the service had no effect. For a business result, return it as a value; for a permanent failure, throw an
+exception implementing `OutboxPermanentFailure`. The failure route receives a `ServiceFailure` reason and attempt count,
+without the exception message. A live target gaining a return value needs a new `@ServiceOperation` so older definitions
+can still start.
+
+For work that cannot finish within those deadlines, declare `.completesLater()` and a timeout. The target returns
+`Future<Void>` after accepting the work and obtains `TransactionalMessageContext.replyHandle()`. Store the latest handle
+with the work: migration can issue a new call and handle. It is a bearer value, so protect it. On completion call
+`OutboxReplies.complete(handle, value)` or `fail(handle)` on a node with the workflow services module. `RECORDED` means the
+outcome was recorded, `DUPLICATE` means the same outcome was already recorded, and `STALE` means nobody waits for this
+outcome (or its value was refused). Treat `STALE` as an outcome nobody waits for, such as a callback needing a refund.
+An invalid handle fails without echoing it. A call already in flight is not cancelled when its wait closes; before the next
+attempt the relay checks the wait. A closed wait settles the row as `PUBLISHED` without delivering it, so that status and
+success observers alone do not prove delivery.
+
+If a reply cannot be applied, for example because its reducer throws, the instance becomes `FAILED` and the reply parks.
+Its timeout does not run while the instance is failed: an operator must fix the defect and retry the instance. A failed
+fork compensates its failed branch calls. After a failed join, sibling calls can keep running or retrying until their waits
+close or the instance is retried. On the post-join path, a failed or timed-out call is not compensated by the framework.
 
 #### Signals from events with a reference
 

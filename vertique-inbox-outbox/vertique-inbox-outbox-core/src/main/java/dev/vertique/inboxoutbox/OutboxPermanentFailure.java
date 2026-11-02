@@ -11,6 +11,8 @@ package dev.vertique.inboxoutbox;
  * destination adapter classifies the failure as {@link OutboxPublishResult.PermanentFailure}
  * instead of the default {@link OutboxPublishResult.RetryableFailure}. This prevents futile
  * retry attempts for deterministic failures such as validation errors or business rule violations.
+ * A workflow reply target takes its failure route with reason {@code PERMANENT}; the exception
+ * message is not included in the workflow failure.
  *
  * <p>Example usage:
  * <pre>{@code

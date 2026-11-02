@@ -188,3 +188,5 @@ public interface AppComponent { ... }
 ```
 
 For a service row carrying a reply handle, the outbox handler returns fixed failure text without the exception message or cause; the retry or permanent disposition is unchanged. Ordinary rows retain their existing handler results.
+
+A reply-producing call must finish within both the service `sendTimeoutMs` and the outbox relay lease; each defaults to 30,000 ms, and the relay defaults to 20 attempts. Set the send timeout below the lease. For longer work, use a deferred completion handle and a workflow timeout. A row settled by the wait check is `PUBLISHED` but was not delivered.
