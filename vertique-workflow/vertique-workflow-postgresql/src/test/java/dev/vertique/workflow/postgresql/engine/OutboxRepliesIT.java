@@ -74,6 +74,45 @@ class OutboxRepliesIT {
     }
 
     @Test
+    void acceptedCallThatCompletesLaterFreesTheRelaySlot(Vertx vertx) throws InterruptedException {
+        try (ReplyGraph run = new ReplyGraph(vertx, db, 30_000, true)) {
+            WorkflowInstanceId later = run.startLater("slot-later");
+            run.storedHandle("slot-later", 0);
+            published(run, later);
+            assertThat(run.rows("SELECT wait_id FROM workflow_signal_waits WHERE instance_id = $1", later.value()))
+                    .hasSize(1);
+            assertThat(run.signals(later)).isEmpty();
+
+            WorkflowInstanceId next = run.startLater("slot-next");
+            run.storedHandle("slot-next", 0);
+            published(run, next);
+            assertThat(run.rows("SELECT wait_id FROM workflow_signal_waits WHERE instance_id = $1", later.value()))
+                    .hasSize(1);
+            assertThat(run.signals(later)).isEmpty();
+
+            Promise<ReplyGraph.Reserved> held = Promise.promise();
+            run.graph.inventoryProbe().held = held;
+            try {
+                WorkflowInstanceId plain = run.startCall("slot-plain");
+                run.until(
+                        "plain service call",
+                        () -> run.graph.inventoryProbe().perReference.containsKey("slot-plain"));
+                WorkflowInstanceId queued = run.startLater("slot-queued");
+                run.until("queued outbox row", () -> run.row(queued) != null);
+                Thread.sleep(1200); // Several relay polling intervals while the first attempt remains in flight.
+                assertThat(run.row(plain).getString("state")).isEqualTo("PROCESSING");
+                assertThat(run.row(queued).getString("state")).isEqualTo("PENDING");
+                assertThat(run.graph.inventoryProbe().handles).doesNotContainKey("slot-queued");
+                held.complete(new ReplyGraph.Reserved("released"));
+                run.storedHandle("slot-queued", 0);
+                published(run, queued);
+            } finally {
+                held.tryComplete(new ReplyGraph.Reserved("released"));
+            }
+        }
+    }
+
+    @Test
     void oneShotIterableIsRecordedWithoutLosingItsValues(Vertx vertx) {
         try (ReplyGraph run = new ReplyGraph(vertx, db)) {
             WorkflowInstanceId id = run.startLater("one-shot");

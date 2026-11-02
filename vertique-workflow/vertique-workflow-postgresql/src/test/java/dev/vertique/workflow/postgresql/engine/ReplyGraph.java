@@ -643,6 +643,10 @@ final class ReplyGraph implements AutoCloseable {
     }
 
     ReplyGraph(Vertx vertx, PostgresContainer db, long sendTimeoutMs) {
+        this(vertx, db, sendTimeoutMs, false);
+    }
+
+    ReplyGraph(Vertx vertx, PostgresContainer db, long sendTimeoutMs, boolean singleAttempt) {
         this.vertx = vertx;
         PgConnectOptions options = RelayGraph.options(db);
         pool = RelayGraph.pool(vertx, db.toPoolConfig(), options);
@@ -651,7 +655,13 @@ final class ReplyGraph implements AutoCloseable {
                 .getJsonObject("relay")
                 .put("leaseTimeoutMs", 1000)
                 .put("backoffBaseDelayMs", 100)
-                .put("instances", 2);
+                .put("instances", singleAttempt ? 1 : 2);
+        if (singleAttempt) {
+            config.getJsonObject("inboxOutbox")
+                    .getJsonObject("relay")
+                    .put("batchSize", 1)
+                    .put("leaseTimeoutMs", 60_000);
+        }
         config.put("services", new JsonObject().put("sendTimeoutMs", sendTimeoutMs));
         graph = DaggerReplyGraph_ComponentGraph.builder()
                 .vertxModule(new VertxModule(vertx, config))
