@@ -270,7 +270,8 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 + " i ON i.id = c.workflow_id ORDER BY c.available_at, c.id";
         this.claimLookup =
                 "SELECT c.state, c.attempts, c.kind, i.status AS instance_status, c.target_json->>'name' AS signal_name,"
-                        + " c.target_json->>'branchId' IS NOT NULL AS branch_signal FROM " + commands + " c JOIN "
+                        + " c.target_json->>'branchId' IS NOT NULL AS branch_signal,"
+                        + " c.target_json->>'waitId' IS NOT NULL AS correlated_signal FROM " + commands + " c JOIN "
                         + instances + " i ON i.id = c.workflow_id WHERE c.id = $1 AND " + eligibility.claimable("c")
                         + " FOR UPDATE OF c";
         this.claimTake = "UPDATE " + commands + " SET state = 'CLAIMED', attempts = attempts + 1,"
@@ -813,10 +814,22 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                                 Boolean.TRUE.equals(looked.getBoolean("branch_signal")),
                                 false))
                 : Optional.empty();
+        String signalName = looked.getString("signal_name");
+        if (EndedInstanceOutcomes.isEnded(instanceStatus)
+                && !"CANCELLED".equals(instanceStatus)
+                && "SIGNAL".equals(kind)
+                && Boolean.TRUE.equals(looked.getBoolean("correlated_signal"))
+                && signalName != null
+                && dev.vertique.workflow.plan.ReplySignals.isReserved(signalName)) {
+            met = Optional.of(new EndedInstanceOutcomes.Outcome(
+                    EndedInstanceOutcomes.Settlement.STALE,
+                    CommandErrors.signalWaitEntryClosed(signalName),
+                    EndedInstanceOutcomes.Reservation.NONE));
+        }
         // Only the two branches that write history are announced; an ordinary claim writes none.
         if (met.isPresent()) {
+            EndedInstanceOutcomes.Outcome outcome = met.get();
             return announcing(null, head.workflowId(), conn, () -> {
-                EndedInstanceOutcomes.Outcome outcome = met.get();
                 String state = outcome.settlement().name();
                 Future<?> reservation = outcome.reservation() == EndedInstanceOutcomes.Reservation.CANCEL
                         ? conn.preparedQuery(cancelReservedTask).execute(Tuple.of(id))

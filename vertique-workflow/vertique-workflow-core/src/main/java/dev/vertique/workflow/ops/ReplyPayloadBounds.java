@@ -45,6 +45,8 @@ public final class ReplyPayloadBounds {
         private int depth;
         private boolean inString;
         private boolean escaped;
+        private int unicodeDigits;
+        private boolean zeroUnicode;
         boolean tooLarge;
         boolean tooDeep;
 
@@ -75,8 +77,15 @@ public final class ReplyPayloadBounds {
 
         private void observe(byte value) throws IOException {
             if (inString) {
-                if (escaped) {
+                if (unicodeDigits > 0) {
+                    zeroUnicode &= value == '0';
+                    if (--unicodeDigits == 0 && zeroUnicode) throw new IOException("payload cannot be encoded");
+                } else if (escaped) {
                     escaped = false;
+                    if (value == 'u') {
+                        unicodeDigits = 4;
+                        zeroUnicode = true;
+                    }
                 } else if (value == '\\') {
                     escaped = true;
                 } else if (value == '"') {

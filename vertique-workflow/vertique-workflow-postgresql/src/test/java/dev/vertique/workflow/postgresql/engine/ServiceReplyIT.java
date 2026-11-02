@@ -535,6 +535,45 @@ class ServiceReplyIT {
     }
 
     @Test
+    void nulReplyIsRefusedWithoutCallingTheServiceAgain(Vertx vertx) {
+        try (ReplyGraph run = new ReplyGraph(vertx, db)) {
+            WorkflowInstanceId id = run.startCall("nul");
+            run.until(
+                    "failure route or a second call",
+                    () -> run.graph.inventoryProbe().calls.get() > 1
+                            || "COMPLETED".equals(run.instance(id).getString("status")));
+            assertThat(run.graph.inventoryProbe().calls).hasValue(1);
+            assertThat(ReplyGraph.json(run.instance(id), "state_json").getString("result"))
+                    .isEqualTo("REPLY_REFUSED:1");
+            run.until("row published", () -> "PUBLISHED".equals(run.row(id).getString("state")));
+        }
+    }
+
+    @Test
+    void recordedReplyReachingEndedInstanceSettlesStale(Vertx vertx) {
+        try (ReplyGraph run = new ReplyGraph(vertx, db)) {
+            run.graph.inventoryProbe().held = Promise.promise();
+            WorkflowInstanceId id = run.startCall("ended-before-application");
+            run.until("service called", () -> run.graph.inventoryProbe().calls.get() == 1);
+            run.pauseExecutor();
+            try {
+                run.graph.inventoryProbe().held.complete(new ReplyGraph.Reserved("answer"));
+                run.until("reply recorded", () -> run.signals(id).size() == 1);
+                // Model the ended instance and closed fence while this already-recorded command waits.
+                ReplyGraph.await(run.pool.withTransaction(tx -> tx.preparedQuery(
+                                "DELETE FROM workflow_signal_waits WHERE instance_id=$1")
+                        .execute(io.vertx.sqlclient.Tuple.of(id.value()))
+                        .compose(v -> tx.preparedQuery("UPDATE workflow_instances SET status='COMPLETED' WHERE id=$1")
+                                .execute(io.vertx.sqlclient.Tuple.of(id.value())))));
+            } finally {
+                run.resumeExecutor();
+            }
+            run.until("reply stale", () -> "STALE"
+                    .equals(run.signals(id).getFirst().getString("state")));
+        }
+    }
+
+    @Test
     void failedRecordingRetriesAndOnTheLastAttemptLeavesTheWaitOpen(Vertx vertx) {
         try (ReplyGraph run = new ReplyGraph(vertx, db)) {
             run.limitAttempts();
@@ -694,12 +733,19 @@ class ServiceReplyIT {
                     .execute());
             try {
                 int before = run.graph.inventoryProbe().calls.get();
+                long staleBefore = run.graph.replyProbe().outcomes.stream()
+                        .filter(o -> o == dev.vertique.workflow.ops.ReplyOutcomeObserver.Outcome.STALE)
+                        .count();
                 WorkflowInstanceId delayed = run.start("service-reply-timed", "delayed");
                 run.until(
                         "the delayed row to publish after timeout",
                         () -> run.row(delayed) != null
                                 && "PUBLISHED".equals(run.row(delayed).getString("state")));
                 assertThat(run.graph.inventoryProbe().calls).hasValue(before);
+                assertThat(run.graph.replyProbe().outcomes.stream()
+                                .filter(o -> o == dev.vertique.workflow.ops.ReplyOutcomeObserver.Outcome.STALE)
+                                .count())
+                        .isEqualTo(staleBefore + 1);
                 assertThat(ReplyGraph.json(run.instance(delayed), "state_json").getString("result"))
                         .isEqualTo("timeout");
             } finally {
@@ -769,6 +815,10 @@ class ServiceReplyIT {
             run.graph.inventoryProbe().heldSecond.complete(new ReplyGraph.Reserved("second"));
             run.until("the reclaimed row to publish", () -> "PUBLISHED"
                     .equals(run.row(id).getString("state")));
+            run.until("the second outcome to be duplicate", () -> run.graph
+                    .replyProbe()
+                    .outcomes
+                    .contains(dev.vertique.workflow.ops.ReplyOutcomeObserver.Outcome.DUPLICATE));
             assertThat(run.signals(id)).hasSize(1);
             run.resumeExecutor();
             run.until("the first outcome to apply", () -> "COMPLETED"

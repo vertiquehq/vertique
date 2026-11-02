@@ -163,6 +163,10 @@ final class WorkflowReplyConsumer implements OutboxOutcomeConsumer, OutboxReplie
                 .current(SecurityContext.class)
                 .filter(security -> security.identity().actor().type() != PrincipalType.ANONYMOUS)
                 .ifPresent(security -> values.put(SecurityContext.class.getName(), security));
+        contextHolder
+                .current(dev.vertique.security.SnapshotDegradationMarker.class)
+                .ifPresent(
+                        marker -> values.put(dev.vertique.security.SnapshotDegradationMarker.class.getName(), marker));
         WorkflowInstanceId id = new WorkflowInstanceId(handle.instanceId());
         return bound(
                         values,

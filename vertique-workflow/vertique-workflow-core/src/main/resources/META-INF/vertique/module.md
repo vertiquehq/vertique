@@ -1218,3 +1218,5 @@ Behaviors that are load-bearing for correct use and not obvious from method sign
 `RelayedSignals.recordedOutcomeName` reads the previously recorded name for a reply wait, including after it closes; its default fails with `UnsupportedOperationException`. `SignalProvenance.completed()` identifies an in-process completion without an outbox entry.
 
 `ReplyPayloadBounds` is an internal shared check for the configured encoded-size and depth bounds; it carries no submitted value in a refusal.
+
+A reply containing U+0000 cannot be stored and is refused as a payload before recording; a reply call then takes the `REPLY_REFUSED` failure route.

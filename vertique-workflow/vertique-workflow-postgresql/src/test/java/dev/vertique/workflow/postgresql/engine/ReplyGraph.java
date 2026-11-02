@@ -90,6 +90,7 @@ final class ReplyGraph implements AutoCloseable {
             if (request.reference().equals("bad") || request.reference().equals("exhaust"))
                 return Future.failedFuture(new IllegalStateException("SECRET-77"));
             if (request.reference().equals("permanent")) return Future.failedFuture(new PermanentProblem());
+            if (request.reference().equals("nul")) return Future.succeededFuture(new Reserved("before\u0000after"));
             if (request.reference().equals("oversize"))
                 return Future.succeededFuture(new Reserved("x".repeat(300_000)));
             return Future.succeededFuture(new Reserved("reserved-" + request.reference()));

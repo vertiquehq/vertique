@@ -120,17 +120,28 @@ class OutboxRepliesIT {
                     dev.vertique.security.authz.AuthorizationClaims.empty(),
                     java.util.Optional.empty());
             SecurityContext anonymous = SecurityContexts.unauthenticated(SecurityIdentity.anonymous());
-            for (String label : new String[] {"root", "absent", "anonymous", "user"}) {
+            for (String label : new String[] {"root", "absent", "anonymous", "user", "degraded"}) {
                 WorkflowInstanceId id = run.startLater(label);
                 String handle = run.storedHandle(label, 0);
                 published(run, id);
-                SecurityContext security = label.equals("user") ? user : label.equals("anonymous") ? anonymous : null;
-                assertThat(complete(run, handle, new ReplyGraph.Reserved(label), security, label.equals("root")))
+                SecurityContext security = (label.equals("user") || label.equals("degraded"))
+                        ? user
+                        : label.equals("anonymous") ? anonymous : null;
+                assertThat(complete(
+                                run,
+                                handle,
+                                new ReplyGraph.Reserved(label),
+                                security,
+                                label.equals("root"),
+                                label.equals("degraded")))
                         .isEqualTo(Completion.RECORDED);
                 done(run, id, label);
                 var command = run.signals(id).getFirst();
-                assertThat(command.getString("actor_kind")).isEqualTo(label.equals("user") ? "USER" : "SYSTEM");
-                if (label.equals("user"))
+                assertThat(command.getString("actor_kind"))
+                        .isEqualTo((label.equals("user") || label.equals("degraded")) ? "USER" : "SYSTEM");
+                assertThat(command.getString("attribution_status"))
+                        .isEqualTo(label.equals("degraded") ? "DEGRADED" : "VERIFIED");
+                if (label.equals("user") || label.equals("degraded"))
                     assertThat(command.getString("actor_id")).isEqualTo("caller-1");
                 else {
                     assertThat(command.getString("actor_id")).isNull();
@@ -310,14 +321,28 @@ class OutboxRepliesIT {
 
     private static Completion complete(
             ReplyGraph run, String handle, Object value, SecurityContext security, boolean root) {
+        return complete(run, handle, value, security, root, false);
+    }
+
+    private static Completion complete(
+            ReplyGraph run, String handle, Object value, SecurityContext security, boolean root, boolean degraded) {
         Promise<Completion> result = Promise.promise();
         ContextInternal base = (ContextInternal) run.vertx.getOrCreateContext();
         ContextInternal caller = root ? base.unwrap() : base.unwrap().duplicate();
         caller.runOnContext(ignored -> {
             var binding = security == null ? null : run.graph.contextHolder().bind(SecurityContext.class, security);
+            var degradation = degraded
+                    ? run.graph
+                            .contextHolder()
+                            .bind(
+                                    dev.vertique.security.SnapshotDegradationMarker.class,
+                                    new dev.vertique.security.SnapshotDegradationMarker(
+                                            "TAMPERED", java.util.Optional.empty()))
+                    : null;
             run.graph.replies().complete(handle, value).onComplete(done -> {
                 try {
                     assertThat(Vertx.currentContext()).isSameAs(caller);
+                    if (degradation != null) degradation.close();
                     if (binding != null) binding.close();
                     result.handle(done);
                 } catch (Throwable failure) {

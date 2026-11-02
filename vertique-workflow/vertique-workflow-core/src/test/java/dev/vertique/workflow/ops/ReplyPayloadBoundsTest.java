@@ -64,6 +64,14 @@ class ReplyPayloadBoundsTest {
         assertThat(visits.get()).isLessThan(100_000);
     }
 
+    @Test
+    void refusesNulButAcceptsLiteralEscapedText() {
+        assertThatThrownBy(() -> ReplyPayloadBounds.encode(Map.of("value", "before\u0000after"), 10_000))
+                .isInstanceOf(WorkflowInvalidPayloadException.class)
+                .hasMessageContaining("cannot be encoded");
+        assertThatCode(() -> ReplyPayloadBounds.encode("\\u0000", 10_000)).doesNotThrowAnyException();
+    }
+
     private static Object nested(int depth, int kind) {
         Object value = "SECRET-DEPTH";
         for (int i = 0; i < depth; i++) {

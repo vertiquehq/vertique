@@ -642,3 +642,5 @@ This module implements the workflow-side durable context propagation surfaces fo
 - **jackson-databind** - workflow state and history payload serialization.
 
 The command repository reads a recorded reply name by instance, wait ID and deduplication key for completion fencing, including after the command has settled.
+
+A correlated reply command claimed after its instance completed, was compensated, or expired settles `STALE`; cancellation retains its cancellation settlement.
