@@ -86,7 +86,7 @@ public final class OrderFulfillmentDefinition
 
 ### Service call reply plans
 
-`call(stepId, targetId, payloadFactory)` describes a dispatch followed by a reply wait. Chain `onReply(replyType, reducer).toStepOnReply(next)` and `onFailure(reducer).toStepOnFailure(next)`; `onFailure()` leaves the state unchanged. `compensateWith(stepId)` is optional. The returned wait stage accepts the same timeout methods as `waitForSignal`; `completesLater()` requires a timeout. The generated wait step is named `<stepId>.reply`, so that id must not be declared separately. The call and its failure route must be completed before building the plan. The engine opens the reply wait when it dispatches; an outcome still needs a delivery component to record it.
+`call(stepId, targetId, payloadFactory)` describes a dispatch followed by a reply wait. Chain `onReply(replyType, reducer).toStepOnReply(next)` and `onFailure(reducer).toStepOnFailure(next)`; `onFailure()` leaves the state unchanged. `compensateWith(stepId)` is optional. The returned wait stage accepts the same timeout methods as `waitForSignal`; `completesLater()` requires a timeout. The generated wait step is named `<stepId>.reply`, so that id must not be declared separately. The call and its failure route must be completed before building the plan. The engine opens the reply wait when it dispatches; the workflow services module records the relay outcome.
 
 ### Signal Wait Key
 
@@ -1212,3 +1212,5 @@ Behaviors that are load-bearing for correct use and not obvious from method sign
 
 - **core** - common Vertique exception and module conventions.
 - **db-core** - `PageCursor` and `PagedResult` used by task and workflow query APIs.
+
+`ReplyOutcomeObserver` is an internal observer of recorded, duplicate, stale and refused reply outcomes. It carries no payload or handle.

@@ -21,9 +21,12 @@ import dev.vertique.services.dispatch.ServiceMethodMeta.ParamSource;
 import dev.vertique.workflow.plan.CompensationNode;
 import dev.vertique.workflow.plan.CompleteNode;
 import dev.vertique.workflow.plan.ServiceDispatchNode;
+import dev.vertique.workflow.plan.WaitSignalNode;
 import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.registry.CallbackId;
 import dev.vertique.workflow.registry.RegisteredWorkflowDefinition;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
+import dev.vertique.workflow.types.WorkflowType;
 import io.vertx.core.Future;
 import java.util.List;
 import java.util.Map;
@@ -202,6 +205,99 @@ class WorkflowOutboxComposeValidatorTest {
         // And a plan that dispatches to no service passes with or without a SERVICE handler
         assertThatCode(() -> withHandler.validate(noService)).doesNotThrowAnyException();
         assertThatCode(() -> withoutHandler.validate(noService)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void replyStepComparesTheTargetsReturnClass() {
+        var names = new DefaultWorkflowTypeNames();
+        names.add(null, List.of(String.class, Void.class));
+        var matching = new WorkflowOutboxComposeValidator(
+                serviceHandlers(),
+                fixedResolver("test.target", buildTarget("test.target", false, String.class, 1)),
+                names);
+        var differing = new WorkflowOutboxComposeValidator(
+                serviceHandlers(),
+                fixedResolver("test.target", buildTarget("test.target", false, Integer.class, 1)),
+                names);
+        var voidTarget = new WorkflowOutboxComposeValidator(
+                serviceHandlers(),
+                fixedResolver("test.target", buildTarget("test.target", false, Void.class, 1)),
+                names);
+        assertThatCode(() -> matching.validate(candidate(planWithReply(String.class))))
+                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> differing.validate(candidate(planWithReply(String.class))))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("java.lang.String")
+                .hasMessageContaining("java.lang.Integer");
+        assertThatCode(() -> voidTarget.validate(candidate(planWithReply(Void.class))))
+                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> matching.validate(candidate(planWithDispatchTarget("test.target"))))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Future<Void>");
+    }
+
+    @Test
+    void validatorWithoutTypeIndexRefusesAReplyPlan() {
+        var legacy = new WorkflowOutboxComposeValidator(
+                serviceHandlers(), fixedResolver("test.target", buildTarget("test.target", false, String.class, 1)));
+        assertThatThrownBy(() -> legacy.validate(candidate(planWithReply(String.class))))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @WorkflowType("reservation")
+    private record Reservation(String value) {}
+
+    @WorkflowType("reservation")
+    private record OtherReservation(String value) {}
+
+    @Test
+    void replyTypeUsesTheIndexedClassForBinaryAndLogicalNames() {
+        var names = new DefaultWorkflowTypeNames();
+        names.add(null, List.of(Reservation.class));
+        var matching = new WorkflowOutboxComposeValidator(
+                serviceHandlers(),
+                fixedResolver("test.target", buildTarget("test.target", false, Reservation.class, 1)),
+                names);
+        var distinct = new WorkflowOutboxComposeValidator(
+                serviceHandlers(),
+                fixedResolver("test.target", buildTarget("test.target", false, OtherReservation.class, 1)),
+                names);
+
+        // A previously stored binary name and the current logical name address the same indexed class.
+        assertThatCode(() -> matching.validate(candidate(planWithReply(Reservation.class.getName()))))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> matching.validate(candidate(planWithReply("reservation"))))
+                .doesNotThrowAnyException();
+        // A matching annotation does not make a different return class the indexed payload class.
+        assertThatThrownBy(() -> distinct.validate(candidate(planWithReply("reservation"))))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    private static WorkflowPlan planWithReply(Class<?> type) {
+        return planWithReply(type.getName());
+    }
+
+    private static WorkflowPlan planWithReply(String typeName) {
+        return new WorkflowPlan(
+                "compose-test-def",
+                1L,
+                "00000000",
+                "java.lang.String",
+                "dispatch-step",
+                List.of(
+                        new ServiceDispatchNode("dispatch-step", "test.target", new CallbackId("p"), null, "wait"),
+                        new WaitSignalNode(
+                                "wait",
+                                "vertique.reply.ok.dispatch-step",
+                                typeName,
+                                new CallbackId("update"),
+                                "done",
+                                null,
+                                null,
+                                new WaitSignalNode.ReplyWait(
+                                        "dispatch-step", "vertique.reply.failed.dispatch-step", null, "done", false)),
+                        new CompleteNode("done")),
+                null);
     }
 
     // --- Helpers ---
