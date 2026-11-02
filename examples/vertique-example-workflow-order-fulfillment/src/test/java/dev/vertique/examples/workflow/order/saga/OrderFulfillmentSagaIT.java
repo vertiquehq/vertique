@@ -71,7 +71,7 @@ public class OrderFulfillmentSagaIT extends SagaTestBase {
 
     @Test
     @DisplayName("happy path: saga drives through all steps and reaches COMPLETED")
-    void happyPathSagaCompletesSuccessfully(VertxTestContext ctx) {
+    void happyPathCompletesThroughServiceReplies(VertxTestContext ctx) {
         String orderId = "saga-happy-1";
 
         startOrder(orderId)
@@ -81,16 +81,24 @@ public class OrderFulfillmentSagaIT extends SagaTestBase {
                 .compose(id -> driveRelay().map(v -> id))
                 // Step 3: relay dispatches shipping.create-shipment → sig-c posted → engine completes
                 .compose(id -> driveRelay().map(v -> id))
-                .compose(id -> component.workflowOperations().query(id))
+                .compose(id -> component.workflowOperations().query(id).compose(view -> historySteps(id)
+                        .map(steps -> java.util.Map.entry(view, steps))))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "saga must succeed: " + ar.cause());
 
-                    var view = ar.result();
+                    var view = ar.result().getKey();
+                    var steps = ar.result().getValue();
                     assertNotNull(view, "view must not be null");
                     assertEquals(WorkflowStatus.COMPLETED, view.instance().status(), "saga must be COMPLETED");
 
                     // Verify history entries exist.
                     var history = view.recentHistory();
+                    assertTrue(steps.contains("reserve-inventory.reply"));
+                    assertTrue(steps.contains("create-shipment.reply"));
+                    var state =
+                            new io.vertx.core.json.JsonObject(view.instance().stateJson());
+                    assertEquals("res-" + orderId, state.getString("reservationId"));
+                    assertEquals("trk-" + orderId, state.getString("trackingNumber"));
                     var entryTypes = history.stream().map(e -> e.entryType()).collect(Collectors.toList());
                     assertTrue(entryTypes.contains(WorkflowEntryType.START), "history must have START");
                     assertTrue(

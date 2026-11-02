@@ -83,7 +83,7 @@ public class FanOutOrderFulfillmentIT extends SagaTestBase {
 
     @Test
     @DisplayName("happy path: ALL_REQUIRED fan-out completes after all three branch signals arrive")
-    void happyPathFanOutCompletesSuccessfully(VertxTestContext ctx) {
+    void inventoryBranchResumesOnItsServiceReply(VertxTestContext ctx) {
         String orderId = "fanout-happy-1";
 
         // Fan-out branch drives hit DurableContextPropagator.bindFrom which is strict on

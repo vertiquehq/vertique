@@ -9,6 +9,8 @@ import dev.vertique.examples.workflow.order.command.ReleaseInventory;
 import dev.vertique.examples.workflow.order.command.ReserveInventory;
 import dev.vertique.examples.workflow.order.command.ScreenFraud;
 import dev.vertique.examples.workflow.order.command.VoidAuthorization;
+import dev.vertique.examples.workflow.order.signal.InventoryReserved;
+import dev.vertique.examples.workflow.order.signal.ShipmentCreated;
 import dev.vertique.services.ServiceContractContributor;
 import dev.vertique.services.ServiceContractEntries;
 import dev.vertique.services.ServiceContractRegistry;
@@ -109,7 +111,7 @@ public final class StubServicesContributor implements ServiceContractContributor
                         .operation("reserve")
                         .method(INVENTORY_RESERVE)
                         .payloadType(ReserveInventory.class)
-                        .returnType(Void.class)
+                        .returnType(InventoryReserved.class)
                         .param("payload", ParamSource.PAYLOAD, ReserveInventory.class)
                         .done()
                         .operation("release")
@@ -147,7 +149,7 @@ public final class StubServicesContributor implements ServiceContractContributor
                         .operation("create-shipment")
                         .method(SHIPPING_CREATE)
                         .payloadType(CreateShipment.class)
-                        .returnType(Void.class)
+                        .returnType(ShipmentCreated.class)
                         .param("payload", ParamSource.PAYLOAD, CreateShipment.class)
                         .done()
                         .deploymentOptions(config, "services", "shipping")

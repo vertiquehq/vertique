@@ -25,11 +25,11 @@ import jakarta.inject.Singleton;
  * <pre>
  *   start
  *     → reserve-inventory (SERVICE, compensable: release-inventory)
- *     → wait-inventory (waits for inventory.reserved)
+ *     → reserve-inventory.reply (waits for the reservation)
  *     → authorize-payment (SERVICE, compensable: void-authorization)
  *     → wait-payment (waits for payment.captured, matched to the order by its order id)
  *     → create-shipment (SERVICE)
- *     → wait-shipment (waits for shipment.created)
+ *     → create-shipment.reply (waits for the shipment)
  *     → completed (CompleteNode)
  *
  *   Compensation nodes:
@@ -78,18 +78,16 @@ public final class OrderFulfillmentDefinition implements WorkflowDefinition<Orde
                 .initialStep("reserve-inventory")
 
                 // --- Forward steps ---
-                .dispatchWithCompensation(
+                .call(
                         "reserve-inventory",
                         "inventory.reserve",
-                        state -> new ReserveInventory(state.orderId(), state.items()),
-                        "release-inventory",
-                        "wait-inventory")
-                .waitFor(
-                        "wait-inventory",
-                        "inventory.reserved",
-                        InventoryReserved.class,
-                        (s, sig) -> s.withReservation(sig.reservationId()),
-                        "authorize-payment")
+                        state -> new ReserveInventory(state.orderId(), state.items()))
+                .compensateWith("release-inventory")
+                .onReply(InventoryReserved.class, (s, sig) -> s.withReservation(sig.reservationId()))
+                .toStepOnReply("authorize-payment")
+                .onFailure()
+                .toStepOnFailure("fail-order")
+                .build()
                 .dispatchWithCompensation(
                         "authorize-payment",
                         "payment.authorize",
@@ -101,17 +99,16 @@ public final class OrderFulfillmentDefinition implements WorkflowDefinition<Orde
                 .onSignal((s, sig) -> s.withPayment(sig.chargeId()))
                 .toStepOnSignal("create-shipment")
                 .build()
-                .dispatch(
+                .call(
                         "create-shipment",
                         "shipping.create-shipment",
-                        state -> new CreateShipment(state.orderId(), state.customerId(), state.items()),
-                        "wait-shipment")
-                .waitFor(
-                        "wait-shipment",
-                        "shipment.created",
-                        ShipmentCreated.class,
-                        (s, sig) -> s.withShipment(sig.trackingNumber()),
-                        "completed")
+                        state -> new CreateShipment(state.orderId(), state.customerId(), state.items()))
+                .onReply(ShipmentCreated.class, (s, sig) -> s.withShipment(sig.trackingNumber()))
+                .toStepOnReply("completed")
+                .onFailure()
+                .toStepOnFailure("fail-order")
+                .build()
+                .fail("fail-order", "SERVICE_FAILURE", state -> "Order fulfillment service failed")
                 .complete("completed")
 
                 // --- Compensation nodes ---

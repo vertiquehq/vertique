@@ -22,31 +22,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
-/**
- * Saga cancellation integration test (§9.4 test 17 — cycle 1 adaptation).
- *
- * <p><strong>Cycle 1 limitation note:</strong> The cycle 1 engine triggers compensation ONLY via
- * a {@code FailNode} in the plan or a service-target-validation failure at recording time — NOT
- * via service runtime failures that happen after the saga commits and waits. When
- * {@code payment.authorize} fails in the relay, the saga is already in WAITING state for
- * {@code payment.captured}; the relay failure causes an outbox retry, not a saga failure.
- *
- * <p>This test therefore verifies the cycle 1 saga cancellation behavior:
- * <ol>
- *   <li>Saga starts → inventory dispatched → relay → {@code inventory.reserved} signal → saga
- *       advances to {@code authorize-payment}.</li>
- *   <li>Payment is dispatched but before the captured signal arrives, the saga is
- *       <strong>cancelled</strong> via {@link dev.vertique.workflow.ops.WorkflowOperations#cancel}.
- *       </li>
- *   <li>Status becomes CANCELLED. No COMPENSATING phase is triggered (cycle 1: cancel does NOT
- *       run compensation; compensation is triggered only by FailNode or recording failure).</li>
- * </ol>
- *
- * <p>LIFO compensation ordering across ≥2 completed compensable steps is separately covered by
- * {@link dev.vertique.workflow.postgresql.engine.CompensationLifoIT} in the workflow-postgresql
- * module, which uses a 3-step saga with an explicit {@code FailNode}. Full end-to-end LIFO
- * compensation via the order-fulfillment saga requires a cycle 2+ signal-based failure path.
- */
+/** Cancellation and service failure compensation of the order saga. */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class OrderFulfillmentCompensationIT extends SagaTestBase {
@@ -66,6 +42,7 @@ public class OrderFulfillmentCompensationIT extends SagaTestBase {
     void reset(VertxTestContext ctx) {
         component.stubScenario().setPaymentFails(false);
         component.stubScenario().setInventoryFails(false);
+        component.stubScenario().setShippingFails(false);
         component.stubInventoryService().reset();
         component.stubPaymentService().reset();
         component.stubShippingService().reset();
@@ -146,6 +123,28 @@ public class OrderFulfillmentCompensationIT extends SagaTestBase {
                             view.instance().currentStepId(),
                             "saga must be waiting at wait-payment step");
 
+                    ctx.completeNow();
+                }));
+    }
+
+    @Test
+    void failedShipmentTakesTheFailureRouteAndCompensatesWhatCompleted(VertxTestContext ctx) {
+        component.stubScenario().setShippingFails(true);
+        startOrder("shipment-failure")
+                .compose(id -> driveRelay().map(v -> id))
+                .compose(id -> driveRelay().map(v -> id))
+                .compose(id -> driveRelay().map(v -> id))
+                .compose(id -> driveRelay().map(v -> id))
+                .compose(id -> driveRelay().map(v -> id))
+                .compose(id -> historySteps(id))
+                .onComplete(ar -> ctx.verify(() -> {
+                    assertTrue(ar.succeeded(), "query: " + ar.cause());
+                    assertTrue(ar.result().contains("fail-order"));
+                    assertEquals(
+                            1, component.stubInventoryService().releaseCalls().size());
+                    assertEquals(1, component.stubPaymentService().voidCalls().size());
+                    assertEquals(
+                            1, component.stubShippingService().createCalls().size());
                     ctx.completeNow();
                 }));
     }

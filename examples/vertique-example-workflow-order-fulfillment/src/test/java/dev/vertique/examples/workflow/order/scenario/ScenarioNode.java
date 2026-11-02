@@ -129,6 +129,14 @@ final class ScenarioNode implements AutoCloseable {
         return graph;
     }
 
+    void reply(WorkflowInstanceId instance, String destination, Object value) {
+        var rows = await(pool().preparedQuery(
+                        "SELECT headers->>'x-outbox-reply-handle' AS handle FROM outbox WHERE destination=$1 AND headers->>'x-outbox-reply-handle' LIKE $2 ORDER BY id DESC LIMIT 1")
+                .execute(Tuple.of(destination, instance.value().toString() + ":%")));
+        await(graph.outboxReplies().complete(rows.iterator().next().getString("handle"), value));
+        awaitIdle(instance);
+    }
+
     /** The startup failure, or null when the node started. */
     Throwable failure() {
         return failure;

@@ -97,9 +97,9 @@ public class CompensationNoCompensableStepsIT extends SagaTestBase {
                             view.instance().status(),
                             "saga must remain WAITING when inventory service fails (cycle 1 relay limitation)");
                     assertEquals(
-                            "wait-inventory",
+                            "reserve-inventory.reply",
                             view.instance().currentStepId(),
-                            "saga must be waiting at wait-inventory step");
+                            "saga must be waiting at reserve-inventory.reply step");
 
                     // History must NOT contain compensation entries.
                     var entryTypes = view.recentHistory().stream()

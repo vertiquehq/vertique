@@ -18,9 +18,7 @@ import dev.vertique.examples.workflow.order.command.ReserveInventory;
 import dev.vertique.examples.workflow.order.command.ScreenFraud;
 import dev.vertique.examples.workflow.order.command.VoidAuthorization;
 import dev.vertique.examples.workflow.order.signal.FraudScreened;
-import dev.vertique.examples.workflow.order.signal.InventoryReserved;
 import dev.vertique.examples.workflow.order.signal.PaymentCaptured;
-import dev.vertique.examples.workflow.order.signal.ShipmentCreated;
 import dev.vertique.inboxoutbox.ClaimScope;
 import dev.vertique.inboxoutbox.DestinationType;
 import dev.vertique.inboxoutbox.OutboxRecord;
@@ -62,7 +60,7 @@ import org.slf4j.LoggerFactory;
  * <p>The relay handles both the linear saga service targets
  * ({@code inventory.reserve}, {@code payment.authorize}, {@code shipping.create-shipment}) and
  * the fan-out service targets ({@code fraud.screen}). For all dispatches the relay extracts the
- * workflow id from the {@code x-workflow-id} outbox header to route signals back. For fan-out
+ * instance id from the aggregate id to route signals back. For fan-out
  * branch dispatches it also extracts {@code x-workflow-fork-step-id} and
  * {@code x-workflow-branch-id} to route via
  * {@link dev.vertique.workflow.ops.TransactionalWorkflowOperations#signal} with branch identity.
@@ -538,14 +536,6 @@ public abstract class SagaTestBase {
      * service, and posts the corresponding signal back to the workflow engine (unless in failure
      * mode). Does NOT deploy any Vert.x verticles — all dispatch is in-process.
      *
-     * <p>For all dispatches the workflow id is read from the {@code x-workflow-id} outbox header
-     * so routing is not affected by the branch-state propagation limitation (branch payload
-     * factories see an empty state rather than the parent instance state, making state-derived
-     * fields like orderId unavailable at dispatch time).
-     * For fan-out branch dispatches, {@code x-workflow-fork-step-id} and
-     * {@code x-workflow-branch-id} headers are additionally extracted and forwarded to the
-     * branch-aware {@link dev.vertique.workflow.ops.TransactionalWorkflowOperations#signal} overload.
-     *
      * <p>Records are processed sequentially to avoid optimistic-concurrency conflicts when
      * multiple branch signals each attempt to update the parent workflow instance state
      * concurrently.
@@ -586,23 +576,19 @@ public abstract class SagaTestBase {
         String forkStepId = record.headers().get("x-workflow-fork-step-id");
         String branchId = record.headers().get("x-workflow-branch-id");
 
-        // Always use the workflow id from the outbox header: this avoids the branch-state
-        // propagation limitation (branch payload factories see empty state so
-        // orderId is null in the dispatch command). The x-workflow-id header is set by
-        // OutboxSideEffectRecorder for every workflow service dispatch.
-        WorkflowInstanceId instanceId = instanceIdFromHeader(record);
+        String handle = record.headers().get(dev.vertique.inboxoutbox.OutboxOutcomeConsumer.HANDLE_HEADER);
+        WorkflowInstanceId instanceId = handle == null
+                ? new WorkflowInstanceId(UUID.fromString(record.aggregateId()))
+                : new WorkflowInstanceId(dev.vertique.workflow.services.reply.ReplyHandle.parse(handle)
+                        .instanceId());
 
         Future<Void> serviceCall;
         if ("inventory.reserve".equals(dest)) {
             var cmd = Json.decodeValue(payload, ReserveInventory.class);
-            serviceCall = inv.reserve(cmd).compose(v -> {
-                if (!scenario.inventoryShouldFail()) {
-                    String orderId = record.aggregateId();
-                    var sig = new InventoryReserved(orderId, "res-" + orderId);
-                    return signalWorkflow(instanceId, "inventory.reserved", sig, sig.dedupKey(), forkStepId, branchId);
-                }
-                return Future.succeededFuture();
-            });
+            serviceCall = inv.reserve(cmd)
+                    .compose(value -> component.outboxReplies().complete(handle, value))
+                    .compose(v -> awaitIdle(instanceId))
+                    .mapEmpty();
         } else if ("inventory.release".equals(dest)) {
             var cmd = Json.decodeValue(payload, ReleaseInventory.class);
             serviceCall = inv.release(cmd);
@@ -621,11 +607,11 @@ public abstract class SagaTestBase {
             serviceCall = pay.voidAuthorization(cmd);
         } else if ("shipping.create-shipment".equals(dest)) {
             var cmd = Json.decodeValue(payload, CreateShipment.class);
-            serviceCall = ship.createShipment(cmd).compose(v -> {
-                String orderId = record.aggregateId();
-                var sig = new ShipmentCreated(orderId, "trk-" + orderId);
-                return signalWorkflow(instanceId, "shipment.created", sig, sig.dedupKey(), forkStepId, branchId);
-            });
+            serviceCall = ship.createShipment(cmd)
+                    .compose(value -> component.outboxReplies().complete(handle, value))
+                    .recover(error -> component.outboxReplies().fail(handle))
+                    .compose(v -> awaitIdle(instanceId))
+                    .mapEmpty();
         } else if ("fraud.screen".equals(dest)) {
             var cmd = Json.decodeValue(payload, ScreenFraud.class);
             serviceCall = fraud.screen(cmd).compose(v -> {
@@ -648,26 +634,6 @@ public abstract class SagaTestBase {
                                 err.getMessage(),
                                 err.getClass().getName())
                         .<Void>mapEmpty());
-    }
-
-    /**
-     * Extracts the workflow instance id from the {@code x-workflow-id} outbox header.
-     *
-     * <p>Using the header directly avoids the need to look up the instance via the
-     * {@code workflow_dedup} table, and also avoids the branch-state propagation limitation
-     * where orderId fields in dispatch commands are null.
-     *
-     * @param record the outbox record
-     * @return the workflow instance id
-     */
-    private static WorkflowInstanceId instanceIdFromHeader(OutboxRecord record) {
-        String workflowIdStr = record.headers().get("x-workflow-id");
-        if (workflowIdStr == null) {
-            // Fall back to aggregate id if the header is absent (should not happen for
-            // workflow service dispatches but provides a safety net).
-            return new WorkflowInstanceId(UUID.fromString(record.aggregateId()));
-        }
-        return new WorkflowInstanceId(UUID.fromString(workflowIdStr));
     }
 
     /**
@@ -742,6 +708,19 @@ public abstract class SagaTestBase {
                     }
                     return Future.succeededFuture(
                             new WorkflowInstanceId(rows.iterator().next().getUUID("workflow_id")));
+                });
+    }
+
+    protected static Future<List<String>> historySteps(WorkflowInstanceId id) {
+        return component
+                .pgInboxOutboxRepository()
+                .pool()
+                .preparedQuery("SELECT step_id FROM workflow_history WHERE workflow_id=$1 AND step_id IS NOT NULL")
+                .execute(Tuple.of(id.value()))
+                .map(rows -> {
+                    List<String> steps = new java.util.ArrayList<>();
+                    for (var row : rows) steps.add(row.getString("step_id"));
+                    return steps;
                 });
     }
 

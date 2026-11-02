@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class StubScenario {
 
     private final AtomicBoolean paymentFails = new AtomicBoolean(false);
+    private final AtomicBoolean shippingFails = new AtomicBoolean(false);
     private final AtomicBoolean inventoryFails = new AtomicBoolean(false);
 
     /**
@@ -58,5 +59,13 @@ public final class StubScenario {
      */
     public void setInventoryFails(boolean fail) {
         inventoryFails.set(fail);
+    }
+    /** Sets whether shipment creation fails. */
+    public void setShippingFails(boolean fail) {
+        shippingFails.set(fail);
+    }
+    /** Returns whether shipment creation fails. */
+    public boolean shippingShouldFail() {
+        return shippingFails.get();
     }
 }
