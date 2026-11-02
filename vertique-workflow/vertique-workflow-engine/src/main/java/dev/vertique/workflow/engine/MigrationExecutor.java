@@ -879,7 +879,14 @@ final class MigrationExecutor {
                     // --- The source wait is left: its record goes before the drive, which may enter a wait again ---
                     .compose(v -> closeSourceWait(inst, sourceStepId, tx))
                     // --- Drive transitions in the target plan ---
-                    .compose(v -> driver.driveTransitions(migrated, targetRw, tx));
+                    .compose(v -> {
+                        var targetNode = targetRw.nodeById().get(newStepId);
+                        WorkflowInstance drive = targetNode instanceof dev.vertique.workflow.plan.WaitSignalNode wait
+                                        && wait.reply() != null
+                                ? migrated.withCurrentStepId(wait.reply().callStepId())
+                                : migrated;
+                        return driver.driveTransitions(drive, targetRw, tx);
+                    });
         });
     }
 
