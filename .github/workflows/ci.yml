@@ -68,7 +68,7 @@ jobs:
           bash scripts/verify-module-docs.sh
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: "24"
+          node-version: "26"
       - name: Verify release contracts
         run: node --test release/tests/*.test.mjs
       - name: Verify documentation contracts
@@ -146,7 +146,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: "24"
+          node-version: "26"
 
       # McpGoClientInteropIT runs `go run` against the Go fixture, whose go.mod
       # states the toolchain it needs. Installing exactly that version keeps the
