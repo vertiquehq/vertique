@@ -126,7 +126,7 @@ OutboxEntry.builder()
 - **The ambient `ScopeContext` does not select it.** Publishing under a bound `ScopeContext` still stores `default` unless the entry names a scope. The context is captured into the durable `metadata` like any other durable context, independent of the row's scope.
 - **A scope is a label, not authorization.** Nothing checks the caller's right to a scope at publish, by id or under a service principal; the application authorizes access itself.
 - **Row scope and `ScopeContext` are independent.** A handler that partitions data by scope chooses one source, compares the other when both are present, fails on a mismatch, and authorizes access itself. Do not assume the two agree.
-- **`aggregateId` ordering is global across scopes.** Entries that share an `aggregateId` order across scopes, except that rows both carrying `x-outbox-reply-handle` may run together. A plain row blocks later rows, and waits for all earlier live rows. Two scopes that reuse an id therefore share this barrier. Keep aggregate ids unique across scopes, for example `<scope>:<id>`.
+- **`aggregateId` ordering is global across scopes.** Entries that share an `aggregateId` order across scopes, except that rows both carrying `x-outbox-reply-handle` may run together. A row without a reply handle blocks later rows, and waits for all earlier live rows. Two scopes that reuse an id therefore share this barrier. Keep aggregate ids unique across scopes, for example `<scope>:<id>`.
 - **A custom `OutboxRepository` must persist `scopeKey`.** `OutboxRepository.insert` receives the entry; an implementation that drops `scopeKey` returns rows that read `default`.
 - **Inbox deduplication is not scoped.** `InboxService` keys on `(messageId, source)` only.
 
@@ -448,12 +448,11 @@ same observer-only contract. `duration` is the time from asking the repository f
 number of entries it returned (zero for an empty claim); a claim that failed is not reported. The report carries no entry,
 aggregate id or payload.
 
-**Aggregate-cardinality guidance.** The claim admits only the oldest unfinished plain entry of each aggregate (reply rows may run together), so a claim that is slow
+**Aggregate-cardinality guidance.** The claim admits a row only when no earlier live row of its aggregate blocks it; reply rows may run together, so a claim that is slow
 for the number of entries it returns is the sign of many entries queued behind few aggregates, such as many service dispatches of
 one workflow instance. Record `duration` and `claimed` as plain figures, for example a timer and a counter with no tag. An
 aggregate id, a destination or an entry id must never become a metric label: the cardinality is unbounded, and the claim has none to
-report. A workflow that dispatches several services in parallel branches still delivers them one at a time, because its entries
-share one aggregate.
+report. Reply calls dispatched by parallel branches can deliver together; ordinary dispatches sharing an aggregate remain ordered.
 
 ```java
 @Provides @IntoSet

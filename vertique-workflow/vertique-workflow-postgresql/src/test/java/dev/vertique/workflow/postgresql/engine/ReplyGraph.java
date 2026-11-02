@@ -698,13 +698,17 @@ final class ReplyGraph implements AutoCloseable {
     }
 
     ReplyGraph(Vertx vertx, PostgresContainer db, long sendTimeoutMs, boolean singleAttempt) {
+        this(vertx, db, sendTimeoutMs, singleAttempt, 1000);
+    }
+
+    ReplyGraph(Vertx vertx, PostgresContainer db, long sendTimeoutMs, boolean singleAttempt, long leaseTimeoutMs) {
         this.vertx = vertx;
         PgConnectOptions options = RelayGraph.options(db);
         pool = RelayGraph.pool(vertx, db.toPoolConfig(), options);
         JsonObject config = RelayGraph.config(null);
         config.getJsonObject("inboxOutbox")
                 .getJsonObject("relay")
-                .put("leaseTimeoutMs", 1000)
+                .put("leaseTimeoutMs", leaseTimeoutMs)
                 .put("backoffBaseDelayMs", 100)
                 .put("instances", singleAttempt ? 1 : 2);
         if (singleAttempt) {

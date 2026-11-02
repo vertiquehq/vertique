@@ -341,9 +341,8 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
      *
      * <p>Runs in a short transaction with {@code FOR UPDATE SKIP LOCKED} to prevent competing
      * relay workers from claiming the same entries. Only entries whose destination type and
-     * target identity match the relay's {@link RelayCapabilities} are eligible. Entries sharing
-     * the same {@code aggregate_id} are delivered in strict insertion order (head-of-line
-     * blocking per aggregate).
+     * target identity match the relay's {@link RelayCapabilities} are eligible. An entry waits for earlier pending or processing entries of the same aggregate, except
+     * that two entries carrying a reply handle do not block each other.
      *
      * <p>The destination-eligibility disjunction in the claim query is built dynamically from
      * {@link RelayCapabilities#byType()} via {@link #buildClaimEligibility(RelayCapabilities, Tuple)}.

@@ -126,8 +126,8 @@ class ServiceReplyIT {
     }
 
     @Test
-    void failedForkWaitsForForwardDeliveryBeforeCompensation(Vertx vertx) {
-        try (ReplyGraph run = new ReplyGraph(vertx, db, 60_000)) {
+    void failedForkWaitsForForwardDeliveryBeforeCompensation(Vertx vertx) throws InterruptedException {
+        try (ReplyGraph run = new ReplyGraph(vertx, db, 60_000, false, 60_000)) {
             run.graph.inventoryProbe().heldGood = Promise.promise();
             WorkflowInstanceId id = run.start("service-reply-failed-fork", "fork-barrier");
             run.until(
@@ -157,7 +157,14 @@ class ServiceReplyIT {
                             id.value().toString())
                     .getFirst();
             assertThat(forward.getString("state")).isEqualTo("PROCESSING");
+            Thread.sleep(1_000); // Longer than the relay's 400 ms maximum idle poll.
             assertThat(run.graph.inventoryProbe().ackCalls).hasValue(0);
+            assertThat(run.rows(
+                                    "SELECT state FROM outbox WHERE headers->>'x-workflow-id' = $1 AND destination = 'inventory.ack'",
+                                    id.value().toString())
+                            .getFirst()
+                            .getString("state"))
+                    .isEqualTo("PENDING");
             run.graph.inventoryProbe().heldGood.complete(new ReplyGraph.Reserved("ok"));
             run.until("forward terminal", () -> "PUBLISHED"
                     .equals(run.rows(
@@ -167,6 +174,10 @@ class ServiceReplyIT {
                             .getString("state")));
             run.until(
                     "undo delivered", () -> run.graph.inventoryProbe().ackCalls.get() == 1);
+            run.until("the fork's outbox rows to settle", () -> run.rows(
+                            "SELECT id FROM outbox WHERE headers->>'x-workflow-id' = $1 AND state IN ('PENDING', 'PROCESSING')",
+                            id.value().toString())
+                    .isEmpty());
         }
     }
 
