@@ -2448,6 +2448,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                             + " exceeds " + MAX_NAME_LENGTH + " characters",
                     List.of(ViolationDetail.unlocated("the signal name is too long", "payload"))));
         }
+        if (dev.vertique.workflow.plan.ReplySignals.isReserved(signalName)) {
+            return Future.failedFuture(reservedSignal());
+        }
         String namespace = WorkflowDedupScopes.correlatedScope(contractName, signalName, signal.scopeKey());
         String dedupKey = WorkflowDedupScopes.correlatedKey(signal.dedupKey());
         return dedup.findCorrelated(namespace, dedupKey, tx).compose(duplicate -> {
@@ -2501,17 +2504,19 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             if (existing.isPresent())
                 return existing.get().equals(id)
                         ? Future.succeededFuture(duplicateReceipt())
-                        : Future.failedFuture(new IllegalStateException("Reply wait not found"));
+                        : Future.failedFuture(replyNoMatch());
             return signalWaits.findById(waitId, tx).compose(found -> {
-                if (found.isEmpty() || !found.get().instanceId().equals(id))
-                    return Future.failedFuture(new IllegalStateException("Reply wait not found"));
+                if (found.isEmpty() || !found.get().instanceId().equals(id)) return Future.failedFuture(replyNoMatch());
                 SignalWaitRecord wait = found.get();
                 String payloadJson;
                 try {
                     recordValidator.validate(payload);
                     payloadJson = payload == null ? null : Json.encode(payload);
-                } catch (RuntimeException e) {
+                } catch (WorkflowInvalidPayloadException e) {
                     return Future.failedFuture(e);
+                } catch (RuntimeException e) {
+                    return Future.failedFuture(
+                            new WorkflowInvalidPayloadException("Reply payload is refused", List.of()));
                 }
                 CorrelatedSignal signal = new CorrelatedSignal(
                         Object.class,
@@ -2530,28 +2535,41 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                             if (again.isPresent())
                                 return again.get().equals(id)
                                         ? Future.succeededFuture(duplicateReceipt())
-                                        : Future.failedFuture(new IllegalStateException("Reply wait not found"));
+                                        : Future.failedFuture(replyNoMatch());
                             return signalWaits.findById(waitId, tx).compose(current -> {
                                 if (current.isEmpty()
                                         || !current.get().instanceId().equals(id))
-                                    return Future.failedFuture(new IllegalStateException("Reply wait not found"));
+                                    return Future.failedFuture(replyNoMatch());
                                 return recordCorrelated(
-                                        signal,
-                                        wait.contractName(),
-                                        id,
-                                        wait.definitionId(),
-                                        wait.forkStepId().isEmpty() ? null : wait.forkStepId(),
-                                        wait.branchId().isEmpty() ? null : wait.branchId(),
-                                        waitId.toString(),
-                                        payloadJson,
-                                        namespace,
-                                        key,
-                                        Integer.MAX_VALUE,
-                                        tx);
+                                                signal,
+                                                wait.contractName(),
+                                                id,
+                                                wait.definitionId(),
+                                                wait.forkStepId().isEmpty() ? null : wait.forkStepId(),
+                                                wait.branchId().isEmpty() ? null : wait.branchId(),
+                                                waitId.toString(),
+                                                payloadJson,
+                                                namespace,
+                                                key,
+                                                Integer.MAX_VALUE,
+                                                tx)
+                                        .recover(error -> error instanceof WorkflowSignalNoMatchException
+                                                ? Future.failedFuture(replyNoMatch())
+                                                : Future.failedFuture(error));
                             });
                         });
             });
         });
+    }
+
+    private static WorkflowSignalNoMatchException replyNoMatch() {
+        return new WorkflowSignalNoMatchException("vertique.reply.", "vertique.reply.");
+    }
+
+    private static WorkflowInvalidPayloadException reservedSignal() {
+        return new WorkflowInvalidPayloadException(
+                "The signal name is reserved",
+                List.of(ViolationDetail.unlocated("the signal name is reserved", "payload")));
     }
 
     /** The receipt of a delivery that an earlier delivery of the same event already recorded. */
@@ -2718,6 +2736,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                     "Signal for instance '" + id.value() + "' is refused: the " + oversized + " exceeds "
                             + MAX_NAME_LENGTH + " characters",
                     List.of(ViolationDetail.unlocated("the " + oversized + " is too long", "payload"))));
+        }
+        if (signalName != null && dev.vertique.workflow.plan.ReplySignals.isReserved(signalName)) {
+            return Future.failedFuture(reservedSignal());
         }
         String key = WorkflowDedupScopes.signalKey(signalDedupKey, forkStepId, branchId);
         return dedup.findSignal(id, key, tx).compose(duplicate -> {
