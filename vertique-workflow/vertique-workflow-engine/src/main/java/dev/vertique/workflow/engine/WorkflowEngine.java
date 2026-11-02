@@ -320,7 +320,25 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                     WorkflowHistoryFailure.Action.SIGNAL,
                     null,
                     tx,
-                    () -> recordReply(id, waitId, payload, provenance, tx));
+                    () -> recordReply(id, waitId, payload, provenance, false, tx));
+        }
+
+        @Override
+        public Future<CorrelatedSignalReceipt> failWait(
+                WorkflowInstanceId id,
+                java.util.UUID waitId,
+                dev.vertique.workflow.ops.ServiceFailure failure,
+                SignalProvenance provenance,
+                SqlClient tx) {
+            if (id == null || waitId == null || failure == null || provenance == null)
+                return Future.failedFuture(new NullPointerException("id, waitId, failure and provenance are required"));
+            Future<CorrelatedSignalReceipt> invalid = WorkflowTransactionClientGuard.reject("failWait", tx);
+            if (invalid != null) return invalid;
+            return historyPublisher.around(
+                    WorkflowHistoryFailure.Action.SIGNAL,
+                    null,
+                    tx,
+                    () -> recordReply(id, waitId, failure, provenance, true, tx));
         }
 
         @Override
@@ -2471,7 +2489,12 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     }
 
     private Future<CorrelatedSignalReceipt> recordReply(
-            WorkflowInstanceId id, java.util.UUID waitId, Object payload, SignalProvenance provenance, SqlClient tx) {
+            WorkflowInstanceId id,
+            java.util.UUID waitId,
+            Object payload,
+            SignalProvenance provenance,
+            boolean failure,
+            SqlClient tx) {
         String namespace = WorkflowDedupScopes.REPLY_NAMESPACE;
         String key = WorkflowDedupScopes.correlatedKey(waitId.toString());
         return dedup.findCorrelated(namespace, key, tx).compose(existing -> {
@@ -2492,7 +2515,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 }
                 CorrelatedSignal signal = new CorrelatedSignal(
                         Object.class,
-                        wait.signalName(),
+                        failure
+                                ? dev.vertique.workflow.plan.ReplySignals.failureNameFor(wait.signalName())
+                                : wait.signalName(),
                         waitId.toString(),
                         payload,
                         waitId.toString(),

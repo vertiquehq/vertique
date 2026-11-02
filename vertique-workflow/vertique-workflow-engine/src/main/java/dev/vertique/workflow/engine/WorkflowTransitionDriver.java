@@ -499,7 +499,7 @@ final class WorkflowTransitionDriver {
                 null,
                 TimerFireTimes.of(wsn.timeout().timeout(), () -> timerPvd.get()
                         .resolveFireAt(wsn.timeout().timeout(), inst, rw)),
-                List.of(wsn.signalName()));
+                wsn.acceptedSignalNames());
 
         return commands.recordTimer(timer, tx).compose(recorded -> {
             UUID timerId = recorded.timerId();

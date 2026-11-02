@@ -56,6 +56,50 @@ class WorkflowPlanValidatorTest {
         }
     }
 
+    @org.junit.jupiter.params.ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.MethodSource("forbiddenFailureRoutes")
+    void failureRouteToForbiddenNodeInForkIsRefused(String description, WorkflowPlan candidate, String message) {
+        assertThatThrownBy(() -> emptyValidator().validate(candidate))
+                .isInstanceOf(WorkflowDefinitionException.class)
+                .hasMessageContaining(message);
+    }
+
+    private static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments> forbiddenFailureRoutes() {
+        var outer = new ForkNode("outer", List.of(BranchStart.of("a", "call")), "outer-join", BranchRetryPolicy.none());
+        var wait = new WaitSignalNode(
+                "wait",
+                "vertique.reply.ok.call",
+                "java.lang.String",
+                new CallbackId("update"),
+                "branch-done",
+                null,
+                null,
+                new WaitSignalNode.ReplyWait("call", "vertique.reply.failed.call", null, "forbidden", false));
+        var decision = new DecisionNode("forbidden", new CallbackId("decide"));
+        var inner = new ForkNode(
+                "forbidden", List.of(BranchStart.of("inner", "inner-done")), "inner-join", BranchRetryPolicy.none());
+        var common = List.<WorkflowNode>of(
+                outer,
+                dispatch("call", "svc", "wait"),
+                wait,
+                complete("branch-done"),
+                allRequiredJoin("outer-join", "after", null),
+                complete("after"));
+        var decisionNodes = new ArrayList<>(common);
+        decisionNodes.add(decision);
+        var forkNodes = new ArrayList<>(common);
+        forkNodes.addAll(List.of(
+                inner,
+                complete("inner-done"),
+                allRequiredJoin("inner-join", "inner-after", null),
+                complete("inner-after")));
+        return java.util.stream.Stream.of(
+                org.junit.jupiter.params.provider.Arguments.of(
+                        "decision", plan("outer", decisionNodes), "DecisionNode"),
+                org.junit.jupiter.params.provider.Arguments.of(
+                        "nested fork", plan("outer", forkNodes), "nested fan-out"));
+    }
+
     private static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments> brokenReplyPlans() {
         var reply = new WaitSignalNode.ReplyWait("call", "vertique.reply.failed.call", null, "done", false);
         var good = replyNode("wait", "vertique.reply.ok.call", null, null, reply);

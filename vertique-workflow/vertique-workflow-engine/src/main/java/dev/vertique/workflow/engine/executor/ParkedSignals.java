@@ -7,10 +7,13 @@ import dev.vertique.workflow.engine.spi.ParkedSignal;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.plan.ReplySignals;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.SqlClient;
 import jakarta.annotation.Nullable;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Objects;
@@ -237,8 +240,23 @@ public final class ParkedSignals {
             return Future.succeededFuture();
         }
         WaitAddress wait = open.get(index);
-        return commands.parkedSignalsAt(instance, wait.signalName(), wait.forkStepId(), wait.branchId(), tx)
-                .compose(parked ->
+        Future<List<ParkedSignal>> selected =
+                commands.parkedSignalsAt(instance, wait.signalName(), wait.forkStepId(), wait.branchId(), tx);
+        if (ReplySignals.isReserved(wait.signalName())) {
+            selected = selected.compose(first -> commands.parkedSignalsAt(
+                            instance,
+                            ReplySignals.failureNameFor(wait.signalName()),
+                            wait.forkStepId(),
+                            wait.branchId(),
+                            tx)
+                    .map(second -> {
+                        List<ParkedSignal> both = new ArrayList<>(first);
+                        both.addAll(second);
+                        both.sort(Comparator.comparingLong(ParkedSignal::seq));
+                        return both;
+                    }));
+        }
+        return selected.compose(parked ->
                         guard.unblocked(instance, wait.stepId(), wait.branchId(), accepted(parked, wait, failed), tx))
                 .compose(candidates -> candidates.isEmpty()
                         ? atWaits(instance, open, failed, index + 1, tx)

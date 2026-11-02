@@ -641,7 +641,7 @@ final class BranchTransitionEngine {
                 TimerFireTimes.of(
                         wsn.timeout().timeout(),
                         () -> resolveFireAt(wsn.timeout().timeout(), parentStateJson, rw)),
-                List.of(wsn.signalName()));
+                wsn.acceptedSignalNames());
         return openWaitRecord(token, wsn, parentStateJson, rw, instanceScope, tx)
                 .compose(opened -> commands.recordTimer(timer, tx))
                 .compose(recorded -> {

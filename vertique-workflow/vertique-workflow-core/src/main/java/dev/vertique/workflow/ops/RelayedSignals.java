@@ -80,6 +80,11 @@ public interface RelayedSignals<TX> {
         return Future.failedFuture(new UnsupportedOperationException("Reply delivery is not supported"));
     }
 
+    default Future<CorrelatedSignalReceipt> failWait(
+            WorkflowInstanceId id, UUID waitId, ServiceFailure failure, SignalProvenance provenance, TX tx) {
+        return Future.failedFuture(new UnsupportedOperationException("Reply delivery is not supported"));
+    }
+
     default Future<Boolean> waitOpen(WorkflowInstanceId id, UUID waitId, TX tx) {
         return Future.failedFuture(new UnsupportedOperationException("Reply wait lookup is not supported"));
     }

@@ -293,6 +293,7 @@ public final class WorkflowPlanValidator {
                 queue.add(sdn.nextStepId());
             } else if (n instanceof WaitSignalNode wsn) {
                 queue.add(wsn.nextStepId());
+                if (wsn.reply() != null) queue.add(wsn.reply().failureNextStepId());
                 if (wsn.timeout() != null) {
                     queue.add(wsn.timeout().timeoutNextStepId());
                 }
