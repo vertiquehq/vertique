@@ -78,6 +78,11 @@ final class ReplyGraph implements AutoCloseable {
             this.replies = replies;
         }
 
+        int callsFor(String reference) {
+            var count = perReference.get(reference);
+            return count == null ? 0 : count.get();
+        }
+
         @Override
         public Future<Reserved> reserve(Start request) {
             calls.incrementAndGet();

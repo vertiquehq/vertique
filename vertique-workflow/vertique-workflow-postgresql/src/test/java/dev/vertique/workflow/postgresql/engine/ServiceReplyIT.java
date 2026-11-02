@@ -728,7 +728,7 @@ class ServiceReplyIT {
         try (ReplyGraph run = new ReplyGraph(vertx, db)) {
             run.graph.inventoryProbe().held = Promise.promise();
             WorkflowInstanceId id = run.startCall("cancel-in-flight");
-            run.until("the service call", () -> run.graph.inventoryProbe().calls.get() == 1);
+            run.until("the service call", () -> run.graph.inventoryProbe().callsFor("cancel-in-flight") == 1);
             ReplyGraph.await(run.pool.withTransaction(
                     tx -> run.graph.transactionalOperations().cancel(id, "cancel", tx)));
             run.graph.inventoryProbe().held.complete(new ReplyGraph.Reserved("late"));
@@ -740,12 +740,10 @@ class ServiceReplyIT {
             assertThat(run.graph.replyProbe().outcomes)
                     .contains(dev.vertique.workflow.ops.ReplyOutcomeObserver.Outcome.STALE);
             for (boolean fail : new boolean[] {false, true}) {
-                int before = run.graph.inventoryProbe().calls.get();
                 run.graph.inventoryProbe().held = Promise.promise();
-                WorkflowInstanceId timed = run.start("service-reply-timed", fail ? "timed-failure" : "timed-success");
-                run.until(
-                        "the service call",
-                        () -> run.graph.inventoryProbe().calls.get() > before);
+                String reference = fail ? "timed-failure" : "timed-success";
+                WorkflowInstanceId timed = run.start("service-reply-timed", reference);
+                run.until("the service call", () -> run.graph.inventoryProbe().callsFor(reference) == 1);
                 run.until("the timer to close the wait", () -> "COMPLETED"
                         .equals(run.instance(timed).getString("status")));
                 if (fail) run.graph.inventoryProbe().held.fail(new IllegalStateException("late"));
@@ -759,15 +757,20 @@ class ServiceReplyIT {
             }
             run.graph.inventoryProbe().held = Promise.promise();
             run.graph.inventoryProbe().heldSecond = Promise.promise();
-            int priorCalls = run.graph.inventoryProbe().calls.get();
+            WorkflowInstanceId unrelated = run.startCall("unrelated-loop-call");
+            run.until(
+                    "the unrelated service call",
+                    () -> run.graph.inventoryProbe().callsFor("unrelated-loop-call") == 1);
             WorkflowInstanceId looped = run.start("service-reply-loop", "looped");
             run.until(
                     "the first and second entries to call the service",
-                    () -> run.graph.inventoryProbe().calls.get() >= priorCalls + 2);
+                    () -> run.graph.inventoryProbe().callsFor("looped") >= 2);
             var waits = run.rows("SELECT wait_id FROM workflow_signal_waits WHERE instance_id = $1", looped.value());
             assertThat(waits).hasSize(1);
             Object currentWait = waits.getFirst().getValue("wait_id");
             run.graph.inventoryProbe().held.complete(new ReplyGraph.Reserved("old"));
+            run.until("the unrelated row to settle", () -> "PUBLISHED"
+                    .equals(run.row(unrelated).getString("state")));
             run.until(
                     "the old row to settle",
                     () -> run.rows(
@@ -804,7 +807,6 @@ class ServiceReplyIT {
                             "CREATE TRIGGER delay_reply_row BEFORE INSERT ON outbox FOR EACH ROW EXECUTE FUNCTION delay_reply_row()")
                     .execute());
             try {
-                int before = run.graph.inventoryProbe().calls.get();
                 long staleBefore = run.graph.replyProbe().outcomes.stream()
                         .filter(o -> o == dev.vertique.workflow.ops.ReplyOutcomeObserver.Outcome.STALE)
                         .count();
@@ -813,7 +815,7 @@ class ServiceReplyIT {
                         "the delayed row to publish after timeout",
                         () -> run.row(delayed) != null
                                 && "PUBLISHED".equals(run.row(delayed).getString("state")));
-                assertThat(run.graph.inventoryProbe().calls).hasValue(before);
+                assertThat(run.graph.inventoryProbe().callsFor("delayed")).isZero();
                 assertThat(run.graph.replyProbe().outcomes.stream()
                                 .filter(o -> o == dev.vertique.workflow.ops.ReplyOutcomeObserver.Outcome.STALE)
                                 .count())
