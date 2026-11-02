@@ -63,7 +63,7 @@ public record FanOutOrderState(
      * Transitions the state after the inventory branch receives its reservation signal.
      *
      * <p>Called by the {@code screen-inventory} branch's stateUpdater when the
-     * {@code inventory.reserved} signal arrives on the {@code inventory} branch.
+     * reservation reply arrives on the {@code inventory} branch.
      *
      * @param reservationId the reservation id returned by the inventory service
      * @return updated state with {@link OrderStatus#INVENTORY_RESERVED} and the reservation id set

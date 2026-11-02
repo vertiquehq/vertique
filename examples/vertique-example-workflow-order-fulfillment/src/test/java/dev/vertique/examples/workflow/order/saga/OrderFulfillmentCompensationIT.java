@@ -60,7 +60,7 @@ public class OrderFulfillmentCompensationIT extends SagaTestBase {
         String orderId = "comp-cancel-1";
 
         startOrder(orderId)
-                // Drive relay: inventory.reserve called → inventory.reserved signal posted → saga
+                // Drive relay: inventory.reserve called → reservation reply recorded → saga
                 // advances to authorize-payment → outbox entry for payment.authorize written.
                 .compose(id -> driveRelay().map(v -> id))
                 .compose(id ->

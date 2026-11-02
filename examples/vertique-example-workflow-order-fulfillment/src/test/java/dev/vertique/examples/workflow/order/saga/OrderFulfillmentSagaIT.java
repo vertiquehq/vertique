@@ -28,13 +28,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>Drives the full order-fulfillment saga end-to-end:
  * <ol>
  *   <li>Start saga → engine records {@code inventory.reserve} outbox entry.</li>
- *   <li>Drive relay → stub inventory.reserve called → {@code inventory.reserved} signal posted
+ *   <li>Drive relay → stub inventory.reserve called → reservation reply recorded
  *       → engine advances to {@code authorize-payment} → records {@code payment.authorize} entry.</li>
  *   <li>Drive relay → stub payment.authorize called → {@code payment.captured} signal posted
  *       → engine advances to {@code create-shipment} → records {@code shipping.create-shipment}
  *       entry.</li>
- *   <li>Drive relay → stub shipping.create-shipment called → {@code shipment.created} signal
- *       posted → engine advances to {@code completed} → status COMPLETED.</li>
+ *   <li>Drive relay → stub shipping.create-shipment called → shipment reply
+ *       recorded → engine advances to {@code completed} → status COMPLETED.</li>
  * </ol>
  *
  * <p>Assertions: status COMPLETED, ordered history, no orphan outbox rows.

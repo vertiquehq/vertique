@@ -8,7 +8,7 @@ import java.util.List;
 /**
  * Command dispatched to the inventory service to reserve stock for an order.
  *
- * @param orderId the order identifier used to correlate with the {@code inventory.reserved} signal
+ * @param orderId the order identifier for the reservation
  * @param items the line items whose stock must be reserved
  */
 public record ReserveInventory(String orderId, List<PlaceOrder.OrderItem> items) {}
