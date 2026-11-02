@@ -57,7 +57,37 @@ public record WorkflowSideEffectIntent(
             String stepId,
             @Nullable UUID branchTokenId,
             @Nullable String forkStepId,
-            @Nullable String branchId) {
+            @Nullable String branchId,
+            @Nullable Reply reply) {
+
+        public record Reply(UUID waitId, boolean completesLater) {
+            public Reply {
+                java.util.Objects.requireNonNull(waitId, "waitId");
+            }
+        }
+
+        public Correlation(
+                WorkflowInstanceId workflowId,
+                long sequence,
+                String definitionId,
+                String definitionScopeKey,
+                String scopeKey,
+                String stepId,
+                @Nullable UUID branchTokenId,
+                @Nullable String forkStepId,
+                @Nullable String branchId) {
+            this(
+                    workflowId,
+                    sequence,
+                    definitionId,
+                    definitionScopeKey,
+                    scopeKey,
+                    stepId,
+                    branchTokenId,
+                    forkStepId,
+                    branchId,
+                    null);
+        }
 
         /**
          * Convenience factory for the single-path (non-branch) case.

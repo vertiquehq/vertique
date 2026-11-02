@@ -230,3 +230,5 @@ Applications normally provide service contracts and destination handlers; this m
 - **services** - service contract contribution and target resolution.
 - **inbox-outbox-core** - outbox and inbox APIs; a signal source writes its inbox rows through `InboxService`.
 - **vertx-sql-client** - `SqlClient` appears in public integration signatures.
+
+When a service intent names a reply wait, the outbox recorder accepts a value-returning target, writes its opaque wait handle on the row, and leaves the aggregate ID empty so the row uses unordered claiming. A call that completes later also carries its completion mode. An ordinary dispatch continues to require a void target.

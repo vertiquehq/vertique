@@ -64,4 +64,11 @@ public record SignalProvenance(String transport, String source, Map<String, Stri
                         "triggerId", Objects.requireNonNull(triggerId, "triggerId"),
                         "messageHash", Objects.requireNonNull(messageHash, "messageHash")));
     }
+
+    public static SignalProvenance outbox(String targetId, long entryId) {
+        return new SignalProvenance(
+                "outbox",
+                "reply",
+                Map.of("target", Objects.requireNonNull(targetId), "entryId", Long.toString(entryId)));
+    }
 }

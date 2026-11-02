@@ -367,19 +367,35 @@ final class WorkflowTransitionDriver {
                     "payloadFactory threw for step '" + sdn.stepId() + "': " + e.getMessage()));
         }
 
-        return history.nextSequence(inst.id(), tx).compose(seq -> {
+        var next = rw.nodeById().get(sdn.nextStepId());
+        WaitSignalNode replyWait = next instanceof WaitSignalNode wait
+                        && wait.reply() != null
+                        && wait.reply().callStepId().equals(sdn.stepId())
+                ? wait
+                : null;
+        java.util.UUID waitId = replyWait == null ? null : java.util.UUID.randomUUID();
+        Future<Void> opened =
+                replyWait == null ? Future.succeededFuture() : signalWaits.openReply(inst, replyWait, rw, waitId, tx);
+        return opened.compose(ignored -> history.nextSequence(inst.id(), tx)).compose(seq -> {
             WorkflowSideEffectIntent intent = new WorkflowSideEffectIntent(
                     IntentKind.SERVICE,
                     sdn.targetId(),
                     payload,
                     Map.of(),
-                    WorkflowSideEffectIntent.Correlation.singlePath(
+                    new WorkflowSideEffectIntent.Correlation(
                             inst.id(),
                             seq,
                             inst.definitionId(),
                             inst.definitionScopeKey(),
                             inst.scopeKey(),
-                            sdn.stepId()));
+                            sdn.stepId(),
+                            null,
+                            null,
+                            null,
+                            replyWait == null
+                                    ? null
+                                    : new WorkflowSideEffectIntent.Correlation.Reply(
+                                            waitId, replyWait.reply().completesLater())));
 
             return recorders
                     .route(intent, tx)

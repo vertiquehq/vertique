@@ -6,6 +6,7 @@ package dev.vertique.workflow.ops;
 import dev.vertique.core.context.DurableMetadata;
 import io.vertx.core.Future;
 import jakarta.annotation.Nullable;
+import java.util.UUID;
 
 /**
  * Records a signal that was already durable before it arrived, such as one the outbox relay delivers to
@@ -73,4 +74,13 @@ public interface RelayedSignals<TX> {
             @Nullable String branchId,
             @Nullable DurableMetadata signalMetadata,
             TX tx);
+
+    default Future<CorrelatedSignalReceipt> signalWait(
+            WorkflowInstanceId id, UUID waitId, @Nullable Object payload, SignalProvenance provenance, TX tx) {
+        return Future.failedFuture(new UnsupportedOperationException("Reply delivery is not supported"));
+    }
+
+    default Future<Boolean> waitOpen(WorkflowInstanceId id, UUID waitId, TX tx) {
+        return Future.failedFuture(new UnsupportedOperationException("Reply wait lookup is not supported"));
+    }
 }

@@ -306,6 +306,35 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      */
     private final RelayedSignals<SqlClient> relayedSignals = new RelayedSignals<>() {
         @Override
+        public Future<CorrelatedSignalReceipt> signalWait(
+                WorkflowInstanceId id,
+                java.util.UUID waitId,
+                Object payload,
+                SignalProvenance provenance,
+                SqlClient tx) {
+            if (id == null || waitId == null || provenance == null)
+                return Future.failedFuture(new NullPointerException("id, waitId and provenance are required"));
+            Future<CorrelatedSignalReceipt> invalid = WorkflowTransactionClientGuard.reject("signalWait", tx);
+            if (invalid != null) return invalid;
+            return historyPublisher.around(
+                    WorkflowHistoryFailure.Action.SIGNAL,
+                    null,
+                    tx,
+                    () -> recordReply(id, waitId, payload, provenance, tx));
+        }
+
+        @Override
+        public Future<Boolean> waitOpen(WorkflowInstanceId id, java.util.UUID waitId, SqlClient tx) {
+            if (id == null || waitId == null)
+                return Future.failedFuture(new NullPointerException("id and waitId are required"));
+            Future<Boolean> invalid = WorkflowTransactionClientGuard.reject("waitOpen", tx);
+            if (invalid != null) return invalid;
+            return signalWaits.findById(waitId, tx).map(found -> found.filter(
+                            wait -> wait.instanceId().equals(id))
+                    .isPresent());
+        }
+
+        @Override
         public Future<Void> signal(
                 WorkflowInstanceId id,
                 String signalName,
@@ -2296,6 +2325,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                                     payloadJson,
                                     namespace,
                                     dedupKey,
+                                    maxOpenSignals,
                                     tx);
                         }),
                 tx);
@@ -2363,6 +2393,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                         payloadJson,
                         namespace,
                         dedupKey,
+                        maxOpenSignals,
                         tx),
                 tx);
     }
@@ -2439,6 +2470,65 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         });
     }
 
+    private Future<CorrelatedSignalReceipt> recordReply(
+            WorkflowInstanceId id, java.util.UUID waitId, Object payload, SignalProvenance provenance, SqlClient tx) {
+        String namespace = WorkflowDedupScopes.REPLY_NAMESPACE;
+        String key = WorkflowDedupScopes.correlatedKey(waitId.toString());
+        return dedup.findCorrelated(namespace, key, tx).compose(existing -> {
+            if (existing.isPresent())
+                return existing.get().equals(id)
+                        ? Future.succeededFuture(duplicateReceipt())
+                        : Future.failedFuture(new IllegalStateException("Reply wait not found"));
+            return signalWaits.findById(waitId, tx).compose(found -> {
+                if (found.isEmpty() || !found.get().instanceId().equals(id))
+                    return Future.failedFuture(new IllegalStateException("Reply wait not found"));
+                SignalWaitRecord wait = found.get();
+                String payloadJson;
+                try {
+                    recordValidator.validate(payload);
+                    payloadJson = payload == null ? null : Json.encode(payload);
+                } catch (RuntimeException e) {
+                    return Future.failedFuture(e);
+                }
+                CorrelatedSignal signal = new CorrelatedSignal(
+                        Object.class,
+                        wait.signalName(),
+                        waitId.toString(),
+                        payload,
+                        waitId.toString(),
+                        null,
+                        null,
+                        provenance);
+                return commands.lockInstance(id, tx)
+                        .compose(locked -> dedup.findCorrelated(namespace, key, tx))
+                        .compose(again -> {
+                            if (again.isPresent())
+                                return again.get().equals(id)
+                                        ? Future.succeededFuture(duplicateReceipt())
+                                        : Future.failedFuture(new IllegalStateException("Reply wait not found"));
+                            return signalWaits.findById(waitId, tx).compose(current -> {
+                                if (current.isEmpty()
+                                        || !current.get().instanceId().equals(id))
+                                    return Future.failedFuture(new IllegalStateException("Reply wait not found"));
+                                return recordCorrelated(
+                                        signal,
+                                        wait.contractName(),
+                                        id,
+                                        wait.definitionId(),
+                                        wait.forkStepId().isEmpty() ? null : wait.forkStepId(),
+                                        wait.branchId().isEmpty() ? null : wait.branchId(),
+                                        waitId.toString(),
+                                        payloadJson,
+                                        namespace,
+                                        key,
+                                        Integer.MAX_VALUE,
+                                        tx);
+                            });
+                        });
+            });
+        });
+    }
+
     /** The receipt of a delivery that an earlier delivery of the same event already recorded. */
     private static CorrelatedSignalReceipt duplicateReceipt() {
         return new CorrelatedSignalReceipt(CorrelatedSignalReceipt.Outcome.DUPLICATE, null);
@@ -2463,16 +2553,16 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             String payloadJson,
             String namespace,
             String dedupKey,
+            int limit,
             SqlClient tx) {
         String signalName = signal.signalName();
         return admitSignal(id, contractName, signalName, forkStepId, branchId, contractName, tx)
                 .compose(admitted -> capturedForDelivery(signal, contractName)
-                        .compose(actor -> commands.raiseOpenSignals(id, maxOpenSignals, tx)
+                        .compose(actor -> commands.raiseOpenSignals(id, limit, tx)
                                 .compose(raised -> {
                                     if (!raised) {
                                         return Future.<CorrelatedSignalReceipt>failedFuture(
-                                                new WorkflowSignalLimitException(
-                                                        id, maxOpenSignals, contractName, signalName));
+                                                new WorkflowSignalLimitException(id, limit, contractName, signalName));
                                     }
                                     return dedup.claimOrResolveCorrelated(namespace, dedupKey, id, tx)
                                             .compose(inserted -> {

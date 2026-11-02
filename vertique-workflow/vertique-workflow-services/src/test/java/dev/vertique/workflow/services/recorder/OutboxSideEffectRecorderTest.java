@@ -21,6 +21,7 @@ import dev.vertique.services.dispatch.ServiceMethodMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamSource;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.services.reply.ReplyHandle;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.RecorderResult;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
@@ -423,6 +424,86 @@ class OutboxSideEffectRecorderTest {
                     workflowId, 1L, "test-def", "acme", "tenant-1", "test-step");
             return new WorkflowSideEffectIntent(IntentKind.SERVICE, targetId, "payload", headers, correlation);
         }
+    }
+
+    record Reserved(String reference) {}
+
+    @Test
+    void replyCorrelationWritesTheHandleAndAcceptsAValueTarget() {
+        WorkflowInstanceId id = new WorkflowInstanceId(UUID.randomUUID());
+        UUID waitId = UUID.randomUUID();
+        ServiceMethodMeta meta = mock(ServiceMethodMeta.class);
+        when(meta.oneWay()).thenReturn(false);
+        doReturn(Reserved.class).when(meta).returnType();
+        when(meta.params()).thenReturn(List.of(new ParamMeta("req", ParamSource.PAYLOAD, Object.class)));
+        ResolvedServiceTarget target = mock(ResolvedServiceTarget.class);
+        when(target.meta()).thenReturn(meta);
+        lenient().when(target.targetId()).thenReturn("inventory.reserve");
+        lenient().when(target.operation()).thenReturn("reserve");
+        when(targetResolver.resolve("inventory.reserve")).thenReturn(target);
+        when(outboxService.publish(eq(tx), any(OutboxEntry.class))).thenReturn(Future.succeededFuture(1L));
+
+        var reply = new WorkflowSideEffectIntent.Correlation(
+                id,
+                1L,
+                "test",
+                "default",
+                "default",
+                "reserve",
+                null,
+                null,
+                null,
+                new WorkflowSideEffectIntent.Correlation.Reply(waitId, false));
+        var later = new WorkflowSideEffectIntent.Correlation(
+                id,
+                1L,
+                "test",
+                "default",
+                "default",
+                "reserve",
+                null,
+                null,
+                null,
+                new WorkflowSideEffectIntent.Correlation.Reply(waitId, true));
+        var none = new WorkflowSideEffectIntent.Correlation(
+                id, 1L, "test", "default", "default", "reserve", null, null, null);
+        assertThat(recorder.record(
+                                new WorkflowSideEffectIntent(
+                                        IntentKind.SERVICE, "inventory.reserve", "p", Map.of(), reply),
+                                tx)
+                        .succeeded())
+                .isTrue();
+        assertThat(recorder.record(
+                                new WorkflowSideEffectIntent(
+                                        IntentKind.SERVICE, "inventory.reserve", "p", Map.of(), later),
+                                tx)
+                        .succeeded())
+                .isTrue();
+        var refused = recorder.record(
+                new WorkflowSideEffectIntent(IntentKind.SERVICE, "inventory.reserve", "p", Map.of(), none), tx);
+        assertThat(refused.failed()).isTrue();
+        assertThat(refused.cause()).isInstanceOf(IllegalStateException.class);
+        doReturn(Void.class).when(meta).returnType();
+        assertThat(recorder.record(
+                                new WorkflowSideEffectIntent(
+                                        IntentKind.SERVICE, "inventory.reserve", "p", Map.of(), none),
+                                tx)
+                        .succeeded())
+                .isTrue();
+
+        ArgumentCaptor<OutboxEntry> entries = ArgumentCaptor.forClass(OutboxEntry.class);
+        verify(outboxService, org.mockito.Mockito.times(3)).publish(eq(tx), entries.capture());
+        var first = entries.getAllValues().get(0);
+        var parsed = ReplyHandle.parse(first.headers().get("x-outbox-reply-handle"));
+        assertThat(parsed.instanceId()).isEqualTo(id.value());
+        assertThat(parsed.waitId()).isEqualTo(waitId);
+        assertThat(first.aggregateId()).isNull();
+        assertThat(first.headers()).doesNotContainKey("x-outbox-reply-mode");
+        assertThat(entries.getAllValues().get(1).headers())
+                .containsEntry("x-outbox-reply-handle", first.headers().get("x-outbox-reply-handle"))
+                .containsEntry("x-outbox-reply-mode", "completes-later");
+        assertThat(entries.getAllValues().get(2).headers())
+                .doesNotContainKeys("x-outbox-reply-handle", "x-outbox-reply-mode");
     }
 
     // --- Helpers ---
