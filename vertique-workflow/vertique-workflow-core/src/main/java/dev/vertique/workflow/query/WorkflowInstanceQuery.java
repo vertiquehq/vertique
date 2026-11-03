@@ -180,8 +180,9 @@ public record WorkflowInstanceQuery(
      * @throws NullPointerException if a member of {@code statuses} is {@code null}
      */
     public WorkflowInstanceQuery withStatuses(@Nullable Collection<WorkflowStatus> statuses) {
+        // The collection becomes a Set here; the canonical constructor then applies the null and copy rules.
         return new WorkflowInstanceQuery(
-                statuses == null ? Set.of() : Set.copyOf(statuses),
+                statuses == null ? null : Set.copyOf(statuses),
                 businessKey,
                 subjectType,
                 subjectId,

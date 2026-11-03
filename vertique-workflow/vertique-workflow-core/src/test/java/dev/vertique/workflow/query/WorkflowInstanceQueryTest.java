@@ -12,6 +12,7 @@ import dev.vertique.workflow.subject.WorkflowSubjectRef;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
@@ -329,6 +330,37 @@ class WorkflowInstanceQueryTest {
             assertThat(q.statuses()).containsExactly(WorkflowStatus.FAILED);
             assertThatThrownBy(() -> q.statuses().add(WorkflowStatus.EXPIRED))
                     .isInstanceOf(UnsupportedOperationException.class);
+        }
+
+        @Test
+        @DisplayName(
+                "clearing a query that already has statuses, by null or by an empty set, gives the unfiltered query")
+        void clearingARealFilterGivesNone() {
+            WorkflowInstanceQuery base = WorkflowInstanceQuery.byStatus(WorkflowStatus.FAILED);
+
+            assertThat(base.withStatuses(null)).isEqualTo(WorkflowInstanceQuery.none());
+            assertThat(base.withStatuses(List.of())).isEqualTo(WorkflowInstanceQuery.none());
+            assertThat(base.withStatuses(null).statuses()).isEmpty();
+        }
+
+        @Test
+        @DisplayName(
+                "the canonical constructor owns the rules: null is empty, the set is copied, a null member is rejected")
+        void canonicalConstructorNormalizes() {
+            Set<WorkflowStatus> mutable = new HashSet<>(Set.of(WorkflowStatus.FAILED));
+
+            WorkflowInstanceQuery fromNull = new WorkflowInstanceQuery(null, null, null, null, null, null, false, null);
+            WorkflowInstanceQuery fromMutable =
+                    new WorkflowInstanceQuery(mutable, null, null, null, null, null, false, null);
+            mutable.add(WorkflowStatus.EXPIRED);
+
+            assertThat(fromNull.statuses()).isEmpty();
+            assertThat(fromMutable.statuses()).containsExactly(WorkflowStatus.FAILED);
+            assertThatThrownBy(() -> fromMutable.statuses().add(WorkflowStatus.EXPIRED))
+                    .isInstanceOf(UnsupportedOperationException.class);
+            Set<WorkflowStatus> withNull = new HashSet<>(Arrays.asList(WorkflowStatus.FAILED, null));
+            assertThatNullPointerException()
+                    .isThrownBy(() -> new WorkflowInstanceQuery(withNull, null, null, null, null, null, false, null));
         }
 
         @Test

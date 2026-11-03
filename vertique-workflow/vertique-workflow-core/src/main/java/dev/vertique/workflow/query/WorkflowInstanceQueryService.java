@@ -42,8 +42,9 @@ public interface WorkflowInstanceQueryService {
      * <p>An empty {@link WorkflowInstanceQuery#none()} returns all live (non-archived) instances
      * in the default cursor order. Multiple non-null filter fields are combined as a conjunction
      * (AND); the members of {@link WorkflowInstanceQuery#statuses()} are alternatives (OR) within
-     * that conjunction, and an empty set applies no status filter. Set {@link WorkflowInstanceQuery#includeArchived()} to {@code true} to include
-     * soft-deleted instances.
+     * that conjunction, and an empty set applies no status filter. Set
+     * {@link WorkflowInstanceQuery#includeArchived()} to {@code true} to include soft-deleted
+     * instances.
      *
      * @param query filter criteria; use {@link WorkflowInstanceQuery#none()} for an unfiltered list
      * @param cursor pagination cursor; use {@link PageCursor#first(int)} for the initial page
