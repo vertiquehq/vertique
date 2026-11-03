@@ -165,7 +165,10 @@ public interface WorkflowInstanceRepository<TX> {
      * Returns a keyset-paginated, filtered list of workflow instances. Executes read-only (no row
      * locking).
      *
-     * @param query  the query criteria to apply; fields set to {@code null} are ignored
+     * @param query  the query criteria to apply; fields set to {@code null} are ignored. An
+     *               implementation must match an instance whose status is any member of
+     *               {@link WorkflowInstanceQuery#statuses()}, and apply no status filter when it is
+     *               empty
      * @param cursor the page cursor; pass {@link PageCursor#first(int)} for the first page and
      *               {@link PageCursor#fromToken(String)} for subsequent pages
      * @return a {@link Future} containing the keyset-paginated result

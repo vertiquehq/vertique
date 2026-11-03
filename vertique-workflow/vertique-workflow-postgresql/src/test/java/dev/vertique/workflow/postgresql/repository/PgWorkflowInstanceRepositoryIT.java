@@ -903,6 +903,113 @@ public class PgWorkflowInstanceRepositoryIT {
     }
 
     @Test
+    @DisplayName("findFiltered by several statuses returns exactly the union, and an empty set filters nothing")
+    void findFilteredByStatusesReturnsTheUnion(VertxTestContext ctx) {
+        WorkflowInstanceId failedId = new WorkflowInstanceId(UUID.randomUUID());
+        WorkflowInstanceId expiredId = new WorkflowInstanceId(UUID.randomUUID());
+        WorkflowInstanceId runningId = new WorkflowInstanceId(UUID.randomUUID());
+        WorkflowInstanceId completedId = new WorkflowInstanceId(UUID.randomUUID());
+
+        pool.withTransaction(tx -> repository
+                        .insert(instance(failedId, WorkflowStatus.FAILED), tx)
+                        .compose(v -> repository.insert(instance(expiredId, WorkflowStatus.EXPIRED), tx))
+                        .compose(v -> repository.insert(instance(runningId, WorkflowStatus.RUNNING), tx))
+                        .compose(v -> repository.insert(instance(completedId, WorkflowStatus.COMPLETED), tx)))
+                .compose(v -> repository
+                        .findFiltered(
+                                WorkflowInstanceQuery.byStatuses(
+                                        List.of(WorkflowStatus.FAILED, WorkflowStatus.EXPIRED)),
+                                PageCursor.first(10))
+                        .compose(union -> repository
+                                .findFiltered(
+                                        WorkflowInstanceQuery.byStatus(WorkflowStatus.FAILED), PageCursor.first(10))
+                                .compose(single -> repository
+                                        .findFiltered(WorkflowInstanceQuery.byStatuses(List.of()), PageCursor.first(10))
+                                        .map(all -> List.of(union, single, all)))))
+                .onSuccess(results -> ctx.verify(() -> {
+                    assertEquals(
+                            java.util.Set.of(failedId, expiredId),
+                            results.get(0).items().stream()
+                                    .map(WorkflowInstance::id)
+                                    .collect(java.util.stream.Collectors.toSet()),
+                            "two statuses must return the union and nothing else");
+                    assertEquals(1, results.get(1).items().size(), "one status behaves as before");
+                    assertEquals(failedId, results.get(1).items().get(0).id());
+                    assertEquals(4, results.get(2).items().size(), "an empty set applies no status filter");
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("findFiltered combines a status set with another filter")
+    void findFilteredByStatusesCombinesWithOtherFilters(VertxTestContext ctx) {
+        WorkflowInstanceId keyedId = new WorkflowInstanceId(UUID.randomUUID());
+        WorkflowInstanceId waitingId = new WorkflowInstanceId(UUID.randomUUID());
+        WorkflowInstanceId failedId = new WorkflowInstanceId(UUID.randomUUID());
+
+        pool.withTransaction(tx -> repository
+                        .insert(instanceWithBusinessKey(keyedId, "bk-union"), tx)
+                        .compose(v -> repository.insert(instance(waitingId, WorkflowStatus.WAITING), tx))
+                        .compose(v -> repository.insert(instance(failedId, WorkflowStatus.FAILED), tx)))
+                .compose(v -> repository.findFiltered(
+                        WorkflowInstanceQuery.byStatuses(List.of(WorkflowStatus.RUNNING, WorkflowStatus.WAITING))
+                                .withBusinessKey("bk-union"),
+                        PageCursor.first(10)))
+                .onSuccess(result -> ctx.verify(() -> {
+                    assertEquals(1, result.items().size(), "the status set and the business key must both apply");
+                    assertEquals(keyedId, result.items().get(0).id());
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("findFiltered pages through a status set without a gap or a duplicate")
+    void findFilteredByStatusesPagesWithoutGapsOrDuplicates(VertxTestContext ctx) {
+        WorkflowInstanceId id1 = new WorkflowInstanceId(UUID.randomUUID());
+        WorkflowInstanceId id2 = new WorkflowInstanceId(UUID.randomUUID());
+        WorkflowInstanceId id3 = new WorkflowInstanceId(UUID.randomUUID());
+        WorkflowInstanceId otherId = new WorkflowInstanceId(UUID.randomUUID());
+        Instant base = Instant.parse("2026-01-01T00:00:00Z");
+        WorkflowInstanceQuery query =
+                WorkflowInstanceQuery.byStatuses(List.of(WorkflowStatus.FAILED, WorkflowStatus.EXPIRED));
+
+        pool.withTransaction(tx -> repository
+                        .insert(instanceAt(id1, WorkflowStatus.FAILED, base), tx)
+                        .compose(v ->
+                                repository.insert(instanceAt(id2, WorkflowStatus.EXPIRED, base.plusSeconds(60)), tx))
+                        .compose(v ->
+                                repository.insert(instanceAt(id3, WorkflowStatus.FAILED, base.plusSeconds(120)), tx))
+                        .compose(v -> repository.insert(
+                                instanceAt(otherId, WorkflowStatus.COMPLETED, base.plusSeconds(180)), tx)))
+                .compose(v -> repository.findFiltered(query, PageCursor.first(2)))
+                .compose(page1 -> {
+                    assertTrue(page1.hasMore(), "two of three matching rows leave a next page");
+                    return repository
+                            .findFiltered(query, PageCursor.fromToken(page1.nextCursorToken()))
+                            .map(page2 -> List.of(page1, page2));
+                })
+                .onSuccess(pages -> ctx.verify(() -> {
+                    assertEquals(
+                            List.of(id3, id2),
+                            pages.get(0).items().stream()
+                                    .map(WorkflowInstance::id)
+                                    .toList(),
+                            "newest first, and the COMPLETED row never appears");
+                    assertEquals(
+                            List.of(id1),
+                            pages.get(1).items().stream()
+                                    .map(WorkflowInstance::id)
+                                    .toList(),
+                            "the second page continues exactly where the first stopped");
+                    assertFalse(pages.get(1).hasMore());
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
     @DisplayName("findFiltered by subjectRef returns only matching instances")
     void findFilteredBySubjectRefReturnsMatchingInstances(VertxTestContext ctx) {
         WorkflowInstanceId id1 = new WorkflowInstanceId(UUID.randomUUID());
