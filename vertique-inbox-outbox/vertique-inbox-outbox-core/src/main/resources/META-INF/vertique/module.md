@@ -6,7 +6,7 @@ SPDX-License-Identifier: EUPL-1.2
 # Inbox/Outbox Core Module
 
 > **Status:** Stable
-> **Package:** `dev.vertique.inboxoutbox`
+> **Package:** `dev.vertique.inboxoutbox` (administration API in `dev.vertique.inboxoutbox.admin`)
 > **Artifact:** `vertique-inbox-outbox-core`
 > **Depends on:** `dev.vertique:vertique-core`, `dev.vertique:vertique-db-core`
 
@@ -303,6 +303,52 @@ Publish-side access to the application/transport headers for an outbound message
 
 The record is the canonical six-component form with `scopeKey` last; a public five-argument constructor without it remains and reads `default`.
 
+### `OutboxDeadLetterService`
+
+Administration facade for dead-lettered outbox entries, in package `dev.vertique.inboxoutbox.admin`. It lists and inspects entries the relay gave up on and retries or discards them. It is the contract for administration adapters (a REST or CLI front end, for example); this module ships the types and a store adapter module supplies the implementation.
+
+```java
+public interface OutboxDeadLetterService {
+    Future<OutboxDeadLetterPage> list(OutboxDeadLetterQuery query);
+    Future<Optional<OutboxDeadLetterDetail>> find(long entryId);
+    Future<Optional<OutboxDeadLetterContent>> readContent(long entryId);
+    Future<OutboxAdminReceipt> retry(OutboxAdminCommand command);
+    Future<OutboxAdminReceipt> discard(OutboxAdminCommand command);
+    Future<OutboxAdminHistoryPage> history(OutboxAdminHistoryQuery query);
+}
+```
+
+| Type | Purpose |
+|------|---------|
+| `OutboxDeadLetterQuery` | Optional exact-match filters (`entryId`, `destinationType`, `destination`, `eventType`, `aggregateType`, `aggregateId`, `errorType`), half-open `failed` and `created` time ranges (`from` inclusive, `before` exclusive, `from < before`), `limit` 1 to 200 (default 50) and an `after` key. Build with `OutboxDeadLetterQuery.builder()` |
+| `OutboxDeadLetterKey` / `OutboxAdminHistoryKey` | Plain keyset positions (`failedAt` + `entryId`, `recordedAt` + `operationId`). Encoding, signing and binding them to a filter set belongs to the adapter |
+| `OutboxDeadLetterPage` / `OutboxAdminHistoryPage` | An unmodifiable `items` list and an `Optional` `next` key |
+| `OutboxDeadLetterSummary` | Listing view: identifiers, `revision`, attempts, `errorType`, `createdAt`, `failedAt`. No payload, headers or metadata |
+| `OutboxDeadLetterDetail` | Summary fields plus `availableAt`, `scheduledAt`, `lastError` (at most 4096 characters) and `lastErrorTruncated` |
+| `OutboxDeadLetterContent` | `payloadJson` (the stored JSON text, unparsed) and the application `headers` (`Map<String, String>`, an unmodifiable copy). Carrier, security and context metadata are never returned |
+| `OutboxAdminCommand` | `operationId`, `entryId`, `expectedRevision`, `reason`, `actor`. The idempotency key is `operationId` |
+| `OutboxAdminActor` | `type` (1 to 64 characters) and `id` (1 to 255 characters), both nonblank |
+| `OutboxAdminReceipt` | `operationId`, `entryId`, `action` (`RETRY`, `DISCARD`), `disposition` (`REQUEUED`, `DISCARDED`), `previousRevision`, `resultRevision` (retry only), `recordedAt`. Returned only after commit |
+| `OutboxAdminHistoryEntry` | Receipt fields plus `actor`, `reason`, the failure snapshot taken before the command (`attempt`, `maxAttempts`, `errorType`) and the target's identifiers. No payload, headers, raw error text or metadata |
+
+```java
+Future<OutboxAdminReceipt> receipt = service.retry(new OutboxAdminCommand(
+        UUID.randomUUID(),                      // operationId: reuse it to retry the request safely
+        entryId,
+        expectedRevision,                       // from a prior summary, detail or content read
+        "downstream fixed in release 4.2",
+        new OutboxAdminActor("user", "alice")));
+```
+
+- **No authorization.** The facade trusts its caller. The adapter authenticates and authorizes, then passes the resolved identity as an explicit `OutboxAdminActor`; nothing is read from ambient context.
+- **Scope note.** The facade neither filters on nor returns an entry's `scopeKey`, no result type carries it, and a command acts on a row whatever its scope. It administers the configured store as a whole and is a platform-operator surface, not a scope-isolation boundary.
+- **Validation.** Every bound above is enforced when the query, key or command value is constructed and fails with `ValidationException` before any store work. Lengths count Unicode code points. `reason` is 1 to 1024 characters, not all whitespace, and is stored and compared exactly as given. `expectedRevision` is not negative and `entryId` is positive.
+- **Reads** answer with an empty `Optional` when the entry is absent or not dead-lettered. **Commands** fail with the exceptions below.
+- **Optimistic revision.** Pass the `revision` you last read as `expectedRevision`; a changed entry fails with `REVISION_CONFLICT` instead of being overwritten.
+- **Idempotency.** Repeating a command with the same `operationId` and the same intent (action, entry ID, expected revision, exact reason, actor) returns the original receipt. The same `operationId` with a different intent fails with `OPERATION_ID_CONFLICT`.
+- **Log hygiene.** `toString()` of `OutboxAdminActor`, `OutboxAdminCommand`, `OutboxAdminHistoryEntry` and `OutboxDeadLetterContent` omits the actor, reason, payload and headers.
+- **Stability.** The records and the facade only grow additively: a new component is appended as nullable with the prior constructor kept.
+
 ### Exceptions
 
 | Exception | Extends | Description |
@@ -310,6 +356,10 @@ The record is the canonical six-component form with `scopeKey` last; a public fi
 | `InboxOutboxConfigurationException` | core `ConfigurationException` | Configuration or contract failure raised during inbox/outbox startup or wiring — e.g. an invalid claim-scope supplier or a misconfigured destination handler. |
 | `InboxOutboxTechnicalException` | core `TechnicalException` | Technical root for inbox/outbox infrastructure failures. |
 | `InboxOutboxPersistenceException` | `InboxOutboxTechnicalException` | Raised when an inbox/outbox operation fails because of a persistence-layer error. Adapter modules translate the underlying data-access failure into this type at the API boundary, so callers of `InboxService`/`OutboxService` see inbox/outbox exceptions rather than raw data-access exceptions. `retryable()` reports whether re-attempting the operation has a reasonable chance of succeeding — `true` for transient infrastructure failures (deadlock, lock timeout, optimistic/pessimistic locking), `false` otherwise. |
+| `OutboxDeadLetterNotFoundException` | core `NotFoundException` | A command targets an entry that does not exist. `entryId()` returns the ID. |
+| `OutboxDeadLetterConflictException` | core `ConflictException` | A request conflicts with current state. `reason()` returns a `Reason`: `NOT_DEAD_LETTER` (the entry exists but is not dead-lettered), `REVISION_CONFLICT` (expected revision does not match), `OPERATION_ID_CONFLICT` (the operation ID was used with a different intent), `CONTENT_LIMIT_EXCEEDED` (payload and headers exceed `maxContentBytes`), `REVISION_EXHAUSTED` (a retry cannot increment a revision already at `Long.MAX_VALUE`). |
+
+Administration input errors (`ValidationException`) and the two exceptions above carry fixed messages with no SQL, driver text, payload, reason or actor data; an `OPERATION_ID_CONFLICT` reveals nothing about the receipt it collided with. Their default HTTP status family comes from the core roots; an adapter that needs stable machine-readable codes maps `Reason` itself. A database failure surfaces as `InboxOutboxPersistenceException`.
 
 ---
 
@@ -345,6 +395,10 @@ points below.
       "deadLetterRetentionDays": 30,
       "inboxRetentionDays": 30,
       "cleanupBatchSize": 1000
+    },
+    "admin": {
+      "operationRetentionDays": 90,
+      "maxContentBytes": 1048576
     }
   },
   "cron": {
@@ -358,7 +412,14 @@ points below.
 
 Cleanup cadence is owned by the framework's cron infrastructure, not by the cleanup config block itself. The legacy `cleanupIntervalHours` field was removed from the cleanup config; configs that still set it are accepted (and the value ignored) via `@JsonIgnoreProperties`. Tune cadence via `cron.jobs.<id>.cron` — e.g. `cron.jobs.outbox-cleanup.cron` (default above) and `cron.jobs.outbox-stale-lease-recovery.cron`.
 
-Config classes: `OutboxRelayConfig` (`inboxOutbox.relay`), `InboxOutboxCleanupConfig` (`inboxOutbox.cleanup`).
+| Key (`inboxOutbox.admin`) | Default | Rule |
+|---------------------------|---------|------|
+| `operationRetentionDays` | `90` | Positive integer. Days to retain administration operation records; follows the `Days` unit of the cleanup retention keys |
+| `maxContentBytes` | `1048576` | Positive integer. Largest combined UTF-8 length of the stored payload and headers JSON text that `readContent` transfers; larger content fails with `CONTENT_LIMIT_EXCEEDED` |
+
+A non-positive value fails with `ValidationException` when the config is built or deserialized.
+
+Config classes: `OutboxRelayConfig` (`inboxOutbox.relay`), `InboxOutboxCleanupConfig` (`inboxOutbox.cleanup`), `InboxOutboxAdminConfig` (`inboxOutbox.admin`, package `dev.vertique.inboxoutbox.admin`).
 
 ---
 
