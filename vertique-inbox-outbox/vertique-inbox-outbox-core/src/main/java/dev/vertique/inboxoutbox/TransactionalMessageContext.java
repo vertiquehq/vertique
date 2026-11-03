@@ -34,6 +34,7 @@ import java.util.Map;
  *                      {@code null} is read as {@link ScopeKey#DEFAULT}, so the accessor never returns
  *                      {@code null}. It is a label, not authorization, and is independent of the
  *                      ambient {@code ScopeContext}
+ * @param replyHandle opaque reply handle, or {@code null} when absent
  */
 @DispatchContextValue
 public record TransactionalMessageContext(
@@ -42,7 +43,8 @@ public record TransactionalMessageContext(
         String aggregateType,
         String aggregateId,
         Map<String, String> headers,
-        @Nullable String scopeKey)
+        @Nullable String scopeKey,
+        @Nullable String replyHandle)
         implements ContextValue {
 
     /**
@@ -59,7 +61,17 @@ public record TransactionalMessageContext(
      */
     public TransactionalMessageContext(
             long messageId, String eventType, String aggregateType, String aggregateId, Map<String, String> headers) {
-        this(messageId, eventType, aggregateType, aggregateId, headers, null);
+        this(messageId, eventType, aggregateType, aggregateId, headers, null, null);
+    }
+
+    public TransactionalMessageContext(
+            long messageId,
+            String eventType,
+            String aggregateType,
+            String aggregateId,
+            Map<String, String> headers,
+            @Nullable String scopeKey) {
+        this(messageId, eventType, aggregateType, aggregateId, headers, scopeKey, null);
     }
 
     /**

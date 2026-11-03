@@ -439,6 +439,12 @@ public interface WorkflowCommandRepository<TX> {
      */
     Future<Void> lowerOpenSignals(WorkflowInstanceId instance, TX tx);
 
+    /** Finds the recorded reply name by instance, wait id and its dedup digest. */
+    default Future<Optional<String>> recordedReplyName(
+            WorkflowInstanceId instance, UUID waitId, String dedupKey, TX tx) {
+        return Future.failedFuture(new UnsupportedOperationException("Reply outcome lookup is not supported"));
+    }
+
     /**
      * Records a {@code SIGNAL} command in the caller's transaction: the next position of the instance's queue, state
      * {@code PENDING}, recorded and available at the database clock now, with the payload and the explicit carrier

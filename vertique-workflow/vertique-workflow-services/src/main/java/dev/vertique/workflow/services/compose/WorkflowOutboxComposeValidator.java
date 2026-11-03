@@ -11,9 +11,12 @@ import dev.vertique.services.dispatch.ServiceMethodMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamSource;
 import dev.vertique.workflow.plan.CompensationNode;
 import dev.vertique.workflow.plan.ServiceDispatchNode;
+import dev.vertique.workflow.plan.WaitSignalNode;
 import dev.vertique.workflow.plan.WorkflowNode;
 import dev.vertique.workflow.registry.RegisteredWorkflowDefinition;
 import dev.vertique.workflow.registry.WorkflowDefinitionValidator;
+import dev.vertique.workflow.types.WorkflowTypeNames;
+import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.util.Set;
@@ -28,8 +31,8 @@ import java.util.Set;
  *       {@code SERVICE} intents are written to the outbox but the relay silently skips them. A
  *       plan that dispatches to no service passes without one.</li>
  *   <li>Every {@link ServiceDispatchNode} and {@link CompensationNode} of the plan resolves to a
- *       known service target with a valid shape (not {@code @OneWay}, returns
- *       {@code Future<Void>}, exactly one payload parameter). This catches mistyped target ids and
+ *       known service target with a valid shape (not {@code @OneWay}, exactly one payload parameter,
+ *       and a return type matching the reply wait, or {@code Future<Void>} without a reply). This catches mistyped target ids and
  *       contract drift when the plan is built rather than at the first dispatch attempt — the
  *       runtime check in {@link dev.vertique.workflow.services.recorder.OutboxSideEffectRecorder}
  *       still applies as defense in depth.</li>
@@ -48,19 +51,29 @@ public final class WorkflowOutboxComposeValidator implements WorkflowDefinitionV
 
     private final Set<OutboxDestinationHandler> handlers;
     private final ServiceTargetResolver targetResolver;
+    private final @Nullable WorkflowTypeNames typeNames;
 
     /**
-     * Creates the validator.
+     * Creates a validator for plans without replies. Reply plans require the constructor with a type index.
      *
      * @param handlers       the full set of registered {@link OutboxDestinationHandler} instances
      * @param targetResolver the service target resolver, used to look up each service step's
      *                       target id and shape
      */
-    @Inject
     public WorkflowOutboxComposeValidator(
             Set<OutboxDestinationHandler> handlers, ServiceTargetResolver targetResolver) {
+        this(handlers, targetResolver, null);
+    }
+
+    /** Creates a validator using the workflow type index to resolve reply types. */
+    @Inject
+    public WorkflowOutboxComposeValidator(
+            Set<OutboxDestinationHandler> handlers,
+            ServiceTargetResolver targetResolver,
+            @Nullable WorkflowTypeNames typeNames) {
         this.handlers = Set.copyOf(handlers);
         this.targetResolver = targetResolver;
+        this.typeNames = typeNames;
     }
 
     /**
@@ -89,7 +102,18 @@ public final class WorkflowOutboxComposeValidator implements WorkflowDefinitionV
                 validateServiceHandlerPresent(handlers);
                 handlerChecked = true;
             }
-            validateTarget(defId, defVersion, node.stepId(), targetId, targetResolver);
+            WaitSignalNode reply = null;
+            if (node instanceof ServiceDispatchNode dispatch) {
+                reply = definition.plan().nodes().stream()
+                        .filter(n -> n.stepId().equals(dispatch.nextStepId()))
+                        .filter(WaitSignalNode.class::isInstance)
+                        .map(WaitSignalNode.class::cast)
+                        .filter(wait -> wait.reply() != null
+                                && wait.reply().callStepId().equals(dispatch.stepId()))
+                        .findFirst()
+                        .orElse(null);
+            }
+            validateTarget(defId, defVersion, node.stepId(), targetId, targetResolver, reply, typeNames);
         }
     }
 
@@ -105,7 +129,13 @@ public final class WorkflowOutboxComposeValidator implements WorkflowDefinitionV
     }
 
     private static void validateTarget(
-            String defId, long defVersion, String stepId, String targetId, ServiceTargetResolver targetResolver) {
+            String defId,
+            long defVersion,
+            String stepId,
+            String targetId,
+            ServiceTargetResolver targetResolver,
+            WaitSignalNode reply,
+            @Nullable WorkflowTypeNames typeNames) {
         ResolvedServiceTarget target;
         try {
             target = targetResolver.resolve(targetId);
@@ -123,7 +153,23 @@ public final class WorkflowOutboxComposeValidator implements WorkflowDefinitionV
                     + " return Future<Void>.");
         }
         Class<?> rt = meta.returnType();
-        if (!Void.class.equals(rt) && !void.class.equals(rt)) {
+        boolean isVoid = Void.class.equals(rt) || void.class.equals(rt);
+        if (reply != null && typeNames == null) {
+            throw new IllegalStateException(
+                    "Reply validation requires the workflow type index for step '" + stepId + "'");
+        }
+        boolean matches = reply == null
+                || typeNames.find(reply.payloadTypeName()).filter(rt::equals).isPresent();
+        if (reply != null && !reply.reply().completesLater() && !matches) {
+            throw new IllegalStateException(
+                    "Workflow definition '" + defId + "' v" + defVersion + " step '" + stepId + "' reply type "
+                            + reply.payloadTypeName() + " differs from service return type " + rt.getTypeName());
+        }
+        if (reply != null && reply.reply().completesLater() && !isVoid) {
+            throw new IllegalStateException("Workflow definition '" + defId + "' v" + defVersion + " step '" + stepId
+                    + "' completes later and must return Future<Void>; got " + rt.getTypeName());
+        }
+        if (reply == null && !isVoid) {
             throw new IllegalStateException("Workflow definition '" + defId + "' v" + defVersion + " step '" + stepId
                     + "' references service target '" + targetId + "' which must return Future<Void>; got "
                     + rt.getTypeName());

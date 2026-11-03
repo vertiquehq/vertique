@@ -19,12 +19,23 @@ import java.util.Optional;
  *
  * <p>Serialization note: {@link OutboxRelayControl} is a relay-time construct only and is
  * <em>never</em> written to or read from the database. {@link DelayedJobControl} is persisted
- * when non-empty.
+ * when non-empty, as is {@link OutboxReplyControl}.
  *
  * @param outbox     relay-time relay control values; never persisted
  * @param delayedJob optional delayed-job scheduling control; persisted when present
+ * @param reply optional reply control; persisted when present
  */
-public record OutboxDeliveryMetadata(Optional<OutboxRelayControl> outbox, Optional<DelayedJobControl> delayedJob) {
+public record OutboxDeliveryMetadata(
+        Optional<OutboxRelayControl> outbox,
+        Optional<DelayedJobControl> delayedJob,
+        Optional<OutboxReplyControl> reply) {
+
+    public OutboxDeliveryMetadata(Optional<OutboxRelayControl> outbox, Optional<DelayedJobControl> delayedJob) {
+        this(outbox, delayedJob, Optional.empty());
+    }
+
+    /** JSON key for the persisted reply control. */
+    public static final String REPLY_KEY = "reply";
 
     /** JSON key for the {@link DelayedJobControl} sub-document. */
     public static final String DELAYED_JOB_KEY = "delayedJob";
@@ -47,7 +58,7 @@ public record OutboxDeliveryMetadata(Optional<OutboxRelayControl> outbox, Option
      *
      * <p>{@link OutboxRelayControl} is relay-time only and is never included in the output.
      * Returns an empty {@link JsonObject} when there is no persisted sub-field (i.e., when
-     * {@link #delayedJob()} is absent).
+     * {@link #delayedJob()} and {@link #reply()} are absent).
      *
      * @return a JSON representation of the persisted delivery control fields; never {@code null}
      */
@@ -60,6 +71,9 @@ public record OutboxDeliveryMetadata(Optional<OutboxRelayControl> outbox, Option
                     .put("maxAttempts", dj.maxAttempts());
             json.put(DELAYED_JOB_KEY, djJson);
         });
+        reply.ifPresent(value -> json.put(
+                REPLY_KEY,
+                new JsonObject().put("handle", value.handle()).put("completesLater", value.completesLater())));
         return json;
     }
 
@@ -84,6 +98,11 @@ public record OutboxDeliveryMetadata(Optional<OutboxRelayControl> outbox, Option
             delayedJob = Optional.of(new DelayedJobControl(
                     djJson.getString("queue"), djJson.getInteger("priority", 0), djJson.getInteger("maxAttempts", 0)));
         }
-        return new OutboxDeliveryMetadata(Optional.empty(), delayedJob);
+        JsonObject replyJson = delivery.getJsonObject(REPLY_KEY);
+        Optional<OutboxReplyControl> reply = replyJson == null
+                ? Optional.empty()
+                : Optional.of(new OutboxReplyControl(
+                        replyJson.getString("handle"), replyJson.getBoolean("completesLater", false)));
+        return new OutboxDeliveryMetadata(Optional.empty(), delayedJob, reply);
     }
 }

@@ -640,3 +640,7 @@ This module implements the workflow-side durable context propagation surfaces fo
 - **db-flyway** - `FlywayMigrationRunner` applies the packaged migration. Declared as a dependency, but no type of this module references Flyway, so the application supplies and wires the runner.
 - **vertx-sql-client** - SQL connection, pool, and transaction types.
 - **jackson-databind** - workflow state and history payload serialization.
+
+The command repository reads a recorded reply name by instance, wait ID and deduplication key for completion fencing, including after the command has settled.
+
+A correlated reply command claimed after its instance completed, was compensated, or expired settles `STALE`; cancellation retains its cancellation settlement.

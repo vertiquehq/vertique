@@ -4,6 +4,7 @@
 package dev.vertique.examples.workflow.order.service;
 
 import dev.vertique.examples.workflow.order.command.CreateShipment;
+import dev.vertique.examples.workflow.order.signal.ShipmentCreated;
 import dev.vertique.services.ServiceContract;
 import dev.vertique.services.ServiceOperation;
 import io.vertx.core.Future;
@@ -25,13 +26,11 @@ public interface ShippingService {
     /**
      * Creates a shipment for the given fulfilled order.
      *
-     * <p>On success, the implementation posts a
-     * {@link dev.vertique.examples.workflow.order.signal.ShipmentCreated} signal back to the
-     * workflow engine.
+     * <p>The returned {@link dev.vertique.examples.workflow.order.signal.ShipmentCreated} resumes the waiting workflow.
      *
      * @param cmd the create-shipment command
      * @return a {@link Future} that completes when the shipment is created
      */
     @ServiceOperation("create-shipment")
-    Future<Void> createShipment(CreateShipment cmd);
+    Future<ShipmentCreated> createShipment(CreateShipment cmd);
 }

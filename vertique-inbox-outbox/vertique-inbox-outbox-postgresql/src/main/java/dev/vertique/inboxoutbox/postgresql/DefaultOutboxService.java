@@ -148,8 +148,8 @@ class DefaultOutboxService implements OutboxService {
                 carrierId.toString(),
                 new DurableTarget(OUTBOX_RELAY_TARGET_KIND, carrierId.toString(), Optional.empty()));
         DurableMetadata context = propagator.mergeCaptured(DurableMetadata.empty(), BOUNDARY, carrier);
-        OutboxDeliveryMetadata delivery =
-                new OutboxDeliveryMetadata(Optional.empty(), Optional.ofNullable(entry.delayedJob()));
+        OutboxDeliveryMetadata delivery = new OutboxDeliveryMetadata(
+                Optional.empty(), Optional.ofNullable(entry.delayedJob()), Optional.ofNullable(entry.reply()));
         OutboxMetadata metadata = new OutboxMetadata(context, delivery);
         return repository
                 .insert(entry, metadata, carrierId, tx)

@@ -26,6 +26,7 @@ import dev.vertique.workflow.registry.WorkflowDefinitionValidator;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
+import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.Future;
 import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
@@ -66,6 +67,16 @@ import org.junit.jupiter.api.Timeout;
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class WorkflowComposeStartupContractIT {
 
+    // The minimal graphs supply the same type index the complete workflow graph provides.
+    @Module
+    static class TypeNamesModule {
+        @Provides
+        @Singleton
+        static WorkflowTypeNames typeNames() {
+            return new DefaultWorkflowTypeNames();
+        }
+    }
+
     // --- Component: no SERVICE handler ---
 
     /**
@@ -75,7 +86,7 @@ public class WorkflowComposeStartupContractIT {
      * definition that dispatches to a service, plus a {@link ServiceTargetResolver} stub; the test
      * focus is the SERVICE-handler check.
      */
-    @Module
+    @Module(includes = TypeNamesModule.class)
     abstract static class DelayedJobOnlyModule {
         @Provides
         @Singleton
@@ -93,9 +104,10 @@ public class WorkflowComposeStartupContractIT {
 
         @Provides
         @Singleton
-        static WorkflowRegistry registry(Provider<Set<WorkflowDefinitionValidator>> validators) {
+        static WorkflowRegistry registry(
+                Provider<Set<WorkflowDefinitionValidator>> validators, WorkflowTypeNames typeNames) {
             DefaultWorkflowRegistry registry =
-                    new DefaultWorkflowRegistry(null, validators, new DefaultWorkflowTypeNames(), Optional.empty());
+                    new DefaultWorkflowRegistry(null, validators, typeNames, Optional.empty());
             registry.register(new ServiceDispatchDefinition());
             return registry;
         }
@@ -127,7 +139,7 @@ public class WorkflowComposeStartupContractIT {
      * — there are no registered workflows in this test, so the validator's plan-target walk is a
      * no-op.
      */
-    @Module
+    @Module(includes = TypeNamesModule.class)
     abstract static class ServiceHandlerModule {
         @Provides
         @Singleton

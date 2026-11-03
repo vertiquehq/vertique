@@ -118,3 +118,5 @@ module includes explicitly. Configuration, registry and optional bindings remain
 | `vertique-micrometer-core` | Provides the application `MeterRegistry` and metrics configuration when `MicrometerModule` is installed |
 | `vertique-workflow-core` | Provides `WorkflowExecutorObserver`, the sealed `WorkflowExecutorEvent` vocabulary, and `SignalSourceObserver` with `SignalSourceEvent` |
 | `micrometer-core` | Supplies counters, timers, gauges, tags and registry APIs |
+
+`ReplyOutcomeMetricsObserver` counts reply outcomes in `vertique.workflow.reply.outcomes` with only an `outcome` tag: `recorded`, `duplicate`, `stale`, or `refused`. It carries no payload or handle.

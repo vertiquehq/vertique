@@ -27,6 +27,12 @@ import java.util.UUID;
  * @param eventType     logical event type name (e.g., {@code "order.placed"})
  * @param aggregateType optional domain aggregate type that produced the event, or {@code null}
  * @param aggregateId   optional identifier of the specific aggregate instance, or {@code null}
+ * @param maxAttempts maximum delivery attempts
  */
 public record OutboxRelayControl(
-        long messageId, UUID carrierId, String eventType, String aggregateType, String aggregateId) {}
+        long messageId, UUID carrierId, String eventType, String aggregateType, String aggregateId, int maxAttempts) {
+    /** Returns whether this zero-based attempt exhausts the configured limit. */
+    public static boolean lastAttempt(int attempt, int maxAttempts) {
+        return attempt + 1 >= maxAttempts;
+    }
+}

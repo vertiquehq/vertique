@@ -186,11 +186,17 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
         this.sqlOutboxClaimSuffix = ")"
                 + "   AND ("
                 + "       o.aggregate_id IS NULL"
-                + "       OR o.id = ("
+                + "       OR CASE WHEN (o.metadata -> 'delivery' -> 'reply' ->> 'handle') IS NULL"
+                + "       THEN o.id = ("
                 + "           SELECT MIN(head.id) FROM " + outbox + " head"
                 + "           WHERE head.aggregate_id = o.aggregate_id"
                 + "             AND head.state IN ('PENDING', 'PROCESSING')"
-                + "       )"
+                + "       ) ELSE NOT EXISTS ("
+                + "           SELECT 1 FROM " + outbox + " head"
+                + "           WHERE head.aggregate_id = o.aggregate_id AND head.id < o.id"
+                + "             AND head.state IN ('PENDING', 'PROCESSING')"
+                + "             AND (head.metadata -> 'delivery' -> 'reply' ->> 'handle') IS NULL"
+                + "       ) END"
                 + "   )"
                 + " ORDER BY o.available_at ASC, o.id ASC"
                 + " LIMIT $1"
@@ -334,9 +340,8 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
      *
      * <p>Runs in a short transaction with {@code FOR UPDATE SKIP LOCKED} to prevent competing
      * relay workers from claiming the same entries. Only entries whose destination type and
-     * target identity match the relay's {@link RelayCapabilities} are eligible. Entries sharing
-     * the same {@code aggregate_id} are delivered in strict insertion order (head-of-line
-     * blocking per aggregate).
+     * target identity match the relay's {@link RelayCapabilities} are eligible. An entry waits for earlier pending or processing entries of the same aggregate, except
+     * that two entries carrying a reply handle do not block each other.
      *
      * <p>The destination-eligibility disjunction in the claim query is built dynamically from
      * {@link RelayCapabilities#byType()} via {@link #buildClaimEligibility(RelayCapabilities, Tuple)}.

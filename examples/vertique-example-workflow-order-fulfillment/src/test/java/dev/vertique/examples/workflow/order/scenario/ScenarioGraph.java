@@ -20,6 +20,10 @@ interface ScenarioGraph extends VertiqueApplicationComponent {
     /** Returns the workflow operations facade. */
     WorkflowOperations workflowOperations();
 
+    dev.vertique.inboxoutbox.OutboxReplies outboxReplies();
+
+    ReplyInjectionFixture replyInjectionFixture();
+
     /** Returns the probe that waits until the engine has run the work recorded for an instance. */
     WorkflowExecutionProbe executionProbe();
 

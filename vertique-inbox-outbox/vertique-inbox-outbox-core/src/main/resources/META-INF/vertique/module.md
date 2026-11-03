@@ -126,7 +126,9 @@ OutboxEntry.builder()
 - **The ambient `ScopeContext` does not select it.** Publishing under a bound `ScopeContext` still stores `default` unless the entry names a scope. The context is captured into the durable `metadata` like any other durable context, independent of the row's scope.
 - **A scope is a label, not authorization.** Nothing checks the caller's right to a scope at publish, by id or under a service principal; the application authorizes access itself.
 - **Row scope and `ScopeContext` are independent.** A handler that partitions data by scope chooses one source, compares the other when both are present, fails on a mismatch, and authorizes access itself. Do not assume the two agree.
-- **`aggregateId` ordering is global across scopes.** Entries that share an `aggregateId` stay in order whatever their scope, so two scopes that reuse an id order against each other. Keep aggregate ids unique across scopes, for example `<scope>:<id>`.
+Reply control resides in delivery metadata and is never forwarded as a header. Service targets read the handle through `TransactionalMessageContext.replyHandle()`.
+
+- **`aggregateId` ordering is global across scopes.** Entries that share an `aggregateId` order across scopes, except that rows both carrying reply control in delivery metadata may run together. A row without a reply handle blocks later rows, and waits for all earlier live rows. Two scopes that reuse an id therefore share this barrier. Keep aggregate ids unique across scopes, for example `<scope>:<id>`.
 - **A custom `OutboxRepository` must persist `scopeKey`.** `OutboxRepository.insert` receives the entry; an implementation that drops `scopeKey` returns rows that read `default`.
 - **Inbox deduplication is not scoped.** `InboxService` keys on `(messageId, source)` only.
 
@@ -176,7 +178,7 @@ Relay state machine for outbox rows.
 |-------|-------------|
 | `PENDING` | Waiting for relay to claim |
 | `PROCESSING` | Claimed by relay; publication in progress |
-| `PUBLISHED` | Successfully published to destination |
+| `PUBLISHED` | The handler settled successfully. A correlated service row whose wait closed settles without delivery. |
 | `DEAD_LETTER` | Exhausted attempts or permanent failure |
 
 ### `OutboxEnvelope`
@@ -313,9 +315,11 @@ The record is the canonical six-component form with `scopeKey` last; a public fi
 
 ---
 
+A service may implement `OutboxPermanentFailure` on an exception to stop retries for a permanent failure. A workflow reply target takes its failure route with reason `PERMANENT`, without the exception message.
+
 ### Framework seams
 
-`OutboxBackoff`, `RelayStrategy`, `OutboxDeliveryMetadata`, `OutboxPermanentFailure`,
+`OutboxBackoff`, `RelayStrategy`, `OutboxDeliveryMetadata`,
 `DelayedJobControl`, `OutboxRelayControl`, and `TransactionalMessagingModule` are public for the
 inbox-outbox adapters and sibling framework modules; their Javadoc marks them INTERNAL and they are
 outside this module's compatibility promise. Applications install the store adapter module
@@ -446,12 +450,11 @@ same observer-only contract. `duration` is the time from asking the repository f
 number of entries it returned (zero for an empty claim); a claim that failed is not reported. The report carries no entry,
 aggregate id or payload.
 
-**Aggregate-cardinality guidance.** The claim admits only the oldest unfinished entry of each aggregate, so a claim that is slow
+**Aggregate-cardinality guidance.** The claim admits a row only when no earlier live row of its aggregate blocks it; reply rows may run together, so a claim that is slow
 for the number of entries it returns is the sign of many entries queued behind few aggregates, such as many service dispatches of
 one workflow instance. Record `duration` and `claimed` as plain figures, for example a timer and a counter with no tag. An
 aggregate id, a destination or an entry id must never become a metric label: the cardinality is unbounded, and the claim has none to
-report. A workflow that dispatches several services in parallel branches still delivers them one at a time, because its entries
-share one aggregate.
+report. Reply calls dispatched by parallel branches can deliver together; ordinary dispatches sharing an aggregate remain ordered.
 
 ```java
 @Provides @IntoSet
@@ -528,3 +531,11 @@ inbox-outbox-core  <--  inbox-outbox-postgresql  (persistence + relay verticle)
                    <--  inbox-outbox-delayed-job  (DELAYED_JOB adapter)
                    <--  inbox-outbox-kafka        (KAFKA adapter)
 ```
+
+### Completing an accepted service call
+
+A service handling a call that completes later reads `TransactionalMessageContext.replyHandle()` and stores the latest handle with its work. The handle is a bearer value: anyone holding it can complete that one wait, so protect it when sending or storing it outside the application. It survives a restart. A migration can issue a new handle; retain the latest one.
+
+Inject `OutboxReplies` and call `complete(handle, value)` or `fail(handle)` when the work ends. `RECORDED` means the outcome was recorded; `DUPLICATE` means the same outcome was already recorded, and `STALE` means the wait ended, a different outcome won, or the value was refused. An invalid handle fails with `IllegalArgumentException` without echoing the handle. A refused value records a `REPLY_REFUSED` failure when the wait remains open. The service's initial successful return settles the outbox row without completing the wait.
+
+A service exception implementing `OutboxPermanentFailure` is classified as permanent and dead-lettered without further attempts.

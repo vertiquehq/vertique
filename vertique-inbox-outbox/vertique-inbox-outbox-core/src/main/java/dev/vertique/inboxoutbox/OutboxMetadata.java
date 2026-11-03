@@ -60,7 +60,7 @@ public record OutboxMetadata(DurableMetadata context, OutboxDeliveryMetadata del
      * <p>The {@code context} key always contains the bare namespaces document from
      * {@link DurableMetadata#toJson()}. The {@code delivery} key is omitted when the delivery
      * sub-document is empty (i.e., both {@link OutboxDeliveryMetadata#outbox()} and
-     * {@link OutboxDeliveryMetadata#delayedJob()} are absent), keeping the document compact.
+     * {@link OutboxDeliveryMetadata#delayedJob()} and {@link OutboxDeliveryMetadata#reply()} are absent), keeping the document compact.
      *
      * @return the JSON representation; never {@code null}
      */

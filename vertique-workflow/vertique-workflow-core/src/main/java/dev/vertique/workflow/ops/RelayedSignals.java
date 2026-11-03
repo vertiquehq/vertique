@@ -6,12 +6,14 @@ package dev.vertique.workflow.ops;
 import dev.vertique.core.context.DurableMetadata;
 import io.vertx.core.Future;
 import jakarta.annotation.Nullable;
+import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Records a signal that was already durable before it arrived, such as one the outbox relay delivers to
  * {@code workflow.signals.post}, in the caller's transaction.
  *
- * <p>Each method behaves exactly as the {@code signal} method of {@link TransactionalWorkflowOperations} that has the
+ * <p>The {@code signal} methods behave as the {@code signal} method of {@link TransactionalWorkflowOperations} that has the
  * same parameters, in every respect but one: it is never refused because the cluster holds too many due commands (see
  * {@link dev.vertique.workflow.exception.WorkflowIntakeRefusedException}). The signal is already stored, and
  * refusing it would only spend delivery attempts until it was dead-lettered while the queue it would join is the one
@@ -73,4 +75,44 @@ public interface RelayedSignals<TX> {
             @Nullable String branchId,
             @Nullable DurableMetadata signalMetadata,
             TX tx);
+
+    /** Records a successful reply fenced to a wait entry.
+     * @param id instance id
+     * @param waitId wait entry id
+     * @param payload reply value
+     * @param provenance delivery provenance
+     * @param tx active transaction
+     * @return receipt for the recorded or duplicate outcome
+     */
+    default Future<CorrelatedSignalReceipt> signalWait(
+            WorkflowInstanceId id, UUID waitId, @Nullable Object payload, SignalProvenance provenance, TX tx) {
+        return Future.failedFuture(new UnsupportedOperationException("Reply delivery is not supported"));
+    }
+
+    /** Records a failed reply fenced to a wait entry.
+     * @param id instance id
+     * @param waitId wait entry id
+     * @param failure service failure
+     * @param provenance delivery provenance
+     * @param tx active transaction
+     * @return receipt for the recorded or duplicate outcome
+     */
+    default Future<CorrelatedSignalReceipt> failWait(
+            WorkflowInstanceId id, UUID waitId, ServiceFailure failure, SignalProvenance provenance, TX tx) {
+        return Future.failedFuture(new UnsupportedOperationException("Reply delivery is not supported"));
+    }
+
+    /** Checks whether the instance still holds the wait entry.
+     * @param id instance id
+     * @param waitId wait entry id
+     * @param tx active transaction
+     * @return whether the entry is open
+     */
+    default Future<Boolean> waitOpen(WorkflowInstanceId id, UUID waitId, TX tx) {
+        return Future.failedFuture(new UnsupportedOperationException("Reply wait lookup is not supported"));
+    }
+    /** Returns the recorded reply outcome name, if this wait already has one. */
+    default Future<Optional<String>> recordedOutcomeName(WorkflowInstanceId id, UUID waitId, TX tx) {
+        return Future.failedFuture(new UnsupportedOperationException("Reply outcome lookup is not supported"));
+    }
 }

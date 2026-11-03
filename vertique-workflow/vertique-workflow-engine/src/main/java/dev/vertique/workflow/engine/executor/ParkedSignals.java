@@ -7,10 +7,13 @@ import dev.vertique.workflow.engine.spi.ParkedSignal;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.plan.ReplySignals;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.SqlClient;
 import jakarta.annotation.Nullable;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Objects;
@@ -30,7 +33,7 @@ import org.slf4j.LoggerFactory;
  * <ul>
  *   <li>a signal that is deadline-blocked at the wait stays parked;</li>
  *   <li>a signal whose application fails in a way a retry repeats is rolled back to its savepoint and rejected, and the
- *       next one is tried;</li>
+ *       next one is tried; a reply instead stays parked and fails the instance;</li>
  *   <li>before each signal the segment's step count is checked; a signal is applied only while the count is at most half
  *       of the step cap. A signal that would start beyond that budget, and one whose application overruns the cap inside
  *       its savepoint, is not rejected: it is set back to {@code PENDING} with every other signal the wait accepts, at its
@@ -113,6 +116,10 @@ public final class ParkedSignals {
          * @return a future that completes when the entries are written
          */
         Future<Void> applied(SegmentCommand signal, SqlClient tx);
+
+        default Future<Void> failedReply(SegmentCommand signal, String reason, SqlClient tx) {
+            return Future.failedFuture(new UnsupportedOperationException("Reply failure handling is not supported"));
+        }
 
         /**
          * Writes the history of a parked signal that was rejected.
@@ -237,8 +244,23 @@ public final class ParkedSignals {
             return Future.succeededFuture();
         }
         WaitAddress wait = open.get(index);
-        return commands.parkedSignalsAt(instance, wait.signalName(), wait.forkStepId(), wait.branchId(), tx)
-                .compose(parked ->
+        Future<List<ParkedSignal>> selected =
+                commands.parkedSignalsAt(instance, wait.signalName(), wait.forkStepId(), wait.branchId(), tx);
+        if (ReplySignals.isReserved(wait.signalName())) {
+            selected = selected.compose(first -> commands.parkedSignalsAt(
+                            instance,
+                            ReplySignals.failureNameFor(wait.signalName()),
+                            wait.forkStepId(),
+                            wait.branchId(),
+                            tx)
+                    .map(second -> {
+                        List<ParkedSignal> both = new ArrayList<>(first);
+                        both.addAll(second);
+                        both.sort(Comparator.comparingLong(ParkedSignal::seq));
+                        return both;
+                    }));
+        }
+        return selected.compose(parked ->
                         guard.unblocked(instance, wait.stepId(), wait.branchId(), accepted(parked, wait, failed), tx))
                 .compose(candidates -> candidates.isEmpty()
                         ? atWaits(instance, open, failed, index + 1, tx)
@@ -285,10 +307,23 @@ public final class ParkedSignals {
                 case Savepoints.Attempt.Contained<Void> contained ->
                     contained.kind() == Savepoints.Containment.STEP_LIMIT
                             ? requeue(candidates, index, tx)
-                            : reject(instance, signal, contained.cause(), tx)
-                                    .compose(done -> candidates(instance, candidates, index + 1, nextWait, tx));
+                            : ReplySignals.isReserved(signal.signalName())
+                                    ? failedReply(instance, signal, command, contained.cause(), tx)
+                                    : reject(instance, signal, contained.cause(), tx)
+                                            .compose(done -> candidates(instance, candidates, index + 1, nextWait, tx));
             });
         });
+    }
+
+    private Future<Void> failedReply(
+            WorkflowInstanceId instance, ParkedSignal signal, SegmentCommand command, Throwable cause, SqlClient tx) {
+        log.warn(
+                "Reply '{}' (command {}) of instance {} failed to apply: {}",
+                signal.signalName(),
+                signal.commandId(),
+                instance.value(),
+                cause.getClass().getName());
+        return host.failedReply(command, CommandErrors.replyFailure(), tx);
     }
 
     private boolean overBudget(SqlClient tx) {

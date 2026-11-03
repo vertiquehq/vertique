@@ -148,6 +148,10 @@ public final class WorkflowTestTables {
         return false;
     }
 
+    public interface WrappedEngine {
+        WorkflowEngineHandle underlyingEngine();
+    }
+
     /**
      * Wraps an engine so that its executor is known to the truncation helper.
      *
@@ -159,7 +163,10 @@ public final class WorkflowTestTables {
         TrackedExecutor tracked = new TrackedExecutor(engine.executor(), pool);
         EXECUTORS.add(tracked);
         return (WorkflowEngineHandle) Proxy.newProxyInstance(
-                WorkflowEngineHandle.class.getClassLoader(), new Class<?>[] {WorkflowEngineHandle.class}, (p, m, a) -> {
+                WorkflowEngineHandle.class.getClassLoader(),
+                new Class<?>[] {WorkflowEngineHandle.class, WrappedEngine.class},
+                (p, m, a) -> {
+                    if ("underlyingEngine".equals(m.getName())) return engine;
                     if ("executor".equals(m.getName()) && m.getParameterCount() == 0) {
                         return tracked;
                     }

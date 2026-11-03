@@ -47,6 +47,7 @@ public record WorkflowSideEffectIntent(
      *     branch; null in single-path workflows
      * @param forkStepId optional fork step id paired with {@code branchTokenId}/{@code branchId}
      * @param branchId optional branch id paired with {@code branchTokenId}/{@code forkStepId}
+     * @param reply optional reply wait address and completion mode
      */
     public record Correlation(
             WorkflowInstanceId workflowId,
@@ -57,7 +58,42 @@ public record WorkflowSideEffectIntent(
             String stepId,
             @Nullable UUID branchTokenId,
             @Nullable String forkStepId,
-            @Nullable String branchId) {
+            @Nullable String branchId,
+            @Nullable Reply reply) {
+
+        /** Reply wait address.
+         * @param waitId wait entry id
+         * @param completesLater whether the service completes asynchronously
+         */
+        public record Reply(UUID waitId, boolean completesLater) {
+            /** Validates the wait id. */
+            public Reply {
+                java.util.Objects.requireNonNull(waitId, "waitId");
+            }
+        }
+
+        public Correlation(
+                WorkflowInstanceId workflowId,
+                long sequence,
+                String definitionId,
+                String definitionScopeKey,
+                String scopeKey,
+                String stepId,
+                @Nullable UUID branchTokenId,
+                @Nullable String forkStepId,
+                @Nullable String branchId) {
+            this(
+                    workflowId,
+                    sequence,
+                    definitionId,
+                    definitionScopeKey,
+                    scopeKey,
+                    stepId,
+                    branchTokenId,
+                    forkStepId,
+                    branchId,
+                    null);
+        }
 
         /**
          * Convenience factory for the single-path (non-branch) case.

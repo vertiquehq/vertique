@@ -86,7 +86,7 @@ class ServiceOutboxDestinationHandlerTest {
                         holder);
         dev.vertique.context.DispatchEnvelopeBuilder envelopeBuilder =
                 new dev.vertique.context.DispatchEnvelopeBuilder(capturer);
-        handler = new ServiceOutboxDestinationHandler(resolver, sender, propagator, envelopeBuilder);
+        handler = new ServiceOutboxDestinationHandler(resolver, sender, propagator, envelopeBuilder, Optional.empty());
     }
 
     // --- Helpers ---
@@ -124,7 +124,8 @@ class ServiceOutboxDestinationHandlerTest {
      * {@code carrier_id} column (PRD identity-002 F3b).
      */
     private OutboxEnvelope makeEnvelopeWithCarrier(UUID carrierId) {
-        OutboxRelayControl relayControl = new OutboxRelayControl(42L, carrierId, "order.placed", "Order", "order-123");
+        OutboxRelayControl relayControl =
+                new OutboxRelayControl(42L, carrierId, "order.placed", "Order", "order-123", 20);
         OutboxMetadata metadata = new OutboxMetadata(
                 DurableMetadata.empty(), new OutboxDeliveryMetadata(Optional.of(relayControl), Optional.empty()));
         return new OutboxEnvelope(
@@ -385,7 +386,8 @@ class ServiceOutboxDestinationHandlerTest {
                             new dev.vertique.context.ServiceDispatchContextRegistry(Set.of(), Set.of()), holder);
             dev.vertique.context.DispatchEnvelopeBuilder envelopeBuilder =
                     new dev.vertique.context.DispatchEnvelopeBuilder(capturer);
-            return new ServiceOutboxDestinationHandler(resolver, sender, recordingPropagator, envelopeBuilder);
+            return new ServiceOutboxDestinationHandler(
+                    resolver, sender, recordingPropagator, envelopeBuilder, Optional.empty());
         }
 
         @Test
@@ -570,7 +572,8 @@ class ServiceOutboxDestinationHandlerTest {
                     new dev.vertique.context.DispatchEnvelopeBuilder(
                             new dev.vertique.context.ServiceDispatchContextCapturer(
                                     new dev.vertique.context.ServiceDispatchContextRegistry(Set.of(), Set.of()),
-                                    holder)));
+                                    holder)),
+                    Optional.empty());
             ResolvedServiceTarget target = makeTarget(false);
             when(resolver.resolve("test.target")).thenReturn(target);
 

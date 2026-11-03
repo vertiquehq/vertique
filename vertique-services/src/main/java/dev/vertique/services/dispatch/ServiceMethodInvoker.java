@@ -14,6 +14,7 @@ import dev.vertique.core.context.DispatchBoundary;
 import dev.vertique.core.context.ServiceDispatchContextDecoder;
 import dev.vertique.core.context.ServiceDispatchDecodeContext;
 import dev.vertique.core.eventbus.DispatchEnvelope;
+import dev.vertique.core.eventbus.DispatchFailureDiagnostics;
 import dev.vertique.core.eventbus.Result;
 import dev.vertique.resilience.ResiliencePipeline;
 import dev.vertique.security.authz.InvocationOrigin;
@@ -253,6 +254,9 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
     @Override
     public void handle(Message<DispatchEnvelope<?>> message) {
         DispatchEnvelope<?> body = message.body();
+        boolean redactFatal = body.metadata().dispatchContext() != null
+                && body.metadata().dispatchContext().get(DispatchFailureDiagnostics.class.getName())
+                        instanceof DispatchFailureDiagnostics;
         Instant startTime = Instant.now();
 
         // Decode and install the dispatch-context map. The MDC decoder (registered by
@@ -272,12 +276,14 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
         final ContextHolder.Scope contextScope;
         try {
             Map<String, Object> sanitized =
-                    decodeDispatchContext(body.metadata().dispatchContext());
+                    decodeDispatchContext(body.metadata().dispatchContext(), redactFatal);
             Map<String, Object> withOrigin = withInvocationOrigin(sanitized, DispatchBoundary.SERVICE_DISPATCH);
             contextScope = inboundExecScope != null
                     ? inboundExecScope.installDispatch(withOrigin, DispatchBoundary.SERVICE_DISPATCH)
                     : inboundScope.install(withOrigin);
         } catch (Throwable t) {
+            if (redactFatal && t instanceof Error error) throw safeFatal(error, true);
+            if (redactFatal && t instanceof RuntimeException error) throw safeRuntime(error);
             throw t;
         }
         // The dispatch context where the holder values are bound. The terminal hook and scope close
@@ -302,16 +308,25 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
             // 1. Chain beforeDispatch → fire onDispatch → execute → map to Result
             chainBeforeDispatch(dispatchCtx)
                     .compose(ctx -> {
-                        fireOnDispatch(ctx);
+                        fireOnDispatch(ctx, redactFatal);
                         return execute(body)
                                 .map(value -> (Result<?>) Result.success(value))
                                 .recover(cause -> {
                                     if (cause instanceof VirtualMachineError vme) {
-                                        contextScope.close();
+                                        closeScope(contextScope, redactFatal);
+                                        if (redactFatal)
+                                            throw new InternalError("Sensitive service failure: "
+                                                    + vme.getClass().getName());
                                         throw vme;
                                     }
                                     if (cause instanceof Error error) {
-                                        notifyFatalError(error);
+                                        notifyFatalError(
+                                                redactFatal
+                                                        ? new AssertionError("Sensitive service failure: "
+                                                                + error.getClass()
+                                                                        .getName())
+                                                        : error,
+                                                redactFatal);
                                     }
                                     Throwable mapped = exceptionMapper.translate(cause);
                                     return Future.succeededFuture(Result.failure(mapped));
@@ -325,11 +340,11 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
                         Result<?> result = ar.succeeded() ? ar.result().result() : Result.failure(ar.cause());
 
                         // 3. Fire onComplete sync observers (success or failure, with timing)
-                        fireOnComplete(finalCtx, result, startTime, endTime);
+                        fireOnComplete(finalCtx, result, startTime, endTime, redactFatal);
 
                         // 4. Fire afterDispatch async handlers and collect their join future so
                         //    the dispatch-context scope (FR-CTX-071) stays open until they settle.
-                        Future<Void> afterDispatchSettled = fireAfterDispatch(finalCtx, result);
+                        Future<Void> afterDispatchSettled = fireAfterDispatch(finalCtx, result, redactFatal);
 
                         // 5. Reply or recover. Capture the reply/recovery future so the scope
                         //    close happens only AFTER afterDispatch ALSO settles. The terminal
@@ -350,7 +365,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
                                             terminalResult.set(recoveryResult);
                                             if (body.replyAddress().isPresent() && vertx != null) {
                                                 sendToReplyAddress(
-                                                        body.replyAddress().orElseThrow(), recoveryResult);
+                                                        body.replyAddress().orElseThrow(), recoveryResult, redactFatal);
                                             } else if (!meta.oneWay()) {
                                                 try {
                                                     message.reply(recoveryResult, REPLY_OPTIONS);
@@ -359,7 +374,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
                                                             "[{}] Failed to send recovery reply for operation {}",
                                                             meta.address(),
                                                             meta.operation(),
-                                                            e);
+                                                            safeDiagnostic(e, redactFatal));
                                                 }
                                             }
                                         })
@@ -368,14 +383,14 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
                                             terminalResult.set(failResult);
                                             if (body.replyAddress().isPresent() && vertx != null) {
                                                 sendToReplyAddress(
-                                                        body.replyAddress().orElseThrow(), failResult);
+                                                        body.replyAddress().orElseThrow(), failResult, redactFatal);
                                             } else if (meta.oneWay()) {
                                                 log.warn(
                                                         "[{}] One-way operation {} failed: {}",
                                                         meta.address(),
                                                         meta.operation(),
                                                         finalCause.getClass().getSimpleName(),
-                                                        finalCause);
+                                                        safeDiagnostic(finalCause, redactFatal));
                                             } else {
                                                 try {
                                                     message.reply(failResult, REPLY_OPTIONS);
@@ -384,7 +399,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
                                                             "[{}] Failed to send error reply for operation {}",
                                                             meta.address(),
                                                             meta.operation(),
-                                                            e);
+                                                            safeDiagnostic(e, redactFatal));
                                                 }
                                             }
                                         })
@@ -392,14 +407,18 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
                                         .mapEmpty();
                             } else {
                                 if (body.replyAddress().isPresent() && vertx != null) {
-                                    sendToReplyAddress(body.replyAddress().orElseThrow(), result);
+                                    sendToReplyAddress(body.replyAddress().orElseThrow(), result, redactFatal);
                                 } else if (!meta.oneWay()) {
                                     message.reply(result, REPLY_OPTIONS);
                                 }
                                 replyOrRecover = Future.succeededFuture();
                             }
                         } catch (Exception e) {
-                            log.warn("[{}] Failed to send reply for operation {}", meta.address(), meta.operation(), e);
+                            log.warn(
+                                    "[{}] Failed to send reply for operation {}",
+                                    meta.address(),
+                                    meta.operation(),
+                                    safeDiagnostic(e, redactFatal));
                             replyOrRecover = Future.succeededFuture();
                         }
 
@@ -415,15 +434,21 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
                                     try {
                                         if (!interceptors.isEmpty()) {
                                             fireOnTerminalComplete(
-                                                    finalCtx, terminalResult.get(), startTime, Instant.now());
+                                                    finalCtx,
+                                                    terminalResult.get(),
+                                                    startTime,
+                                                    Instant.now(),
+                                                    redactFatal);
                                         }
                                     } finally {
-                                        contextScope.close();
+                                        closeScope(contextScope, redactFatal);
                                     }
                                 }));
                     });
         } catch (Throwable t) {
-            contextScope.close();
+            closeScope(contextScope, redactFatal);
+            if (redactFatal && t instanceof Error error) throw safeFatal(error, true);
+            if (redactFatal && t instanceof RuntimeException error) throw safeRuntime(error);
             throw t;
         }
     }
@@ -558,15 +583,15 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
      *
      * @param ctx the dispatch context
      */
-    private void fireOnDispatch(ServiceDispatchContext ctx) {
+    private void fireOnDispatch(ServiceDispatchContext ctx, boolean redact) {
         Combinators.forEachSwallowSync(
                 interceptors,
-                interceptor -> interceptor.onDispatch(ctx),
+                interceptor -> safeHook(() -> interceptor.onDispatch(ctx), redact),
                 (interceptor, e) -> log.warn(
                         "[{}] onDispatch interceptor {} threw synchronously",
                         meta.address(),
                         interceptor.getClass().getSimpleName(),
-                        e));
+                        safeDiagnostic(e, redact)));
     }
 
     /**
@@ -577,15 +602,16 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
      * @param startTime when dispatch started
      * @param endTime   when dispatch completed
      */
-    private void fireOnComplete(ServiceDispatchContext ctx, Result<?> result, Instant startTime, Instant endTime) {
+    private void fireOnComplete(
+            ServiceDispatchContext ctx, Result<?> result, Instant startTime, Instant endTime, boolean redact) {
         Combinators.forEachSwallowSync(
                 interceptors,
-                interceptor -> interceptor.onComplete(ctx, result, startTime, endTime),
+                interceptor -> safeHook(() -> interceptor.onComplete(ctx, result, startTime, endTime), redact),
                 (interceptor, e) -> log.warn(
                         "[{}] onComplete interceptor {} threw synchronously",
                         meta.address(),
                         interceptor.getClass().getSimpleName(),
-                        e));
+                        safeDiagnostic(e, redact)));
     }
 
     /**
@@ -598,15 +624,15 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
      * @param endTime   when the terminal outcome was reached (after the recovery decision)
      */
     private void fireOnTerminalComplete(
-            ServiceDispatchContext ctx, Result<?> result, Instant startTime, Instant endTime) {
+            ServiceDispatchContext ctx, Result<?> result, Instant startTime, Instant endTime, boolean redact) {
         Combinators.forEachSwallowSync(
                 interceptors,
-                interceptor -> interceptor.onTerminalComplete(ctx, result, startTime, endTime),
+                interceptor -> safeHook(() -> interceptor.onTerminalComplete(ctx, result, startTime, endTime), redact),
                 (interceptor, e) -> log.warn(
                         "[{}] onTerminalComplete interceptor {} threw synchronously",
                         meta.address(),
                         interceptor.getClass().getSimpleName(),
-                        e));
+                        safeDiagnostic(e, redact)));
     }
 
     /**
@@ -637,7 +663,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
      * @param result the dispatch result (success or failure)
      * @return a future that completes (always succeeded) when all afterDispatch futures settle
      */
-    private Future<Void> fireAfterDispatch(ServiceDispatchContext ctx, Result<?> result) {
+    private Future<Void> fireAfterDispatch(ServiceDispatchContext ctx, Result<?> result, boolean redact) {
         // Delegates to Combinators.joinAllSwallow: all afterDispatch hooks are issued, the join waits
         // for all of them to settle, and per-interceptor failures are swallowed (never failing the
         // dispatch). The two WARN messages are preserved for the cases they cover: a synchronous
@@ -657,15 +683,17 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
                                 "[{}] afterDispatch interceptor {} threw synchronously",
                                 meta.address(),
                                 interceptor.getClass().getSimpleName(),
-                                e);
+                                safeDiagnostic(e, redact));
                         return Future.succeededFuture();
+                    } catch (Error error) {
+                        throw safeFatal(error, redact);
                     }
                 },
                 (interceptor, cause) -> log.warn(
                         "[{}] afterDispatch interceptor {} failed",
                         meta.address(),
                         interceptor.getClass().getSimpleName(),
-                        cause));
+                        safeDiagnostic(cause, redact)));
     }
 
     // --- Dispatch Execution ---
@@ -780,7 +808,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
      *
      * <p>Decode failures (null result, returned warnings) drop the entry with a throttled WARN.
      */
-    private Map<String, Object> decodeDispatchContext(Map<String, Object> raw) {
+    private Map<String, Object> decodeDispatchContext(Map<String, Object> raw, boolean redact) {
         if (raw == null || raw.isEmpty()) {
             return Map.of();
         }
@@ -814,7 +842,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
                                     meta.address(),
                                     decoder.getClass().getName(),
                                     carrierKey,
-                                    re));
+                                    safeDiagnostic(re, redact)));
                     if (result == null) {
                         result = new java.util.HashMap<>(raw);
                     }
@@ -851,7 +879,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
                                         meta.address(),
                                         decoder.getClass().getName(),
                                         carrierKey,
-                                        warning.reason()));
+                                        redact ? "redacted" : warning.reason()));
                     }
                 }
             }
@@ -919,7 +947,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
      * @param replyAddress the target event bus address
      * @param result       the result to send
      */
-    private void sendToReplyAddress(String replyAddress, Result<?> result) {
+    private void sendToReplyAddress(String replyAddress, Result<?> result, boolean redact) {
         try {
             vertx.eventBus().send(replyAddress, DispatchEnvelope.of(result), REPLY_OPTIONS);
         } catch (Exception e) {
@@ -928,7 +956,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
                     meta.address(),
                     replyAddress,
                     meta.operation(),
-                    e);
+                    safeDiagnostic(e, redact));
         }
     }
 
@@ -939,16 +967,54 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
      *
      * @param error the fatal error to report
      */
-    private void notifyFatalError(Throwable error) {
+    private void notifyFatalError(Throwable error, boolean redact) {
         if (fatalErrorHandler != null) {
             try {
                 fatalErrorHandler.onFatalError(error);
             } catch (Exception e) {
-                log.error("[{}] FatalErrorHandler threw while handling error", meta.address(), e);
+                log.error(
+                        "[{}] FatalErrorHandler threw while handling error", meta.address(), safeDiagnostic(e, redact));
             }
         } else {
             log.error("[{}] Fatal error during dispatch (no FatalErrorHandler configured)", meta.address(), error);
         }
+    }
+
+    private static void closeScope(ContextHolder.Scope scope, boolean redact) {
+        try {
+            scope.close();
+        } catch (RuntimeException error) {
+            if (redact) throw safeRuntime(error);
+            throw error;
+        } catch (Error error) {
+            throw safeFatal(error, redact);
+        }
+    }
+
+    private static RuntimeException safeRuntime(RuntimeException failure) {
+        return new IllegalStateException(
+                "Sensitive dispatch failure: " + failure.getClass().getName());
+    }
+
+    private static void safeHook(Runnable hook, boolean redact) {
+        try {
+            hook.run();
+        } catch (Error error) {
+            throw safeFatal(error, redact);
+        }
+    }
+
+    private static Error safeFatal(Error failure, boolean redact) {
+        if (!redact) return failure;
+        String message = "Sensitive dispatch failure: " + failure.getClass().getName();
+        return failure instanceof VirtualMachineError ? new InternalError(message) : new AssertionError(message);
+    }
+
+    private static Throwable safeDiagnostic(Throwable failure, boolean redact) {
+        return redact
+                ? new IllegalStateException(
+                        "Sensitive dispatch failure: " + failure.getClass().getName())
+                : failure;
     }
 
     // --- Internal types ---

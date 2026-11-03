@@ -5,11 +5,13 @@ package dev.vertique.workflow.services.recorder;
 
 import dev.vertique.inboxoutbox.DestinationType;
 import dev.vertique.inboxoutbox.OutboxEntry;
+import dev.vertique.inboxoutbox.OutboxReplyControl;
 import dev.vertique.inboxoutbox.OutboxService;
 import dev.vertique.services.ResolvedServiceTarget;
 import dev.vertique.services.ServiceTargetResolver;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamSource;
+import dev.vertique.workflow.services.reply.ReplyHandle;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.RecorderResult;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
@@ -31,7 +33,7 @@ import java.util.Map;
  * <ol>
  *   <li>Resolves the target via {@link ServiceTargetResolver#resolve(String)}; returns a failed
  *       {@link Future} with {@link IllegalArgumentException} if the target id is unknown.</li>
- *   <li>Validates the target shape: not {@code @OneWay}, returns {@code Future<Void>}, has exactly
+ *   <li>Validates the target shape: not {@code @OneWay}, returns {@code Future<Void>} unless a reply is expected, has exactly
  *       one payload parameter. Any violation fails the {@link Future}, rolling back the workflow
  *       transaction before any state is mutated.</li>
  *   <li>Writes an {@link OutboxEntry} with {@link DestinationType#SERVICE} inside the caller's
@@ -114,7 +116,7 @@ public final class OutboxSideEffectRecorder implements WorkflowSideEffectRecorde
                     + intent.targetId()
                     + "' is @OneWay; cycle 1 only supports request/reply targets that return Future<Void>."));
         }
-        if (!isVoidReturn(meta)) {
+        if (intent.correlation().reply() == null && !isVoidReturn(meta)) {
             return Future.failedFuture(new IllegalStateException("Workflow service-dispatch target '"
                     + intent.targetId()
                     + "' must return Future<Void>; got "
@@ -156,6 +158,19 @@ public final class OutboxSideEffectRecorder implements WorkflowSideEffectRecorde
                 .aggregateId(intent.correlation().workflowId().value().toString())
                 .payload(intent.payload())
                 .headers(mergeHeaders(intentHeaders, intent.correlation()))
+                .reply(
+                        intent.correlation().reply() == null
+                                ? null
+                                : new OutboxReplyControl(
+                                        new ReplyHandle(
+                                                        intent.correlation()
+                                                                .workflowId()
+                                                                .value(),
+                                                        intent.correlation()
+                                                                .reply()
+                                                                .waitId())
+                                                .toString(),
+                                        intent.correlation().reply().completesLater()))
                 .scopeKey(intent.correlation().scopeKey())
                 .build();
 
