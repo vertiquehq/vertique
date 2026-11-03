@@ -1,0 +1,9 @@
+{
+  "name": "smoke-staircase",
+  "set": "smoke",
+  "diagnostic": true,
+  "arm": "ON",
+  "nodes": 2,
+  "load": {"kind": "staircase", "startRatePerSec": 10, "stepRatePerSec": 10, "steps": 4, "stepSec": 20, "measureSkipSec": 6},
+  "timeline": {"settleSec": 6, "recoverySec": 5, "drainDeadlineSec": 40}
+}
