@@ -249,6 +249,12 @@ Future<List<PendingCommand>> openCommands(WorkflowInstanceId id);
 - **Reading is not authorized here.** Entries name actors and carry state patches, and open commands carry stored failure text. The framework performs no authorization on these reads; the application authorizes them before exposing them.
 - **No lock.** The service reads on a pooled connection outside any caller transaction and takes no execution lock.
 
+### Status Filter On Instance Queries
+
+`WorkflowInstanceQuery.statuses()` is a set: an instance matches when its status is any member, and the set takes part in the query's other conditions as one filter (AND). `byStatus(status)` and `withStatus(status)` set a one-member set, and `withStatus(null)` clears it; `byStatuses(collection)` and `withStatuses(collection)` take several. The record copies the set, so it is unmodifiable and `null` reads as empty. **An empty set matches every status.** That is the reverse of the empty set in `DefinitionFilter`, where an empty set matches nothing. Like `scopeKey`, the set is a filter and not an authorization boundary: a caller that computes the statuses a user may see must not pass an empty result expecting no rows.
+
+The accessor is `statuses()`; `status()` no longer exists. The seven-argument constructor that takes one `WorkflowStatus` (or `null`) is retained, but the canonical constructor now starts with a `Set<WorkflowStatus>`, so record patterns that list the components must change. A `WorkflowInstanceRepository` implementation must match every member of `statuses()`; reading a single status silently widens the result.
+
 ### Scope Keys on Instances, Tasks And Filters
 
 `WorkflowScopes.DEFAULT` (`"default"`) is the reserved default scope. It is a value, not a stored record: it always exists, needs no registration, and every row written without a scope belongs to it.

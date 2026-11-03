@@ -6,7 +6,9 @@ package dev.vertique.workflow.query;
 import dev.vertique.workflow.state.WorkflowStatus;
 import dev.vertique.workflow.subject.WorkflowSubjectRef;
 import jakarta.annotation.Nullable;
+import java.util.Collection;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Public query filter for listing workflow instances via {@link WorkflowInstanceQueryService#list}.
@@ -17,11 +19,18 @@ import java.util.Objects;
  * declarations on contract interfaces.
  *
  * <p>All nullable fields are optional. A {@code null} value means the corresponding filter is not
- * applied. Multiple non-null fields produce a conjunction (AND). The {@code includeArchived} flag
+ * applied. Multiple non-null fields produce a conjunction (AND). The {@code statuses} set is a
+ * disjunction within itself (OR) and takes part in that conjunction as one filter; an empty set
+ * applies no status filter. The {@code includeArchived} flag
  * controls whether soft-deleted (archived) instances are included; defaults to {@code false} so
  * that routine queries only see live (non-archived) rows.
  *
- * @param status optional status to filter by; {@code null} means no filter
+ * @param statuses the statuses to filter by; an instance matches when its status is any member. An
+ *     empty set matches every status, which is the reverse of an empty set in
+ *     {@code DefinitionFilter}; it is never {@code null}, a {@code null} argument is read as empty.
+ *     The set is copied and unmodifiable. Like {@code scopeKey}, this is a filter and not an
+ *     authorization boundary: a caller that computes the set from what a user may see must not
+ *     pass an empty result expecting no rows.
  * @param businessKey optional business key to filter by (exact match); {@code null} means no filter
  * @param subjectType optional subject type component of a subject-reference filter;
  *     {@code null} means no filter
@@ -38,7 +47,7 @@ import java.util.Objects;
  *     that has not resolved a scope must not pass {@code null} expecting scoping.
  */
 public record WorkflowInstanceQuery(
-        @Nullable WorkflowStatus status,
+        Set<WorkflowStatus> statuses,
         @Nullable String businessKey,
         @Nullable String subjectType,
         @Nullable String subjectId,
@@ -47,9 +56,15 @@ public record WorkflowInstanceQuery(
         boolean includeArchived,
         @Nullable String scopeKey) {
 
+    /** Normalizes the statuses: {@code null} becomes empty, and the set is copied unmodifiable. */
+    public WorkflowInstanceQuery {
+        statuses = statuses == null ? Set.of() : Set.copyOf(statuses);
+    }
+
     /**
-     * Creates a query without a scope filter. Retained so existing callers keep compiling;
-     * equivalent to the canonical constructor with a {@code null} {@code scopeKey}.
+     * Creates a query with at most one status and without a scope filter. Retained so existing
+     * callers keep compiling; equivalent to the canonical constructor with the status as a
+     * one-member set ({@code null} as the empty set) and a {@code null} {@code scopeKey}.
      */
     public WorkflowInstanceQuery(
             @Nullable WorkflowStatus status,
@@ -59,7 +74,15 @@ public record WorkflowInstanceQuery(
             @Nullable String subjectVersion,
             @Nullable String definitionId,
             boolean includeArchived) {
-        this(status, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived, null);
+        this(
+                status == null ? Set.of() : Set.of(status),
+                businessKey,
+                subjectType,
+                subjectId,
+                subjectVersion,
+                definitionId,
+                includeArchived,
+                null);
     }
 
     // --- Factory methods ---
@@ -81,6 +104,18 @@ public record WorkflowInstanceQuery(
      */
     public static WorkflowInstanceQuery byStatus(WorkflowStatus status) {
         return new WorkflowInstanceQuery(status, null, null, null, null, null, false);
+    }
+
+    /**
+     * Returns a query that matches instances whose status is any of the given statuses (excludes
+     * archived).
+     *
+     * @param statuses the statuses to filter by; {@code null} or empty matches every status
+     * @return a query for the given statuses
+     * @throws NullPointerException if a member of {@code statuses} is {@code null}
+     */
+    public static WorkflowInstanceQuery byStatuses(@Nullable Collection<WorkflowStatus> statuses) {
+        return none().withStatuses(statuses);
     }
 
     /**
@@ -126,14 +161,35 @@ public record WorkflowInstanceQuery(
     // --- Fluent with* setters ---
 
     /**
-     * Returns a copy of this query with the {@code status} field replaced.
+     * Returns a copy of this query with the {@code statuses} set replaced by at most one status.
+     *
+     * <p>Equal to {@code withStatuses(Set.of(status))}; a {@code null} status clears the filter.
      *
      * @param status the status to filter by; {@code null} removes the filter
      * @return a new {@code WorkflowInstanceQuery} with the updated field and all others preserved
      */
     public WorkflowInstanceQuery withStatus(@Nullable WorkflowStatus status) {
+        return withStatuses(status == null ? Set.of() : Set.of(status));
+    }
+
+    /**
+     * Returns a copy of this query with the {@code statuses} set replaced.
+     *
+     * @param statuses the statuses to filter by; {@code null} or empty removes the filter
+     * @return a new {@code WorkflowInstanceQuery} with the updated field and all others preserved
+     * @throws NullPointerException if a member of {@code statuses} is {@code null}
+     */
+    public WorkflowInstanceQuery withStatuses(@Nullable Collection<WorkflowStatus> statuses) {
+        // The collection becomes a Set here; the canonical constructor then applies the null and copy rules.
         return new WorkflowInstanceQuery(
-                status, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived, scopeKey);
+                statuses == null ? null : Set.copyOf(statuses),
+                businessKey,
+                subjectType,
+                subjectId,
+                subjectVersion,
+                definitionId,
+                includeArchived,
+                scopeKey);
     }
 
     /**
@@ -144,7 +200,7 @@ public record WorkflowInstanceQuery(
      */
     public WorkflowInstanceQuery withBusinessKey(@Nullable String businessKey) {
         return new WorkflowInstanceQuery(
-                status, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived, scopeKey);
+                statuses, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived, scopeKey);
     }
 
     /**
@@ -155,7 +211,7 @@ public record WorkflowInstanceQuery(
      */
     public WorkflowInstanceQuery withSubjectType(@Nullable String subjectType) {
         return new WorkflowInstanceQuery(
-                status, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived, scopeKey);
+                statuses, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived, scopeKey);
     }
 
     /**
@@ -166,7 +222,7 @@ public record WorkflowInstanceQuery(
      */
     public WorkflowInstanceQuery withSubjectId(@Nullable String subjectId) {
         return new WorkflowInstanceQuery(
-                status, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived, scopeKey);
+                statuses, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived, scopeKey);
     }
 
     /**
@@ -188,7 +244,7 @@ public record WorkflowInstanceQuery(
      */
     public WorkflowInstanceQuery withSubjectVersion(@Nullable String subjectVersion) {
         return new WorkflowInstanceQuery(
-                status, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived, scopeKey);
+                statuses, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived, scopeKey);
     }
 
     /**
@@ -199,7 +255,7 @@ public record WorkflowInstanceQuery(
      */
     public WorkflowInstanceQuery withDefinitionId(@Nullable String definitionId) {
         return new WorkflowInstanceQuery(
-                status, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived, scopeKey);
+                statuses, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived, scopeKey);
     }
 
     /**
@@ -210,7 +266,7 @@ public record WorkflowInstanceQuery(
      */
     public WorkflowInstanceQuery withIncludeArchived(boolean includeArchived) {
         return new WorkflowInstanceQuery(
-                status, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived, scopeKey);
+                statuses, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived, scopeKey);
     }
 
     /**
@@ -222,6 +278,6 @@ public record WorkflowInstanceQuery(
      */
     public WorkflowInstanceQuery withScopeKey(@Nullable String scopeKey) {
         return new WorkflowInstanceQuery(
-                status, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived, scopeKey);
+                statuses, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived, scopeKey);
     }
 }

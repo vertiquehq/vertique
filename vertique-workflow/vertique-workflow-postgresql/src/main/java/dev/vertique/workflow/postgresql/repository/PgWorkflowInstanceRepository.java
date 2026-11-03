@@ -675,10 +675,17 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
         // --- Dynamic WHERE clause ---
         boolean hasWhere = false;
 
-        if (query.status() != null) {
+        if (query.statuses().size() == 1) {
+            // A single status keeps the plain equality predicate, whose selectivity the planner estimates exactly.
             sql.append(hasWhere ? " AND" : " WHERE");
-            paramValues.add(query.status().name());
+            paramValues.add(query.statuses().iterator().next().name());
             sql.append(" status = $").append(paramValues.size());
+            hasWhere = true;
+        } else if (!query.statuses().isEmpty()) {
+            // Several statuses go in one array parameter, so the statement text is the same for any number of them.
+            sql.append(hasWhere ? " AND" : " WHERE");
+            paramValues.add(query.statuses().stream().map(Enum::name).toArray(String[]::new));
+            sql.append(" status = ANY($").append(paramValues.size()).append("::varchar[])");
             hasWhere = true;
         }
         if (query.definitionId() != null) {

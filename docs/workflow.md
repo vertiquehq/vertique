@@ -1207,6 +1207,11 @@ is registered, and a static source failing a limit fails startup naming the reso
   Forward all four members. `DefaultWorkflowRegistry` implements them.
 - **Instance query.** `WorkflowInstanceQueryService.countNonTerminal(id, version)` is a default method that fails with
   `UnsupportedOperationException`; the PostgreSQL implementation overrides it.
+- **Instance query statuses.** `WorkflowInstanceQuery` filters on a set, `statuses()`, and `status()` is removed. An empty set
+  matches every status. `byStatus` and `withStatus` remain for one status, and `byStatuses` and `withStatuses` take several.
+  The canonical constructor now starts with a `Set<WorkflowStatus>`; the seven-argument constructor with one status is
+  retained. Record patterns that list the components must change, and a `WorkflowInstanceRepository` implementation must
+  match every member of `statuses()`.
 - **Added bindings.** Applications gain the bound `WorkflowDefinitionLifecycle` and the engine's plan cache. No timer is
   armed: a node reads the rows it needs when it needs them.
 - **Instance scopes.** `V002__` adds the scope columns, which default to `default` (see [Scopes](#scopes) and

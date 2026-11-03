@@ -5,9 +5,16 @@ package dev.vertique.workflow.query;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNullPointerException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dev.vertique.workflow.state.WorkflowStatus;
 import dev.vertique.workflow.subject.WorkflowSubjectRef;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.EnumSet;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -30,7 +37,7 @@ class WorkflowInstanceQueryTest {
         void allFieldsNullAndArchivedFalse() {
             WorkflowInstanceQuery q = WorkflowInstanceQuery.none();
 
-            assertThat(q.status()).isNull();
+            assertThat(q.statuses()).isEmpty();
             assertThat(q.businessKey()).isNull();
             assertThat(q.subjectType()).isNull();
             assertThat(q.subjectId()).isNull();
@@ -57,7 +64,7 @@ class WorkflowInstanceQueryTest {
         void populatesStatusOnly() {
             WorkflowInstanceQuery q = WorkflowInstanceQuery.byStatus(WorkflowStatus.RUNNING);
 
-            assertThat(q.status()).isEqualTo(WorkflowStatus.RUNNING);
+            assertThat(q.statuses()).containsExactly(WorkflowStatus.RUNNING);
             assertThat(q.businessKey()).isNull();
             assertThat(q.subjectType()).isNull();
             assertThat(q.subjectId()).isNull();
@@ -79,7 +86,7 @@ class WorkflowInstanceQueryTest {
             WorkflowInstanceQuery q = WorkflowInstanceQuery.byDefinitionId("article-publish");
 
             assertThat(q.definitionId()).isEqualTo("article-publish");
-            assertThat(q.status()).isNull();
+            assertThat(q.statuses()).isEmpty();
             assertThat(q.businessKey()).isNull();
             assertThat(q.subjectType()).isNull();
             assertThat(q.subjectId()).isNull();
@@ -103,7 +110,7 @@ class WorkflowInstanceQueryTest {
             assertThat(q.subjectType()).isEqualTo("Article");
             assertThat(q.subjectId()).isEqualTo("art-1");
             assertThat(q.subjectVersion()).isEqualTo("v3");
-            assertThat(q.status()).isNull();
+            assertThat(q.statuses()).isEmpty();
             assertThat(q.businessKey()).isNull();
             assertThat(q.definitionId()).isNull();
             assertThat(q.includeArchived()).isFalse();
@@ -143,7 +150,7 @@ class WorkflowInstanceQueryTest {
             assertThat(q.subjectType()).isEqualTo("Product");
             assertThat(q.subjectId()).isNull();
             assertThat(q.subjectVersion()).isNull();
-            assertThat(q.status()).isNull();
+            assertThat(q.statuses()).isEmpty();
             assertThat(q.definitionId()).isNull();
             assertThat(q.includeArchived()).isFalse();
         }
@@ -166,7 +173,7 @@ class WorkflowInstanceQueryTest {
             assertThat(updated.subjectVersion()).isEqualTo("v4");
             assertThat(updated.subjectType()).isEqualTo("Article");
             assertThat(updated.subjectId()).isEqualTo("art-1");
-            assertThat(updated.status()).isNull();
+            assertThat(updated.statuses()).isEmpty();
             assertThat(updated.businessKey()).isNull();
             assertThat(updated.definitionId()).isNull();
             assertThat(updated.includeArchived()).isFalse();
@@ -195,7 +202,7 @@ class WorkflowInstanceQueryTest {
             assertThat(updated.subjectType()).isEqualTo("Article");
             assertThat(updated.subjectId()).isEqualTo("art-1");
             assertThat(updated.subjectVersion()).isEqualTo("v3");
-            assertThat(updated.status()).isNull();
+            assertThat(updated.statuses()).isEmpty();
             assertThat(updated.businessKey()).isNull();
             assertThat(updated.definitionId()).isNull();
         }
@@ -217,7 +224,7 @@ class WorkflowInstanceQueryTest {
 
             WorkflowInstanceQuery updated = base.withStatus(WorkflowStatus.WAITING);
 
-            assertThat(updated.status()).isEqualTo(WorkflowStatus.WAITING);
+            assertThat(updated.statuses()).containsExactly(WorkflowStatus.WAITING);
             assertThat(updated.definitionId()).isEqualTo("article-publish");
             assertThat(updated.subjectType()).isEqualTo("Article");
             assertThat(updated.subjectId()).isEqualTo("art-1");
@@ -233,7 +240,7 @@ class WorkflowInstanceQueryTest {
             WorkflowInstanceQuery updated = base.withBusinessKey("bk-001");
 
             assertThat(updated.businessKey()).isEqualTo("bk-001");
-            assertThat(updated.status()).isEqualTo(WorkflowStatus.RUNNING);
+            assertThat(updated.statuses()).containsExactly(WorkflowStatus.RUNNING);
             assertThat(updated.subjectType()).isNull();
             assertThat(updated.subjectId()).isNull();
             assertThat(updated.subjectVersion()).isNull();
@@ -249,7 +256,7 @@ class WorkflowInstanceQueryTest {
 
             assertThat(updated.definitionId()).isEqualTo("order-flow");
             assertThat(updated.subjectType()).isEqualTo("Order");
-            assertThat(updated.status()).isEqualTo(WorkflowStatus.COMPLETED);
+            assertThat(updated.statuses()).containsExactly(WorkflowStatus.COMPLETED);
         }
 
         @Test
@@ -260,6 +267,137 @@ class WorkflowInstanceQueryTest {
 
             assertThat(updated).isNotSameAs(original);
             assertThat(original.includeArchived()).isFalse();
+        }
+    }
+
+    // --- statuses ---
+
+    @Nested
+    @DisplayName("statuses filter")
+    class Statuses {
+
+        @Test
+        @DisplayName("none, a null set, an empty set and a null single status are all the same query")
+        void absentAndEmptyAreEqual() {
+            WorkflowInstanceQuery none = WorkflowInstanceQuery.none();
+
+            assertThat(none.withStatuses(null)).isEqualTo(none);
+            assertThat(none.withStatuses(List.of())).isEqualTo(none);
+            assertThat(none.withStatus(WorkflowStatus.FAILED).withStatus(null)).isEqualTo(none);
+            assertThat(WorkflowInstanceQuery.byStatuses(null)).isEqualTo(none);
+            assertThat(WorkflowInstanceQuery.byStatuses(Set.of())).isEqualTo(none);
+        }
+
+        @Test
+        @DisplayName("a query matches the union: byStatuses and withStatuses keep every member once")
+        void keepsEveryMemberOnce() {
+            WorkflowInstanceQuery q = WorkflowInstanceQuery.byStatuses(
+                    List.of(WorkflowStatus.FAILED, WorkflowStatus.EXPIRED, WorkflowStatus.FAILED));
+
+            assertThat(q.statuses()).containsExactlyInAnyOrder(WorkflowStatus.FAILED, WorkflowStatus.EXPIRED);
+            assertThat(WorkflowInstanceQuery.none().withStatuses(q.statuses())).isEqualTo(q);
+        }
+
+        @Test
+        @DisplayName("a single status is the one-member set, whichever way it is given")
+        void singleStatusIsAOneMemberSet() {
+            WorkflowInstanceQuery viaSingle = WorkflowInstanceQuery.byStatus(WorkflowStatus.RUNNING);
+
+            assertThat(viaSingle).isEqualTo(WorkflowInstanceQuery.byStatuses(Set.of(WorkflowStatus.RUNNING)));
+            assertThat(WorkflowInstanceQuery.none().withStatus(WorkflowStatus.RUNNING))
+                    .isEqualTo(viaSingle);
+            assertThat(viaSingle.statuses()).containsExactly(WorkflowStatus.RUNNING);
+        }
+
+        @Test
+        @DisplayName("withStatus replaces the whole set rather than adding to it")
+        void withStatusReplacesTheSet() {
+            WorkflowInstanceQuery q = WorkflowInstanceQuery.byStatuses(
+                            Set.of(WorkflowStatus.FAILED, WorkflowStatus.EXPIRED))
+                    .withStatus(WorkflowStatus.WAITING);
+
+            assertThat(q.statuses()).containsExactly(WorkflowStatus.WAITING);
+        }
+
+        @Test
+        @DisplayName("the set is copied: changing the source later or through the accessor changes nothing")
+        void setIsCopiedAndUnmodifiable() {
+            List<WorkflowStatus> source = new ArrayList<>(List.of(WorkflowStatus.FAILED));
+            WorkflowInstanceQuery q = WorkflowInstanceQuery.byStatuses(source);
+
+            source.add(WorkflowStatus.EXPIRED);
+
+            assertThat(q.statuses()).containsExactly(WorkflowStatus.FAILED);
+            assertThatThrownBy(() -> q.statuses().add(WorkflowStatus.EXPIRED))
+                    .isInstanceOf(UnsupportedOperationException.class);
+        }
+
+        @Test
+        @DisplayName(
+                "clearing a query that already has statuses, by null or by an empty set, gives the unfiltered query")
+        void clearingARealFilterGivesNone() {
+            WorkflowInstanceQuery base = WorkflowInstanceQuery.byStatus(WorkflowStatus.FAILED);
+
+            assertThat(base.withStatuses(null)).isEqualTo(WorkflowInstanceQuery.none());
+            assertThat(base.withStatuses(List.of())).isEqualTo(WorkflowInstanceQuery.none());
+            assertThat(base.withStatuses(null).statuses()).isEmpty();
+        }
+
+        @Test
+        @DisplayName(
+                "the canonical constructor owns the rules: null is empty, the set is copied, a null member is rejected")
+        void canonicalConstructorNormalizes() {
+            Set<WorkflowStatus> mutable = new HashSet<>(Set.of(WorkflowStatus.FAILED));
+
+            WorkflowInstanceQuery fromNull = new WorkflowInstanceQuery(null, null, null, null, null, null, false, null);
+            WorkflowInstanceQuery fromMutable =
+                    new WorkflowInstanceQuery(mutable, null, null, null, null, null, false, null);
+            mutable.add(WorkflowStatus.EXPIRED);
+
+            assertThat(fromNull.statuses()).isEmpty();
+            assertThat(fromMutable.statuses()).containsExactly(WorkflowStatus.FAILED);
+            assertThatThrownBy(() -> fromMutable.statuses().add(WorkflowStatus.EXPIRED))
+                    .isInstanceOf(UnsupportedOperationException.class);
+            Set<WorkflowStatus> withNull = new HashSet<>(Arrays.asList(WorkflowStatus.FAILED, null));
+            assertThatNullPointerException()
+                    .isThrownBy(() -> new WorkflowInstanceQuery(withNull, null, null, null, null, null, false, null));
+        }
+
+        @Test
+        @DisplayName("a null member is rejected")
+        void nullMemberIsRejected() {
+            List<WorkflowStatus> withNull = Arrays.asList(WorkflowStatus.FAILED, null);
+
+            assertThatNullPointerException().isThrownBy(() -> WorkflowInstanceQuery.byStatuses(withNull));
+            assertThatNullPointerException()
+                    .isThrownBy(() -> WorkflowInstanceQuery.none().withStatuses(withNull));
+        }
+
+        @Test
+        @DisplayName("every other setter keeps the statuses")
+        void otherSettersKeepTheStatuses() {
+            Set<WorkflowStatus> two = EnumSet.of(WorkflowStatus.FAILED, WorkflowStatus.EXPIRED);
+            WorkflowInstanceQuery base = WorkflowInstanceQuery.byStatuses(two);
+
+            assertThat(base.withBusinessKey("bk").statuses()).isEqualTo(two);
+            assertThat(base.withSubjectType("t").statuses()).isEqualTo(two);
+            assertThat(base.withSubjectId("i").statuses()).isEqualTo(two);
+            assertThat(base.withSubjectVersion("v").statuses()).isEqualTo(two);
+            assertThat(base.withDefinitionId("d").statuses()).isEqualTo(two);
+            assertThat(base.withIncludeArchived(true).statuses()).isEqualTo(two);
+            assertThat(base.withScopeKey("s").statuses()).isEqualTo(two);
+        }
+
+        @Test
+        @DisplayName("the previous seven-argument constructor takes at most one status")
+        void previousConstructorStillWorks() {
+            WorkflowInstanceQuery running =
+                    new WorkflowInstanceQuery(WorkflowStatus.RUNNING, null, null, null, null, null, false);
+            WorkflowInstanceQuery any = new WorkflowInstanceQuery(null, null, null, null, null, null, false);
+
+            assertThat(running.statuses()).containsExactly(WorkflowStatus.RUNNING);
+            assertThat(any.statuses()).isEmpty();
+            assertThat(any).isEqualTo(WorkflowInstanceQuery.none());
         }
     }
 }
