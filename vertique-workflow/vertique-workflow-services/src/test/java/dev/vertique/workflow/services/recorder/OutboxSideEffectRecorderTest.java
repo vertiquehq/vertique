@@ -494,16 +494,15 @@ class OutboxSideEffectRecorderTest {
         ArgumentCaptor<OutboxEntry> entries = ArgumentCaptor.forClass(OutboxEntry.class);
         verify(outboxService, org.mockito.Mockito.times(3)).publish(eq(tx), entries.capture());
         var first = entries.getAllValues().get(0);
-        var parsed = ReplyHandle.parse(first.headers().get("x-outbox-reply-handle"));
+        var parsed = ReplyHandle.parse(first.reply().handle());
         assertThat(parsed.instanceId()).isEqualTo(id.value());
         assertThat(parsed.waitId()).isEqualTo(waitId);
         assertThat(first.aggregateId()).isEqualTo(id.value().toString());
-        assertThat(first.headers()).doesNotContainKey("x-outbox-reply-mode");
-        assertThat(entries.getAllValues().get(1).headers())
-                .containsEntry("x-outbox-reply-handle", first.headers().get("x-outbox-reply-handle"))
-                .containsEntry("x-outbox-reply-mode", "completes-later");
-        assertThat(entries.getAllValues().get(2).headers())
-                .doesNotContainKeys("x-outbox-reply-handle", "x-outbox-reply-mode");
+        assertThat(first.reply().completesLater()).isFalse();
+        assertThat(entries.getAllValues().get(1).reply().handle())
+                .isEqualTo(first.reply().handle());
+        assertThat(entries.getAllValues().get(1).reply().completesLater()).isTrue();
+        assertThat(entries.getAllValues().get(2).reply()).isNull();
     }
 
     // --- Helpers ---

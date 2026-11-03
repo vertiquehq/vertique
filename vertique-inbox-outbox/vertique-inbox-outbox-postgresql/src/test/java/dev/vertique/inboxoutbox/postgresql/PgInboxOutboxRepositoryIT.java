@@ -180,7 +180,16 @@ public class PgInboxOutboxRepositoryIT {
      * these tests.
      */
     private Future<Long> insert(OutboxEntry entry, io.vertx.sqlclient.SqlClient tx) {
-        return repository.insert(entry, OutboxMetadata.empty(), UUID.randomUUID(), tx);
+        return repository.insert(
+                entry,
+                new OutboxMetadata(
+                        dev.vertique.core.context.DurableMetadata.empty(),
+                        new dev.vertique.inboxoutbox.OutboxDeliveryMetadata(
+                                java.util.Optional.empty(),
+                                java.util.Optional.empty(),
+                                java.util.Optional.ofNullable(entry.reply()))),
+                UUID.randomUUID(),
+                tx);
     }
 
     // =========================================================================
@@ -695,7 +704,7 @@ public class PgInboxOutboxRepositoryIT {
                 .eventType("test.event")
                 .aggregateType("WorkflowInstance")
                 .aggregateId(aggregate)
-                .headers(reply ? Map.of("x-outbox-reply-handle", "handle") : Map.of())
+                .reply(reply ? new dev.vertique.inboxoutbox.OutboxReplyControl("handle", false) : null)
                 .payload(new JsonObject())
                 .build();
     }

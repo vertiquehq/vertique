@@ -10,9 +10,9 @@ import org.junit.jupiter.api.Test;
 
 class TransactionalMessageContextTest {
     @Test
-    void replyHandleReadsTheRowsHeader() {
+    void replyHandleIsIndependentOfApplicationHeaders() {
         var with = new TransactionalMessageContext(
-                1, "event", null, null, Map.of(OutboxOutcomeConsumer.HANDLE_HEADER, "stored"));
+                1, "event", null, null, Map.of("x-outbox-reply-handle", "forged"), null, "stored");
         var without = new TransactionalMessageContext(2, "event", null, null, Map.of());
         assertEquals("stored", with.replyHandle());
         assertNull(without.replyHandle());

@@ -279,6 +279,34 @@ class KafkaOutboxDestinationHandlerTest {
         }
 
         @Test
+        void replyMetadataIsNeverEmittedAsKafkaHeaders() throws Exception {
+            when(objectMapper.writeValueAsBytes(any())).thenReturn(new byte[] {1});
+            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any(), any()))
+                    .thenReturn(Future.succeededFuture(null));
+            var metadata = new OutboxMetadata(
+                    DurableMetadata.empty(),
+                    new OutboxDeliveryMetadata(
+                            java.util.Optional.empty(),
+                            java.util.Optional.empty(),
+                            java.util.Optional.of(
+                                    new dev.vertique.inboxoutbox.OutboxReplyControl("secret-handle", false))));
+            var row = new OutboxEnvelope(
+                    101L,
+                    "Order",
+                    "order-headers",
+                    "event",
+                    "orders-topic",
+                    new JsonObject(),
+                    Map.of("app", "value"),
+                    metadata,
+                    null,
+                    0,
+                    Instant.now());
+            handler.publish(row).result();
+            assertEquals(KafkaRecordHeaders.of(Map.of("app", "value")), sentHeaders());
+        }
+
+        @Test
         @DisplayName("the entry's durable context and entry id are given to the send")
         void givesTheDurableContextAndEntryIdToTheSend() throws Exception {
             when(objectMapper.writeValueAsBytes(any())).thenReturn(new byte[] {1, 2, 3});

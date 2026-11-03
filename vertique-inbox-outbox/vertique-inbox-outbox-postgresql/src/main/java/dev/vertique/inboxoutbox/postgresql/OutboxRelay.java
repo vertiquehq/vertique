@@ -601,7 +601,8 @@ public class OutboxRelay extends AbstractVerticle {
                 record.maxAttempts());
         OutboxDeliveryMetadata delivery = new OutboxDeliveryMetadata(
                 java.util.Optional.of(relayControl),
-                record.metadata().delivery().delayedJob());
+                record.metadata().delivery().delayedJob(),
+                record.metadata().delivery().reply());
         OutboxMetadata envelopeMetadata = new OutboxMetadata(record.metadata().context(), delivery);
         return new OutboxEnvelope(
                 record.id(),

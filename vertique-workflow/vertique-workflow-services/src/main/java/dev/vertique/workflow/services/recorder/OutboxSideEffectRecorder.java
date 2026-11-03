@@ -5,7 +5,7 @@ package dev.vertique.workflow.services.recorder;
 
 import dev.vertique.inboxoutbox.DestinationType;
 import dev.vertique.inboxoutbox.OutboxEntry;
-import dev.vertique.inboxoutbox.OutboxOutcomeConsumer;
+import dev.vertique.inboxoutbox.OutboxReplyControl;
 import dev.vertique.inboxoutbox.OutboxService;
 import dev.vertique.services.ResolvedServiceTarget;
 import dev.vertique.services.ServiceTargetResolver;
@@ -158,6 +158,19 @@ public final class OutboxSideEffectRecorder implements WorkflowSideEffectRecorde
                 .aggregateId(intent.correlation().workflowId().value().toString())
                 .payload(intent.payload())
                 .headers(mergeHeaders(intentHeaders, intent.correlation()))
+                .reply(
+                        intent.correlation().reply() == null
+                                ? null
+                                : new OutboxReplyControl(
+                                        new ReplyHandle(
+                                                        intent.correlation()
+                                                                .workflowId()
+                                                                .value(),
+                                                        intent.correlation()
+                                                                .reply()
+                                                                .waitId())
+                                                .toString(),
+                                        intent.correlation().reply().completesLater()))
                 .scopeKey(intent.correlation().scopeKey())
                 .build();
 
@@ -199,16 +212,6 @@ public final class OutboxSideEffectRecorder implements WorkflowSideEffectRecorde
         merged.put("x-workflow-definition-scope", correlation.definitionScopeKey());
         merged.put("x-workflow-scope", correlation.scopeKey());
         merged.put("x-workflow-step-id", correlation.stepId());
-        if (correlation.reply() != null) {
-            merged.put(
-                    OutboxOutcomeConsumer.HANDLE_HEADER,
-                    new ReplyHandle(
-                                    correlation.workflowId().value(),
-                                    correlation.reply().waitId())
-                            .toString());
-            if (correlation.reply().completesLater())
-                merged.put(OutboxOutcomeConsumer.MODE_HEADER, OutboxOutcomeConsumer.MODE_COMPLETES_LATER);
-        }
         // PRD-WF-002 D8a: branch-identity headers when the intent originates from a fan-out branch.
         if (correlation.branchTokenId() != null) {
             merged.put("x-workflow-branch-token-id", correlation.branchTokenId().toString());

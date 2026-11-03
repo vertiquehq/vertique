@@ -162,8 +162,7 @@ public class ServiceOutboxDestinationHandler implements OutboxDestinationHandler
      */
     @Override
     public Future<OutboxPublishResult> publish(OutboxEnvelope outboxEnvelope) {
-        boolean reply = outboxEnvelope.headers() != null
-                && outboxEnvelope.headers().get(OutboxOutcomeConsumer.HANDLE_HEADER) != null;
+        boolean reply = outboxEnvelope.metadata().delivery().reply().isPresent();
         if (!reply) return publishEntry(outboxEnvelope);
         String message = "Reply delivery failed for service target: " + outboxEnvelope.destination();
         try {
@@ -198,9 +197,12 @@ public class ServiceOutboxDestinationHandler implements OutboxDestinationHandler
             return Future.succeededFuture(OutboxPublishResult.retryable(e.getMessage(), e));
         }
 
-        String handle = outboxEnvelope.headers() == null
-                ? null
-                : outboxEnvelope.headers().get(OutboxOutcomeConsumer.HANDLE_HEADER);
+        String handle = outboxEnvelope
+                .metadata()
+                .delivery()
+                .reply()
+                .map(control -> control.handle())
+                .orElse(null);
         if (handle == null) {
             try {
                 return deliver(outboxEnvelope, target, null);
@@ -239,7 +241,8 @@ public class ServiceOutboxDestinationHandler implements OutboxDestinationHandler
                 outboxEnvelope.aggregateType(),
                 outboxEnvelope.aggregateId(),
                 outboxEnvelope.headers() != null ? outboxEnvelope.headers() : Map.of(),
-                outboxEnvelope.scopeKey());
+                outboxEnvelope.scopeKey(),
+                handle);
 
         // A payload this node cannot decode may be decodable by a newer node during a rolling deploy,
         // so the failure is retryable; the entry's maximum attempts bound a payload no node decodes.
@@ -323,8 +326,12 @@ public class ServiceOutboxDestinationHandler implements OutboxDestinationHandler
                     OutboxPublishResult classified = classifyResult(result);
                     if (handle != null
                             && result.isSuccess()
-                            && !OutboxOutcomeConsumer.MODE_COMPLETES_LATER.equals(
-                                    outboxEnvelope.headers().get(OutboxOutcomeConsumer.MODE_HEADER))) {
+                            && !outboxEnvelope
+                                    .metadata()
+                                    .delivery()
+                                    .reply()
+                                    .orElseThrow()
+                                    .completesLater()) {
                         OutboxOutcome outcome = new OutboxOutcome.Success(
                                 outboxEnvelope.entryId(),
                                 outboxEnvelope.destination(),

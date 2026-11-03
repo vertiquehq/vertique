@@ -576,7 +576,11 @@ public abstract class SagaTestBase {
         String forkStepId = record.headers().get("x-workflow-fork-step-id");
         String branchId = record.headers().get("x-workflow-branch-id");
 
-        String handle = record.headers().get(dev.vertique.inboxoutbox.OutboxOutcomeConsumer.HANDLE_HEADER);
+        String handle = record.metadata()
+                .delivery()
+                .reply()
+                .map(control -> control.handle())
+                .orElse(null);
         WorkflowInstanceId instanceId = handle == null
                 ? new WorkflowInstanceId(UUID.fromString(record.aggregateId()))
                 : new WorkflowInstanceId(dev.vertique.workflow.services.reply.ReplyHandle.parse(handle)

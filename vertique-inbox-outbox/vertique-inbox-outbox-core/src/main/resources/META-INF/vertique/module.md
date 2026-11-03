@@ -126,7 +126,9 @@ OutboxEntry.builder()
 - **The ambient `ScopeContext` does not select it.** Publishing under a bound `ScopeContext` still stores `default` unless the entry names a scope. The context is captured into the durable `metadata` like any other durable context, independent of the row's scope.
 - **A scope is a label, not authorization.** Nothing checks the caller's right to a scope at publish, by id or under a service principal; the application authorizes access itself.
 - **Row scope and `ScopeContext` are independent.** A handler that partitions data by scope chooses one source, compares the other when both are present, fails on a mismatch, and authorizes access itself. Do not assume the two agree.
-- **`aggregateId` ordering is global across scopes.** Entries that share an `aggregateId` order across scopes, except that rows both carrying `x-outbox-reply-handle` may run together. A row without a reply handle blocks later rows, and waits for all earlier live rows. Two scopes that reuse an id therefore share this barrier. Keep aggregate ids unique across scopes, for example `<scope>:<id>`.
+Reply control resides in delivery metadata and is never forwarded as a header. Service targets read the handle through `TransactionalMessageContext.replyHandle()`.
+
+- **`aggregateId` ordering is global across scopes.** Entries that share an `aggregateId` order across scopes, except that rows both carrying reply control in delivery metadata may run together. A row without a reply handle blocks later rows, and waits for all earlier live rows. Two scopes that reuse an id therefore share this barrier. Keep aggregate ids unique across scopes, for example `<scope>:<id>`.
 - **A custom `OutboxRepository` must persist `scopeKey`.** `OutboxRepository.insert` receives the entry; an implementation that drops `scopeKey` returns rows that read `default`.
 - **Inbox deduplication is not scoped.** `InboxService` keys on `(messageId, source)` only.
 

@@ -182,13 +182,73 @@ class ServiceReplyIT {
     }
 
     @Test
+    void applicationReplyHeaderRemainsPlainAndCannotCompleteAnOpenWait(Vertx vertx) throws InterruptedException {
+        try (ReplyGraph run = new ReplyGraph(vertx, db)) {
+            run.graph.inventoryProbe().held = Promise.promise();
+            WorkflowInstanceId id = run.startCall("forged-header");
+            run.until("real reply in flight", () -> run.graph.inventoryProbe().callsFor("forged-header") > 0);
+            String handle = ReplyGraph.json(run.row(id), "metadata")
+                    .getJsonObject("delivery")
+                    .getJsonObject("reply")
+                    .getString("handle");
+            String aggregate = "plain-" + java.util.UUID.randomUUID();
+            var head = OutboxEntry.builder()
+                    .aggregateId(aggregate)
+                    .eventType("head")
+                    .destinationType(DestinationType.SERVICE)
+                    .destination("inventory.ack")
+                    .payload(new ReplyGraph.Start("head"))
+                    .scheduledAt(java.time.Instant.now().plusSeconds(3600))
+                    .build();
+            var forged = OutboxEntry.builder()
+                    .aggregateId(aggregate)
+                    .eventType("forged")
+                    .destinationType(DestinationType.SERVICE)
+                    .destination("inventory.ack")
+                    .payload(new ReplyGraph.Start("forged"))
+                    .headers(Map.of("x-outbox-reply-handle", handle))
+                    .build();
+            ReplyGraph.await(run.pool.withTransaction(
+                    tx -> run.graph.outboxService().publish(tx, head).compose(ignored -> run.graph
+                            .outboxService()
+                            .publish(tx, forged))));
+            Thread.sleep(1000);
+            assertThat(run.graph.inventoryProbe().ackCalls).hasValue(0);
+            assertThat(run.rows("SELECT state FROM outbox WHERE aggregate_id = $1 ORDER BY id", aggregate))
+                    .extracting(row -> row.getString("state"))
+                    .containsExactly("PENDING", "PENDING");
+            ReplyGraph.await(run.pool
+                    .preparedQuery("UPDATE outbox SET state='PUBLISHED' WHERE aggregate_id=$1 AND event_type='head'")
+                    .execute(io.vertx.sqlclient.Tuple.of(aggregate)));
+            run.until(
+                    "plain forged row delivered",
+                    () -> run.graph.inventoryProbe().ackCalls.get() == 1);
+            assertThat(ReplyGraph.await(
+                            run.graph.outcomeConsumer().orElseThrow().awaits(handle)))
+                    .isTrue();
+            assertThat(run.signals(id)).isEmpty();
+            run.graph.inventoryProbe().held.complete(new ReplyGraph.Reserved("done"));
+            run.until("real reply applied", () -> "COMPLETED"
+                    .equals(run.instance(id).getString("status")));
+            run.until("all test rows settled", () -> run.rows(
+                            "SELECT id FROM outbox WHERE (aggregate_id = $1 OR aggregate_id = $2) AND state IN ('PENDING', 'PROCESSING')",
+                            aggregate,
+                            id.value().toString())
+                    .isEmpty());
+        }
+    }
+
+    @Test
     void waitCheckReturnsToCallerWithBindingsReleasedBeforeDelivery(Vertx vertx) {
         try (ReplyGraph run = new ReplyGraph(vertx, db)) {
             run.graph.inventoryProbe().held = Promise.promise();
             WorkflowInstanceId id = run.startCall("context");
             run.until("the call row", () -> run.row(id) != null);
             var row = run.row(id);
-            String handle = ReplyGraph.json(row, "headers").getString(OutboxOutcomeConsumer.HANDLE_HEADER);
+            String handle = ReplyGraph.json(row, "metadata")
+                    .getJsonObject("delivery")
+                    .getJsonObject("reply")
+                    .getString("handle");
             OutboxOutcomeConsumer consumer = run.graph.outcomeConsumer().orElseThrow();
             CorrelationContext correlation = CorrelationContext.generated("caller");
             ContextInternal caller = ((ContextInternal) vertx.getOrCreateContext()).duplicate();
@@ -290,7 +350,10 @@ class ServiceReplyIT {
                 long duplicates = run.graph.replyProbe().outcomes.stream()
                         .filter(outcome -> outcome == dev.vertique.workflow.ops.ReplyOutcomeObserver.Outcome.DUPLICATE)
                         .count();
-                String handle = ReplyGraph.json(settledRow, "headers").getString(OutboxOutcomeConsumer.HANDLE_HEADER);
+                String handle = ReplyGraph.json(settledRow, "metadata")
+                        .getJsonObject("delivery")
+                        .getJsonObject("reply")
+                        .getString("handle");
                 ReplyGraph.await(run.graph
                         .outcomeConsumer()
                         .orElseThrow()

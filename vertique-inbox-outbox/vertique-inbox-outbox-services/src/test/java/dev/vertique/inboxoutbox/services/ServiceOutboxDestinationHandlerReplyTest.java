@@ -27,6 +27,8 @@ import dev.vertique.inboxoutbox.OutboxOutcomeConsumer;
 import dev.vertique.inboxoutbox.OutboxPermanentFailure;
 import dev.vertique.inboxoutbox.OutboxPublishResult;
 import dev.vertique.inboxoutbox.OutboxRelayControl;
+import dev.vertique.inboxoutbox.OutboxReplyControl;
+import dev.vertique.inboxoutbox.TransactionalMessageContext;
 import dev.vertique.services.ResolvedServiceTarget;
 import dev.vertique.services.ServiceRequestSender;
 import dev.vertique.services.ServiceTargetResolver;
@@ -60,12 +62,14 @@ class ServiceOutboxDestinationHandlerReplyTest {
 
     OutboxEnvelope row(int attempt, boolean handle, boolean later) {
         Map<String, String> headers = new HashMap<>();
-        if (handle) headers.put(OutboxOutcomeConsumer.HANDLE_HEADER, "handle");
-        if (later) headers.put(OutboxOutcomeConsumer.MODE_HEADER, OutboxOutcomeConsumer.MODE_COMPLETES_LATER);
+
         var control = new OutboxRelayControl(42, UUID.randomUUID(), "event", "Order", "id", 3);
         var metadata = new OutboxMetadata(
                 dev.vertique.core.context.DurableMetadata.empty(),
-                new OutboxDeliveryMetadata(Optional.of(control), Optional.empty()));
+                new OutboxDeliveryMetadata(
+                        Optional.of(control),
+                        Optional.empty(),
+                        handle ? Optional.of(new OutboxReplyControl("handle", later)) : Optional.empty()));
         return new OutboxEnvelope(
                 42,
                 "Order",
@@ -84,6 +88,18 @@ class ServiceOutboxDestinationHandlerReplyTest {
         when(consumer.awaits("handle")).thenReturn(Future.succeededFuture(true));
         when(propagator.decodeToDispatchContext(any(), any(), any())).thenReturn(Map.of("context", "value"));
         when(sender.send(any(), any())).thenReturn(Future.succeededFuture(Result.success("reply")));
+    }
+
+    @Test
+    void replyHandleReachesTargetOnlyViaContext() {
+        ready();
+        when(consumer.onOutcome(any())).thenReturn(Future.succeededFuture());
+        handler(Optional.of(consumer)).publish(row(0, true, false));
+        var capture = org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(builder).build(any(), capture.capture(), any());
+        var context = (TransactionalMessageContext) capture.getValue().get(TransactionalMessageContext.class.getName());
+        assertEquals("handle", context.replyHandle());
+        assertFalse(context.headers().containsValue("handle"));
     }
 
     @Test

@@ -12,7 +12,6 @@ import dev.vertique.inboxoutbox.DestinationType;
 import dev.vertique.inboxoutbox.InboxRepository;
 import dev.vertique.inboxoutbox.OutboxEntry;
 import dev.vertique.inboxoutbox.OutboxMetadata;
-import dev.vertique.inboxoutbox.OutboxOutcomeConsumer;
 import dev.vertique.inboxoutbox.OutboxRecord;
 import dev.vertique.inboxoutbox.OutboxRepository;
 import dev.vertique.inboxoutbox.PayloadCodec;
@@ -187,7 +186,7 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
         this.sqlOutboxClaimSuffix = ")"
                 + "   AND ("
                 + "       o.aggregate_id IS NULL"
-                + "       OR CASE WHEN (o.headers ->> '" + OutboxOutcomeConsumer.HANDLE_HEADER + "') IS NULL"
+                + "       OR CASE WHEN (o.metadata -> 'delivery' -> 'reply' ->> 'handle') IS NULL"
                 + "       THEN o.id = ("
                 + "           SELECT MIN(head.id) FROM " + outbox + " head"
                 + "           WHERE head.aggregate_id = o.aggregate_id"
@@ -196,7 +195,7 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
                 + "           SELECT 1 FROM " + outbox + " head"
                 + "           WHERE head.aggregate_id = o.aggregate_id AND head.id < o.id"
                 + "             AND head.state IN ('PENDING', 'PROCESSING')"
-                + "             AND (head.headers ->> '" + OutboxOutcomeConsumer.HANDLE_HEADER + "') IS NULL"
+                + "             AND (head.metadata -> 'delivery' -> 'reply' ->> 'handle') IS NULL"
                 + "       ) END"
                 + "   )"
                 + " ORDER BY o.available_at ASC, o.id ASC"

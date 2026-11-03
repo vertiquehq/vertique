@@ -139,6 +139,8 @@ or use `InboxService` for dedup if needed.
 
 ---
 
+The reply handle and completion mode reside in the row’s delivery metadata, never in headers or forwarded to the target as headers. A target reads the handle through `TransactionalMessageContext.replyHandle()`.
+
 For a service row carrying a reply handle, the handler checks whether its wait is still open before
 calling the service. A closed wait settles the row as `PUBLISHED` without delivering it. If the
 consumer is unavailable, the row is deferred without spending an attempt. A successful immediate
