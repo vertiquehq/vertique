@@ -15,7 +15,7 @@ import lombok.extern.jackson.Jacksonized;
  *
  * <p>Deserialized from the {@code inboxOutbox.cleanup} section of the application config.
  * The cleanup job runs periodically to remove old records from the inbox, published outbox,
- * and dead-letter outbox tables, preventing unbounded table growth.
+ * dead-letter and discarded outbox tables, preventing unbounded table growth.
  *
  * <p>Cleanup cadence is owned by the framework's cron infrastructure (see
  * {@code OutboxMaintenanceCron} in {@code vertique-inbox-outbox-postgresql}). Operators
@@ -29,6 +29,7 @@ import lombok.extern.jackson.Jacksonized;
  *   cleanup:
  *     publishedRetentionDays: 7
  *     deadLetterRetentionDays: 30
+ *     discardedRetentionDays: 7
  *     inboxRetentionDays: 30
  *     cleanupBatchSize: 1000
  * }</pre>
@@ -58,6 +59,14 @@ public class InboxOutboxCleanupConfig {
      */
     @Builder.Default
     private final int deadLetterRetentionDays = 30;
+
+    /**
+     * Number of days to retain discarded outbox entries before the cleanup job deletes them. A discarded entry
+     * can be brought back until then, so the window is the time an operator has to undo a discard.
+     * Default: 7 days.
+     */
+    @Builder.Default
+    private final int discardedRetentionDays = 7;
 
     /**
      * Number of days to retain processed inbox deduplication records before the cleanup job

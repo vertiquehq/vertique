@@ -791,8 +791,7 @@ public class PgWorkflowSchemaIT {
     private static void assertTransactionObjectsLiveInTheirSchemas() throws SQLException {
         assertEquals(Set.of("orders", APP_HISTORY), tablesIn(APP_SCHEMA));
         assertEquals(Set.of(APP_SCHEMA, DECOY_SCHEMA), schemasHoldingTable("orders"));
-        assertEquals(
-                Set.of("inbox", "outbox", "outbox_admin_operations", MESSAGING_HISTORY), tablesIn(MESSAGING_SCHEMA));
+        assertEquals(Set.of("inbox", "outbox", MESSAGING_HISTORY), tablesIn(MESSAGING_SCHEMA));
         assertEquals(Set.of(MESSAGING_SCHEMA, DECOY_SCHEMA), schemasHoldingTable("outbox"));
         assertEquals(with(WORKFLOW_TABLES, WORKFLOW_HISTORY), tablesIn(MAPPED_SCHEMA));
         for (String table : WORKFLOW_TABLES) {

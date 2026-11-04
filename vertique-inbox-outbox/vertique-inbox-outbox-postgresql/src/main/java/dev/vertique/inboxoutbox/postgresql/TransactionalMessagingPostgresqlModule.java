@@ -28,11 +28,11 @@ import dev.vertique.inboxoutbox.OutboxRepository;
 import dev.vertique.inboxoutbox.OutboxService;
 import dev.vertique.inboxoutbox.RelayCapabilities;
 import dev.vertique.inboxoutbox.TransactionalMessagingModule;
-import dev.vertique.inboxoutbox.admin.InboxOutboxAdminConfig;
-import dev.vertique.inboxoutbox.admin.OutboxDeadLetterService;
+import dev.vertique.inboxoutbox.ops.OutboxOperations;
 import dev.vertique.inboxoutbox.postgresql.compose.InboxOutboxPostgresqlComposeValidator;
-import dev.vertique.inboxoutbox.postgresql.maintenance.OutboxAdminOperationCleanup;
 import dev.vertique.inboxoutbox.postgresql.maintenance.OutboxMaintenanceCron;
+import dev.vertique.inboxoutbox.query.OutboxQueryConfig;
+import dev.vertique.inboxoutbox.query.OutboxQueryService;
 import dev.vertique.logging.LoggingContextModule;
 import dev.vertique.services.Services;
 import io.vertx.core.DeploymentOptions;
@@ -135,47 +135,61 @@ public abstract class TransactionalMessagingPostgresqlModule {
     }
 
     /**
-     * Provides the {@link PgOutboxDeadLetterService}, applying the schema mapping for the
-     * {@code inbox-outbox} instance when a {@link DbSchemas} binding exists, so the administration statements
-     * address the same {@code outbox} table as the repository and the receipt table next to it.
+     * Provides the {@link PgOutboxQueryService}, applying the schema mapping for the {@code inbox-outbox}
+     * instance when a {@link DbSchemas} binding exists, so its statements address the same {@code outbox} table
+     * as the repository.
      *
      * <p>A binding exposes no endpoint by itself; an administration adapter has to be installed to use it.
      *
      * @param pool    the PostgreSQL connection pool
      * @param mapper  the PostgreSQL failure mapper
      * @param schemas the optional schema placement; absent means unqualified table names
-     * @param config  the administration configuration
-     * @return the scoped PostgreSQL dead-letter administration service
+     * @param config  the query configuration
+     * @return the scoped PostgreSQL outbox query service
      */
     @Provides
     @Singleton
-    static PgOutboxDeadLetterService pgOutboxDeadLetterService(
-            Pool pool, PgDbExceptionMapper mapper, Optional<DbSchemas> schemas, InboxOutboxAdminConfig config) {
-        return new PgOutboxDeadLetterService(pool, mapper, schemas.orElseGet(DbSchemas::empty), config);
+    static PgOutboxQueryService pgOutboxQueryService(
+            Pool pool, PgDbExceptionMapper mapper, Optional<DbSchemas> schemas, OutboxQueryConfig config) {
+        return new PgOutboxQueryService(pool, mapper, schemas.orElseGet(DbSchemas::empty), config);
     }
 
     /**
-     * Provides the {@link OutboxDeadLetterService} binding, delegating to the PostgreSQL implementation.
+     * Provides the {@link OutboxQueryService} binding, delegating to the PostgreSQL implementation.
      *
-     * @param impl the PostgreSQL dead-letter administration service
-     * @return the {@link OutboxDeadLetterService} to use throughout the application
+     * @param impl the PostgreSQL outbox query service
+     * @return the {@link OutboxQueryService} to use throughout the application
      */
     @Provides
     @Singleton
-    static OutboxDeadLetterService outboxDeadLetterService(PgOutboxDeadLetterService impl) {
+    static OutboxQueryService outboxQueryService(PgOutboxQueryService impl) {
         return impl;
     }
 
     /**
-     * Provides the {@link OutboxAdminOperationCleanup} binding the maintenance service uses for receipt
-     * retention, delegating to the PostgreSQL implementation.
+     * Provides the {@link PgOutboxOperations}, applying the schema mapping for the {@code inbox-outbox}
+     * instance when a {@link DbSchemas} binding exists.
      *
-     * @param impl the PostgreSQL dead-letter administration service
-     * @return the receipt retention cleanup
+     * @param pool    the PostgreSQL connection pool
+     * @param mapper  the PostgreSQL failure mapper
+     * @param schemas the optional schema placement; absent means unqualified table names
+     * @return the scoped PostgreSQL outbox operations service
      */
     @Provides
     @Singleton
-    static OutboxAdminOperationCleanup outboxAdminOperationCleanup(PgOutboxDeadLetterService impl) {
+    static PgOutboxOperations pgOutboxOperations(Pool pool, PgDbExceptionMapper mapper, Optional<DbSchemas> schemas) {
+        return new PgOutboxOperations(pool, mapper, schemas.orElseGet(DbSchemas::empty));
+    }
+
+    /**
+     * Provides the {@link OutboxOperations} binding, delegating to the PostgreSQL implementation.
+     *
+     * @param impl the PostgreSQL outbox operations service
+     * @return the {@link OutboxOperations} to use throughout the application
+     */
+    @Provides
+    @Singleton
+    static OutboxOperations outboxOperations(PgOutboxOperations impl) {
         return impl;
     }
 
@@ -256,22 +270,21 @@ public abstract class TransactionalMessagingPostgresqlModule {
     }
 
     /**
-     * Provides {@link InboxOutboxAdminConfig} as a Dagger {@link Singleton} binding for the dead-letter
-     * administration service and the maintenance service.
+     * Provides {@link OutboxQueryConfig} as a Dagger {@link Singleton} binding for the outbox query service.
      *
-     * <p>Deserialised from the {@code inboxOutbox.admin} section of the application config; an absent
-     * section yields the defaults.
+     * <p>Deserialised from the {@code inboxOutbox.query} section of the application config; an absent section
+     * yields the defaults.
      *
      * @param config the application configuration root
      * @param parser the injected config parser
-     * @return the administration configuration
+     * @return the query configuration
      */
     @Provides
     @Singleton
-    static InboxOutboxAdminConfig inboxOutboxAdminConfig(@VertxConfig JsonObject config, ConfigParser parser) {
+    static OutboxQueryConfig outboxQueryConfig(@VertxConfig JsonObject config, ConfigParser parser) {
         return parser.parse(
-                JsonConfigPaths.navigateObject(JsonConfigPaths.navigateObject(config, "inboxOutbox"), "admin"),
-                InboxOutboxAdminConfig.class);
+                JsonConfigPaths.navigateObject(JsonConfigPaths.navigateObject(config, "inboxOutbox"), "query"),
+                OutboxQueryConfig.class);
     }
 
     /**

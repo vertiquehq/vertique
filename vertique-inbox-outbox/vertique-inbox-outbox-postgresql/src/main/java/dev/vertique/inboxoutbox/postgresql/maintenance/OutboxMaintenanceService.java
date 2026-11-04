@@ -7,7 +7,6 @@ import dev.vertique.inboxoutbox.InboxOutboxCleanupConfig;
 import dev.vertique.inboxoutbox.InboxRepository;
 import dev.vertique.inboxoutbox.OutboxRelayConfig;
 import dev.vertique.inboxoutbox.OutboxRepository;
-import dev.vertique.inboxoutbox.admin.InboxOutboxAdminConfig;
 import io.vertx.core.CompositeFuture;
 import io.vertx.core.Future;
 import jakarta.inject.Inject;
@@ -15,7 +14,6 @@ import jakarta.inject.Singleton;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,21 +24,19 @@ import org.slf4j.LoggerFactory;
  * <ol>
  *   <li>{@link #recoverStaleLeases()} — resets entries stuck in {@code PROCESSING} state beyond
  *       the configured lease timeout. Idempotent UPDATE; safe under any cron cadence.</li>
- *   <li>{@link #cleanup()} — deletes old published, dead-letter, and inbox rows, and the receipts of
- *       administrative commands, in batches according to the configured retention windows.</li>
+ *   <li>{@link #cleanup()} — deletes old published, dead-letter, discarded and inbox rows in batches
+ *       according to the configured retention windows.</li>
  * </ol>
  *
  * <h2>Cleanup failure contract</h2>
  *
- * <p>{@link #cleanup()} performs independent operations, labelled {@code published},
- * {@code deadLetter} and {@code inbox}, plus {@code operations} (receipt retention) when the service is
- * built with an {@link OutboxAdminOperationCleanup}, and reports a single composite outcome to the cron
- * timeline:
+ * <p>{@link #cleanup()} performs four independent operations and reports a single composite
+ * outcome to the cron timeline:
  * <ul>
- *   <li>Starts all cleanups concurrently and <strong>never short-circuits</strong> — every
- *       cleanup call always runs (subject to whatever the repository's synchronous
+ *   <li>Starts all four cleanups concurrently and <strong>never short-circuits</strong> — all
+ *       four repository calls always run (subject to whatever the repository's synchronous
  *       contract permits).</li>
- *   <li>Returns success only when all of them succeed.</li>
+ *   <li>Returns success only when all four succeed.</li>
  *   <li>Returns failure with an {@link OutboxMaintenanceException} carrying every underlying
  *       cause as a suppressed exception when one or more fail.</li>
  * </ul>
@@ -57,22 +53,18 @@ public final class OutboxMaintenanceService {
     private final InboxRepository inboxRepository;
     private final OutboxRelayConfig relayConfig;
     private final InboxOutboxCleanupConfig cleanupConfig;
-    private final OutboxAdminOperationCleanup adminOperationCleanup;
-    private final InboxOutboxAdminConfig adminConfig;
 
     /**
-     * Creates a maintenance service that runs three cleanup outcomes ({@code published},
-     * {@code deadLetter}, {@code inbox}) and no receipt retention. Dependency injection uses the
-     * constructor that also takes the receipt cleanup; this one stays for callers that build the service
-     * directly.
+     * Creates a new maintenance service.
      *
      * @param outboxRepository repository for outbox-side maintenance (reclaimStale, cleanupPublished,
-     *                         cleanupDeadLetter)
+     *                         cleanupDeadLetter, cleanupDiscarded)
      * @param inboxRepository  repository for inbox-side maintenance (cleanup)
      * @param relayConfig      relay configuration (used for {@link OutboxRelayConfig#leaseTimeoutMs()}
      *                         when resetting stale leases)
      * @param cleanupConfig    cleanup configuration (retention windows and batch size)
      */
+    @Inject
     public OutboxMaintenanceService(
             OutboxRepository outboxRepository,
             InboxRepository inboxRepository,
@@ -82,37 +74,6 @@ public final class OutboxMaintenanceService {
         this.inboxRepository = inboxRepository;
         this.relayConfig = relayConfig;
         this.cleanupConfig = cleanupConfig;
-        this.adminOperationCleanup = null;
-        this.adminConfig = null;
-    }
-
-    /**
-     * Creates a maintenance service that also deletes administration receipts past their retention window
-     * as a fourth cleanup outcome labelled {@code operations}.
-     *
-     * @param outboxRepository      repository for outbox-side maintenance (reclaimStale, cleanupPublished,
-     *                              cleanupDeadLetter)
-     * @param inboxRepository       repository for inbox-side maintenance (cleanup)
-     * @param relayConfig           relay configuration (used for {@link OutboxRelayConfig#leaseTimeoutMs()}
-     *                              when resetting stale leases)
-     * @param cleanupConfig         cleanup configuration (retention windows and batch size)
-     * @param adminOperationCleanup store method that deletes administration receipts
-     * @param adminConfig           administration configuration (receipt retention window)
-     */
-    @Inject
-    public OutboxMaintenanceService(
-            OutboxRepository outboxRepository,
-            InboxRepository inboxRepository,
-            OutboxRelayConfig relayConfig,
-            InboxOutboxCleanupConfig cleanupConfig,
-            OutboxAdminOperationCleanup adminOperationCleanup,
-            InboxOutboxAdminConfig adminConfig) {
-        this.outboxRepository = outboxRepository;
-        this.inboxRepository = inboxRepository;
-        this.relayConfig = relayConfig;
-        this.cleanupConfig = cleanupConfig;
-        this.adminOperationCleanup = Objects.requireNonNull(adminOperationCleanup, "adminOperationCleanup");
-        this.adminConfig = Objects.requireNonNull(adminConfig, "adminConfig");
     }
 
     /**
@@ -126,44 +87,40 @@ public final class OutboxMaintenanceService {
     }
 
     /**
-     * Runs one cleanup cycle across published, dead-letter, and inbox tables, and the administration
-     * receipts when this service has a receipt cleanup. See the class-level "Cleanup failure contract" for
-     * outcome semantics.
+     * Runs one cleanup cycle across published, dead-letter, discarded and inbox rows. See the
+     * class-level "Cleanup failure contract" for outcome semantics.
      *
-     * @return a future that succeeds when every cleanup succeeds; otherwise fails with an
+     * @return a future that succeeds when all four cleanups succeed; otherwise fails with an
      *         {@link OutboxMaintenanceException} carrying every underlying cause as a suppressed
      *         exception
      */
     public Future<Void> cleanup() {
-        List<String> labels = new ArrayList<>(List.of("published", "deadLetter", "inbox"));
-        List<Future<Integer>> outcomes = new ArrayList<>();
-        outcomes.add(outboxRepository.cleanupPublished(
-                cleanupConfig.publishedRetentionDays(), cleanupConfig.cleanupBatchSize()));
-        outcomes.add(outboxRepository.cleanupDeadLetter(
-                cleanupConfig.deadLetterRetentionDays(), cleanupConfig.cleanupBatchSize()));
-        outcomes.add(inboxRepository.cleanup(cleanupConfig.inboxRetentionDays(), cleanupConfig.cleanupBatchSize()));
-        if (adminOperationCleanup != null) {
-            labels.add("operations");
-            outcomes.add(adminOperationCleanup.cleanupOperations(
-                    adminConfig.operationRetentionDays(), cleanupConfig.cleanupBatchSize()));
-        }
+        Future<Integer> published = outboxRepository.cleanupPublished(
+                cleanupConfig.publishedRetentionDays(), cleanupConfig.cleanupBatchSize());
+        Future<Integer> deadLetter = outboxRepository.cleanupDeadLetter(
+                cleanupConfig.deadLetterRetentionDays(), cleanupConfig.cleanupBatchSize());
+        Future<Integer> discarded = outboxRepository.cleanupDiscarded(
+                cleanupConfig.discardedRetentionDays(), cleanupConfig.cleanupBatchSize());
+        Future<Integer> inbox =
+                inboxRepository.cleanup(cleanupConfig.inboxRetentionDays(), cleanupConfig.cleanupBatchSize());
 
-        CompositeFuture joined = Future.join(new ArrayList<Future<?>>(outcomes));
+        CompositeFuture joined = Future.join(published, deadLetter, discarded, inbox);
         return joined.transform(ar -> {
+            String[] labels = {"published", "deadLetter", "discarded", "inbox"};
             List<Throwable> failures = new ArrayList<>();
             List<String> failedLabels = new ArrayList<>();
             for (int idx = 0; idx < joined.size(); idx++) {
                 Throwable cause = joined.cause(idx);
                 if (cause != null) {
-                    log.warn("Outbox cleanup '{}' failed: {}", labels.get(idx), cause.getMessage());
+                    log.warn("Outbox cleanup '{}' failed: {}", labels[idx], cause.getMessage());
                     failures.add(cause);
-                    failedLabels.add(labels.get(idx));
+                    failedLabels.add(labels[idx]);
                 } else {
                     Integer rows = joined.resultAt(idx);
                     if (rows != null && rows > 0) {
-                        log.info("Outbox cleanup '{}' removed {} rows", labels.get(idx), rows);
+                        log.info("Outbox cleanup '{}' removed {} rows", labels[idx], rows);
                     } else {
-                        log.debug("Outbox cleanup '{}' removed 0 rows", labels.get(idx));
+                        log.debug("Outbox cleanup '{}' removed 0 rows", labels[idx]);
                     }
                 }
             }
@@ -175,7 +132,7 @@ public final class OutboxMaintenanceService {
             // composite wrapper. Remaining failures attach as suppressed.
             String labelList = String.join(", ", failedLabels);
             OutboxMaintenanceException composite = new OutboxMaintenanceException(
-                    "outbox cleanup failed for [" + labelList + "] (" + failures.size() + " of " + labels.size() + "): "
+                    "outbox cleanup failed for [" + labelList + "] (" + failures.size() + " of 4): "
                             + failures.get(0).getMessage(),
                     failures.get(0));
             for (int i = 1; i < failures.size(); i++) {

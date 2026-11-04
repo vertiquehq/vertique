@@ -35,6 +35,7 @@ import dev.vertique.db.flyway.MigrationReport;
 import dev.vertique.db.flyway.MigrationStatus;
 import dev.vertique.db.postgresql.DbPostgresqlModule;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
+import dev.vertique.db.query.PageCursor;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.inboxoutbox.ClaimScope;
@@ -54,12 +55,15 @@ import dev.vertique.inboxoutbox.OutboxRepository;
 import dev.vertique.inboxoutbox.OutboxService;
 import dev.vertique.inboxoutbox.RelayCapabilities;
 import dev.vertique.inboxoutbox.RelayStrategy;
-import dev.vertique.inboxoutbox.admin.InboxOutboxAdminConfig;
-import dev.vertique.inboxoutbox.admin.OutboxAdminHistoryQuery;
-import dev.vertique.inboxoutbox.admin.OutboxDeadLetterQuery;
-import dev.vertique.inboxoutbox.admin.OutboxDeadLetterService;
-import dev.vertique.inboxoutbox.postgresql.maintenance.OutboxAdminOperationCleanup;
+import dev.vertique.inboxoutbox.ops.OutboxEntryStateException;
+import dev.vertique.inboxoutbox.ops.OutboxOperations;
+import dev.vertique.inboxoutbox.ops.OutboxTransition;
 import dev.vertique.inboxoutbox.postgresql.maintenance.OutboxMaintenanceService;
+import dev.vertique.inboxoutbox.query.OutboxEntrySummary;
+import dev.vertique.inboxoutbox.query.OutboxPayloadTooLargeException;
+import dev.vertique.inboxoutbox.query.OutboxQuery;
+import dev.vertique.inboxoutbox.query.OutboxQueryConfig;
+import dev.vertique.inboxoutbox.query.OutboxQueryService;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
@@ -129,16 +133,15 @@ public class PgInboxOutboxSchemaIT {
     private static final String APP_TABLE = APP_SCHEMA + ".orders";
 
     private static final Set<String> MESSAGING_TABLES = Set.of("inbox", "outbox");
-    private static final Set<String> MIGRATED_TABLES = Set.of("inbox", "outbox", "outbox_admin_operations");
     private static final Set<String> MIGRATED_INDEXES = Set.of(
             "idx_outbox_pending",
             "idx_outbox_processing",
             "idx_outbox_aggregate",
             "idx_outbox_published",
             "idx_outbox_dead_letter",
-            "idx_outbox_dead_letter_listing",
-            "idx_outbox_admin_operations_entry",
-            "idx_outbox_admin_operations_recorded_at",
+            "idx_outbox_listing_updated",
+            "idx_outbox_listing_created",
+            "idx_outbox_discarded",
             "idx_inbox_processed_at");
     private static final String OUTBOX_SEQUENCE = "outbox_id_seq";
     private static final String SCOPE_COLUMN = "scope_key";
@@ -151,6 +154,8 @@ public class PgInboxOutboxSchemaIT {
     private static final Set<String> DECOY_INDEXES = Set.of("inbox_pkey", "outbox_pkey");
     private static final String DECOY_OUTBOX_SENTINEL = "decoy-outbox-row";
     private static final String DECOY_INBOX_SENTINEL = "decoy-inbox-row";
+
+    private static final int QUERY_MAX_PAYLOAD_BYTES = 4096;
 
     private static final String SOURCE = "schema-placement-it";
     private static final String UNDEFINED_COLUMN = "42703";
@@ -196,12 +201,13 @@ public class PgInboxOutboxSchemaIT {
 
             // Then: every concrete and SPI lookup resolves the one scoped repository and its claim identity
             assertScopedRepositoryIdentity(runtime);
-            assertAdministrationBinding(runtime);
+            assertQueryAndOperationsBinding(runtime);
 
             // When: the runtime component serves every outbox, inbox, maintenance and relay operation
             // Then: each one succeeds against the mapped schema, which the decoy shape would not allow
             SettledEntries settled = exerciseOutboxLifecycle(runtime);
             exerciseRepositoryRetentionCleanup(runtime, settled);
+            exerciseQueryAndOperations(runtime);
             exerciseStaleLeaseRecovery(runtime);
             exerciseInboxOperations(runtime);
             exerciseMaintenanceCleanup(runtime);
@@ -296,13 +302,15 @@ public class PgInboxOutboxSchemaIT {
 
         OutboxMaintenanceService outboxMaintenanceService();
 
-        OutboxDeadLetterService outboxDeadLetterService();
+        PgOutboxQueryService pgOutboxQueryService();
 
-        PgOutboxDeadLetterService pgOutboxDeadLetterService();
+        OutboxQueryService outboxQueryService();
 
-        OutboxAdminOperationCleanup outboxAdminOperationCleanup();
+        PgOutboxOperations pgOutboxOperations();
 
-        InboxOutboxAdminConfig inboxOutboxAdminConfig();
+        OutboxOperations outboxOperations();
+
+        OutboxQueryConfig outboxQueryConfig();
 
         Optional<FlywayConfig> optionalFlywayConfig();
 
@@ -459,7 +467,7 @@ public class PgInboxOutboxSchemaIT {
     private static void assertObjectsLiveOnlyInMappedSchema() throws SQLException {
         // The mapped schema holds the history, both tables, the sequence, the indexes, the notify function and
         // the trigger that calls it
-        assertEquals(with(MIGRATED_TABLES, HISTORY), tablesIn(MAPPED_SCHEMA));
+        assertEquals(with(MESSAGING_TABLES, HISTORY), tablesIn(MAPPED_SCHEMA));
         assertEquals(Set.of(OUTBOX_SEQUENCE), sequencesIn(MAPPED_SCHEMA));
         assertTrue(
                 indexesIn(MAPPED_SCHEMA).containsAll(MIGRATED_INDEXES),
@@ -500,25 +508,6 @@ public class PgInboxOutboxSchemaIT {
 
     // --- Scoped identity ---
 
-    private static void assertAdministrationBinding(RuntimeComponent runtime) throws Exception {
-        PgOutboxDeadLetterService concrete = runtime.pgOutboxDeadLetterService();
-
-        assertSame(concrete, runtime.outboxDeadLetterService(), "the facade aliases the scoped concrete service");
-        assertSame(concrete, runtime.outboxAdminOperationCleanup(), "the receipt cleanup aliases the same service");
-        assertEquals(90, runtime.inboxOutboxAdminConfig().operationRetentionDays(), "absent section: default days");
-        assertEquals(1_048_576, runtime.inboxOutboxAdminConfig().maxContentBytes(), "absent section: default bytes");
-        // Every administration statement runs against the mapped schema: the decoy has neither the receipt table
-        // nor the dead-letter columns, so an unqualified statement would fail
-        assertTrue(await(concrete.list(OutboxDeadLetterQuery.builder().build()))
-                .items()
-                .isEmpty());
-        assertTrue(
-                await(concrete.history(OutboxAdminHistoryQuery.of(1))).items().isEmpty());
-        assertTrue(await(concrete.find(1)).isEmpty());
-        assertTrue(await(concrete.readContent(1)).isEmpty());
-        assertEquals(0, await(concrete.cleanupOperations(90, 10)));
-    }
-
     private static void assertScopedRepositoryIdentity(RuntimeComponent runtime) {
         PgInboxOutboxRepository concrete = runtime.pgInboxOutboxRepository();
 
@@ -542,6 +531,21 @@ public class PgInboxOutboxSchemaIT {
                 runtime.outboxMaintenanceService(),
                 runtime.outboxMaintenanceService(),
                 "the maintenance service is one singleton");
+    }
+
+    private static void assertQueryAndOperationsBinding(RuntimeComponent runtime) {
+        PgOutboxQueryService query = runtime.pgOutboxQueryService();
+        PgOutboxOperations operations = runtime.pgOutboxOperations();
+
+        assertSame(query, runtime.pgOutboxQueryService(), "the concrete query service is one singleton");
+        assertSame(query, runtime.outboxQueryService(), "the query SPI aliases the scoped concrete service");
+        assertSame(operations, runtime.pgOutboxOperations(), "the concrete operations service is one singleton");
+        assertSame(operations, runtime.outboxOperations(), "the operations SPI aliases the scoped concrete service");
+        assertSame(runtime.outboxQueryConfig(), runtime.outboxQueryConfig(), "the query config is one singleton");
+        assertEquals(
+                QUERY_MAX_PAYLOAD_BYTES,
+                runtime.outboxQueryConfig().maxPayloadBytes(),
+                "inboxOutbox.query.maxPayloadBytes reaches the binding");
     }
 
     // --- Outbox, inbox, maintenance and relay operations ---
@@ -635,6 +639,62 @@ public class PgInboxOutboxSchemaIT {
         assertEquals(0, mappedOutboxRows(settled.deadLettered()));
     }
 
+    private static void exerciseQueryAndOperations(RuntimeComponent runtime) throws Exception {
+        OutboxQueryService query = runtime.outboxQueryService();
+        OutboxOperations operations = runtime.outboxOperations();
+        OutboxRepository outbox = runtime.outboxRepository();
+        String target = unique("query-operations");
+        long toDiscard = insertServiceEntry(runtime, target);
+        long toRetry = insertServiceEntry(runtime, target);
+        long oversized = await(runtime.pool().withTransaction(tx -> runtime.outboxService()
+                .publish(
+                        tx,
+                        OutboxEntry.builder()
+                                .destinationType(DestinationType.SERVICE)
+                                .destination(target)
+                                .eventType("schema.placement.test")
+                                .payload(new JsonObject().put("blob", "x".repeat(2 * QUERY_MAX_PAYLOAD_BYTES)))
+                                .build())));
+
+        // reads see the mapped entries, and the decoy's single row never appears
+        List<OutboxEntrySummary> listed = await(query.list(
+                        OutboxQuery.builder()
+                                .states(Set.of(OutboxEntryState.PENDING))
+                                .destination(target)
+                                .build(),
+                        PageCursor.first(50)))
+                .items();
+        assertEquals(
+                Set.of(toDiscard, toRetry, oversized),
+                listed.stream().map(OutboxEntrySummary::entryId).collect(Collectors.toSet()));
+        assertEquals(
+                OutboxEntryState.PENDING,
+                await(query.getById(toDiscard)).orElseThrow().state());
+        assertTrue(await(query.getPayload(toRetry)).orElseThrow().payloadJson().contains(target));
+        assertInstanceOf(OutboxPayloadTooLargeException.class, failureOf(query.getPayload(oversized)));
+
+        // commands change the mapped rows
+        assertEquals(
+                new OutboxTransition(toDiscard, OutboxEntryState.PENDING, OutboxEntryState.DISCARDED, true),
+                await(operations.discard(toDiscard, OutboxEntryState.PENDING)));
+        assertEquals("DISCARDED", mappedOutbox(toDiscard, "state"));
+        assertEquals(
+                OutboxEntryState.PENDING,
+                await(operations.retry(toDiscard, OutboxEntryState.DISCARDED)).current());
+        assertEquals("PENDING", mappedOutbox(toDiscard, "state"));
+        OutboxEntryStateException stale = assertInstanceOf(
+                OutboxEntryStateException.class, failureOf(operations.retry(toRetry, OutboxEntryState.DEAD_LETTER)));
+        assertEquals(OutboxEntryState.PENDING, stale.current());
+
+        // the discarded cleanup removes only the expired discarded entry
+        await(operations.discard(oversized, OutboxEntryState.PENDING));
+        await(operations.discard(toRetry, OutboxEntryState.PENDING));
+        backdateOutbox(oversized, "updated_at", "8 days");
+        assertEquals(1, await(outbox.cleanupDiscarded(7, 100)));
+        assertEquals(0, mappedOutboxRows(oversized));
+        assertEquals(1, mappedOutboxRows(toRetry));
+    }
+
     private static void exerciseStaleLeaseRecovery(RuntimeComponent runtime) throws Exception {
         OutboxRepository outbox = runtime.outboxRepository();
         String nodeId = runtime.pgInboxOutboxRepository().nodeId();
@@ -697,8 +757,8 @@ public class PgInboxOutboxSchemaIT {
         String nodeId = runtime.pgInboxOutboxRepository().nodeId();
         String target = unique("maintenance");
 
-        // Given: an expired published entry, an expired dead-letter entry and an expired inbox record, plus a
-        // recent counterpart of each that the default retention keeps
+        // Given: an expired published entry, an expired dead-letter entry, an expired discarded entry and an expired
+        // inbox record, plus a recent counterpart of each that the default retention keeps
         long expiredPublished = insertServiceEntry(runtime, target);
         long expiredDeadLetter = insertServiceEntry(runtime, target);
         long recentPublished = insertServiceEntry(runtime, target);
@@ -712,8 +772,14 @@ public class PgInboxOutboxSchemaIT {
         String recentMessage = unique("maintenance-recent");
         assertTrue(await(pool.<Boolean>withTransaction(tx -> inbox.tryInsert(expiredMessage, SOURCE, tx))));
         assertTrue(await(pool.<Boolean>withTransaction(tx -> inbox.tryInsert(recentMessage, SOURCE, tx))));
+        String discardTarget = unique("maintenance-discard");
+        long expiredDiscarded = insertServiceEntry(runtime, discardTarget);
+        long recentDiscarded = insertServiceEntry(runtime, discardTarget);
+        await(runtime.outboxOperations().discard(expiredDiscarded, OutboxEntryState.PENDING));
+        await(runtime.outboxOperations().discard(recentDiscarded, OutboxEntryState.PENDING));
         backdateOutbox(expiredPublished, "published_at", "8 days");
         backdateOutbox(expiredDeadLetter, "updated_at", "31 days");
+        backdateOutbox(expiredDiscarded, "updated_at", "8 days");
         backdateInbox(expiredMessage, "31 days");
 
         // When: the maintenance service runs its cleanup
@@ -723,6 +789,8 @@ public class PgInboxOutboxSchemaIT {
         assertEquals(0, mappedOutboxRows(expiredPublished));
         assertEquals(0, mappedOutboxRows(expiredDeadLetter));
         assertEquals(1, mappedOutboxRows(recentPublished));
+        assertEquals(0, mappedOutboxRows(expiredDiscarded));
+        assertEquals(1, mappedOutboxRows(recentDiscarded));
         assertEquals(0, mappedInboxRows(expiredMessage));
         assertEquals(1, mappedInboxRows(recentMessage));
     }
@@ -1031,7 +1099,11 @@ public class PgInboxOutboxSchemaIT {
                                 .put("database", pool.database())
                                 .put("user", pool.user())
                                 .put("password", pool.password())
-                                .put("schemas", new JsonObject().put(INSTANCE, MAPPED_SCHEMA)));
+                                .put("schemas", new JsonObject().put(INSTANCE, MAPPED_SCHEMA)))
+                .put(
+                        "inboxOutbox",
+                        new JsonObject()
+                                .put("query", new JsonObject().put("maxPayloadBytes", QUERY_MAX_PAYLOAD_BYTES)));
     }
 
     private static JsonObject migrationConfig() {

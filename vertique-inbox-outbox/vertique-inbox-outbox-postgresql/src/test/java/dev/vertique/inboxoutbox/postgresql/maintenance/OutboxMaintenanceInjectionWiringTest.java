@@ -5,54 +5,44 @@ package dev.vertique.inboxoutbox.postgresql.maintenance;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.inboxoutbox.InboxOutboxCleanupConfig;
 import dev.vertique.inboxoutbox.InboxRepository;
 import dev.vertique.inboxoutbox.OutboxRelayConfig;
 import dev.vertique.inboxoutbox.OutboxRepository;
-import dev.vertique.inboxoutbox.admin.InboxOutboxAdminConfig;
 import jakarta.inject.Inject;
 import java.lang.reflect.Constructor;
-import java.util.Arrays;
-import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Proves the constructor shape Dagger resolves for {@link OutboxMaintenanceService}: exactly one
- * {@code @Inject} constructor, the one that takes the receipt cleanup, while the original public
- * four-argument constructor stays available without being an injection point.
+ * Proves the constructor shape Dagger resolves for {@link OutboxMaintenanceService}: a single public constructor,
+ * annotated for injection, that takes the two repositories and the two configurations.
  */
 @DisplayName("OutboxMaintenanceService injection wiring")
 class OutboxMaintenanceInjectionWiringTest {
 
     @Test
-    @DisplayName("exactly one @Inject constructor, and it is the six-argument one")
+    @DisplayName("exactly one public constructor, it is the @Inject one, and it takes four arguments")
     void singleInjectConstructor() {
-        List<Constructor<?>> injectable = Arrays.stream(OutboxMaintenanceService.class.getConstructors())
-                .filter(constructor -> constructor.isAnnotationPresent(Inject.class))
-                .toList();
+        Constructor<?>[] constructors = OutboxMaintenanceService.class.getConstructors();
 
-        assertEquals(1, injectable.size());
+        assertEquals(1, constructors.length);
+        assertTrue(constructors[0].isAnnotationPresent(Inject.class));
         assertArrayEquals(
                 new Class<?>[] {
                     OutboxRepository.class,
                     InboxRepository.class,
                     OutboxRelayConfig.class,
-                    InboxOutboxCleanupConfig.class,
-                    OutboxAdminOperationCleanup.class,
-                    InboxOutboxAdminConfig.class
+                    InboxOutboxCleanupConfig.class
                 },
-                injectable.get(0).getParameterTypes());
+                constructors[0].getParameterTypes());
     }
 
     @Test
-    @DisplayName("the original public four-argument constructor still exists")
-    void legacyConstructorStillPublic() throws NoSuchMethodException {
-        Constructor<OutboxMaintenanceService> legacy = OutboxMaintenanceService.class.getConstructor(
-                OutboxRepository.class, InboxRepository.class, OutboxRelayConfig.class, InboxOutboxCleanupConfig.class);
-
-        assertNotNull(legacy);
+    @DisplayName("no other constructor, however restricted, competes for injection")
+    void noOtherConstructor() {
+        assertEquals(1, OutboxMaintenanceService.class.getDeclaredConstructors().length);
     }
 }

@@ -116,6 +116,7 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
     private final String sqlReclaimStale;
     private final String sqlCleanupPublished;
     private final String sqlCleanupDeadLetter;
+    private final String sqlCleanupDiscarded;
 
     // --- Node identity ---
 
@@ -235,6 +236,13 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
                 + " AND updated_at < NOW() - ($1 * interval '1 day') LIMIT $2 FOR UPDATE SKIP LOCKED)"
                 + " DELETE FROM " + outbox + " WHERE id IN (SELECT id FROM batch)"
                 + " AND state = 'DEAD_LETTER' AND updated_at < NOW() - ($1 * interval '1 day')";
+
+        // Same shape for discarded rows: updated_at is the moment of the discard, and an entry an operator brought
+        // back to PENDING no longer matches the recheck.
+        this.sqlCleanupDiscarded = "WITH batch AS (SELECT id FROM " + outbox + " WHERE state = 'DISCARDED'"
+                + " AND updated_at < NOW() - ($1 * interval '1 day') LIMIT $2 FOR UPDATE SKIP LOCKED)"
+                + " DELETE FROM " + outbox + " WHERE id IN (SELECT id FROM batch)"
+                + " AND state = 'DISCARDED' AND updated_at < NOW() - ($1 * interval '1 day')";
     }
 
     /**
@@ -623,6 +631,21 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
                 .execute(Tuple.of(retentionDays, batchSize))
                 .map(rs -> rs.rowCount())
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "outbox cleanupDeadLetter")));
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Deletes discarded records the same way as {@link #cleanupDeadLetter(int, int)}: candidates are locked
+     * with {@code FOR UPDATE SKIP LOCKED} and the delete re-checks the {@code DISCARDED} state and the age
+     * cutoff, so an entry that an operator brought back in the meantime is never removed.
+     */
+    @Override
+    public Future<Integer> cleanupDiscarded(int retentionDays, int batchSize) {
+        return pool.preparedQuery(sqlCleanupDiscarded)
+                .execute(Tuple.of(retentionDays, batchSize))
+                .map(rs -> rs.rowCount())
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "outbox cleanupDiscarded")));
     }
 
     // --- Internal helpers ---
