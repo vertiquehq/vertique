@@ -10,6 +10,8 @@
  * {@link dev.vertique.inboxoutbox.ops.OutboxEntryStateException}. Reading entries is
  * {@link dev.vertique.inboxoutbox.query.OutboxQueryService}.
  *
- * <p>The service performs no authorization and takes no actor.
+ * <p>The service performs no authorization and takes no actor. An
+ * {@link dev.vertique.inboxoutbox.ops.OutboxOperationListener} is told whether each command committed or failed, with
+ * a snapshot of the security context bound to the call.
  */
 package dev.vertique.inboxoutbox.ops;

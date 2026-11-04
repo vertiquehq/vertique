@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.inboxoutbox`
 > **Artifact:** `vertique-inbox-outbox-core`
-> **Depends on:** `dev.vertique:vertique-core`, `dev.vertique:vertique-db-core`
+> **Depends on:** `dev.vertique:vertique-core`, `dev.vertique:vertique-db-core`, `dev.vertique:vertique-security-core`
 
 Provides the core write APIs and relay contracts for Transactional Messaging. `InboxService` deduplicates inbound messages within the same transaction as business logic. `OutboxService` records outbound side-effects atomically with business writes. The relay SPI (`OutboxDestinationHandler`) allows adapter modules to publish recorded entries to their respective destinations after commit.
 
@@ -346,6 +346,44 @@ public interface OutboxOperations {
 - **Undo.** `retry` on a `DISCARDED` entry brings it back until the maintenance job removes it after `inboxOutbox.cleanup.discardedRetentionDays` (1 to 3650; a value outside that range fails when the config is built, because zero would purge every discarded entry at the next cleanup).
 - **Failures from the store** leave the services as `InboxOutboxPersistenceException` with a message that carries no SQL, driver text or payload; `retryable()` is `true` for a lock timeout.
 
+#### Listening to commands
+
+An `OutboxOperationListener` is told how each `retry` and `discard` ended. Contribute one with `@Provides @IntoSet`; the set is declared by `TransactionalMessagingModule` and is empty by default. An administration adapter that has to record who acted on an entry listens here instead of wrapping the service.
+
+```java
+public interface OutboxOperationListener {
+    void onOutboxEntryChanged(OutboxEntryChange change);
+    default void onOutboxCommandFailed(OutboxCommandFailure failure) {}
+}
+```
+
+- **Committed or failed.** `onOutboxEntryChanged` is called only after the command's transaction commit is confirmed, with the entry id, the `previous` and `current` state and `changed`. A discard of an already `DISCARDED` entry is still reported, with `changed = false`. `onOutboxCommandFailed` is called for a command that was refused as invalid, found no entry, found the entry in another state, hit a persistence failure, or whose commit failed or could not be confirmed. For a persistence failure the outcome of a commit lost on the way may be unknown: read the entry's state in the table.
+- **One call, one id.** Both events carry the same `callId` for the same call, so a consumer can pair them; every call has its own id. `expectedState` of a failure is `null` only when the caller passed `null`, which the command refuses as invalid.
+- **Security snapshot.** `security` is the standard `dev.vertique.security.SecurityContextSnapshot` of the `SecurityContext` bound in the `ContextHolder` when the command was called, taken before any asynchronous hop, so rebinding the context later does not change it. It is `null` when no `SecurityContext` was bound to the call, in both events: a system caller such as a workflow executor or a job binds none, so its commands are reported without a snapshot and otherwise behave the same. A system caller that wants attribution must bind its own `SecurityContext` before calling. `occurredAt` is stamped with it when the call was made, not when the transaction committed (a failure's `occurredAt` is when it was observed). `toString()` of both events never shows the snapshot.
+- **No content.** Events carry no payload, headers, last-error text or message text. A failure carries only the simple class name of the failure the caller receives (`errorType`), never its message.
+- **At most once.** A crash between the commit and the notification loses the event; the entry's state in the table is the source of truth. A listener runs on the thread that completes the command, which is not ordered relative to the caller's own result future, and it must not block. Every listener gets every event, in no particular order.
+- **Isolation.** A listener that throws never changes what the caller receives and never stops the other listeners. An `Exception`, `LinkageError`, `AssertionError` or `StackOverflowError` is logged by class name (the failure itself at debug level) and swallowed, as for `OutboxPublishObserver`; any other `Error` is not caught.
+- **Default branch.** `OutboxOperationType` (`RETRY`, `DISCARD`) grows additively, so a listener must have a default branch for a value it does not know.
+- **The relay is separate.** Nothing is reported to the relay's `OutboxPublishObserver`: it sees publish attempts, not operator commands.
+
+```java
+@Provides
+@IntoSet
+static OutboxOperationListener operatorAudit(AuditTrail audit) {
+    return new OutboxOperationListener() {
+        @Override
+        public void onOutboxEntryChanged(OutboxEntryChange change) {
+            audit.record(change.operation().name(), change.entryId(), change.callId(), change.security());
+        }
+
+        @Override
+        public void onOutboxCommandFailed(OutboxCommandFailure failure) {
+            audit.recordFailure(failure.operation().name(), failure.entryId(), failure.callId(), failure.errorType());
+        }
+    };
+}
+```
+
 ### Exceptions
 
 | Exception | Extends | Description |
@@ -364,7 +402,7 @@ inbox-outbox adapters and sibling framework modules; their Javadoc marks them IN
 outside this module's compatibility promise. Applications install the store adapter module
 (`TransactionalMessagingPostgresqlModule`), which includes the core wiring, alongside the
 destination adapters they need (`TransactionalMessagingServiceModule`,
-`TransactionalMessagingKafkaModule`, `TransactionalMessagingDelayedJobModule`), and program against `OutboxService`, `InboxService`, `OutboxQueryService`, `OutboxOperations`, the
+`TransactionalMessagingKafkaModule`, `TransactionalMessagingDelayedJobModule`), and program against `OutboxService`, `InboxService`, `OutboxQueryService`, `OutboxOperations`, `OutboxOperationListener`, the
 record and result types, `ClaimScope`, `DestinationType`, `RelayCapabilities`, and the extension
 points below.
 

@@ -10,6 +10,7 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
+import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.lifecycle.ComposeValidator;
 import dev.vertique.core.lifecycle.LifecyclePhase;
 import dev.vertique.db.DbSchemas;
@@ -28,6 +29,7 @@ import dev.vertique.inboxoutbox.OutboxRepository;
 import dev.vertique.inboxoutbox.OutboxService;
 import dev.vertique.inboxoutbox.RelayCapabilities;
 import dev.vertique.inboxoutbox.TransactionalMessagingModule;
+import dev.vertique.inboxoutbox.ops.OutboxOperationListener;
 import dev.vertique.inboxoutbox.ops.OutboxOperations;
 import dev.vertique.inboxoutbox.postgresql.compose.InboxOutboxPostgresqlComposeValidator;
 import dev.vertique.inboxoutbox.postgresql.maintenance.OutboxMaintenanceCron;
@@ -40,6 +42,7 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import jakarta.inject.Singleton;
+import java.time.Clock;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -170,15 +173,24 @@ public abstract class TransactionalMessagingPostgresqlModule {
      * Provides the {@link PgOutboxOperations}, applying the schema mapping for the {@code inbox-outbox}
      * instance when a {@link DbSchemas} binding exists.
      *
-     * @param pool    the PostgreSQL connection pool
-     * @param mapper  the PostgreSQL failure mapper
-     * @param schemas the optional schema placement; absent means unqualified table names
+     * @param pool      the PostgreSQL connection pool
+     * @param mapper    the PostgreSQL failure mapper
+     * @param schemas   the optional schema placement; absent means unqualified table names
+     * @param holder    the context holder the security context of a command is read from when it is called
+     * @param listeners the listeners contributed by applications and adapter modules, told how each command ended;
+     *                  empty when nothing listens
      * @return the scoped PostgreSQL outbox operations service
      */
     @Provides
     @Singleton
-    static PgOutboxOperations pgOutboxOperations(Pool pool, PgDbExceptionMapper mapper, Optional<DbSchemas> schemas) {
-        return new PgOutboxOperations(pool, mapper, schemas.orElseGet(DbSchemas::empty));
+    static PgOutboxOperations pgOutboxOperations(
+            Pool pool,
+            PgDbExceptionMapper mapper,
+            Optional<DbSchemas> schemas,
+            ContextHolder holder,
+            Set<OutboxOperationListener> listeners) {
+        return new PgOutboxOperations(
+                pool, mapper, schemas.orElseGet(DbSchemas::empty), holder, listeners, Clock.systemUTC());
     }
 
     /**

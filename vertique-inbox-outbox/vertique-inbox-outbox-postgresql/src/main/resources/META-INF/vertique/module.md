@@ -10,7 +10,8 @@ SPDX-License-Identifier: EUPL-1.2
 > **Artifact:** `vertique-inbox-outbox-postgresql`
 > **Depends on:** `dev.vertique:vertique-inbox-outbox-core`, `dev.vertique:vertique-db-postgresql`
 > (which brings `dev.vertique:vertique-db-core` for `DbSchemas` and `MigrationDefinition`),
-> `dev.vertique:vertique-core`, `dev.vertique:vertique-context`, `dev.vertique:vertique-deploy`,
+> `dev.vertique:vertique-core`, `dev.vertique:vertique-context`, `dev.vertique:vertique-security-core`
+> (the `SecurityContextSnapshot` of listener reports), `dev.vertique:vertique-deploy`,
 > `dev.vertique:vertique-logging`, `dev.vertique:vertique-services`, `dev.vertique:vertique-job-cron`
 > (the maintenance cron jobs). `dev.vertique:vertique-db-flyway` is test-scope here; the application
 > supplies the migration runner.
@@ -185,6 +186,7 @@ The store implementations of the core `OutboxQueryService` and `OutboxOperations
 | Commands | One transaction: READ COMMITTED set explicitly, `SET LOCAL lock_timeout` of 30 seconds, `SELECT state ... FOR UPDATE`, a state check against the caller's expectation, then an update that names the state again. A lock timeout is a retryable `InboxOutboxPersistenceException`. |
 | Retry | Sets `PENDING`, `attempt = 0`, clears `claimed_at`, `claimed_by`, `last_error` and `error_type`, sets `available_at` to the later of now and `scheduled_at`, and sends `pg_notify('transactional_outbox_channel', id)` inside the transaction, so the wake-up is delivered only when the retry commits. |
 | Discard | Sets `DISCARDED` and clears the lease; `attempt`, `last_error` and `error_type` stay as the record of why the entry was dropped. |
+| Listener reports | `PgOutboxOperations` reports each command to the contributed `Set<OutboxOperationListener>` (contract in `dev.vertique:vertique-inbox-outbox-core`). The call id, the instant and the `SecurityContextSnapshot` of the `SecurityContext` bound in the `ContextHolder` are captured at the start of `retry` or `discard`, before any asynchronous hop; with no listener nothing is captured. The committed report is sent when `pool.withTransaction` has confirmed the commit, never before; every other ending, including a refusal before the transaction starts, a rollback and a commit that fails, is reported as failed. Each listener call is isolated and its failure is reported through `ObserverFailureReporter` by class name; the caller's result is the same with or without listeners. |
 | Races | The relay's claim uses `FOR UPDATE SKIP LOCKED`, so a locked row is skipped; a row a command has moved no longer matches the claim. A command that finds the row claimed waits for the claim to commit and then reports `OutboxEntryStateException` with the new state. |
 | Relay ordering | A claim lets an entry go first only if no older entry of its aggregate is `PENDING` or `PROCESSING`. `DEAD_LETTER` and `DISCARDED` entries do not hold later entries back, so discarding the oldest `PENDING` entry releases the rest of its aggregate. |
 
@@ -402,6 +404,7 @@ look in a schema the migration never filled.
 | `OutboxService` | Singleton | `DefaultOutboxService` backed by `PgInboxOutboxRepository` |
 | `PgInboxOutboxRepository` | Singleton | PostgreSQL repository, built from `Optional<DbSchemas>`: placed in the schema mapped to `inbox-outbox` when the component supplies `DbSchemas` (a component that installs `DbModule` gets it from `db.schemas.inbox-outbox`), unqualified when it does not. The `InboxRepository` and `OutboxRepository` bindings, both services, the maintenance cron and every relay instance resolve to this one instance, so they share one node identity (each relay instance appends a counter suffix to it for `claimed_by`) |
 | `Set<MigrationDefinition>` | `@IntoSet` | The `inbox-outbox` declaration from `InboxOutboxMigrationsModule`: location `classpath:db/migration/inbox-outbox`, no dependencies |
+| `PgOutboxOperations` / `OutboxOperations` | Singleton | Built from `Optional<DbSchemas>`, the `ContextHolder` bound by the included `ContextRuntimeModule` (no extra holder binding is needed or declared) and the contributed `Set<OutboxOperationListener>`, which is empty by default |
 | `OutboxRelayConfig` | Singleton | Relay configuration deserialized from `inboxOutbox.relay` |
 | `InboxOutboxCleanupConfig` | Singleton | Cleanup configuration deserialized from `inboxOutbox.cleanup` |
 | `Set<VerticleDeployment>` | `@ElementsIntoSet` | `OutboxRelay` verticle; SERVICES phase, priority 100. Every relay instance is given the contributed `Set<OutboxPublishObserver>`, sorted once per instance by `OrderedExtension` order |
