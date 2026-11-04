@@ -11,6 +11,10 @@
  *       {@link dev.vertique.inboxoutbox.OutboxRepository} against a PostgreSQL database using
  *       {@code FOR UPDATE SKIP LOCKED} claim semantics and {@code ON CONFLICT DO NOTHING} for
  *       inbox deduplication</li>
+ *   <li>{@link dev.vertique.inboxoutbox.postgresql.PgOutboxDeadLetterService} — implements
+ *       {@link dev.vertique.inboxoutbox.admin.OutboxDeadLetterService}: lists, reads, requeues and
+ *       discards dead-lettered outbox entries, one transaction per command, and keeps a receipt of
+ *       each command; also the retention cleanup of those receipts</li>
  *   <li>{@link dev.vertique.inboxoutbox.postgresql.OutboxRecordMapper} — maps PostgreSQL
  *       {@code Row} instances to {@link dev.vertique.inboxoutbox.OutboxRecord} domain objects</li>
  *   <li>{@link dev.vertique.inboxoutbox.postgresql.DefaultInboxService} — default implementation
@@ -30,7 +34,8 @@
  * </ul>
  *
  * <p>Flyway migrations are located at {@code classpath:db/migration/inbox-outbox} and create the
- * {@code inbox} and {@code outbox} tables together with the {@code LISTEN/NOTIFY} trigger.
+ * {@code inbox} and {@code outbox} tables together with the {@code LISTEN/NOTIFY} trigger, and the
+ * dead-letter administration objects (the entry revision, the receipt table and their indexes).
  *
  * <p><b>Schema placement.</b> The {@code inbox-outbox} name is both the migration instance and the key of
  * the optional {@code db.schemas} mapping. When a {@link dev.vertique.db.DbSchemas} binding maps it to a schema, the

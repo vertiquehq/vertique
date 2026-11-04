@@ -3,12 +3,16 @@
 
 package dev.vertique.inboxoutbox.postgresql.maintenance;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -17,6 +21,7 @@ import dev.vertique.inboxoutbox.InboxOutboxCleanupConfig;
 import dev.vertique.inboxoutbox.InboxRepository;
 import dev.vertique.inboxoutbox.OutboxRelayConfig;
 import dev.vertique.inboxoutbox.OutboxRepository;
+import dev.vertique.inboxoutbox.admin.InboxOutboxAdminConfig;
 import io.vertx.core.Future;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -36,7 +41,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
  *       {@link OutboxRepository#reclaimStale(Duration)} with the configured lease timeout.</li>
  *   <li>{@link OutboxMaintenanceService#cleanup()} invokes all three cleanup paths
  *       (published, dead-letter, inbox) and returns a composite outcome: success iff all three
- *       succeed; otherwise failure carrying every underlying cause as suppressed exceptions.</li>
+ *       succeed; otherwise failure carrying every underlying cause as suppressed exceptions.
+ *       Built with the receipt cleanup, it runs a fourth {@code operations} outcome under the same
+ *       contract.</li>
  * </ul>
  */
 @ExtendWith(MockitoExtension.class)
@@ -48,12 +55,17 @@ class OutboxMaintenanceServiceTest {
     @Mock
     private InboxRepository inboxRepository;
 
+    @Mock
+    private OutboxAdminOperationCleanup operationCleanup;
+
     private OutboxMaintenanceService service;
 
     private static final OutboxRelayConfig RELAY_CONFIG =
             OutboxRelayConfig.builder().build();
     private static final InboxOutboxCleanupConfig CLEANUP_CONFIG =
             InboxOutboxCleanupConfig.builder().build();
+    private static final InboxOutboxAdminConfig ADMIN_CONFIG =
+            InboxOutboxAdminConfig.builder().operationRetentionDays(45).build();
 
     @BeforeEach
     void setUp() {
@@ -180,6 +192,141 @@ class OutboxMaintenanceServiceTest {
             verify(outboxRepository)
                     .cleanupDeadLetter(CLEANUP_CONFIG.deadLetterRetentionDays(), CLEANUP_CONFIG.cleanupBatchSize());
             verify(inboxRepository).cleanup(CLEANUP_CONFIG.inboxRetentionDays(), CLEANUP_CONFIG.cleanupBatchSize());
+        }
+    }
+
+    @Nested
+    @DisplayName("cleanup() with receipt retention")
+    class CleanupWithOperations {
+
+        private OutboxMaintenanceService fourOutcomes;
+
+        @BeforeEach
+        void build() {
+            fourOutcomes = new OutboxMaintenanceService(
+                    outboxRepository, inboxRepository, RELAY_CONFIG, CLEANUP_CONFIG, operationCleanup, ADMIN_CONFIG);
+        }
+
+        @Test
+        @DisplayName("all four cleanups succeed and receipts use the admin retention with the shared batch size")
+        void allSucceed() {
+            stubAll(
+                    Future.succeededFuture(1),
+                    Future.succeededFuture(2),
+                    Future.succeededFuture(3),
+                    Future.succeededFuture(4));
+
+            Future<Void> result = fourOutcomes.cleanup();
+
+            assertTrue(result.succeeded());
+            verifyAllInvoked();
+        }
+
+        @Test
+        @DisplayName("operations cleanup fails alone — outcome is labelled 'operations' and counted of 4")
+        void operationsFailsAlone() {
+            RuntimeException boom = new RuntimeException("operations failure");
+            stubAll(
+                    Future.succeededFuture(1),
+                    Future.succeededFuture(2),
+                    Future.succeededFuture(3),
+                    Future.failedFuture(boom));
+
+            Future<Void> result = fourOutcomes.cleanup();
+
+            assertTrue(result.failed());
+            assertInstanceOf(OutboxMaintenanceException.class, result.cause());
+            assertSame(boom, result.cause().getCause());
+            assertEquals(0, result.cause().getSuppressed().length);
+            assertEquals(
+                    "outbox cleanup failed for [operations] (1 of 4): operations failure",
+                    result.cause().getMessage());
+            verifyAllInvoked();
+        }
+
+        @Test
+        @DisplayName("operations fails together with others — every cause reported, first is primary")
+        void operationsFailsWithOthers() {
+            RuntimeException published = new RuntimeException("published failure");
+            RuntimeException inbox = new RuntimeException("inbox failure");
+            RuntimeException operations = new RuntimeException("operations failure");
+            stubAll(
+                    Future.failedFuture(published),
+                    Future.succeededFuture(2),
+                    Future.failedFuture(inbox),
+                    Future.failedFuture(operations));
+
+            Future<Void> result = fourOutcomes.cleanup();
+
+            assertTrue(result.failed());
+            assertSame(published, result.cause().getCause());
+            assertEquals(List.of(inbox, operations), List.of(result.cause().getSuppressed()));
+            assertEquals(
+                    "outbox cleanup failed for [published, inbox, operations] (3 of 4): published failure",
+                    result.cause().getMessage());
+            verifyAllInvoked();
+        }
+
+        @Test
+        @DisplayName("all four fail — all causes reported")
+        void allFour() {
+            RuntimeException b1 = new RuntimeException("1");
+            RuntimeException b2 = new RuntimeException("2");
+            RuntimeException b3 = new RuntimeException("3");
+            RuntimeException b4 = new RuntimeException("4");
+            stubAll(Future.failedFuture(b1), Future.failedFuture(b2), Future.failedFuture(b3), Future.failedFuture(b4));
+
+            Future<Void> result = fourOutcomes.cleanup();
+
+            assertSame(b1, result.cause().getCause());
+            assertEquals(List.of(b2, b3, b4), List.of(result.cause().getSuppressed()));
+            assertTrue(result.cause()
+                    .getMessage()
+                    .startsWith(
+                            "outbox cleanup failed for [published, deadLetter, " + "inbox, operations] (4 of 4): 1"));
+        }
+
+        @Test
+        @DisplayName("the four-argument constructor keeps three outcomes and never touches receipts")
+        void legacyConstructorKeepsThreeOutcomes() {
+            RuntimeException boom = new RuntimeException("inbox failure");
+            when(outboxRepository.cleanupPublished(anyInt(), anyInt())).thenReturn(Future.succeededFuture(1));
+            when(outboxRepository.cleanupDeadLetter(anyInt(), anyInt())).thenReturn(Future.succeededFuture(1));
+            when(inboxRepository.cleanup(anyInt(), anyInt())).thenReturn(Future.failedFuture(boom));
+
+            Future<Void> result = service.cleanup();
+
+            assertEquals(
+                    "outbox cleanup failed for [inbox] (1 of 3): inbox failure",
+                    result.cause().getMessage());
+            verify(operationCleanup, never()).cleanupOperations(anyInt(), anyInt());
+        }
+
+        private void stubAll(
+                Future<Integer> published,
+                Future<Integer> deadLetter,
+                Future<Integer> inbox,
+                Future<Integer> operations) {
+            when(outboxRepository.cleanupPublished(
+                            CLEANUP_CONFIG.publishedRetentionDays(), CLEANUP_CONFIG.cleanupBatchSize()))
+                    .thenReturn(published);
+            when(outboxRepository.cleanupDeadLetter(
+                            CLEANUP_CONFIG.deadLetterRetentionDays(), CLEANUP_CONFIG.cleanupBatchSize()))
+                    .thenReturn(deadLetter);
+            when(inboxRepository.cleanup(CLEANUP_CONFIG.inboxRetentionDays(), CLEANUP_CONFIG.cleanupBatchSize()))
+                    .thenReturn(inbox);
+            when(operationCleanup.cleanupOperations(
+                            ADMIN_CONFIG.operationRetentionDays(), CLEANUP_CONFIG.cleanupBatchSize()))
+                    .thenReturn(operations);
+        }
+
+        private void verifyAllInvoked() {
+            verify(outboxRepository)
+                    .cleanupPublished(CLEANUP_CONFIG.publishedRetentionDays(), CLEANUP_CONFIG.cleanupBatchSize());
+            verify(outboxRepository)
+                    .cleanupDeadLetter(CLEANUP_CONFIG.deadLetterRetentionDays(), CLEANUP_CONFIG.cleanupBatchSize());
+            verify(inboxRepository).cleanup(CLEANUP_CONFIG.inboxRetentionDays(), CLEANUP_CONFIG.cleanupBatchSize());
+            verify(operationCleanup).cleanupOperations(45, CLEANUP_CONFIG.cleanupBatchSize());
         }
     }
 

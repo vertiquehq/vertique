@@ -15,7 +15,7 @@ SPDX-License-Identifier: EUPL-1.2
 > (the maintenance cron jobs). `dev.vertique:vertique-db-flyway` is test-scope here; the application
 > supplies the migration runner.
 
-PostgreSQL persistence and relay engine for Transactional Messaging. Provides `DefaultInboxService` and `DefaultOutboxService` (the only implementations of the core write APIs), `PgInboxOutboxRepository` (claim/lease queries, stale recovery), `OutboxRelay` (relay verticle with POLLING and LISTEN_NOTIFY strategies), and the Flyway migration that creates the `inbox` and `outbox` tables. `InboxOutboxMigrationsModule` declares those migrations as the `inbox-outbox` migration instance for named Flyway instances, and the optional `db.schemas.inbox-outbox` setting places both tables in one schema for the migrations and the repository.
+PostgreSQL persistence and relay engine for Transactional Messaging. Provides `DefaultInboxService` and `DefaultOutboxService` (the only implementations of the core write APIs), `PgInboxOutboxRepository` (claim/lease queries, stale recovery), `OutboxRelay` (relay verticle with POLLING and LISTEN_NOTIFY strategies), `PgOutboxDeadLetterService` (the PostgreSQL implementation of the core `OutboxDeadLetterService` administration facade), and the Flyway migrations that create the `inbox` and `outbox` tables and the dead-letter administration objects. `InboxOutboxMigrationsModule` declares those migrations as the `inbox-outbox` migration instance for named Flyway instances, and the optional `db.schemas.inbox-outbox` setting places the tables in one schema for the migrations, the repository and the administration service.
 
 ---
 
@@ -53,7 +53,7 @@ cannot complete a row another node now owns.
 - `markUnresolvable(long entryId, String claimedBy, Duration delay)` — returns an owned row to `PENDING` after the delay without incrementing attempt (the `unresolvable` outcome)
 - `reclaimStale(Duration leaseTimeout)` — returns stale `PROCESSING` rows to `PENDING` without incrementing attempt; deliberately unguarded, because its job is to take rows from nodes that are gone
 - `cleanupPublished(int retentionDays, int batchSize)` — batch-deletes `PUBLISHED` rows past retention
-- `cleanupDeadLetter(int retentionDays, int batchSize)` — batch-deletes `DEAD_LETTER` rows past retention
+- `cleanupDeadLetter(int retentionDays, int batchSize)` — batch-deletes `DEAD_LETTER` rows past retention. The candidate select is ordered by `id` and locks its rows with `FOR UPDATE SKIP LOCKED`, so a row another transaction holds (for example one an administrative command is requeuing) is skipped and left for a later run; the delete re-checks `state = 'DEAD_LETTER'` and the age cutoff, so a row that is no longer an expired dead letter is never removed. `cleanupPublished` is unchanged
 
 **Claim eligibility filter (applied in SQL):**
 - `state = 'PENDING'`
@@ -79,6 +79,23 @@ The read path uses `DestinationType.of(...)` (lenient factory) when mapping rows
 **Sharp edge — unregistered destination types:** A destination type with no registered handler/scope stays `PENDING` indefinitely. Because of the per-aggregate head-of-line subquery, an unclaimable-type row at an aggregate HEAD (the lowest id among `PENDING`/`PROCESSING` for that `aggregate_id`) blocks younger claimable siblings of the same aggregate until that type's handler and claim scope are registered. This is intentional ordering behavior, not a bug.
 
 **Scope:** `insert` writes `OutboxEntry.scopeKey()` to `outbox.scope_key`, and every read maps it to `OutboxRecord.scopeKey()`, including the rows `claimBatch` returns after a retry or a stale-lease reclaim. The claim predicate, the claim ordering, the lease recovery and the retention cleanup do not read it, so a relay claims rows of every scope. The head-of-line ordering above keys on `aggregate_id` alone and is therefore global across scopes: two scopes that reuse an `aggregateId` order against each other. Keep aggregate ids unique across scopes, for example `<scope>:<id>`.
+
+### `PgOutboxDeadLetterService`
+
+PostgreSQL implementation of `OutboxDeadLetterService` (the facade is owned by `dev.vertique:vertique-inbox-outbox-core`, package `dev.vertique.inboxoutbox.admin`) and of the receipt retention cleanup `OutboxAdminOperationCleanup`. It lists, reads and administers dead-lettered outbox entries: `retry` requeues one, `discard` deletes one, and both record a receipt. The facade performs no authorization, takes the actor as an explicit argument and exposes no endpoint: a binding is only the persistence half, and an administration adapter has to be installed to use it. It administers the configured store as a whole and never filters on, selects or returns `scope_key`.
+
+**Constructor:** `PgOutboxDeadLetterService(Pool pool, PgDbExceptionMapper exceptionMapper, DbSchemas schemas, InboxOutboxAdminConfig config)`. Every statement is built once at construction, and the `outbox` table and the `outbox_admin_operations` table are both qualified with the schema mapped to `inbox-outbox`, exactly like `PgInboxOutboxRepository`, so a configured mapping places the receipt table and every statement together. Only the optional filters of the listing are appended per call, from constant fragments, and every value is a bound parameter.
+
+- **`list`** reads a narrow projection (never payload, headers, metadata or `scope_key`) of `DEAD_LETTER` rows, filtered by exact match on the optional fields, ordered `updated_at DESC, id DESC` and paged by a strict keyset `(updated_at, id) < (after)`. The page holds at most `limit` items and a `next` key when a further row exists. A summary's `revision` is the row's `admin_revision`.
+- **`find`** returns the detail projection with at most 4096 characters of `last_error`, cut in the database, and `lastErrorTruncated`. It is empty when the row is absent or not `DEAD_LETTER`.
+- **`readContent`** decides in one statement whether the combined UTF-8 size of the stored payload text and headers text is within `maxContentBytes` and returns the text only when it is, so an oversized value is never transferred and there is no check-then-read race. It returns the payload as raw stored JSON text and the application headers; carrier, security and context metadata are never returned. Too large fails with `OutboxDeadLetterConflictException` reason `CONTENT_LIMIT_EXCEEDED`; absent or not `DEAD_LETTER` is an empty `Optional`.
+- **`retry` and `discard`** each run in one READ COMMITTED transaction, in this order: (1) insert the receipt row for the operation id with `ON CONFLICT DO NOTHING`; a concurrent duplicate waits for the first transaction, and if the operation id was already committed the stored receipt is read with a new statement and returned unchanged, without looking at the entry, when action, entry id, expected revision, exact reason and actor all match, and fails `OPERATION_ID_CONFLICT` (revealing nothing about the other receipt) otherwise; (2) lock the entry `FOR UPDATE`: missing is `OutboxDeadLetterNotFoundException`, a state other than `DEAD_LETTER` is `NOT_DEAD_LETTER`, a revision other than the expected one is `REVISION_CONFLICT`, and a retry of a row at `Long.MAX_VALUE` is `REVISION_EXHAUSTED` (the revision never wraps); (3) retry sets `PENDING`, `attempt = 0`, increments `admin_revision`, clears the claim and the error fields, sets `available_at` and `updated_at` to database time and sends the same `pg_notify('transactional_outbox_channel', id)` the insert trigger sends, inside the transaction; discard deletes the row; (4) complete the receipt with the prior failure snapshot, the target identity, the disposition and, for a retry, the result revision, then commit. Any failure rolls the reservation back together with the state change, so only complete receipts are committed, and a rolled-back operation id can be used again. The receipt is returned only after the commit succeeds.
+- **`history`** lists the completed receipts of one entry, newest first, ordered `recorded_at DESC, operation_id DESC` and paged by keyset. Receipts do not depend on the entry: they survive a discard.
+- **`cleanupOperations(int retentionDays, int batchSize)`** deletes receipts older than the window in one bounded batch. Both arguments must be positive.
+
+Retry preserves the entry's identity (row id, carrier, destination, payload, headers, metadata, aggregate and event identity, scheduling, `created_at`, `max_attempts`) and resets only the documented fields. The entry is an ordinary pending row afterwards and can fail again and be dead-lettered again; a replay of the original command still returns the original receipt after that, because the receipt is answered before the entry is looked at. A retry restores no ordering: rows of the same aggregate that were delivered while the entry was dead-lettered stay delivered ahead of it, and rows of the same aggregate that are still pending wait behind the requeued entry again, because it has the lowest id.
+
+Database failures leave this class as `InboxOutboxPersistenceException` (`retryable` marks transient errors) with a message that carries no SQL, driver text, payload, reason or actor; the semantic exceptions and `ValidationException` pass through unchanged.
 
 ### `DefaultInboxService`
 
@@ -208,6 +225,17 @@ Deserialized from `inboxOutbox.cleanup`.
 
 ---
 
+### `InboxOutboxAdminConfig` (owned by `dev.vertique:vertique-inbox-outbox-core`)
+
+This module provides its Dagger binding, deserialized from the `inboxOutbox.admin` section; an absent section yields the defaults.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `operationRetentionDays` | `90` | Days to retain administration receipts before the maintenance cleanup deletes them. A positive integer. The `Days` suffix follows the retention keys of `InboxOutboxCleanupConfig` |
+| `maxContentBytes` | `1048576` | Largest combined UTF-8 size, in bytes, of the stored payload text and headers text that `readContent` returns. A positive integer, checked in SQL before transfer |
+
+---
+
 ### `OutboxMaintenanceService`, `OutboxMaintenanceContract`, and `OutboxMaintenanceCron`
 
 The cluster-singleton maintenance path. `OutboxMaintenanceCron` is the `@CronJob` entry point (hence
@@ -217,14 +245,17 @@ this module's compile dependency on `dev.vertique:vertique-job-cron`); it delega
 resolves. Applications install the module and tune the cron through configuration; they do not call
 these types.
 
+**Cleanup outcomes.** `cleanup()` runs four independent outcomes, labelled `published`, `deadLetter`, `inbox` and `operations` (the receipts of administrative commands, deleted past `inboxOutbox.admin.operationRetentionDays` in batches of `cleanupBatchSize`). All of them always run, success needs all of them to succeed, and a failure carries every cause: the first as the primary cause, the rest suppressed. The aggregate message now counts four outcomes, for example `outbox cleanup failed for [inbox, operations] (2 of 4): <first cause message>`; it read `(n of 3)` before, so match on the label list rather than the count. `OutboxMaintenanceService` keeps its public four-argument constructor, which runs the original three outcomes and reports `of 3`; the `@Inject` constructor adds the `OutboxAdminOperationCleanup` and `InboxOutboxAdminConfig` collaborators that Dagger supplies from this module.
+
 ## Database Schema
 
-The Flyway migration creates two tables and associated indexes. **`V1__create_inbox_outbox_tables.sql`
+The Flyway migrations create the inbox and outbox tables, the administration receipt table and their indexes. **`V1__create_inbox_outbox_tables.sql`
 is frozen from this Stable release.** Every later schema change ships as `V2+`, never as an edit to
 `V1`.
 
 - `V1__create_inbox_outbox_tables.sql` — the `outbox` and `inbox` tables, their indexes and the `LISTEN/NOTIFY` trigger.
 - `V002__add_outbox_scope.sql` — adds `outbox.scope_key VARCHAR(255) NOT NULL DEFAULT 'default'`, so every existing row reads `default`. The default is a constant, so PostgreSQL 11 and later add the column without rewriting the table. The script sets `lock_timeout` to 30 s, which bounds only the wait for the table lock, and is safe to rerun. No index and no check constraint are added; `inbox` is unchanged.
+- `V003__add_outbox_dead_letter_administration.sql` — adds `outbox.admin_revision BIGINT NOT NULL DEFAULT 0` (the count of administrative requeues, which only the administration commands change and the relay's writes never mention), the `outbox_admin_operations` receipt table, and three indexes: `idx_outbox_admin_operations_entry` on `(entry_id, recorded_at DESC, operation_id DESC)`, `idx_outbox_admin_operations_recorded_at` on `(recorded_at)`, and the partial `idx_outbox_dead_letter_listing` on `outbox (updated_at DESC, id DESC) WHERE state = 'DEAD_LETTER'`. Every statement is `IF NOT EXISTS`, so the script is safe to rerun, and it sets `lock_timeout` to 30 s first. **Lock hazard:** the `ADD COLUMN` default is a constant, so no row is rewritten, but the statement needs a lock that blocks every read and write of `outbox`, and `CREATE INDEX` inside the migration transaction scans the table under a lock that blocks inserts. `lock_timeout` bounds only the wait for a lock, not the index build once it holds the lock. **Very large installations** can create the partial index beforehand without blocking inserts, under the same name: `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_outbox_dead_letter_listing ON outbox (updated_at DESC, id DESC) WHERE state = 'DEAD_LETTER'`; the script then finds it and does nothing.
 
 **`outbox` table** — relay rows:
 
@@ -251,10 +282,28 @@ is frozen from this Stable release.** Every later schema change ships as `V2+`, 
 | `last_error` | `TEXT` | Last error message |
 | `error_type` | `VARCHAR(500)` | Last error type |
 | `scope_key` | `VARCHAR(255) NOT NULL DEFAULT 'default'` | Scope label chosen at publish; not read by claim, ordering, lease recovery or cleanup. Added by `V002` |
+| `admin_revision` | `BIGINT NOT NULL DEFAULT 0` | Count of administrative requeues; the revision an administration command must quote. The relay never writes it. Added by `V003` |
 | `created_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | Row creation time |
 | `updated_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | Row last-modified time |
 
-Indexes: `idx_outbox_pending` (partial, `state = 'PENDING'`, on `available_at ASC, id ASC`), `idx_outbox_processing` (partial, `state = 'PROCESSING'`, on `claimed_at ASC`), `idx_outbox_aggregate` (partial, pending/processing non-null aggregates), `idx_outbox_published`, `idx_outbox_dead_letter`.
+Indexes: `idx_outbox_pending` (partial, `state = 'PENDING'`, on `available_at ASC, id ASC`), `idx_outbox_processing` (partial, `state = 'PROCESSING'`, on `claimed_at ASC`), `idx_outbox_aggregate` (partial, pending/processing non-null aggregates), `idx_outbox_published`, `idx_outbox_dead_letter`, and `idx_outbox_dead_letter_listing` (partial, `state = 'DEAD_LETTER'`, on `updated_at DESC, id DESC`, serves the administration listing).
+
+**`outbox_admin_operations` table** — one receipt per administrative command. Added by `V003`. It has no foreign key to `outbox`, so a receipt outlives a discarded entry, and it stores no payload, headers, raw error text or metadata:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `operation_id` | `UUID PK` | The caller's operation id |
+| `action` | `VARCHAR(16) NOT NULL` | `RETRY` or `DISCARD` |
+| `entry_id` | `BIGINT NOT NULL` | The targeted outbox entry |
+| `expected_revision` | `BIGINT NOT NULL` | The revision the command quoted |
+| `reason` | `VARCHAR(1024) NOT NULL` | The reason, stored and compared exactly |
+| `actor_type`, `actor_id` | `VARCHAR(64)`, `VARCHAR(255)` `NOT NULL` | The acting identity, as given |
+| `recorded_at` | `TIMESTAMPTZ NOT NULL` | Database time of the command's transaction |
+| `attempt`, `max_attempts`, `error_type` | `INTEGER`, `INTEGER`, `VARCHAR(500)` | Prior failure snapshot, read before the change |
+| `destination_type`, `destination`, `event_type`, `aggregate_type`, `aggregate_id` | `VARCHAR` | Target identity |
+| `disposition`, `result_revision` | `VARCHAR(16)`, `BIGINT` | `REQUEUED` or `DISCARDED`; the new revision for a retry |
+
+The intent columns are required. The snapshot, target and result columns are nullable only because the row is inserted first and completed in the same transaction, so a committed row is always complete. Retention deletes receipts past `operationRetentionDays`.
 
 **`inbox` table** — dedup log:
 
@@ -268,7 +317,18 @@ Index: `idx_inbox_processed_at` (for cleanup queries).
 
 **LISTEN/NOTIFY trigger:** `transactional_outbox_notify` fires `AFTER INSERT ON outbox` and calls `pg_notify('transactional_outbox_channel', NEW.id::text)`.
 
-**Placement.** The migration scripts are unqualified, so the migration instance's default schema decides where the tables, indexes, the `outbox_id_seq` sequence, the `notify_transactional_outbox` function and the trigger land. In named Flyway mode with a `db.schemas.inbox-outbox` entry, that schema is the default, and the repository qualifies every table with it, so both agree. In single mode the migration lands where the single-run configuration says (see [Flyway Configuration](#flyway-configuration)). The `transactional_outbox_channel` notification channel is **database-wide**: PostgreSQL channels are not schema-scoped, so every relay listening on the database receives every notification. Treat the channel as a wake-up hint, not a tenant boundary; a relay still claims rows only from its own mapped `outbox` table.
+**Placement.** The migration scripts are unqualified, so the migration instance's default schema decides where the tables (including `outbox_admin_operations`), indexes, the `outbox_id_seq` sequence, the `notify_transactional_outbox` function and the trigger land. In named Flyway mode with a `db.schemas.inbox-outbox` entry, that schema is the default, and the repository and the administration service qualify every table with it, so all agree. In single mode the migration lands where the single-run configuration says (see [Flyway Configuration](#flyway-configuration)). The `transactional_outbox_channel` notification channel is **database-wide**: PostgreSQL channels are not schema-scoped, so every relay listening on the database receives every notification. Treat the channel as a wake-up hint, not a tenant boundary; a relay still claims rows only from its own mapped `outbox` table.
+
+---
+
+## Rollout prerequisite
+
+Dead-letter administration changes how the cleanup must behave, so roll it out in this order:
+
+- **Every cleanup-capable node must run this version's cleanup before any administration adapter exposes retry.** An older node's dead-letter cleanup selects and deletes without locking its candidates and without re-checking the state, so it can delete a row an administrative retry has just requeued. This version's cleanup locks its candidates with `FOR UPDATE SKIP LOCKED` and re-checks the state and age in the delete. The maintenance cron jobs run on one node at a time, which can be any node that has the module installed; upgrade all of them first.
+- **Apply `V003` first.** It adds the revision column and the receipt table that the service and the maintenance cleanup read. Very large installations should pre-build the partial index concurrently, as described under [Database Schema](#database-schema).
+- **A retried entry keeps its identity and can fail again.** It returns to `PENDING` with `attempt = 0` and the same row id, carrier, destination, payload and headers, so it goes through the same delivery path and can be dead-lettered again; each requeue raises `admin_revision` by one, and a command must quote the revision it read.
+- **No ordering is restored.** Entries of the same aggregate that were delivered while this one was dead-lettered stay delivered ahead of it; the requeued entry is delivered when it is claimed, and pending entries of the same aggregate wait behind it again.
 
 ---
 
@@ -383,9 +443,11 @@ look in a schema the migration never filled.
 | `InboxService` | Singleton | `DefaultInboxService` backed by `PgInboxOutboxRepository` |
 | `OutboxService` | Singleton | `DefaultOutboxService` backed by `PgInboxOutboxRepository` |
 | `PgInboxOutboxRepository` | Singleton | PostgreSQL repository, built from `Optional<DbSchemas>`: placed in the schema mapped to `inbox-outbox` when the component supplies `DbSchemas` (a component that installs `DbModule` gets it from `db.schemas.inbox-outbox`), unqualified when it does not. The `InboxRepository` and `OutboxRepository` bindings, both services, the maintenance cron and every relay instance resolve to this one instance, so they share one node identity (each relay instance appends a counter suffix to it for `claimed_by`) |
+| `PgOutboxDeadLetterService` | Singleton | Dead-letter administration service, built from `Optional<DbSchemas>` and `InboxOutboxAdminConfig` like the repository. `OutboxDeadLetterService` and `OutboxAdminOperationCleanup` both resolve to this one instance. Binding it exposes no endpoint; an administration adapter must be installed to use it |
 | `Set<MigrationDefinition>` | `@IntoSet` | The `inbox-outbox` declaration from `InboxOutboxMigrationsModule`: location `classpath:db/migration/inbox-outbox`, no dependencies |
 | `OutboxRelayConfig` | Singleton | Relay configuration deserialized from `inboxOutbox.relay` |
 | `InboxOutboxCleanupConfig` | Singleton | Cleanup configuration deserialized from `inboxOutbox.cleanup` |
+| `InboxOutboxAdminConfig` | Singleton | Administration configuration deserialized from `inboxOutbox.admin`; an absent section yields the defaults |
 | `Set<VerticleDeployment>` | `@ElementsIntoSet` | `OutboxRelay` verticle; SERVICES phase, priority 100. Every relay instance is given the contributed `Set<OutboxPublishObserver>`, sorted once per instance by `OrderedExtension` order |
 | `@Services Set<Object>` | `@IntoSet` | `OutboxMaintenanceCron` — provides cluster-singleton `@CronJob` entry points for stale-lease recovery and table cleanup |
 
@@ -429,6 +491,10 @@ public interface AppComponent { ... }
       "deadLetterRetentionDays": 30,
       "inboxRetentionDays": 30,
       "cleanupBatchSize": 1000
+    },
+    "admin": {
+      "operationRetentionDays": 90,
+      "maxContentBytes": 1048576
     }
   },
   "cron": {

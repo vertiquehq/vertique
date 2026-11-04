@@ -28,7 +28,10 @@ import dev.vertique.inboxoutbox.OutboxRepository;
 import dev.vertique.inboxoutbox.OutboxService;
 import dev.vertique.inboxoutbox.RelayCapabilities;
 import dev.vertique.inboxoutbox.TransactionalMessagingModule;
+import dev.vertique.inboxoutbox.admin.InboxOutboxAdminConfig;
+import dev.vertique.inboxoutbox.admin.OutboxDeadLetterService;
 import dev.vertique.inboxoutbox.postgresql.compose.InboxOutboxPostgresqlComposeValidator;
+import dev.vertique.inboxoutbox.postgresql.maintenance.OutboxAdminOperationCleanup;
 import dev.vertique.inboxoutbox.postgresql.maintenance.OutboxMaintenanceCron;
 import dev.vertique.logging.LoggingContextModule;
 import dev.vertique.services.Services;
@@ -132,6 +135,51 @@ public abstract class TransactionalMessagingPostgresqlModule {
     }
 
     /**
+     * Provides the {@link PgOutboxDeadLetterService}, applying the schema mapping for the
+     * {@code inbox-outbox} instance when a {@link DbSchemas} binding exists, so the administration statements
+     * address the same {@code outbox} table as the repository and the receipt table next to it.
+     *
+     * <p>A binding exposes no endpoint by itself; an administration adapter has to be installed to use it.
+     *
+     * @param pool    the PostgreSQL connection pool
+     * @param mapper  the PostgreSQL failure mapper
+     * @param schemas the optional schema placement; absent means unqualified table names
+     * @param config  the administration configuration
+     * @return the scoped PostgreSQL dead-letter administration service
+     */
+    @Provides
+    @Singleton
+    static PgOutboxDeadLetterService pgOutboxDeadLetterService(
+            Pool pool, PgDbExceptionMapper mapper, Optional<DbSchemas> schemas, InboxOutboxAdminConfig config) {
+        return new PgOutboxDeadLetterService(pool, mapper, schemas.orElseGet(DbSchemas::empty), config);
+    }
+
+    /**
+     * Provides the {@link OutboxDeadLetterService} binding, delegating to the PostgreSQL implementation.
+     *
+     * @param impl the PostgreSQL dead-letter administration service
+     * @return the {@link OutboxDeadLetterService} to use throughout the application
+     */
+    @Provides
+    @Singleton
+    static OutboxDeadLetterService outboxDeadLetterService(PgOutboxDeadLetterService impl) {
+        return impl;
+    }
+
+    /**
+     * Provides the {@link OutboxAdminOperationCleanup} binding the maintenance service uses for receipt
+     * retention, delegating to the PostgreSQL implementation.
+     *
+     * @param impl the PostgreSQL dead-letter administration service
+     * @return the receipt retention cleanup
+     */
+    @Provides
+    @Singleton
+    static OutboxAdminOperationCleanup outboxAdminOperationCleanup(PgOutboxDeadLetterService impl) {
+        return impl;
+    }
+
+    /**
      * Provides the {@link InboxService} binding, delegating to the default implementation.
      *
      * @param impl the default inbox service
@@ -205,6 +253,25 @@ public abstract class TransactionalMessagingPostgresqlModule {
         return parser.parse(
                 JsonConfigPaths.navigateObject(JsonConfigPaths.navigateObject(config, "inboxOutbox"), "cleanup"),
                 InboxOutboxCleanupConfig.class);
+    }
+
+    /**
+     * Provides {@link InboxOutboxAdminConfig} as a Dagger {@link Singleton} binding for the dead-letter
+     * administration service and the maintenance service.
+     *
+     * <p>Deserialised from the {@code inboxOutbox.admin} section of the application config; an absent
+     * section yields the defaults.
+     *
+     * @param config the application configuration root
+     * @param parser the injected config parser
+     * @return the administration configuration
+     */
+    @Provides
+    @Singleton
+    static InboxOutboxAdminConfig inboxOutboxAdminConfig(@VertxConfig JsonObject config, ConfigParser parser) {
+        return parser.parse(
+                JsonConfigPaths.navigateObject(JsonConfigPaths.navigateObject(config, "inboxOutbox"), "admin"),
+                InboxOutboxAdminConfig.class);
     }
 
     /**

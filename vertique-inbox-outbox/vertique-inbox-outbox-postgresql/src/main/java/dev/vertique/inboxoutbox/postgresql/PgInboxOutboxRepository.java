@@ -226,9 +226,13 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
                 + " AND published_at < NOW() - ($1 * interval '1 day') LIMIT $2)"
                 + " DELETE FROM " + outbox + " WHERE id IN (SELECT id FROM batch)";
 
+        // The candidates are locked and ordered, and locked rows are skipped, so a cleanup never waits for a row
+        // an administrative command holds. The delete re-checks state and age, so a row that stopped being an
+        // expired dead letter (for example one an administration command requeued) is never removed.
         this.sqlCleanupDeadLetter = "WITH batch AS (SELECT id FROM " + outbox + " WHERE state = 'DEAD_LETTER'"
-                + " AND updated_at < NOW() - ($1 * interval '1 day') LIMIT $2)"
-                + " DELETE FROM " + outbox + " WHERE id IN (SELECT id FROM batch)";
+                + " AND updated_at < NOW() - ($1 * interval '1 day') ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED)"
+                + " DELETE FROM " + outbox + " WHERE id IN (SELECT id FROM batch)"
+                + " AND state = 'DEAD_LETTER' AND updated_at < NOW() - ($1 * interval '1 day')";
     }
 
     /**
@@ -607,7 +611,9 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
     /**
      * {@inheritDoc}
      *
-     * <p>Deletes dead-letter records in a single batched CTE to avoid holding long-running locks.
+     * <p>Deletes dead-letter records in a single batched CTE to avoid holding long-running locks. The
+     * candidates are locked with {@code FOR UPDATE SKIP LOCKED}, so rows another transaction holds are left for
+     * a later run, and the delete re-checks the {@code DEAD_LETTER} state and the age cutoff.
      */
     @Override
     public Future<Integer> cleanupDeadLetter(int retentionDays, int batchSize) {
