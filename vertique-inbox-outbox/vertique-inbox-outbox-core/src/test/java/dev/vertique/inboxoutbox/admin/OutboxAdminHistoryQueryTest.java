@@ -47,7 +47,7 @@ class OutboxAdminHistoryQueryTest {
     @Test
     @DisplayName("a null position reads as empty and a given one is kept")
     void after() {
-        assertTrue(new OutboxAdminHistoryQuery(1L, 10, null).after().isEmpty());
+        assertTrue(new OutboxAdminHistoryQuery(1L, 10, Optional.empty()).after().isEmpty());
         OutboxAdminHistoryKey key = new OutboxAdminHistoryKey(Instant.EPOCH, UUID.randomUUID());
         assertEquals(Optional.of(key), new OutboxAdminHistoryQuery(1L, 10, Optional.of(key)).after());
     }

@@ -24,6 +24,6 @@ public record OutboxDeadLetterPage(List<OutboxDeadLetterSummary> items, Optional
      */
     public OutboxDeadLetterPage {
         items = AdminChecks.copyOf(items, "items");
-        next = AdminChecks.optional(next);
+        next = AdminChecks.optional(next, "next");
     }
 }

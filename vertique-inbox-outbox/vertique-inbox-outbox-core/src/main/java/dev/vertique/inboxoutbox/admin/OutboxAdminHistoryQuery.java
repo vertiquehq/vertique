@@ -35,7 +35,7 @@ public record OutboxAdminHistoryQuery(long entryId, int limit, Optional<OutboxAd
     public OutboxAdminHistoryQuery {
         AdminChecks.positive(entryId, "entryId");
         AdminChecks.limit(limit);
-        after = AdminChecks.optional(after);
+        after = AdminChecks.optional(after, "after");
     }
 
     /**

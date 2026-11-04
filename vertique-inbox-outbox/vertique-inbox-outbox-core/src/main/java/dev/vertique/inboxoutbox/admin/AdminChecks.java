@@ -32,12 +32,12 @@ final class AdminChecks {
         return value;
     }
 
-    static <T> Optional<T> optional(Optional<T> value) {
-        return value == null ? Optional.empty() : value;
+    static <T> Optional<T> optional(Optional<T> value, String name) {
+        return required(value, name);
     }
 
-    static OptionalLong optionalLong(OptionalLong value) {
-        return value == null ? OptionalLong.empty() : value;
+    static OptionalLong optionalLong(OptionalLong value, String name) {
+        return required(value, name);
     }
 
     static <T> List<T> copyOf(List<T> values, String name) {

@@ -86,7 +86,7 @@ public record OutboxDeadLetterDetail(
         AdminChecks.required(createdAt, "createdAt");
         AdminChecks.required(failedAt, "failedAt");
         AdminChecks.required(availableAt, "availableAt");
-        scheduledAt = AdminChecks.optional(scheduledAt);
+        scheduledAt = AdminChecks.optional(scheduledAt, "scheduledAt");
         if (lastError != null) {
             AdminChecks.bounded(lastError, "lastError", MAX_LAST_ERROR_LENGTH);
         }

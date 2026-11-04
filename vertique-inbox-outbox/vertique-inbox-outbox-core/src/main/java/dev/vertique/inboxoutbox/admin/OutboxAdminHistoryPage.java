@@ -24,6 +24,6 @@ public record OutboxAdminHistoryPage(List<OutboxAdminHistoryEntry> items, Option
      */
     public OutboxAdminHistoryPage {
         items = AdminChecks.copyOf(items, "items");
-        next = AdminChecks.optional(next);
+        next = AdminChecks.optional(next, "next");
     }
 }

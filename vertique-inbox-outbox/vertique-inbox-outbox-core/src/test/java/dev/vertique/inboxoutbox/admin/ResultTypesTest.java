@@ -97,7 +97,7 @@ class ResultTypesTest {
     @Test
     @DisplayName("detail keeps components; null scheduledAt reads as empty")
     void detailValid() {
-        OutboxDeadLetterDetail d = detail(NOW, null, "boom", true);
+        OutboxDeadLetterDetail d = detail(NOW, Optional.empty(), "boom", true);
         assertEquals(1L, d.entryId());
         assertEquals(2L, d.revision());
         assertEquals(DestinationType.KAFKA, d.destinationType());

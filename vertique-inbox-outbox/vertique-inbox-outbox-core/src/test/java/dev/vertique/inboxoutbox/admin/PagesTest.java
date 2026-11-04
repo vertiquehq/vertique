@@ -38,7 +38,7 @@ class PagesTest {
         assertThrows(
                 ValidationException.class,
                 () -> new OutboxDeadLetterPage(Arrays.asList((OutboxDeadLetterSummary) null), Optional.empty()));
-        assertTrue(new OutboxDeadLetterPage(List.of(), null).next().isEmpty());
+        assertTrue(new OutboxDeadLetterPage(List.of(), Optional.empty()).next().isEmpty());
         OutboxDeadLetterKey key = new OutboxDeadLetterKey(Instant.EPOCH, 1L);
         assertEquals(Optional.of(key), new OutboxDeadLetterPage(List.of(), Optional.of(key)).next());
     }
@@ -60,7 +60,8 @@ class PagesTest {
         assertThrows(
                 ValidationException.class,
                 () -> new OutboxAdminHistoryPage(Arrays.asList((OutboxAdminHistoryEntry) null), Optional.empty()));
-        assertTrue(new OutboxAdminHistoryPage(List.of(), null).next().isEmpty());
+        assertTrue(
+                new OutboxAdminHistoryPage(List.of(), Optional.empty()).next().isEmpty());
         OutboxAdminHistoryKey key = new OutboxAdminHistoryKey(Instant.EPOCH, UUID.randomUUID());
         assertEquals(Optional.of(key), new OutboxAdminHistoryPage(List.of(), Optional.of(key)).next());
     }

@@ -47,7 +47,7 @@ public record OutboxAdminReceipt(
      *         or absent for a retry
      */
     public OutboxAdminReceipt {
-        resultRevision = AdminChecks.optionalLong(resultRevision);
+        resultRevision = AdminChecks.optionalLong(resultRevision, "resultRevision");
         AdminChecks.required(operationId, "operationId");
         AdminChecks.positive(entryId, "entryId");
         AdminChecks.required(action, "action");
