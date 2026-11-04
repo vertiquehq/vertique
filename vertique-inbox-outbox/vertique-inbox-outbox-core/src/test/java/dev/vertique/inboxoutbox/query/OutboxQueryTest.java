@@ -74,7 +74,7 @@ class OutboxQueryTest {
         void enumOrder() {
             Set<OutboxEntryState> given = new LinkedHashSet<>(List.of(
                     OutboxEntryState.DISCARDED,
-                    OutboxEntryState.PUBLISHED,
+                    OutboxEntryState.PROCESSING,
                     OutboxEntryState.PENDING,
                     OutboxEntryState.DEAD_LETTER));
 
@@ -83,10 +83,55 @@ class OutboxQueryTest {
             assertEquals(
                     List.of(
                             OutboxEntryState.PENDING,
-                            OutboxEntryState.PUBLISHED,
+                            OutboxEntryState.PROCESSING,
                             OutboxEntryState.DEAD_LETTER,
                             OutboxEntryState.DISCARDED),
                     new ArrayList<>(query.states()));
+        }
+
+        @Test
+        @DisplayName("PUBLISHED cannot be listed, alone or mixed with other states, through the builder or inStates")
+        void publishedIsRejected() {
+            String expected = "PUBLISHED entries cannot be listed";
+
+            assertEquals(expected, message(b -> b.states(Set.of(OutboxEntryState.PUBLISHED))));
+            assertEquals(
+                    expected, message(b -> b.states(EnumSet.of(OutboxEntryState.PENDING, OutboxEntryState.PUBLISHED))));
+            assertEquals(expected, message(b -> b.states(EnumSet.allOf(OutboxEntryState.class))));
+            assertEquals(
+                    expected,
+                    assertThrows(ValidationException.class, () -> OutboxQuery.inStates(OutboxEntryState.PUBLISHED))
+                            .getMessage());
+            assertEquals(
+                    expected,
+                    assertThrows(
+                                    ValidationException.class,
+                                    () -> OutboxQuery.inStates(
+                                            OutboxEntryState.DEAD_LETTER, OutboxEntryState.PUBLISHED))
+                            .getMessage());
+            assertEquals(
+                    expected,
+                    assertThrows(ValidationException.class, () -> OutboxQuery.inStates(OutboxEntryState.values()))
+                            .getMessage());
+        }
+
+        @Test
+        @DisplayName("each of the other four states is accepted alone, and all four together")
+        void otherStatesAreAccepted() {
+            for (OutboxEntryState state : OutboxEntryState.values()) {
+                if (state == OutboxEntryState.PUBLISHED) {
+                    continue;
+                }
+                assertEquals(
+                        Set.of(state), valid().states(Set.of(state)).build().states());
+                assertEquals(Set.of(state), OutboxQuery.inStates(state).states());
+            }
+            Set<OutboxEntryState> four = EnumSet.complementOf(EnumSet.of(OutboxEntryState.PUBLISHED));
+
+            assertEquals(four, valid().states(four).build().states());
+            assertEquals(
+                    four,
+                    OutboxQuery.inStates(four.toArray(OutboxEntryState[]::new)).states());
         }
 
         @Test

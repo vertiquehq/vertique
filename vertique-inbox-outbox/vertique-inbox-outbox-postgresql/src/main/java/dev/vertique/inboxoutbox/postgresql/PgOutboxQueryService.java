@@ -30,6 +30,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -110,6 +111,11 @@ public class PgOutboxQueryService extends PgSqlRepository implements OutboxQuery
     public Future<PagedResult<OutboxEntrySummary>> list(OutboxQuery query, PageCursor cursor) {
         if (query == null || cursor == null) {
             return Future.failedFuture(new ValidationException("query and cursor must not be null"));
+        }
+        List<Object> keyset = cursor.keysetValues();
+        if (!keyset.isEmpty()
+                && !(keyset.size() == 2 && keyset.get(0) instanceof OffsetDateTime && keyset.get(1) instanceof Long)) {
+            return Future.failedFuture(new ValidationException("cursor does not belong to an outbox listing"));
         }
         PageCursor page;
         try {

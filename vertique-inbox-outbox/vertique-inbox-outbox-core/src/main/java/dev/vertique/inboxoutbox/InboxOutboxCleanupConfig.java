@@ -5,6 +5,7 @@ package dev.vertique.inboxoutbox;
 
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import dev.vertique.core.exception.ValidationException;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.experimental.Accessors;
@@ -81,4 +82,36 @@ public class InboxOutboxCleanupConfig {
      */
     @Builder.Default
     private final int cleanupBatchSize = 1_000;
+
+    /** Largest accepted {@code discardedRetentionDays}. */
+    public static final int MAX_DISCARDED_RETENTION_DAYS = 3650;
+
+    /**
+     * Creates the config; reached through the builder and Jackson deserialization. Only the discarded window is
+     * range-checked: it is the time an operator has to undo a discard, so a zero or negative value, which would
+     * purge every discarded entry at the next cleanup, is refused.
+     *
+     * @param publishedRetentionDays  retention of published entries, in days
+     * @param deadLetterRetentionDays retention of dead-letter entries, in days
+     * @param discardedRetentionDays  retention of discarded entries; 1 to {@value #MAX_DISCARDED_RETENTION_DAYS}
+     * @param inboxRetentionDays      retention of inbox records, in days
+     * @param cleanupBatchSize        records deleted per batch
+     * @throws ValidationException if {@code discardedRetentionDays} is outside its range
+     */
+    InboxOutboxCleanupConfig(
+            int publishedRetentionDays,
+            int deadLetterRetentionDays,
+            int discardedRetentionDays,
+            int inboxRetentionDays,
+            int cleanupBatchSize) {
+        if (discardedRetentionDays < 1 || discardedRetentionDays > MAX_DISCARDED_RETENTION_DAYS) {
+            throw new ValidationException(
+                    "discardedRetentionDays must be between 1 and " + MAX_DISCARDED_RETENTION_DAYS);
+        }
+        this.publishedRetentionDays = publishedRetentionDays;
+        this.deadLetterRetentionDays = deadLetterRetentionDays;
+        this.discardedRetentionDays = discardedRetentionDays;
+        this.inboxRetentionDays = inboxRetentionDays;
+        this.cleanupBatchSize = cleanupBatchSize;
+    }
 }

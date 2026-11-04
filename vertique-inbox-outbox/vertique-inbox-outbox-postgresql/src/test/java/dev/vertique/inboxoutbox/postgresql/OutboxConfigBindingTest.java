@@ -133,6 +133,27 @@ class OutboxConfigBindingTest {
         }
 
         @Test
+        @DisplayName("a discarded retention outside 1 to 3650 days is rejected and the bounds are accepted")
+        void discardedRetentionBounds() {
+            for (int value : new int[] {0, -1, 3651}) {
+                JsonObject root = inboxOutbox("cleanup", new JsonObject().put("discardedRetentionDays", value));
+
+                assertThrows(
+                        RuntimeException.class,
+                        () -> TransactionalMessagingPostgresqlModule.inboxOutboxCleanupConfig(root, PARSER),
+                        String.valueOf(value));
+            }
+            for (int value : new int[] {1, 3650}) {
+                JsonObject root = inboxOutbox("cleanup", new JsonObject().put("discardedRetentionDays", value));
+
+                assertEquals(
+                        value,
+                        TransactionalMessagingPostgresqlModule.inboxOutboxCleanupConfig(root, PARSER)
+                                .discardedRetentionDays());
+            }
+        }
+
+        @Test
         @DisplayName("the retention keys are independent of each other")
         void independentKeys() {
             JsonObject root = inboxOutbox(

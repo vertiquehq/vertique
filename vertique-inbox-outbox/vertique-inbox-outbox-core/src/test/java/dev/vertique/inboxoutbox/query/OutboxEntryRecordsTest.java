@@ -244,6 +244,63 @@ class OutboxEntryRecordsTest {
         }
 
         @Test
+        @DisplayName("the last error limit counts code points: 4096 supplementary characters fit and 4097 do not")
+        void lastErrorLimitCountsCodePoints() {
+            String emoji = "\uD83D\uDE00";
+
+            OutboxEntryDetail atLimit = detail(
+                    1,
+                    OutboxEntryState.PENDING,
+                    DestinationType.SERVICE,
+                    "d",
+                    "e",
+                    0,
+                    0,
+                    AT,
+                    AT,
+                    AT,
+                    emoji.repeat(4096));
+
+            assertEquals(8192, atLimit.lastError().length());
+            assertEquals(
+                    "lastError must be at most 4096 characters",
+                    message(() -> detail(
+                            1,
+                            OutboxEntryState.PENDING,
+                            DestinationType.SERVICE,
+                            "d",
+                            "e",
+                            0,
+                            0,
+                            AT,
+                            AT,
+                            AT,
+                            emoji.repeat(4097))));
+        }
+
+        @Test
+        @DisplayName("toString shows the entry id and state and never the last error")
+        void toStringHidesLastError() {
+            OutboxEntryDetail detail = detail(
+                    42,
+                    OutboxEntryState.DEAD_LETTER,
+                    DestinationType.SERVICE,
+                    "secret-destination",
+                    "secret-event",
+                    1,
+                    2,
+                    AT,
+                    AT,
+                    AT,
+                    "secret-last-error");
+
+            String text = detail.toString();
+
+            assertEquals("OutboxEntryDetail[entryId=42, state=DEAD_LETTER]", text);
+            assertFalse(text.contains("secret"));
+        }
+
+        @Test
         @DisplayName("each invalid component is rejected with its own message")
         void invalid() {
             OutboxEntryState state = OutboxEntryState.PENDING;

@@ -34,6 +34,8 @@ import io.vertx.core.json.JsonObject;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -104,6 +106,12 @@ class PgOutboxQueryServiceIT {
         private OutboxQueryServiceLimits() {}
     }
 
+    private static List<OutboxEntryState> listable() {
+        return java.util.Arrays.stream(OutboxEntryState.values())
+                .filter(state -> state != OutboxEntryState.PUBLISHED)
+                .toList();
+    }
+
     private static List<Long> listIds(OutboxQuery query) throws Exception {
         return idsOf(await(service.list(query, ALL)));
     }
@@ -123,13 +131,13 @@ class PgOutboxQueryServiceIT {
     class StateFilter {
 
         @Test
-        @DisplayName("a single state lists exactly the entries in that state, for each of the five states")
+        @DisplayName("a single state lists exactly the entries in that state, for each of the four listable states")
         void singleState() throws Exception {
             for (OutboxEntryState state : OutboxEntryState.values()) {
                 fixture.seed().state(state.name()).insert();
             }
 
-            for (OutboxEntryState state : OutboxEntryState.values()) {
+            for (OutboxEntryState state : listable()) {
                 List<OutboxEntrySummary> items =
                         await(service.list(OutboxQuery.inStates(state), ALL)).items();
 
@@ -155,17 +163,20 @@ class PgOutboxQueryServiceIT {
         }
 
         @Test
-        @DisplayName("every state at once lists every entry")
+        @DisplayName("every listable state at once lists every entry except the published one")
         void everyState() throws Exception {
             for (OutboxEntryState state : OutboxEntryState.values()) {
                 fixture.seed().state(state.name()).insert();
             }
 
+            List<OutboxEntrySummary> items = await(
+                            service.list(OutboxQuery.inStates(listable().toArray(OutboxEntryState[]::new)), ALL))
+                    .items();
+
+            assertEquals(4, items.size());
             assertEquals(
-                    5,
-                    await(service.list(OutboxQuery.inStates(OutboxEntryState.values()), ALL))
-                            .items()
-                            .size());
+                    java.util.Set.copyOf(listable()),
+                    items.stream().map(OutboxEntrySummary::state).collect(java.util.stream.Collectors.toSet()));
         }
 
         @Test
@@ -673,6 +684,182 @@ class PgOutboxQueryServiceIT {
     // --- Projections ---
 
     @Nested
+    @DisplayName("list: cursors")
+    class Cursors {
+
+        private static final String FOREIGN = "cursor does not belong to an outbox listing";
+        private final OffsetDateTime at = BASE.atOffset(ZoneOffset.UTC);
+
+        private void assertRejected(List<Object> keyset, boolean backward) {
+            recording.clear();
+
+            Throwable failure =
+                    failureOf(recordedService.list(deadLetters().build(), PageCursor.of(keyset, 10, backward)));
+
+            assertEquals(
+                    FOREIGN,
+                    assertInstanceOf(ValidationException.class, failure).getMessage());
+            assertTrue(recording.statements().isEmpty(), "no statement ran for " + keyset);
+        }
+
+        @Test
+        @DisplayName("a keyset that is not exactly a timestamp and an id is rejected before any statement runs")
+        void foreignKeysetsAreRejected() {
+            List<List<Object>> foreign = List.of(
+                    List.of(5L),
+                    List.of(at),
+                    List.of(at, 5L, 1L),
+                    List.of(at, 5L, at),
+                    List.of("2026-01-01T00:00:00Z", 5L),
+                    List.of(5L, 5L),
+                    List.of(at, "5"),
+                    List.of(at, 5),
+                    List.of(at, at),
+                    List.of(BASE, 5L),
+                    java.util.Arrays.asList(null, 5L),
+                    java.util.Arrays.asList(at, null));
+
+            for (List<Object> keyset : foreign) {
+                assertRejected(keyset, false);
+                assertRejected(keyset, true);
+            }
+        }
+
+        @Test
+        @DisplayName("a keyset of a timestamp and an id is accepted and runs a statement")
+        void matchingKeysetIsAccepted() throws Exception {
+            long id = fixture.seed().updated(BASE.minusSeconds(10)).insert();
+            recording.clear();
+
+            PagedResult<OutboxEntrySummary> page =
+                    await(recordedService.list(deadLetters().build(), PageCursor.of(List.of(at, 1_000L), 10, false)));
+
+            assertEquals(List.of(id), idsOf(page));
+            assertEquals(1, recording.statements().size());
+        }
+
+        @Test
+        @DisplayName("tokens from a created_at and an updated_at listing carry such a keyset and keep paging")
+        void realTokensStillWork() throws Exception {
+            for (int i = 0; i < 5; i++) {
+                fixture.seed().insert();
+            }
+
+            for (OutboxSort sort : List.of(OutboxSort.CREATED_AT_DESC, OutboxSort.UPDATED_AT_ASC)) {
+                OutboxQuery query = deadLetters().sort(sort).build();
+                PagedResult<OutboxEntrySummary> first = await(recordedService.list(query, PageCursor.first(2)));
+                PageCursor next = PageCursor.fromToken(first.nextCursorToken());
+                recording.clear();
+
+                PagedResult<OutboxEntrySummary> second = await(recordedService.list(query, next));
+                PageCursor back = PageCursor.fromToken(second.previousCursorToken());
+                PagedResult<OutboxEntrySummary> again = await(recordedService.list(query, back));
+
+                assertEquals(2, next.keysetValues().size(), sort.name());
+                assertInstanceOf(OffsetDateTime.class, next.keysetValues().get(0), sort.name());
+                assertInstanceOf(Long.class, next.keysetValues().get(1), sort.name());
+                assertEquals(2, second.size(), sort.name());
+                assertEquals(idsOf(first), idsOf(again), sort.name());
+                assertEquals(2, recording.statements().size(), sort.name());
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("list: states without a listing index")
+    class UnindexedStates {
+
+        private record Row(long id, Instant created, Instant updated) {}
+
+        private List<Row> seed(OutboxEntryState state) throws SQLException {
+            // created: 3, 1, 2, 1, 3, 2 and updated: 6, 6, 5, 4, 4, 5 seconds, so every sort has ties
+            long[] created = {3, 1, 2, 1, 3, 2};
+            long[] updated = {6, 6, 5, 4, 4, 5};
+            List<Row> rows = new ArrayList<>();
+            for (int i = 0; i < created.length; i++) {
+                Instant c = BASE.plusSeconds(created[i]);
+                Instant u = BASE.plusSeconds(updated[i]);
+                rows.add(new Row(
+                        fixture.seed().state(state.name()).created(c).updated(u).insert(), c, u));
+            }
+            return rows;
+        }
+
+        private static List<Long> expected(List<Row> rows, OutboxSort sort) {
+            java.util.Comparator<Row> byTime = sort.column().equals("created_at")
+                    ? java.util.Comparator.comparing(Row::created)
+                    : java.util.Comparator.comparing(Row::updated);
+            java.util.Comparator<Row> order = byTime.thenComparingLong(Row::id);
+            return rows.stream()
+                    .sorted(sort.ascending() ? order : order.reversed())
+                    .map(Row::id)
+                    .toList();
+        }
+
+        @Test
+        @DisplayName("pending and processing entries list correctly in every order, alone and together")
+        void listsCorrectlyInEveryOrder() throws Exception {
+            List<Row> pending = seed(OutboxEntryState.PENDING);
+            List<Row> processing = seed(OutboxEntryState.PROCESSING);
+            seed(OutboxEntryState.PUBLISHED);
+            List<Row> dead = seed(OutboxEntryState.DEAD_LETTER);
+            List<Row> all = new ArrayList<>(pending);
+            all.addAll(processing);
+            all.addAll(dead);
+
+            for (OutboxSort sort : OutboxSort.values()) {
+                assertEquals(
+                        expected(pending, sort),
+                        listIds(OutboxQuery.builder()
+                                .states(java.util.Set.of(OutboxEntryState.PENDING))
+                                .sort(sort)
+                                .build()),
+                        "PENDING " + sort);
+                assertEquals(
+                        expected(processing, sort),
+                        listIds(OutboxQuery.builder()
+                                .states(java.util.Set.of(OutboxEntryState.PROCESSING))
+                                .sort(sort)
+                                .build()),
+                        "PROCESSING " + sort);
+                assertEquals(
+                        expected(all, sort),
+                        listIds(OutboxQuery.builder()
+                                .states(java.util.Set.of(
+                                        OutboxEntryState.PENDING,
+                                        OutboxEntryState.PROCESSING,
+                                        OutboxEntryState.DEAD_LETTER))
+                                .sort(sort)
+                                .build()),
+                        "PENDING+PROCESSING+DEAD_LETTER " + sort);
+            }
+        }
+
+        @Test
+        @DisplayName("paging through pending entries visits each once, forward and back")
+        void pagesThroughPending() throws Exception {
+            List<Row> pending = seed(OutboxEntryState.PENDING);
+            seed(OutboxEntryState.PUBLISHED);
+            OutboxQuery query = OutboxQuery.builder()
+                    .states(java.util.Set.of(OutboxEntryState.PENDING))
+                    .sort(OutboxSort.CREATED_AT_ASC)
+                    .build();
+            List<Long> expected = expected(pending, OutboxSort.CREATED_AT_ASC);
+
+            PagedResult<OutboxEntrySummary> first = await(service.list(query, PageCursor.first(4)));
+            PagedResult<OutboxEntrySummary> second =
+                    await(service.list(query, PageCursor.fromToken(first.nextCursorToken())));
+            PagedResult<OutboxEntrySummary> back =
+                    await(service.list(query, PageCursor.fromToken(second.previousCursorToken())));
+
+            assertEquals(expected.subList(0, 4), idsOf(first));
+            assertEquals(expected.subList(4, 6), idsOf(second));
+            assertFalse(second.hasMore());
+            assertEquals(idsOf(first), idsOf(back));
+        }
+    }
+
+    @Nested
     @DisplayName("statements never select content")
     class Projections {
 
@@ -783,6 +970,23 @@ class PgOutboxQueryServiceIT {
                         detail,
                         state.name());
             }
+        }
+
+        @Test
+        @DisplayName("a published entry, which cannot be listed, is still read by id and by payload")
+        void publishedEntryIsReadableById() throws Exception {
+            long id = fixture.seed()
+                    .state("PUBLISHED")
+                    .published(BASE.plusSeconds(50))
+                    .insert();
+
+            OutboxEntryDetail detail = await(service.getById(id)).orElseThrow();
+            OutboxEntryPayload payload = await(service.getPayload(id)).orElseThrow();
+
+            assertEquals(OutboxEntryState.PUBLISHED, detail.state());
+            assertEquals(BASE.plusSeconds(50), detail.publishedAt());
+            assertEquals(id, payload.entryId());
+            assertEquals(Map.of("traceparent", "abc", "tenant", "t-1"), payload.headers());
         }
 
         @Test

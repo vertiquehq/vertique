@@ -324,11 +324,11 @@ public interface OutboxOperations {
 
 **Listing.**
 
-- **State is required.** An `OutboxQuery` names at least one `OutboxEntryState`, so a listing never scans the whole table. The other filters are optional exact matches: `destinationType`, `destination`, `eventType`, `aggregateType`, `aggregateId`, plus `createdFrom`/`createdBefore` and `updatedFrom`/`updatedBefore` ranges (start inclusive, end exclusive).
+- **State is required.** An `OutboxQuery` names at least one `OutboxEntryState`, and never `PUBLISHED`: published entries are the largest set, no index serves them, and nothing needs to browse them, so listing them fails with `ValidationException` (`getById` still reads one). The other filters are optional exact matches: `destinationType`, `destination`, `eventType`, `aggregateType`, `aggregateId`, plus `createdFrom`/`createdBefore` and `updatedFrom`/`updatedBefore` ranges (start inclusive, end exclusive).
 - **Order.** `OutboxSort` is `UPDATED_AT_DESC` (default), `UPDATED_AT_ASC`, `CREATED_AT_DESC` or `CREATED_AT_ASC`, always tie-broken by entry id in the same direction. `updatedAt` is when the entry entered its current state, so for a dead letter it is when it failed.
-- **Paging.** Keyset paging with `dev.vertique.db.query.PageCursor` and `PagedResult`, as in the workflow query service. A page size is 1 to 200 (`OutboxQueryService.MAX_PAGE_SIZE`); 50 is the default. A cursor is not bound to the query that produced it; an adapter that hands cursors to untrusted callers must bind them.
+- **Paging.** Keyset paging with `dev.vertique.db.query.PageCursor` and `PagedResult`, as in the workflow query service. A page size is 1 to 200 (`OutboxQueryService.MAX_PAGE_SIZE`); 50 is the default. A cursor that is not shaped like a listing cursor fails with `ValidationException`, but one is not bound to the query that produced it; an adapter that hands cursors to untrusted callers must bind them.
 - **Live reads.** Each page reads the live table, so an entry that changes state between two pages can be missed or repeated.
-- **Indexes.** Entries that are `PENDING`, `PROCESSING`, `DEAD_LETTER` or `DISCARDED` are served by partial indexes. `PUBLISHED` is not indexed for the listing: it is the large set and cleanup removes it after `publishedRetentionDays`.
+- **Indexes.** `DEAD_LETTER` and `DISCARDED` listings are served by partial indexes, so listing dead letters stays cheap however large the table is. `PENDING` and `PROCESSING` entries are listed from the indexes the relay already uses, then sorted; that is cheap while the backlog is small. The listing indexes cover only the two states that rarely change, so they add nothing to the relay's insert, claim and publish path.
 - **What a row carries.** `OutboxEntrySummary` holds identity, state, destination, event and aggregate, attempt counts, `errorType`, `createdAt` and `updatedAt`. `OutboxEntryDetail` adds `availableAt`, `scheduledAt`, `publishedAt`, the relay lease (`claimedAt`, `claimedBy`) and `lastError` cut at 4096 characters with `lastErrorTruncated`. Neither carries payload, headers or metadata.
 - **Payload.** `getPayload` returns the stored JSON text and the application headers. The size check and the read are one statement, so content larger than `inboxOutbox.query.maxPayloadBytes` (default 1 MiB, at most 16 MiB) is never transferred and the call fails with `OutboxPayloadTooLargeException`.
 
@@ -343,7 +343,7 @@ public interface OutboxOperations {
 - **A second retry** finds the entry `PENDING` and fails with `OutboxEntryStateException`; a caller can read that as "already requeued".
 - **Discarding `PENDING` drops a promise.** The row was recorded by a committed business transaction and nothing tells the code that recorded it, so for example a workflow still waits for the result of a discarded side effect. Discarding the oldest `PENDING` entry of an aggregate also releases the later entries of that aggregate to the relay.
 - **Retry can reorder an aggregate.** A retried entry is delivered after later entries of the same aggregate that were delivered while it was parked.
-- **Undo.** `retry` on a `DISCARDED` entry brings it back until the maintenance job removes it after `inboxOutbox.cleanup.discardedRetentionDays`.
+- **Undo.** `retry` on a `DISCARDED` entry brings it back until the maintenance job removes it after `inboxOutbox.cleanup.discardedRetentionDays` (1 to 3650; a value outside that range fails when the config is built, because zero would purge every discarded entry at the next cleanup).
 - **Failures from the store** leave the services as `InboxOutboxPersistenceException` with a message that carries no SQL, driver text or payload; `retryable()` is `true` for a lock timeout.
 
 ### Exceptions

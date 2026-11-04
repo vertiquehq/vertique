@@ -83,4 +83,10 @@ public record OutboxEntryDetail(
             throw new ValidationException("lastError must be at most " + MAX_LAST_ERROR_LENGTH + " characters");
         }
     }
+
+    /** Returns a string without the last error, which can quote application data, so it cannot leak through logging. */
+    @Override
+    public String toString() {
+        return "OutboxEntryDetail[entryId=" + entryId + ", state=" + state + "]";
+    }
 }

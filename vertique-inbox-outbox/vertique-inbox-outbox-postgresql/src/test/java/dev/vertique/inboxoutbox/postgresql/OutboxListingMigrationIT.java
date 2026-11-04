@@ -124,9 +124,8 @@ class OutboxListingMigrationIT {
     void acceptsPrebuiltIndex() throws Exception {
         try (Connection connection = jdbc();
                 Statement statement = connection.createStatement()) {
-            statement.execute(
-                    "CREATE INDEX CONCURRENTLY idx_outbox_listing_updated ON outbox"
-                            + " (updated_at DESC, id DESC) WHERE state IN ('PENDING', 'PROCESSING', 'DEAD_LETTER', 'DISCARDED')");
+            statement.execute("CREATE INDEX CONCURRENTLY idx_outbox_listing_updated ON outbox"
+                    + " (updated_at DESC, id DESC) WHERE state IN ('DEAD_LETTER', 'DISCARDED')");
         }
         String prebuilt = string("SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_outbox_listing_updated'");
 
@@ -140,31 +139,74 @@ class OutboxListingMigrationIT {
 
     @Test
     @DisplayName(
-            "the planner uses the listing indexes for a listing over the indexed states, and the purge index for discarded")
+            "the planner uses the listing indexes for dead-letter and discarded listings, in both sorts, and the purge index")
     void plannerUsesTheIndexes() throws Exception {
         flyway().load().migrate();
-
+        // a table shaped like production: the relay's states and the published backlog dominate
         try (Connection connection = jdbc();
                 Statement statement = connection.createStatement()) {
-            statement.execute("SET enable_seqscan = off");
-            statement.execute("SET enable_bitmapscan = off");
-            String updated = plan(
-                    statement,
-                    "SELECT id FROM outbox WHERE state IN ('DEAD_LETTER', 'DISCARDED')"
-                            + " ORDER BY updated_at DESC, id DESC LIMIT 10");
-            String created = plan(
-                    statement,
-                    "SELECT id FROM outbox WHERE state IN ('DEAD_LETTER', 'DISCARDED')"
-                            + " ORDER BY created_at DESC, id DESC LIMIT 10");
+            statement.execute("INSERT INTO outbox (carrier_id, event_type, destination, destination_type, payload,"
+                    + " state, created_at, updated_at) SELECT gen_random_uuid(), 'e', 'd', 'SERVICE', '{}'::jsonb,"
+                    + " CASE WHEN n % 100 < 90 THEN 'PUBLISHED' WHEN n % 100 < 94 THEN 'PENDING'"
+                    + " WHEN n % 100 < 97 THEN 'DEAD_LETTER' ELSE 'DISCARDED' END,"
+                    + " NOW() - (n * interval '1 minute'), NOW() - (n * interval '1 minute')"
+                    + " FROM generate_series(1, 20000) AS n");
+            statement.execute("ANALYZE outbox");
+        }
+
+        List<String> stateSets = List.of("'DEAD_LETTER'", "'DISCARDED'", "'DEAD_LETTER', 'DISCARDED'");
+        try (Connection connection = jdbc();
+                Statement statement = connection.createStatement()) {
+            // as the database plans them: an index scan, never a scan of the table or a full sort. The older
+            // single-state indexes may legitimately win a single-state listing sorted by updated_at.
+            for (String states : stateSets) {
+                for (String column : List.of("updated", "created")) {
+                    String plan = plan(statement, listing(states, column));
+
+                    assertTrue(
+                            plan.matches("(?s).*Index (Only )?Scan.*"),
+                            "states " + states + " by " + column + ":\n" + plan);
+                    assertFalse(plan.contains("Seq Scan"), "states " + states + " by " + column + ":\n" + plan);
+                    if (column.equals("created") || states.contains(",")) {
+                        assertTrue(
+                                plan.contains("idx_outbox_listing_" + column),
+                                "states " + states + " by " + column + ":\n" + plan);
+                    }
+                }
+            }
+        }
+        // with the older single-state indexes out of the way (inside a transaction that is rolled back), the
+        // listing indexes alone must serve every dead-letter and discarded listing
+        try (Connection connection = jdbc();
+                Statement statement = connection.createStatement()) {
+            connection.setAutoCommit(false);
+            statement.execute("DROP INDEX idx_outbox_dead_letter, idx_outbox_discarded");
+            for (String states : stateSets) {
+                for (String column : List.of("updated", "created")) {
+                    String plan = plan(statement, listing(states, column));
+
+                    assertTrue(
+                            plan.contains("idx_outbox_listing_" + column),
+                            "states " + states + " by " + column + ":\n" + plan);
+                    assertFalse(plan.contains("Sort"), "states " + states + " by " + column + ":\n" + plan);
+                }
+            }
+            connection.rollback();
+        }
+        try (Connection connection = jdbc();
+                Statement statement = connection.createStatement()) {
             String purge = plan(
                     statement,
                     "SELECT id FROM outbox WHERE state = 'DISCARDED'"
                             + " AND updated_at < NOW() - interval '7 days' LIMIT 100");
 
-            assertTrue(updated.contains("idx_outbox_listing_updated"), updated);
-            assertTrue(created.contains("idx_outbox_listing_created"), created);
             assertTrue(purge.contains("idx_outbox_discarded"), purge);
         }
+    }
+
+    private static String listing(String states, String column) {
+        return "SELECT id FROM outbox WHERE state IN (" + states + ") ORDER BY " + column
+                + "_at DESC, id DESC LIMIT 51";
     }
 
     // --- Helpers ---
@@ -177,7 +219,7 @@ class OutboxListingMigrationIT {
             assertTrue(definition.contains(" WHERE "), definition);
             for (OutboxEntryState state : OutboxEntryState.values()) {
                 assertEquals(
-                        state != OutboxEntryState.PUBLISHED,
+                        state == OutboxEntryState.DEAD_LETTER || state == OutboxEntryState.DISCARDED,
                         definition.contains("'" + state.name() + "'"),
                         name + " predicate for " + state);
             }

@@ -41,8 +41,8 @@ public interface OutboxQueryService {
      * @param cursor the page to read; {@code PageCursor.first(DEFAULT_PAGE_SIZE)} for the first page, with a page
      *               size from 1 to {@link #MAX_PAGE_SIZE}
      * @return the page of summaries and the tokens of the neighbouring pages; fails with a
-     *         {@link dev.vertique.core.exception.ValidationException} for an absent argument or a page size out of
-     *         range
+     *         {@link dev.vertique.core.exception.ValidationException} for an absent argument, a page size out of
+     *         range, or a cursor that is not shaped like an outbox listing cursor
      */
     Future<PagedResult<OutboxEntrySummary>> list(OutboxQuery query, PageCursor cursor);
 

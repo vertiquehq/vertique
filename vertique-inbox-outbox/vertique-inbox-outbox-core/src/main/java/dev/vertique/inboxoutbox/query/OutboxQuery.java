@@ -18,13 +18,15 @@ import lombok.Builder;
 /**
  * The filters and order of an outbox entry listing.
  *
- * <p>At least one state is required, so a listing never has to scan the whole table, and every other filter is
- * optional and narrows the result. Time ranges are inclusive at the start and exclusive at the end. A text
+ * <p>At least one state is required, and every other filter is optional and narrows the result. Listings of
+ * {@code DEAD_LETTER} and {@code DISCARDED} entries are served by indexes. {@code PUBLISHED} entries cannot be listed:
+ * they are the largest set and no index serves them; {@code OutboxQueryService#getById} still reads one. Time ranges are inclusive at the start and exclusive at the end. A text
  * filter matches the whole stored value exactly.
  *
  * <p>The query does not filter on, and results do not carry, an entry's scope key.
  *
- * @param states          the states to list; at least one, held as an unmodifiable set
+ * @param states          the states to list; at least one, never {@link OutboxEntryState#PUBLISHED}, held as an
+ *                        unmodifiable set
  * @param destinationType only entries for this destination type, or {@code null} for all
  * @param destination     only entries for this destination, or {@code null} for all; at most 255 characters
  * @param eventType       only entries of this event type, or {@code null} for all; at most 255 characters
@@ -56,7 +58,7 @@ public record OutboxQuery(
     /**
      * Creates a validated query.
      *
-     * @throws ValidationException if no state is given, a state is {@code null}, a text filter is blank, too long
+     * @throws ValidationException if no state is given, a state is {@code null} or {@code PUBLISHED}, a text filter is blank, too long
      *                             or holds a control character, an instant is out of range, or a range start is
      *                             not before its end
      */
@@ -67,6 +69,9 @@ public record OutboxQuery(
         }
         for (OutboxEntryState state : states) {
             QueryChecks.required(state, "states element");
+            if (state == OutboxEntryState.PUBLISHED) {
+                throw new ValidationException("PUBLISHED entries cannot be listed");
+            }
         }
         states = Collections.unmodifiableSet(EnumSet.copyOf(states));
         QueryChecks.optionalText(destination, "destination", MAX_TEXT_LENGTH);
