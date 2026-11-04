@@ -17,7 +17,8 @@ import java.util.UUID;
  * @param entryId          identifier of the target entry; positive
  * @param expectedRevision revision of the entry the caller last saw; not negative
  * @param reason           why the operation is performed, stored and compared exactly as given; 1 to 1024
- *                         characters, not all whitespace
+ *                         characters, not all whitespace, no control character other than tab, line feed and
+ *                         carriage return, no unpaired surrogate
  * @param actor            the identity performing the operation; never {@code null}
  */
 public record OutboxAdminCommand(
@@ -32,7 +33,8 @@ public record OutboxAdminCommand(
      * @param operationId      caller-chosen idempotency identifier; never {@code null}
      * @param entryId          identifier of the target entry; positive
      * @param expectedRevision revision the caller last saw; not negative
-     * @param reason           1 to 1024 characters, not all whitespace
+     * @param reason           1 to 1024 characters, not all whitespace, no control character other than tab,
+     *                         line feed and carriage return, no unpaired surrogate
      * @param actor            the identity performing the operation; never {@code null}
      * @throws dev.vertique.core.exception.ValidationException if any component is outside its bound
      */
@@ -40,7 +42,7 @@ public record OutboxAdminCommand(
         AdminChecks.required(operationId, "operationId");
         AdminChecks.positive(entryId, "entryId");
         AdminChecks.nonNegative(expectedRevision, "expectedRevision");
-        AdminChecks.text(reason, "reason", MAX_REASON_LENGTH);
+        AdminChecks.multilineText(reason, "reason", MAX_REASON_LENGTH);
         AdminChecks.required(actor, "actor");
     }
 

@@ -144,23 +144,33 @@ class PgOutboxDeadLetterCleanupInterleavingIT {
     }
 
     @Test
-    @DisplayName("cleanup only removes dead letters older than the cutoff, in id order, within the batch")
+    @DisplayName("cleanup only removes dead letters older than the cutoff, within the batch")
     void cleanupBoundsAndAges() throws Exception {
-        long first = expiredDeadLetter();
-        long second = expiredDeadLetter();
-        long third = expiredDeadLetter();
+        List<Long> expired = List.of(expiredDeadLetter(), expiredDeadLetter(), expiredDeadLetter());
         long fresh = fixture.seed().updated(Instant.now()).insert();
         long oldPending = fixture.seed().state("PENDING").updated(LONG_AGO).insert();
 
         assertEquals(2, await(repository.cleanupDeadLetter(30, 2)));
 
-        assertFalse(fixture.outboxExists(first));
-        assertFalse(fixture.outboxExists(second));
-        assertTrue(fixture.outboxExists(third));
+        // the batch is unordered, so which two go is not specified; exactly two do
+        assertEquals(1, expired.stream().filter(id -> existsUnchecked(id)).count(), "one expired dead letter remains");
         assertTrue(fixture.outboxExists(fresh));
         assertTrue(fixture.outboxExists(oldPending));
     }
 
+    private static boolean existsUnchecked(long id) {
+        try {
+            return fixture.outboxExists(id);
+        } catch (SQLException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /**
+     * Pins the outcome, not the mechanism: this passes whether or not the cleanup skips locked rows, because the
+     * entry is already {@code PENDING} when the cleanup runs. The locking proof is the barrier tests in this
+     * class, where the cleanup runs while a command or a held lock owns the entry.
+     */
     @Test
     @DisplayName("a requeued entry is never deleted by cleanup, even once it is old")
     void requeuedEntryIsNeverCleanedUp() throws Exception {

@@ -83,13 +83,44 @@ final class AdminChecks {
         return value;
     }
 
-    /** Required text of 1 to {@code max} code points that is not all whitespace. */
+    /**
+     * Required text of 1 to {@code max} code points that is not all whitespace and holds no control character and
+     * no unpaired surrogate. The failure names the field and never echoes the value.
+     */
     static String text(String value, String name, int max) {
+        return text(value, name, max, false);
+    }
+
+    /**
+     * Like {@link #text(String, String, int)}, but a tab, line feed and carriage return are allowed, for free text
+     * such as a reason.
+     */
+    static String multilineText(String value, String name, int max) {
+        return text(value, name, max, true);
+    }
+
+    private static String text(String value, String name, int max, boolean allowLineBreaks) {
         required(value, name);
         if (value.isBlank()) {
             throw new ValidationException(name + " must not be blank");
         }
+        clean(value, name, allowLineBreaks);
         return bounded(value, name, max);
+    }
+
+    private static void clean(String value, String name, boolean allowLineBreaks) {
+        int index = 0;
+        while (index < value.length()) {
+            int codePoint = value.codePointAt(index);
+            if (Character.isISOControl(codePoint)
+                    && !(allowLineBreaks && (codePoint == '\t' || codePoint == '\n' || codePoint == '\r'))) {
+                throw new ValidationException(name + " must not contain control characters");
+            }
+            if (codePoint >= Character.MIN_SURROGATE && codePoint <= Character.MAX_SURROGATE) {
+                throw new ValidationException(name + " must not contain unpaired surrogates");
+            }
+            index += Character.charCount(codePoint);
+        }
     }
 
     /** Text that is either absent or valid per {@link #text(String, String, int)}. */
@@ -101,6 +132,28 @@ final class AdminChecks {
     static String bounded(String value, String name, int max) {
         if (value.codePointCount(0, value.length()) > max) {
             throw new ValidationException(name + " must be at most " + max + " characters");
+        }
+        return value;
+    }
+
+    /** Earliest instant a query or key may carry. */
+    static final Instant MIN_INSTANT = Instant.parse("0001-01-01T00:00:00Z");
+
+    /** Latest instant a query or key may carry. */
+    static final Instant MAX_INSTANT = Instant.parse("9999-12-31T23:59:59Z");
+
+    /** Requires an instant, when present, to lie within {@link #MIN_INSTANT} and {@link #MAX_INSTANT}. */
+    static Instant instant(Instant value, String name) {
+        if (value != null && (value.isBefore(MIN_INSTANT) || value.isAfter(MAX_INSTANT))) {
+            throw new ValidationException(name + " must be between 0001-01-01T00:00:00Z and 9999-12-31T23:59:59Z");
+        }
+        return value;
+    }
+
+    /** Requires a number to be at most {@code max}. */
+    static long atMost(long value, long max, String name) {
+        if (value > max) {
+            throw new ValidationException(name + " must be at most " + max);
         }
         return value;
     }

@@ -86,6 +86,10 @@ public record OutboxDeadLetterQuery(
         AdminChecks.optionalText(aggregateType, "aggregateType", MAX_TEXT_LENGTH);
         AdminChecks.optionalText(aggregateId, "aggregateId", MAX_TEXT_LENGTH);
         AdminChecks.optionalText(errorType, "errorType", MAX_ERROR_TYPE_LENGTH);
+        AdminChecks.instant(failedFrom, "failedFrom");
+        AdminChecks.instant(failedBefore, "failedBefore");
+        AdminChecks.instant(createdFrom, "createdFrom");
+        AdminChecks.instant(createdBefore, "createdBefore");
         AdminChecks.ordered(failedFrom, failedBefore, "failedFrom", "failedBefore");
         AdminChecks.ordered(createdFrom, createdBefore, "createdFrom", "createdBefore");
         AdminChecks.limit(limit);

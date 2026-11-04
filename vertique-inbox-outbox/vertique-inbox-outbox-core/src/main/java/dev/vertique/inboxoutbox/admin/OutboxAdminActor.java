@@ -11,7 +11,8 @@ package dev.vertique.inboxoutbox.admin;
  *
  * @param type kind of actor (for example {@code "user"} or {@code "service"}); 1 to 64 characters, not
  *             blank
- * @param id   identifier of the actor within its type; 1 to 255 characters, not blank
+ * @param id   identifier of the actor within its type; 1 to 255 characters, not blank; neither part may contain a
+ *             control character or an unpaired surrogate
  */
 public record OutboxAdminActor(String type, String id) {
 
@@ -26,7 +27,8 @@ public record OutboxAdminActor(String type, String id) {
      *
      * @param type kind of actor; 1 to 64 characters, not blank
      * @param id   identifier of the actor within its type; 1 to 255 characters, not blank
-     * @throws dev.vertique.core.exception.ValidationException if a component is absent, blank or too long
+     * @throws dev.vertique.core.exception.ValidationException if a component is absent, blank, too long, or holds a
+     *         control character or an unpaired surrogate
      */
     public OutboxAdminActor {
         AdminChecks.text(type, "actor type", MAX_TYPE_LENGTH);

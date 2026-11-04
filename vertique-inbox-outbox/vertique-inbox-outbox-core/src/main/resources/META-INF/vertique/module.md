@@ -342,10 +342,13 @@ Future<OutboxAdminReceipt> receipt = service.retry(new OutboxAdminCommand(
 
 - **No authorization.** The facade trusts its caller. The adapter authenticates and authorizes, then passes the resolved identity as an explicit `OutboxAdminActor`; nothing is read from ambient context.
 - **Scope note.** The facade neither filters on nor returns an entry's `scopeKey`, no result type carries it, and a command acts on a row whatever its scope. It administers the configured store as a whole and is a platform-operator surface, not a scope-isolation boundary.
-- **Validation.** Every bound above is enforced when the query, key or command value is constructed and fails with `ValidationException` before any store work. Lengths count Unicode code points. `reason` is 1 to 1024 characters, not all whitespace, and is stored and compared exactly as given. `expectedRevision` is not negative and `entryId` is positive.
+- **Validation.** Every bound above is enforced when the query, key or command value is constructed and fails with `ValidationException` before any store work. Lengths count Unicode code points. `reason` is 1 to 1024 characters, not all whitespace, and is stored and compared exactly as given. Text inputs (every query filter, the reason, and both actor parts) must not contain control characters or unpaired surrogates, and failures name the field without echoing the value; only the reason may contain tab, line feed and carriage return. Every instant in a query or keyset position lies between `0001-01-01T00:00:00Z` and `9999-12-31T23:59:59Z`. `expectedRevision` is not negative and `entryId` is positive.
 - **Reads** answer with an empty `Optional` when the entry is absent or not dead-lettered. **Commands** fail with the exceptions below.
 - **Optimistic revision.** Pass the `revision` you last read as `expectedRevision`; a changed entry fails with `REVISION_CONFLICT` instead of being overwritten.
-- **Idempotency.** Repeating a command with the same `operationId` and the same intent (action, entry ID, expected revision, exact reason, actor) returns the original receipt. The same `operationId` with a different intent fails with `OPERATION_ID_CONFLICT`.
+- **Idempotency.** Repeating a command with the same `operationId` and the same intent (action, entry ID, expected revision, exact reason, actor) returns the original receipt. The same `operationId` with a different intent fails with `OPERATION_ID_CONFLICT`. Replay works only while the store still retains the receipt (`operationRetentionDays`); afterwards the same `operationId` executes as a new command and, depending on the entry's state by then, fails with `NOT_DEAD_LETTER`, `REVISION_CONFLICT` or not found.
+- **`lastError` is sensitive.** The detail's `lastError` is relay failure text. It can embed fragments of the payload, headers or a remote response, so an administration adapter should gate it as it gates the content read.
+- **Retained data.** A receipt keeps the destination, event type, aggregate id and error type of the entry, including a discarded one, and the free-text reason and the actor, for the retention period. A deployment with erasure obligations should treat the reason as non-sensitive input and set `operationRetentionDays` accordingly.
+- **History paging.** `recordedAt` is the start time of the command's transaction, so history paging is not gap-free against commands that were waiting on a lock when a page was read.
 - **Log hygiene.** `toString()` of `OutboxAdminActor`, `OutboxAdminCommand`, `OutboxAdminHistoryEntry` and `OutboxDeadLetterContent` omits the actor, reason, payload and headers.
 - **Stability.** The records and the facade only grow additively: a new component is appended as nullable with the prior constructor kept.
 
@@ -414,10 +417,10 @@ Cleanup cadence is owned by the framework's cron infrastructure, not by the clea
 
 | Key (`inboxOutbox.admin`) | Default | Rule |
 |---------------------------|---------|------|
-| `operationRetentionDays` | `90` | Positive integer. Days to retain administration operation records; follows the `Days` unit of the cleanup retention keys |
-| `maxContentBytes` | `1048576` | Positive integer. Largest combined UTF-8 length of the stored payload and headers JSON text that `readContent` transfers; larger content fails with `CONTENT_LIMIT_EXCEEDED` |
+| `operationRetentionDays` | `90` | Integer from 1 to 3650. Days to retain administration operation records; follows the `Days` unit of the cleanup retention keys. Replay of a command is answered from its receipt only for this long |
+| `maxContentBytes` | `1048576` | Integer from 1 to 16777216 (16 MiB). Largest combined UTF-8 length of the stored payload and headers JSON text that `readContent` transfers; larger content fails with `CONTENT_LIMIT_EXCEEDED` |
 
-A non-positive value fails with `ValidationException` when the config is built or deserialized.
+A value outside its range fails with `ValidationException` when the config is built or deserialized.
 
 Config classes: `OutboxRelayConfig` (`inboxOutbox.relay`), `InboxOutboxCleanupConfig` (`inboxOutbox.cleanup`), `InboxOutboxAdminConfig` (`inboxOutbox.admin`, package `dev.vertique.inboxoutbox.admin`).
 

@@ -42,10 +42,14 @@ import dev.vertique.inboxoutbox.admin.OutboxDeadLetterSummary;
 import dev.vertique.inboxoutbox.exception.InboxOutboxPersistenceException;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+import io.vertx.pgclient.PgBuilder;
 import io.vertx.pgclient.PgConnection;
 import io.vertx.pgclient.PgNotification;
+import io.vertx.sqlclient.Pool;
+import io.vertx.sqlclient.PoolOptions;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -946,6 +950,142 @@ class PgOutboxDeadLetterServiceIT {
                 } catch (java.util.concurrent.ExecutionException expectedForTheLoser) {
                     // inspected by the caller
                 }
+            }
+        }
+    }
+
+    // --- transaction settings ---
+
+    @Nested
+    @DisplayName("explicit transaction settings")
+    class TransactionSettingsTests {
+
+        private PgOutboxDeadLetterService withLockTimeout(Duration timeout) {
+            return new PgOutboxDeadLetterService(
+                    fixture.pool(),
+                    new PgDbExceptionMapper(),
+                    DbSchemas.empty(),
+                    InboxOutboxAdminConfig.builder().build(),
+                    timeout);
+        }
+
+        @Test
+        @DisplayName("a retry blocked behind a long-held row lock fails retryably and its operation id stays usable")
+        void retryLockTimeout() throws Exception {
+            long id = fixture.seed().insert();
+            OutboxAdminCommand command = command(id, 0);
+            PgOutboxDeadLetterService impatient = withLockTimeout(Duration.ofMillis(300));
+            try (Connection blocker = fixture.begin()) {
+                fixture.exec(blocker, "SELECT id FROM outbox WHERE id = ? FOR UPDATE", id);
+
+                Throwable failure = failureOf(impatient.retry(command));
+
+                InboxOutboxPersistenceException persistence =
+                        assertInstanceOf(InboxOutboxPersistenceException.class, failure);
+                assertTrue(persistence.retryable(), "a lock timeout is a retryable failure");
+                assertEquals(0, fixture.receipts(), "the reservation rolled back with the failed command");
+                assertEquals("DEAD_LETTER", fixture.stateOf(id));
+                blocker.commit();
+            }
+
+            OutboxAdminReceipt receipt = await(service.retry(command));
+
+            assertEquals(command.operationId(), receipt.operationId());
+            assertEquals("PENDING", fixture.stateOf(id));
+            assertEquals(1, fixture.receipts());
+        }
+
+        @Test
+        @DisplayName("a discard blocked behind a long-held row lock fails retryably too")
+        void discardLockTimeout() throws Exception {
+            long id = fixture.seed().insert();
+            PgOutboxDeadLetterService impatient = withLockTimeout(Duration.ofMillis(300));
+            try (Connection blocker = fixture.begin()) {
+                fixture.exec(blocker, "SELECT id FROM outbox WHERE id = ? FOR UPDATE", id);
+
+                Throwable failure = failureOf(impatient.discard(command(id, 0)));
+
+                assertTrue(assertInstanceOf(InboxOutboxPersistenceException.class, failure)
+                        .retryable());
+                blocker.commit();
+            }
+            assertTrue(fixture.outboxExists(id));
+            assertEquals(0, fixture.receipts());
+        }
+
+        @Test
+        @DisplayName("the lock timeout is transaction-local: it does not leak to later users of the connection")
+        void lockTimeoutIsLocal() throws Exception {
+            long id = fixture.seed().insert();
+            Pool single = PgBuilder.pool()
+                    .with(new PoolOptions().setMaxSize(1))
+                    .connectingTo(fixture.connectOptions())
+                    .using(vertx)
+                    .build();
+            try {
+                PgOutboxDeadLetterService onSingle = new PgOutboxDeadLetterService(
+                        single,
+                        new PgDbExceptionMapper(),
+                        DbSchemas.empty(),
+                        InboxOutboxAdminConfig.builder().build(),
+                        Duration.ofMillis(300));
+                await(onSingle.retry(command(id, 0)));
+
+                String after = await(single.query("SHOW lock_timeout")
+                        .execute()
+                        .map(rows -> rows.iterator().next().getString(0)));
+
+                assertEquals("0", after, "the next statement on the same connection sees the server default");
+            } finally {
+                await(single.close());
+            }
+        }
+
+        @Test
+        @DisplayName("on a database defaulting to repeatable read a committed duplicate still returns the receipt")
+        void repeatableReadDefault() throws Exception {
+            long id = fixture.seed().insert();
+            OutboxAdminCommand sequential = command(id, 0);
+            long second = fixture.seed().insert();
+            OutboxAdminCommand concurrent = command(second, 0);
+            fixture.exec("DO $$ BEGIN EXECUTE format('ALTER DATABASE %I SET default_transaction_isolation ="
+                    + " ''repeatable read''', current_database()); END $$");
+            Pool repeatable = PgBuilder.pool()
+                    .with(new PoolOptions().setMaxSize(10))
+                    .connectingTo(fixture.connectOptions())
+                    .using(vertx)
+                    .build();
+            try {
+                String isolation = await(repeatable.withTransaction(conn -> conn.query("SHOW transaction_isolation")
+                        .execute()
+                        .map(rows -> rows.iterator().next().getString(0))));
+                assertEquals("repeatable read", isolation, "the premise: the server default really is repeatable read");
+                PgOutboxDeadLetterService onRepeatable = new PgOutboxDeadLetterService(
+                        repeatable,
+                        new PgDbExceptionMapper(),
+                        DbSchemas.empty(),
+                        InboxOutboxAdminConfig.builder().build());
+
+                OutboxAdminReceipt first = await(onRepeatable.retry(sequential));
+                assertEquals(first, await(onRepeatable.retry(sequential)));
+                assertEquals(1, fixture.revisionOf(id));
+
+                Future<OutboxAdminReceipt> a;
+                Future<OutboxAdminReceipt> b;
+                try (Connection blocker = fixture.begin()) {
+                    fixture.exec(blocker, "SELECT id FROM outbox WHERE id = ? FOR UPDATE", second);
+                    a = onRepeatable.retry(concurrent);
+                    b = onRepeatable.retry(concurrent);
+                    fixture.awaitLockWaiters(2);
+                    blocker.commit();
+                }
+                assertEquals(await(a), await(b));
+                assertEquals(1, fixture.revisionOf(second));
+                assertEquals(2, fixture.receipts());
+            } finally {
+                fixture.exec("DO $$ BEGIN EXECUTE format('ALTER DATABASE %I RESET default_transaction_isolation',"
+                        + " current_database()); END $$");
+                await(repeatable.close());
             }
         }
     }

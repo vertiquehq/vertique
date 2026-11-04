@@ -14,8 +14,9 @@ import lombok.extern.jackson.Jacksonized;
  * Configuration for outbox dead-letter administration.
  *
  * <p>Deserialized from the {@code inboxOutbox.admin} section of the application config. Both values must
- * be positive; a non-positive value fails with {@link ValidationException} when the config is built or
- * deserialized. The retention key uses the {@code Days} unit of the cleanup retention keys.
+ * be positive and at most {@value #MAX_OPERATION_RETENTION_DAYS} days and {@value #MAX_CONTENT_BYTES_LIMIT}
+ * bytes (16 MiB) respectively; a value outside its range fails with {@link ValidationException} when the
+ * config is built or deserialized. The retention key uses the {@code Days} unit of the cleanup retention keys.
  *
  * <p>Example YAML:
  * <pre>{@code
@@ -31,6 +32,12 @@ import lombok.extern.jackson.Jacksonized;
 @Accessors(fluent = true)
 @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.ANY, getterVisibility = JsonAutoDetect.Visibility.NONE)
 public class InboxOutboxAdminConfig {
+
+    /** Largest accepted {@code operationRetentionDays}. */
+    public static final int MAX_OPERATION_RETENTION_DAYS = 3650;
+
+    /** Largest accepted {@code maxContentBytes}: 16 MiB. */
+    public static final int MAX_CONTENT_BYTES_LIMIT = 16_777_216;
 
     /**
      * Number of days to retain administration operation records before maintenance deletes them.
@@ -49,12 +56,16 @@ public class InboxOutboxAdminConfig {
     /**
      * Creates a validated config; reached through the builder and Jackson deserialization.
      *
-     * @param operationRetentionDays retention window in days; positive
-     * @param maxContentBytes        content size limit in bytes; positive
-     * @throws ValidationException if a value is not positive
+     * @param operationRetentionDays retention window in days; 1 to {@value #MAX_OPERATION_RETENTION_DAYS}
+     * @param maxContentBytes        content size limit in bytes; 1 to {@value #MAX_CONTENT_BYTES_LIMIT}
+     * @throws ValidationException if a value is outside its range
      */
     InboxOutboxAdminConfig(int operationRetentionDays, int maxContentBytes) {
-        this.operationRetentionDays = (int) AdminChecks.positive(operationRetentionDays, "operationRetentionDays");
-        this.maxContentBytes = (int) AdminChecks.positive(maxContentBytes, "maxContentBytes");
+        this.operationRetentionDays = (int) AdminChecks.atMost(
+                AdminChecks.positive(operationRetentionDays, "operationRetentionDays"),
+                MAX_OPERATION_RETENTION_DAYS,
+                "operationRetentionDays");
+        this.maxContentBytes = (int) AdminChecks.atMost(
+                AdminChecks.positive(maxContentBytes, "maxContentBytes"), MAX_CONTENT_BYTES_LIMIT, "maxContentBytes");
     }
 }

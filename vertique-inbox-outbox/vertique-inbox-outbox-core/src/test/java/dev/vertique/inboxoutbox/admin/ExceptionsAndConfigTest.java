@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.exception.ConflictException;
@@ -126,5 +127,41 @@ class ExceptionsAndConfigTest {
             cause = cause.getCause();
         }
         assertEquals(true, found);
+    }
+
+    @Test
+    @DisplayName("admin config accepts its upper bounds and rejects one beyond them")
+    void configUpperBounds() throws Exception {
+        InboxOutboxAdminConfig atLimit = InboxOutboxAdminConfig.builder()
+                .operationRetentionDays(3650)
+                .maxContentBytes(16_777_216)
+                .build();
+        assertEquals(3650, atLimit.operationRetentionDays());
+        assertEquals(16_777_216, atLimit.maxContentBytes());
+        assertEquals(
+                "operationRetentionDays must be at most 3650",
+                assertThrows(ValidationException.class, () -> InboxOutboxAdminConfig.builder()
+                                .operationRetentionDays(3651)
+                                .build())
+                        .getMessage());
+        assertEquals(
+                "maxContentBytes must be at most 16777216",
+                assertThrows(ValidationException.class, () -> InboxOutboxAdminConfig.builder()
+                                .maxContentBytes(16_777_217)
+                                .build())
+                        .getMessage());
+        assertThrows(ValidationException.class, () -> InboxOutboxAdminConfig.builder()
+                .maxContentBytes(Integer.MAX_VALUE)
+                .build());
+        Exception fromJson = assertThrows(
+                Exception.class,
+                () -> mapper.readValue("{\"operationRetentionDays\":3651}", InboxOutboxAdminConfig.class));
+        Throwable cause = fromJson;
+        boolean validation = false;
+        while (cause != null) {
+            validation |= cause instanceof ValidationException;
+            cause = cause.getCause();
+        }
+        assertTrue(validation, "the JSON path surfaces the ValidationException");
     }
 }

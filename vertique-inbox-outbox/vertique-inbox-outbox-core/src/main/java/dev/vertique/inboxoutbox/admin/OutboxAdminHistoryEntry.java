@@ -85,7 +85,7 @@ public record OutboxAdminHistoryEntry(
         AdminChecks.nonNegative(previousRevision, "previousRevision");
         AdminChecks.required(recordedAt, "recordedAt");
         AdminChecks.required(actor, "actor");
-        AdminChecks.text(reason, "reason", OutboxAdminCommand.MAX_REASON_LENGTH);
+        AdminChecks.multilineText(reason, "reason", OutboxAdminCommand.MAX_REASON_LENGTH);
         AdminChecks.nonNegative(attempt, "attempt");
         AdminChecks.nonNegative(maxAttempts, "maxAttempts");
         AdminChecks.required(destinationType, "destinationType");

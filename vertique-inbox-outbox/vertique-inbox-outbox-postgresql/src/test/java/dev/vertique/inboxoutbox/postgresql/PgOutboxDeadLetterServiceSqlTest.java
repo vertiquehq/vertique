@@ -3,6 +3,7 @@
 
 package dev.vertique.inboxoutbox.postgresql;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -76,7 +77,8 @@ class PgOutboxDeadLetterServiceSqlTest {
         while (matcher.find()) {
             String reference = matcher.group(1);
             boolean qualified = reference.startsWith("\"" + SCHEMA + "\".\"outbox");
-            boolean cteReference = reference.equals("batch") || reference.startsWith("batch)");
+            boolean cteReference = List.of("batch", "content", "sized").stream()
+                    .anyMatch(cte -> reference.equals(cte) || reference.startsWith(cte + ")"));
             assertTrue(qualified || cteReference, name + " references an unqualified table: " + reference);
         }
     }
@@ -189,8 +191,13 @@ class PgOutboxDeadLetterServiceSqlTest {
             assertFalse(content.contains(column), "content must not reference " + column);
         }
         // the size decision and the text come from one statement, and the value is cut off in the select list
-        assertTrue(content.contains("CASE WHEN"), content);
-        assertTrue(content.contains("octet_length(payload::text) + COALESCE(octet_length(headers::text), 0)"));
+        assertTrue(content.contains("CASE WHEN content_bytes <= $2 THEN payload_text END"), content);
+        assertTrue(content.contains("CASE WHEN content_bytes <= $2 THEN headers_text END"), content);
+        assertTrue(content.contains("octet_length(payload_text) + COALESCE(octet_length(headers_text), 0)"));
+        // each JSONB-to-text conversion is written once, in a materialized CTE, so it runs once per call
+        assertTrue(content.contains("AS MATERIALIZED"), content);
+        assertEquals(1, content.split("payload::text", -1).length - 1, content);
+        assertEquals(1, content.split("headers::text", -1).length - 1, content);
         assertTrue(statements.get("sqlFind").contains("left(last_error, 4096)"), statements.get("sqlFind"));
         List<String> receiptStatements = new ArrayList<>(statements.values());
         for (String receipt : receiptStatements) {
@@ -199,7 +206,8 @@ class PgOutboxDeadLetterServiceSqlTest {
     }
 
     @Test
-    @DisplayName("the dead-letter cleanup locks ordered candidates with SKIP LOCKED and the delete rechecks them")
+    @DisplayName(
+            "the dead-letter cleanup locks candidates with SKIP LOCKED, sorts nothing, and the delete rechecks them")
     void deadLetterCleanupShape() throws Exception {
         PgInboxOutboxRepository repository =
                 new PgInboxOutboxRepository(mock(Pool.class), new PgDbExceptionMapper(), DbSchemas.empty());
@@ -209,7 +217,8 @@ class PgOutboxDeadLetterServiceSqlTest {
         String published = statements.get("sqlCleanupPublished");
 
         assertNotNull(deadLetter);
-        assertTrue(deadLetter.contains("ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED"), deadLetter);
+        assertTrue(deadLetter.contains(" LIMIT $2 FOR UPDATE SKIP LOCKED)"), deadLetter);
+        assertFalse(deadLetter.contains("ORDER BY"), "the backlog is not sorted per batch: " + deadLetter);
         assertTrue(
                 deadLetter.endsWith("DELETE FROM outbox WHERE id IN (SELECT id FROM batch)"
                         + " AND state = 'DEAD_LETTER' AND updated_at < NOW() - ($1 * interval '1 day')"),

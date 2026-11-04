@@ -21,11 +21,11 @@ public record OutboxDeadLetterKey(Instant failedAt, long entryId) {
      *
      * @param failedAt time the entry was dead-lettered; never {@code null}
      * @param entryId  identifier of the entry; positive
-     * @throws dev.vertique.core.exception.ValidationException if {@code failedAt} is absent or
-     *         {@code entryId} is not positive
+     * @throws dev.vertique.core.exception.ValidationException if {@code failedAt} is absent or outside
+     *         0001-01-01T00:00:00Z to 9999-12-31T23:59:59Z, or {@code entryId} is not positive
      */
     public OutboxDeadLetterKey {
-        AdminChecks.required(failedAt, "failedAt");
+        AdminChecks.instant(AdminChecks.required(failedAt, "failedAt"), "failedAt");
         AdminChecks.positive(entryId, "entryId");
     }
 }

@@ -5,14 +5,17 @@ package dev.vertique.inboxoutbox.admin;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import dev.vertique.core.exception.ValidationException;
 import dev.vertique.inboxoutbox.DestinationType;
 import java.time.Instant;
+import java.util.List;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -169,5 +172,50 @@ class OutboxDeadLetterQueryTest {
         BiFunction<Integer, Long, OutboxDeadLetterQuery> make = (limit, id) ->
                 OutboxDeadLetterQuery.builder().limit(limit).entryId(id).build();
         assertEquals(make.apply(5, 1L), make.apply(5, 1L));
+    }
+
+    @Test
+    @DisplayName("every text filter rejects control characters and unpaired surrogates, without echoing them")
+    void filterTextHygiene() {
+        List<Function<String, Consumer<OutboxDeadLetterQuery.Builder>>> setters = List.of(
+                v -> b -> b.destination(v),
+                v -> b -> b.eventType(v),
+                v -> b -> b.aggregateType(v),
+                v -> b -> b.aggregateId(v),
+                v -> b -> b.errorType(v));
+        for (Function<String, Consumer<OutboxDeadLetterQuery.Builder>> setter : setters) {
+            for (String bad : new String[] {"a\u0000b", "a\tb", "a\nb", "a\u007fb", "a\u0085b", "a\ud800", "\udc00"}) {
+                rejects(setter.apply("secret" + bad));
+                OutboxDeadLetterQuery.Builder builder = OutboxDeadLetterQuery.builder();
+                setter.apply("secret" + bad).accept(builder);
+                ValidationException e = assertThrows(ValidationException.class, builder::build);
+                assertFalse(e.getMessage().contains("secret"), e.getMessage());
+            }
+            accepts(setter.apply("caf\u00e9 \ud83d\ude00"));
+        }
+    }
+
+    @Test
+    @DisplayName("every instant filter must lie within 0001-01-01T00:00:00Z and 9999-12-31T23:59:59Z")
+    void instantBounds() {
+        Instant min = Instant.parse("0001-01-01T00:00:00Z");
+        Instant max = Instant.parse("9999-12-31T23:59:59Z");
+        List<Function<Instant, Consumer<OutboxDeadLetterQuery.Builder>>> setters = List.of(
+                v -> b -> b.failedFrom(v),
+                v -> b -> b.failedBefore(v),
+                v -> b -> b.createdFrom(v),
+                v -> b -> b.createdBefore(v));
+        for (Function<Instant, Consumer<OutboxDeadLetterQuery.Builder>> setter : setters) {
+            accepts(setter.apply(min));
+            accepts(setter.apply(max));
+            rejects(setter.apply(min.minusSeconds(1)));
+            rejects(setter.apply(max.plusSeconds(1)));
+            rejects(setter.apply(Instant.MIN));
+            rejects(setter.apply(Instant.MAX));
+        }
+        ValidationException e = assertThrows(
+                ValidationException.class,
+                () -> OutboxDeadLetterQuery.builder().failedFrom(Instant.MAX).build());
+        assertEquals("failedFrom must be between 0001-01-01T00:00:00Z and 9999-12-31T23:59:59Z", e.getMessage());
     }
 }

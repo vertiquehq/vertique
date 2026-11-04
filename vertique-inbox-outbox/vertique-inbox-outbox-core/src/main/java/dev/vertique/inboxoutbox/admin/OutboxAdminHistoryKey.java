@@ -22,10 +22,11 @@ public record OutboxAdminHistoryKey(Instant recordedAt, UUID operationId) {
      *
      * @param recordedAt  time the operation was recorded; never {@code null}
      * @param operationId identifier of the operation; never {@code null}
-     * @throws dev.vertique.core.exception.ValidationException if a component is absent
+     * @throws dev.vertique.core.exception.ValidationException if a component is absent or {@code recordedAt} is
+     *         outside 0001-01-01T00:00:00Z to 9999-12-31T23:59:59Z
      */
     public OutboxAdminHistoryKey {
-        AdminChecks.required(recordedAt, "recordedAt");
+        AdminChecks.instant(AdminChecks.required(recordedAt, "recordedAt"), "recordedAt");
         AdminChecks.required(operationId, "operationId");
     }
 }

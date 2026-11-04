@@ -226,11 +226,13 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
                 + " AND published_at < NOW() - ($1 * interval '1 day') LIMIT $2)"
                 + " DELETE FROM " + outbox + " WHERE id IN (SELECT id FROM batch)";
 
-        // The candidates are locked and ordered, and locked rows are skipped, so a cleanup never waits for a row
-        // an administrative command holds. The delete re-checks state and age, so a row that stopped being an
+        // The candidates are locked and locked rows are skipped, so a cleanup never waits for a row an
+        // administrative command holds. No ORDER BY: sorting the whole expired backlog for every batch would cost
+        // more than the batch, and SKIP LOCKED already avoids lock-order waits. The delete re-checks state and age, so
+        // a row that stopped being an
         // expired dead letter (for example one an administration command requeued) is never removed.
         this.sqlCleanupDeadLetter = "WITH batch AS (SELECT id FROM " + outbox + " WHERE state = 'DEAD_LETTER'"
-                + " AND updated_at < NOW() - ($1 * interval '1 day') ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED)"
+                + " AND updated_at < NOW() - ($1 * interval '1 day') LIMIT $2 FOR UPDATE SKIP LOCKED)"
                 + " DELETE FROM " + outbox + " WHERE id IN (SELECT id FROM batch)"
                 + " AND state = 'DEAD_LETTER' AND updated_at < NOW() - ($1 * interval '1 day')";
     }

@@ -37,6 +37,7 @@ import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.RowSet;
 import io.vertx.sqlclient.SqlConnection;
 import io.vertx.sqlclient.Tuple;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -64,7 +65,10 @@ import java.util.UUID;
  * of the last error from the database. {@link #readContent(long)} decides the size limit in the same
  * statement that reads the content, so an oversized value is never transferred.
  *
- * <p>A command runs in one READ COMMITTED transaction in a fixed order. It first reserves its operation id by
+ * <p>A command runs in one transaction whose first statements set READ COMMITTED explicitly, whatever the
+ * server default is, and a transaction-local {@code lock_timeout} (30 seconds), so a command that waits too long
+ * for a lock fails with a retryable {@link InboxOutboxPersistenceException} and rolls back its reservation. It
+ * then proceeds in a fixed order. It first reserves its operation id by
  * inserting the receipt row with {@code ON CONFLICT DO NOTHING}; a concurrent duplicate blocks on that key
  * until the first transaction ends, and a unique violation is never relied on. It then locks the entry,
  * checks its state and revision, applies the retry or discard, and completes the receipt row before the
@@ -77,6 +81,10 @@ import java.util.UUID;
  */
 public class PgOutboxDeadLetterService implements OutboxDeadLetterService, OutboxAdminOperationCleanup {
 
+    /** How long a command waits for a lock before it fails with a retryable persistence exception. */
+    static final Duration DEFAULT_LOCK_TIMEOUT = Duration.ofSeconds(30);
+
+    private static final String ISOLATION_STATEMENT = "SET TRANSACTION ISOLATION LEVEL READ COMMITTED";
     private static final String NOTIFY_CHANNEL = "transactional_outbox_channel";
     private static final String DEAD_LETTER = "DEAD_LETTER";
 
@@ -102,6 +110,7 @@ public class PgOutboxDeadLetterService implements OutboxDeadLetterService, Outbo
     private final PgInboxOutboxExceptionMapper boundaryMapper = new PgInboxOutboxExceptionMapper();
     private final int maxContentBytes;
 
+    private final String sqlSetLockTimeout;
     private final String sqlListPrefix;
     private final String sqlFind;
     private final String sqlReadContent;
@@ -129,10 +138,36 @@ public class PgOutboxDeadLetterService implements OutboxDeadLetterService, Outbo
      */
     public PgOutboxDeadLetterService(
             Pool pool, PgDbExceptionMapper exceptionMapper, DbSchemas schemas, InboxOutboxAdminConfig config) {
+        this(pool, exceptionMapper, schemas, config, DEFAULT_LOCK_TIMEOUT);
+    }
+
+    /**
+     * Creates the service with an explicit lock timeout for its command transactions; tests use a small value.
+     *
+     * @param pool            the PostgreSQL connection pool
+     * @param exceptionMapper the PostgreSQL failure mapper for exception translation
+     * @param schemas         the schema placement; an empty mapping leaves table names unqualified
+     * @param config          the administration configuration (content limit and receipt retention)
+     * @param lockTimeout     how long a command waits for a lock; at least one millisecond
+     * @throws IllegalArgumentException if the mapped schema name is not a valid identifier or the timeout is
+     *                                  shorter than one millisecond
+     */
+    PgOutboxDeadLetterService(
+            Pool pool,
+            PgDbExceptionMapper exceptionMapper,
+            DbSchemas schemas,
+            InboxOutboxAdminConfig config,
+            Duration lockTimeout) {
         this.pool = Objects.requireNonNull(pool, "pool");
         this.exceptionMapper = Objects.requireNonNull(exceptionMapper, "exceptionMapper");
         Objects.requireNonNull(config, "config");
         this.maxContentBytes = config.maxContentBytes();
+        long lockTimeoutMs = Objects.requireNonNull(lockTimeout, "lockTimeout").toMillis();
+        if (lockTimeoutMs < 1) {
+            throw new IllegalArgumentException("lockTimeout must be at least one millisecond");
+        }
+        // SET LOCAL takes no bind parameter; the value is a number this class formats, never caller input.
+        this.sqlSetLockTimeout = "SET LOCAL lock_timeout = '" + lockTimeoutMs + "ms'";
 
         String outbox = PgTableNames.qualify(schemas, InboxOutboxMigrationsModule.INSTANCE_NAME, "outbox");
         String operations =
@@ -147,12 +182,16 @@ public class PgOutboxDeadLetterService implements OutboxDeadLetterService, Outbo
                 + " FROM " + outbox + " WHERE id = $1 AND state = '" + DEAD_LETTER + "'";
 
         // One statement measures the combined UTF-8 size and returns the text only when it fits, so a large value
-        // never leaves the database and no separate size check can race with the read.
-        String contentBytes = "octet_length(payload::text) + COALESCE(octet_length(headers::text), 0)";
-        this.sqlReadContent = "SELECT admin_revision, " + contentBytes + " AS content_bytes,"
-                + " CASE WHEN " + contentBytes + " <= $2 THEN payload::text END AS payload_text,"
-                + " CASE WHEN " + contentBytes + " <= $2 THEN headers::text END AS headers_text"
-                + " FROM " + outbox + " WHERE id = $1 AND state = '" + DEAD_LETTER + "'";
+        // never leaves the database and no separate size check can race with the read. The JSONB-to-text
+        // conversions run once, in the materialized CTE; the size and both CASE expressions read their result.
+        this.sqlReadContent = "WITH content AS MATERIALIZED (SELECT admin_revision, payload::text AS payload_text,"
+                + " headers::text AS headers_text FROM " + outbox + " WHERE id = $1 AND state = '" + DEAD_LETTER
+                + "'), sized AS (SELECT admin_revision, payload_text, headers_text,"
+                + " octet_length(payload_text) + COALESCE(octet_length(headers_text), 0) AS content_bytes"
+                + " FROM content)"
+                + " SELECT admin_revision, content_bytes,"
+                + " CASE WHEN content_bytes <= $2 THEN payload_text END AS payload_text,"
+                + " CASE WHEN content_bytes <= $2 THEN headers_text END AS headers_text FROM sized";
 
         this.sqlReserve = "INSERT INTO " + operations
                 + " (operation_id, action, entry_id, expected_revision, reason, actor_type, actor_id, recorded_at)"
@@ -331,7 +370,10 @@ public class PgOutboxDeadLetterService implements OutboxDeadLetterService, Outbo
         if (command == null) {
             return Future.failedFuture(new ValidationException("command must not be null"));
         }
-        return pool.<OutboxAdminReceipt>withTransaction(conn -> runCommand(conn, action, command))
+        return pool.<OutboxAdminReceipt>withTransaction(conn -> conn.query(ISOLATION_STATEMENT)
+                        .execute()
+                        .compose(isolated -> conn.query(sqlSetLockTimeout).execute())
+                        .compose(bounded -> runCommand(conn, action, command)))
                 .recover(t -> Future.failedFuture(translate(t, operation)));
     }
 

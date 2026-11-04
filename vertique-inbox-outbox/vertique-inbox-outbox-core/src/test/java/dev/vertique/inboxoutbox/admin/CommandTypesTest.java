@@ -114,4 +114,55 @@ class CommandTypesTest {
                 assertThrows(ValidationException.class, () -> command(OP, 1L, 0L, "x".repeat(1025), ACTOR));
         assertFalse(e.getMessage().contains("xxx"));
     }
+
+    @Test
+    @DisplayName("reason allows tab, line feed and carriage return but no other control character")
+    void reasonControlCharacters() {
+        assertDoesNotThrow(() -> command(OP, 1L, 0L, "line one\r\n\tline two", ACTOR));
+        for (String bad : new String[] {"a\u0000b", "a\u0001b", "a\u001fb", "a\u007fb", "a\u0085b", "a\u009fb"}) {
+            ValidationException e = assertThrows(ValidationException.class, () -> command(OP, 1L, 0L, bad, ACTOR));
+            assertEquals("reason must not contain control characters", e.getMessage());
+        }
+    }
+
+    @Test
+    @DisplayName("reason rejects unpaired surrogates and accepts a valid pair")
+    void reasonSurrogates() {
+        assertDoesNotThrow(() -> command(OP, 1L, 0L, "ok \ud83d\ude00", ACTOR));
+        for (String bad : new String[] {"a\ud800", "\udc00b", "a\ud83d", "\ude00\ud83d"}) {
+            ValidationException e = assertThrows(ValidationException.class, () -> command(OP, 1L, 0L, bad, ACTOR));
+            assertEquals("reason must not contain unpaired surrogates", e.getMessage());
+        }
+    }
+
+    @Test
+    @DisplayName("actor parts reject every control character, including tab and line breaks, and unpaired surrogates")
+    void actorControlCharactersAndSurrogates() {
+        for (String bad : new String[] {"a\u0000", "a\tb", "a\nb", "a\rb", "a\u007f", "a\u0085"}) {
+            ValidationException type = assertThrows(ValidationException.class, () -> new OutboxAdminActor(bad, "id"));
+            ValidationException id = assertThrows(ValidationException.class, () -> new OutboxAdminActor("type", bad));
+            assertEquals("actor type must not contain control characters", type.getMessage());
+            assertEquals("actor id must not contain control characters", id.getMessage());
+        }
+        assertEquals(
+                "actor id must not contain unpaired surrogates",
+                assertThrows(ValidationException.class, () -> new OutboxAdminActor("type", "x\ud800"))
+                        .getMessage());
+        assertEquals(
+                "actor type must not contain unpaired surrogates",
+                assertThrows(ValidationException.class, () -> new OutboxAdminActor("x\udc00", "id"))
+                        .getMessage());
+        assertDoesNotThrow(() -> new OutboxAdminActor("type", "caf\u00e9 \ud83d\ude00"));
+    }
+
+    @Test
+    @DisplayName("control and surrogate failures never echo the value")
+    void failuresDoNotEchoValues() {
+        ValidationException e =
+                assertThrows(ValidationException.class, () -> command(OP, 1L, 0L, "secret\u0000value", ACTOR));
+        assertFalse(e.getMessage().contains("secret"));
+        ValidationException lone =
+                assertThrows(ValidationException.class, () -> new OutboxAdminActor("secret-type\ud800", "id"));
+        assertFalse(lone.getMessage().contains("secret"));
+    }
 }
