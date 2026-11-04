@@ -116,6 +116,7 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
     private final String sqlReclaimStale;
     private final String sqlCleanupPublished;
     private final String sqlCleanupDeadLetter;
+    private final String sqlCleanupDiscarded;
 
     // --- Node identity ---
 
@@ -226,9 +227,22 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
                 + " AND published_at < NOW() - ($1 * interval '1 day') LIMIT $2)"
                 + " DELETE FROM " + outbox + " WHERE id IN (SELECT id FROM batch)";
 
+        // The candidates are locked and locked rows are skipped, so a cleanup never waits for a row an
+        // administrative command holds. No ORDER BY: sorting the whole expired backlog for every batch would cost
+        // more than the batch, and SKIP LOCKED already avoids lock-order waits. The delete re-checks state and age, so
+        // a row that stopped being an
+        // expired dead letter (for example one an administration command requeued) is never removed.
         this.sqlCleanupDeadLetter = "WITH batch AS (SELECT id FROM " + outbox + " WHERE state = 'DEAD_LETTER'"
-                + " AND updated_at < NOW() - ($1 * interval '1 day') LIMIT $2)"
-                + " DELETE FROM " + outbox + " WHERE id IN (SELECT id FROM batch)";
+                + " AND updated_at < NOW() - ($1 * interval '1 day') LIMIT $2 FOR UPDATE SKIP LOCKED)"
+                + " DELETE FROM " + outbox + " WHERE id IN (SELECT id FROM batch)"
+                + " AND state = 'DEAD_LETTER' AND updated_at < NOW() - ($1 * interval '1 day')";
+
+        // Same shape for discarded rows: updated_at is the moment of the discard, and an entry an operator brought
+        // back to PENDING no longer matches the recheck.
+        this.sqlCleanupDiscarded = "WITH batch AS (SELECT id FROM " + outbox + " WHERE state = 'DISCARDED'"
+                + " AND updated_at < NOW() - ($1 * interval '1 day') LIMIT $2 FOR UPDATE SKIP LOCKED)"
+                + " DELETE FROM " + outbox + " WHERE id IN (SELECT id FROM batch)"
+                + " AND state = 'DISCARDED' AND updated_at < NOW() - ($1 * interval '1 day')";
     }
 
     /**
@@ -607,7 +621,9 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
     /**
      * {@inheritDoc}
      *
-     * <p>Deletes dead-letter records in a single batched CTE to avoid holding long-running locks.
+     * <p>Deletes dead-letter records in a single batched CTE to avoid holding long-running locks. The
+     * candidates are locked with {@code FOR UPDATE SKIP LOCKED}, so rows another transaction holds are left for
+     * a later run, and the delete re-checks the {@code DEAD_LETTER} state and the age cutoff.
      */
     @Override
     public Future<Integer> cleanupDeadLetter(int retentionDays, int batchSize) {
@@ -615,6 +631,21 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
                 .execute(Tuple.of(retentionDays, batchSize))
                 .map(rs -> rs.rowCount())
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "outbox cleanupDeadLetter")));
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Deletes discarded records the same way as {@link #cleanupDeadLetter(int, int)}: candidates are locked
+     * with {@code FOR UPDATE SKIP LOCKED} and the delete re-checks the {@code DISCARDED} state and the age
+     * cutoff, so an entry that an operator brought back in the meantime is never removed.
+     */
+    @Override
+    public Future<Integer> cleanupDiscarded(int retentionDays, int batchSize) {
+        return pool.preparedQuery(sqlCleanupDiscarded)
+                .execute(Tuple.of(retentionDays, batchSize))
+                .map(rs -> rs.rowCount())
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "outbox cleanupDiscarded")));
     }
 
     // --- Internal helpers ---

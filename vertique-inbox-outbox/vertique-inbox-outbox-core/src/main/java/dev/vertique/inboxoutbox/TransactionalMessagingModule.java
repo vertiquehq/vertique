@@ -5,6 +5,7 @@ package dev.vertique.inboxoutbox;
 
 import dagger.Module;
 import dagger.multibindings.Multibinds;
+import dev.vertique.inboxoutbox.ops.OutboxOperationListener;
 import java.util.Set;
 
 /**
@@ -17,7 +18,8 @@ import java.util.Set;
  * <p>Declares the {@link OutboxDestinationHandler} multibinding so that destination-specific
  * sub-modules can contribute handlers via {@code @Provides @IntoSet} methods, and the
  * {@link OutboxPublishObserver} multibinding so that applications and adapter modules can observe
- * publish attempts the same way.
+ * publish attempts the same way. The {@link OutboxOperationListener} multibinding lets them observe the operator
+ * commands on outbox entries.
  *
  * <p>Installed transitively: {@code TransactionalMessagingPostgresqlModule} includes this module, so an
  * application lists that store adapter module in its component rather than this one.
@@ -35,4 +37,11 @@ public abstract class TransactionalMessagingModule {
      */
     @Multibinds
     abstract Set<OutboxPublishObserver> outboxPublishObservers();
+
+    /**
+     * Declares the empty-by-default set binding for {@link OutboxOperationListener} contributions, so the outbox
+     * operations can be built when nothing listens to operator commands.
+     */
+    @Multibinds
+    abstract Set<OutboxOperationListener> outboxOperationListeners();
 }

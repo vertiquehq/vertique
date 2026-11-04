@@ -5,6 +5,7 @@ package dev.vertique.inboxoutbox;
 
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import dev.vertique.core.exception.ValidationException;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.experimental.Accessors;
@@ -15,7 +16,7 @@ import lombok.extern.jackson.Jacksonized;
  *
  * <p>Deserialized from the {@code inboxOutbox.cleanup} section of the application config.
  * The cleanup job runs periodically to remove old records from the inbox, published outbox,
- * and dead-letter outbox tables, preventing unbounded table growth.
+ * dead-letter and discarded outbox tables, preventing unbounded table growth.
  *
  * <p>Cleanup cadence is owned by the framework's cron infrastructure (see
  * {@code OutboxMaintenanceCron} in {@code vertique-inbox-outbox-postgresql}). Operators
@@ -29,6 +30,7 @@ import lombok.extern.jackson.Jacksonized;
  *   cleanup:
  *     publishedRetentionDays: 7
  *     deadLetterRetentionDays: 30
+ *     discardedRetentionDays: 7
  *     inboxRetentionDays: 30
  *     cleanupBatchSize: 1000
  * }</pre>
@@ -60,6 +62,14 @@ public class InboxOutboxCleanupConfig {
     private final int deadLetterRetentionDays = 30;
 
     /**
+     * Number of days to retain discarded outbox entries before the cleanup job deletes them. A discarded entry
+     * can be brought back until then, so the window is the time an operator has to undo a discard.
+     * Default: 7 days.
+     */
+    @Builder.Default
+    private final int discardedRetentionDays = 7;
+
+    /**
      * Number of days to retain processed inbox deduplication records before the cleanup job
      * deletes them. Default: 30 days.
      */
@@ -72,4 +82,36 @@ public class InboxOutboxCleanupConfig {
      */
     @Builder.Default
     private final int cleanupBatchSize = 1_000;
+
+    /** Largest accepted {@code discardedRetentionDays}. */
+    public static final int MAX_DISCARDED_RETENTION_DAYS = 3650;
+
+    /**
+     * Creates the config; reached through the builder and Jackson deserialization. Only the discarded window is
+     * range-checked: it is the time an operator has to undo a discard, so a zero or negative value, which would
+     * purge every discarded entry at the next cleanup, is refused.
+     *
+     * @param publishedRetentionDays  retention of published entries, in days
+     * @param deadLetterRetentionDays retention of dead-letter entries, in days
+     * @param discardedRetentionDays  retention of discarded entries; 1 to {@value #MAX_DISCARDED_RETENTION_DAYS}
+     * @param inboxRetentionDays      retention of inbox records, in days
+     * @param cleanupBatchSize        records deleted per batch
+     * @throws ValidationException if {@code discardedRetentionDays} is outside its range
+     */
+    InboxOutboxCleanupConfig(
+            int publishedRetentionDays,
+            int deadLetterRetentionDays,
+            int discardedRetentionDays,
+            int inboxRetentionDays,
+            int cleanupBatchSize) {
+        if (discardedRetentionDays < 1 || discardedRetentionDays > MAX_DISCARDED_RETENTION_DAYS) {
+            throw new ValidationException(
+                    "discardedRetentionDays must be between 1 and " + MAX_DISCARDED_RETENTION_DAYS);
+        }
+        this.publishedRetentionDays = publishedRetentionDays;
+        this.deadLetterRetentionDays = deadLetterRetentionDays;
+        this.discardedRetentionDays = discardedRetentionDays;
+        this.inboxRetentionDays = inboxRetentionDays;
+        this.cleanupBatchSize = cleanupBatchSize;
+    }
 }
