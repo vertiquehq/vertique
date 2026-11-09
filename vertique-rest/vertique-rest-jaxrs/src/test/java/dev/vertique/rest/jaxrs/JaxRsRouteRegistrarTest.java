@@ -584,7 +584,7 @@ class JaxRsRouteRegistrarTest {
     @Test
     @DisplayName("A non-overridden generic default binds its concrete parameter at startup")
     void genericDefaultRoute_concreteParameterRegisters() {
-        RegistrarTestSupport.registerAll(
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> RegistrarTestSupport.registerAll(
                 registrar,
                 Set.of(new GenericDefaultResource()),
                 router,
@@ -599,7 +599,7 @@ class JaxRsRouteRegistrarTest {
                 null,
                 null,
                 null,
-                false);
+                false));
     }
 
     // --- File upload and content type tests ---
