@@ -1954,13 +1954,13 @@ Any exception a resource method throws or fails its `Future` with enters the err
 mapped by `ExceptionMapperRegistry`. Unmapped exceptions become a 500 problem detail whose detail is
 the fixed string `"Internal Server Error"` — never the exception message.
 
-A failure that surfaces **after** the response head is on the wire cannot change the status. When a
-streamed or buffered body is truncated, the pipeline closes the response in the way that frames the
-truncation honestly: a chunked response is ended normally, while a non-chunked response whose declared
-`Content-Length` does not match the bytes written is **reset** (RST_STREAM on HTTP/2, connection close
-on HTTP/1.1) rather than ended, so a peer observes an incomplete transfer instead of a well-framed
-lie. Clients must therefore be prepared for a reset mid-response and must not treat a 200 status line
-as proof of a complete body.
+A failure after the response head is on the wire cannot change the status. The pipeline resets an
+open response when its body fails, instead of ending it normally: this closes an HTTP/1 connection or
+resets the affected HTTP/2 stream. Clients must handle incomplete responses and must not treat a 200
+status line as proof of a complete body. A close-delimited HTTP/1.0 response cannot reliably distinguish
+a failed stream from a normal end; an application-level completion marker or known length is needed
+when that distinction matters. A client may also have already consumed all declared bytes before a
+late failure is observed.
 
 ### Common mistakes
 

@@ -22,9 +22,13 @@ import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClient;
+import io.vertx.core.http.HttpClientOptions;
 import io.vertx.core.http.HttpClientResponse;
+import io.vertx.core.http.HttpConnection;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
+import io.vertx.core.http.HttpServerResponse;
+import io.vertx.core.http.HttpVersion;
 import io.vertx.core.streams.ReadStream;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
@@ -57,7 +61,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * End-to-end acceptance proof that a post-handoff wire failure on a <em>streamed</em> response is
  * observable through {@link RestRequestCompletedEvent#wireFailureCode()}.
  *
- * <p>Both tests drive the real runtime stack over a live socket — no mocks, no hand-written
+ * <p>The tests drive the real runtime stack over a live socket — no mocks, no hand-written
  * pipeline: {@link RequestContextLifecycle} and {@link RestRequestCompletionEmitter} are mounted as
  * ROOT middlewares on the root router, and the API router is the one built by
  * {@link JaxRsRouterMount#createRouter(Vertx)}, so the request flows through the production
@@ -65,18 +69,20 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@link ReadStreamBodyEncoder} path. A {@code RestRequestCompletedListener} registered on the
  * emitter captures the single completion event per request.
  *
- * <p>The two tests cover the two <em>independent</em> failure inputs the emitter consults:
+ * <p>The tests cover the two <em>independent</em> failure inputs the emitter consults:
  * <ul>
  *   <li>{@link #midStreamSourceFailureSurfacesWireFailureCode()} — the streamed source fails after
  *       the first chunk reached the client. The pipe future fails, the response pipeline records
- *       the cause through {@link RequestCompletionRecorder#recordWireFailure} and ends the
+ *       the cause through {@link RequestCompletionRecorder#recordWireFailure} and resets the
  *       response. The event carries status 200 <em>and</em> a non-null {@code wireFailureCode} —
- *       the truncated-response signature — while the client observes a well-formed but truncated
+ *       the truncated-response signature — while the client observes an incomplete
  *       body.</li>
  *   <li>{@link #clientAbortDuringStreamingSurfacesWireFailureCode()} — the client resets the
  *       connection ({@code SO_LINGER(0)}) while the stream is still open. Nothing is in flight, so
  *       the pipe future never settles; the failure reaches the event through the failed response
  *       end-handler {@code AsyncResult} instead.</li>
+ *   <li>{@link #http2FailureDoesNotCloseSiblingStream()} — a failed HTTP/2 stream does not close
+ *       a sibling stream on the same connection.</li>
  * </ul>
  *
  * <p>Determinism: the server binds port 0 on the loopback address and the actual port is read after
@@ -121,6 +127,9 @@ public class StreamingWireFailureIT {
     // --- Per-test resources ---
 
     private HttpServer server;
+    private final CompletableFuture<HttpServerResponse> siblingResponse = new CompletableFuture<>();
+    private final CompletableFuture<HttpConnection> streamConnection = new CompletableFuture<>();
+    private final CompletableFuture<HttpConnection> siblingConnection = new CompletableFuture<>();
 
     /**
      * Creates the single {@link HttpClient} shared by every test in the class.
@@ -208,15 +217,14 @@ public class StreamingWireFailureIT {
 
         stream.failFromSource(new IllegalStateException(SOURCE_FAILURE_MESSAGE));
 
-        Buffer body = bodyEnded.get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        org.junit.jupiter.api.Assertions.assertThrows(
+                java.util.concurrent.ExecutionException.class,
+                () -> bodyEnded.get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS),
+                "the client must observe the incomplete response");
         RestRequestCompletedEvent event = completed.get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
         assertEquals(200, response.statusCode(), "the status line was already on the wire when the source failed");
-        assertEquals(
-                FIRST_CHUNK,
-                body,
-                "the client must see a truncated but cleanly ended body — only the chunk written "
-                        + "before the source failed");
+        assertEquals(FIRST_CHUNK, collected, "the client received the first chunk before failure");
         assertEquals(200, event.statusCode(), "the completion event must report the status actually sent");
         assertNotNull(
                 event.wireFailureCode(),
@@ -229,6 +237,79 @@ public class StreamingWireFailureIT {
         assertTrue(
                 !SOURCE_FAILURE_MESSAGE.equals(event.safeFailureMessage()),
                 "the raw source-failure message must never reach the event");
+    }
+
+    @Test
+    @DisplayName("HTTP/2 source failure resets only its stream")
+    void http2FailureDoesNotCloseSiblingStream() throws Exception {
+        CompletableFuture<GatedReadStream> streamCreated = new CompletableFuture<>();
+        CompletableFuture<RestRequestCompletedEvent> completed = new CompletableFuture<>();
+        int port = startServer(streamCreated, completed);
+        HttpClient http2Client = vertx.createHttpClient(
+                new HttpClientOptions().setProtocolVersion(HttpVersion.HTTP_2).setHttp2ClearTextUpgrade(false));
+        try {
+            HttpClientResponse failed = http2Client
+                    .request(HttpMethod.GET, port, LOOPBACK, STREAM_PATH)
+                    .compose(request -> {
+                        Future<HttpClientResponse> response = request.response().map(r -> {
+                            r.pause();
+                            return r;
+                        });
+                        request.end();
+                        return response;
+                    })
+                    .toCompletionStage()
+                    .toCompletableFuture()
+                    .get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            CompletableFuture<Void> first = new CompletableFuture<>();
+            CompletableFuture<Void> failure = new CompletableFuture<>();
+            failed.handler(chunk -> first.complete(null));
+            failed.exceptionHandler(failure::completeExceptionally);
+            failed.endHandler(v -> failure.complete(null));
+            failed.resume();
+            first.get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+
+            HttpClientResponse sibling = http2Client
+                    .request(HttpMethod.GET, port, LOOPBACK, "/sibling")
+                    .compose(request -> {
+                        Future<HttpClientResponse> response = request.response().map(r -> {
+                            r.pause();
+                            return r;
+                        });
+                        request.end();
+                        return response;
+                    })
+                    .toCompletionStage()
+                    .toCompletableFuture()
+                    .get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            CompletableFuture<Buffer> siblingBody = new CompletableFuture<>();
+            Buffer collectedSibling = Buffer.buffer();
+            sibling.handler(collectedSibling::appendBuffer);
+            sibling.exceptionHandler(siblingBody::completeExceptionally);
+            sibling.endHandler(v -> siblingBody.complete(collectedSibling));
+            sibling.resume();
+            assertEquals(HttpVersion.HTTP_2, failed.version());
+            assertEquals(
+                    streamConnection.get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS),
+                    siblingConnection.get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS));
+
+            streamCreated
+                    .get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                    .failFromSource(new IllegalStateException(SOURCE_FAILURE_MESSAGE));
+            org.junit.jupiter.api.Assertions.assertThrows(
+                    java.util.concurrent.ExecutionException.class,
+                    () -> failure.get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS));
+            HttpServerResponse openSibling = siblingResponse.get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            openSibling.end().toCompletionStage().toCompletableFuture().get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            assertEquals(
+                    "sibling",
+                    siblingBody.get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS).toString());
+            assertEquals(
+                    "IllegalStateException",
+                    completed.get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS).wireFailureCode());
+        } finally {
+            http2Client.close().toCompletionStage().toCompletableFuture().get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        }
     }
 
     @Test
@@ -298,6 +379,15 @@ public class StreamingWireFailureIT {
                 .get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
         Router root = Router.router(vertx);
+        root.route(STREAM_PATH).order(Integer.MIN_VALUE).handler(rc -> {
+            streamConnection.complete(rc.request().connection());
+            rc.next();
+        });
+        root.get("/sibling").handler(rc -> {
+            siblingConnection.complete(rc.request().connection());
+            rc.response().setChunked(true).write("sibling");
+            siblingResponse.complete(rc.response());
+        });
         // 1. RequestContextLifecycle (ORDER = Integer.MIN_VALUE) — its end handler fires last.
         root.route().order(RequestContextLifecycle.ORDER).handler(new RequestContextLifecycle());
         // 2. RestRequestCompletionEmitter (ORDER + 5) — registers the end handler that emits the event.
@@ -421,10 +511,7 @@ public class StreamingWireFailureIT {
 
     /**
      * Marks every response as chunked before the body is written. A streamed response of unknown
-     * length must declare chunked transfer encoding; a declared {@code Content-Length} would instead
-     * put the truncated response on the pipeline's <em>reset</em> path (an under-length fixed-length
-     * body cannot be framed honestly by {@code end()}), which is not the behavior under test here —
-     * these tests pin the clean-end path for a chunked stream.
+     * length uses chunked transfer encoding on HTTP/1.1. These tests exercise its failure path.
      *
      * <p>This is a test-explicitness device, not a production requirement. A plain
      * {@link ReadStream} entity yields a {@code StreamingBody} with neither {@code Content-Length}
