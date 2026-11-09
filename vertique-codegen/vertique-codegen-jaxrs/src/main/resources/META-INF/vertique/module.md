@@ -514,3 +514,5 @@ Other test-only dependencies: `vertique-codegen-test` (compilation harness) and 
 ## Known Gaps
 
 - Descriptor-registry hierarchy walk for proxy/subclass resource patterns — the current registry uses `resource.getClass()` exactly and does not walk superclasses to find a companion for a subclass or proxy.
+
+Inherited resource methods use parameter and return types resolved from the concrete resource, including bindings passed through intermediate supertypes. Unresolved type variables retain their erased fallback. Generated invocation may fall back to reflection when a substituted parameterized type could make an overload ambiguous.
