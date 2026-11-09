@@ -587,8 +587,15 @@ class ResourceScanner {
     }
 
     private static Class<?> rawType(Type type, Class<?> fallback) {
+        return rawType(type, fallback, java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()));
+    }
+
+    private static Class<?> rawType(Type type, Class<?> fallback, java.util.Set<Type> visiting) {
+        if (!visiting.add(type)) return fallback;
         if (type instanceof Class<?> cls) return cls;
         if (type instanceof ParameterizedType pt && pt.getRawType() instanceof Class<?> cls) return cls;
+        if (type instanceof java.lang.reflect.WildcardType wildcard && wildcard.getUpperBounds().length > 0)
+            return rawType(wildcard.getUpperBounds()[0], fallback, visiting);
         return fallback;
     }
 

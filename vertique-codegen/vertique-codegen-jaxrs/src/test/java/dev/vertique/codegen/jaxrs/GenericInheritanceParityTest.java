@@ -55,6 +55,16 @@ class GenericInheritanceParityTest {
 
     // --- Reflective fixtures ---
 
+    interface BoundedFutureApi<T> {
+        @GET
+        default io.vertx.core.Future<? extends T> bounded() {
+            return io.vertx.core.Future.succeededFuture();
+        }
+    }
+
+    @Path("/bounded-future")
+    static class BoundedFutureLeaf implements BoundedFutureApi<String> {}
+
     interface SecuredCrud<I> {
         @DELETE
         @Path("/{id}")
@@ -1281,6 +1291,37 @@ class GenericInheritanceParityTest {
             Object payload = ((List<?>) decoded.getFirst()).getFirst();
             assertEquals(meta.responseBodyType(), payload.getClass());
             assertEquals("ok", payload.getClass().getField("value").get(payload));
+            assertEquals(true, meta.returnsFuture());
+        }
+    }
+
+    @org.junit.jupiter.api.Test
+    @DisplayName("inherited bounded future return metadata agrees")
+    void boundedFutureReturnMetadataParity() throws Exception {
+        var result = ProcessorTestHarness.run(
+                new JaxRsPipelineProcessor(), src("BoundedFutureApi", """
+                        public interface BoundedFutureApi<T> {
+                            @GET
+                            default io.vertx.core.Future<? extends T> bounded() {
+                                return io.vertx.core.Future.succeededFuture();
+                            }
+                        }
+                        """), src("BoundedFutureLeaf", """
+                        @Path("/bounded-future")
+                        public class BoundedFutureLeaf implements BoundedFutureApi<String> {}
+                        """));
+        result.assertSuccess();
+        String name = fqn("BoundedFutureLeaf");
+        Object instance = result.generatedClassLoader()
+                .loadClass(name)
+                .getDeclaredConstructor()
+                .newInstance();
+        var generated =
+                callDescribe(result, instance, name + "_JaxRsDescriptor").getFirst();
+        var reflective =
+                new JaxRsRouteRegistrar().scanResource(new BoundedFutureLeaf()).getFirst();
+        for (var meta : List.of(reflective, generated)) {
+            assertEquals(String.class, meta.responseBodyType());
             assertEquals(true, meta.returnsFuture());
         }
     }
