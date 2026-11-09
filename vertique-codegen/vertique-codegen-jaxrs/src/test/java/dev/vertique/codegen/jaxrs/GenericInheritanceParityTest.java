@@ -160,6 +160,46 @@ class GenericInheritanceParityTest {
     @Path("/body-chain")
     static class BodyLeaf implements BodyApi<Payload> {}
 
+    interface NestedReturnApi<T> {
+        @GET
+        default io.vertx.core.Future<List<List<T>>> nested() {
+            return io.vertx.core.Future.succeededFuture(List.of());
+        }
+    }
+
+    @Path("/nested-return")
+    static class NestedReturnLeaf implements NestedReturnApi<Payload> {}
+
+    interface ScalarApi<T> {
+        @jakarta.ws.rs.POST
+        default String values(
+                @PathParam("p") T p,
+                @QueryParam("q") T q,
+                @jakarta.ws.rs.HeaderParam("h") T h,
+                @jakarta.ws.rs.CookieParam("c") T c,
+                @jakarta.ws.rs.FormParam("f") T f) {
+            return "ok";
+        }
+    }
+
+    @Path("/scalars/{p}")
+    static class ScalarLeaf implements ScalarApi<Integer> {}
+
+    public static class InputBean {
+        @QueryParam("q")
+        public Integer q;
+    }
+
+    interface BeanApi<T> {
+        @jakarta.ws.rs.POST
+        default String bean(@jakarta.ws.rs.BeanParam T value) {
+            return "ok";
+        }
+    }
+
+    @Path("/bean")
+    static class BeanLeaf implements BeanApi<InputBean> {}
+
     static class PlainBase {
         @GET
         @Path("/ping")
@@ -1243,6 +1283,150 @@ class GenericInheritanceParityTest {
             assertEquals("ok", payload.getClass().getField("value").get(payload));
             assertEquals(true, meta.returnsFuture());
         }
+    }
+
+    @org.junit.jupiter.api.Test
+    @DisplayName("inherited nested future return metadata agrees at raw body type precision")
+    void nestedReturnMetadataParity() throws Exception {
+        var result = ProcessorTestHarness.run(
+                new JaxRsPipelineProcessor(),
+                src("Payload", "public class Payload {}"),
+                src("NestedReturnApi", """
+                        public interface NestedReturnApi<T> {
+                            @GET
+                            default io.vertx.core.Future<java.util.List<java.util.List<T>>> nested() {
+                                return io.vertx.core.Future.succeededFuture(java.util.List.of());
+                            }
+                        }
+                        """),
+                src("NestedReturnLeaf", """
+                        @Path("/nested-return")
+                        public class NestedReturnLeaf implements NestedReturnApi<Payload> {}
+                        """));
+        result.assertSuccess();
+        String name = fqn("NestedReturnLeaf");
+        Object instance = result.generatedClassLoader()
+                .loadClass(name)
+                .getDeclaredConstructor()
+                .newInstance();
+        var generated =
+                callDescribe(result, instance, name + "_JaxRsDescriptor").getFirst();
+        var reflective =
+                new JaxRsRouteRegistrar().scanResource(new NestedReturnLeaf()).getFirst();
+        for (var meta : List.of(reflective, generated)) {
+            assertEquals(List.class, meta.responseBodyType());
+            assertEquals(true, meta.returnsFuture());
+            assertEquals(false, meta.returnsVoid());
+        }
+    }
+
+    @org.junit.jupiter.api.Test
+    void inheritedScalarAndBeanExtractionParity() throws Exception {
+        var result = ProcessorTestHarness.run(
+                new JaxRsPipelineProcessor(),
+                src("ScalarApi", """
+                        public interface ScalarApi<T> {
+                            @jakarta.ws.rs.POST
+                            default String values(@PathParam("p") T p, @QueryParam("q") T q,
+                                @jakarta.ws.rs.HeaderParam("h") T h, @jakarta.ws.rs.CookieParam("c") T c,
+                                @jakarta.ws.rs.FormParam("f") T f) { return "ok"; }
+                        }
+                        """),
+                src("ScalarLeaf", """
+                        @Path("/scalars/{p}") public class ScalarLeaf implements ScalarApi<Integer> {}
+                        """),
+                src("InputBean", """
+                        public class InputBean { @QueryParam("q") public Integer q; }
+                        """),
+                src("BeanApi", """
+                        public interface BeanApi<T> {
+                            @jakarta.ws.rs.POST default String bean(@jakarta.ws.rs.BeanParam T value) { return "ok"; }
+                        }
+                        """),
+                src("BeanLeaf", """
+                        @Path("/bean") public class BeanLeaf implements BeanApi<InputBean> {}
+                        """));
+        result.assertSuccess();
+        var request = new dev.vertique.rest.jaxrs.request.BoundRequest() {
+            public java.util.Map<String, dev.vertique.rest.core.request.RequestValue> pathParameters() {
+                return java.util.Map.of("p", dev.vertique.rest.core.request.RequestValue.of("11"));
+            }
+
+            public java.util.Map<String, dev.vertique.rest.core.request.RequestValue> query() {
+                return java.util.Map.of("q", dev.vertique.rest.core.request.RequestValue.of("12"));
+            }
+
+            public java.util.Map<String, dev.vertique.rest.core.request.RequestValue> headers() {
+                return java.util.Map.of("h", dev.vertique.rest.core.request.RequestValue.of("13"));
+            }
+
+            public java.util.Map<String, dev.vertique.rest.core.request.RequestValue> cookies() {
+                return java.util.Map.of("c", dev.vertique.rest.core.request.RequestValue.of("14"));
+            }
+
+            public dev.vertique.rest.core.request.RequestValue body() {
+                return dev.vertique.rest.core.request.RequestValue.of(null);
+            }
+
+            public io.vertx.core.http.HttpServerRequest raw() {
+                return null;
+            }
+        };
+        var http = (io.vertx.core.http.HttpServerRequest) java.lang.reflect.Proxy.newProxyInstance(
+                getClass().getClassLoader(),
+                new Class<?>[] {io.vertx.core.http.HttpServerRequest.class},
+                (proxy, method, args) -> method.getName().equals("getFormAttribute") ? "15" : null);
+        var ctx = (io.vertx.ext.web.RoutingContext) java.lang.reflect.Proxy.newProxyInstance(
+                getClass().getClassLoader(),
+                new Class<?>[] {io.vertx.ext.web.RoutingContext.class},
+                (proxy, method, args) -> method.getName().equals("request") ? http : null);
+        for (String leaf : List.of("ScalarLeaf", "BeanLeaf")) {
+            Object local = leaf.equals("ScalarLeaf") ? new ScalarLeaf() : new BeanLeaf();
+            var reflective = new JaxRsRouteRegistrar().scanResource(local).getFirst();
+            String name = fqn(leaf);
+            Object instance = result.generatedClassLoader()
+                    .loadClass(name)
+                    .getDeclaredConstructor()
+                    .newInstance();
+            var generated =
+                    callDescribe(result, instance, name + "_JaxRsDescriptor").getFirst();
+            for (var meta : List.of(reflective, generated)) {
+                Object[] args = extract(meta, ctx, request, meta == generated);
+                if (leaf.equals("ScalarLeaf")) {
+                    org.junit.jupiter.api.Assertions.assertArrayEquals(new Object[] {11, 12, 13, 14, 15}, args);
+                } else {
+                    assertEquals(meta.params().getFirst().type(), args[0].getClass());
+                    assertEquals(12, args[0].getClass().getField("q").get(args[0]));
+                }
+            }
+        }
+    }
+
+    private static Object[] extract(
+            ResourceMethodMeta meta,
+            io.vertx.ext.web.RoutingContext ctx,
+            dev.vertique.rest.jaxrs.request.BoundRequest request,
+            boolean generated)
+            throws Exception {
+        Class<?> extractorType = Class.forName("dev.vertique.rest.jaxrs.ParameterExtractor");
+        var constructor = extractorType.getDeclaredConstructor(
+                ResourceMethodMeta.class, List.class, dev.vertique.rest.core.context.RestContextResolution.class);
+        constructor.setAccessible(true);
+        Object extractor = constructor.newInstance(
+                meta, List.of(), new dev.vertique.rest.core.context.RestContextResolution(java.util.Set.of()));
+        if (!generated) {
+            var method = extractorType.getDeclaredMethod(
+                    "extractArguments",
+                    io.vertx.ext.web.RoutingContext.class,
+                    dev.vertique.rest.jaxrs.request.BoundRequest.class);
+            method.setAccessible(true);
+            return (Object[]) method.invoke(extractor, ctx, request);
+        }
+        Class<?> supportType = Class.forName("dev.vertique.rest.jaxrs.ParameterExtractorBackedSupport");
+        var supportConstructor = supportType.getDeclaredConstructor(extractorType);
+        supportConstructor.setAccessible(true);
+        var support = (dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsSupport) supportConstructor.newInstance(extractor);
+        return meta.executionPlan().extractArguments(ctx, request, support);
     }
 
     // --- Normalization ---
