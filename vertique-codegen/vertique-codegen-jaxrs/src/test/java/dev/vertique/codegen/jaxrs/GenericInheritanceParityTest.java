@@ -29,7 +29,6 @@ import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
@@ -125,6 +124,9 @@ class GenericInheritanceParityTest {
             return "derived " + id;
         }
     }
+
+    @Path("/inherited")
+    static class InheritedGeneric extends GenericBase<String> {}
 
     static class PlainBase {
         @GET
@@ -570,6 +572,16 @@ class GenericInheritanceParityTest {
                                 List.of(
                                         "GET /derived/{id} GenericDerived id|PATH|java.lang.String roles=[editor] -> derived 7")),
                         new Shape(
+                                "an inherited generic superclass method binds its parameter",
+                                new InheritedGeneric(),
+                                "InheritedGeneric",
+                                List.of(genericBase(), src("InheritedGeneric", """
+                                        @Path("/inherited")
+                                        public class InheritedGeneric extends GenericBase<String> {}
+                                        """)),
+                                List.of(
+                                        "GET /inherited/{id} GenericBase id|PATH|java.lang.String roles=[editor] -> base 7")),
+                        new Shape(
                                 "a non-generic annotated superclass method overridden without annotations",
                                 new PlainDerived(),
                                 "PlainDerived",
@@ -688,7 +700,7 @@ class GenericInheritanceParityTest {
                                         """)),
                                 List.of(
                                         "GET /overload-base/{id} OverloadDerived id|PATH|java.lang.String None -> derived 7",
-                                        "GET /overload-base/{id}/times OverloadBase id|PATH|java.lang.Object,times|QUERY|java.lang.String None -> b 7")),
+                                        "GET /overload-base/{id}/times OverloadBase id|PATH|java.lang.String,times|QUERY|java.lang.String None -> b 7")),
                         new Shape(
                                 "a same-erasure overload with another type argument displaces nothing",
                                 new PurgeOverload(),
@@ -711,7 +723,7 @@ class GenericInheritanceParityTest {
                                         }
                                         """)),
                                 List.of(
-                                        "GET /purge-overload/{id} PurgeBase id|PATH|java.lang.Object roles=[admin] -> base 7")),
+                                        "GET /purge-overload/{id} PurgeBase id|PATH|java.util.List roles=[admin] -> base [7]")),
                         new Shape(
                                 "a private helper with the same erasure displaces nothing",
                                 new PurgeHelper(),
@@ -735,7 +747,7 @@ class GenericInheritanceParityTest {
                                         }
                                         """)),
                                 List.of(
-                                        "GET /purge-helper/{id} PurgeBase id|PATH|java.lang.Object roles=[admin] -> base 7")),
+                                        "GET /purge-helper/{id} PurgeBase id|PATH|java.util.List roles=[admin] -> base [7]")),
                         new Shape(
                                 "a protected generic override inherits the declaration's route and security",
                                 new ProtectedDerived(),
@@ -778,7 +790,7 @@ class GenericInheritanceParityTest {
                                         public class ProtectedInherited extends ProtectedBase<String> {}
                                         """)),
                                 List.of(
-                                        "GET /prot-inherited/{id} ProtectedBase id|PATH|java.lang.Object roles=[admin] -> base 7")),
+                                        "GET /prot-inherited/{id} ProtectedBase id|PATH|java.lang.String roles=[admin] -> base 7")),
                         new Shape(
                                 "an unrelated overload is not a route and takes nothing from the interface",
                                 new Overloads(),
@@ -857,7 +869,7 @@ class GenericInheritanceParityTest {
                                             }
                                         }
                                         """)),
-                                List.of("GET /relay/{id} RelayBase id|PATH|java.lang.Object roles=[admin] -> base 7")),
+                                List.of("GET /relay/{id} RelayBase id|PATH|java.lang.String roles=[admin] -> base 7")),
                         new Shape(
                                 "a private method with the erased signature of an interface route overrides nothing",
                                 new PrivateKeyResource(),
@@ -1145,8 +1157,9 @@ class GenericInheritanceParityTest {
                             .map(p ->
                                     p.name() + "|" + p.source() + "|" + p.type().getName())
                             .toList());
-            Object[] args =
-                    Collections.nCopies(meta.params().size(), (Object) "7").toArray();
+            Object[] args = meta.params().stream()
+                    .map(p -> p.type() == List.class ? List.of("7") : "7")
+                    .toArray();
             Object invoked = meta.executionPlan() != null
                     ? meta.executionPlan().invoke(meta.resourceInstance(), args)
                     : meta.method().invoke(meta.resourceInstance(), args);

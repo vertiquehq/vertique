@@ -658,7 +658,10 @@ public final class EffectiveJaxRsContractResolver {
         List<javax.lang.model.element.VariableElement> annotationSources =
                 resolveParamAnnotationSources(concreteParam, paramIndex, method, resourceClass);
 
-        TypeMirror type = concreteParam.asType();
+        TypeMirror type = ((javax.lang.model.type.ExecutableType)
+                        ctx.types().asMemberOf((DeclaredType) resourceClass.asType(), method))
+                .getParameterTypes()
+                .get(paramIndex);
 
         // Component type for a multi-value shape (List<T>, Set<T>, T[], ...) — SOURCE-GATED, exactly
         // like beanParamType and genericType below. Only the sources whose reflective counterpart
@@ -720,12 +723,25 @@ public final class EffectiveJaxRsContractResolver {
         // declarations it overrides, taking the first source in a fixed priority. The enum is
         // declared in that priority order (BODY last), so the effective source is the lowest
         // ordinal among the concrete parameter and the matching parameter of each declaration.
-        JaxRsParamSource effective = JaxRsParamClassifier.classify(concreteParam, ctx.types(), ctx.elements());
+        JaxRsParamSource effective = JaxRsParamClassifier.classify(
+                concreteParam,
+                ((javax.lang.model.type.ExecutableType)
+                                ctx.types().asMemberOf((DeclaredType) resourceClass.asType(), method))
+                        .getParameterTypes()
+                        .get(paramIndex),
+                ctx.types(),
+                ctx.elements());
         for (ExecutableElement declaration : JaxRsHierarchy.inheritedDeclarations(ctx, method, resourceClass)) {
             var declaredParams = declaration.getParameters();
             if (paramIndex >= declaredParams.size()) continue;
-            JaxRsParamSource declaredSource =
-                    JaxRsParamClassifier.classify(declaredParams.get(paramIndex), ctx.types(), ctx.elements());
+            JaxRsParamSource declaredSource = JaxRsParamClassifier.classify(
+                    declaredParams.get(paramIndex),
+                    ((javax.lang.model.type.ExecutableType)
+                                    ctx.types().asMemberOf((DeclaredType) resourceClass.asType(), method))
+                            .getParameterTypes()
+                            .get(paramIndex),
+                    ctx.types(),
+                    ctx.elements());
             if (declaredSource.ordinal() < effective.ordinal()) {
                 effective = declaredSource;
             }

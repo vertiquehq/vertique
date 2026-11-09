@@ -208,10 +208,18 @@ public final class JaxRsDescriptorEmitter {
                 String paramTypeFqn = erasedFqn(pc.type());
                 String constName = "P" + pIdx + methodSuffix;
                 staticFields.add(stringConst(constName, paramTypeFqn));
+                staticFields.add(stringConst(
+                        "D" + pIdx + methodSuffix,
+                        erasedFqn(concreteMethod.getParameters().get(pIdx).asType())));
             }
 
             // Return type FQN constant
-            TypeMirror returnType = concreteMethod.getReturnType();
+            TypeMirror returnType = ((javax.lang.model.type.ExecutableType) ctx.types()
+                            .asMemberOf(
+                                    (javax.lang.model.type.DeclaredType)
+                                            contract.concreteClass().asType(),
+                                    concreteMethod))
+                    .getReturnType();
             TypeMirror unwrapped = ctx.unwrapFuture(returnType);
             String returnFqn = erasedFqn(unwrapped);
             staticFields.add(stringConst("R" + methodSuffix, returnFqn));
@@ -568,7 +576,7 @@ public final class JaxRsDescriptorEmitter {
         }
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < params.size(); i++) {
-            sb.append(", P").append(i).append(methodSuffix);
+            sb.append(", D").append(i).append(methodSuffix);
         }
         return sb.toString();
     }
