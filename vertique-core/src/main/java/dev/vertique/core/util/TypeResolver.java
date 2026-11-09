@@ -102,9 +102,36 @@ public final class TypeResolver {
             Type component = substitute(array.getGenericComponentType(), bindings, visiting);
             if (component instanceof Class<?> cls)
                 return Array.newInstance(cls, 0).getClass();
-            return (GenericArrayType) () -> component;
+            return new ResolvedGenericArrayType(component);
         }
         return type;
+    }
+
+    private record ResolvedGenericArrayType(Type component) implements GenericArrayType {
+        @Override
+        public Type getGenericComponentType() {
+            return component;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof GenericArrayType array && component.equals(array.getGenericComponentType());
+        }
+
+        @Override
+        public int hashCode() {
+            return component.hashCode();
+        }
+
+        @Override
+        public String getTypeName() {
+            return component.getTypeName() + "[]";
+        }
+
+        @Override
+        public String toString() {
+            return getTypeName();
+        }
     }
 
     private record ResolvedParameterizedType(Type raw, Type owner, Type[] arguments) implements ParameterizedType {
@@ -129,6 +156,21 @@ public final class TypeResolver {
                     && Objects.equals(raw, pt.getRawType())
                     && Objects.equals(owner, pt.getOwnerType())
                     && Arrays.equals(arguments, pt.getActualTypeArguments());
+        }
+
+        @Override
+        public String getTypeName() {
+            String base =
+                    owner == null ? raw.getTypeName() : owner.getTypeName() + "$" + ((Class<?>) raw).getSimpleName();
+            if (arguments.length == 0) return base;
+            return base + "<"
+                    + Arrays.stream(arguments).map(Type::getTypeName).collect(java.util.stream.Collectors.joining(", "))
+                    + ">";
+        }
+
+        @Override
+        public String toString() {
+            return getTypeName();
         }
 
         @Override
