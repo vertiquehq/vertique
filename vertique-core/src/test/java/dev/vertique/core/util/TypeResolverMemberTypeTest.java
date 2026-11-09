@@ -14,6 +14,8 @@ class TypeResolverMemberTypeTest {
     static class Base<T> {
         List<T>[] array;
         List<List<T>> nested;
+        List<? extends T> upper;
+        List<? super T> lower;
     }
 
     static class Concrete extends Base<String> {}
@@ -21,12 +23,14 @@ class TypeResolverMemberTypeTest {
     static class Expected {
         List<String>[] array;
         List<List<String>> nested;
+        List<? extends String> upper;
+        List<? super String> lower;
     }
 
     @Test
     @DisplayName("Resolved member types retain reflection value semantics")
     void resolvedTypesMatchReflectionValues() throws Exception {
-        for (String name : List.of("array", "nested")) {
+        for (String name : List.of("array", "nested", "upper", "lower")) {
             Type declared = Base.class.getDeclaredField(name).getGenericType();
             Type expected = Expected.class.getDeclaredField(name).getGenericType();
             Type actual = TypeResolver.resolveMemberType(Concrete.class, declared);
@@ -35,6 +39,15 @@ class TypeResolverMemberTypeTest {
             assertEquals(expected.hashCode(), actual.hashCode());
             assertEquals(expected.getTypeName(), actual.getTypeName());
             assertEquals(expected.toString(), actual.toString());
+            if (expected instanceof java.lang.reflect.ParameterizedType expectedParameterized) {
+                Type expectedArgument = expectedParameterized.getActualTypeArguments()[0];
+                Type actualArgument = ((java.lang.reflect.ParameterizedType) actual).getActualTypeArguments()[0];
+                assertEquals(expectedArgument, actualArgument);
+                assertEquals(actualArgument, expectedArgument);
+                assertEquals(expectedArgument.hashCode(), actualArgument.hashCode());
+                assertEquals(expectedArgument.getTypeName(), actualArgument.getTypeName());
+                assertEquals(expectedArgument.toString(), actualArgument.toString());
+            }
         }
     }
 }

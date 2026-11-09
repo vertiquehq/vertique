@@ -2130,4 +2130,5 @@ Vert.x, Dagger, the JAX-RS API, and Jackson arrive transitively through `vertiqu
 The reflective scanner resolves inherited resource method generic parameter and response types from the concrete resource
 class, including type variables forwarded through intermediate superclasses and interfaces. Nested
 parameterized request body types retain their arguments for JSON decoding. Raw or unresolved type
-variables retain their declared fallback types.
+variables retain their declared fallback types. For a `Future<? extends T>` response, response metadata uses
+the erased upper bound after resolving `T` against the resource class.

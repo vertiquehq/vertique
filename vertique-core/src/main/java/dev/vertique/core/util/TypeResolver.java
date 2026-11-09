@@ -96,6 +96,16 @@ public final class TypeResolver {
                 public int hashCode() {
                     return Arrays.hashCode(upper) ^ Arrays.hashCode(lower);
                 }
+
+                public String getTypeName() {
+                    if (lower.length > 0) return "? super " + lower[0].getTypeName();
+                    if (upper.length == 0 || upper[0] == Object.class) return "?";
+                    return "? extends " + upper[0].getTypeName();
+                }
+
+                public String toString() {
+                    return getTypeName();
+                }
             };
         }
         if (type instanceof GenericArrayType array) {
