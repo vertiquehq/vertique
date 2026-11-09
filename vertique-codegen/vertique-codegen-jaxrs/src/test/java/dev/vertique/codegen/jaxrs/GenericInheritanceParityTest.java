@@ -128,6 +128,38 @@ class GenericInheritanceParityTest {
     @Path("/inherited")
     static class InheritedGeneric extends GenericBase<String> {}
 
+    interface DefaultApi<T> {
+        @GET
+        @Path("/{id}")
+        default String find(@PathParam("id") T id) {
+            return "default " + id;
+        }
+    }
+
+    interface DefaultMiddle<T> extends DefaultApi<T> {}
+
+    @Path("/default-chain")
+    static class DefaultLeaf implements DefaultMiddle<String> {}
+
+    static class BaseMiddle<T> extends GenericBase<T> {}
+
+    @Path("/base-chain")
+    static class BaseLeaf extends BaseMiddle<String> {}
+
+    interface BodyApi<T> {
+        @jakarta.ws.rs.POST
+        default io.vertx.core.Future<T> submit(List<List<T>> body) {
+            return io.vertx.core.Future.succeededFuture(body.getFirst().getFirst());
+        }
+    }
+
+    public static class Payload {
+        public String value;
+    }
+
+    @Path("/body-chain")
+    static class BodyLeaf implements BodyApi<Payload> {}
+
     static class PlainBase {
         @GET
         @Path("/ping")
@@ -482,6 +514,35 @@ class GenericInheritanceParityTest {
 
     static Stream<Arguments> shapes() {
         return Stream.of(
+                        new Shape(
+                                "an inherited default method resolves through multiple interfaces",
+                                new DefaultLeaf(),
+                                "DefaultLeaf",
+                                List.of(src("DefaultApi", """
+                                        public interface DefaultApi<T> {
+                                            @GET @Path("/{id}")
+                                            default String find(@PathParam("id") T id) { return "default " + id; }
+                                        }
+                                        """), src("DefaultMiddle", """
+                                        public interface DefaultMiddle<T> extends DefaultApi<T> {}
+                                        """), src("DefaultLeaf", """
+                                        @Path("/default-chain")
+                                        public class DefaultLeaf implements DefaultMiddle<String> {}
+                                        """)),
+                                List.of(
+                                        "GET /default-chain/{id} DefaultApi id|PATH|java.lang.String None -> default 7")),
+                        new Shape(
+                                "an inherited superclass method resolves through multiple classes",
+                                new BaseLeaf(),
+                                "BaseLeaf",
+                                List.of(genericBase(), src("BaseMiddle", """
+                                        public class BaseMiddle<T> extends GenericBase<T> {}
+                                        """), src("BaseLeaf", """
+                                        @Path("/base-chain")
+                                        public class BaseLeaf extends BaseMiddle<String> {}
+                                        """)),
+                                List.of(
+                                        "GET /base-chain/{id} GenericBase id|PATH|java.lang.String roles=[editor] -> base 7")),
                         new Shape(
                                 "an override with its own verb inherits the interface's security (the fail-open case)",
                                 new SecuredOverride(),
@@ -1143,6 +1204,44 @@ class GenericInheritanceParityTest {
                             generated.get(0).methodAnnotations(),
                             generated.get(0).classAnnotations()),
                     "generated action of " + name);
+        }
+    }
+
+    @org.junit.jupiter.api.Test
+    @DisplayName("Generated and reflective inherited nested bodies decode concrete values")
+    void nestedBodyAndFutureReturnMatch() throws Exception {
+        var result = ProcessorTestHarness.run(
+                new JaxRsPipelineProcessor(), src("Payload", """
+                        public class Payload { public String value; }
+                        """), src("BodyApi", """
+                        public interface BodyApi<T> {
+                            @jakarta.ws.rs.POST
+                            default io.vertx.core.Future<T> submit(java.util.List<java.util.List<T>> body) {
+                                return io.vertx.core.Future.succeededFuture(body.getFirst().getFirst());
+                            }
+                        }
+                        """), src("BodyLeaf", """
+                        @Path("/body-chain")
+                        public class BodyLeaf implements BodyApi<Payload> {}
+                        """));
+        result.assertSuccess();
+        String name = fqn("BodyLeaf");
+        Object instance = result.generatedClassLoader()
+                .loadClass(name)
+                .getDeclaredConstructor()
+                .newInstance();
+        var generated =
+                callDescribe(result, instance, name + "_JaxRsDescriptor").getFirst();
+        var reflective = new JaxRsRouteRegistrar().scanResource(new BodyLeaf()).getFirst();
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        for (var meta : List.of(reflective, generated)) {
+            List<?> decoded = mapper.readValue(
+                    "[[{\"value\":\"ok\"}]]",
+                    mapper.constructType(meta.params().getFirst().genericType()));
+            Object payload = ((List<?>) decoded.getFirst()).getFirst();
+            assertEquals(meta.responseBodyType(), payload.getClass());
+            assertEquals("ok", payload.getClass().getField("value").get(payload));
+            assertEquals(true, meta.returnsFuture());
         }
     }
 
