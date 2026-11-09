@@ -80,10 +80,11 @@ first use. Module internals depend on the typed record, never on the raw `JsonOb
 ### Two ordering contracts, deliberately unrelated
 
 `OrderedExtension` orders behavioral extensions (interceptors, customizers, observers).
-`LifecycleOrdered` orders lifecycle participants (startup and shutdown steps, verticle
-deployments). Both sort **phase ascending → priority ascending → `orderKey` ascending**, and both
-expose a static `comparator()`. They are separate interfaces because their `phase()` methods return
-different enums — `ExtensionPhase` and `LifecyclePhase`.
+`LifecycleOrdered` orders startup and shutdown steps. Both sort **phase ascending → priority
+ascending → `orderKey` ascending**, and both expose a static `comparator()`. They are separate
+interfaces because their `phase()` methods return different enums — `ExtensionPhase` and
+`LifecyclePhase`. Verticle deployments do not implement `LifecycleOrdered`; they use their own
+phase-and-priority grouping, documented in `vertique-deploy`.
 
 The rules an extension author must know:
 
