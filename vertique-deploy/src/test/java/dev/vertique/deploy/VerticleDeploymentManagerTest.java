@@ -27,7 +27,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 /**
  * Unit tests for {@link VerticleDeploymentManager}.
  *
- * <p>Verifies phase orchestration including priority ordering, parallel group execution, invocation-scoped
+ * <p>Verifies phase orchestration including priority ordering, sequential deployment, invocation-scoped
  * rollback on failure, cross-phase isolation, and rollback safety when re-running deployments on a
  * shared {@link VerticleDeployer} that already has prior healthy deployments.
  */
@@ -246,9 +246,8 @@ class VerticleDeploymentManagerTest {
     }
 
     @Test
-    void deployPhase_lateSuccessAfterFailure_noLeaks(Vertx vertx, VertxTestContext ctx) {
-        // Three verticles at same priority — one fails.
-        // Future.join ensures all settle before rollback, so no leaked deployments.
+    void deployPhase_samePriorityFailure_noLeaks(Vertx vertx, VertxTestContext ctx) {
+        // Three verticles at the same priority: a succeeds, bad fails, and c must never start.
         VerticleDeployer deployer = new VerticleDeployer(vertx);
         VerticleDeploymentManager manager = new VerticleDeploymentManager(
                 deployer,
@@ -260,7 +259,7 @@ class VerticleDeploymentManagerTest {
         manager.deployPhase(LifecyclePhase.EDGE).onComplete(ctx.failing(cause -> {
             assertNull(deployer.deploymentId("a"), "Successful deployment a should be rolled back");
             assertNull(deployer.deploymentId("bad"), "Failed deployment should not be tracked");
-            assertNull(deployer.deploymentId("c"), "Successful deployment c should be rolled back");
+            assertNull(deployer.deploymentId("c"), "Deployment c must not start after bad fails");
             // Verify no leaked Vert.x deployments
             assertTrue(vertx.deploymentIDs().isEmpty(), "No leaked Vert.x deployments");
             ctx.completeNow();
@@ -381,7 +380,7 @@ class VerticleDeploymentManagerTest {
         manager1.deployPhase(LifecyclePhase.INFRA)
                 .compose(v -> {
                     assertNotNull(deployer.deploymentId("infra-ok"), "Prior deployment should be tracked");
-                    // manager2 fails: infra-ok is rejected as duplicate, infra-bad fails on start
+                    // manager2 fails on infra-bad before reaching the prior infra-ok deployment
                     return manager2.deployPhase(LifecyclePhase.INFRA);
                 })
                 .onComplete(ctx.failing(cause -> {
@@ -417,7 +416,7 @@ class VerticleDeploymentManagerTest {
                 .compose(v -> {
                     assertNotNull(deployer.deploymentId("infra-ok"), "infra-ok should be deployed");
                     assertNotNull(deployer.deploymentId("edge-ok"), "edge-ok should be deployed");
-                    // manager2 fails: infra-ok and edge-ok rejected as duplicates, edge-bad fails on start
+                    // manager2 fails on the duplicate infra-ok before reaching EDGE
                     return manager2.deployAll();
                 })
                 .onComplete(ctx.failing(cause -> {
