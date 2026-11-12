@@ -83,8 +83,10 @@ first use. Module internals depend on the typed record, never on the raw `JsonOb
 `LifecycleOrdered` orders startup and shutdown steps. Both sort **phase ascending → priority
 ascending → `orderKey` ascending**, and both expose a static `comparator()`. They are separate
 interfaces because their `phase()` methods return different enums — `ExtensionPhase` and
-`LifecyclePhase`. Verticle deployments do not implement `LifecycleOrdered`; they use their own
-phase-and-priority grouping, documented in `vertique-deploy`.
+`LifecyclePhase`. Verticle deployments share the lifecycle contract: `VerticleDeployment` in
+`vertique-deploy` implements `LifecycleOrdered` with its name as the `orderKey`, so deployments
+start sequentially in phase, priority, then name order and are undeployed in reverse order.
+`vertique-deploy` documents the deployment sequence.
 
 The rules an extension author must know:
 
@@ -504,6 +506,38 @@ fail-closed emission sites that still need an audit join key when no ambient cor
 The runtime that binds this context, and the `CorrelationIdGenerator` SPI it uses, ship in
 `dev.vertique:vertique-correlation`. An application overrides ID generation by binding its own
 `CorrelationIdGenerator` — that module declares the binding as optional.
+
+### General-purpose helpers
+
+Core also ships a small set of public, final utility classes. They are part of the module's
+public surface and application code may use them like any other core type.
+
+- **`dev.vertique.core.async.Futures`** — converts between Vert.x `Future` failures and `Result`
+  values (`toFuture`, `reflect`), settles a collection of futures into a list of `Result`s without
+  short-circuiting (`settle`), and maps a failure cause without touching successful values
+  (`mapFailure`).
+- **`dev.vertique.core.async.Timeouts`** — the shared timeout boundaries `awaitCondition` and
+  `withTimeout`; see [Asynchronous timeouts](#asynchronous-timeouts).
+- **`dev.vertique.core.async.Combinators`** — asynchronous control-flow kernels over a pre-ordered
+  list: a sequential value fold, a first-success-wins recovery chain, an all-settled join that
+  swallows per-item failures, a synchronous swallowing loop, and a fire-and-forget dispatch. They
+  preserve the caller's order, never reorder, and route a synchronous throw from a callback into
+  the same channel as an asynchronous failure; whether a failure continues or propagates is the
+  caller's lambda's decision.
+- **`dev.vertique.core.util.Strings`** — pure string helpers shared across modules: `firstNonBlank`
+  and the `errorTypeToken` validator.
+- **`dev.vertique.core.util.TypeResolver`** — resolves the concrete type argument bound to a target
+  interface (`resolveTypeArgument`) and collects all transitively reachable interfaces
+  (`getAllInterfaces`). Type variables forwarded through a parameterized intermediate interface are
+  not resolved.
+- **`dev.vertique.core.util.AnnotationResolver`** — resolves method, class, and parameter
+  annotations across the superclass chain and interface hierarchy (`resolveMethodAnnotations`,
+  `resolveClassAnnotations`, `resolveParameterAnnotations`) and finds composed annotations through
+  meta-annotations (`findMetaAnnotation`). Deduplication is by annotation equality, so same-type
+  annotations with different member values are all kept in traversal order.
+  `inheritedDeclarations` and `overridesBySignature` are internal framework seams.
+- **`dev.vertique.core.util.UUIDV7`** — time-ordered RFC 9562 UUIDv7 identifiers; see
+  [`UUIDV7`](#uuidv7).
 
 ### `UUIDV7`
 
