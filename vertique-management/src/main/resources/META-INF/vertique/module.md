@@ -12,7 +12,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 Runs a dedicated management HTTP server on its own port (default 9090) that serves Kubernetes-style liveness and readiness probes and hosts operational endpoints contributed by other modules. The management server is separate from the application's `HttpVerticle`, so probes and metrics can be placed behind different network policy (cluster-internal only, for example) from the application's traffic.
 
-The health-check SPI itself lives in `dev.vertique.core.health`, not in this package. That placement lets any module contribute a check without taking a dependency on `dev.vertique:vertique-management`.
+The health-check SPI itself lives in `dev.vertique.core.health`, not in this package, and so does the aggregation: each probe hands its set to `HealthCheckAggregator` from `dev.vertique:vertique-core` and renders the `HealthReport` it returns. That placement lets any module contribute a check, and anything in the process evaluate a set, without taking a dependency on `dev.vertique:vertique-management`.
 
 ---
 
@@ -69,11 +69,14 @@ Classify a check by the qualifier you contribute it under. `@Liveness` answers "
 
 ### Aggregation rules
 
+The probe endpoints evaluate their set through `HealthCheckAggregator` from `dev.vertique:vertique-core`, constructed with `healthCheckTimeoutSeconds`, so a probe and an in-process caller of the aggregator reach the same verdict for the same set and timeout. The rules below are the aggregator's, restated for the HTTP surface; the `vertique-core` contract (Extension Points, `HealthCheck`) is their home.
+
 - Every check in the set runs concurrently; the endpoint waits for all of them to settle, whatever their outcome. The one exception is a check that throws an `Error` while starting — see the last bullet.
 - The overall status is UP only when every individual check is UP.
 - An empty check set is UP with an empty `checks` array.
-- Each check is bounded by a per-check timeout (`healthCheckTimeoutSeconds`, default 5); a timed-out check counts as DOWN.
-- A check that returns a failed future, or that throws an **exception** synchronously from `check()`, is reported as DOWN carrying the throwable's message — or its fully qualified class name when the throwable has no message. A check that throws an `Error` rather than an exception from `check()` or `name()` is not attributable to one entry and degrades the whole probe to the terse `{"status":"DOWN","checks":[]}` body. Because checks are started in sequence, such an `Error` also prevents the checks after it from starting at all and abandons those already in flight.
+- Each check is bounded by a per-check timeout (`healthCheckTimeoutSeconds`, default 5); a timed-out check counts as DOWN. The aggregator instance `HealthCheckModule` binds for injection uses the aggregator's own default of 5 seconds, not `healthCheckTimeoutSeconds`; a caller that wants the probes' timeout constructs `new HealthCheckAggregator(config.healthCheckTimeoutSeconds())`.
+- A check that returns a failed future, or that throws an **exception** synchronously from `check()`, is reported as DOWN carrying the throwable's message — or its fully qualified class name when the throwable has no message. A check that returns `null` instead of a future is DOWN the same way; a check whose future completes with a `null` result is DOWN with no `data`. A check that throws an `Error` rather than an exception from `check()` or `name()` is not attributable to one entry and degrades the whole probe to the terse `{"status":"DOWN","checks":[]}` body. Because checks are started in sequence, such an `Error` also prevents the checks after it from starting at all and abandons those already in flight.
+- Rendering is the endpoint's own step on top of the report. A check whose result data cannot be rendered as JSON is reported DOWN by the endpoint even though the `HealthReport` entry is UP, so the HTTP status is decided from the rendered entries, and data that breaks the response as a whole degrades the probe to the terse body (see Invariants & Gotchas).
 
 ### Response format
 
@@ -192,7 +195,11 @@ Dagger qualifier annotations (`@Qualifier`, runtime-retained, valid on methods, 
 
 ### HealthCheckModule
 
-The abstract Dagger module in `dev.vertique.core.health` that declares both `@Multibinds` sets. Any module that contributes or consumes health checks must include it — directly or transitively. `ManagementModule` includes it, as do the Dagger modules of `dev.vertique:vertique-db-postgresql` and `dev.vertique:vertique-services`.
+The abstract Dagger module in `dev.vertique.core.health` that declares both `@Multibinds` sets and binds `HealthCheckAggregator` with its default timeout. Any module that contributes or consumes health checks must include it — directly or transitively. `ManagementModule` includes it, as do the Dagger modules of `dev.vertique:vertique-db-postgresql` and `dev.vertique:vertique-services`.
+
+### HealthCheckAggregator and HealthReport
+
+The in-process evaluator and its verdict, both in `dev.vertique.core.health`. The probe endpoints are one consumer; a test, a command-line tool or a shutdown hook that needs the same liveness or readiness verdict injects `HealthCheckAggregator` with the qualified set and calls `evaluate`, with no management server. The `vertique-core` contract documents them.
 
 ### Invariants & Gotchas
 
@@ -330,7 +337,7 @@ With hierarchical property expansion, `management.port=9090` in a `.properties` 
 
 | Dependency | Why |
 |------------|-----|
-| `dev.vertique:vertique-core` | `HealthCheck`, `HealthCheckResult`, `HealthStatus`, `@Liveness`, `@Readiness`, `HealthCheckModule`, `OrderedExtension`, `ConfigParser`, `@VertxConfig` |
+| `dev.vertique:vertique-core` | `HealthCheck`, `HealthCheckResult`, `HealthStatus`, `HealthCheckAggregator`, `HealthReport`, `@Liveness`, `@Readiness`, `HealthCheckModule`, `OrderedExtension`, `ConfigParser`, `@VertxConfig` |
 | `io.vertx:vertx-web` | `Router` and `RoutingContext` for the management server |
 | `com.google.dagger:dagger` | `ManagementModule` bindings and multibinding declarations |
 | `jakarta.inject:jakarta.inject-api` | `@Inject`, `@Singleton` |
