@@ -8,13 +8,15 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.vertique.config.parser.DefaultConfigMapper;
+import io.vertx.core.json.JsonObject;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link FlywayConfig} secret hygiene: the DDL password is readable after
- * deserialization, excluded from Jackson serialization ({@code WRITE_ONLY}), and redacted in the
- * class and builder {@code toString()}.
+ * deserialization, serialized as {@code "***"} by the config mapper (the write-only placeholders are
+ * omitted), and redacted in the class and builder {@code toString()}.
  */
 @DisplayName("FlywayConfig redaction")
 class FlywayConfigRedactionTest {
@@ -23,7 +25,7 @@ class FlywayConfigRedactionTest {
     private static final String PLACEHOLDER_SECRET = "role-secret-2";
     private static final String URL_SECRET = "url-secret-3";
 
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper = DefaultConfigMapper.lenient();
 
     private FlywayConfig deserialized() throws Exception {
         String json = """
@@ -46,15 +48,16 @@ class FlywayConfigRedactionTest {
     }
 
     @Test
-    @DisplayName("password is excluded from Jackson serialization (WRITE_ONLY)")
-    void password_writeOnly() throws Exception {
+    @DisplayName("the config mapper masks the password as *** and omits the write-only placeholders")
+    void password_maskedByConfigMapper() throws Exception {
         String serialized = mapper.writeValueAsString(deserialized());
 
         assertFalse(serialized.contains(PASSWORD), "password value must not serialize");
-        assertFalse(serialized.contains("\"password\""), "password key must not serialize");
         assertFalse(serialized.contains(PLACEHOLDER_SECRET), "placeholder value must not serialize");
-        assertFalse(serialized.contains("\"placeholders\""), "placeholders key must not serialize");
-        assertTrue(serialized.contains("\"user\":\"ddl\""), "non-secret fields still serialize");
+        JsonObject json = new JsonObject(serialized);
+        assertEquals("***", json.getString("password"));
+        assertFalse(json.containsKey("placeholders"), "placeholders key must not serialize");
+        assertEquals("ddl", json.getString("user"), "non-secret fields still serialize");
     }
 
     @Test

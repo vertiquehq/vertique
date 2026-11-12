@@ -28,6 +28,11 @@ import java.util.Map;
  * <p>An application may supply a custom config mapper through the {@code @ConfigMapper} override
  * seam; the framework re-layers its mandatory modules and lenient policy over the override so a
  * config parse never loses the framework's required behavior.
+ *
+ * <p>Secret hygiene is symmetric: the config mapper serializes every field whose dotted path
+ * {@link ConfigSecretRenderer#isSensitivePath(String) names a secret} as {@code "***"} (omitting it
+ * when absent), and every {@code parse} method rejects a section in which such a field holds the
+ * literal {@code "***"}, so a masked dump cannot be fed back as a secret.
  */
 public interface ConfigParser {
 
@@ -40,7 +45,8 @@ public interface ConfigParser {
      * @param type the target record type
      * @param <T> the target type
      * @return the parsed instance
-     * @throws ConfigurationException if the section cannot be deserialized into {@code type}
+     * @throws ConfigurationException if a secret field holds the literal {@code "***"}, or the section
+     *     cannot be deserialized into {@code type}
      */
     <T> T parse(JsonObject section, Class<T> type);
 
@@ -54,7 +60,8 @@ public interface ConfigParser {
      * @param <T> the element type
      * @return the parsed list, one element per entry, in the section's insertion order
      * @throws ConfigurationException if an entry key is blank, an entry value is not a JSON object,
-     *     an explicit identity conflicts with its key, or an entry cannot be deserialized
+     *     an explicit identity conflicts with its key, a secret field of an entry holds the literal
+     *     {@code "***"}, or an entry cannot be deserialized
      */
     <T> List<T> parseKeyedObject(JsonObject section, String identityProp, Class<T> elementType);
 
@@ -74,8 +81,8 @@ public interface ConfigParser {
      * @param <T> the element type
      * @return the parsed list, one element per entry, in the section's insertion order
      * @throws ConfigurationException if an entry key is blank, an entry value is not a JSON object,
-     *     an explicit identity or fixed property conflicts with its injected value, or an entry
-     *     cannot be deserialized
+     *     an explicit identity or fixed property conflicts with its injected value, a secret field of
+     *     an entry holds the literal {@code "***"}, or an entry cannot be deserialized
      */
     <T> List<T> parseKeyedObject(
             JsonObject section, String identityProp, Class<T> elementType, Map<String, Object> fixedProps);

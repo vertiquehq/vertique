@@ -1550,11 +1550,11 @@ When `enabled` is `false`, every other key in this section is ignored.
 |---|---:|---|
 | `http.ssl.enabled` | `false` | |
 | `http.ssl.keyStorePath` | *(none)* | keystore file, or the PEM private key |
-| `http.ssl.keyStorePassword` | *(none)* | |
+| `http.ssl.keyStorePassword` | *(none)* | serialized as `"***"` by the config mapper; a literal `"***"` is rejected |
 | `http.ssl.keyStoreType` | `"JKS"` | `JKS`, `PKCS12`, or `PEM`; any other value falls back to JKS handling |
 | `http.ssl.certPath` | *(none)* | PEM certificate; defaults to `keyStorePath` for a combined file |
 | `http.ssl.trustStorePath` | *(none)* | client-certificate validation (mTLS) |
-| `http.ssl.trustStorePassword` | *(none)* | |
+| `http.ssl.trustStorePassword` | *(none)* | serialized as `"***"` by the config mapper; a literal `"***"` is rejected |
 | `http.ssl.trustStoreType` | `"JKS"` | `JKS`, `PKCS12`, or `PEM` |
 | `http.ssl.clientAuth` | `"NONE"` | `NONE`, `REQUEST`, or `REQUIRED`; anything else fails startup |
 | `http.ssl.enabledProtocols` | `["TLSv1.2","TLSv1.3"]` | |

@@ -15,17 +15,14 @@ import java.nio.charset.StandardCharsets;
  *
  * <p>{@code secretRef} carries the resolved secret value itself (e.g. sourced from an environment
  * variable or a {@code vertique-config-*} secret provider before this section is parsed) — it is
- * never logged or re-serialized; see {@link SnapshotHmacConfig} for the keyset this entry belongs
- * to.
+ * never logged, and the config mapper behind {@code ConfigParser} serializes it as {@code "***"}
+ * (its name matches the shared secret rule, {@code ConfigSecretRenderer}); see
+ * {@link SnapshotHmacConfig} for the keyset this entry belongs to.
  *
  * @param keyId     the stable identifier for this key; must not be {@code null} or blank
  * @param secretRef the resolved secret key material; must not be {@code null} or blank
  */
-public record SnapshotHmacKeyConfig(
-        String keyId,
-
-        @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
-        String secretRef) {
+public record SnapshotHmacKeyConfig(String keyId, String secretRef) {
 
     /**
      * Minimum {@code secretRef} length, in UTF-8 bytes, required for adequate HMAC key strength.

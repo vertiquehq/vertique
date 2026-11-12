@@ -1212,6 +1212,18 @@ concurrently for any other purpose.
 Shared redactor so every module's config `toString()` masks the same things. `MASK` is `"***"`, and
 the input is never mutated — masking is applied to a copy used only for the returned string.
 
+`isSensitivePath` is the framework's one definition of what counts as a secret, and the same rule
+governs the config mapper behind `ConfigParser` (`dev.vertique:vertique-config-core`): when that
+mapper serializes a configuration record, every field whose dotted path within the record is
+sensitive renders as `"***"` when it has a value and is omitted when it is absent, and `ConfigParser`
+rejects a literal `"***"` at such a path so a masked dump cannot be fed back as a secret. A scalar
+secret component whose serialized name the rule recognises therefore needs no
+`@JsonProperty(access = WRITE_ONLY)`; it stays readable from configuration and through its accessor.
+An open bag that may hold a secret under any key keeps `WRITE_ONLY`. Only the config mapper masks —
+a record serialized with another `ObjectMapper` prints the secret — the rule keys on names, so a
+credential embedded in a URL-typed string is not recognised, and the substring rule also masks
+look-alikes such as `keyStorePath` or `maxTokens`.
+
 | Method | Behavior |
 |---|---|
 | `isSensitivePath(String dottedPath)` | `true` when the lower-cased path contains `password`, `secret`, `token`, `passphrase`, `credential`, `jaas.config`, `user.info`, `private.key`, `keystore`, or `truststore`; or when its separator-stripped, lower-cased form contains `apikey`, `accesskey`, or `secretkey`. |
@@ -1380,7 +1392,9 @@ runtime or annotation vocabulary.
   provided by generated code and by the framework's own scanners.
 - **Never log a secret-bearing config record without redaction.** Route the value through
   `ConfigSecretRenderer` in the record's `toString()` rather than relying on `@JsonIgnore`, which on
-  a record would also block deserialization and make the value unreadable from configuration.
+  a record would also block deserialization and make the value unreadable from configuration. Do not
+  serialize a configuration record with a mapper other than the config mapper: the masking lives
+  there, and secret components carry no `WRITE_ONLY` annotation of their own.
 
 ---
 

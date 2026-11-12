@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.vertique.core.config.ConfigParser;
+import dev.vertique.core.config.ConfigSecretRenderer;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.json.keyed.KeyedCollectionDeserializer;
 import io.vertx.core.json.JsonObject;
@@ -30,6 +31,12 @@ import java.util.Set;
  * <p>All deserialization runs through the held mapper, so the parser's behavior is entirely
  * determined by that mapper's configuration. {@link ConfigurationException} wrapping and messages
  * preserve the framework's value-free, secret-safe error contract (SEC-1).
+ *
+ * <p>Before binding, every section is scanned for the mask placeholder: a leaf whose dotted path
+ * {@code ConfigSecretRenderer} deems sensitive and whose value is the literal {@code "***"} — the
+ * shape the config mapper gives a serialized secret — is rejected with a {@link ConfigurationException}
+ * naming the path, so a masked dump fed back as configuration fails at startup instead of binding the
+ * mask as the secret.
  */
 public final class DefaultConfigParser implements ConfigParser {
 
@@ -57,11 +64,13 @@ public final class DefaultConfigParser implements ConfigParser {
      * @param type the target record type
      * @param <T> the target type
      * @return the parsed instance
-     * @throws ConfigurationException if the section cannot be deserialized into {@code type}
+     * @throws ConfigurationException if a secret field holds the literal mask placeholder {@code "***"},
+     *     or the section cannot be deserialized into {@code type}
      */
     @Override
     public <T> T parse(JsonObject section, Class<T> type) {
         JsonObject effective = section != null ? section : new JsonObject();
+        rejectMaskPlaceholder(effective, null);
         try {
             return mapper.readValue(effective.encode(), type);
         } catch (IOException | IllegalArgumentException ex) {
@@ -81,7 +90,8 @@ public final class DefaultConfigParser implements ConfigParser {
      * @param <T> the element type
      * @return the parsed list, one element per entry, in the section's insertion order
      * @throws ConfigurationException if an entry key is blank, an entry value is not a JSON object,
-     *     an explicit identity conflicts with its key, or an entry cannot be deserialized
+     *     an explicit identity conflicts with its key, a secret field of an entry holds the literal
+     *     mask placeholder {@code "***"}, or an entry cannot be deserialized
      */
     @Override
     public <T> List<T> parseKeyedObject(JsonObject section, String identityProp, Class<T> elementType) {
@@ -104,14 +114,19 @@ public final class DefaultConfigParser implements ConfigParser {
      * @param <T> the element type
      * @return the parsed list, one element per entry, in the section's insertion order
      * @throws ConfigurationException if an entry key is blank, an entry value is not a JSON object,
-     *     an explicit identity or fixed property conflicts with its injected value, or an entry
-     *     cannot be deserialized
+     *     an explicit identity or fixed property conflicts with its injected value, a secret field of
+     *     an entry holds the literal mask placeholder {@code "***"}, or an entry cannot be deserialized
      */
     @Override
     public <T> List<T> parseKeyedObject(
             JsonObject section, String identityProp, Class<T> elementType, Map<String, Object> fixedProps) {
         if (section == null || section.isEmpty()) {
             return List.of();
+        }
+        for (String entryKey : section.fieldNames()) {
+            if (section.getValue(entryKey) instanceof JsonObject entry) {
+                rejectMaskPlaceholder(entry, entryKey);
+            }
         }
         ObjectNode root;
         try {
@@ -136,6 +151,27 @@ public final class DefaultConfigParser implements ConfigParser {
             }
         }
         return List.copyOf(result);
+    }
+
+    // --- Mask placeholder rejection ---
+
+    /**
+     * Rejects a section in which a secret field carries the literal mask placeholder {@code "***"}.
+     * The path is relative to the record being bound (for a keyed entry, relative to the entry), the
+     * same shape the config mapper masks on output.
+     *
+     * @param section the raw section about to be bound
+     * @param entryKey the keyed-collection entry key when binding one entry, or {@code null}
+     * @throws ConfigurationException naming the offending path (never a value) when found
+     */
+    private static void rejectMaskPlaceholder(JsonObject section, String entryKey) {
+        ConfigSecretPaths.findMaskPlaceholder(section).ifPresent(path -> {
+            throw new ConfigurationException("Configuration key '" + path + "'"
+                    + (entryKey != null ? " of entry '" + entryKey + "'" : "")
+                    + " holds the mask placeholder '" + ConfigSecretRenderer.MASK
+                    + "' instead of a secret — a masked configuration dump cannot be fed back; supply the"
+                    + " real value or omit the key");
+        });
     }
 
     // --- Failure translation ---

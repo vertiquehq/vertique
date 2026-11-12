@@ -39,10 +39,15 @@ import lombok.extern.jackson.Jacksonized;
  * }
  * }</pre>
  *
- * <p><strong>Secret hygiene.</strong> {@code password}, {@code trustStorePassword}, and the vendor
- * {@code properties} bag are read from configuration but are {@link JsonProperty.Access#WRITE_ONLY}:
- * Jackson never serializes them back out, and {@link #toString()} renders them redacted, so a config
- * dump, diagnostics endpoint, or log line cannot reveal them.
+ * <p><strong>Secret hygiene.</strong> {@code password} and {@code trustStorePassword} are read from
+ * configuration and stay readable through their accessors; the config mapper behind
+ * {@code ConfigParser} serializes them as {@code "***"} when set and omits them when absent, because
+ * their names match the shared secret rule ({@code ConfigSecretRenderer}). The vendor
+ * {@code properties} bag may carry a secret under any key, so it stays
+ * {@link JsonProperty.Access#WRITE_ONLY} and is never serialized back out. {@link #toString()}
+ * renders all three redacted, so a config dump, diagnostics endpoint, or log line cannot reveal them.
+ * Only the config mapper masks: an application that serializes this record with another
+ * {@code ObjectMapper} prints the passwords.
  */
 @Getter
 @Builder
@@ -66,8 +71,7 @@ public class DbPoolConfig {
     /** The database user. */
     private final String user;
 
-    /** The database password. */
-    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
+    /** The database password. Masked as {@code "***"} when the config mapper serializes the record. */
     private final String password;
 
     // --- Pool sizing ---
@@ -151,7 +155,8 @@ public class DbPoolConfig {
 
     /**
      * Vendor-specific connection properties (e.g., {@code ApplicationName} for PostgreSQL). Defaults
-     * to an empty map.
+     * to an empty map. Write-only: the bag may hold a secret under any key, so it is never serialized
+     * back out.
      */
     @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     @Builder.Default
@@ -189,9 +194,9 @@ public class DbPoolConfig {
     private final String trustStorePath;
 
     /**
-     * Password for the trust store. Required for JKS and PKCS12 formats; ignored for PEM.
+     * Password for the trust store. Required for JKS and PKCS12 formats; ignored for PEM. Masked as
+     * {@code "***"} when the config mapper serializes the record.
      */
-    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     private final String trustStorePassword;
 
     /**

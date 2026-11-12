@@ -344,8 +344,29 @@ Absent any `@ConfigMapper` binding, the framework uses its own lenient default m
 
 - **The config mapper is isolated** from Vert.x's `DatabindCodec.mapper()` and from any REST or JSON
   profile mapper. It registers `Jdk8Module`, `JavaTimeModule`, `KeyedCollectionModule` (from
-  `dev.vertique:vertique-json`), and Vert.x's Jackson module; it coerces scalars leniently and
-  tolerates unknown properties, independent of any strictness the REST-input mapper is given.
+  `dev.vertique:vertique-json`), the secret-masking module, and Vert.x's Jackson module; it coerces
+  scalars leniently and tolerates unknown properties, independent of any strictness the REST-input
+  mapper is given.
+- **Serialization through the config mapper masks secrets.** Every field whose dotted path within
+  the record `ConfigSecretRenderer.isSensitivePath` (in `dev.vertique:vertique-core`) deems sensitive
+  — `ssl.keyStorePassword`, `credentials`, `apiKey`, a `jaas` record's `config` — renders as `"***"`
+  when it has a value and is omitted when it is `null` or an empty `Optional`; a secret-named record
+  or list masks as one `"***"`. The path uses the serialized property names, so a
+  `@JsonProperty("pwd")` renames a field out of the rule. An open bag (`Map`, `JsonObject`,
+  collection, also held through an `Optional`) under a non-secret key is written with its sensitive
+  entries masked at every depth, the walk `redactBag` applies to `toString()`, with `null` secret
+  entries dropped. The rule keys on names: a credential embedded in a URL-typed string (`jdbcUrl`)
+  serializes as given. The live value is untouched, deserialization is untouched, and so is any other
+  `ObjectMapper`: a record dumped through a REST or process mapper is not masked. A `@ConfigMapper`
+  override gets the module too, provided it has not serialized anything before it is finalized; a
+  custom serializer registered for a record type and `@JsonAnyGetter` entries bypass it, and the
+  members of a `@JsonUnwrapped` property mask by their own names only (the enclosing property's name
+  is not part of their path). The substring rule also masks look-alikes (`keyStorePath`,
+  `maxTokens`).
+- **`ConfigParser` rejects the mask placeholder.** A secret-path leaf whose value is the literal
+  `"***"` fails the parse with a `ConfigurationException` naming the dotted path (relative to the
+  record, or to the entry for keyed collections), so a masked dump cannot be fed back as the secret.
+  The same literal under a non-secret key is an ordinary value.
 - **An `@ConfigMapper` override is finalized in place**, not copied — the framework layers its
   mandatory modules and lenient policy onto the very instance supplied and then owns it. Do not share
   that instance concurrently for another purpose.
@@ -483,10 +504,10 @@ instance before first use — see [Config Parsing](#config-parsing) above.
 
 | Artifact | Scope | Purpose |
 |---|---|---|
-| `dev.vertique:vertique-core` | compile | `ConfigParser` interface, `@ConfigMapper` qualifier, `JsonConfigPaths`, `ConfigurationException` |
+| `dev.vertique:vertique-core` | compile | `ConfigParser` interface, `@ConfigMapper` qualifier, `ConfigSecretRenderer` (the secret rule the mapper masks by), `JsonConfigPaths`, `ConfigurationException` |
 | `dev.vertique:vertique-json` | compile | `KeyedCollectionModule` — keyed-collection deserialization on the config mapper |
 | `io.vertx:vertx-config` | compile | `ConfigRetriever`, the built-in store types, and the `ConfigStoreFactory` SPI |
-| `com.fasterxml.jackson.core:jackson-databind` | compile | `ObjectMapper` behind the config parser |
+| `com.fasterxml.jackson.core:jackson-databind` | compile | `ObjectMapper` behind the config parser; the secret-masking bean-serializer modifier |
 | `com.fasterxml.jackson.datatype:jackson-datatype-jdk8` | compile | `Jdk8Module` — mandatory config-mapper module |
 | `com.fasterxml.jackson.datatype:jackson-datatype-jsr310` | compile | `JavaTimeModule` — mandatory config-mapper module |
 | `com.google.dagger:dagger` | compile | `@Module`, `@Provides`, `@BindsOptionalOf` |

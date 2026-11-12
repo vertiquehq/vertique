@@ -385,7 +385,7 @@ public record IdentitySnapshotConfig(
 | `identity.snapshot.onDegradation` | `FAIL` | `FAIL` or `CONTINUE_WITHOUT_IDENTITY` |
 | `identity.snapshot.hmacKeys` | — | **Required**; signing/verification cannot proceed without at least an active key |
 | `identity.snapshot.hmacKeys.active.keyId` | — | Required, non-blank |
-| `identity.snapshot.hmacKeys.active.secretRef` | — | Required, ≥ 32 UTF-8 bytes; never logged or re-serialized |
+| `identity.snapshot.hmacKeys.active.secretRef` | — | Required, ≥ 32 UTF-8 bytes; never logged; the config mapper serializes it as `"***"` and `ConfigParser` rejects a literal `"***"` |
 | `identity.snapshot.hmacKeys.previous[]` | empty | Each `keyId` must be distinct from the active key's and from every other `previous` key; each `secretRef` ≥ 32 UTF-8 bytes |
 | `identity.snapshot.maxCarrierLifetimeMs` | unset (unbounded) | Required when any `carriageRequirements` entry is `REQUIRED` |
 | `identity.snapshot.maxSnapshotLifetimeMs` | unset (unbounded) | Required when any `carriageRequirements` entry is `REQUIRED` |

@@ -17,8 +17,8 @@ import org.junit.jupiter.api.Test;
  *
  * <p>The HMAC secret is available to the runtime but must never leak out. These tests pin both
  * halves of the direct value contract: the secret is readable through {@link
- * KafkaMessageKeyHashConfig#hmacSecret()}, yet it is excluded from Jackson serialization ({@code
- * WRITE_ONLY}) and redacted in {@link KafkaMessageKeyHashConfig#toString()}.
+ * KafkaMessageKeyHashConfig#hmacSecret()}, yet the config mapper serializes it as {@code "***"} (and
+ * omits it when absent) and it is redacted in {@link KafkaMessageKeyHashConfig#toString()}.
  */
 @DisplayName("KafkaMessageKeyHashConfig redaction")
 class KafkaMessageKeyHashConfigRedactionTest {
@@ -39,15 +39,21 @@ class KafkaMessageKeyHashConfigRedactionTest {
     }
 
     @Test
-    @DisplayName("secret is directly readable but excluded from Jackson serialization (WRITE_ONLY)")
-    void hmacSecret_writeOnly() throws JsonProcessingException {
-        KafkaMessageKeyHashConfig config = new KafkaMessageKeyHashConfig("s");
+    @DisplayName("secret is directly readable but the config mapper serializes it as ***")
+    void hmacSecret_maskedByConfigMapper() throws JsonProcessingException {
+        KafkaMessageKeyHashConfig config = new KafkaMessageKeyHashConfig("super-secret-key");
 
-        assertEquals("s", config.hmacSecret());
+        assertEquals("super-secret-key", config.hmacSecret());
 
         String serialized = DefaultConfigMapper.lenient().writeValueAsString(config);
-        assertFalse(serialized.contains("hmacSecret"), "WRITE_ONLY secret must not serialize");
-        assertFalse(serialized.contains("\"s\""), "the secret value must not serialize");
+        assertEquals("{\"hmacSecret\":\"***\"}", serialized);
+    }
+
+    @Test
+    @DisplayName("an absent secret is omitted by the config mapper")
+    void nullHmacSecret_omittedByConfigMapper() throws JsonProcessingException {
+        String serialized = DefaultConfigMapper.lenient().writeValueAsString(new KafkaMessageKeyHashConfig(null));
+        assertEquals("{}", serialized);
     }
 
     @Test

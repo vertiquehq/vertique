@@ -73,8 +73,12 @@ Lombok `@Builder` configuration value object. Deserialized from the `"flyway"` s
 | `instances` | `List<FlywayInstanceConfig>` | `null` | Per-instance overrides of a named run, bound from the keyed `flyway.instances` object. It never selects a mode: absent, `null` and `{}` all mean no overrides. A non-empty object without `named: true` is a configuration error, not ignored |
 | `lockRetryCount` | `Integer` | `null` | Number of one-second retries Flyway makes to acquire its history-table lock while another process holds it. `null` keeps Flyway's default of `50` (about 50 seconds); `-1` retries without a bound. Values below `-1` are rejected when the runner resolves named instances, or builds Flyway for a single-history `MIGRATE`/`VALIDATE` run. Applies to the single run and, unless an instance overrides it, to every named instance. See [Concurrent starts](#concurrent-starts) |
 
-**Secret hygiene:** `password` and `placeholders` are write-only — read from configuration but never
-serialized back out by Jackson. `toString()` renders the password as `<redacted>`, the placeholder
+**Secret hygiene:** `password` is read from configuration and stays readable; the config mapper
+behind `ConfigParser` serializes it as `"***"` when set and omits it when absent (its name matches
+the shared secret rule, `ConfigSecretRenderer` in `dev.vertique:vertique-core`), and `ConfigParser`
+rejects a literal `"***"` as its value. `placeholders` stays write-only — a placeholder value may be
+a secret under any key, so the bag is never serialized back out. Only the config mapper masks;
+another `ObjectMapper` prints the password. `toString()` renders the password as `<redacted>`, the placeholder
 keys without their values, and a `password=` parameter in `jdbcUrl` masked, on the class and on its
 builder. The same holds for every nested `FlywayInstanceConfig`. Prefer `user` and `password` over
 credentials embedded in `jdbcUrl`.

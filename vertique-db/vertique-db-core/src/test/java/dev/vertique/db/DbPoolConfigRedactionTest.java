@@ -8,6 +8,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.vertique.config.parser.DefaultConfigMapper;
+import io.vertx.core.json.JsonObject;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -17,8 +19,9 @@ import org.junit.jupiter.api.Test;
  *
  * <p>The password, the trust-store password, and the vendor properties bag are available to the
  * runtime but must never leak out. These tests pin both halves of the contract: each secret is
- * readable through its accessor after deserialization, yet it is excluded from Jackson
- * serialization ({@code WRITE_ONLY}) and redacted in {@link DbPoolConfig#toString()}.
+ * readable through its accessor after deserialization, yet the config mapper serializes the two
+ * passwords as {@code "***"} and omits the write-only properties bag, and every secret is redacted
+ * in {@link DbPoolConfig#toString()}.
  */
 @DisplayName("DbPoolConfig redaction")
 class DbPoolConfigRedactionTest {
@@ -27,7 +30,7 @@ class DbPoolConfigRedactionTest {
     private static final String TRUST_STORE_PASSWORD = "trust-secret-2";
     private static final String PROPERTY_VALUE = "property-secret-3";
 
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper = DefaultConfigMapper.lenient();
 
     private DbPoolConfig deserialized() throws Exception {
         String json = """
@@ -55,17 +58,29 @@ class DbPoolConfigRedactionTest {
     }
 
     @Test
-    @DisplayName("secrets are excluded from Jackson serialization (WRITE_ONLY)")
-    void secrets_writeOnly() throws Exception {
+    @DisplayName("the config mapper masks the passwords as *** and omits the write-only properties bag")
+    void secrets_maskedByConfigMapper() throws Exception {
         String serialized = mapper.writeValueAsString(deserialized());
 
         assertFalse(serialized.contains(PASSWORD), "password value must not serialize");
         assertFalse(serialized.contains(TRUST_STORE_PASSWORD), "trust-store password value must not serialize");
         assertFalse(serialized.contains(PROPERTY_VALUE), "vendor property value must not serialize");
-        assertFalse(serialized.contains("\"password\""), "password key must not serialize");
-        assertFalse(serialized.contains("\"trustStorePassword\""), "trustStorePassword key must not serialize");
-        assertFalse(serialized.contains("\"properties\""), "properties key must not serialize");
-        assertTrue(serialized.contains("\"host\":\"db.example\""), "non-secret fields still serialize");
+        JsonObject json = new JsonObject(serialized);
+        assertEquals("***", json.getString("password"));
+        assertEquals("***", json.getString("trustStorePassword"));
+        assertFalse(json.containsKey("properties"), "properties key must not serialize");
+        assertEquals("db.example", json.getString("host"), "non-secret fields still serialize");
+    }
+
+    @Test
+    @DisplayName("absent passwords are omitted from the config mapper's output")
+    void absentSecrets_omittedByConfigMapper() throws Exception {
+        DbPoolConfig config = mapper.readValue("{\"host\":\"db.example\"}", DbPoolConfig.class);
+
+        JsonObject json = new JsonObject(mapper.writeValueAsString(config));
+
+        assertFalse(json.containsKey("password"), json.encode());
+        assertFalse(json.containsKey("trustStorePassword"), json.encode());
     }
 
     @Test
