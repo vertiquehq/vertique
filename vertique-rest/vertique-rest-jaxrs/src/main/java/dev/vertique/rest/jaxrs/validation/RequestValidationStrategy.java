@@ -61,7 +61,9 @@ public interface RequestValidationStrategy extends OrderedExtension {
      * strategy must opt in explicitly. {@code OpenApiContractValidationStrategy} ({@code
      * vertique-rest-openapi-validation}) overrides this to {@code true}. The rest-jaxrs mount
      * composition validator reads it, when a strategy id is selected, to decide whether a mount's
-     * OpenAPI contract location must parse.
+     * OpenAPI contract location must parse and whether two distinct operations sharing an
+     * operationId across mounts whose normalized contract locations are equal fail startup, since
+     * such a strategy would look both up in one contract.
      *
      * @return {@code true} when this strategy resolves operations from the mount's contract
      */

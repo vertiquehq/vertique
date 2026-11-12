@@ -18,6 +18,8 @@ import dev.vertique.rest.openapi.docs.fixture.input.b.PartnerApplicationModule;
 import dev.vertique.rest.openapi.docs.fixture.input.it.ItApplicationModules;
 import dev.vertique.rest.openapi.docs.fixture.input.it.TestValidatorModule;
 import dev.vertique.rest.openapi.docs.fixture.input.patterns.PatternsApplicationModule;
+import dev.vertique.rest.openapi.docs.fixture.input.sharedid.StoreApplicationModule;
+import dev.vertique.rest.openapi.docs.fixture.input.sharedid.SupplierApplicationModule;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 
@@ -190,5 +192,27 @@ public final class InputTestComponents {
         /** Factory taking the application configuration. */
         @Component.Factory
         interface ComponentFactory extends Factory<TwoApplicationsComponent> {}
+    }
+
+    /**
+     * The two applications {@code store} and {@code supplier}: each lists one resource of its own,
+     * and both resources' one operation has the id {@code list}.
+     */
+    @Singleton
+    @Component(
+            modules = {
+                RestModule.class,
+                OpenApiDocsModule.class,
+                ConfigParsingModule.class,
+                DocsTestSupportModule.class,
+                InputValidationModule.class,
+                StoreApplicationModule.class,
+                SupplierApplicationModule.class
+            })
+    public interface SharedOperationIdComponent extends InputProvisions {
+
+        /** Factory taking the application configuration. */
+        @Component.Factory
+        interface ComponentFactory extends Factory<SharedOperationIdComponent> {}
     }
 }

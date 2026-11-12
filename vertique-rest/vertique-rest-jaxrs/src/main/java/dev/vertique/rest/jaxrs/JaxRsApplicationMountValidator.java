@@ -15,23 +15,31 @@ import java.lang.reflect.Method;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.IdentityHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * The rest-jaxrs {@link MountCompositionValidator} contribution: rejects an application mount that
- * conflicts with a hand-built JAX-RS mount, rejects two operations on any JAX-RS mounts that share
- * an operationId without sharing the same owner once one or more applications are declared, rejects
- * a non-null application name carried by more than one application mount in the given list,
- * and — under a strategy reporting {@link
- * RequestValidationStrategy#resolvesOperationsFromMountContract()} — rejects a JAX-RS mount whose
- * OpenAPI contract location cannot be parsed. Only when its own checks find no violation does it
- * mark every application mount instance in the given list validated, so {@link
- * JaxRsRouterMount#createRouter} accepts it.
+ * conflicts with a hand-built JAX-RS mount, rejects a non-null application name carried by more than
+ * one application mount in the given list, and, once one or more applications are declared, rejects
+ * two operations on different JAX-RS mounts that share an operationId without sharing the same owner
+ * when both mounts are hand-built or, under a strategy reporting {@link
+ * RequestValidationStrategy#resolvesOperationsFromMountContract()}, when both mounts resolve to the
+ * same OpenAPI contract location. Under such a strategy it also rejects a JAX-RS mount whose
+ * contract location cannot be parsed. Only when its own checks find no violation does it mark every
+ * application mount instance in the given list validated, so {@link JaxRsRouterMount#createRouter}
+ * accepts it, and log one WARN for each operationId more than one mount uses where at least one of
+ * them is an application mount.
  *
  * <p>An application mount is a {@link JaxRsRouterMount} whose {@link JaxRsRouterMount#declaringType()}
  * is non-{@code null}; a non-application {@link JaxRsRouterMount} is a hand-built JAX-RS mount. A
@@ -61,11 +69,17 @@ import java.util.stream.Collectors;
  *       composition can hold an application mount this validator instance's own view does not
  *       reflect. Scans every {@link JaxRsRouterMount}'s resources with {@link ResourceScanner}'s
  *       accumulating overload, discarding the scanner's own violations (the registrar remains the
- *       reporter of declaration problems), and reports every pair of operations on two different
- *       mounts that share an operationId unless they share the same owner: the same normalized
- *       resource class, method name, and parameter types. The normalized class is the resource
- *       instance's own class, or that class's superclass when {@link
- *       JaxRsApplicationComposer#sameSurface} holds between them.
+ *       reporter of declaration problems, including a duplicate operationId within one mount). Two
+ *       operations on different mounts that share an operationId never collide when they share the
+ *       same owner: the same normalized resource class, method name, and parameter types. The
+ *       normalized class is the resource instance's own class, or that class's superclass when
+ *       {@link JaxRsApplicationComposer#sameSurface} holds between them. Otherwise the pair is
+ *       reported when both mounts are hand-built (neither carries an application name), whatever
+ *       the strategy, or when the selected strategy reports {@link
+ *       RequestValidationStrategy#resolvesOperationsFromMountContract()} and both mounts' non-null
+ *       contract locations are equal after {@link Path#normalize()}; a pair involving an
+ *       application mount is allowed otherwise, because operationIds are scoped per mount. An
+ *       absolute location and a relative one naming the same file count as distinct.
  *   <li><strong>Unparseable contract location.</strong> Runs under the same gate as the operationId
  *       scan, and only when the registered {@link RequestValidationStrategy} whose {@link
  *       RequestValidationStrategy#id()} equals the configured {@code jaxrs.validationStrategy}
@@ -76,11 +90,18 @@ import java.util.stream.Collectors;
  *       parsed ({@link InvalidPathException}) is reported as a violation naming the mount — an
  *       application by its name and the setting its location came from, a hand-built mount by its
  *       path — and never the raw value.
- *   <li><strong>Validated mark.</strong> Only when the checks above found no violation, marks every
- *       application mount instance in the given list validated.
+ *   <li><strong>Validated mark and shared-id warning.</strong> Only when the checks above found no
+ *       violation, marks every application mount instance in the given list validated and, for
+ *       each operationId used by more than one mount of which at least one is an application mount
+ *       (same-owner reuse included), logs one WARN naming the operationId, each application by name
+ *       and each hand-built mount by path, and stating that controls keyed on the operationId alone
+ *       must also key on the application. The warnings are logged once per call, that is, once per
+ *       composition, in operationId order.
  * </ol>
  */
 final class JaxRsApplicationMountValidator implements MountCompositionValidator {
+
+    private static final Logger LOG = LoggerFactory.getLogger(JaxRsApplicationMountValidator.class);
 
     private final RestApplications view;
     private final JaxRsConfig config;
@@ -129,17 +150,24 @@ final class JaxRsApplicationMountValidator implements MountCompositionValidator 
             violations.addAll(applicationPairConflictViolations(applicationMounts));
             violations.addAll(repeatedApplicationNameViolations(applicationMounts));
         }
+        List<Operation> operations = List.of();
         if (!view.all().isEmpty() || !applicationMounts.isEmpty()) {
-            violations.addAll(operationIdViolations(mounts));
-            if (resolvesLocationsFromMountContract()) {
-                violations.addAll(locationParseViolations(allJaxRsMounts));
+            Map<JaxRsRouterMount, Path> contractLocations = new IdentityHashMap<>();
+            boolean comparesContractLocations = resolvesLocationsFromMountContract();
+            if (comparesContractLocations) {
+                violations.addAll(locationParseViolations(allJaxRsMounts, contractLocations));
             }
+            operations = scanOperations(allJaxRsMounts);
+            violations.addAll(operationIdViolations(operations, comparesContractLocations, contractLocations));
         }
 
         List<String> sortedViolations = violations.stream().sorted().toList();
         if (sortedViolations.isEmpty()) {
             for (JaxRsRouterMount applicationMount : applicationMounts) {
                 applicationMount.markValidated();
+            }
+            for (String warning : sharedOperationIdWarnings(operations)) {
+                LOG.warn(warning);
             }
         }
         return sortedViolations;
@@ -277,28 +305,43 @@ final class JaxRsApplicationMountValidator implements MountCompositionValidator 
     }
 
     /**
-     * Reports every pair of operations, scanned from two different {@link JaxRsRouterMount}s, that
-     * share an operationId without sharing the same owner.
+     * Scans every operation of every given JAX-RS mount, discarding the scanner's own violations.
      *
-     * @param mounts every mount in the composition, in mounting order
-     * @return the operationId collision violations, unsorted
+     * @param jaxRsMounts every {@link JaxRsRouterMount} in the composition, in mounting order
+     * @return the scanned operations, in mounting order
      */
-    private static List<String> operationIdViolations(List<RouterMount> mounts) {
+    private static List<Operation> scanOperations(List<JaxRsRouterMount> jaxRsMounts) {
         ResourceScanner scanner = new ResourceScanner(new SecurityPolicyBuilder());
         List<SecurityPolicyViolation> discardedScannerViolations = new ArrayList<>();
 
         List<Operation> operations = new ArrayList<>();
-        for (RouterMount mount : mounts) {
-            if (!(mount instanceof JaxRsRouterMount jaxRsRouterMount)) {
-                continue;
-            }
-            for (Object resource : jaxRsRouterMount.orderedResources()) {
+        for (JaxRsRouterMount mount : jaxRsMounts) {
+            for (Object resource : mount.orderedResources()) {
                 for (ResourceMethodMeta meta : scanner.scanResource(resource, discardedScannerViolations)) {
-                    operations.add(Operation.of(meta, jaxRsRouterMount));
+                    operations.add(Operation.of(meta, mount));
                 }
             }
         }
+        return operations;
+    }
 
+    /**
+     * Reports every pair of operations, scanned from two different {@link JaxRsRouterMount}s, that
+     * share an operationId without sharing the same owner, when both mounts are hand-built, or when
+     * {@code comparesContractLocations} holds and both mounts resolve to the same parsed contract
+     * location.
+     *
+     * @param operations                every scanned operation of the composition
+     * @param comparesContractLocations whether the selected strategy reports {@link
+     *                                  RequestValidationStrategy#resolvesOperationsFromMountContract()}
+     * @param contractLocations         each mount's normalized contract location; a mount with a
+     *                                  {@code null} or unparseable location has no entry
+     * @return the operationId collision violations, unsorted
+     */
+    private static List<String> operationIdViolations(
+            List<Operation> operations,
+            boolean comparesContractLocations,
+            Map<JaxRsRouterMount, Path> contractLocations) {
         Map<String, List<Operation>> byOperationId =
                 operations.stream().collect(Collectors.groupingBy(Operation::operationId));
 
@@ -308,14 +351,74 @@ final class JaxRsApplicationMountValidator implements MountCompositionValidator 
                 for (int j = i + 1; j < group.size(); j++) {
                     Operation a = group.get(i);
                     Operation b = group.get(j);
-                    if (a.mount() != b.mount() && !a.owner().equals(b.owner())) {
-                        violations.add("Duplicate operationId '" + a.operationId() + "' across mounts: " + a.label()
+                    if (a.mount() == b.mount() || a.owner().equals(b.owner())) {
+                        continue;
+                    }
+                    if (!isApplicationMount(a.mount()) && !isApplicationMount(b.mount())) {
+                        violations.add("Duplicate operationId '" + a.operationId() + "' across hand-built mounts: "
+                                + a.label() + " and " + b.label());
+                    } else if (comparesContractLocations && sameContractLocation(a, b, contractLocations)) {
+                        violations.add("Duplicate operationId '" + a.operationId()
+                                + "' across mounts that resolve to the same OpenAPI contract location: " + a.label()
                                 + " and " + b.label());
                     }
                 }
             }
         }
         return violations;
+    }
+
+    /**
+     * Returns whether both operations' mounts have a parsed contract location and the two are equal.
+     *
+     * @param a                 the first operation
+     * @param b                 the second operation
+     * @param contractLocations each mount's normalized contract location
+     * @return {@code true} when both mounts resolve to one contract location
+     */
+    private static boolean sameContractLocation(
+            Operation a, Operation b, Map<JaxRsRouterMount, Path> contractLocations) {
+        Path first = contractLocations.get(a.mount());
+        return first != null && first.equals(contractLocations.get(b.mount()));
+    }
+
+    /**
+     * Builds one warning for each operationId used by more than one mount of which at least one is
+     * an application mount, same-owner reuse included, in operationId order. Each warning names the
+     * operationId, every application using it by name (sorted), then every hand-built mount using it
+     * by path (sorted), and states that controls keyed on the operationId alone must also key on the
+     * application.
+     *
+     * @param operations every scanned operation of the composition
+     * @return the warnings, possibly empty
+     */
+    private static List<String> sharedOperationIdWarnings(List<Operation> operations) {
+        Map<String, List<Operation>> byOperationId =
+                new TreeMap<>(operations.stream().collect(Collectors.groupingBy(Operation::operationId)));
+        List<String> warnings = new ArrayList<>();
+        for (Map.Entry<String, List<Operation>> entry : byOperationId.entrySet()) {
+            Set<JaxRsRouterMount> mounts = Collections.newSetFromMap(new IdentityHashMap<>());
+            entry.getValue().forEach(operation -> mounts.add(operation.mount()));
+            if (mounts.size() < 2 || mounts.stream().noneMatch(JaxRsApplicationMountValidator::isApplicationMount)) {
+                continue;
+            }
+            Set<String> names = new LinkedHashSet<>();
+            mounts.stream()
+                    .filter(JaxRsApplicationMountValidator::isApplicationMount)
+                    .map(mount -> "application '" + mount.applicationName() + "'")
+                    .sorted()
+                    .forEach(names::add);
+            mounts.stream()
+                    .filter(mount -> !isApplicationMount(mount))
+                    .map(mount -> "hand-built JAX-RS mount '" + mount.mountPath() + "'")
+                    .sorted()
+                    .forEach(names::add);
+            warnings.add("OperationId '" + entry.getKey() + "' is used by more than one JAX-RS mount: "
+                    + String.join(", ", names)
+                    + ". Controls keyed on the operationId alone (audit capture bindings, custom validation"
+                    + " strategies, interceptors) must also key on the application.");
+        }
+        return warnings;
     }
 
     /**
@@ -339,15 +442,19 @@ final class JaxRsApplicationMountValidator implements MountCompositionValidator 
     }
 
     /**
-     * Reports every JAX-RS mount whose non-null {@code meta().openapiPath()} cannot be parsed as a
-     * path ({@link Path#of(String, String...)} then {@link Path#normalize()} throwing {@link
-     * InvalidPathException}). A mount with a {@code null} {@code openapiPath()} is skipped.
+     * Normalizes every JAX-RS mount's non-null {@code meta().openapiPath()} into {@code
+     * contractLocations} and reports every mount whose location cannot be parsed as a path ({@link
+     * Path#of(String, String...)} then {@link Path#normalize()} throwing {@link
+     * InvalidPathException}). A mount with a {@code null} {@code openapiPath()} is skipped, and an
+     * unparseable one gets no entry.
      *
-     * @param jaxRsMounts every {@link JaxRsRouterMount} in the given mounts list, application and
-     *                    hand-built alike
+     * @param jaxRsMounts       every {@link JaxRsRouterMount} in the given mounts list, application
+     *                          and hand-built alike
+     * @param contractLocations receives each parsed mount's normalized contract location
      * @return the unparseable-location violations, unsorted
      */
-    private List<String> locationParseViolations(List<JaxRsRouterMount> jaxRsMounts) {
+    private List<String> locationParseViolations(
+            List<JaxRsRouterMount> jaxRsMounts, Map<JaxRsRouterMount, Path> contractLocations) {
         List<String> violations = new ArrayList<>();
         for (JaxRsRouterMount mount : jaxRsMounts) {
             String openapiPath = mount.meta().openapiPath();
@@ -355,7 +462,7 @@ final class JaxRsApplicationMountValidator implements MountCompositionValidator 
                 continue;
             }
             try {
-                Path.of(openapiPath).normalize();
+                contractLocations.put(mount, Path.of(openapiPath).normalize());
             } catch (InvalidPathException e) {
                 violations.add(unparseableLocationViolation(mount));
             }
@@ -403,7 +510,7 @@ final class JaxRsApplicationMountValidator implements MountCompositionValidator 
     /**
      * One operation scanned from one {@link JaxRsRouterMount}: its operationId, its owner, and the
      * mount it was scanned from — the identity {@link #operationIdViolations} compares to find a
-     * cross-mount collision.
+     * cross-mount collision and {@link #sharedOperationIdWarnings} groups to find a shared id.
      *
      * @param operationId the scanned operation's operationId
      * @param owner       the operation's normalized owner

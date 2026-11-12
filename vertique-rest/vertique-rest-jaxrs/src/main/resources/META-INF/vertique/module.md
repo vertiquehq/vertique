@@ -122,10 +122,10 @@ type bound by a variable is `Object`. Override such a method with concrete param
 default route's `operationId` is the same in every class that inherits
 it, and operationIds are unique per mount, so only one resource per mount can inherit a given
 default route; give the others their own route by overriding it with a distinct
-`@Operation(operationId = "…")`. Once any `@RestApplication` is registered (active or not) or an
-application mount is present, operationIds are unique across mounts too (the same-owner
-exemption kept; see [Startup failures](#startup-failures)), so only one resource class across all
-JAX-RS mounts can inherit it.
+`@Operation(operationId = "…")`. Across mounts the id may repeat; once any `@RestApplication` is
+registered or an application mount is present, it may not repeat across two hand-built mounts or
+across mounts that share one contract location under a contract-driven strategy (see [Startup
+failures](#startup-failures)).
 
 `OperationHandlerContributor`s are sorted by the framework `OrderedExtension` comparator (phase →
 priority → `orderKey`); the invoker is always appended last. Every declaration problem found during
@@ -1574,7 +1574,7 @@ route installs:
   warning-only overlap detection `HttpVerticle` already performs for every mount.
 
 Only the Dagger-built `HttpVerticle` hosts application mounts. Its composition validators run the
-checks above, the cross-mount operationId refusal and, where it applies, the contract-location parse
+checks above, the cross-mount operationId rule and, where it applies, the contract-location parse
 below (see [Startup failures](#startup-failures)), and mark each application mount instance validated
 only once every check passes for the whole composition; an `HttpVerticle` built with the public
 five-argument constructor, or a subclass that runs no composition validator, refuses to create an
@@ -1590,7 +1590,9 @@ normalizes every JAX-RS mount's non-null contract location (`Path.of(value).norm
 one it cannot parse as a violation, naming the mount — an application by its name and the setting its
 location came from (`jaxrs.applications.<name>.openapiPath`, the `@RestApplication` annotation's
 `openapiPath`, or `jaxrs.openapiPath`), a hand-built mount by its path — and never the raw,
-unparseable value. This parse runs under the same gate as the operationId refusal below, and never
+unparseable value. The same flag makes mounts whose normalized locations are equal share one
+operationId namespace (see [Startup failures](#startup-failures)). This parse runs under the same
+gate as the operationId rule below, and never
 when no registered strategy carries the configured `jaxrs.validationStrategy` id (`createRouter`'s own
 fail-fast selection reports that separately).
 
@@ -1872,11 +1874,18 @@ reports these as violation strings, surfaced through `HttpVerticle`'s own aggreg
 `IllegalStateException("Invalid mount configuration: …")` rather than thrown directly by the
 validator:
 
-- a duplicate operationId **across** mounts: two operations on different `JaxRsRouterMount`s that
-  share an operationId fail startup unless they are the same operation — the same resource class (an
-  annotation-free AOP proxy counts as its base class), method name, and parameter types — naming both
-  operations and both mounts; this global, cross-mount refusal is kept until a later change
-  scopes it per mount;
+- a duplicate operationId **across** mounts, where operationIds are otherwise scoped per mount: two
+  operations on different `JaxRsRouterMount`s that share an operationId, and are not the same
+  operation (the same resource class, an annotation-free AOP proxy counting as its base class, method
+  name, and parameter types), fail startup naming both operations and both mounts when
+  - both mounts are hand-built (neither carries an application name), under every strategy; or
+  - the strategy selected by `jaxrs.validationStrategy` reports `resolvesOperationsFromMountContract()`
+    (as `openapi-contract` does) and both mounts' contract locations are equal after
+    `Path.of(value).normalize()`, so `a.yaml` and `./a.yaml` are one location while an absolute
+    path and a relative one naming the same file stay distinct; the message says the mounts resolve
+    to the same OpenAPI contract location and never echoes it;
+
+  any other pair, which includes an application mount, composes;
 - a non-null application name carried by more than one application mount in a `Set<RouterMount>`
   merged from more than one composition, naming the name and both mount paths;
 - under a strategy reporting `resolvesOperationsFromMountContract()`, a JAX-RS mount whose contract
@@ -1887,6 +1896,20 @@ The per-mount `DUPLICATE_OPERATION_ID` row above is unaffected — it keeps comp
 mount, and with no application declared it remains the only operationId check that runs. An
 `HttpVerticle` built with the public five-argument constructor runs none of this validator's checks
 and refuses to create any application mount's router.
+
+**Shared operationId warning.** When its own checks pass, the same validator logs one WARN for
+each operationId used by more than one JAX-RS mount of which at least one is an application mount,
+the same operation listed by several applications included:
+
+```
+OperationId 'list' is used by more than one JAX-RS mount: application 'partner', application 'public', hand-built JAX-RS mount '/manual/*'. Controls keyed on the operationId alone (audit capture bindings, custom validation strategies, interceptors) must also key on the application.
+```
+
+Applications are named by name and hand-built mounts by path, each group sorted. The validator runs
+once per composition, so each WARN appears once per `HttpVerticle` start. The WARN is logged only
+when this validator's own checks pass, so a composition it refuses logs none; another composition
+validator, such as the documentation module's, may still refuse the start afterwards. Key
+per-operation state on `operation().applicationName()` as well as the operationId.
 
 Parsing `jaxrs.applications` (see [Per-application configuration](#per-application-configuration))
 raises `ConfigurationException`. The section-name, shape, key, and blank-value checks use the four
@@ -2033,7 +2056,7 @@ Beyond what `RestCoreModule` and `JsonRuntimeModule` contribute:
 | `RestApplications` | `@Provides @Singleton`; INTERNAL; built once per component from `Set<GeneratedRestApplicationRegistration>`, the parsed `jaxrs.applications`, and `Optional<ApiDocsModuleInstalled>` — see [The `RestApplications` view](#the-restapplications-view) |
 | `Set<GeneratedJaxRsResourceEntry>` | `@Multibinds`; INTERNAL generated-code contract, populated by the annotation processor with one entry per DI-eligible JAX-RS resource; empty by default |
 | `Set<RouterMount>` | `@ElementsIntoSet`: with no `@RestApplication` declared, the default `JaxRsRouterMount` at `jaxrs.basePath`, empty when `@JaxRsResources` is empty; once one or more are declared, one mount per active application instead — see [`@RestApplication`](#restapplication) |
-| `MountCompositionValidator` (`JaxRsApplicationMountValidator`) | `@IntoSet`; INTERNAL; takes the `RestApplications` view, `JaxRsConfig`, and `Set<RequestValidationStrategy>`; validates application mounts against hand-built JAX-RS mounts and against each other, the cross-mount operationId refusal, and, under a contract-driven strategy, the contract-location parse — see [Mount conflicts](#mount-conflicts) |
+| `MountCompositionValidator` (`JaxRsApplicationMountValidator`) | `@IntoSet`; INTERNAL; takes the `RestApplications` view, `JaxRsConfig`, and `Set<RequestValidationStrategy>`; validates application mounts against hand-built JAX-RS mounts and against each other, the cross-mount operationId rule and its shared-id WARN, and, under a contract-driven strategy, the contract-location parse — see [Mount conflicts](#mount-conflicts) |
 | `ComposeValidator` (`JaxRsDefaultProfileValidator`) | `@IntoSet`; fails the `VALIDATE` phase on an unknown `jaxrs.jsonProfile` (`json.systemProfile` is validated earlier, by the `CONFIGURE`-phase install step) |
 | `OperationSchemaSource`, `BeanValidator`, `InputObjectProcessor` (`dev.vertique.input.processing.InputObjectProcessor`), `ActionRegistry`, `Authorizer` | `@BindsOptionalOf`; satisfied by `rest-validation`, `validation`, `sanitization`, and `rest-security` respectively |
 | `SyntheticOperationInstaller` | `@Binds` to a package-private implementation; INTERNAL; framework documentation module only; enforces a `SyntheticOperation` typed policy in the supported `AuthModule` and `SecurityModule` composition and refuses a restrictive one without it |
