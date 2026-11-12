@@ -1,0 +1,8 @@
+{
+  "name": "smoke-unknown-input",
+  "set": "smoke",
+  "arm": "ON",
+  "nodes": 2,
+  "load": {"kind": "fixed", "ratePerSec": 40},
+  "node": {"confOverride": {"workflow": {"executor": {"concurency": 8}}}}
+}

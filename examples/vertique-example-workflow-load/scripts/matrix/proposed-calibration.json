@@ -1,0 +1,91 @@
+{
+  "title": "Calibration, proposed for freezing",
+  "version": 1,
+  "session": "calibration",
+  "thresholds": {
+    "generatorMaxLatenessMs": 250,
+    "lateArrivalMs": 50,
+    "maxLateArrivalFraction": 0.001,
+    "maxNotSubmitted": 0,
+    "collectorMinCoverage": 0.95,
+    "collectorMaxGapMs": 3000,
+    "hostMinCoverage": 0.9,
+    "outsideCpuPercent": 100,
+    "outsideCpuMaxSeconds": 10,
+    "completionRateBar": 0.99,
+    "depthSlopeFraction": 0.005,
+    "dipFractionOfTypical": 0.5,
+    "dipMinSeconds": 2,
+    "excursionMs": 1000,
+    "excursionMinSeconds": 2,
+    "jvmPauseReportMs": 20,
+    "pauseAttributionMs": 100,
+    "cpuSaturationPercent": 95,
+    "hostLoadWarn": 14,
+    "g3RecordedToStartP95Ms": 100,
+    "g3TimerLatenessP95Ms": 1000,
+    "g2Ratio": 0.9,
+    "g1RecoverySeconds": 60,
+    "minValidRuns": 2,
+    "maxExcludedFraction": 0.01,
+    "lockWatchMinCoverage": 0.9,
+    "lockWatchMaxErrorFraction": 0.05,
+    "minDepthReadingFraction": 0.9,
+    "maxAttemptsPerReplicate": 3
+  },
+  "points": [
+    {
+      "id": "floor",
+      "set": "calibration",
+      "diagnostic": true,
+      "replicates": 1,
+      "spec": {
+        "arm": "ON",
+        "nodes": 0,
+        "load": {"kind": "none", "windowSec": 60},
+        "timeline": {"settleSec": 0, "recoverySec": 0}
+      }
+    },
+    {
+      "id": "cal-on-4",
+      "set": "calibration",
+      "diagnostic": true,
+      "replicates": 1,
+      "spec": {
+        "arm": "ON",
+        "nodes": 4,
+        "load": {"kind": "staircase", "startRatePerSec": 20, "stepRatePerSec": 20, "steps": 10, "stepSec": 60, "measureSkipSec": 10}
+      }
+    },
+    {
+      "id": "cal-off-4",
+      "set": "calibration",
+      "diagnostic": true,
+      "replicates": 1,
+      "spec": {
+        "arm": "OFF",
+        "nodes": 4,
+        "load": {"kind": "staircase", "startRatePerSec": 20, "stepRatePerSec": 20, "steps": 10, "stepSec": 60, "measureSkipSec": 10}
+      }
+    },
+    {
+      "id": "sim-compare-on-4",
+      "set": "simulator-comparison",
+      "diagnostic": true,
+      "replicates": 1,
+      "spec": {
+        "arm": "ON",
+        "nodes": 4,
+        "load": {"kind": "staircase", "startRatePerSec": 20, "stepRatePerSec": 20, "steps": 10, "stepSec": 60, "measureSkipSec": 10},
+        "node": {"handlerDelayMs": 0}
+      }
+    }
+  ],
+  "scalingGroups": [],
+  "order": [
+    {"point": "floor", "replicate": 1},
+    {"point": "cal-on-4", "replicate": 1},
+    {"point": "cal-off-4", "replicate": 1},
+    {"point": "sim-compare-on-4", "replicate": 1}
+  ]
+}

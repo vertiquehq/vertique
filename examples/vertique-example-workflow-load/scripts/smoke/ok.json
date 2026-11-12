@@ -1,0 +1,9 @@
+{
+  "name": "smoke-ok",
+  "set": "smoke",
+  "diagnostic": true,
+  "arm": "ON",
+  "nodes": 2,
+  "load": {"kind": "fixed", "ratePerSec": 40, "warmupSec": 5, "windowSec": 20},
+  "timeline": {"settleSec": 6, "recoverySec": 5, "drainDeadlineSec": 40}
+}

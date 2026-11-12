@@ -1,0 +1,19 @@
+{
+  "name": "smoke-g1",
+  "set": "smoke-gates",
+  "arm": "OFF",
+  "nodes": 2,
+  "load": {
+    "kind": "profile",
+    "segments": [
+      {"label": "over", "durationSec": 10, "ratePerSec": 200},
+      {"label": "under", "durationSec": 20, "ratePerSec": 20}
+    ]
+  },
+  "timeline": {"settleSec": 6, "recoverySec": 5, "replayRatePerSec": 40, "drainDeadlineSec": 60},
+  "node": {
+    "executorConcurrency": 1,
+    "intake": {"enabled": true, "highMark": 60, "lowMark": 20, "sampleIntervalMs": 100}
+  },
+  "collector": {"lockWatch": true}
+}

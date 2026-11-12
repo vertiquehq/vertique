@@ -1,0 +1,21 @@
+{
+  "title": "Smoke matrix",
+  "version": 1,
+  "session": "smoke",
+  "thresholds": {},
+  "points": [
+    {
+      "id": "m-on-2",
+      "set": "smoke-matrix",
+      "replicates": 2,
+      "spec": {
+        "arm": "ON",
+        "nodes": 2,
+        "load": {"kind": "fixed", "ratePerSec": 20, "warmupSec": 4, "windowSec": 14},
+        "timeline": {"settleSec": 6, "recoverySec": 3, "drainDeadlineSec": 30}
+      }
+    }
+  ],
+  "scalingGroups": [],
+  "order": [{"point": "m-on-2", "replicate": 1}, {"point": "m-on-2", "replicate": 2}]
+}
