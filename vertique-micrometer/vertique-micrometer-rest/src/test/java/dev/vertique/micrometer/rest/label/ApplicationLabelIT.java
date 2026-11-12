@@ -47,8 +47,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@link LegacyResource}. Tag keys are literals so the expectations never copy production state.
  *
  * <p>The adapter's listener and the test's {@link CompletionLog} receive the same event in an
- * unspecified order, so the test waits for the series itself, polling the registry with a bound,
- * instead of trusting a latch released by the other listener.
+ * unspecified order, and the listener registers a series before it records the sample. The test
+ * therefore polls, with a bound, until the series has recorded its sample and until the log holds the
+ * expected events, instead of trusting either one to have run first.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
@@ -131,7 +132,7 @@ public class ApplicationLabelIT {
 
         int anonymousStatus = send("/api/mgmt/status", null, null).statusCode();
         Timer unauthorized = awaitTimer(registry, "mgmt", "status", "401");
-        List<RestRequestCompletedEvent> anonymousEvents = log.events();
+        List<RestRequestCompletedEvent> anonymousEvents = awaitEvents(log, 1);
 
         int nonAdminStatus = send("/api/mgmt/status", "user", "").statusCode();
         Timer forbidden = awaitTimer(registry, "mgmt", "status", "403");
@@ -179,7 +180,7 @@ public class ApplicationLabelIT {
 
         int status = send("/legacy", null, null).statusCode();
         Timer none = awaitTimer(registry, "none", "legacy");
-        List<RestRequestCompletedEvent> events = component.completionLog().events();
+        List<RestRequestCompletedEvent> events = awaitEvents(component.completionLog(), 1);
 
         assertAll(
                 () -> assertEquals(200, status, "legacy request status"),
@@ -225,9 +226,10 @@ public class ApplicationLabelIT {
 
     /**
      * Polls the registry until a timer tagged with the application, operation and (when given) status
-     * exists, or the bound elapses.
+     * exists and has recorded at least one sample, or the bound elapses.
      *
-     * @return the timer, or {@code null} when none appeared within the bound
+     * @return the timer, or {@code null} when none appeared within the bound; a timer that appeared but
+     *     recorded nothing within the bound is returned as found, for the caller's count assertion
      */
     private static Timer awaitTimer(MeterRegistry registry, String application, String operation, String status)
             throws InterruptedException {
@@ -238,11 +240,25 @@ public class ApplicationLabelIT {
                 search = search.tag(STATUS, status);
             }
             Timer timer = search.timer();
-            if (timer != null || System.nanoTime() >= deadline) {
+            if ((timer != null && timer.count() > 0) || System.nanoTime() >= deadline) {
                 return timer;
             }
             Thread.sleep(20);
         }
+    }
+
+    /**
+     * Polls the log until it holds at least {@code expected} events, or the bound elapses.
+     *
+     * @return the events received when the wait ended
+     */
+    private static List<RestRequestCompletedEvent> awaitEvents(CompletionLog log, int expected)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SERIES_WAIT_MILLIS);
+        while (log.events().size() < expected && System.nanoTime() < deadline) {
+            Thread.sleep(20);
+        }
+        return log.events();
     }
 
     private static String tag(Timer timer, String key) {

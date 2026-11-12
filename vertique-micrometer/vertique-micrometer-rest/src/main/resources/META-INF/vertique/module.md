@@ -135,8 +135,9 @@ not timed there. Vert.x's native HTTP server metrics count document reads with e
 **Application tag.** Every series carries `rest.application`: the name of the application whose
 mount served the operation, or `none` outside applications. One resource mounted by several
 applications under the same operationId and mount-relative route (which the mount validator permits
-for one owner) therefore records one series per application instead of merging them. The key is
-cardinality-guarded in `vertique-micrometer-core` and cannot be claimed by `metrics.tags.extra`.
+for one owner) therefore records one series per application instead of merging them. When the
+registry comes from `MicrometerModule`, the key is cardinality-guarded in `vertique-micrometer-core`
+and cannot be claimed by `metrics.tags.extra`.
 Dashboards that aggregate the timer across applications must sum over `rest.application`.
 
 **`error.type` on a 200-status series.** Because `error.type` falls back to `wireFailureCode`, a
