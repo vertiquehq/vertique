@@ -29,6 +29,7 @@ import javax.lang.model.element.TypeElement;
 import javax.tools.Diagnostic;
 import javax.tools.JavaFileObject;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -2492,6 +2493,68 @@ class McpToolProcessorCompileTest {
                     }
                 }
                 """);
+    }
+
+    // ==================================================================================
+    // Per-type opt-out
+    // ==================================================================================
+
+    @Test
+    @DisplayName("a tool type annotated @NoAutoWire gets no invoker and no module binding")
+    void shouldSkipToolTypeAnnotatedNoAutoWire() {
+        JavaFileObject optedOut = SourceFiles.inline(TOOLS_PACKAGE + ".ManualWeatherTools", """
+                package com.example.tools;
+
+                import dev.vertique.codegen.NoAutoWire;
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+
+                @NoAutoWire
+                public class ManualWeatherTools {
+
+                    @McpTool(name = "weather.manual", description = "Look up the weather, bound by hand.")
+                    public Future<WeatherReport> lookup(
+                            @McpToolParam(name = "city", description = "The city to look up.") String city) {
+                        return Future.succeededFuture(new WeatherReport(city, 21));
+                    }
+                }
+                """);
+
+        // Alone: nothing is emitted, and the type's declarations are not even validated
+        // (it has no injectable constructor, which would otherwise be an error).
+        try (McpToolCompilation alone = McpToolCompilation.of(weatherReport(), optedOut)) {
+            alone.result().assertSuccess().assertNoWarnings();
+            assertNoGeneratedSource(alone, GENERATED_MODULE_FQN);
+            assertNoGeneratedSource(alone, TOOLS_PACKAGE + ".ManualWeatherTools_lookup_McpToolInvoker");
+        }
+
+        // Beside an un-annotated tool type: only that type is bound.
+        try (McpToolCompilation mixed = McpToolCompilation.of(weatherReport(), optedOut, validWeatherTools())) {
+            mixed.result()
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(GENERATED_MODULE_FQN, "WeatherTools_lookup_McpToolInvoker")
+                    .assertGeneratedSourceDoesNotContain(GENERATED_MODULE_FQN, "ManualWeatherTools")
+                    .assertGeneratedSourceContains(WEATHER_INVOKER_FQN, "weather.lookup");
+            assertNoGeneratedSource(mixed, TOOLS_PACKAGE + ".ManualWeatherTools_lookup_McpToolInvoker");
+        }
+    }
+
+    @Test
+    @DisplayName("an un-annotated tool type still generates an invoker and module binding")
+    void shouldStillGenerateForToolTypeWithoutNoAutoWire() {
+        try (McpToolCompilation valid = McpToolCompilation.of(weatherReport(), validWeatherTools())) {
+            valid.result()
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(GENERATED_MODULE_FQN, "WeatherTools_lookup_McpToolInvoker")
+                    .assertGeneratedSourceContains(WEATHER_INVOKER_FQN, "weather.lookup");
+        }
+    }
+
+    private static void assertNoGeneratedSource(McpToolCompilation compilation, String fqn) {
+        boolean present = compilation.result().compilation().generatedSourceFiles().stream()
+                .anyMatch(file -> file.getName().endsWith(fqn.replace('.', '/') + ".java"));
+        assertEquals(false, present, fqn + " must not be generated");
     }
 
     // --- Framework construction ---
