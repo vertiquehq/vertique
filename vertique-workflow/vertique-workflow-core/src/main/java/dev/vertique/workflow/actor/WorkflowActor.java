@@ -25,7 +25,7 @@ import java.util.Objects;
  * record shape — {@code {"userId":"..."}} / {@code {"serviceId":"..."}} / {@code {"reason":"..."}}
  * — with no wrapper or type discriminator. {@link JsonTypeInfo.Id#DEDUCTION} deserialization picks
  * the correct permit by which field is present, so this wire shape is preserved byte-for-byte
- * while still allowing {@code WorkflowActor} to round-trip through Jackson (ADR-0048).
+ * while still allowing {@code WorkflowActor} to round-trip through Jackson.
  *
  * <p>Each permit's compact constructor rejects both {@code null} and blank strings — an empty
  * {@code User("")} or whitespace-only {@code System("   ")} is a programmer error, not a usable

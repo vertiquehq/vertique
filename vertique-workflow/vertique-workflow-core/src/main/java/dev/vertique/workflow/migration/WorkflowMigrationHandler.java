@@ -39,8 +39,6 @@ import dev.vertique.workflow.registry.store.WorkflowScopes;
  *
  * <p>Implementations are typically {@code @Singleton} — they carry no per-instance state.
  *
- * <p>PRD-WF-003 FR-WF-DEF-063 through FR-WF-DEF-068.
- *
  * @param <S> source state type; must match the source plan's state type exactly
  * @param <T> target state type; must match the target plan's state type exactly
  */

@@ -6,7 +6,7 @@ package dev.vertique.workflow.state;
 import jakarta.annotation.Nullable;
 
 /**
- * Optional filter for branch-token queries (PRD-WF-002 §7.6).
+ * Optional filter for branch-token queries.
  *
  * <p>All fields are nullable; null means "no filter on this dimension". Unfiltered queries return
  * every branch token belonging to the requested workflow instance.

@@ -23,7 +23,7 @@ import jakarta.ws.rs.ext.ExceptionMapper;
 import java.util.Optional;
 
 /**
- * Dagger wiring for the REST rate-limit adapter (contracts/rest-adapter.md, "Dagger wiring").
+ * Dagger wiring for the REST rate-limit adapter.
  *
  * <p>Includes {@link RateLimitCoreModule} and contributes the {@link RateLimitExceptionMapper}'s
  * two nested mappers unconditionally, plus the optional edge {@link RateLimitEdgeMiddleware} only
@@ -54,8 +54,8 @@ public abstract class RestRateLimitModule {
     abstract RequestOriginConfig optionalRequestOriginConfig();
 
     /**
-     * Contributes the {@code 429} mapper unconditionally (contracts/rest-adapter.md, "HTTP
-     * mapping" — always active regardless of the edge kill switch).
+     * Contributes the {@code 429} mapper unconditionally (always active regardless of the edge
+     * kill switch).
      *
      * @param mapper the injected mapper
      * @return the mapper contributed to the {@code Set<ExceptionMapper<?>>} multibinding
@@ -67,8 +67,8 @@ public abstract class RestRateLimitModule {
     }
 
     /**
-     * Contributes the {@code 503} mapper unconditionally (contracts/rest-adapter.md, "HTTP
-     * mapping" — always active regardless of the edge kill switch).
+     * Contributes the {@code 503} mapper unconditionally (always active regardless of the edge
+     * kill switch).
      *
      * @param mapper the injected mapper
      * @return the mapper contributed to the {@code Set<ExceptionMapper<?>>} multibinding

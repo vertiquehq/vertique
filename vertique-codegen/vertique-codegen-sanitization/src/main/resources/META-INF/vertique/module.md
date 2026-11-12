@@ -41,7 +41,7 @@ See "Runtime SPI Types" below for the interfaces and helpers this generated clas
 
 For a `@BODY` resource-method parameter typed `Collection<E>` or `E[]`, the element type `E` — not the collection/array type itself — is the discovery root for generation.
 
-**Which nested DTOs get a generated processor.** A nested DTO type is included in the generated set only if **it** carries at least one of `@Canonicalize`, `@Sanitize`, `@SkipCanonicalization`, or `@SkipSanitization` — on the type itself, on one of its own fields/components, or via a meta-annotation on either. A discovery-root DTO is always included regardless of local annotations, so route- and parameter-level policies still flow through the generated path. Field classification walks the superclass chain (stopping at `Object`) to collect inherited fields, mirroring `FR-CG008-005`, so they participate alongside a DTO's own fields.
+**Which nested DTOs get a generated processor.** A nested DTO type is included in the generated set only if **it** carries at least one of `@Canonicalize`, `@Sanitize`, `@SkipCanonicalization`, or `@SkipSanitization` — on the type itself, on one of its own fields/components, or via a meta-annotation on either. A discovery-root DTO is always included regardless of local annotations, so route- and parameter-level policies still flow through the generated path. Field classification walks the superclass chain (stopping at `Object`) to collect inherited fields, so they participate alongside a DTO's own fields.
 
 The condition is the type's **own** annotations, not its subtree's. An un-annotated mid-tier DTO on the path to an annotated leaf gets **no** generated processor — the leaf still does, because discovery traverses through a non-participating type rather than pruning at it, and the mid-tier's own fragment is handled by the reflective continuation at runtime. Reading the rule as a subtree condition over-states which types are generated.
 
@@ -301,4 +301,4 @@ Test-only dependencies: `vertique-codegen-test` (compilation harness), `vertique
 
 ## Known Gaps
 
-- **Latency-reduction target not yet met.** NFR-CG008-001 targets a ≥3× latency reduction versus the reflective path; current benchmarks show roughly a 5% improvement. The per-field and per-type chain constants are resolved once at class-load time (see "Generated `{DTO}_InputProcessor`" above), but they are not yet composed into a single chain function — `GeneratedSupport.applyString(...)` still receives the raw `List<Class<...>>` on every call.
+- **Latency-reduction target not yet met.** The target is a ≥3× latency reduction versus the reflective path; current benchmarks show roughly a 5% improvement. The per-field and per-type chain constants are resolved once at class-load time (see "Generated `{DTO}_InputProcessor`" above), but they are not yet composed into a single chain function — `GeneratedSupport.applyString(...)` still receives the raw `List<Class<...>>` on every call.

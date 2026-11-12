@@ -22,6 +22,6 @@
  * any module that assumes an injected {@code Vertx} is already available). ServiceLoader discovery
  * here is the deliberate exception in a Dagger-first codebase: contributors are resolved via the
  * standard Java SPI mechanism rather than Dagger multibinding precisely because the Dagger graph
- * is not yet initialised at this point. See ADR-0095 for the recorded rationale.
+ * is not yet initialised at this point.
  */
 package dev.vertique.launcher;

@@ -93,8 +93,8 @@ import org.slf4j.LoggerFactory;
 /**
  * Package-private collaborator owning the human-task lifecycle callback paths.
  *
- * <p>This class is extracted from {@link WorkflowEngine} as part of the Phase-1 decomposition
- * (PRD-WF-006, Slice C7). It absorbs the {@code TransactionalTaskCallbacks} bodies and their
+ * <p>This class is extracted from {@link WorkflowEngine}. It owns the
+ * {@code TransactionalTaskCallbacks} bodies and their
  * supporting helpers:
  * <ul>
  *   <li>{@link #taskCompleted} — records a task completion behind a reservation of the task; {@link #runCompletion}
@@ -1262,7 +1262,7 @@ final class TaskLifecycleService {
                                                         : node.getClass().getSimpleName())));
                             }
 
-                            // Step 7: Version-stability check — mirrors single-path §B.3.
+                            // Step 7: Version-stability check — mirrors the single-path completion.
                             if (htn.requireVersionStability()) {
                                 if (cmd.reviewedSubjectVersion() == null
                                         || !Objects.equals(
@@ -1787,7 +1787,7 @@ final class TaskLifecycleService {
      * dev.vertique.workflow.state.WorkflowInstance)}: the ambient correlation bound to the current
      * execution context wins when present; otherwise it falls back to the correlation id captured in
      * {@code inst}'s start-time durable metadata (branch-owned task completion does not bind a
-     * correlation context for the duration of the drive — the C2 bind-once rule keeps binding
+     * correlation context for the duration of the drive — the bind-once rule keeps binding
      * exclusive to the instance path).
      *
      * @param workflowId the owning workflow instance id
@@ -1836,7 +1836,7 @@ final class TaskLifecycleService {
     Future<TaskMutationResult> dueFired(
             WorkflowInstanceId workflowId, UUID taskId, DriveBinding binding, SqlClient tx) {
         // Lock order: workflow_timers BEFORE workflow_tasks (matches taskCompleted/cancel and the
-        // reminder-fire executor — preserves the cycle-4 workflow-wide lock-order invariant).
+        // reminder-fire executor — preserves the workflow-wide lock-order invariant).
         // Step sequence: (1) non-locking task read for the slot validation, (2) branch-fork on
         // branchTokenId, (3) cancel pending reminder timers — locks REMINDER timer rows, (4) lock
         // the task row, (5) markExpired re-verifies status='OPEN' under lock, (6) advance.
@@ -2047,7 +2047,7 @@ final class TaskLifecycleService {
                                     "task-reassign", cmd.idempotencyKey(), claim.existingFingerprint(), fingerprint));
                         }
 
-                        // Load the instance for the binder-row bind (Contract Appendix C2) and for
+                        // Load the instance for the binder-row bind and for
                         // event emission below. taskReassigned has no branch fork at all — every
                         // reassignment is instance-owned — so this is always the binder-row seam,
                         // never the branch carrier.
@@ -2263,9 +2263,9 @@ final class TaskLifecycleService {
         // Atomically increment the durable reminder counter on workflow_tasks. The UPDATE is
         // gated on status='OPEN', so a concurrent terminal transition between the earlier
         // findById check and this write is observed as Optional.empty() and we no-op (the
-        // executor will still markFired the timer). Replaces the cycle-4 first-cut JSONB-path
-        // COUNT(*) over workflow_history, which both scaled poorly and was vulnerable to
-        // duplicate counting on concurrent fires (no row lock to serialize).
+        // executor will still markFired the timer). A COUNT(*) over workflow_history would both
+        // scale poorly and be vulnerable to duplicate counting on concurrent fires (no row lock
+        // to serialize).
         return taskStore.incrementRemindersFiredCount(taskId, tx).compose(maybeIndex -> {
             if (maybeIndex.isEmpty()) {
                 // Task closed concurrently with this fire — emit nothing, let the executor
@@ -2343,8 +2343,8 @@ final class TaskLifecycleService {
     // --- Internal helpers ---
 
     /**
-     * Resolves the runtime workflow for {@code inst} and enforces the plan-hash drift guard
-     * (PRD-WF-002 round-1 fix H2 + round-2 single-path adjacent fix). Synchronous helper used by
+     * Resolves the runtime workflow for {@code inst} and enforces the plan-hash drift guard.
+     * Synchronous helper used by
      * branch callback paths that need both lookups before any row mutation; the caller wraps the
      * thrown exception in a failed Future. Mirrors the inline pattern used in the single-path
      * callbacks (e.g. {@link #doCompleteTask}).

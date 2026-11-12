@@ -64,18 +64,18 @@ import javax.lang.model.util.ElementFilter;
  * publisher. Observer methods must return {@code void}; a non-{@code void} return is a compile error.
  *
  * <p>Observer methods must also declare exactly one parameter and that parameter must carry
- * {@code @Observes}; multi-parameter observers are rejected with a compile error (P3-W2).
- * Observing {@code java.lang.Object} directly is also rejected (P3-W5) because the registry's
+ * {@code @Observes}; multi-parameter observers are rejected with a compile error.
+ * Observing {@code java.lang.Object} directly is also rejected because the registry's
  * superclass walk excludes {@code Object.class}, so such an observer would silently never fire.
  *
- * <p>Observer methods must be {@code public} (W2): the generated lambda
+ * <p>Observer methods must be {@code public}: the generated lambda
  * {@code e -> bean.method((EventType) e)} lives in {@code GeneratedEventsModule}. Private,
  * protected, and package-private methods are unreachable from there and cause a generated-source
  * compile error; they are rejected at codegen time with a
  * {@link dev.vertique.codegen.Diagnostics#observerMustBeAccessible} diagnostic.
  *
  * <p>Event payload types — both from {@code @Observes} parameters and {@code Event<T>} constructor
- * injections — must not be parameterized (generic) (W3). A parameterized payload such as
+ * injections — must not be parameterized (generic). A parameterized payload such as
  * {@code Box<String>} would be erased to {@code Box} and produce a {@code @Binds Event<Box>}
  * binding that does not satisfy Dagger's {@code Event<Box<String>>} key, causing a
  * {@code MissingBinding} error at the app component. Such payloads are rejected with a
@@ -185,8 +185,8 @@ public final class EventsProcessor extends AbstractProcessor {
         // 1a. @Observes scan: every method with at least one @Observes-annotated parameter is
         //     scanned.  Three validations run before harvesting:
         //     (a) void-return rule,
-        //     (b) exactly-one-parameter rule (P3-W2), and
-        //     (c) @Observes Object rejection (P3-W5).
+        //     (b) exactly-one-parameter rule, and
+        //     (c) @Observes Object rejection.
         for (Element root : roundEnv.getRootElements()) {
             if (!(root instanceof TypeElement type)) {
                 continue;
@@ -208,7 +208,7 @@ public final class EventsProcessor extends AbstractProcessor {
                     valid = false;
                 }
 
-                // (b) Exactly-one-parameter validation (P3-W2): the method must have exactly one
+                // (b) Exactly-one-parameter validation: the method must have exactly one
                 //     parameter total, and that parameter must be the @Observes one.
                 if (method.getParameters().size() != 1) {
                     ctx.diagnostics().error(method, Diagnostics.observerMustHaveSingleParameter(methodFqn));
@@ -220,7 +220,7 @@ public final class EventsProcessor extends AbstractProcessor {
                 VariableElement observesParam = observesParams.get(0);
                 TypeMirror paramType = observesParam.asType();
 
-                // (c) @Observes Object rejection (P3-W5): Object.class is excluded from the
+                // (c) @Observes Object rejection: Object.class is excluded from the
                 //     registry's superclass walk, so such an observer would silently never fire.
                 if (isJavaLangObject(paramType)) {
                     ctx.diagnostics().error(method, Diagnostics.observerMustNotObserveObject(methodFqn));
@@ -228,7 +228,7 @@ public final class EventsProcessor extends AbstractProcessor {
                     continue; // Skip inventory + observer registration.
                 }
 
-                // (d) Accessibility check (W2): the observer method must be public so the generated
+                // (d) Accessibility check: the observer method must be public so the generated
                 //     lambda (e -> bean.method((EventType) e)) in GeneratedEventsModule can call it.
                 //     Private methods cannot be called from outside the class. Protected and
                 //     package-private methods fail when the module is in a different package from the
@@ -239,7 +239,7 @@ public final class EventsProcessor extends AbstractProcessor {
                     continue; // Skip inventory + observer registration.
                 }
 
-                // (e) Parameterized payload rejection (W3): the @Observes parameter type must not
+                // (e) Parameterized payload rejection: the @Observes parameter type must not
                 //     be a parameterized (generic) type such as Box<String>. The v1 inventory stores
                 //     event types as erased TypeElements; a parameterized payload would be erased to
                 //     Box and emit a @Binds Event<Box> that does not satisfy Dagger's
@@ -273,7 +273,7 @@ public final class EventsProcessor extends AbstractProcessor {
                     TypeMirror paramType = param.asType();
                     TypeMirror eventArg = unwrapToEventArg(paramType);
                     if (eventArg != null) {
-                        // (W3) Reject parameterized (generic) event payload types: e.g.
+                        // Reject parameterized (generic) event payload types: e.g.
                         // Event<Box<String>> unwraps to Box<String>, which is parameterized.
                         // Recording it as erased Box would emit Event<Box> — a binding that
                         // does not satisfy Dagger's Event<Box<String>> key.
@@ -306,7 +306,7 @@ public final class EventsProcessor extends AbstractProcessor {
         }
 
         // --- Step 3: Emit one X$Event publisher per inventory type ---
-        // Each publisher is placed in its event type's own package (P3-W3): two distinct-FQN event
+        // Each publisher is placed in its event type's own package: two distinct-FQN event
         // types sharing the same simple name (e.g. com.acme.OrderCreated, com.shop.OrderCreated)
         // then land in different packages and never produce a name collision.
         // Dedup by the publisher's own FQN — only emit each publisher once per compilation.
@@ -429,8 +429,8 @@ public final class EventsProcessor extends AbstractProcessor {
     /**
      * Returns {@code true} when the given type mirror is exactly {@code java.lang.Object}.
      *
-     * <p>Used by the {@code @Observes} scan to reject catch-all {@code @Observes Object} observers
-     * (P3-W5): the registry's superclass walk excludes {@code Object.class}, so such an observer
+     * <p>Used by the {@code @Observes} scan to reject catch-all {@code @Observes Object} observers:
+     * the registry's superclass walk excludes {@code Object.class}, so such an observer
      * would silently never fire.
      *
      * @param type the type to inspect
@@ -444,7 +444,7 @@ public final class EventsProcessor extends AbstractProcessor {
      * Returns {@code true} when the given type mirror is a parameterized (generic) declared type —
      * i.e. a {@link DeclaredType} with at least one type argument.
      *
-     * <p>Used to reject parameterized event payload types (W3): the v1 inventory stores event
+     * <p>Used to reject parameterized event payload types: the v1 inventory stores event
      * types as erased {@link TypeElement} references. A parameterized payload such as
      * {@code Box<String>} would be erased to {@code Box} and produce a {@code @Binds Event<Box>}
      * binding that does NOT satisfy Dagger's {@code Event<Box<String>>} key. Rejecting at codegen
@@ -495,7 +495,7 @@ public final class EventsProcessor extends AbstractProcessor {
      * LCP package). This guarantees that two distinct-FQN event types sharing the same simple
      * name — e.g. {@code com.acme.OrderCreated} and {@code com.shop.OrderCreated} — emit
      * {@code com.acme.OrderCreated$Event} and {@code com.shop.OrderCreated$Event} respectively,
-     * with no name collision (P3-W3).
+     * with no name collision.
      *
      * <p>The generated class is a {@code final} top-level class whose name literally contains a
      * {@code $} (e.g. {@code OrderCreated$Event}). JavaPoet renders the {@code $} in a
@@ -575,15 +575,15 @@ public final class EventsProcessor extends AbstractProcessor {
         DaggerModuleWriter writer = DaggerModuleWriter.named(moduleName).generatedBy(PROCESSOR_FQN);
 
         // --- Publisher @Binds per event type ---
-        // The publisher lives in the event type's own package (P3-W3), so ClassName must use
+        // The publisher lives in the event type's own package, so ClassName must use
         // that package rather than the module's package. The bind method name is derived from the
         // event type's simple name and its ORDINAL index in the FQN-sorted inventory
         // (bind<SimpleName>_<ordinal>Event). Sorting by FQN (String natural order) before numbering
         // makes the ordinal assignment reproducible across compilation runs and JVM implementations,
         // regardless of the non-deterministic RoundEnvironment.getRootElements() set iteration
-        // order (P3-W7). The ordinal is injective by construction: distinct ordinals always produce
+        // order. The ordinal is injective by construction: distinct ordinals always produce
         // distinct method names, regardless of how the FQNs relate (same simple name, case
-        // differences, underscore/dot-boundary collisions — P3-W6 history).
+        // differences, underscore/dot-boundary collisions).
         List<Map.Entry<String, TypeElement>> sortedInventory =
                 inventory.entrySet().stream().sorted(Map.Entry.comparingByKey()).toList();
         int eventOrdinal = 0;
@@ -608,9 +608,9 @@ public final class EventsProcessor extends AbstractProcessor {
         // --- @Provides @IntoSet ObserverRegistration per observer method ---
         // Sort observers by (bean-FQN, method-name, event-FQN) before assigning ordinals so the
         // generated provider method names are reproducible across compilation runs, independent of
-        // the non-deterministic RoundEnvironment.getRootElements() iteration order (P3-W7).
+        // the non-deterministic RoundEnvironment.getRootElements() iteration order.
         // The ordinal (zero-based index after sorting) guarantees uniqueness even when multiple
-        // observer methods in the same bean share the same simple name (P3-W1 overloads).
+        // observer methods in the same bean share the same simple name (overloads).
         List<ObserverInfo> sortedObservers = observers.stream()
                 .sorted(Comparator.<ObserverInfo, String>comparing(
                                 o -> o.beanType().getQualifiedName().toString())
@@ -651,11 +651,11 @@ public final class EventsProcessor extends AbstractProcessor {
      * it alone guarantees uniqueness — no FQN string encoding is needed. The simple name prefix is
      * included only for legibility. This disambiguator covers all cases:
      * <ul>
-     *   <li>multiple observer methods in the same bean sharing the same simple name (P3-W1 overloads),
+     *   <li>multiple observer methods in the same bean sharing the same simple name (overloads),
      *       e.g. {@code void on(@Observes EventA e)} and {@code void on(@Observes EventB e)};
-     *   <li>two distinct-FQN event types sharing the same simple name (P3-W3), e.g.
+     *   <li>two distinct-FQN event types sharing the same simple name, e.g.
      *       {@code com.acme.OrderCreated} and {@code com.shop.OrderCreated};
-     *   <li>FQNs differing only in casing (P3-W6) or underscore/dot placement.
+     *   <li>FQNs differing only in casing or underscore/dot placement.
      * </ul>
      *
      * @param writer   the module writer to append the provider method to

@@ -12,9 +12,9 @@ package dev.vertique.core.context;
  * {@link ContextHolder}.
  *
  * <p>Implementations MUST NOT return {@code null} — a null return is an SPI contract violation
- * treated as a decode failure with a throttled WARN (FR-CTX-051).
+ * treated as a decode failure with a throttled WARN.
  *
- * <p>Implementations MUST NOT block the Vert.x event loop (FR-CTX-049).
+ * <p>Implementations MUST NOT block the Vert.x event loop.
  *
  * @param <T> the context value type this decoder produces; must implement {@link ContextValue}
  */

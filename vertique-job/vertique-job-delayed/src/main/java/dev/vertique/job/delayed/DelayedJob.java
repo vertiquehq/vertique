@@ -91,7 +91,7 @@ public class DelayedJob {
      * <p>{@code DelayedJobService.toExecution(...)} merges this document with any ambient
      * holder-bound durable context via
      * {@code DurableContextPropagator.mergeCaptured(metadata, DispatchBoundary.DELAYED_JOB)} —
-     * namespace collisions throw per FR-CTX-063. The merged result is persisted into
+     * namespace collisions throw. The merged result is persisted into
      * {@code job_executions.metadata JSONB} via {@link DurableMetadata#toCarrier()}, then decoded
      * back into the outgoing service envelope's caller-overrides by
      * {@code DelayedJobPoller.dispatch(...)} on poll.

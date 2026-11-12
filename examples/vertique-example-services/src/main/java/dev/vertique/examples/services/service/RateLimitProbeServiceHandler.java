@@ -17,10 +17,10 @@ import jakarta.inject.Inject;
  * Dagger-provided {@code Provider.get()} the generated services module uses to dispatch.
  *
  * <p>{@code subject = NONE} means no identity dimension is resolved (the resolver is never
- * consulted, contracts/rate-limit-aop.md), so the derived key is the explicit zero-component
+ * consulted), so the derived key is the explicit zero-component
  * {@code RateLimitKey.global()} — the exact same key {@link
  * dev.vertique.examples.services.resource.RateLimitProbeResource}'s programmatic path acquires
- * against, so both paths compete for the same token bucket (TP-002).
+ * against, so both paths compete for the same token bucket.
  */
 public class RateLimitProbeServiceHandler implements ServiceHandler<RateLimitProbeService> {
 

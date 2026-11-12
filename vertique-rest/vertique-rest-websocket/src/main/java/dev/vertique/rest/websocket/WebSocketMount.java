@@ -165,7 +165,7 @@ public class WebSocketMount implements RouterMount {
      * {@code f.securityRuntime()}, {@link #identityResolutionHandler} is
      * {@code f.identityResolutionHandler(IdentityPipelineOptions.webSocket())} — a
      * {@link Handler}{@code <}{@link RoutingContext}{@code >} bound to the {@code websocket} origin
-     * with identity-snapshot capture off (ADR-0164); the factory holds this handler, never an
+     * with identity-snapshot capture off; the factory holds this handler, never an
      * {@link IdentityResolutionMiddleware} instance, because no middleware accessor honours a non-REST
      * origin — and {@link #securityPolicyEnforcer} is {@code f.policyEnforcer()}. When absent, all four
      * fields (including {@link #channelAdapter}) remain {@code null} and every WebSocket endpoint
@@ -273,7 +273,7 @@ public class WebSocketMount implements RouterMount {
             if (identityPipeline.isPresent()) {
                 IdentityPipelineFactory f = identityPipeline.get();
                 this.securityRuntime = f.securityRuntime();
-                // The handler assembled for the WebSocket origin with capture off (ADR-0164) — never
+                // The handler assembled for the WebSocket origin with capture off — never
                 // the REST middleware, since no middleware accessor honours a non-REST origin.
                 this.identityResolutionHandler = f.identityResolutionHandler(IdentityPipelineOptions.webSocket());
                 this.securityPolicyEnforcer = f.policyEnforcer();

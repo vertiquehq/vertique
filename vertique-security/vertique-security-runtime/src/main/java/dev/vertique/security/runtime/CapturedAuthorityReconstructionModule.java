@@ -17,8 +17,7 @@ import jakarta.inject.Singleton;
 
 /**
  * Dagger {@link Module} that provides {@link CapturedAuthorityReconstruction} to the framework
- * infrastructure that explicitly opts into Mode-3 captured-authority reconstruction (PRD
- * identity-002 §14.3 Phase-2 Appendix, §14.6 P2.S4).
+ * infrastructure that explicitly opts into Mode-3 captured-authority reconstruction.
  *
  * <p><strong>Structural never-default.</strong> This module is deliberately <strong>not</strong>
  * included by {@link PrivilegedIdentityModule}, {@code IdentitySnapshotReconstructionModule}, or
@@ -62,7 +61,7 @@ import jakarta.inject.Singleton;
  * sanctioned seam that consuming infrastructure uses to actually put captured authority into
  * effect — it invokes the internally-constructed {@link CapturedAuthorityReconstruction}, then
  * emits and awaits the {@code CapturedAuthorityActivatedEvent} audit record (reconstruction itself
- * stays event-silent per FR-ID-CA-007). This ordering guarantee is emission-ordering, not a
+ * stays event-silent). This ordering guarantee is emission-ordering, not a
  * durable/acknowledged-delivery guarantee — see {@link CapturedAuthorityActivation}'s javadoc.
  *
  * <p><strong>Startup REQUIRED validation.</strong> {@link #capturedAuthorityReconstruction} checks,

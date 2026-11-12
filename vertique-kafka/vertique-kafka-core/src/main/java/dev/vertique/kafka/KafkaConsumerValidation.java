@@ -127,7 +127,7 @@ final class KafkaConsumerValidation {
      *       resolves the format, then {@link KafkaSerdeRegistry#deserializer} builds the serde.</li>
      * </ul>
      *
-     * <p>Event-loop safety (NFR-AVRO-005): when the effective deserializer reports
+     * <p>Event-loop safety: when the effective deserializer reports
      * {@link KafkaDeserializer#mayBlock()}, the consumer is forced onto the worker threading model
      * unless {@code worker=false} was set explicitly (which is a violation).
      *
@@ -309,8 +309,8 @@ final class KafkaConsumerValidation {
         if (valid) {
             if (kind == ConsumerEntry.Kind.ROUTER) {
                 // A router has multiple route value types but one wire format per topic: resolve a single
-                // format across all non-Void routes, failing fast on a mix or a missing provider
-                // (FR-AVRO-005/010). Returns null (and records a violation) on conflict.
+                // format across all non-Void routes, failing fast on a mix or a missing provider.
+                // Returns null (and records a violation) on conflict.
                 String routerFormat = resolveRouterFormat(name, config, routes, registry, violations);
                 if (routerFormat == null) {
                     valid = false;
@@ -394,7 +394,7 @@ final class KafkaConsumerValidation {
                 effectiveDeserializer = null; // no value type (e.g. Void payload)
             }
 
-            // Event-loop safety (NFR-AVRO-005): force worker threading when the effective serde may block.
+            // Event-loop safety: force worker threading when the effective serde may block.
             // For routers there is no per-entry deserializer, so the provider-level flag for the router's
             // resolved format is used; for other kinds the effective deserializer's flag is used. An
             // explicit worker=false paired with a blocking serde is a violation.

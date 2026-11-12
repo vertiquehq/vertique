@@ -4,6 +4,7 @@
 package dev.vertique.mcp.server.runtime;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.List;
@@ -55,6 +56,17 @@ class McpSchemaHardeningTest {
     @DisplayName("enforces the T009 contract matrix")
     void shouldEnforceT009ContractMatrix(MatrixRow row) throws Throwable {
         row.proof().execute();
+    }
+
+    /** A canonical document whose root is not a JSON object is rejected before any hardening runs. */
+    @Test
+    @DisplayName("rejects a canonical document whose root is not a JSON object")
+    void shouldRejectNonObjectCanonicalDocument() {
+        JsonNode arrayRoot = McpCanonicalJsonWriter.read("[]");
+
+        assertThatThrownBy(() -> McpSchemaHardener.harden(arrayRoot, List.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("the canonical schema document must be a JSON object");
     }
 
     // --- Row 1: adjacent argument objects, root and nested, both closed ---

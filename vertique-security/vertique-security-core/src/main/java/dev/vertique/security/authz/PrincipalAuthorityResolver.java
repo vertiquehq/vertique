@@ -7,7 +7,7 @@ import io.vertx.core.Future;
 
 /**
  * Application-implemented SPI that re-resolves a principal's <strong>current</strong> authority
- * from its durable key alone (Mode 2, PRD identity-002 §14.3 Phase-2 Appendix).
+ * from its durable key alone (Mode 2).
  *
  * <p>{@link #resolve(PrincipalKey)} receives only {@code (type, id)} — {@link PrincipalKey}
  * structurally carries no attributes, so an implementation cannot resolve scope from

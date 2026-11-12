@@ -33,7 +33,7 @@ import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 
 /**
- * Emitter for per-resource {@code {Resource}_JaxRsDescriptor} companions (CG-010 step 4b).
+ * Emitter for per-resource {@code {Resource}_JaxRsDescriptor} companions.
  *
  * <p>For each validated {@link EffectiveResourceContract}, this emitter generates a
  * {@code public final class {Resource}_JaxRsDescriptor} in the resource's own package. The
@@ -158,7 +158,7 @@ public final class JaxRsDescriptorEmitter {
      *                            returned by filtering {@code contract.methods()} to those with a
      *                            non-null {@code httpMethod}; must not be {@code null}
      * @param emittedLiteralFqns  the per-round shared dedup set of {@code <Ann>$JaxRsLiteral} FQNs already
-     *                            written to the {@code Filer} (GitHub issue #162); this method adds
+     *                            written to the {@code Filer}; this method adds
      *                            each literal class it writes and skips any already present
      */
     public void emit(
@@ -169,7 +169,7 @@ public final class JaxRsDescriptorEmitter {
 
         // ClassName.get(TypeElement) yields the source-form nested name (Outer.InnerResource)
         // when the resource is a static nested class. Today the candidate scanner only surfaces
-        // top-level root elements, but using the element-aware overload keeps the four CG-010
+        // top-level root elements, but using the element-aware overload keeps the four
         // emitters consistent.
         ClassName resourceClass = ClassName.get(concreteClass);
         ClassName descriptorClass = ClassName.get(pkg, simpleName);
@@ -612,7 +612,7 @@ public final class JaxRsDescriptorEmitter {
             Set<String> emittedLiteralFqns) {
         CodeBlock.Builder cb = CodeBlock.builder();
 
-        // name (preserve null vs empty-string parity per CG-009 blank-name parity)
+        // name (preserve null vs empty-string parity with the runtime)
         if (pc.name() == null) {
             cb.add(
                     "new $T(null, $T.$L, resolveClass(support, cl_, $L), ",
@@ -652,7 +652,7 @@ public final class JaxRsDescriptorEmitter {
         }
 
         // parameterMetadata — composed ParameterMetadata view, literal-backed with a reflective
-        // fallback for unsupported annotation shapes (GitHub issue #162, ADR-0146 parity-first
+        // fallback for unsupported annotation shapes (parity-first
         // policy): replaces the earlier live support.effectiveParameterAnnotations(method, index)
         // read. A registered ParamConverterProvider that inspects parameter annotations sees
         // byte-for-byte the same annotations on this path as on the reflective scan path.
@@ -992,7 +992,7 @@ public final class JaxRsDescriptorEmitter {
 
     /**
      * Returns the erased binary FQN of {@code type} — for strings the generated code resolves at
-     * runtime. Delegates to {@link TypeMirrorFqn} so the three CG-010 emitters share one source of
+     * runtime. Delegates to {@link TypeMirrorFqn} so the three emitters share one source of
      * truth on nested-type and array form.
      */
     private String erasedFqn(TypeMirror type) {

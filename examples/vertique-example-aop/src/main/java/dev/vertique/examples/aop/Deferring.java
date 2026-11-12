@@ -10,7 +10,7 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * A deliberately-misbehaving custom aspect trigger used to prove the FR-013-05 sync-defer guard.
+ * A deliberately-misbehaving custom aspect trigger used to prove the sync-defer guard.
  *
  * <p>Unlike the framework's {@code @Timed} built-in, which observes the outcome and passes it through
  * unchanged, {@link DeferringAspect} returns a {@link io.vertx.core.Future} that never settles

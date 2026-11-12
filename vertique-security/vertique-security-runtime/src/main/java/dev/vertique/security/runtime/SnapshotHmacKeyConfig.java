@@ -28,7 +28,7 @@ public record SnapshotHmacKeyConfig(String keyId, String secretRef) {
      * Minimum {@code secretRef} length, in UTF-8 bytes, required for adequate HMAC key strength.
      * {@code secretRef} is used directly as the HMAC key material (see {@link SnapshotHmac} —
      * {@code new SecretKeySpec(secret.getBytes(UTF_8), algorithm)}), and this HMAC is the sole
-     * forgery defense over the app-writable durable snapshot store (ADR-0162), so the key must be at
+     * forgery defense over the app-writable durable snapshot store, so the key must be at
      * least as long as the HMAC-SHA256 output size (32 bytes) — a shorter key weakens that defense.
      */
     private static final int MIN_SECRET_BYTES = 32;

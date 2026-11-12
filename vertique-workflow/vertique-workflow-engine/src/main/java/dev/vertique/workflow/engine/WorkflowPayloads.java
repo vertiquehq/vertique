@@ -35,8 +35,7 @@ import java.util.List;
  * a leaf in the dependency graph: it references only domain model types and the Vert.x JSON codec;
  * it has no dependency on repositories, recorders, or the transition driver.
  *
- * <p>Extracted from {@code WorkflowEngine} as part of the Phase-1 decomposition
- * (PRD-WF-006, Slice C1). Call sites in the engine and recovery service are updated to use the
+ * <p>Extracted from {@code WorkflowEngine}. Call sites in the engine and recovery service use the
  * {@code WorkflowPayloads.} prefix.
  */
 final class WorkflowPayloads {
@@ -343,7 +342,7 @@ final class WorkflowPayloads {
         requirePlanHashMatches(inst, rw);
     }
 
-    // --- Command history correlation stitching (Contract Appendix C5) ---
+    // --- Command history correlation stitching ---
 
     /**
      * Resolves the {@code commandCorrelationId} to stitch onto a command history payload
@@ -353,8 +352,7 @@ final class WorkflowPayloads {
      * context at the call site — the same value the binder ({@link WorkflowContextBinder}) or the
      * branch-transition carrier seam installed for this drive. There is no special-casing between
      * instance-path binder drives and branch/engine-internal construction sites: whichever
-     * correlation is bound at the point of construction is the truthful value (PRD
-     * FR-WF-CTX-050/051).
+     * correlation is bound at the point of construction is the truthful value.
      *
      * @return the bound correlation id value, or {@code null} when no {@link CorrelationContext} is
      *     bound to the current execution context
@@ -373,7 +371,7 @@ final class WorkflowPayloads {
      *
      * <p>Branch-owned task completion (unlike the instance-path binder drives {@link
      * #commandCorrelationId()} serves) does not bind a {@link CorrelationContext} for the duration
-     * of the drive — the C2 bind-once rule keeps binding exclusive to the instance path. Without a
+     * of the drive — the bind-once rule keeps binding exclusive to the instance path. Without a
      * fallback, a branch-owned completion recorded with no ambient correlation would always record
      * {@code null} even when the instance was started with a durable correlation context. This
      * overload closes that gap: it first tries the ambient value (identical to

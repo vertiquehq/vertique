@@ -79,8 +79,7 @@ public class ServiceDeploymentManager {
 
     /**
      * Full constructor including the optional service-dispatch context registry threaded into
-     * each {@link ServiceVerticle} for decoder-driven inbound carrier validation
-     * (FR-CTX-072..076).
+     * each {@link ServiceVerticle} for decoder-driven inbound carrier validation.
      *
      * @param contextRegistry the service-dispatch context registry, or {@code null} to disable
      *                        decoder-driven validation (legacy passthrough)

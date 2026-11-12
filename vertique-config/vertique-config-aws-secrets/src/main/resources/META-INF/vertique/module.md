@@ -208,7 +208,7 @@ The source config subtree is resolved in pass 1 (tree-only), so `region`, `endpo
 
 ## Security Notes
 
-NFR-CONF-002 applies throughout this module:
+The value-redaction rule applies throughout this module:
 
 - Secret values **never** appear in log output at any level, in exception messages, or in `toString()` of any internal type.
 - Exception messages contain only: source instance name, secret IDs (structural identifiers, safe to echo), field names, structural descriptions, and the AWS SDK's own error message text. `GetSecretValue` error bodies describe operational failures (access-denied, not-found, etc.) and do not carry secret values; the module passes those messages through as-is.

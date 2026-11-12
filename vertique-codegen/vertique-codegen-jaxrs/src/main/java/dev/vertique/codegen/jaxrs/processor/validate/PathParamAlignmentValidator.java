@@ -22,7 +22,7 @@ import javax.lang.model.element.VariableElement;
 
 /**
  * Validates bidirectional alignment between {@code @Path} placeholders and {@code @PathParam}
- * declarations on JAX-RS resource methods at compile time (CG-009 Tier-A pre-empted defect).
+ * declarations on JAX-RS resource methods at compile time.
  *
  * <p>The runtime never validates this — a placeholder without a matching {@code @PathParam} causes
  * the parameter to silently resolve to {@code null} at dispatch time. This validator catches the
@@ -42,9 +42,9 @@ import javax.lang.model.element.VariableElement;
  *   <li>Emit an {@code ERROR} for each {@code @PathParam} with no matching placeholder.</li>
  * </ol>
  *
- * <p>Two APIs are provided: the original element-based API (used by CG-009 tests) and an
+ * <p>Two APIs are provided: the original element-based API (used by existing tests) and an
  * {@link EffectiveResourceContract}/{@link EffectiveMethodContract}-based API used by
- * {@code JaxRsPipelineProcessor} (CG-010).
+ * {@code JaxRsPipelineProcessor}.
  */
 public final class PathParamAlignmentValidator {
 
@@ -64,7 +64,7 @@ public final class PathParamAlignmentValidator {
         this.beanScanner = new JaxRsBeanScanner(ctx);
     }
 
-    // --- Element-based API (CG-009, preserved for existing tests) ---
+    // --- Element-based API (preserved for existing tests) ---
 
     /**
      * Validates bidirectional alignment between {@code @Path} placeholders and {@code @PathParam}
@@ -119,7 +119,7 @@ public final class PathParamAlignmentValidator {
         }
     }
 
-    // --- Contract-based API (CG-010) ---
+    // --- Contract-based API ---
 
     /**
      * Validates bidirectional alignment between {@code @Path} placeholders and {@code @PathParam}

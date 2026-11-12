@@ -18,7 +18,7 @@ import java.util.Set;
  * <p>At construction time the full set of registered resolvers is sorted into an immutable,
  * deterministic chain using {@link OrderedExtension#comparator()}:
  * <ol>
- *   <li>Primary sort: {@link RestContextResolver#phase()} ascending (FR-REST-194).
+ * <li>Primary sort: {@link RestContextResolver#phase()} ascending.
  *   <li>Secondary sort: {@link RestContextResolver#priority()} ascending — lower values run first.
  *       Application resolvers at the default priority of {@code 0} therefore run before framework
  *       built-ins at higher values.
@@ -83,11 +83,11 @@ public final class RestContextResolution {
 
     /**
      * Resolves a context value of the given {@code type} for the current request, throwing
-     * {@link RestContextUnavailableException} if the value is absent (FR-REST-173/174).
+     * {@link RestContextUnavailableException} if the value is absent.
      *
      * <p>This is the required form of resolution used for JAX-RS resource method parameters that
      * the dispatch layer has identified as injectable context types. When the resolver chain
-     * returns no value, the resulting exception carries the exact FR-REST-174 message and the
+     * returns no value, the resulting exception carries the fixed-format message and the
      * {@code type}, {@code resourceClass}, and {@code methodName} that identify where the missing
      * binding was expected.
      *

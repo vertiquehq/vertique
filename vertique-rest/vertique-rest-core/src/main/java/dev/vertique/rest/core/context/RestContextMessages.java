@@ -14,8 +14,7 @@ package dev.vertique.rest.core.context;
  * <p>These templates are used by both the runtime route validator
  * ({@code RouteValidator.addContextParamViolations} in {@code vertique-rest-jaxrs}) and the
  * compile-time context-param validator ({@code ContextParamValidator} in
- * {@code vertique-codegen-jaxrs}) to guarantee identical error wording across the two channels
- * (FR-REST-187/188/189 parity).
+ * {@code vertique-codegen-jaxrs}) to guarantee identical error wording across the two channels.
  *
  * <p>All methods are static; this class is not intended to be instantiated.
  */
@@ -23,7 +22,7 @@ public final class RestContextMessages {
 
     private RestContextMessages() {}
 
-    // --- Context-param diagnostic templates (FR-REST-187/188/189) ---
+    // --- Context-param diagnostic templates ---
 
     /**
      * Returns the error message when a parameter carries both {@code @Context} and a JAX-RS
@@ -31,7 +30,7 @@ public final class RestContextMessages {
      * {@code @CookieParam}, {@code @FormParam}, {@code @BeanParam}).
      *
      * <p>Used by the runtime {@code RouteValidator} (CONTEXT_PARAM_CONFLICT violation) and the
-     * compile-time {@code ContextParamValidator} (FR-REST-187).
+     * compile-time {@code ContextParamValidator}.
      *
      * @param resourceClassName   the simple name of the declaring resource class
      *                            (e.g. {@code "HelloResource"})
@@ -52,7 +51,7 @@ public final class RestContextMessages {
      * JAX-RS context type not supported in this framework version.
      *
      * <p>Used by the runtime {@code RouteValidator} (UNSUPPORTED_JAXRS_CONTEXT_TYPE violation) and
-     * the compile-time {@code ContextParamValidator} (FR-REST-188).
+     * the compile-time {@code ContextParamValidator}.
      *
      * @param resourceClassName   the simple name of the declaring resource class
      * @param methodName          the simple name of the resource method
@@ -73,7 +72,7 @@ public final class RestContextMessages {
      * {@code ContextValue} subtype).
      *
      * <p>Used by the runtime {@code RouteValidator} (NON_INJECTABLE_CONTEXT_TYPE violation) and the
-     * compile-time {@code ContextParamValidator} (FR-REST-189).
+     * compile-time {@code ContextParamValidator}.
      *
      * @param resourceClassName   the simple name of the declaring resource class
      * @param methodName          the simple name of the resource method

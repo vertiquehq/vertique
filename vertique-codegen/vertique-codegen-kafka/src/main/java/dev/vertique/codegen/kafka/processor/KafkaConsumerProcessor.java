@@ -51,8 +51,8 @@ import javax.lang.model.element.TypeElement;
  *       value type {@code V}.</li>
  * </ul>
  *
- * <p>Consumer shape is validated at compile time by {@link KafkaConsumerValidator}
- * (FR-CG006-005). Invalid listeners produce diagnostics and are not emitted.
+ * <p>Consumer shape is validated at compile time by {@link KafkaConsumerValidator}.
+ * Invalid listeners produce diagnostics and are not emitted.
  *
  * <p><b>Dual annotation (aggregated emission):</b> if a class carries both {@code @KafkaListener}
  * (Model 4 direct handler — interfaces cannot carry {@code @KafkaSource} methods) and

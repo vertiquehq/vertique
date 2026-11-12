@@ -38,7 +38,7 @@ import java.util.Optional;
  *                         {@code null} means use the default validation group
  * @param requiredAction   the canonical action gate resolved from a class-level
  *                         {@code @RequiresAction}, AND-composed with {@code securityPolicy} and
- *                         enforced once at upgrade (FR-AUTHZ-048, ADR-0115); {@link Optional#empty()}
+ * enforced once at upgrade; {@link Optional#empty()}
  *                         when the endpoint declares no action gate
  */
 record WebSocketEndpointMeta(

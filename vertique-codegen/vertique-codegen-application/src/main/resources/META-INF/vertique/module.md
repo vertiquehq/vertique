@@ -32,7 +32,7 @@ This processor owns application-factory generation when:
   graph — for example, a component naming `dev.vertique.starter.core.CoreApplicationModule`
   satisfies this because `CoreApplicationModule` includes `VertxModule`.
 
-Applications that manage their own factory (the manual Phase-3 path) do not need this module.
+Applications that manage their own factory (the manual path) do not need this module.
 Both paths satisfy the same `VertiqueComponentFactoryLoader` discovery contract, so the choice is
 additive: switching to `@VertiqueApp` requires removing the hand-written factory and SPI entry.
 

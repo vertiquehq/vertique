@@ -16,7 +16,7 @@ import jakarta.annotation.Nullable;
  * <p>The {@code method} identity is injected from the keyed-object key during boundary parsing (the
  * parent {@link KafkaProducerConfig#methods()} list is annotated
  * {@link dev.vertique.core.json.KeyedBy @KeyedBy("method")}). The {@code serdeProperties} bag is an
- * intentionally open property bag (config rule R9) whose values are kept intact for runtime use; its
+ * intentionally open property bag whose values are kept intact for runtime use; its
  * secret keys are masked only when this record is rendered to a string (see {@link #toString()}).
  *
  * @param method the producer method name (identity; injected from the keyed-object key)

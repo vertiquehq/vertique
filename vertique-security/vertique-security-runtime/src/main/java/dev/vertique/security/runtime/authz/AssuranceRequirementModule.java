@@ -16,7 +16,7 @@ import java.time.Clock;
 
 /**
  * Opt-in Dagger module that activates the minimum-assurance policy hooks in the authorization
- * engine (PRD identity-002 FR-ID-CA-005).
+ * engine.
  *
  * <p>Contributes {@link AssuranceRequirementNarrower} into the {@code Set<AuthorizationNarrower>}
  * multibinding declared by {@code SecurityAuthzModule}, so it folds into the

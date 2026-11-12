@@ -205,7 +205,7 @@ Production gateway backed by the Azure SDK `SecretClient`. The client is built o
 
 Timeouts are applied via `HttpClientOptions` passed to `HttpClient.createDefault(httpOptions)` — the only effective path for configuring the underlying Netty HTTP client. `connectTimeout` and `readTimeout` bound the TCP-connect and per-read-chunk phases respectively. `responseTimeout` is additionally set to `readTimeoutMs` to bound the total time-to-first-byte from the server (the Azure SDK default is 60 seconds, which would stall bootstrap on auth misconfiguration). Passing the same `HttpClientOptions` to `SecretClientBuilder.clientOptions(...)` is redundant when an explicit HTTP client is supplied and is intentionally omitted.
 
-The fail-closed contract: `ResourceNotFoundException` (HTTP 404) → `Optional.empty()`. Any other `HttpResponseException` or runtime exception → `ConfigPropertySourceException` naming the source and original placeholder key. The SDK exception cause is intentionally **not** attached — it is severed to prevent any potential credential or value content in the SDK's exception chain from leaking (NFR-CONF-002).
+The fail-closed contract: `ResourceNotFoundException` (HTTP 404) → `Optional.empty()`. Any other `HttpResponseException` or runtime exception → `ConfigPropertySourceException` naming the source and original placeholder key. The SDK exception cause is intentionally **not** attached — it is severed to prevent any potential credential or value content in the SDK's exception chain from leaking.
 
 **Null-response guard**: Azure SDK credential exceptions (`CredentialUnavailableException`, `ClientAuthenticationException`) extend `HttpResponseException` but are constructed with a `null` `HttpResponse`. Without an explicit null guard, `e.getResponse().getStatusCode()` would throw a `NullPointerException` inside the catch block on auth misconfiguration. When the response is `null`, the exception's class simple name is used as the error detail instead of the HTTP status code.
 
@@ -254,7 +254,7 @@ The IT covers the full lookup pipeline: prefix filtering, dot-to-dash normalizat
 
 ## Security Notes
 
-NFR-CONF-002 applies throughout this module:
+The value-redaction rule applies throughout this module:
 
 - Secret values **never** appear in log output at any level, in exception messages, or in `toString()` of any internal type.
 - Exception messages contain only: source instance name, secret name (not value), original placeholder key, HTTP status codes, and structural descriptions of the failure. The SDK exception cause chain is severed at the gateway boundary.

@@ -12,6 +12,6 @@
  * {@code vertique-kafka-json} ({@link dev.vertique.kafka.json.KafkaJsonModule}) is included.
  *
  * <p>The provider keeps all {@code org.apache.avro} type access on this module's classpath —
- * {@code vertique-kafka-core} never imports Avro types (see ADR-0074 and ADR-0075).
+ * {@code vertique-kafka-core} never imports Avro types.
  */
 package dev.vertique.kafka.avro;

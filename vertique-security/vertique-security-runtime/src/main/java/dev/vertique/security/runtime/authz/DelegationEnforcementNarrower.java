@@ -25,7 +25,7 @@ import java.util.Optional;
 
 /**
  * {@link AuthorizationNarrower} that bounds a delegated evaluation to the intersection of the
- * actor's base authority and the delegation grant's scope (PRD identity-002 FR-ID-DG-006).
+ * actor's base authority and the delegation grant's scope.
  *
  * <p><strong>Non-delegated contexts pass through unchanged.</strong> {@link SecurityIdentity#subject()}
  * and {@link SecurityIdentity#delegation()} must both be present for a context to count as delegated.
@@ -40,7 +40,7 @@ import java.util.Optional;
  * ({@code ReconstructedAuthorityResolvingAuthorizer}); there is no grant to intersect against, so
  * {@link #narrow} passes {@code base} through unchanged without ever consulting
  * {@link #validator} — validating the synthetic scheduling id as a grant would deny every
- * reconstructed deferred action (FR-ID-DG-006 excludes this path from grant-scope intersection).
+ * reconstructed deferred action (this path is excluded from grant-scope intersection).
  *
  * <p><strong>The pass-through is gated on the TYPED reconstruction signal, never the string
  * {@code kind} alone.</strong> {@link DelegationContext} is a public core type: a live
@@ -112,7 +112,7 @@ import java.util.Optional;
  *
  * <p><strong>Ordering.</strong> Runs at {@link #priority()} {@value #PRIORITY} ("delegation") within
  * the default {@code dev.vertique.core.extension.ExtensionPhase#APPLICATION} phase &mdash; ahead of
- * the identity-002 assurance narrower (priority 200), so grant-scope enforcement composes before
+ * the assurance narrower (priority 200), so grant-scope enforcement composes before
  * assurance-level narrowing.
  *
  * <p><strong>Introspection is annotate-only.</strong> {@link #requirementFor} never calls
@@ -148,7 +148,7 @@ public final class DelegationEnforcementNarrower implements AuthorizationNarrowe
     static final String AUTHORITY_ID_ATTRIBUTE = "delegation.authorityId";
 
     /**
-     * Fixed {@link #priority()} for this narrower ("delegation"): runs ahead of the identity-002
+     * Fixed {@link #priority()} for this narrower ("delegation"): runs ahead of the
      * assurance narrower (priority 200) within the default
      * {@code dev.vertique.core.extension.ExtensionPhase#APPLICATION} phase.
      */

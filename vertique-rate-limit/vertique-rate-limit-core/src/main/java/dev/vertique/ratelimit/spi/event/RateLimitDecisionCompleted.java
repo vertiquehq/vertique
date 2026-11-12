@@ -13,8 +13,7 @@ import java.util.Optional;
 import java.util.OptionalLong;
 
 /**
- * The single terminal observation for one completed rate-limit admission decision
- * (contracts/rate-limit-runtime.md, "Observer SPI").
+ * The single terminal observation for one completed rate-limit admission decision.
  *
  * @param policyName the policy this decision was resolved against
  * @param policyRevision the resolved policy's revision at decision time

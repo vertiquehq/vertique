@@ -73,7 +73,7 @@ public interface TransactionalWorkflowOperations<TX> {
     Future<Void> signal(WorkflowInstanceId id, String signalName, Object payload, String signalDedupKey, TX tx);
 
     /**
-     * Branch-aware variant of {@link #signal} (PRD-WF-002 §D11). Targets a specific fork-group
+     * Branch-aware variant of {@link #signal}. Targets a specific fork-group
      * branch via {@code (forkStepId, branchId)}. When both are non-null, the engine looks up the
      * matching branch token and resumes its branch; when both are null, behaviour is identical to
      * {@link #signal(WorkflowInstanceId, String, Object, String, Object)} (instance-level signal);
@@ -112,7 +112,7 @@ public interface TransactionalWorkflowOperations<TX> {
     }
 
     /**
-     * Explicit-carrier variant of {@link #signal} (PRD-WF-007, Contract Appendix C4). Accepts an
+     * Explicit-carrier variant of {@link #signal}. Accepts an
      * explicit {@link DurableMetadata} durable-context carrier that, when non-null, overrides the
      * ambient capture as the authoritative base for this signal's drive.
      *

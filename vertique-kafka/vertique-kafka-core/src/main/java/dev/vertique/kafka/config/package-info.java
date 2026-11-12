@@ -9,7 +9,7 @@
  * are the typed, validated result assembled at the {@code KafkaModule} provider boundary, with each
  * object key injected into a typed identity field. The open property bags ({@code properties},
  * {@code serdeProperties}, {@code schemaRegistry}) are kept as raw {@link io.vertx.core.json.JsonObject}
- * (config rule R9) with their values intact for runtime use; secret keys are masked only when a
+ * with their values intact for runtime use; secret keys are masked only when a
  * record is rendered to a string (see {@link dev.vertique.kafka.config.KafkaSecretKeys}). The
  * message-key HMAC secret is constructor-bound but never serialized out and is redacted in {@code
  * toString()}.

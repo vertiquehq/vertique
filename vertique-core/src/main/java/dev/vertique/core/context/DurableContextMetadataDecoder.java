@@ -12,11 +12,10 @@ package dev.vertique.core.context;
  * to each decoder's {@link #decode} method. Decoders read their own namespace body via
  * {@link DurableMetadata#body(String) metadata.body(namespace())}.
  *
- * <p>Decode failures are recoverable: they log a throttled WARN and do not block other decoders
- * (FR-CTX-118, FR-CTX-156).
+ * <p>Decode failures are recoverable: they log a throttled WARN and do not block other decoders.
  *
  * <p>Implementations MUST NOT return {@code null} — a null return is an SPI contract violation
- * treated as a decode failure with a throttled WARN (FR-CTX-122).
+ * treated as a decode failure with a throttled WARN.
  *
  * <p>Implementations MUST NOT block the Vert.x event loop.
  *
@@ -64,7 +63,7 @@ public interface DurableContextMetadataDecoder<T extends ContextValue> {
      * sanitization seam ({@code DurableContextPropagator#sanitizeInboundCarrier}) and can only enter
      * a drive via ambient/authenticated derivation or a framework-persisted carrier (timer, branch,
      * or instance metadata) — those are framework-captured, not sender-supplied, and are therefore
-     * trusted regardless of this flag. See ADR-0147.
+     * trusted regardless of this flag.
      *
      * <p>Defaults to {@code true} — the flag is additive and opt-in; every namespace remains
      * explicit-carrier-eligible until its decoder overrides this method.

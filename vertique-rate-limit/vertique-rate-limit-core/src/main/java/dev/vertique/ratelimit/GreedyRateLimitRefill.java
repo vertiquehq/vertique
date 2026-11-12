@@ -11,8 +11,8 @@ import java.util.Objects;
 
 /**
  * Continuous, fractional token refill: progress toward the next token accrues every instant
- * rather than arriving all at once at the period boundary (contracts/rate-limit-runtime.md,
- * "Bucket4j translation contract" — maps to Bucket4j's {@code refillGreedy}).
+ * rather than arriving all at once at the period boundary (maps to Bucket4j's
+ * {@code refillGreedy}).
  *
  * @param tokens tokens added per {@link #period()}; bounded {@code 1..1_000_000_000_000}
  * @param period the refill period; bounded {@code 1ms..31_536_000_000ms}
@@ -25,7 +25,7 @@ public record GreedyRateLimitRefill(long tokens, Duration period) implements Rat
     private static final long MAX_PERIOD_MS = 31_536_000_000L;
 
     /**
-     * Compact constructor — validates {@code tokens} and {@code period} against §5.8's bounds.
+     * Compact constructor — validates {@code tokens} and {@code period} against their declared bounds.
      *
      * @throws ConfigurationException if {@code period} is {@code null} or either bound is violated
      */

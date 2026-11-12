@@ -17,7 +17,7 @@ import jakarta.inject.Singleton;
  *
  * <p>{@link ServiceDeploymentManager#undeployAll()} <em>deregisters supervision before undeploy</em>,
  * suppressing spurious restarts — the deregister-first teardown the generic
- * {@link dev.vertique.deploy.VerticleDeployer} cannot provide. Per FR-APP-028 / AC-14 the lifecycle
+ * {@link dev.vertique.deploy.VerticleDeployer} cannot provide. The lifecycle
  * runner runs this owner-managed shutdown step (in reverse {@link LifecycleOrdered#comparator()}
  * order) <em>before</em> any generic verticle undeploy, and it never undeploys the service verticles
  * through the generic deployer (which would bypass the deregister-first ordering).

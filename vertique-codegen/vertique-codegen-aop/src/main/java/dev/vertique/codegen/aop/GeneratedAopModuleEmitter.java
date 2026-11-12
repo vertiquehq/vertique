@@ -18,7 +18,7 @@ import javax.lang.model.element.TypeElement;
  * its bean.
  *
  * <p>Each binding replicates the bean's <em>declared</em> scope — a {@code @Singleton} bean yields a
- * {@code @Singleton}-scoped binding, an unscoped bean yields an unscoped binding (FR-013-03). The
+ * {@code @Singleton}-scoped binding, an unscoped bean yields an unscoped binding. The
  * scope is never hard-coded.
  *
  * <p>Output-package resolution mirrors the sibling {@code GeneratedServicesModule} emitter: the
@@ -26,8 +26,8 @@ import javax.lang.model.element.TypeElement;
  * bound beans is used; a disjoint set falls back to {@code vertique.generated.aop}.
  *
  * <p>The generated module type carries a class-level
- * {@code @javax.annotation.processing.Generated("dev.vertique.codegen.aop.AopProcessor")} marker
- * (FR-013-16), stamped via {@link DaggerModuleWriter#generatedBy(String)}.
+ * {@code @javax.annotation.processing.Generated("dev.vertique.codegen.aop.AopProcessor")} marker,
+ * stamped via {@link DaggerModuleWriter#generatedBy(String)}.
  *
  * <p>The {@code @Binds} declarations are built via {@link DaggerModuleWriter#addBinds}, which renders
  * the proxy {@link ClassName} verbatim. The generated proxy is a <em>top-level</em> class whose name
@@ -39,7 +39,7 @@ final class GeneratedAopModuleEmitter {
     private static final String MODULE_SIMPLE_NAME = "GeneratedAopModule";
     private static final String FALLBACK_PACKAGE = "vertique.generated.aop";
 
-    /** FQN of the processor stamped into the module's {@code @Generated} marker (FR-013-16). */
+    /** FQN of the processor stamped into the module's {@code @Generated} marker. */
     private static final String PROCESSOR_FQN = "dev.vertique.codegen.aop.AopProcessor";
 
     private final CodegenContext ctx;

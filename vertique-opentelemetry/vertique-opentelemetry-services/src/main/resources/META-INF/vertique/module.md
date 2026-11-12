@@ -40,7 +40,7 @@ trace is propagated with the message (propagation mode: `PROPAGATE`, which is th
 interceptor enriches that CONSUMER span — not the sender-side span — because `ServiceInterceptor`
 callbacks run within the consumer's message handler, where the span is current.
 
-**Producer enrichment is descoped (SP-7).** A sender-side seam would require intercepting the
+**Producer enrichment is not provided.** A sender-side seam would require intercepting the
 `EventBus.send/publish` call before the message leaves the event loop. No such seam exists in the
 current `ServiceInterceptor` SPI; `onDispatch` fires on the consumer side once the message is
 received. Producer-side span enrichment is therefore not supported and is not emitted.

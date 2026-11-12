@@ -314,7 +314,7 @@ public class AnnotationSecurityPolicyResolver implements SecurityPolicyResolver 
     /**
      * Returns {@code true} when the merged annotation list carries two {@code @RolesAllowed} or
      * two {@code @Authorized} instances with disagreeing member values — the fail-closed half of
-     * cross-declaration security parity with codegen (issue #634).
+     * cross-declaration security parity with codegen.
      *
      * @param annotations merged annotations from one declaration level
      * @return {@code true} if member values conflict

@@ -12,7 +12,7 @@ import java.util.stream.Collectors;
 import javax.lang.model.element.TypeElement;
 
 /**
- * Group-level validator that enforces FR-CG011-012 and FR-CG011-016: in any contract group with
+ * Group-level validator: in any contract group with
  * more than one candidate implementation, <strong>at most one</strong> may lack
  * {@code @ConditionalOnProperty}.
  *

@@ -25,13 +25,12 @@ import jakarta.inject.Singleton;
  * that phase's verticles. This step returns a deliberately very low priority
  * ({@link #DEPLOY_PRIORITY}) so that, among all {@code SERVICES}-phase startup steps, it runs first —
  * and therefore service dispatch is brought up before any {@code SERVICES}-phase verticle. That
- * preserves the legacy INFRA &rarr; service-dispatch-deploy &rarr; {@code SERVICES}-verticle order
- * (FR-APP-022 / AC-11).
+ * preserves the legacy INFRA &rarr; service-dispatch-deploy &rarr; {@code SERVICES}-verticle order.
  *
  * <p>This step is paired with {@link ServiceDeploymentShutdownStep}: the runner runs the shutdown
  * step (which calls {@link ServiceDeploymentManager#undeployAll()}, deregistering supervision first)
  * during reverse-order teardown, before any generic verticle undeploy — the owner-managed teardown
- * contract of FR-APP-028 / AC-14.
+ * contract.
  */
 @Singleton
 public final class ServiceDeploymentStartupStep implements ApplicationStartupStep {

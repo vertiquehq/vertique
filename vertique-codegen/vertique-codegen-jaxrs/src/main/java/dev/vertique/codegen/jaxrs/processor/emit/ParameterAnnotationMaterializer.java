@@ -22,7 +22,7 @@ import javax.lang.model.element.VariableElement;
 /**
  * Shared logic for materializing a JAX-RS parameter's runtime-retained annotations into a
  * literal-backed {@code dev.vertique.core.codegen.ParameterMetadata} implementation, used identically
- * by {@link ExecutionPlanEmitter} and {@link JaxRsDescriptorEmitter} (ADR-0146).
+ * by {@link ExecutionPlanEmitter} and {@link JaxRsDescriptorEmitter}.
  *
  * <p><strong>Parity-first policy.</strong> Codegen is a performance optimization, not a feature gate:
  * adding or removing the annotation processor must not change runtime behavior. Each parameter's

@@ -33,8 +33,8 @@ import jakarta.inject.Singleton;
  * {@link dev.vertique.localization.context.LocalizationContext}.
  *
  * <p>The module deliberately does NOT provide a global {@link
- * dev.vertique.localization.message.MessageSource MessageSource} (FR-LOC-011) and does NOT
- * declare a {@code Set<MessageSource>} multibinding (FR-LOC-012). Applications create their
+ * dev.vertique.localization.message.MessageSource MessageSource} and does NOT
+ * declare a {@code Set<MessageSource>} multibinding. Applications create their
  * own qualified {@code MessageSource} bindings using the factory:
  *
  * <pre>{@code

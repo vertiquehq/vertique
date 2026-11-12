@@ -25,13 +25,13 @@ import java.util.Map;
  * codecs need a stable, evolvable wire shape: {@code schemaVersion} for forward compatibility,
  * {@code @JsonInclude(NON_NULL)} so absent optional fields are omitted from the JSON, and
  * {@code @JsonIgnoreProperties(ignoreUnknown=true)} so future versions can add fields without
- * breaking older consumers (FR-COR-143 / FR-COR-152).
+ * breaking older consumers.
  *
  * <p>{@link CorrelationContextDurableEncoder} fills this DTO from a
  * {@link dev.vertique.core.correlation.CorrelationContextSnapshot}, applying durability filters
  * ({@link CorrelationSessionRef#durableSafe()} omits the whole session block when false;
  * {@link dev.vertique.core.correlation.ProtocolCorrelationRef#durableSafe()} filters individual
- * items out of the list — FR-COR-144 / FR-COR-148). {@link CorrelationContextDurableDecoder}
+ * items out of the list). {@link CorrelationContextDurableDecoder}
  * deserialises the JSON, enforces required fields and {@code schemaVersion}, re-validates header
  * names/values per {@link dev.vertique.core.correlation.CorrelationHeaderValidator}, and rebuilds
  * a fresh live context.

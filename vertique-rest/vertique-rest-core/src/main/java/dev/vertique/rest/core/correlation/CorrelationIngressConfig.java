@@ -14,8 +14,8 @@ import java.util.Objects;
  *
  * <p>Default header names mirror the existing framework conventions ({@code X-Request-Id},
  * {@code X-Correlation-Id}, {@code X-Causation-Id}). Default echo policy preserves the
- * pre-correlation behaviour (echo {@code X-Request-Id}, do not echo {@code X-Correlation-Id} —
- * FR-COR-089 / FR-COR-090). Causation parsing is off by default per FR-COR-085 (MAY).
+ * pre-correlation behaviour (echo {@code X-Request-Id}, do not echo {@code X-Correlation-Id}).
+ * Causation parsing is off by default.
  *
  * <p>Configured header names MUST be valid HTTP header tokens — this record validates them at
  * construction via {@link CorrelationHeaderValidator#requireValidHeaderName(String)} so a typo
@@ -99,7 +99,7 @@ public record CorrelationIngressConfig(
     public enum InvalidValuePolicy {
         /** Reject the request (4xx). Suitable for strict environments. */
         REJECT,
-        /** Replace the inbound value with a freshly generated one (default — FR-COR-053). */
+        /** Replace the inbound value with a freshly generated one (default). */
         REPLACE_WITH_GENERATED
     }
 

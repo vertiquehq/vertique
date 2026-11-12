@@ -91,7 +91,7 @@ final class RestClientRequestFactory {
      * Creates a new request factory with an explicit {@link BeanParamAccessorRegistry} and the
      * supplied {@link ParamConversionResolver} for outbound typed-parameter serialization.
      *
-     * <p>This is the constructor used by {@link RestClientBuilder#build(Class)} after slice 4.2,
+     * <p>This is the constructor used by {@link RestClientBuilder#build(Class)},
      * which threads the effective resolver (built from the builder's converter accumulator lists,
      * or the Dagger-provided app-wide resolver seeded by {@link RestClientFactory#builder()}).
      *

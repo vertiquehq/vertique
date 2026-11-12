@@ -5,12 +5,14 @@ package dev.vertique.ratelimit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dev.vertique.ratelimit.spi.RateLimitBackend;
 import dev.vertique.ratelimit.spi.RateLimitObserver;
 import dev.vertique.ratelimit.spi.event.RateLimitEvent;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+import java.lang.reflect.Field;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -116,6 +118,21 @@ class RateLimiterDisabledPolicyTest {
             Optional::empty;
 
     /** Records every {@link RateLimitEvent} it receives; never throws. */
+    /**
+     * The placeholder backend bound to a disabled policy's handle is a guard, not a backend: if a
+     * code path ever invoked it, it must fail loudly rather than consume anything.
+     */
+    @Test
+    void shouldFailLoudlyIfTheDisabledPolicyPlaceholderBackendIsEverInvoked() throws Exception {
+        Field field = RateLimiters.class.getDeclaredField("UNREACHABLE_DISABLED_BACKEND");
+        field.setAccessible(true);
+        RateLimitBackend placeholder = (RateLimitBackend) field.get(null);
+
+        assertThatThrownBy(() -> placeholder.consume(null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageStartingWith("BUG: a disabled policy's handle must never invoke its backend");
+    }
+
     private static final class RecordingObserver implements RateLimitObserver {
         private final List<RateLimitEvent> received = new ArrayList<>();
 

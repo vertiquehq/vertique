@@ -20,7 +20,7 @@ import dev.vertique.core.json.JsonProfileId;
  * comments. It never mutates Vert.x's shared mapper.
  *
  * <p>This type is package-private and registered separately from application-contributed profiles;
- * applications must not contribute a profile with the reserved {@code vertique} id (FR-JSON-044).
+ * applications must not contribute a profile with the reserved {@code vertique} id.
  */
 final class VertiqueJsonMapperProfile implements JsonMapperProfile {
 
@@ -30,7 +30,7 @@ final class VertiqueJsonMapperProfile implements JsonMapperProfile {
     /**
      * The single independent {@link ObjectMapper} backing this profile, built once at construction by
      * applying the {@link JacksonDefaults} baseline recipe and opinions to a fresh mapper. It is never
-     * the shared Vert.x {@code DatabindCodec.mapper()} (FR-JSON-045).
+     * the shared Vert.x {@code DatabindCodec.mapper()}.
      */
     private final ObjectMapper mapper = JacksonDefaults.apply(new ObjectMapper());
 
@@ -50,7 +50,7 @@ final class VertiqueJsonMapperProfile implements JsonMapperProfile {
      * <p>Returns the single independent {@link ObjectMapper} this profile owns — built once via
      * {@code JacksonDefaults.apply(new ObjectMapper())} and returned as-is (the same instance on every
      * call), never copied or wrapped. This mapper is the profile's own instance, so the
-     * {@code vertique} profile never mutates Vert.x's shared mapper (FR-JSON-045).
+     * {@code vertique} profile never mutates Vert.x's shared mapper.
      *
      * @return the {@link ObjectMapper} backing the {@code vertique} profile
      */

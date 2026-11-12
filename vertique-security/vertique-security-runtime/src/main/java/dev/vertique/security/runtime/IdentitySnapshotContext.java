@@ -14,7 +14,7 @@ import java.util.Optional;
 /**
  * {@link ContextHolder}-bindable wrapper carried across durable execution boundaries (delayed jobs,
  * inbox/outbox, workflow resume) so a deferred execution can reconstruct — or fail closed on — the
- * identity that originated the work (PRD-ID-002 §14.3 "Durable carriage", §14.6 amendment A9).
+ * identity that originated the work.
  *
  * <p>The wrapper models the two sides of the durable boundary with three mutually-exclusive states,
  * so the schema v2 content/envelope split ({@code IdentitySnapshotFactory} captures content only; the
@@ -30,7 +30,7 @@ import java.util.Optional;
  *       carries a snapshot that decoded and passed HMAC + freshness + carrier verification on the
  *       receive side. {@link #snapshot()} is present and {@link #verified()} is {@code true}.
  *       {@link IdentitySnapshotReconstructionInitializer} reconstructs a
- *       {@link dev.vertique.security.SecurityContext} from it (re-verifying per FR-ID-CA-008 as
+ *       {@link dev.vertique.security.SecurityContext} from it (re-verifying as
  *       defense-in-depth).</li>
  *   <li><strong>Present-but-unverifiable (receive side)</strong> —
  *       {@link #unverifiable(SnapshotDegradationReason)} carries only the typed reason a

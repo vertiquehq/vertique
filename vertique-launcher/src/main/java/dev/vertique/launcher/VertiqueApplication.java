@@ -182,7 +182,7 @@ public class VertiqueApplication extends VertxApplication implements VertxApplic
      * System property that opts a standalone app out of the framework-owned bootstrap verticle.
      * When set to {@code "false"} (case-insensitive), {@link #verticleSupplier()} returns
      * {@code null} so the upstream launcher resolves the verticle via its standard
-     * {@code Main-Verticle}/CLI mechanism instead (see FR-APP-030 escape hatch).
+     * {@code Main-Verticle}/CLI mechanism instead (the escape hatch).
      */
     static final String BOOTSTRAP_VERTICLE_PROPERTY = "vertique.bootstrap.verticle";
 
@@ -531,7 +531,7 @@ public class VertiqueApplication extends VertxApplication implements VertxApplic
      * resolution entirely (this hook runs <em>before</em> manifest resolution). By default this
      * returns {@code () -> new VertiqueBootstrapVerticle()}.
      *
-     * <p><strong>Escape hatch (FR-APP-030):</strong> when the system property
+     * <p><strong>Escape hatch:</strong> when the system property
      * {@value #BOOTSTRAP_VERTICLE_PROPERTY} equals {@code "false"} (case-insensitive), this returns
      * {@code null}, deferring to the launcher's standard {@code Main-Verticle}/CLI resolution so a
      * custom-startup app can supply its own main verticle the standard way (CLI positional argument

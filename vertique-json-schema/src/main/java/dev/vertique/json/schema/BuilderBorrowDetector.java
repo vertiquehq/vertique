@@ -16,8 +16,7 @@ import java.lang.reflect.Modifier;
  * MetadataConstraintSource#forUnscopedMember} — is sound enough to publish, for the
  * <em>getter-less</em> built property (the private, no-getter case). A getter-backed built property
  * borrows unconditionally, for any builder, and never consults this class — see
- * {@code module.md}'s "Builder borrow assumption" (round 2). The owner ruling (vertiquehq/vertique-dev,
- * {@code spike/deserializer-driven-schema}): the borrow is guaranteed by construction for a Lombok
+ * {@code module.md}'s "Builder borrow assumption". The borrow is guaranteed by construction for a Lombok
  * {@code @Builder @Jacksonized} setter, which the framework's own configuration types use throughout,
  * and is kept for that shape; a hand-written builder that does not reproduce it may go unresolved,
  * meaning its getter-less property is published by type only.

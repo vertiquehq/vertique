@@ -28,17 +28,17 @@ import org.apache.avro.specific.SpecificRecord;
  * {@link AvroKafkaSerializer}/{@link AvroKafkaDeserializer} in <strong>Confluent-wire-compatible</strong>
  * mode: the Apicurio 3.x default {@code Default4ByteIdHandler} writes a magic byte + 4-byte schema id
  * into the <em>payload</em>, and headers are disabled — so the framing matches Confluent's and survives
- * the consumer's UTF-8 header stringification and the DLQ raw-bytes republish (see ADR-0074).
+ * the consumer's UTF-8 header stringification and the DLQ raw-bytes republish.
  *
  * <p>Serdes are built once per producer-method / consumer (the registry calls
  * {@link #serializer}/{@link #deserializer} at endpoint-build time, not per record). The provider
  * declares {@link #mayBlock()}{@code =true}; the {@code KafkaSerdeRegistry} wrapper propagates it onto
  * every built serde, so the framework offloads producer serialization off the event loop and forces
- * the worker threading model for Avro consumers (NFR-AVRO-005).
+ * the worker threading model for Avro consumers.
  *
  * <p>Registry/serde configuration is read from the already-merged {@code endpointConfig}
  * ({@code serdeProperties} + {@code schemaRegistry}); the native Kafka {@code properties} bag is never
- * consulted (FR-AVRO-009).
+ * consulted.
  */
 public final class ApicurioAvroSerdeProvider implements KafkaSerdeProvider {
 
@@ -50,10 +50,10 @@ public final class ApicurioAvroSerdeProvider implements KafkaSerdeProvider {
     private static final String CFG_HEADERS_ENABLED = "apicurio.registry.headers.enabled";
     private static final String CFG_USE_SPECIFIC_AVRO_READER = "apicurio.registry.use-specific-avro-reader";
     private static final String CFG_AUTO_REGISTER = "apicurio.registry.auto-register";
-    // Bounded registry-call defaults (NFR-AVRO-002). Apicurio 3.2.4 exposes no config-map socket
+    // Bounded registry-call defaults. Apicurio 3.2.4 exposes no config-map socket
     // read-timeout key; the JDK client adapter applies a 30s connect timeout, and these bound the
     // retry storm. All are overridable via serdeProperties / kafka.schemaRegistry. The worker-threading
-    // contract (NFR-AVRO-005) remains the primary event-loop protection.
+    // contract remains the primary event-loop protection.
     private static final String CFG_RETRY_COUNT = "apicurio.registry.retry-count";
     private static final String CFG_RETRY_BACKOFF_MS = "apicurio.registry.retry-backoff-ms";
     private static final long DEFAULT_RETRY_COUNT = 3L;
@@ -161,7 +161,7 @@ public final class ApicurioAvroSerdeProvider implements KafkaSerdeProvider {
     /**
      * Runs an Apicurio deserialize, mapping any runtime failure (registry unreachable, missing
      * schema/class) to {@link DeserializationException} so it flows through the framework's
-     * {@code ErrorStrategy} (NFR-AVRO-003).
+     * {@code ErrorStrategy}.
      */
     private static <T> T decode(AvroKafkaDeserializer<T> deserializer, String topic, byte[] data) {
         try {
@@ -230,7 +230,7 @@ public final class ApicurioAvroSerdeProvider implements KafkaSerdeProvider {
      * Builds the base Apicurio config from the merged endpoint view: registry URL + bounded retry
      * defaults (overridable by {@code serdeProperties}), the user {@code serdeProperties} overlay,
      * then the Confluent-wire framing flag re-applied last as a non-overridable framework invariant
-     * (the whole design depends on the schema id living in the payload, not headers — ADR-0074).
+     * (the whole design depends on the schema id living in the payload, not headers).
      */
     private Map<String, Object> baseConfig(JsonObject endpointConfig) {
         JsonObject schemaRegistry = endpointConfig.getJsonObject("schemaRegistry", globalSchemaRegistry);
@@ -241,7 +241,7 @@ public final class ApicurioAvroSerdeProvider implements KafkaSerdeProvider {
         if (url != null) {
             config.put(CFG_REGISTRY_URL, url);
         }
-        // Bounded registry-call defaults (NFR-AVRO-002); overridable by serdeProperties below.
+        // Bounded registry-call defaults; overridable by serdeProperties below.
         config.put(CFG_RETRY_COUNT, DEFAULT_RETRY_COUNT);
         config.put(CFG_RETRY_BACKOFF_MS, DEFAULT_RETRY_BACKOFF_MS);
         // User-supplied apicurio.registry.* properties override the defaults above.

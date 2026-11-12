@@ -18,7 +18,7 @@ import javax.lang.model.type.TypeMirror;
  *
  * @param concreteParameter    the concrete parameter element; never {@code null}
  * @param annotationSources    the parameter elements whose annotation mirrors back the effective
- *                             annotation set for literal materialization (GitHub issue #162):
+ *                             annotation set for literal materialization:
  *                             {@code concreteParameter} first, followed by the matching parameter on
  *                             each superclass/interface override that declares it (BFS order),
  *                             mirroring the runtime {@code AnnotationResolver.resolveParameterAnnotations}
@@ -29,7 +29,7 @@ import javax.lang.model.type.TypeMirror;
  *                             {@code null}
  * @param name                 the param name value (e.g. from {@code @PathParam("id")}), may be
  *                             {@code null} if the annotation is absent, or blank if the annotation
- *                             declares an empty name (CG-009 blank-name parity)
+ *                             declares an empty name (blank-name parity with the runtime)
  * @param defaultValue         the value from {@code @DefaultValue}, or {@code null} if absent
  * @param type                 the parameter type mirror; never {@code null}
  * @param componentType        the element type if the parameter is a multi-value shape — a generic

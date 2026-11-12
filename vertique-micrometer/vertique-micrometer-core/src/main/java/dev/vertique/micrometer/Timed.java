@@ -40,7 +40,7 @@ public @interface Timed {
 
     /**
      * Returns the metric (timer) name; an empty value auto-derives
-     * {@code vertique.<simpleClassName>.<method>} (lower-dotted) per §3b.
+     * {@code vertique.<simpleClassName>.<method>} (lower-dotted).
      *
      * @return the metric name, or {@code ""} to auto-derive
      */

@@ -121,7 +121,7 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>Safety: {@code safeFailureMessage} is intentionally left {@code null}. Raw exception messages
  * may contain SQL errors, upstream service details, or PII and must never be placed in the event
- * directly (§10.3). A future curated source may populate this field. The request path is carried
+ * directly. A future curated source may populate this field. The request path is carried
  * raw on either event; this middleware never writes it to its log.
  */
 @Slf4j
@@ -343,7 +343,7 @@ public final class RestRequestCompletionEmitter implements Middleware {
         int status = ctx.response().getStatusCode();
         // failureCode: class name only — safe, low-cardinality, suitable for metric labels.
         String failureCode = ctx.failure() != null ? ctx.failure().getClass().getSimpleName() : null;
-        // safeFailureMessage: intentionally null. Raw exception messages are unsafe (§10.3).
+        // safeFailureMessage: intentionally null. Raw exception messages are unsafe.
         // A future curated source may populate this field via enrichment.
         String safeFailureMessage = null;
         // wireFailureCode: post-handoff wire-failure classification. The framework-owned marker

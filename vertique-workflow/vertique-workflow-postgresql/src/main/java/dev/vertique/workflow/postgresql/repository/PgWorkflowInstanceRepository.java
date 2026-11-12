@@ -658,7 +658,7 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
      * <p>When {@link WorkflowInstanceQuery#subjectVersion()} is non-null, the query adds a
      * {@code subject_version = $N} predicate and the partial composite index
      * {@code idx_workflow_instances_subject_versioned} will be used by the planner for
-     * version-aware queries ({@code FR-WF-123}).
+     * version-aware queries.
      *
      * @param query  the query criteria to apply; fields set to {@code null} are ignored
      * @param cursor the page cursor; pass {@link PageCursor#first(int)} for the first page and

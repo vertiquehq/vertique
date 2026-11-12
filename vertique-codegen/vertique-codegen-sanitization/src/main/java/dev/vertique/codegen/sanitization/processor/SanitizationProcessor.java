@@ -21,7 +21,7 @@ import javax.lang.model.SourceVersion;
 import javax.lang.model.element.TypeElement;
 
 /**
- * Annotation processor (CG-008) that generates {@code {DTO}_InputProcessor} classes for REST
+ * Annotation processor that generates {@code {DTO}_InputProcessor} classes for REST
  * request body DTOs discovered via JAX-RS resource methods.
  *
  * <p>Discovery is anchored on HTTP-verb annotations ({@code @GET}, {@code @POST}, etc.) on
@@ -50,7 +50,7 @@ import javax.lang.model.element.TypeElement;
  *
  * <p>This processor emits no Dagger module: the
  * {@link dev.vertique.input.processing.GeneratedInputProcessorDispatcher} self-populates via
- * classloader lookup, making CG-008 a transparent optimization that requires no extra wiring.
+ * classloader lookup, making the processor a transparent optimization that requires no extra wiring.
  */
 @SupportedAnnotationTypes("*")
 @SupportedSourceVersion(SourceVersion.RELEASE_21)

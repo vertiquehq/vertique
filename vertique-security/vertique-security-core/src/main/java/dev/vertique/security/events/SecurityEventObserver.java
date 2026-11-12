@@ -131,8 +131,8 @@ public interface SecurityEventObserver {
      * context's current authority.
      *
      * <p>Emitted and awaited by the activation seam itself (not by
-     * {@link dev.vertique.security.CapturedAuthorityReconstruction}, which stays event-silent per
-     * FR-ID-CA-007) — the returned {@link Future} resolving signals delivery to this observer
+     * {@link dev.vertique.security.CapturedAuthorityReconstruction}, which stays event-silent)
+     * — the returned {@link Future} resolving signals delivery to this observer
      * before the activation caller receives its reconstructed context.
      *
      * @param event the captured-authority-activated event; never null

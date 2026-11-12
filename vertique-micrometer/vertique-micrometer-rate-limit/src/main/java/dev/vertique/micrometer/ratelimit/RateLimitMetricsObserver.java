@@ -24,8 +24,7 @@ import lombok.extern.slf4j.Slf4j;
  * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
  * outside the maturity promise. Applications use the surface the module document lists.
  *
- * <p>Records the frozen Micrometer meter vocabulary for completed rate-limit admission decisions
- * (contracts/observability.md, "Micrometer adapter").
+ * <p>Records the frozen Micrometer meter vocabulary for completed rate-limit admission decisions.
  */
 @Slf4j
 @Singleton

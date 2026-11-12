@@ -15,7 +15,7 @@ import java.util.Objects;
 import java.util.regex.Pattern;
 
 /**
- * Encodes and decodes the unsigned, non-expiring {@code tools/list} pagination cursor (§4.7).
+ * Encodes and decodes the unsigned, non-expiring {@code tools/list} pagination cursor.
  *
  * <p>A cursor is canonical compact JSON with exactly {@code protocolVersion}, {@code registryDigest},
  * and {@code lastScannedToolName}, in that order, base64url-encoded without padding. It carries no

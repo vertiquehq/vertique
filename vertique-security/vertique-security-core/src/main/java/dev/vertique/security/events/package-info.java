@@ -6,7 +6,7 @@
  *
  * <p>This package contains the event types emitted during authentication and authorization
  * processing, as well as the {@link dev.vertique.security.events.SecurityEventObserver}
- * SPI that consumers implement to receive those events. See PRD §7.13 for the full contract.
+ * SPI that consumers implement to receive those events.
  *
  * <p>Event categories:
  * <ul>

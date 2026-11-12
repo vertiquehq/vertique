@@ -143,7 +143,7 @@ public class DefaultSecurityPolicyValidator implements SecurityPolicyValidator {
      * whose V1 enforcement is deferred — the fail-closed matrix on the class javadoc.
      *
      * <p>This delegates to {@link EffectiveSecurityPolicy#enforceSupportedShape}, the single source of
-     * truth for ADR-0124's fail-closed matrix shared with the rest-jaxrs route registrar's always-on
+     * truth for the fail-closed matrix shared with the rest-jaxrs route registrar's always-on
      * gate, so the matrix logic lives in exactly one place. The three deferred cases it rejects are any
      * multi-scheme (AND) set; scopes on an OR alternative (more than one set with any set carrying
      * scopes); and scopes declared via both {@code @Authorized} (the policy's required scopes) and

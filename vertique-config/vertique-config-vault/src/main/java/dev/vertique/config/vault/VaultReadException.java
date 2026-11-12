@@ -24,7 +24,7 @@ import dev.vertique.core.exception.ConfigurationException;
  *       {@link #VaultReadException(String, String)}.</li>
  * </ul>
  *
- * <h2>Cause-chain severing (NFR-CONF-002)</h2>
+ * <h2>Cause-chain severing</h2>
  * <p>The jopenlibs driver embeds raw HTTP response bodies in {@code VaultException} messages for
  * non-2xx reads and failed logins (format: {@code "...\nResponse body: <body>"}). An untrusted
  * proxy 502 HTML page or a Vault error body can therefore flow up the cause chain and reach
@@ -46,7 +46,7 @@ class VaultReadException extends ConfigurationException {
      * detail is sanitized externally by
      * {@link JOpenLibsVaultGateway#sanitizeDriverFailure(String, io.github.jopenlibs.vault.VaultException)}),
      * HTTP status failures (404, 403, other non-2xx), and JWT file read errors. The cause is
-     * intentionally NOT attached — see class-level javadoc for NFR-CONF-002 rationale.
+     * intentionally NOT attached — see class-level javadoc for the rationale.
      *
      * @param path   the Vault path that was being read; used for diagnostics only
      * @param detail a safe, non-secret description of the failure (e.g. "HTTP 403",

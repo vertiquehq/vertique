@@ -282,7 +282,7 @@ public final class ServiceContractEntries {
         @Nullable
         private String explicitAddress;
 
-        // --- Optional overrides for handler-pattern support (CG-005) ---
+        // --- Optional overrides for handler-pattern support ---
 
         /**
          * Explicit handler method override. When set, {@link ServiceMethodMeta#handlerMethod()}

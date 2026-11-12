@@ -16,7 +16,7 @@ import java.util.Optional;
  * context is non-null, it returns the routing context cast to the requested type.
  *
  * <p>Priority is {@code 100} — higher than the application default of {@code 0}, so application
- * resolvers may shadow this one if needed (FR-REST-194).
+ * resolvers may shadow this one if needed.
  *
  * <p><b>Internal framework built-in — not an application SPI.</b> Applications must not extend or
  * contribute this resolver. To provide custom context values, implement {@link RestContextResolver}

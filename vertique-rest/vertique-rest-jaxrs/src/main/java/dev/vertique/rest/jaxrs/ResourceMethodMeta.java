@@ -52,7 +52,7 @@ import java.util.function.Supplier;
  * @param routeSanitizerChain      route-level sanitizer chain resolved from {@code @Sanitize} on
  *                                 the resource class or method; method-level overrides class-level;
  *                                 empty if none declared
- * @param executionPlan            optional CG-010 generated execution plan that replaces the
+ * @param executionPlan            optional generated execution plan that replaces the
  *                                 reflective {@code ParameterExtractor + Method.invoke(...)} path
  *                                 on the request hot path; {@code null} means the reflective path
  *                                 runs unchanged

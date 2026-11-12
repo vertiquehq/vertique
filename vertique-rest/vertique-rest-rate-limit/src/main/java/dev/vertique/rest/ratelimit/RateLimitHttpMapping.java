@@ -7,7 +7,7 @@ import java.time.Duration;
 
 /**
  * Shared HTTP-mapping constants and the {@code Retry-After} rounding rule
- * (contracts/rest-adapter.md, "HTTP mapping") used identically by both {@link
+ * used identically by both {@link
  * RateLimitExceptionMapper} (the {@code execute()}/exception-mapping path) and {@link
  * RateLimitEdgeMiddleware} (the edge decision-mapping path) — kept as one definition so the two
  * independent HTTP-mapping call sites cannot silently drift apart.

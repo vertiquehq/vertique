@@ -155,7 +155,7 @@ final class CronJobDispatcher {
      * Creates a new dispatcher with the given configuration.
      *
      * <p>Requires the {@link dev.vertique.context.DispatchEnvelopeBuilder} used to construct
-     * outgoing envelopes through the context-substrate capturer (FR-CTX-015). Currently bound
+     * outgoing envelopes through the context-substrate capturer. Currently bound
      * {@code ContextHolder} values flow into the dispatch envelope via registered
      * {@code ServiceDispatchContextEncoder}s.
      *
@@ -169,7 +169,7 @@ final class CronJobDispatcher {
      * @param progressFlushIntervalMs interval for flushing progress snapshots; {@code 0} disables
      * @param nodeId                  stable node identifier for attribution
      * @param envelopeBuilder         builder for outgoing dispatch envelopes; must not be
-     *                                {@code null} (FR-CTX-015)
+     * {@code null}
      */
     CronJobDispatcher(
             Vertx vertx,
@@ -187,8 +187,7 @@ final class CronJobDispatcher {
         this.executionTimeoutMs = executionTimeoutMs;
         this.progressFlushIntervalMs = progressFlushIntervalMs;
         this.nodeId = nodeId;
-        this.envelopeBuilder =
-                java.util.Objects.requireNonNull(envelopeBuilder, "envelopeBuilder must not be null (FR-CTX-015)");
+        this.envelopeBuilder = java.util.Objects.requireNonNull(envelopeBuilder, "envelopeBuilder must not be null");
     }
 
     /**
@@ -282,7 +281,7 @@ final class CronJobDispatcher {
             ctx.put(JobContext.class.getName(), jobContext);
             ctx.put(JobDispatchContext.class.getName(), dispatchCtx);
             // Provenance proving this is deferred (cron) execution so the receive-side identity
-            // reconstruction initializer may mint a bounded SYSTEM context (W2/A6). Keyed by FQCN
+            // reconstruction initializer may mint a bounded SYSTEM context. Keyed by FQCN
             // like the JobDispatchContext entry; reinstated before InboundContextInitializers run.
             ctx.put(DeferredExecutionOrigin.class.getName(), DeferredExecutionOrigin.of("cron", job.id()));
             if (!mdc.isEmpty()) {
@@ -292,7 +291,7 @@ final class CronJobDispatcher {
             }
 
             String replyAddress = "job.completions." + executionId;
-            // FR-CTX-015: always route through DispatchEnvelopeBuilder so registered
+            // Always route through DispatchEnvelopeBuilder so registered
             // ServiceDispatchContextEncoders capture currently-bound holder values (including the
             // built-in DurablePropagationMetadata encoder). The builder is required (non-null) per
             // the constructor contract. Inside the region because a registered encoder is

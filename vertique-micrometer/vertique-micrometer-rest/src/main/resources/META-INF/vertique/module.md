@@ -41,7 +41,7 @@ into their respective multibinding sets. Neither contribution touches the respon
 exceptions toward the caller — every callback body is wrapped in a try/catch that logs at WARN and
 swallows.
 
-**Active gauge design (SP-5 rationale).** The original PRD design paired `onRequest` with
+**Active gauge design.** An earlier design paired `onRequest` with
 `afterResponse`. That pairing leaks: WebSocket upgrades and bare-metal 500s where the error pipeline
 never fires both produce an `onRequest` with no matching `afterResponse`, leaving the gauge
 permanently inflated. The implementation instead uses `onRequest` to increment and `rc.addEndHandler`
@@ -72,7 +72,7 @@ drop-on-saturation variant silently stops recording real time series once legiti
 exceed any fixed cap.
 
 **Zero-overhead when unconfigured.** Before `VertiqueApplication` bootstrap the injected
-`MeterRegistry` is an empty composite whose recording is a no-op (NFR-TEL-003). When the optional
+`MeterRegistry` is an empty composite whose recording is a no-op. When the optional
 `MetricsConfig` binding is absent (i.e., `MicrometerModule` is not installed), both contributions
 default to enabled — they record against whatever registry is injected.
 

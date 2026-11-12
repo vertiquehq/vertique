@@ -28,7 +28,7 @@ import java.util.Objects;
  * the policy catalogue (built once from every {@link PolicyDefinitionSource}), and permits the action
  * iff some {@link Effect#ALLOW} statement's pattern matches it. Every outcome is reported as an
  * already-succeeded {@link Future} carrying an {@link AuthorizationDecision} with a stable
- * {@link AuthzReasonCodes reason code}; the engine never emits an event (ADR-0114) and never throws to
+ * {@link AuthzReasonCodes reason code}; the engine never emits an event and never throws to
  * signal a denial.
  *
  * <p><strong>Decision order</strong> (first matching rule wins):
@@ -61,7 +61,7 @@ public final class DefaultAuthorizer implements Authorizer {
      * <p>The policy catalogue is materialised once at construction (inside {@link AuthzResolution})
      * into an immutable name→policy map. When two sources contribute a policy with the same name the
      * last one wins; duplicate-name rejection across sources is enforced upstream at startup
-     * validation (slice 7 wiring).
+     * validation.
      *
      * @param actionRegistry     the registry of known actions; must not be {@code null}
      * @param policyDefinitionSource the source of policy definitions; must not be {@code null}

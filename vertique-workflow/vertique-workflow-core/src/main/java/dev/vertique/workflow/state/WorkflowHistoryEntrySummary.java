@@ -12,7 +12,7 @@ import java.util.Objects;
  * <p>Migration handlers receive a list of recent {@code WorkflowHistoryEntrySummary} instances
  * via {@link dev.vertique.workflow.migration.MigrationContext#recentHistory()}. This projection
  * intentionally omits the full {@code payloadJson} to prevent handlers from coupling to
- * engine-internal payload typing (PRD-WF-003 §7.4).
+ * engine-internal payload typing.
  *
  * <p>Field names and semantics mirror the corresponding fields on {@link WorkflowHistoryEntry}:
  * <ul>

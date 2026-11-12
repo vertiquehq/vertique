@@ -58,9 +58,8 @@ import java.util.function.Supplier;
 /**
  * Package-private collaborator owning the core state-machine transition driver.
  *
- * <p>This class is extracted from {@link WorkflowEngine} as part of the Phase-1 decomposition
- * (PRD-WF-006, Slice C5). It absorbs the mutually recursive transition loop and the per-node
- * handlers for the single-path plan nodes:
+ * <p>This class is extracted from {@link WorkflowEngine}. It owns the mutually recursive
+ * transition loop and the per-node handlers for the single-path plan nodes:
  * <ul>
  *   <li>{@link #driveTransitions} / {@link #driveTransitionsStep} — the {@code Future.compose}
  *       recursion that advances {@code currentStepId} until a wait, terminal, or error state.</li>
@@ -75,24 +74,22 @@ import java.util.function.Supplier;
  * coordinator drives the parent instance back into {@link #driveTransitionsStep} after a join
  * decides. To break the Dagger constructor cycle, the driver injects the coordinator
  * <em>eagerly</em> while the coordinator injects a {@link Provider}{@code <}{@link
- * WorkflowTransitionDriver}{@code >} <em>lazily</em>. This mirrors the C4 wiring (the lazy
+ * WorkflowTransitionDriver}{@code >} <em>lazily</em> (the lazy
  * {@code Provider} is on the {@link ForkJoinCoordinator} side; the driver is eager).
  *
- * <p><b>Task back-edge (C7).</b> {@link #handleHumanTaskNode} (+due-date) needs the task-creation
- * helpers {@code resolveAssignment} and {@code appendTaskCreatedHistory}, which slice C7 placed on
+ * <p><b>Task back-edge.</b> {@link #handleHumanTaskNode} (+due-date) needs the task-creation
+ * helpers {@code resolveAssignment} and {@code appendTaskCreatedHistory}, which live on
  * {@link TaskLifecycleService}. The driver reaches them through a lazy
  * {@link Provider}{@code <}{@link TaskLifecycleService}{@code >}; this lazy {@code Provider} also
  * breaks the driver↔task constructor cycle (the service injects the driver eagerly). The static
  * {@link TaskLifecycleService#buildTaskRecord} helper is invoked statically (no back-edge needed).
  *
- * <p><b>Timer back-edge (C8).</b> The timer-bearing handlers
+ * <p><b>Timer back-edge.</b> The timer-bearing handlers
  * ({@link #handleTimerNode}, {@link #handleWaitSignalWithTimeout}, {@link #handleHumanTaskNodeWithDueDate})
- * depend on {@link TimerLifecycleService#resolveFireAt}, which PRD-WF-006 §4 assigns to
- * {@link TimerLifecycleService} (C8). The driver reaches it through a lazy
+ * depend on {@link TimerLifecycleService#resolveFireAt}. The driver reaches it through a lazy
  * {@link Provider}{@code <}{@link TimerLifecycleService}{@code >}; this lazy {@code Provider} breaks
  * the driver↔timer constructor cycle (the timer service injects the driver eagerly to drive
- * transitions after a timer fires). This replaced the transient C5
- * {@code Provider<WorkflowEngine>} back-edge — the driver no longer references the engine facade.
+ * transitions after a timer fires). The driver does not reference the engine facade.
  *
  * <p>Instances are {@code @Singleton} and constructed by Dagger via {@code @Inject}.
  */
@@ -438,7 +435,7 @@ final class WorkflowTransitionDriver {
         if (wsn.timeout() != null) {
             return handleWaitSignalWithTimeout(inst, wsn, rw, tx);
         }
-        // No timeout — simple SIGNAL wait (cycle-1 path).
+        // No timeout — simple SIGNAL wait.
         long prevVersion = inst.version();
         WorkflowInstance waiting = inst.withVersion(prevVersion + 1)
                 .withStatus(WorkflowStatus.WAITING)

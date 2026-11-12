@@ -60,7 +60,7 @@ public final class SecurityContexts {
      * {@link PrincipalType#SYSTEM} principal — the only sanctioned path to one is
      * {@link SystemIdentities}. Stamping a {@code custom("system")} authentication method on a
      * {@code USER}/{@code SERVICE}/{@code ANONYMOUS} actor would misattribute an asserted principal
-     * as system-acting (ADR-0163), so a non-{@code SYSTEM} actor is rejected.
+     * as system-acting, so a non-{@code SYSTEM} actor is rejected.
      *
      * <p>The identity must also be <strong>actor-only</strong>: {@link SecurityIdentity#subject()},
      * {@link SecurityIdentity#delegation()}, and {@link SecurityIdentity#client()} must all be

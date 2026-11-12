@@ -131,7 +131,7 @@ public class DelayedJobClientFactory {
         JsonObject contractConfig = resolveContractConfig(annotation);
 
         // Prefer the generated static proxy when present (zero reflection); fall back to the JDK
-        // dynamic proxy otherwise. A present-but-broken generated class fails loudly. See ADR-0070.
+        // dynamic proxy otherwise. A present-but-broken generated class fails loudly.
         return GeneratedCompanions.instantiate(
                         contractInterface,
                         PROXY_SUFFIX,

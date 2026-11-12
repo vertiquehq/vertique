@@ -21,23 +21,22 @@ import javax.lang.model.type.TypeMirror;
 
 /**
  * Validates {@code @Context} parameter constraints on JAX-RS resource methods at compile time,
- * mirroring the runtime {@code RouteValidator.addContextParamViolations} rules
- * (FR-REST-187/188/189). This is the compile-time parity guardrail for split inherited
+ * mirroring the runtime {@code RouteValidator.addContextParamViolations} rules. This is the compile-time parity guardrail for split inherited
  * annotations, where {@code @Context} may appear on an interface method parameter while a
  * value-binding annotation ({@code @PathParam}, etc.) appears on the corresponding concrete
  * parameter.
  *
  * <p>For each parameter, at most one diagnostic is emitted in this priority order:
  * <ol>
- *   <li><strong>Conflict</strong> (FR-REST-187) — the parameter carries both {@code @Context} and a
+ * <li><strong>Conflict</strong> — the parameter carries both {@code @Context} and a
  *       JAX-RS value-binding annotation ({@code @PathParam}, {@code @QueryParam},
  *       {@code @HeaderParam}, {@code @CookieParam}, {@code @FormParam}, {@code @BeanParam}), on
  *       either the concrete parameter or a corresponding interface parameter. This also catches the
  *       split-inherited case where {@code @Context} is on the interface and a binding annotation is
  *       on the concrete parameter, or vice versa.</li>
- *   <li><strong>Reserved unsupported type</strong> (FR-REST-188) — the parameter's erased type is
+ * <li><strong>Reserved unsupported type</strong> — the parameter's erased type is
  *       in {@link RestContextTypes#RESERVED_UNSUPPORTED_JAXRS_FQNS}.</li>
- *   <li><strong>Non-injectable type</strong> (FR-REST-189) — the parameter's erased type is not
+ * <li><strong>Non-injectable type</strong> — the parameter's erased type is not
  *       {@code RoutingContext} (or a subtype), <em>exactly</em> JAX-RS {@code SecurityContext}, or a
  *       {@code ContextValue} subtype. The JAX-RS {@code SecurityContext} is matched exactly because
  *       the resolver only bridges that exact type.</li>

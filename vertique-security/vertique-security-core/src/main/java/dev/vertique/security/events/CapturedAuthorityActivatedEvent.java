@@ -21,8 +21,8 @@ import java.util.UUID;
  *
  * <p><strong>Emitted and awaited by the activation seam</strong>
  * ({@code CapturedAuthorityActivation} in {@code vertique-security-runtime}), never by
- * {@link dev.vertique.security.CapturedAuthorityReconstruction}, which stays event-silent per
- * FR-ID-CA-007. Awaiting delivery before the reconstructed context reaches the caller is an
+ * {@link dev.vertique.security.CapturedAuthorityReconstruction}, which stays event-silent.
+ * Awaiting delivery before the reconstructed context reaches the caller is an
  * <strong>emission-ordering</strong> guarantee and, for an audit consumer, an
  * <strong>accepted-for-delivery</strong> one. It is <strong>not</strong> a durable or acknowledged
  * audit-delivery guarantee: an observer that fails to persist is isolated exactly as one that

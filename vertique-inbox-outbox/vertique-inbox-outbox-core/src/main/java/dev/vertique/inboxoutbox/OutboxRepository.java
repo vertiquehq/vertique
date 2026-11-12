@@ -34,7 +34,7 @@ public interface OutboxRepository {
      *
      * <p>{@code carrierId} is persisted into the first-class, {@code NOT NULL UNIQUE} {@code
      * carrier_id} column — never into the app-writable {@code metadata} JSONB — so a durable identity
-     * snapshot signed for this exact row (PRD identity-002 F3b) can be verified against a carrier
+     * snapshot signed for this exact row can be verified against a carrier
      * reproduced from a column the relay controls, not from attacker-writable metadata.
      *
      * @param entry     the outbox entry to insert; caller-supplied headers are stored as-is

@@ -10,8 +10,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
 /**
- * Canonical, length-bounded encoders for {@code workflow_dedup} scopes/keys (PRD-WF-002 §A.4.4
- * and §D6). Lives in {@code workflow-core} so both {@code workflow-postgresql} (engine + repos)
+ * Canonical, length-bounded encoders for {@code workflow_dedup} scopes/keys. Lives in
+ * {@code workflow-core} so both {@code workflow-postgresql} (engine + repos)
  * and {@code workflow-services} ({@code WorkflowSignalContributor}) can call the same encoders
  * without crossing module boundaries.
  *
@@ -19,15 +19,15 @@ import java.security.NoSuchAlgorithmException;
  * <ul>
  *   <li><b>signal</b> — instance scope is {@code workflowId.toString()} (UUID, 36 chars). The
  *       key is the caller's {@code dedupKey} for non-branch signals (back-compat with the
- *       cycle-2 form), or a 64-char SHA-256 hex digest of the
- *       {@code (forkStepId, branchId, dedupKey)} tuple for branch signals (FR-WF-PAR-026).</li>
- *   <li><b>dispatch</b> (PRD-WF-002 D6) — kind {@code 'dispatch'} (8 chars; fits the existing
+ *       original form), or a 64-char SHA-256 hex digest of the
+ * {@code (forkStepId, branchId, dedupKey)} tuple for branch signals.</li>
+ *   <li><b>dispatch</b> — kind {@code 'dispatch'} (8 chars; fits the existing
  *       {@code workflow_dedup.kind VARCHAR(16)} column). Scope is {@code workflowId.toString()}
  *       (36 chars). Key is a 64-char SHA-256 hex digest of
  *       {@code (forkStepId, branchId, stepId, targetId, operation)}. The engine inserts the
  *       dedup row in {@code BranchTransitionEngine} BEFORE invoking {@code RecorderRouter}; on
- *       conflict the dispatch is treated as already-recorded and not re-emitted
- *       (FR-WF-PAR-038).</li>
+ *       conflict the dispatch is treated as already-recorded and not re-emitted.
+ * </li>
  *   <li><b>correlated</b> — kind {@code 'correlated'}. The namespace is a 64-char SHA-256 hex digest of
  *       {@code (contract name, signal name, scope or empty)} and the key a 64-char digest of the caller's
  *       dedup key, so one event is unique across instances and no name, scope or key is stored in clear.</li>
@@ -76,7 +76,7 @@ public final class WorkflowDedupScopes {
      * <p>For non-branch signals (both {@code forkStepId} and {@code branchId} null), returns
      * {@code dedupKey} unchanged so existing single-path entries remain compatible. For branch
      * signals the key is a 64-char SHA-256 hex digest of {@code (forkStepId, branchId, dedupKey)}
-     * so two sibling branches sharing a {@code dedupKey} do not collide (FR-WF-PAR-026).
+     * so two sibling branches sharing a {@code dedupKey} do not collide.
      *
      * @param dedupKey caller-supplied dedup key
      * @param forkStepId optional fork step id (paired with {@code branchId})

@@ -367,7 +367,7 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
                 if (fieldMeta == null) {
                     // Looked up by the WIRE key, never the projected name: a promoted key is not a
                     // name of this type, so the projection returns it unchanged and resolving it is
-                    // the projection's own job (ADR-0247 Amendment 2).
+                    // the projection's own job.
                     PromotedField promoted = ctx.promotedField(ownerType, key);
                     if (promoted != null) {
                         InputPolicyMetadata levelMeta = metadata;

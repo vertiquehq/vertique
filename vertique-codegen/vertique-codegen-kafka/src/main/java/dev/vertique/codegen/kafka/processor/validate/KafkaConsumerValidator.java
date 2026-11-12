@@ -10,8 +10,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Orchestrates compile-time validation of scanned {@link ListenerModel} instances
- * (FR-CG006-005), combining the results of all individual validators.
+ * Orchestrates compile-time validation of scanned {@link ListenerModel} instances,
+ * combining the results of all individual validators.
  *
  * <p>All validators run for every model regardless of whether an earlier one has already found a
  * problem (using {@code &} not {@code &&}). This ensures that all diagnostics surface in a single
@@ -20,7 +20,7 @@ import java.util.List;
  * <p>Validators are applied in the following order:
  * <ol>
  *   <li>{@link DirectHandlerValidator} — rejects listeners that are neither a router nor a direct
- *       handler (Slice 6)</li>
+ *       handler</li>
  *   <li>{@link ListenerTopicValidator} — rejects blank {@code topic()}</li>
  *   <li>{@link HandlerMatchValidator} — rejects invalid match-rule combinations per route</li>
  *   <li>{@link HandlerParamValidator} — rejects incorrect payload-parameter arity per route</li>

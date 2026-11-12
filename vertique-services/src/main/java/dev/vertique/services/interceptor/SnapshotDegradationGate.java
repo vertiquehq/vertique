@@ -21,8 +21,7 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * Service-dispatch {@link ServiceInterceptor} that consults the
  * {@link SnapshotDegradationMarker} bound by the receive-side identity-snapshot reconstruction
- * initializer and enforces the configured {@link IdentitySnapshotDegradationPolicy}
- * (PRD-ID-002 §14.3 "Durable carriage").
+ * initializer and enforces the configured {@link IdentitySnapshotDegradationPolicy}.
  *
  * <p>The receive-side {@code IdentitySnapshotReconstructionInitializer} runs synchronously and
  * cannot itself emit the {@link IdentitySnapshotDegradationEvent} — event emission is async
@@ -35,9 +34,9 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>This is <strong>not</strong> a guarantee that an audit consumer actually received the event.
  * With the framework's default {@link SecurityEventEmitter}, per-observer failures are isolated
- * (identity-001 AC-SE-6) and the observer fan-out always succeeds, so an absent or failing audit
+ * and the observer fan-out always succeeds, so an absent or failing audit
  * consumer never surfaces as an emit failure here — see {@link #beforeDispatch} for how this bounds
- * the fail-closed branch. See PRD identity-002 §13 for the deferred acknowledged-delivery path.
+ * the fail-closed branch. Acknowledged audit delivery is not implemented.
  *
  * <p>When no marker is bound — the overwhelmingly common path — {@link #beforeDispatch} is a
  * pure passthrough: no event is emitted and no policy is consulted.
@@ -127,11 +126,11 @@ public final class SnapshotDegradationGate implements ServiceInterceptor {
      * dispatch failure regardless of the configured policy, and — after a successful emission — the
      * {@code FAIL} policy aborts with a {@link SnapshotDegradationForbiddenException} while
      * {@code CONTINUE_WITHOUT_IDENTITY} proceeds. With the framework's default {@link SecurityEventEmitter},
-     * per-observer failures are isolated (identity-001 AC-SE-6) and the observer fan-out always
+     * per-observer failures are isolated and the observer fan-out always
      * succeeds, so an absent or failing audit consumer does <strong>not</strong> produce an emission
      * failure. The guarantee this gate makes is emission <em>ordering</em> — the emit future is
-     * awaited before the FAIL/CONTINUE decision — not acknowledged audit <em>delivery</em>; see PRD
-     * identity-002 §13 for the deferred acknowledged-delivery path.
+     * awaited before the FAIL/CONTINUE decision — not acknowledged audit <em>delivery</em>, which is
+     * not implemented.
      *
      * @param ctx the dispatch context; must not be {@code null}
      * @return a succeeded future carrying {@code ctx} unchanged when no marker is bound, or when a

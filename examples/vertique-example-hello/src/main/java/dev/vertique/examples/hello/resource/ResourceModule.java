@@ -15,7 +15,7 @@ import dagger.Module;
  *
  * <p>Retained as an explicit extension point for non-resource JAX-RS bindings; it currently
  * contributes none. The prototype {@code GreetingLimitExceptionMapper} binding this module used to
- * hold was retired (T013): {@code HelloResource#greetLimited} now carries {@code @RateLimited} and
+ * hold was retired: {@code HelloResource#greetLimited} now carries {@code @RateLimited} and
  * relies entirely on {@code RestRateLimitModule}'s own {@code 429}/{@code 503} exception mappers
  * (installed on {@link dev.vertique.examples.hello.AppComponent}), never a hand-rolled mapper.
  */

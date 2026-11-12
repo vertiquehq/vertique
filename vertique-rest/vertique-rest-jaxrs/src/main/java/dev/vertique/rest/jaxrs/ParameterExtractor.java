@@ -1610,7 +1610,7 @@ final class ParameterExtractor {
      * {@link #extractBeanParam}. A broken companion (registry throws) propagates immediately
      * and is NOT masked by a reflective fallback.
      *
-     * <p><b>Field-hiding semantics (closed adjacent defect ex-#30):</b> the class hierarchy is
+     * <p><b>Field-hiding semantics:</b> the class hierarchy is
      * walked subclass-to-superclass and entries are deduplicated by field name on first encounter,
      * so a subclass field shadows a superclass field of the same name (the JLS-conformant
      * interpretation that {@code JaxRsBeanScanner} also uses at compile time). Without this dedup,

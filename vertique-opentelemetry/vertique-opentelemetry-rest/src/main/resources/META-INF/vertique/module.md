@@ -70,7 +70,7 @@ it as the ambient OTel context; Micrometer exemplar samplers (e.g.
 timer samples recorded in `RestRequestCompletedListener` implementations (including
 `vertique-micrometer-rest`).
 
-**NFR-TEL-002 note.** `vertique-micrometer-rest` has no compile dependency on `opentelemetry-api`.
+**No OpenTelemetry compile dependency.** `vertique-micrometer-rest` has no compile dependency on `opentelemetry-api`.
 The `RequestCompletionScope` SPI lives in `vertique-rest-core` and the implementation lives in
 `vertique-opentelemetry-rest`, keeping the micrometer-rest module free of any OTel compile
 dependency.

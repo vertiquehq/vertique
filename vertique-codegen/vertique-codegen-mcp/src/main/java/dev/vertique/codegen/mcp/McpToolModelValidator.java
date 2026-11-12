@@ -61,8 +61,7 @@ import javax.lang.model.type.TypeMirror;
  * </ul>
  *
  * <p>Output-schema synthesis is a composition-time concern: a result type that is structurally valid
- * here but cannot be synthesized by the shared runtime schema generator fails startup, per
- * FR-MCP-124.
+ * here but cannot be synthesized by the shared runtime schema generator fails startup.
  */
 final class McpToolModelValidator {
 

@@ -9,7 +9,7 @@ import dev.vertique.core.exception.ConfigurationException;
 import io.vertx.core.json.JsonObject;
 
 /**
- * Typed {@code rateLimit.redis.*} configuration (contracts/rate-limit-runtime.md, "Configuration").
+ * Typed {@code rateLimit.redis.*} configuration.
  * Every component is required with no default and eagerly bounds-validated by this record itself —
  * the same "required, no default" idiom {@link dev.vertique.ratelimit.RateLimitPolicy} follows
  * ({@link #fromJson} detects an omitted primitive before it loses that distinction, and this
@@ -61,7 +61,7 @@ record RateLimitRedisConfig(String connection, String namespace, long operationT
      * expirationSlackMs} are bound as boxed {@link Long} so an omitted value fails loudly
      * ("required, no default") instead of silently coercing to {@code 0} before the compact
      * constructor ever sees it. Invoked through the canonical injected {@code
-     * dev.vertique.core.config.ConfigParser} (docs/standards/config.md rule R10) — never {@link
+     * dev.vertique.core.config.ConfigParser} — never {@link
      * JsonObject#mapTo} or a hand-rolled reader — so a string-encoded value (e.g. {@code
      * "operationTimeoutMs": "200"}) coerces reliably through the parser's dedicated,
      * coercion-lenient mapper.

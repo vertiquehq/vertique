@@ -40,8 +40,7 @@ import javax.lang.model.util.Types;
  * processor-read attribute values baked as compile-time constants, with no {@code getAnnotation}
  * reflection at call time.
  *
- * <p>The generated literal follows the shape proven by the slice-0.3 feasibility spike
- * (branch (a), OQ-2): a per-member accessor returning the stored constant, an
+ * <p>The generated literal follows a fixed shape: a per-member accessor returning the stored constant, an
  * {@link Annotation#annotationType() annotationType()} returning the annotation's {@code Class}
  * literal, and {@code equals}/{@code hashCode} implemented to the {@link Annotation} contract so a
  * generated literal is interchangeable with the JDK reflective proxy in hash-based collections:

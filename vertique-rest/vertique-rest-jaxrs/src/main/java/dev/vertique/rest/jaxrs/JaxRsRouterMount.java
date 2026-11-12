@@ -66,7 +66,7 @@ import lombok.extern.slf4j.Slf4j;
  * {@code resources}, and {@code priority}) is supplied at creation time. The {@code openapiPath} is
  * retained only as documentation metadata ({@link #meta()}); routing is always built from JAX-RS
  * metadata, never from the spec, and the default {@code web-validation} strategy loads no spec at
- * runtime either (PRD-REST-017 FR-001 — {@code openapi.json} is docs-only on that path, and binding is
+ * runtime either ({@code openapi.json} is docs-only on that path, and binding is
  * decoupled from validation). The opt-in {@code openapi-contract} strategy ({@code
  * vertique-rest-openapi-validation}) does load {@code openapi.json} at runtime and validates requests
  * against it.
@@ -315,7 +315,7 @@ public class JaxRsRouterMount implements RouterMount {
      * from a declared application never logs this warning.
      *
      * <p>No OpenAPI contract is loaded: the router is built entirely from the JAX-RS annotation model,
-     * so an {@code openapi.json} (when present) is documentation only (PRD-REST-017 FR-001).
+     * so an {@code openapi.json} (when present) is documentation only.
      *
      * @param vertx the Vert.x instance
      * @return a future resolving to the configured API router, once every bound hook's future has
@@ -425,8 +425,8 @@ public class JaxRsRouterMount implements RouterMount {
             hook.beforeAuthSetup(routerSetup);
         }
 
-        // Configure security scheme handlers, collecting each scheme's auth handler. No contract gating
-        // (FR-014): every handler is configured once; the registrar applies the collected handler per
+        // Configure security scheme handlers, collecting each scheme's auth handler. No contract gating:
+        // every handler is configured once; the registrar applies the collected handler per
         // each operation's effective security requirements.
         SecuritySchemeHandlerCollector securityHandlers = configureSecuritySchemes(factory.securitySchemeHandlers);
 
@@ -522,7 +522,7 @@ public class JaxRsRouterMount implements RouterMount {
             apiRouter.route(m.path()).order(routeOrder).handler(m);
         }
 
-        // FR-JSON-058: resolve the no-matched-method error-body default mapper once, at router-build
+        // Resolve the no-matched-method error-body default mapper once, at router-build
         // time. The no-method failure path (pre-routing 404s, request-interceptor rejections) reaches
         // the failure handler with NO per-method KEY_RESOLVED_BODY_MAPPER stash, so the boundary+global
         // default (jaxrs.jsonProfile -> json.jsonProfile -> the vertique floor) is folded in here and
@@ -601,8 +601,8 @@ public class JaxRsRouterMount implements RouterMount {
     }
 
     /**
-     * Resolves the boundary+global default error-body mapper for the no-matched-method failure path
-     * (FR-JSON-058). The effective id is the non-blank {@code jaxrs.jsonProfile}, else
+     * Resolves the boundary+global default error-body mapper for the no-matched-method failure path.
+     * The effective id is the non-blank {@code jaxrs.jsonProfile}, else
      * {@link JsonConfig#effectiveProfile()} — the non-blank {@code json.jsonProfile}, else the
      * reserved {@code vertique} floor. Every id, {@code system} included, is resolved against the
      * registry, which fails fast at this router-build time when the id is unknown.
@@ -679,7 +679,7 @@ public class JaxRsRouterMount implements RouterMount {
      * older server-error cause. The observation is cleared when the failure is handed to mapping, so it
      * cannot freeze a later cycle that reuses the same Throwable after {@code reroute()}.
      *
-     * <p>Before dispatching, the resolved no-matched-method error-body default mapper (FR-JSON-058) — when
+     * <p>Before dispatching, the resolved no-matched-method error-body default mapper — when
      * non-{@code null} and not already stashed by an upstream per-method handler — is placed under
      * {@link dev.vertique.rest.jaxrs.request.BoundRequest#KEY_RESOLVED_BODY_MAPPER} so the JSON body
      * encoder serializes the error body through the boundary+global default profile. When the default
@@ -688,7 +688,7 @@ public class JaxRsRouterMount implements RouterMount {
      * boundary default is applied <em>only</em> when no matched operation route
      * already decided the error-body mapper: a matched route's per-route failure handler
      * ({@code JaxRsRouteRegistrar} step (e)) runs first and sets
-     * {@link dev.vertique.rest.jaxrs.request.BoundRequest#KEY_ERROR_BODY_MAPPER_DECIDED} (FR-JSON-058A),
+     * {@link dev.vertique.rest.jaxrs.request.BoundRequest#KEY_ERROR_BODY_MAPPER_DECIDED},
      * so a route's own decision — including a route whose profile is the process codec's and must
      * therefore serialize via {@code Json.encode} — is preserved over the boundary default. This closes
      * the error-path profiling asymmetry for auth/415 rejections and for process-codec routes under a
@@ -709,7 +709,7 @@ public class JaxRsRouterMount implements RouterMount {
         if (ctx.response().ended() || ctx.response().headWritten()) {
             return;
         }
-        // FR-JSON-058/058A: stash the no-method boundary+global default mapper before the error body is
+        // Stash the no-method boundary+global default mapper before the error body is
         // serialized, but ONLY when no matched operation route already decided the error-body mapper.
         // A matched route's per-route failure handler (JaxRsRouteRegistrar step (e)) runs first and sets
         // KEY_ERROR_BODY_MAPPER_DECIDED: it either stashed its own profile mapper under
@@ -851,7 +851,7 @@ public class JaxRsRouterMount implements RouterMount {
          * present when {@code vertique-rest-validation} is on the classpath. The configured strategy
          * (see {@link JaxRsConfig#validationStrategy()}) is resolved against this set by
          * {@link dev.vertique.rest.jaxrs.validation.RequestValidationStrategySelector} when the router is
-         * built (slice 9c); selection fails fast when the configured id is not registered.
+         * built; selection fails fast when the configured id is not registered.
          */
         final Set<RequestValidationStrategy> validationStrategies;
 
@@ -868,7 +868,7 @@ public class JaxRsRouterMount implements RouterMount {
          * {@link ActionRegistry} and the {@code Authorizer} are bound through separate optional seams, a
          * non-default graph can have the registry present while the {@code Authorizer} is absent; the
          * registrar then fails startup for any {@code @RequiresAction} route rather than failing closed
-         * per-request (finding W2).
+         * per-request.
          */
         final boolean authorizerAvailable;
 
@@ -913,7 +913,7 @@ public class JaxRsRouterMount implements RouterMount {
          *                                     effective request-body {@code ObjectMapper} per resource method
          *                                     ({@code @JsonProfile} method/class &rarr; {@code jaxrs.jsonProfile}
          *                                     &rarr; {@code json.jsonProfile} &rarr; {@code vertx}); always present via
-         *                                     {@link dev.vertique.json.JsonRuntimeModule} (FR-JSON-007B)
+         *                                     {@link dev.vertique.json.JsonRuntimeModule}
          * @param jsonConfig                  global JSON configuration; supplies the {@code json.jsonProfile}
          *                                     default used when a resource method and {@code jaxrs.jsonProfile}
          *                                     both select no profile; always present via
@@ -932,8 +932,7 @@ public class JaxRsRouterMount implements RouterMount {
          *                                     {@code Authorizer} are bound through separate optional seams,
          *                                     a non-default graph can have the registry present while the
          *                                     {@code Authorizer} is absent; when empty, any operation
-         *                                     declaring {@code @RequiresAction} fails startup (fail-closed,
-         *                                     finding W2)
+         *                                     declaring {@code @RequiresAction} fails startup (fail-closed)
          * @param fileContentVerifiers         file-content verifier extensions bound in the application
          *                                     graph; used to warn when the selected validation strategy
          *                                     does not run file verifiers
@@ -941,7 +940,7 @@ public class JaxRsRouterMount implements RouterMount {
          *                                     {@code Set<RequestValidationStrategy>} multibinding); always
          *                                     contains at least the {@code none} strategy. The configured
          *                                     strategy is resolved against this set by id when the router
-         *                                     is built (slice 9c)
+         *                                     is built
          * @param operationSchemaSource        optional source of per-operation validation schemas, present
          *                                     when a module providing an {@link OperationSchemaSource}
          *                                     (e.g. {@code vertique-rest-validation}) is included
@@ -1068,7 +1067,7 @@ public class JaxRsRouterMount implements RouterMount {
          *                                     {@code Set<RequestValidationStrategy>} multibinding); always
          *                                     contains at least the {@code none} strategy. The configured
          *                                     strategy is resolved against this set by id when the router
-         *                                     is built (slice 9c)
+         *                                     is built
          * @param operationSchemaSource        optional source of per-operation validation schemas, present
          *                                     when a module providing an {@link OperationSchemaSource}
          *                                     (e.g. {@code vertique-rest-validation}) is included

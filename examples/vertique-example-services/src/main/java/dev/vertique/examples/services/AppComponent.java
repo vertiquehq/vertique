@@ -81,7 +81,7 @@ import jakarta.inject.Singleton;
  *       exception mappers, shared by {@link
  *       dev.vertique.examples.services.resource.RateLimitProbeResource}'s programmatic path and
  *       {@link dev.vertique.examples.services.service.RateLimitProbeServiceHandler}'s annotated
- *       path (T013, transport-neutrality proof)</li>
+ *       path (transport-neutrality proof)</li>
  *   <li>{@link ResilienceModule} — resilience runtime components</li>
  *   <li>{@link ResiliencePoliciesModule} — named resilience policy configuration</li>
  *   <li>{@link ResilienceAopModule} — generated {@code @Resilient} aspect binding</li>

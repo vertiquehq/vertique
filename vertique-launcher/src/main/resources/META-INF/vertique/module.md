@@ -20,8 +20,8 @@ implement without the application touching its `main` method.
 
 When no contributors are present on the classpath and no `vertx.options` section is declared,
 `VertiqueApplication` behaves identically to `io.vertx.launcher.application.VertxApplication` with
-respect to CLI parsing, `--conf`/`Main-Verticle` manifest resolution, and exit codes
-(FR-LAUNCH-001 parity scope). The bootstrap config load still runs and the `vertx.options` overlay
+respect to CLI parsing, `--conf`/`Main-Verticle` manifest resolution, and exit codes.
+The bootstrap config load still runs and the `vertx.options` overlay
 hook is still installed — they are zero-cost no-ops in that case.
 
 ---

@@ -257,8 +257,7 @@ final class GeneratedBindingMetaLoader {
      * @param meta the precomputed router metadata
      * @param registry the service contract registry for dispatch target validation
      * @param resolver the service target resolver for address and stable-id lookup
-     * @param serdeRegistry the serde registry (passed through to validation; router format is JSON
-     *     until slice 4 generalizes it)
+     * @param serdeRegistry the serde registry (passed through to validation; router format is JSON)
      * @param kafkaConfig the typed {@code kafka} config (supplies the global format / schema-registry /
      *     connection property bags)
      * @param consumerIndex the immutable {@code name -> KafkaConsumerConfig} index for per-consumer

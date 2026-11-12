@@ -20,10 +20,10 @@ import java.util.Objects;
  * <ul>
  *   <li>After {@link CorrelationIngressMiddleware} — so the {@link
  *       dev.vertique.core.correlation.CorrelationContext} is already bound on the context when
- *       origin capture runs (FR-ID-CO-001).</li>
+ * origin capture runs.</li>
  *   <li>Before any authentication handler — so the captured origin is available to
- *       {@code CredentialRejectionReporter} on auth failures (AC-SE-3) and to
- *       {@code IdentityResolutionMiddleware} on success (AC-CO-1).</li>
+ *       {@code CredentialRejectionReporter} on auth failures and to
+ *       {@code IdentityResolutionMiddleware} on success.</li>
  * </ul>
  *
  * <p>The captured {@link RequestOrigin} is stashed on the routing context under the well-known

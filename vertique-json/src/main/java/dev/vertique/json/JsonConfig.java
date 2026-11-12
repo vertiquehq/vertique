@@ -10,7 +10,7 @@ import jakarta.annotation.Nullable;
 
 /**
  * Typed model of the {@code json} configuration section. Carries the two framework-wide profile
- * selections. Parsed at the Dagger provider boundary via {@code ConfigParser} (config.md R10).
+ * selections. Parsed at the Dagger provider boundary via {@code ConfigParser}.
  *
  * <p>Both components are stored verbatim — {@code null} stays {@code null} and a blank string stays
  * blank. The floors live in the accessors {@link #effectiveProfile()} and

@@ -59,8 +59,7 @@ public record RouteRegistrationViolation(String operationId, ViolationType type,
         /**
          * A {@code @Context}-annotated parameter's declared type is a reserved JAX-RS context type
          * (e.g. {@code jakarta.ws.rs.core.UriInfo}, {@code jakarta.ws.rs.core.HttpHeaders}) that is
-         * syntactically valid JAX-RS but is not supported in this version of the Vertique framework
-         * (FR-REST-188).
+         * syntactically valid JAX-RS but is not supported in this version of the Vertique framework.
          */
         UNSUPPORTED_JAXRS_CONTEXT_TYPE,
 
@@ -95,7 +94,7 @@ public record RouteRegistrationViolation(String operationId, ViolationType type,
          * A declared conversion-applicable parameter (path/query/header/cookie/form) has a type that
          * no built-in converter, application {@code ParamConverterBinding}, or JAX-RS
          * {@code ParamConverterProvider} can satisfy. Such a parameter could only ever fail (opaquely)
-         * at request time, so startup fails fast (PRD-REST-018).
+         * at request time, so startup fails fast.
          */
         UNRESOLVABLE_PARAM_CONVERTER,
 

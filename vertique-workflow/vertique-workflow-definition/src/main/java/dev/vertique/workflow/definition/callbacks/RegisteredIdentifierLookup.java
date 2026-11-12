@@ -17,7 +17,7 @@ import java.util.Set;
  * Levenshtein-distance utility for generating "did you mean?" suggestions in validation error
  * messages.
  *
- * <p>Slice D's validator uses this class to check whether ids referenced in a definition document
+ * <p>The definition validator uses this class to check whether ids referenced in a definition document
  * are registered before the document is compiled.
  *
  * <p>This class is intentionally dumb — it only exposes the 11 registries as named accessors and

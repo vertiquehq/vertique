@@ -5,7 +5,7 @@ package dev.vertique.ratelimit.spi;
 
 /**
  * Selects the security-identity dimension {@link RateLimitAdapterSupport#subjectKey} frames into a
- * rate-limit key (contracts/rate-limit-runtime.md, "Subject resolution SPI"; {@code spec.md} §5.2).
+ * rate-limit key.
  */
 public enum RateLimitSubject {
 

@@ -26,7 +26,7 @@ import java.util.Set;
  * config nests one level deeper under {@code kafka.producers.{name}.methods.{method}}.
  *
  * <p>The {@code properties} and {@code schemaRegistry} blocks are intentionally open property bags
- * (config rule R9) whose values are kept intact for runtime use; secret keys in every open bag —
+ * whose values are kept intact for runtime use; secret keys in every open bag —
  * {@code properties}, {@code schemaRegistry}, {@code connectionProperties}, {@code producerProperties}
  * — are masked at every depth only when this record is rendered to a string (see {@link #toString()}).
  *

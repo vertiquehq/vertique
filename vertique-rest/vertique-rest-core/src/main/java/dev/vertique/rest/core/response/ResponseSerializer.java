@@ -31,13 +31,13 @@ public interface ResponseSerializer {
      * have been written to the {@code RoutingContext}'s response and after
      * {@code transformResponse} hooks have run. Normal empty-body and bare fallback paths
      * bypass the serializer entirely; the error fail-open path may retry it exactly once
-     * after a synchronous pre-initiation failure (FR-JSON-058A). Implementations MUST NOT
+     * after a synchronous pre-initiation failure. Implementations MUST NOT
      * block the calling thread.
      *
      * <p>Completion contract (dual-channel):
      * <ul>
      *   <li>SYNCHRONOUS THROW — no write or end was initiated (encode-time failure).
-     *       The caller may retry against the same response head (fail-open, FR-JSON-058A).</li>
+     *       The caller may retry against the same response head (fail-open).</li>
      *   <li>RETURNED FUTURE — success: the response has been fully written and ended.
      *       Failure: the wire write failed after handoff; zero or more bytes may have been
      *       written; never retryable; the caller owns terminal cleanup (the response may
@@ -50,7 +50,7 @@ public interface ResponseSerializer {
      * no matching encoder → future of {@code end(problemJson)} [500]; BufferedBody →
      * future of {@code end(buffer)}; StreamingBody →
      * {@code stream.pipe().endOnFailure(false).to(httpResponse)} — MUST NOT buffer
-     * (FR-RESTSER-013 / NFR-003) and MUST NOT end the response on pipe failure.
+     * and MUST NOT end the response on pipe failure.
      *
      * @param ctx      the routing context whose response head has already been written
      * @param response the produced framework response carrying the entity to serialize

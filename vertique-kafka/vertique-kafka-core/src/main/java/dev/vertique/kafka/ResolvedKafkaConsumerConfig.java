@@ -168,7 +168,7 @@ record ResolvedKafkaConsumerConfig(
         String globalFormat = kafkaConfig.format();
 
         // Value JSON profile precedence: config override → binding/listener default →
-        // kafka.jsonProfile boundary default → vertx (FR-JSON-052).
+        // kafka.jsonProfile boundary default → vertx.
         // The json.jsonProfile global tier and the vertx floor are applied in kafka-json
         // (JsonSerdeProvider.resolveMapper), which sees the bag id via the serde config.
         String jsonProfile = Strings.firstNonBlank(

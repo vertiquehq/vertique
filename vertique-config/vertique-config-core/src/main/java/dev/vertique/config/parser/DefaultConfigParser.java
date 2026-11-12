@@ -30,7 +30,7 @@ import java.util.Set;
  *
  * <p>All deserialization runs through the held mapper, so the parser's behavior is entirely
  * determined by that mapper's configuration. {@link ConfigurationException} wrapping and messages
- * preserve the framework's value-free, secret-safe error contract (SEC-1).
+ * preserve the framework's value-free, secret-safe error contract.
  *
  * <p>Before binding, every section is scanned for the mask placeholder: a leaf whose dotted path
  * {@code ConfigSecretRenderer} deems sensitive and whose value is the literal {@code "***"} — the
@@ -193,7 +193,7 @@ public final class DefaultConfigParser implements ConfigParser {
      *       is in the chain (a plain Jackson coercion/type error whose diagnostic may embed the
      *       offending config value), a new {@link ConfigurationException} carrying only the supplied
      *       value-free {@code genericMessage} is thrown, with the original failure kept as the cause.
-     *       This is the SEC-1 non-leakage behavior.</li>
+     *       This is the non-leakage behavior.</li>
      * </ul>
      *
      * @param failure the caught deserialization failure

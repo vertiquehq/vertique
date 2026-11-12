@@ -313,7 +313,7 @@ public abstract class RestModule {
      * {@link #actionRegistry()} binding are separate optional seams, a non-default graph can have the
      * registry present while the {@code Authorizer} is absent; the route registrar then fails startup
      * for any operation declaring {@code @RequiresAction} (fail-closed) rather than failing closed
-     * per-request when the gate evaluates (finding W2).
+     * per-request when the gate evaluates.
      *
      * @return the optional core {@link Authorizer} binding declaration
      */

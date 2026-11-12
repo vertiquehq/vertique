@@ -18,7 +18,7 @@ import java.util.Optional;
  * ordinary typed value stored in {@link DispatchMetadata#dispatchContext()} under
  * {@code SecurityContext.class.getName()}, like any other context type. There is no SC-specific
  * factory on this carrier; framework dispatchers construct envelopes through
- * {@link dev.vertique.context.DispatchEnvelopeBuilder} (PRD FR-CTX-015), which captures
+ * {@link dev.vertique.context.DispatchEnvelopeBuilder}, which captures
  * holder-bound values through the registered service-dispatch encoder SPIs.
  *
  * @param <T> the payload type

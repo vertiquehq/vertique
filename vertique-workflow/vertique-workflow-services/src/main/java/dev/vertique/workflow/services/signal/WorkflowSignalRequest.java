@@ -17,7 +17,7 @@ import jakarta.annotation.Nullable;
  * {@link WorkflowSignalContributor} wraps each invocation with {@code InboxService.processOnce} to
  * guarantee exactly-once engine transitions even under at-least-once relay delivery.
  *
- * <p>PRD-WF-002 (D11): the optional {@code forkStepId} / {@code branchId} fields target a
+ * <p>Branch targeting: the optional {@code forkStepId} / {@code branchId} fields target a
  * specific fork-group branch when both are supplied. Behaviour:
  * <ul>
  *   <li>Both null — instance-level signal (existing semantics).</li>
@@ -26,7 +26,7 @@ import jakarta.annotation.Nullable;
  *   <li>Exactly one set — rejected at request validation time.</li>
  * </ul>
  *
- * <p>PRD-WF-007 (Contract Appendix C4): the optional {@code metadata} field carries an explicit
+ * <p>Explicit carrier: the optional {@code metadata} field carries an explicit
  * durable-context carrier — the raw {@code {"context": {…}}} wire shape produced by
  * {@code DurableMetadata.toCarrier()} — that the caller wants bound as the authoritative base for
  * this signal's drive, overriding the ambient capture. {@code null} preserves today's semantics (no
@@ -38,7 +38,7 @@ import jakarta.annotation.Nullable;
  * internal-relay-only endpoint (see its class javadoc) — {@code metadata} is bound as the
  * authoritative durable-context base and MUST NOT be populated from untrusted or end-user input.
  * Only the relay that produced the carrier (via {@code DurableMetadata#toCarrier()}) may supply it.
- * Authenticating the provenance of a caller-supplied carrier is tracked as a follow-up (ADR-0147).
+ * Authenticating the provenance of a caller-supplied carrier is tracked as a follow-up.
  *
  * @param workflowId  the workflow instance to signal
  * @param signalName  the name of the signal to deliver; must match a {@code WaitSignalNode}
@@ -54,7 +54,7 @@ import jakarta.annotation.Nullable;
  *     shape); {@code null} means no explicit carrier is supplied and the engine falls back to
  *     capturing the ambient context as the bind base. <strong>Security:</strong> bound as the
  *     authoritative durable-context base — MUST NOT be populated from untrusted or end-user input
- *     (see the class-level security note; ADR-0147 tracks provenance authentication as a follow-up)
+ *     (see the class-level security note; provenance authentication is a known follow-up)
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record WorkflowSignalRequest(

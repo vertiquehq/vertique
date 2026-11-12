@@ -27,7 +27,7 @@ import java.util.Optional;
  * and contains encoded (not necessarily typed) values safe for in-process event-bus dispatch.
  *
  * <p>Framework code MUST use this capturer rather than calling encoders directly to ensure
- * collision detection (FR-CTX-063) and null-encode validation (FR-CTX-050) are applied
+ * collision detection and null-encode validation are applied
  * consistently.
  */
 @Singleton
@@ -55,7 +55,7 @@ public final class ServiceDispatchContextCapturer {
      *
      * @param context the encode context identifying the dispatch boundary
      * @return an immutable map of encoded context values; never {@code null}
-     * @throws IllegalStateException if any encoder returns {@code null} (FR-CTX-050)
+     * @throws IllegalStateException if any encoder returns {@code null}
      */
     public Map<String, Object> capture(ServiceDispatchEncodeContext context) {
         if (registry.encoders().isEmpty()) {
@@ -71,15 +71,15 @@ public final class ServiceDispatchContextCapturer {
     /**
      * Merges captured context values into an existing caller-provided map. For each key produced by
      * capture: if the caller map already contains the key, an {@link IllegalStateException} is
-     * thrown naming the colliding key and encoder type (FR-CTX-063). Otherwise the captured entry
+     * thrown naming the colliding key and encoder type. Otherwise the captured entry
      * is added.
      *
      * @param caller  the caller-provided map to merge into; must not be {@code null}
      * @param context the encode context identifying the dispatch boundary
      * @return an immutable merged map; never {@code null}
      * @throws IllegalStateException if any captured key already exists in {@code caller}
-     *                               (FR-CTX-063) or if any encoder returns {@code null}
-     *                               (FR-CTX-050)
+     * or if any encoder returns {@code null}
+     *
      */
     public Map<String, Object> mergeCaptured(Map<String, Object> caller, ServiceDispatchEncodeContext context) {
         Objects.requireNonNull(caller, "caller must not be null");
@@ -135,7 +135,7 @@ public final class ServiceDispatchContextCapturer {
         Object encoded = encoder.encode(current.get(), context);
         if (encoded == null) {
             throw new IllegalStateException(
-                    "ServiceDispatchContextEncoder '%s' returned null for type '%s' — null is not a valid encoded value (FR-CTX-050)"
+                    "ServiceDispatchContextEncoder '%s' returned null for type '%s' — null is not a valid encoded value"
                             .formatted(
                                     encoder.getClass().getName(), encoder.type().getName()));
         }

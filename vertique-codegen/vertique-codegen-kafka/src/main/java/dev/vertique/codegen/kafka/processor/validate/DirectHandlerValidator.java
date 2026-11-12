@@ -15,7 +15,7 @@ import javax.lang.model.type.TypeMirror;
 
 /**
  * Validates that a {@link dev.vertique.kafka.KafkaListener @KafkaListener} type is either a
- * Model 3 router or a valid Model 4 direct handler (FR-CG006-005, Slice 6).
+ * Model 3 router or a valid Model 4 direct handler.
  *
  * <p>A {@code @KafkaListener} type that is <em>neither</em> is rejected at compile time:
  * <ul>

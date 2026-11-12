@@ -42,7 +42,7 @@ import java.util.Optional;
  *       to anonymous or fabricating a shared literal id (e.g. {@code "unknown"}) would silently
  *       hide a genuine verified-credential-without-stable-id condition, and a fabricated shared id
  *       would additionally collide across distinct principals with no derivable identity, violating
- *       the trust-domain-unique {@code (type, id)} guarantee (PRD identity-002 FR-ID-CA-012).</li>
+ *       the trust-domain-unique {@code (type, id)} guarantee.</li>
  * </ul>
  *
  * <h3>Applicability — single-issuer trust domains only</h3>
@@ -50,7 +50,7 @@ import java.util.Optional;
  * already unique within the snapshot HMAC trust domain. Multi-issuer, multi-tenant, or
  * realm-local deployments MUST install a higher-priority {@link SecurityIdentityResolver} that
  * produces qualified ids (e.g. namespaced with an issuer or tenant prefix) before this resolver
- * runs, per FR-ID-CA-012.</p>
+ * runs.</p>
  *
  * <h3>Classification heuristic</h3>
  * <ul>
@@ -72,7 +72,7 @@ import java.util.Optional;
  * issuer-scoped namespace or URN before this resolver runs. This resolver treats {@code id} as an
  * opaque string end-to-end and never composes issuer qualification itself.
  *
- * <h3>AC-CO-3 defense-in-depth invariant</h3>
+ * <h3>Defense-in-depth invariant</h3>
  * <p>Framework-provided resolution MUST NOT produce {@link PrincipalType#SYSTEM} from inbound
  * evidence. Even hostile claims ({@code sub=SYSTEM}, {@code type=SYSTEM}, {@code system=true})
  * are never elevated to {@code SYSTEM}; the literal string {@code "SYSTEM"} is preserved as the
@@ -117,7 +117,7 @@ public final class DefaultSecurityIdentityResolver implements SecurityIdentityRe
      * classifies the actor as {@code USER}, {@code SERVICE}, or {@code ANONYMOUS} and optionally
      * attaches a {@link ClientRef} when a client-id claim is present. When the evidence classifies
      * as {@code USER}/{@code SERVICE} but no stable id can be derived from it, the returned
-     * {@link Future} fails with an {@link IdentityResolutionException} (FR-ID-CA-012) — see
+     * {@link Future} fails with an {@link IdentityResolutionException} — see
      * {@link #buildIdentityFromEvidence(AuthenticationEvidence)}.
      *
      * @param context the resolution context carrying accumulated authentication evidence; must not
@@ -143,7 +143,7 @@ public final class DefaultSecurityIdentityResolver implements SecurityIdentityRe
         try {
             return Future.succeededFuture(Optional.of(buildIdentityFromEvidence(primary)));
         } catch (IdentityResolutionException e) {
-            // Underivable id (FR-ID-CA-012) — fail resolution explicitly rather than letting the
+            // Underivable id — fail resolution explicitly rather than letting the
             // exception escape as a synchronous throw from an async-contract method.
             return Future.failedFuture(e);
         }
@@ -155,14 +155,14 @@ public final class DefaultSecurityIdentityResolver implements SecurityIdentityRe
      * Builds a {@link SecurityIdentity} from the primary authentication evidence entry.
      *
      * <p>Classification is based on {@link AuthMethodKind} and safe-attribute hints.
-     * The AC-CO-3 invariant is asserted: this method MUST NOT return a {@code SYSTEM} identity.
+     * The defense-in-depth invariant is asserted: this method MUST NOT return a {@code SYSTEM} identity.
      *
      * @param primary the primary (first) evidence entry for this request
      * @return a resolved {@link SecurityIdentity} with type {@code USER}, {@code SERVICE}, or
      *         {@code ANONYMOUS}
      * @throws IdentityResolutionException if the evidence classifies as {@code USER}/{@code SERVICE}
      *                                      but no stable id ({@code sub}/{@code client_id}/
-     *                                      {@code azp}) can be derived from it (FR-ID-CA-012)
+     * {@code azp}) can be derived from it
      */
     private SecurityIdentity buildIdentityFromEvidence(AuthenticationEvidence primary) {
         AuthMethodKind kind = primary.method().normalizedKind();
@@ -184,7 +184,7 @@ public final class DefaultSecurityIdentityResolver implements SecurityIdentityRe
                     case NONE, UNKNOWN, CUSTOM -> PrincipalType.ANONYMOUS;
                 };
 
-        // AC-CO-3 defense-in-depth: framework-provided resolution NEVER produces SYSTEM.
+        // Defense-in-depth: framework-provided resolution NEVER produces SYSTEM.
         // PrincipalType.SYSTEM can only result from explicit SystemIdentities factory calls.
         if (actorType == PrincipalType.SYSTEM) {
             throw new IllegalStateException(
@@ -196,7 +196,7 @@ public final class DefaultSecurityIdentityResolver implements SecurityIdentityRe
         }
 
         // Subject id: prefer `sub` claim; fall back to client_id / azp. When neither is present the
-        // id is underivable — per FR-ID-CA-012, a durable principal identity is trust-domain-unique
+        // id is underivable — a durable principal identity is trust-domain-unique
         // by (type, id); fabricating a shared literal id (e.g. "unknown") would collide across
         // distinct principals lacking evidence, defeating that uniqueness guarantee, and silently
         // downgrading to ANONYMOUS would hide a genuine verified-credential-without-stable-id

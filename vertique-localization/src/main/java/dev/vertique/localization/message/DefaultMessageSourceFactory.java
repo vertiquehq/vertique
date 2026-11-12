@@ -17,8 +17,7 @@ import java.util.Objects;
  *
  * <p>This factory is a {@link Singleton} and captures only immutable configuration; it is
  * therefore safe to call from multiple threads. Each invocation of {@link #create(String)} or
- * {@link #create(MessageSourceOptions)} returns a fresh, independent {@link MessageSource} instance
- * (FR-LOC-060).
+ * {@link #create(MessageSourceOptions)} returns a fresh, independent {@link MessageSource} instance.
  *
  * <h2>ClassLoader precedence</h2>
  * <ol>
@@ -54,7 +53,7 @@ public class DefaultMessageSourceFactory implements MessageSourceFactory {
 
     /**
      * Creates a {@link MessageSource} backed by the resource bundle with the given
-     * {@code basename} (FR-LOC-060).
+     * {@code basename}.
      *
      * <p>This is sugar for
      * {@code create(MessageSourceOptions.builder().basename(basename).build())}.

@@ -454,8 +454,8 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
      * <p>The operation, the pointer, and the index precede the engine's description and always
      * survive; only the description is elided, because the engine bounds the token it quotes by the
      * pattern's own length alone. The assembled message is at most {@value #MAX_MESSAGE_LENGTH} UTF-16
-     * code units, and an elision never splits a surrogate pair. JSON-005's own bounding helper is
-     * package-private to {@code vertique-json-schema}, so the numeric bound is applied here instead.
+     * code units, and an elision never splits a surrogate pair. The bounding helper in
+     * {@code vertique-json-schema} is package-private, so the numeric bound is applied here instead.
      *
      * <p>The wording carries no parenthesis on purpose: a one-character pattern such as an unclosed
      * group is disclosed by any parenthesis in this text, so the proof that the pattern never leaks is
