@@ -125,9 +125,10 @@ public final class ConfigSecretRenderer {
      * convention.
      *
      * <p>The predicate is deliberately biased towards matching: a missed name leaks a credential, while
-     * a wrong match costs nothing because {@link #redactUri(String)} returns a string equal to its input
-     * unless the value carries an authority userinfo or a credential-named query parameter. Look-alikes
-     * such as {@code security} and {@code during} (both contain {@code uri}) therefore match by design.
+     * a wrong match costs at most a rewritten non-URL string that happens to contain {@code //…@} or a
+     * credential-named {@code ?name=value}, because {@link #redactUri(String)} returns a string equal to
+     * its input otherwise. Look-alikes such as {@code security} and {@code during} (both contain
+     * {@code uri}) therefore match by design.
      * Names that do not contain one of the tokens — {@code address}, {@code host},
      * {@code bootstrap.servers} — are not recognized even when they hold a URL.
      *

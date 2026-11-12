@@ -368,9 +368,12 @@ Absent any `@ConfigMapper` binding, the framework uses its own lenient default m
   entry) is written as `ConfigSecretRenderer.redactUri` renders it: `user:pass@` and credential-named
   query-parameter values become `***`, scheme, host, port and path stay visible, and a URL without
   credentials serializes as given. Secret wins over URL (`tokenUrl` renders as `"***"`). The URL rule
-  covers `scheme://user:pass@host` and `?name=value` forms only — a scheme-less or semicolon-style
-  connection string, or a URL under a name without one of the tokens (`address`), serializes as given
-  — and it is one difference from `toString()`: `redactBag` leaves a URL inside a bag as given. The
+  covers `scheme://user:pass@host` and `?name=value` forms only, with the userinfo percent-encoded — a
+  raw `/`, `?` or `#` inside a password ends the authority early, only the first authority of a
+  comma-joined value is masked, and a scheme-less or semicolon-style connection string, a
+  `java.net.URI`, `URL` or array-typed value, or a URL under a name without one of the tokens
+  (`address`) serializes as given — and it is one difference from `toString()`: `redactBag` leaves a
+  URL inside a bag as given. The
   live value is untouched, deserialization is untouched, and so is any other
   `ObjectMapper`: a record dumped through a REST or process mapper is not masked. A `@ConfigMapper`
   override gets the module too, provided it has not serialized anything before it is finalized; a
@@ -382,7 +385,8 @@ Absent any `@ConfigMapper` binding, the framework uses its own lenient default m
   `"***"` fails the parse with a `ConfigurationException` naming the dotted path (relative to the
   record, or to the entry for keyed collections), so a masked dump cannot be fed back as the secret.
   The same literal under a non-secret key is an ordinary value, and a masked URL (`//***@host`,
-  `password=***`) is not recognised: fed back, it fails at connect time, not at startup.
+  `password=***`) is not recognised by the parser: fed back, the owning record's validation or the
+  connection decides when it fails.
 - **An `@ConfigMapper` override is finalized in place**, not copied — the framework layers its
   mandatory modules and lenient policy onto the very instance supplied and then owns it. Do not share
   that instance concurrently for another purpose.

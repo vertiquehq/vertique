@@ -1320,14 +1320,17 @@ userinfo and credential-named query-parameter values masked while scheme, host, 
 visible. A secret-named path wins (`tokenUrl` renders as `"***"`). The config mapper applies the rule
 to every string it walks at such a path — a field, an `Optional`, a list element, a bag entry — but
 `redactBag`, and so a bag's `toString()`, does not. The rule covers `scheme://user:pass@host` and
-`?name=value` forms only: a scheme-less or semicolon-style connection string is printed as given, a
-URL under a name without one of the tokens (`address`, `host`) is not recognized, and a masked URL fed
-back to `ConfigParser` is not rejected (only the literal `"***"` at a secret path is).
+`?name=value` forms only, with the userinfo percent-encoded: a raw `/`, `?` or `#` inside a password
+ends the authority early and leaves the rest visible, only the first authority of a comma-joined value
+is masked, a scheme-less or semicolon-style connection string is printed as given, a `java.net.URI`,
+`URL` or array-typed value is written as given, a URL under a name without one of the tokens
+(`address`, `host`) is not recognized, and a masked URL fed back to `ConfigParser` is not rejected
+(only the literal `"***"` at a secret path is).
 
 | Method | Behavior |
 |---|---|
 | `isSensitivePath(String dottedPath)` | `true` when the lower-cased path contains `password`, `secret`, `token`, `passphrase`, `credential`, `jaas.config`, `user.info`, `private.key`, `keystore`, or `truststore`; or when its separator-stripped, lower-cased form contains `apikey`, `accesskey`, or `secretkey`. |
-| `isUriPath(String dottedPath)` | `true` when the separator-stripped, lower-cased path contains `url`, `uri`, `endpoint` or `connectionstring`. Biased towards matching: `security` and `during` match through `uri`, which is harmless because `redactUri` returns an equal string unless the value carries credentials. The token set may widen in a minor release and never narrows. |
+| `isUriPath(String dottedPath)` | `true` when the separator-stripped, lower-cased path contains `url`, `uri`, `endpoint` or `connectionstring`. Biased towards matching: `security` and `during` match through `uri`; a wrong match costs at most a rewritten non-URL string that contains `//…@` or a credential-named `?name=value`, because `redactUri` returns an equal string otherwise. The token set may widen in a minor release and never narrows. |
 | `redactBag(JsonObject bag)` | Renders a bag as a log-safe `String`, descending through nested objects *and* arrays and masking every leaf whose full dotted path is sensitive. |
 | `redactUri(String uri)` | Masks authority userinfo (`user:pass` between `//` and `@`) and the value of any credential-bearing query parameter. Best-effort; never throws. |
 

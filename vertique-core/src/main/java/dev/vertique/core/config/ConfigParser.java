@@ -32,7 +32,8 @@ import java.util.Map;
  * <p>Secret hygiene is symmetric: the config mapper serializes every field whose dotted path
  * {@link ConfigSecretRenderer#isSensitivePath(String) names a secret} as {@code "***"} (omitting it
  * when absent), and every {@code parse} method rejects a section in which such a field holds the
- * literal {@code "***"}, so a masked dump cannot be fed back as a secret. A string field whose path
+ * literal {@code "***"}, so a masked dump cannot be fed back as a secret. A string (a field, an
+ * {@code Optional}, a list element or a bag entry) whose path
  * {@link ConfigSecretRenderer#isUriPath(String) names a URL} is serialized through
  * {@link ConfigSecretRenderer#redactUri(String)}, credentials masked and host and path visible; that
  * masked form is not rejected on input.

@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.annotation.JsonUnwrapped;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
@@ -75,6 +76,15 @@ class ConfigSecretMaskingModuleTest {
 
     @JsonFormat(shape = JsonFormat.Shape.ARRAY)
     record ArrayShapedUrl(String name, String baseUrl) {}
+
+    /** URL leaves inside Vert.x bags and an {@code Object}-typed bag, under URL-named and plain keys. */
+    record UrlBags(JsonObject endpoints, JsonArray endpointUris, Object extras, String address, CharSequence uri) {}
+
+    record Db(String url, String name) {}
+
+    /** The unwrapped members are written as {@code db.url} and {@code db.name}: the prefix is prepended as-is. */
+    record Unwrapping(
+            String host, @JsonUnwrapped(prefix = "db.") Db db) {}
 
     private JsonNode tree(Object value) throws Exception {
         return mapper.readTree(mapper.writeValueAsString(value));
@@ -319,12 +329,56 @@ class ConfigSecretMaskingModuleTest {
         }
 
         @Test
-        @DisplayName("a null URL field serializes as before")
+        @DisplayName("a null or empty URL field is neither masked nor rejected")
         void nullUrlUnchanged() throws Exception {
             JsonNode json = tree(new Urls(null, null, Optional.empty(), List.of(), Map.of(), null, "h"));
 
-            assertTrue(json.get("jdbcUrl").isNull(), json.toString());
-            assertTrue(json.get("uri").isNull(), json.toString());
+            assertFalse(json.toString().contains("***"), json.toString());
+            assertEquals("h", json.get("host").asText());
+        }
+
+        @Test
+        @DisplayName("URL leaves inside JsonObject, JsonArray and Object-typed bags are redacted by their path")
+        void vertxBagUrlsMasked() throws Exception {
+            JsonNode json = tree(new UrlBags(
+                    new JsonObject().put("orders", USERINFO_URL).put("nested", new JsonObject().put("v", QUERY_URL)),
+                    new JsonArray().add(USERINFO_URL).add(new JsonArray().add(QUERY_URL)),
+                    new JsonObject().put("baseUrl", USERINFO_URL).put("label", "see //me@there"),
+                    USERINFO_URL,
+                    new StringBuilder(USERINFO_URL)));
+
+            assertEquals(
+                    "https://***@api.example:8443/v1/orders",
+                    json.get("endpoints").get("orders").asText());
+            assertEquals(
+                    "jdbc:postgresql://db.example:5432/app?password=***&ssl=true",
+                    json.get("endpoints").get("nested").get("v").asText());
+            assertEquals(
+                    "https://***@api.example:8443/v1/orders",
+                    json.get("endpointUris").get(0).asText());
+            assertEquals(
+                    "jdbc:postgresql://db.example:5432/app?password=***&ssl=true",
+                    json.get("endpointUris").get(1).get(0).asText());
+            assertEquals(
+                    "https://***@api.example:8443/v1/orders",
+                    json.get("extras").get("baseUrl").asText());
+            // extras.label is not a URL-named path: the string is copied as-is.
+            assertEquals("see //me@there", json.get("extras").get("label").asText());
+            // The documented limit: a URL under a name without one of the tokens serializes as given.
+            assertEquals(USERINFO_URL, json.get("address").asText());
+            // Any CharSequence is a string for the rule.
+            assertEquals(
+                    "https://***@api.example:8443/v1/orders", json.get("uri").asText());
+        }
+
+        @Test
+        @DisplayName("an unwrapped member keeps the rule under its prefixed name")
+        void unwrappedUrlMasked() throws Exception {
+            JsonNode json = tree(new Unwrapping("h", new Db(USERINFO_URL, "app")));
+
+            assertEquals(
+                    "https://***@api.example:8443/v1/orders", json.get("db.url").asText(), json.toString());
+            assertEquals("app", json.get("db.name").asText());
         }
 
         @Test

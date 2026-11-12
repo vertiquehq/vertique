@@ -48,7 +48,7 @@ final class ConfigSecretPaths {
      * Returns the log-safe rendering of a non-secret value at {@code path}, or the <em>same</em>
      * instance when nothing in it needs masking.
      *
-     * <p>Two rules apply, by dotted path. A {@link String} at a path that
+     * <p>Two rules apply, by dotted path. A {@link CharSequence} at a path that
      * {@link ConfigSecretRenderer#isUriPath(String) names a URL} is rendered through
      * {@link ConfigSecretRenderer#redactUri(String)} and returned only when that differs from the
      * input (compared by {@code equals}, because {@code redactUri} rebuilds any string with a query).
@@ -64,10 +64,11 @@ final class ConfigSecretPaths {
      * @return a masked rendering, or {@code value} itself when nothing was masked
      */
     static Object maskValue(String path, Object value) {
-        if (value instanceof String text) {
+        if (value instanceof CharSequence sequence) {
             if (!ConfigSecretRenderer.isUriPath(path)) {
                 return value;
             }
+            String text = sequence.toString();
             String redacted = ConfigSecretRenderer.redactUri(text);
             return redacted.equals(text) ? value : redacted;
         }
