@@ -441,6 +441,81 @@ class PlaceholderResolverTest {
 
             assertEquals("${not.resolved}", result.getString("x"));
         }
+
+        @Test
+        @DisplayName("escaped reference inside a default stays literal: ${a:\\${b}} → '${b}' even when b resolves")
+        void escapedReferenceInDefaultStaysLiteral() {
+            // 'a' is absent, so the default applies; 'b' is present and must NOT be resolved
+            JsonObject tree = new JsonObject().put("b", "b-value").put("x", "${a:\\${b}}");
+
+            JsonObject result = PlaceholderResolver.resolveTree(tree, List.of());
+
+            assertEquals("${b}", result.getString("x"));
+        }
+
+        @Test
+        @DisplayName(
+                "the escaped reference's closing brace belongs to the default: ${a:\\${b}} with a present → a's value")
+        void escapedReferenceInDefaultDoesNotLeakClosingBrace() {
+            JsonObject tree = new JsonObject().put("a", "a-value").put("x", "${a:\\${b}}");
+
+            JsonObject result = PlaceholderResolver.resolveTree(tree, List.of());
+
+            assertEquals("a-value", result.getString("x"));
+        }
+
+        @Test
+        @DisplayName("escaped reference inside a nested default stays literal: ${a:${c:\\${b}}} → '${b}'")
+        void escapedReferenceInNestedDefaultStaysLiteral() {
+            JsonObject tree = new JsonObject().put("b", "b-value").put("x", "${a:${c:\\${b}}}");
+
+            JsonObject result = PlaceholderResolver.resolveTree(tree, List.of());
+
+            assertEquals("${b}", result.getString("x"));
+        }
+
+        @Test
+        @DisplayName("nested default with its key present: ${a:${c:\\${b}}} with c present → c's value")
+        void escapedReferenceInNestedDefaultDoesNotLeakClosingBrace() {
+            JsonObject tree = new JsonObject().put("c", "c-value").put("x", "${a:${c:\\${b}}}");
+
+            JsonObject result = PlaceholderResolver.resolveTree(tree, List.of());
+
+            assertEquals("c-value", result.getString("x"));
+        }
+
+        @Test
+        @DisplayName("escaped reference inside a default in a concatenation: pre-${a:\\${b}}-post → 'pre-${b}-post'")
+        void escapedReferenceInDefaultInConcatenation() {
+            JsonObject tree = new JsonObject().put("x", "pre-${a:\\${b}}-post");
+
+            JsonObject result = PlaceholderResolver.resolveTree(tree, List.of());
+
+            assertEquals("pre-${b}-post", result.getString("x"));
+        }
+
+        @Test
+        @DisplayName("an escaped ${ with no closing brace inside a default leaves the whole reference unterminated")
+        void escapedOpenWithoutCloseInDefaultIsMalformed() {
+            JsonObject tree = new JsonObject().put("x", "${a:x\\${}");
+
+            PlaceholderResolutionException ex = assertThrows(
+                    PlaceholderResolutionException.class, () -> PlaceholderResolver.resolveTree(tree, List.of()));
+
+            assertEquals(List.of("x (malformed placeholder at index 0)"), ex.unresolvedReferences());
+        }
+
+        @Test
+        @DisplayName("a malformed reference after an escape in a default is positioned in the default text as written")
+        void malformedAfterEscapeInDefaultPositionedAsWritten() {
+            // Default text is '\\${b}${}': the escape occupies five characters, so the blank-key ${} sits at index 5
+            JsonObject tree = new JsonObject().put("x", "${a:\\${b}${}}");
+
+            PlaceholderResolutionException ex = assertThrows(
+                    PlaceholderResolutionException.class, () -> PlaceholderResolver.resolveTree(tree, List.of()));
+
+            assertEquals(List.of("a default (malformed placeholder at index 5)"), ex.unresolvedReferences());
+        }
     }
 
     // --- Arrays ---
