@@ -60,6 +60,59 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith(VertxExtension.class)
 class ServiceMethodInvokerTest {
 
+    record SensitiveInbound(String value) implements dev.vertique.core.context.ContextValue {}
+
+    @Test
+    void inboundInitializerFailureRedactsMarkedDispatchAndPreservesOrdinary(Vertx vertx, VertxTestContext testContext)
+            throws Exception {
+        var inboundScope = new dev.vertique.context.InboundDispatchScope();
+        var sensitive = new SensitiveInbound("SECRET-INBOUND actual-handle");
+        var scopes = new dev.vertique.context.InboundExecutionContextScope(
+                inboundScope,
+                org.mockito.Mockito.mock(dev.vertique.context.DurableContextPropagator.class),
+                java.util.Set.of(context -> {
+                    var bound = (SensitiveInbound) inboundScope.currentRawValueByKey(SensitiveInbound.class.getName());
+                    assertNotNull(bound);
+                    throw new IllegalStateException(bound.value());
+                }));
+        var invoker = new ServiceMethodInvoker(
+                greetMeta(SERVICE_IMPL, uniqueAddress("inbound")),
+                emptyExceptionMapper(),
+                List.of(),
+                null,
+                null,
+                vertx,
+                null,
+                inboundScope,
+                scopes);
+        var marker = dev.vertique.core.eventbus.DispatchFailureDiagnostics.REDACT_FATAL;
+        ((io.vertx.core.internal.ContextInternal) vertx.getOrCreateContext())
+                .duplicate()
+                .runOnContext(ignored -> testContext.verify(() -> {
+                    @SuppressWarnings("unchecked")
+                    var message = (io.vertx.core.eventbus.Message<DispatchEnvelope<?>>)
+                            org.mockito.Mockito.mock(io.vertx.core.eventbus.Message.class);
+                    var ordinary = dev.vertique.core.eventbus.DispatchMetadata.of(
+                            Map.of(SensitiveInbound.class.getName(), sensitive));
+                    org.mockito.Mockito.doReturn(DispatchEnvelope.of("x", ordinary))
+                            .when(message)
+                            .body();
+                    Throwable original = assertThrows(IllegalStateException.class, () -> invoker.handle(message));
+                    assertEquals(sensitive.value(), original.getMessage());
+                    var marked = dev.vertique.core.eventbus.DispatchMetadata.of(Map.of(
+                            SensitiveInbound.class.getName(), sensitive,
+                            dev.vertique.core.eventbus.DispatchFailureDiagnostics.class.getName(), marker));
+                    org.mockito.Mockito.doReturn(DispatchEnvelope.of("x", marked))
+                            .when(message)
+                            .body();
+                    Throwable redacted = assertThrows(Throwable.class, () -> invoker.handle(message));
+                    assertFalse(String.valueOf(redacted.getMessage()).contains("SECRET-INBOUND"));
+                    assertFalse(String.valueOf(redacted.getMessage()).contains("actual-handle"));
+                    assertNull(redacted.getCause());
+                    testContext.completeNow();
+                }));
+    }
+
     // --- Contract Fixture ---
 
     @ServiceContract(namespace = "test", value = "svc")

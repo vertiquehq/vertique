@@ -61,14 +61,14 @@ public final class DeclaredSignalNames {
         TreeSet<String> instance = new TreeSet<>();
         for (WorkflowNode node : workflow.plan().nodes()) {
             if (node instanceof WaitSignalNode wait && !inBranch.contains(wait.stepId())) {
-                instance.add(wait.signalName());
+                instance.addAll(wait.acceptedSignalNames());
             }
         }
         JsonObject branches = new JsonObject();
         branchSteps.forEach((key, steps) -> {
             TreeSet<String> names = new TreeSet<>();
             for (String stepId : steps) {
-                if (nodeById.get(stepId) instanceof WaitSignalNode wait) names.add(wait.signalName());
+                if (nodeById.get(stepId) instanceof WaitSignalNode wait) names.addAll(wait.acceptedSignalNames());
             }
             branches.put(key, new JsonArray(List.copyOf(names)));
         });
@@ -95,6 +95,7 @@ public final class DeclaredSignalNames {
                 queue.add(dispatch.nextStepId());
             } else if (node instanceof WaitSignalNode wait) {
                 queue.add(wait.nextStepId());
+                if (wait.reply() != null) queue.add(wait.reply().failureNextStepId());
                 if (wait.timeout() != null) queue.add(wait.timeout().timeoutNextStepId());
             } else if (node instanceof TimerNode timer) {
                 queue.add(timer.nextStepId());

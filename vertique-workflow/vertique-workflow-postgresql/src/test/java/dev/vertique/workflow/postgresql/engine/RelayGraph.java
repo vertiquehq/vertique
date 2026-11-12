@@ -325,6 +325,8 @@ final class RelayGraph {
         ContextHolder contextHolder();
 
         BillingProbe billingProbe();
+
+        dev.vertique.services.ServiceClientFactory serviceClientFactory();
     }
 
     /** Identity carriage and reconstruction, the framework's relay identity. */

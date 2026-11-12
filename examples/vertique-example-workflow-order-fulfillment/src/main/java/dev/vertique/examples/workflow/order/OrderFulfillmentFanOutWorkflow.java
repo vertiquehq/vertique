@@ -5,9 +5,7 @@ package dev.vertique.examples.workflow.order;
 
 import dev.vertique.examples.workflow.order.command.PlaceOrder;
 import dev.vertique.examples.workflow.order.signal.FraudScreened;
-import dev.vertique.examples.workflow.order.signal.InventoryReserved;
 import dev.vertique.examples.workflow.order.signal.PaymentCaptured;
-import dev.vertique.examples.workflow.order.signal.ShipmentCreated;
 import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.contract.WorkflowQuery;
 import dev.vertique.workflow.contract.WorkflowSignal;
@@ -41,16 +39,6 @@ public interface OrderFulfillmentFanOutWorkflow {
     Future<Void> fraudScreened(WorkflowInstanceId id, FraudScreened signal);
 
     /**
-     * Delivers the inventory-reservation result.
-     *
-     * @param id the workflow instance id
-     * @param signal the signal payload; must not be null
-     * @return a {@link Future} that completes when the signal has been applied
-     */
-    @WorkflowSignal("inventory.reserved")
-    Future<Void> inventoryReserved(WorkflowInstanceId id, InventoryReserved signal);
-
-    /**
      * Delivers the payment-capture result.
      *
      * @param id the workflow instance id
@@ -59,16 +47,6 @@ public interface OrderFulfillmentFanOutWorkflow {
      */
     @WorkflowSignal("payment.captured")
     Future<Void> paymentCaptured(WorkflowInstanceId id, PaymentCaptured signal);
-
-    /**
-     * Delivers the shipment-creation result.
-     *
-     * @param id the workflow instance id
-     * @param signal the signal payload; must not be null
-     * @return a {@link Future} that completes when the signal has been applied
-     */
-    @WorkflowSignal("shipment.created")
-    Future<Void> shipmentCreated(WorkflowInstanceId id, ShipmentCreated signal);
 
     /**
      * Starts a new fan-out order-fulfillment workflow instance.

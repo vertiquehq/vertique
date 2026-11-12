@@ -64,4 +64,20 @@ public record SignalProvenance(String transport, String source, Map<String, Stri
                         "triggerId", Objects.requireNonNull(triggerId, "triggerId"),
                         "messageHash", Objects.requireNonNull(messageHash, "messageHash")));
     }
+
+    /** Describes an outbox reply without its payload or headers.
+     * @param targetId service target
+     * @param entryId outbox entry id
+     * @return reply provenance
+     */
+    public static SignalProvenance outbox(String targetId, long entryId) {
+        return new SignalProvenance(
+                "outbox",
+                "reply",
+                Map.of("target", Objects.requireNonNull(targetId), "entryId", Long.toString(entryId)));
+    }
+    /** Describes a completion submitted through the in-process reply API. */
+    public static SignalProvenance completed() {
+        return new SignalProvenance("outbox", "completed", Map.of());
+    }
 }

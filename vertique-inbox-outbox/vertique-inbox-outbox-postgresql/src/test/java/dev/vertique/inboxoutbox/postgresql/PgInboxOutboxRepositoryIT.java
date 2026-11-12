@@ -180,7 +180,16 @@ public class PgInboxOutboxRepositoryIT {
      * these tests.
      */
     private Future<Long> insert(OutboxEntry entry, io.vertx.sqlclient.SqlClient tx) {
-        return repository.insert(entry, OutboxMetadata.empty(), UUID.randomUUID(), tx);
+        return repository.insert(
+                entry,
+                new OutboxMetadata(
+                        dev.vertique.core.context.DurableMetadata.empty(),
+                        new dev.vertique.inboxoutbox.OutboxDeliveryMetadata(
+                                java.util.Optional.empty(),
+                                java.util.Optional.empty(),
+                                java.util.Optional.ofNullable(entry.reply()))),
+                UUID.randomUUID(),
+                tx);
     }
 
     // =========================================================================
@@ -687,6 +696,77 @@ public class PgInboxOutboxRepositoryIT {
     // =========================================================================
     // Outbox — aggregate head-of-line blocking
     // =========================================================================
+
+    private static OutboxEntry barrierEntry(String aggregate, boolean reply) {
+        return OutboxEntry.builder()
+                .destinationType(DestinationType.KAFKA)
+                .destination("barrier")
+                .eventType("test.event")
+                .aggregateType("WorkflowInstance")
+                .aggregateId(aggregate)
+                .reply(reply ? new dev.vertique.inboxoutbox.OutboxReplyControl("handle", false) : null)
+                .payload(new JsonObject())
+                .build();
+    }
+
+    @Test
+    void replyRowsOfAnInstanceAreClaimedTogether(VertxTestContext ctx) {
+        pool.withTransaction(tx -> insert(barrierEntry("instance", true), tx)
+                        .compose(first -> insert(barrierEntry("instance", true), tx)))
+                .compose(v -> repository.claimBatch(10, "node", kafkaOnly()))
+                .onSuccess(rows -> ctx.verify(() -> {
+                    assertEquals(2, rows.size());
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    void replyWaitsBehindEarlierPlainRow(VertxTestContext ctx) {
+        pool.withTransaction(tx -> insert(barrierEntry("instance", false), tx)
+                        .compose(first ->
+                                insert(barrierEntry("instance", true), tx).map(second -> first)))
+                .compose(first -> repository
+                        .claimBatch(10, "node", kafkaOnly())
+                        .map(rows -> List.of(first, rows.getFirst().id(), (long) rows.size())))
+                .onSuccess(result -> ctx.verify(() -> {
+                    assertEquals(result.get(0), result.get(1));
+                    assertEquals(1L, result.get(2));
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    void plainRowWaitsForEveryPendingOrInFlightReply(VertxTestContext ctx) {
+        pool.withTransaction(tx -> insert(barrierEntry("instance", true), tx)
+                        .compose(first -> insert(barrierEntry("instance", true), tx)
+                                .compose(second -> insert(barrierEntry("instance", false), tx)
+                                        .map(plain -> List.of(first, second, plain)))))
+                .compose(ids -> repository.claimBatch(1, "node", kafkaOnly()).compose(first -> repository
+                        .claimBatch(10, "node", kafkaOnly())
+                        .compose(second -> repository
+                                .markPublished(ids.get(0), "node")
+                                .compose(v -> repository.claimBatch(10, "node", kafkaOnly()))
+                                .compose(blocked -> repository
+                                        .markPublished(ids.get(1), "node")
+                                        .compose(v -> repository.claimBatch(10, "node", kafkaOnly()))
+                                        .map(last -> List.of(
+                                                first.size(),
+                                                second.size(),
+                                                blocked.size(),
+                                                last.size(),
+                                                last.isEmpty()
+                                                        ? -1L
+                                                        : last.getFirst().id(),
+                                                ids.get(2)))))))
+                .onSuccess(result -> ctx.verify(() -> {
+                    assertEquals(List.of(1, 1, 0, 1), result.subList(0, 4));
+                    assertEquals(result.get(5), result.get(4));
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
 
     @Test
     @DisplayName("claimBatch with shared aggregate_id: only the oldest entry (MIN id) is claimed")

@@ -119,6 +119,9 @@ public class OutboxEntry {
      */
     private final DelayedJobControl delayedJob;
 
+    /** INTERNAL reply control persisted in delivery metadata, never forwarded as a header. */
+    private final OutboxReplyControl reply;
+
     /**
      * Internal field set by the relay backoff logic. Represents the earliest time at which
      * this entry may be re-claimed after a failed publish attempt. Not set by callers.
@@ -151,6 +154,7 @@ public class OutboxEntry {
      * @param maxAttempts     maximum number of delivery attempts
      * @param scheduledAt     optional intended delivery time
      * @param delayedJob      optional delayed-job scheduling snapshot
+     * @param reply           optional internal reply control
      * @param availableAt     earliest time at which the entry may be claimed
      * @param scopeKey        scope label; held as given and validated when the entry is published
      */
@@ -165,6 +169,7 @@ public class OutboxEntry {
             int maxAttempts,
             Instant scheduledAt,
             DelayedJobControl delayedJob,
+            OutboxReplyControl reply,
             Instant availableAt,
             String scopeKey) {
         this.aggregateType = aggregateType;
@@ -177,8 +182,38 @@ public class OutboxEntry {
         this.maxAttempts = maxAttempts;
         this.scheduledAt = scheduledAt;
         this.delayedJob = delayedJob;
+        this.reply = reply;
         this.availableAt = availableAt;
         this.scopeKey = scopeKey;
+    }
+
+    OutboxEntry(
+            String aggregateType,
+            String aggregateId,
+            String eventType,
+            DestinationType destinationType,
+            String destination,
+            Object payload,
+            Map<String, String> headers,
+            int maxAttempts,
+            Instant scheduledAt,
+            DelayedJobControl delayedJob,
+            Instant availableAt,
+            String scopeKey) {
+        this(
+                aggregateType,
+                aggregateId,
+                eventType,
+                destinationType,
+                destination,
+                payload,
+                headers,
+                maxAttempts,
+                scheduledAt,
+                delayedJob,
+                null,
+                availableAt,
+                scopeKey);
     }
 
     /**

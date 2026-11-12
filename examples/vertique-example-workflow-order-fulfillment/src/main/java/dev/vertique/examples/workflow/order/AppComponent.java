@@ -190,6 +190,9 @@ public interface AppComponent extends VertiqueApplicationComponent {
      */
     WorkflowOperations workflowOperations();
 
+    /** Returns the service used to complete durable reply handles. */
+    dev.vertique.inboxoutbox.OutboxReplies outboxReplies();
+
     /**
      * Returns the transactional workflow operations for branch-aware signal routing.
      *

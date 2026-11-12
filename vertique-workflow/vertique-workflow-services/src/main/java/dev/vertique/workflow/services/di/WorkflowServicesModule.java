@@ -10,6 +10,7 @@ import dev.vertique.services.ServiceContractContributor;
 import dev.vertique.workflow.registry.WorkflowDefinitionValidator;
 import dev.vertique.workflow.services.compose.WorkflowOutboxComposeValidator;
 import dev.vertique.workflow.services.recorder.OutboxSideEffectRecorder;
+import dev.vertique.workflow.services.reply.WorkflowReplyModule;
 import dev.vertique.workflow.services.signal.WorkflowSignalContributor;
 import dev.vertique.workflow.sideeffect.WorkflowRecorders;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
@@ -34,7 +35,7 @@ import jakarta.inject.Singleton;
  *       to an unknown service target or without a {@code SERVICE} outbox handler is refused.</li>
  * </ol>
  */
-@Module(includes = WorkflowSourceModule.class)
+@Module(includes = {WorkflowSourceModule.class, WorkflowReplyModule.class})
 public abstract class WorkflowServicesModule {
 
     /**

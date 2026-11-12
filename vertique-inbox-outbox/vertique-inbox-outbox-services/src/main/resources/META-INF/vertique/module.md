@@ -139,6 +139,15 @@ or use `InboxService` for dedup if needed.
 
 ---
 
+The reply handle and completion mode reside in the row’s delivery metadata, never in headers or forwarded to the target as headers. A target reads the handle through `TransactionalMessageContext.replyHandle()`.
+
+For a service row carrying a reply handle, the handler checks whether its wait is still open before
+calling the service. A closed wait settles the row as `PUBLISHED` without delivering it. If the
+consumer is unavailable, the row is deferred without spending an attempt. A successful immediate
+reply is recorded before settlement; a final failure is forwarded before dead-lettering. A service
+that completes later settles on acceptance and supplies its outcome separately. Rows without a
+reply handle retain the ordinary delivery behavior.
+
 ## Extension Points
 
 None beyond the `OutboxDestinationHandler` SPI already defined in `inbox-outbox-core`.
@@ -179,3 +188,7 @@ Include alongside `TransactionalMessagingPostgresqlModule` and `DispatchModule`:
 })
 public interface AppComponent { ... }
 ```
+
+For a service row carrying a reply handle, the outbox handler returns fixed failure text naming the target without the exception message, and retains the cause; the relay records only its class name; the retry or permanent disposition is unchanged. Ordinary rows retain their existing handler results.
+
+A reply-producing call must finish within both the service `sendTimeoutMs` and the outbox relay lease; each defaults to 30,000 ms, and the relay defaults to 20 attempts. Set the send timeout below the lease. Retries run for about an hour by default; the wait timeout is the overall deadline, and a shorter timeout takes the timeout route, not `onFailure`. For longer work, use a deferred completion handle and a workflow timeout. A row settled by the wait check is `PUBLISHED` but was not delivered.

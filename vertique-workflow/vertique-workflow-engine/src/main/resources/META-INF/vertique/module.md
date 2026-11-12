@@ -14,7 +14,7 @@ SPDX-License-Identifier: EUPL-1.2
 execution kernel — the durable saga state machine, fork/join coordinator, task and timer lifecycle
 services, signal delivery, migration executor, and history recorder — decoupled from any specific SQL
 dialect. Persistence is injected at application composition time through seven `<TX>`-generic repository
-SPIs and a transaction-runner SPI.
+SPIs and a transaction-runner SPI. Plans supplied to the engine have a non-null next step on each signal wait.
 
 The module is the seam for DB portability: a second Vert.x SQL backend needs only dialect-specific
 implementations of those SPIs; the orchestration logic is reused verbatim. A maven-enforcer
@@ -415,7 +415,7 @@ the operation, as described under `WorkflowContextBinder`.
   deterministically (an invalid payload, or a callback or definition failure), or when it runs more nodes than
   `workflow.executor.maxStepsPerSegment` (reason `STEP_LIMIT`). The savepoint is rolled back, so the instance, its version and its
   wait are unchanged;
-- a branch-addressed signal for a branch that was superseded or ended, or for an ended instance, is `STALE`.
+- a branch-addressed signal for a branch that was superseded or ended, or for an ended instance, is `STALE`; a recorded reply reaching a completed, compensated or expired instance is also `STALE`.
 - a signal delivered by key carries the `wait_id` of the wait entry it matched in its target, and is compared against the open wait records before
   the `FAILED` test: it applies only while that exact entry is open, and is `STALE` (reason `WAIT_ENTRY_CLOSED`) when no wait is open with that
   `wait_id`, on a live and on a `FAILED` instance alike. See "Wait Records And Delivery By Key".
@@ -489,13 +489,13 @@ settlement finds nothing to settle and writes nothing, and a deferral or a failu
 failing. A signal, completion or retry recorded while a cancel waits for the lock is refused once the lock is free, or was recorded
 first and is cancelled with the rest.
 
-`EndedInstanceOutcomes` is the one place that decides what becomes of a command that meets an instance that has ended or failed, in
-the executor's claim and in the segment of every kind:
+`EndedInstanceOutcomes` provides the common outcomes for a command that meets an instance that has ended or failed. The claim path also handles recorded replies:
 
 | Command | `FAILED` | `COMPLETED`, `COMPENSATED`, `EXPIRED` | `CANCELLED` |
 | --- | --- | --- | --- |
 | signal (instance-addressed) | parked | rejected | cancelled |
 | signal (branch-addressed) | stale if its branch ended, else parked | stale | cancelled |
+| recorded reply | parked while its wait is open, otherwise stale | stale | cancelled |
 | task completion | rejected, reservation reopened | rejected, task cancelled | cancelled, task cancelled |
 | retry | executes | rejected | cancelled |
 | migration | rejected | rejected | cancelled |
@@ -1158,7 +1158,7 @@ command it peeks on a live instance through `load`, so a node runs a document ve
 - **Pool use.** No transaction takes a second pooled connection for definition data: the loads happen before the claim, and
   the load itself holds a connection only for each short read, so a cold version runs on a pool of two connections.
 
-**Budget.** A resident plan is kept by reference, so `maxEntries` bounds the count of plans, not bytes. The largest plan of the order-fulfillment example, the fan-out definition with 15 nodes, retains about 2.4 KB of heap once built (the
+**Budget.** A resident plan is kept by reference, so `maxEntries` bounds the count of plans, not bytes. The largest plan of the order-fulfillment example, the fan-out definition with 16 nodes, retains about 2.4 KB of heap once built (the
 retained size of 2,000 builds after a full collection, shared classes and the type-name index excluded); the 9-node order definition
 retains about 1.9 KB. The default of 500 plans therefore budgets about 1.2 MB for plans of that size. Measure your own largest document
 the same way before raising the limit: a plan grows with its node count and with the callbacks and schemas it holds, and a plan that is
@@ -1172,7 +1172,7 @@ Settings, behavior, overshoot and the operator procedure are described under Int
 - **State.** `IntakeAdmissionState` holds the high and low marks: it starts admitting, refuses from a reading at or above the high mark, admits again from a reading at or below the low mark, and keeps its state between them. Two failed samples in a row leave it as it is and the third admits.
 - **Sampler.** `IntakePressureSampler` is a single-instance verticle, deployed as `workflow-intake-sampler`, that feeds the state. It reads `WorkflowCommandRepository.countDue(highMark + 1)` and nothing else, so it depends on neither the executor nor the engine and runs on a recording-only node. At most one read is outstanding; a read that has not settled one sample interval after it began counts as a failed sample, and its late result is discarded. The next reading follows after `sampleIntervalMs` while the last reading was above the low mark and after four intervals at or below it; the loop is a recursive one-shot timer because that delay depends on the result, which keeps an idle cluster's cost down. Its state lives on the verticle's context; only the admission flag is read from other contexts.
 - **Events.** Each transition emits one `WorkflowExecutorEvent.IntakePressureChanged` to the observers and one warning. A node that admits because its reads failed emits that one event with `readFailed` set.
-- **Relayed signals.** `RelayedSignals<SqlClient>` (`vertique-workflow-core`) is bound to the engine. Its two methods are the branch and explicit-carrier `signal` forms of `TransactionalWorkflowOperations`, with the same transaction guard, branch guards, carrier sanitization and checks, minus the intake check. `vertique-workflow-services` records signals the outbox relay delivers through it.
+- **Relayed signals.** `RelayedSignals<SqlClient>` (`vertique-workflow-core`) is bound to the engine. Its `signal` overloads are the branch and explicit-carrier forms of `TransactionalWorkflowOperations`, with the same transaction guard, branch guards, carrier sanitization and checks, minus the intake check. `vertique-workflow-services` records signals the outbox relay delivers through it.
 - **Not checked.** `cancel`, `retry`, `migrate`, task completions and reassignments, timers and everything a segment records do not pass the check.
 
 ### Executor
@@ -1437,3 +1437,15 @@ which case `WorkflowReminderComposeValidator` refuses the plan (aborting startup
 - **vertx-json-schema** and **json-schema-validation** — compile and run the JSON Schemas that task snapshots store for decision payloads, through the framework's pattern-input guard (record-time completion validation).
 - **vertx-sql-client** — `io.vertx.sqlclient.SqlClient` used as the concrete `<TX>` type throughout
   all SPI signatures and the engine implementation.
+
+A service call reply wait is opened in the dispatch transaction with a random wait ID, which is carried on the side-effect correlation. `RelayedSignals.signalWait` records a deduplicated reply against that entry without the intake limit or open-signal cap; `failWait` records the failure under its own name and applies the declared failure reducer and route. Either outcome holds back the timeout when recorded before its fire time, and a parked failure drains when the wait resumes. A failed call is not counted as completed for compensation. `waitOpen` reads whether the entry belongs to the instance. A separate delivery component must supply the outcome. Reply rows of an instance run alongside each other, wait behind earlier rows without a reply handle, and hold later rows without a reply handle until they settle. Rows without a reply handle include ordinary dispatches, compensations and workflow events; an earlier event row held by a broker outage delays reply calls. A reply row deferred because no node has the consumer also holds later rows without a reply handle. This is a delivery barrier, not proof of business completion: a `completesLater` call releases it when accepted.
+
+Reply delivery checks the wait ID and instance together; a closed or mismatched entry fails with `WorkflowSignalNoMatchException` and writes nothing. A recorded outcome remains a duplicate after its wait closes. Payloads that exceed the recording bound or cannot be encoded are refused before a command or dedup claim is written. Public signal entry points refuse the reserved `vertique.reply.` names; only reply delivery records those names.
+
+A reply call in a fork branch opens its wait record with that fork and branch in the dispatch transaction. Re-entering the call dispatches again with a new wait ID; a reply or failure applies to its branch while siblings keep their own waits. Ordinary branch dispatches retain their existing deduplication. A failed fork compensates its branch dispatches under the branch compensation rules.
+
+If applying a service reply or failure fails, the attempt rolls back, the instance is marked `FAILED` with a fixed diagnostic, and the command stays parked on its open wait entry. The failure history is attributed to the reply command, and the diagnostic and log omit exception text. Retry resumes the wait and reapplies the parked outcome; repeated failures park again. A direct reply that exceeds the segment step limit follows the same failure path, while a limit reached during the parked drain requeues the command for a fresh segment. Ordinary signals retain their existing rejection behavior.
+
+When a migration targets a reply wait, the target drive starts at that wait’s call and dispatches again under a new wait ID. The source wait and its timeout close in the migration transaction, making the old outcome stale. A retry of a failed instance at a wait preserves its existing entry instead of dispatching again.
+
+Reply outcome lookup reads the recorded command for the wait's fixed deduplication key, so a repeated completion can distinguish its original outcome after application or wait closure. Refused completion values are checked before an existing reply is treated as a duplicate.

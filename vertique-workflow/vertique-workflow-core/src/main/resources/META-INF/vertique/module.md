@@ -84,6 +84,10 @@ public final class OrderFulfillmentDefinition
 }
 ```
 
+### Service call reply plans
+
+`call(stepId, targetId, payloadFactory)` describes a dispatch followed by a reply wait. Chain `onReply(replyType, reducer).toStepOnReply(next)` and `onFailure(reducer).toStepOnFailure(next)`; `onFailure()` leaves the state unchanged. `compensateWith(stepId)` is optional. The returned wait stage accepts the same timeout methods as `waitForSignal`; `completesLater()` requires a timeout. The generated wait step is named `<stepId>.reply`, so that id must not be declared separately. The call and its failure route must be completed before building the plan. The engine opens the reply wait when it dispatches; the workflow services module records the relay outcome.
+
 ### Signal Wait Key
 
 `waitForSignal(stepId, signalName, Payload.class)` returns a `SignalWaitBuilder`. Its optional `correlateBy(Function<S, String>)` declares the value that identifies the wait, computed from the workflow state:
@@ -97,7 +101,7 @@ wf.waitForSignal("await-payment", "payment.captured", PaymentCaptured.class)
 
 The function is registered under the callback id `<stepId>.correlationKey`, and the resulting `WaitSignalNode` carries that id as `correlationKeyCallbackId` (the plan holds the id, never the function). The id is `null` when the wait declares no key, and the deprecated `waitFor` declares none. `WorkflowCallbackRegistry.correlationKeyResolver(CallbackId)` returns the function; like `timerResolver`, its default throws `UnsupportedOperationException`, and registration fails a plan whose node names a key callback the registry cannot resolve. The declaration is recorded in the plan; the engine computes the key each time an instance enters the wait (see `dev.vertique:vertique-workflow-engine`).
 
-`WaitSignalNode` has seven components and keeps its six-argument constructor, which leaves the key absent. A component added later is appended after `correlationKeyCallbackId`.
+`WaitSignalNode` has an optional `ReplyWait` after its correlation key and retains its six- and seven-argument constructors. A reply wait identifies its originating dispatch, failure signal and route, optional failure updater, and whether completion comes later. `acceptedSignalNames()` lists the reply signal followed by the failure signal. A reply wait cannot declare a correlation key; completion later requires a timeout. The `vertique.reply.` namespace is reserved, and signal names are limited to 255 characters. `ServiceFailure` carries a reason and attempt count without exception details. `RelayedSignals.signalWait` records a reply by instance and wait ID without the intake limit or open-signal cap; `failWait` records a `ServiceFailure` against the same entry and `waitOpen` checks whether that instance still holds it. The interface defaults fail with `UnsupportedOperationException`.
 
 A computed key is a non-blank string of at most 255 characters with no NUL. A key that is `null`, blank, too long or holds a NUL, or an accessor that throws, fails the wait's segment with `WorkflowCorrelationKeyException`, a final `WorkflowDefinitionException` (so a signal whose application reached the wait is rejected and the instance stays where it was). Its message names the definition, the step and the reason, never the key; it carries no cause, because an accessor's own message may hold the key.
 
@@ -1212,3 +1216,11 @@ Behaviors that are load-bearing for correct use and not obvious from method sign
 
 - **core** - common Vertique exception and module conventions.
 - **db-core** - `PageCursor` and `PagedResult` used by task and workflow query APIs.
+
+`ReplyOutcomeObserver` is an internal observer of recorded, duplicate, stale and refused reply outcomes. It carries no payload or handle.
+
+`RelayedSignals.recordedOutcomeName` reads the previously recorded name for a reply wait, including after it closes; its default fails with `UnsupportedOperationException`. `SignalProvenance.completed()` identifies an in-process completion without an outbox entry.
+
+`ReplyPayloadBounds` is an internal shared check for the configured encoded-size and depth bounds; it carries no submitted value in a refusal.
+
+A reply containing U+0000 cannot be stored and is refused as a payload before recording; a reply call then takes the `REPLY_REFUSED` failure route.

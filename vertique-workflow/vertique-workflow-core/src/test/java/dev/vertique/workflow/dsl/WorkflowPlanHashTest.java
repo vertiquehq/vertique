@@ -31,6 +31,76 @@ import org.junit.jupiter.api.Test;
  */
 class WorkflowPlanHashTest {
 
+    @Test
+    @DisplayName("a keyed wait with timeout keeps its baseline hash")
+    void planWithoutAReplyKeepsItsHash() {
+        var timeout = new WaitSignalNode.TimeoutBranch(
+                new dev.vertique.workflow.plan.TimerSpec.After(java.time.Duration.ofMinutes(3)),
+                new dev.vertique.workflow.registry.CallbackId("timeout"),
+                "done");
+        var wait = new WaitSignalNode(
+                "wait",
+                "signal",
+                "java.lang.String",
+                new dev.vertique.workflow.registry.CallbackId("update"),
+                "done",
+                timeout,
+                new dev.vertique.workflow.registry.CallbackId("key"));
+        var plan = new WorkflowPlan(
+                "hash-baseline",
+                1,
+                "",
+                "java.lang.String",
+                "wait",
+                java.util.List.of(wait, new dev.vertique.workflow.plan.CompleteNode("done")),
+                null);
+        // Pins the baseline digest for a keyed wait with a timeout.
+        assertThat(WorkflowBuilder.computePlanHashForTesting(plan))
+                .isEqualTo("90d0e2f1be6d1e76240a079e9b70f8605d27f791602d2b3d3fe577b45e81c26c");
+    }
+
+    @Test
+    @DisplayName("a reply contributes a tag and every field to the plan hash")
+    void replyWritesATagAndEveryField() {
+        var original = new WaitSignalNode.ReplyWait(
+                "call", "failed", new dev.vertique.workflow.registry.CallbackId("failure"), "failure-next", false);
+        var variants = java.util.List.of(
+                original,
+                new WaitSignalNode.ReplyWait(
+                        "other", "failed", original.failureUpdaterCallbackId(), "failure-next", false),
+                new WaitSignalNode.ReplyWait(
+                        "call", "other", original.failureUpdaterCallbackId(), "failure-next", false),
+                new WaitSignalNode.ReplyWait(
+                        "call",
+                        "failed",
+                        new dev.vertique.workflow.registry.CallbackId("other"),
+                        "failure-next",
+                        false),
+                new WaitSignalNode.ReplyWait("call", "failed", original.failureUpdaterCallbackId(), "other", false),
+                new WaitSignalNode.ReplyWait(
+                        "call", "failed", original.failureUpdaterCallbackId(), "failure-next", true),
+                new WaitSignalNode.ReplyWait("call", "failed", original.failureUpdaterCallbackId(), "done", false));
+        var hashes = new java.util.HashSet<String>();
+        hashes.add(replyHash(null));
+        for (var reply : variants) {
+            assertThat(hashes.add(replyHash(reply))).isTrue();
+        }
+    }
+
+    private static String replyHash(WaitSignalNode.ReplyWait reply) {
+        var wait = new WaitSignalNode(
+                "wait",
+                "ok",
+                "java.lang.String",
+                new dev.vertique.workflow.registry.CallbackId("update"),
+                "done",
+                null,
+                null,
+                reply);
+        return WorkflowBuilder.computePlanHashForTesting(
+                new WorkflowPlan("hash", 1, "", "java.lang.String", "wait", java.util.List.of(wait), null));
+    }
+
     record OrderState(String id) {}
 
     record StartCmd(String id) {}

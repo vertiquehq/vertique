@@ -4,6 +4,7 @@
 package dev.vertique.workflow.dsl;
 
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
+import dev.vertique.workflow.ops.ServiceFailure;
 import dev.vertique.workflow.plan.BranchResult;
 import dev.vertique.workflow.plan.BranchRetryPolicy;
 import dev.vertique.workflow.plan.BranchStart;
@@ -15,6 +16,7 @@ import dev.vertique.workflow.plan.ForkNode;
 import dev.vertique.workflow.plan.HumanTaskNode;
 import dev.vertique.workflow.plan.JoinNode;
 import dev.vertique.workflow.plan.ReminderSpec;
+import dev.vertique.workflow.plan.ReplySignals;
 import dev.vertique.workflow.plan.ServiceDispatchNode;
 import dev.vertique.workflow.plan.TimerNode;
 import dev.vertique.workflow.plan.TimerSpec;
@@ -36,6 +38,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -93,6 +96,10 @@ public final class WorkflowBuilder<S> {
 
     /** Nodes in declaration order; insertion-ordered. */
     private final List<WorkflowNode> nodes = new ArrayList<>();
+
+    private final Set<String> reservedCallSteps = new HashSet<>();
+    private final Set<String> pendingCalls = new LinkedHashSet<>();
+    private final Map<String, WaitSignalNode.ReplyWait> replyWaits = new HashMap<>();
 
     /** Payload factories keyed by CallbackId value. */
     private final Map<String, Function<Object, Object>> payloadFactories = new HashMap<>();
@@ -224,6 +231,128 @@ public final class WorkflowBuilder<S> {
     }
 
     // --- Step DSL methods ---
+
+    /** Starts a service call whose reply resumes the workflow. */
+    public CallBuilder call(String stepId, String targetId, Function<S, Object> payloadFactory) {
+        requireInit();
+        stepCalled = true;
+        requireUniqueStepId(stepId);
+        String waitStep = ReplySignals.waitStepId(stepId);
+        requireUniqueStepId(waitStep);
+        reservedCallSteps.add(stepId);
+        reservedCallSteps.add(waitStep);
+        pendingCalls.add(stepId);
+        return new CallBuilder(stepId, targetId, payloadFactory);
+    }
+
+    /** Captures a service call and its reply type. */
+    public final class CallBuilder {
+        private final String stepId;
+        private final String targetId;
+        private final Function<S, Object> payloadFactory;
+        private String compensation;
+        private boolean later;
+
+        private CallBuilder(String stepId, String targetId, Function<S, Object> payloadFactory) {
+            this.stepId = stepId;
+            this.targetId = targetId;
+            this.payloadFactory = payloadFactory;
+        }
+
+        public CallBuilder compensateWith(String compensationStepId) {
+            this.compensation = compensationStepId;
+            return this;
+        }
+
+        public CallBuilder completesLater() {
+            this.later = true;
+            return this;
+        }
+
+        @SuppressWarnings("unchecked")
+        public <R> CallReplyTerminator onReply(Class<R> replyType, BiFunction<S, R, S> applicator) {
+            String waitStep = ReplySignals.waitStepId(stepId);
+            CallbackId updater = callbackId(waitStep, "updater");
+            stateUpdaters.put(updater.value(), (BiFunction<Object, Object, Object>) (BiFunction<?, ?, ?>) applicator);
+            signalPayloadTypes.put(ReplySignals.replyName(stepId), replyType);
+            return new CallReplyTerminator(this, replyType, updater);
+        }
+    }
+
+    /** Captures the next step on a successful reply. */
+    public final class CallReplyTerminator {
+        private final CallBuilder call;
+        private final Class<?> replyType;
+        private final CallbackId updater;
+
+        private CallReplyTerminator(CallBuilder call, Class<?> replyType, CallbackId updater) {
+            this.call = call;
+            this.replyType = replyType;
+            this.updater = updater;
+        }
+
+        public CallWithReply toStepOnReply(String nextStepId) {
+            return new CallWithReply(call, replyType, updater, nextStepId);
+        }
+    }
+
+    /** Captures the failure reducer for a call. */
+    public final class CallWithReply {
+        private final CallBuilder call;
+        private final Class<?> replyType;
+        private final CallbackId updater;
+        private final String next;
+
+        private CallWithReply(CallBuilder call, Class<?> replyType, CallbackId updater, String next) {
+            this.call = call;
+            this.replyType = replyType;
+            this.updater = updater;
+            this.next = next;
+        }
+
+        @SuppressWarnings("unchecked")
+        public CallFailureTerminator onFailure(BiFunction<S, ServiceFailure, S> applicator) {
+            CallbackId failureUpdater = callbackId(ReplySignals.waitStepId(call.stepId), "failureUpdater");
+            stateUpdaters.put(
+                    failureUpdater.value(), (BiFunction<Object, Object, Object>) (BiFunction<?, ?, ?>) applicator);
+            return new CallFailureTerminator(this, failureUpdater);
+        }
+
+        public CallFailureTerminator onFailure() {
+            return new CallFailureTerminator(this, null);
+        }
+    }
+
+    /** Captures the failure successor and creates the dispatch. */
+    public final class CallFailureTerminator {
+        private final CallWithReply reply;
+        private final @Nullable CallbackId failureUpdater;
+
+        private CallFailureTerminator(CallWithReply reply, @Nullable CallbackId failureUpdater) {
+            this.reply = reply;
+            this.failureUpdater = failureUpdater;
+        }
+
+        @SuppressWarnings("unchecked")
+        public SignalWaitWithNextStep toStepOnFailure(String nextStepId) {
+            CallBuilder call = reply.call;
+            String waitStep = ReplySignals.waitStepId(call.stepId);
+            CallbackId payload = callbackId(call.stepId, "payload");
+            payloadFactories.put(payload.value(), (Function<Object, Object>) (Function<?, ?>) call.payloadFactory);
+            nodes.add(new ServiceDispatchNode(call.stepId, call.targetId, payload, call.compensation, waitStep));
+            replyWaits.put(
+                    waitStep,
+                    new WaitSignalNode.ReplyWait(
+                            call.stepId,
+                            ReplySignals.failureName(call.stepId),
+                            failureUpdater,
+                            nextStepId,
+                            call.later));
+            pendingCalls.remove(call.stepId);
+            return new SignalWaitWithNextStep(
+                    waitStep, ReplySignals.replyName(call.stepId), reply.replyType, reply.updater, reply.next, null);
+        }
+    }
 
     /**
      * Adds a service-dispatch step without compensation.
@@ -1199,6 +1328,7 @@ public final class WorkflowBuilder<S> {
         private final CallbackId stateUpdaterCbId;
         private final String nextStepId;
         private final @Nullable CallbackId correlationKeyCbId;
+        private final @Nullable WaitSignalNode.ReplyWait reply;
 
         /**
          * Constructs a {@code SignalWaitWithNextStep}.
@@ -1223,6 +1353,7 @@ public final class WorkflowBuilder<S> {
             this.stateUpdaterCbId = stateUpdaterCbId;
             this.nextStepId = nextStepId;
             this.correlationKeyCbId = correlationKeyCbId;
+            this.reply = replyWaits.get(stepId);
         }
 
         /**
@@ -1239,7 +1370,8 @@ public final class WorkflowBuilder<S> {
                     stateUpdaterCbId,
                     nextStepId,
                     null,
-                    correlationKeyCbId));
+                    correlationKeyCbId,
+                    reply));
             return WorkflowBuilder.this;
         }
 
@@ -1318,6 +1450,7 @@ public final class WorkflowBuilder<S> {
         private final String nextStepId;
         private final TimerSpec timeoutSpec;
         private final @Nullable CallbackId correlationKeyCbId;
+        private final @Nullable WaitSignalNode.ReplyWait reply;
 
         /**
          * Constructs a {@code SignalWaitWithTimeout}.
@@ -1345,6 +1478,7 @@ public final class WorkflowBuilder<S> {
             this.nextStepId = nextStepId;
             this.timeoutSpec = timeoutSpec;
             this.correlationKeyCbId = correlationKeyCbId;
+            this.reply = replyWaits.get(stepId);
         }
 
         /**
@@ -1394,7 +1528,8 @@ public final class WorkflowBuilder<S> {
                     stateUpdaterCbId,
                     nextStepId,
                     branch,
-                    correlationKeyCbId));
+                    correlationKeyCbId,
+                    reply));
             return WorkflowBuilder.this;
         }
     }
@@ -1412,6 +1547,7 @@ public final class WorkflowBuilder<S> {
         private final TimerSpec timeoutSpec;
         private final CallbackId timeoutMutatorCbId;
         private final @Nullable CallbackId correlationKeyCbId;
+        private final @Nullable WaitSignalNode.ReplyWait reply;
 
         /**
          * Constructs a {@code SignalWaitWithTimeoutMutator}.
@@ -1442,6 +1578,7 @@ public final class WorkflowBuilder<S> {
             this.timeoutSpec = timeoutSpec;
             this.timeoutMutatorCbId = timeoutMutatorCbId;
             this.correlationKeyCbId = correlationKeyCbId;
+            this.reply = replyWaits.get(stepId);
         }
 
         /**
@@ -1462,7 +1599,8 @@ public final class WorkflowBuilder<S> {
                     stateUpdaterCbId,
                     nextStepId,
                     branch,
-                    correlationKeyCbId));
+                    correlationKeyCbId,
+                    reply));
             return WorkflowBuilder.this;
         }
     }
@@ -1912,6 +2050,10 @@ public final class WorkflowBuilder<S> {
      * @throws WorkflowDefinitionException if any referenced step id is not declared in the plan
      */
     private void validateStepReferences() {
+        if (!pendingCalls.isEmpty()) {
+            throw new WorkflowDefinitionException(
+                    "Call '" + pendingCalls.iterator().next() + "' is missing its failure route");
+        }
         java.util.Set<String> knownStepIds = new java.util.HashSet<>();
         for (WorkflowNode node : nodes) {
             knownStepIds.add(node.stepId());
@@ -1925,6 +2067,12 @@ public final class WorkflowBuilder<S> {
                     }
                 }
                 case WaitSignalNode wsn -> {
+                    if (wsn.reply() != null
+                            && !knownStepIds.contains(wsn.reply().failureNextStepId())) {
+                        throw new WorkflowDefinitionException(
+                                "WaitSignalNode '" + wsn.stepId() + "' references unknown failure next step '"
+                                        + wsn.reply().failureNextStepId() + "'");
+                    }
                     if (wsn.timeout() != null
                             && !knownStepIds.contains(wsn.timeout().timeoutNextStepId())) {
                         throw new WorkflowDefinitionException(
@@ -1955,6 +2103,10 @@ public final class WorkflowBuilder<S> {
      * @param stepId the step id to check for uniqueness
      */
     private void requireUniqueStepId(String stepId) {
+        if (reservedCallSteps.contains(stepId)) {
+            throw new WorkflowDefinitionException(
+                    "duplicate stepId '" + stepId + "'; each step must have a unique id within the plan");
+        }
         for (WorkflowNode existing : nodes) {
             if (existing.stepId().equals(stepId)) {
                 throw new WorkflowDefinitionException(
@@ -2063,6 +2215,19 @@ public final class WorkflowBuilder<S> {
                         // without a key hashes as it did before the key existed
                         if (n.correlationKeyCallbackId() != null) {
                             update(digest, n.correlationKeyCallbackId().value());
+                        }
+                        if (n.reply() != null) {
+                            var reply = n.reply();
+                            update(digest, "reply");
+                            update(digest, reply.callStepId());
+                            update(digest, reply.failureSignalName());
+                            update(
+                                    digest,
+                                    reply.failureUpdaterCallbackId() == null
+                                            ? ""
+                                            : reply.failureUpdaterCallbackId().value());
+                            update(digest, reply.failureNextStepId());
+                            update(digest, Boolean.toString(reply.completesLater()));
                         }
                     }
                     case TimerNode n -> {
