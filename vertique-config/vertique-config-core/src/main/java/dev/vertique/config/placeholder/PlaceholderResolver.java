@@ -328,8 +328,8 @@ public final class PlaceholderResolver {
          * @param location where {@code value} lives: a dotted config path for a walked value, the
          *                 referenced key for a tree value reached through a reference, or the
          *                 referenced key suffixed with {@code " default"} for a default text (whose
-         *                 positions count from the start of the default text, after escapes were
-         *                 expanded); used only in failure renderings
+         *                 positions count from the start of the default text as written, escapes
+         *                 included); used only in failure renderings
          * @return the resolved value; may be a non-{@link String} in WHOLE-VALUE mode
          */
         private Object resolveString(String value, int depth, String location) {
@@ -390,7 +390,9 @@ public final class PlaceholderResolver {
          *       immediately.</li>
          *   <li><strong>Default</strong> — if a default value text was provided and all sources
          *       missed, the default is parsed and resolved with the same stack at
-         *       {@code depth + 1}.</li>
+         *       {@code depth + 1}. The parser keeps an escape inside the default text as
+         *       written, so this re-parse is the one place it is expanded: {@code ${a:\${b}}}
+         *       yields the text {@code ${b}}, never a reference to {@code b}.</li>
          *   <li><strong>Failure</strong> — record the unresolved reference and return the raw
          *       {@code ${...}} placeholder text in place.</li>
          * </ol>

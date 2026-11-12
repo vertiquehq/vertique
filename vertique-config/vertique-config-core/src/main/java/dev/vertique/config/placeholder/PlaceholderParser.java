@@ -30,6 +30,16 @@ import java.util.List;
  *       immediately followed by {@code ${} is treated as a literal backslash.</li>
  * </ul>
  *
+ * <h2>Escape inside a reference</h2>
+ * <p>Inside {@code ${...}} the escape is kept as written: the key and the default text carry
+ * {@code \${}, not {@code ${}. The engine re-parses a default text when it is used, and that
+ * parse turns the escape into the literal {@code ${} — so an escape is expanded exactly once, and
+ * {@code ${a:\${b}}} yields the text {@code ${b}} when {@code a} is missing instead of resolving
+ * {@code b}. The escaped {@code ${} still opens a brace level, so the {@code }} that closes it
+ * belongs to the escaped text and does not close the enclosing reference: {@code ${a:\${b}}} is
+ * one reference whose default is {@code \${b}}. An escaped {@code ${} with no closing brace
+ * therefore leaves the enclosing reference unterminated.
+ *
  * <h2>Blank-key rule</h2>
  * <p>A placeholder whose key is blank (empty or whitespace-only before the first
  * top-level colon) is reported as a {@link Malformed} segment. Whitespace inside
@@ -105,9 +115,12 @@ final class PlaceholderParser {
                 while (i < len && depth > 0) {
                     char ch = input.charAt(i);
 
-                    // Nested escape inside placeholder content: \${ → emit literal ${ into content
+                    // Escape inside placeholder content: keep \${ as written so that the default
+                    // text is unescaped exactly once, by the engine's re-parse. The escaped ${ still
+                    // opens a brace level: its closing } must not close the enclosing reference.
                     if (ch == '\\' && i + 2 < len && input.charAt(i + 1) == '$' && input.charAt(i + 2) == '{') {
-                        content.append("${");
+                        content.append("\\${");
+                        depth++;
                         i += 3;
                         continue;
                     }
@@ -265,6 +278,10 @@ final class PlaceholderParser {
      *       ({@code ${key:}}).</li>
      *   <li>{@link #defaultValue()} may contain nested {@code ${...}} text; the parser
      *       does not recurse — nested resolution is the engine's responsibility.</li>
+     *   <li>An escape inside the reference is kept as written: {@link #key()} and
+     *       {@link #defaultValue()} carry {@code \${}. The key is looked up as written; only the
+     *       default text is re-parsed by the engine, which turns the escape into the literal
+     *       {@code ${}.</li>
      * </ul>
      *
      * @param key          the placeholder key; never blank

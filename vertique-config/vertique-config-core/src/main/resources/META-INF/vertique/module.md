@@ -157,6 +157,12 @@ resolved. Resolution runs once, eagerly, before `Vertx` is created.
 Multiple placeholders in one value concatenate as strings:
 `jdbc:postgresql://${db.host}:${db.port}/app`.
 
+An escape inside a default text stays literal: `${a:\${b}}` yields the text `${b}` when `a` is
+missing, and `a`'s value when it is present — `b` is never resolved. The escaped `${` still opens a
+brace level, so its closing `}` belongs to the default text and does not close the enclosing
+reference. An escaped `${` with no closing brace, as in `${a:x\${}`, leaves the enclosing reference
+unterminated (a malformed reference).
+
 ### Resolution Chain
 
 For each key the engine consults, in order:
@@ -167,7 +173,9 @@ For each key the engine consults, in order:
 2. **Declared property sources**, in list order; the first non-empty hit wins. Source values are
    **literal** — a `${...}` inside a secret value passes through unchanged.
 3. **Default** — if every chain step missed and a default was declared, the default text is itself
-   resolved and may contain placeholders, bounded by a maximum nesting depth of 5.
+   resolved and may contain placeholders, bounded by a maximum nesting depth of 5. An escape in the
+   default text is expanded by this step only, so `\${` inside a default emits the text `${` and is
+   not resolved.
 4. **Failure** — the reference is recorded and the walk continues, so all failures are reported
    together.
 
@@ -208,8 +216,8 @@ stringified. Property-source values are always strings.
   `<location>` is the dotted path of the containing value (relative to the resolved subtree during
   bootstrap, so `[0].endpoint` for a store declaration), the referenced key for a value reached
   through a reference, or the referenced key plus ` default` for a default text, and `N` is the
-  zero-based index of the `${` in that text as written (for a default text, as it reads after the
-  outer reference's escapes were expanded). The text after `${` runs to the end of the value and may
+  zero-based index of the `${` in that text as written (for a default text, counted from the start
+  of the default text, escapes included). The text after `${` runs to the end of the value and may
   be a secret, so it never appears in the exception or the startup log.
 - **A source error is not a miss.** An auth failure, network error, or malformed response aborts
   startup immediately. Source errors are never degraded into not-found and are never masked by a
