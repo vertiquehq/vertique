@@ -146,7 +146,7 @@ final class PlaceholderParser {
                 if (!foundClose) {
                     // Unterminated placeholder — report as Malformed
                     String rawText = input.substring(start, i);
-                    segments.add(new Malformed(rawText));
+                    segments.add(new Malformed(rawText, start));
                     // Do not advance i further; it's already at end-of-string
                     break;
                 }
@@ -171,7 +171,7 @@ final class PlaceholderParser {
                 if (key.isBlank()) {
                     // Reconstruct the raw text for the Malformed segment
                     String rawText = input.substring(start, i);
-                    segments.add(new Malformed(rawText));
+                    segments.add(new Malformed(rawText, start));
                 } else {
                     segments.add(new Placeholder(key, defaultValue));
                 }
@@ -285,8 +285,15 @@ final class PlaceholderParser {
      *       entire content if no colon) is blank (empty or whitespace-only).</li>
      * </ol>
      *
+     * <p>The {@link #offset()} is the zero-based index of the opening {@code ${} in the parsed
+     * input. Diagnostics report a malformed segment by that position only; {@link #rawText()} is
+     * kept solely so the resolver can pass the original characters through into the resolved
+     * value, and it must never be written to a log, an exception, or any other observable output,
+     * because an unterminated reference swallows the rest of the value — which may be a secret.
+     *
      * @param rawText the unterminated or blank-key placeholder text starting at {@code ${};
-     *                never {@code null}
+     *                never {@code null}; never observable
+     * @param offset  the zero-based index of the opening {@code ${} within the parsed input
      */
-    record Malformed(String rawText) implements Segment {}
+    record Malformed(String rawText, int offset) implements Segment {}
 }

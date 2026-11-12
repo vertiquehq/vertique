@@ -622,7 +622,7 @@ class PlaceholderResolverTest {
     // --- Malformed segments ---
 
     @Nested
-    @DisplayName("Malformed segments: unterminated ${... recorded as unresolved reference")
+    @DisplayName("Malformed segments: reported by location and position, never by text")
     class MalformedSegmentTests {
 
         @Test
@@ -633,7 +633,129 @@ class PlaceholderResolverTest {
             PlaceholderResolutionException ex = assertThrows(
                     PlaceholderResolutionException.class, () -> PlaceholderResolver.resolveTree(tree, List.of()));
 
-            assertFalse(ex.unresolvedReferences().isEmpty());
+            assertEquals(List.of("x (malformed placeholder at index 0)"), ex.unresolvedReferences());
+        }
+
+        @Test
+        @DisplayName(
+                "pa${ss under key 'secret' → 'secret (malformed placeholder at index 2)'; message never contains ss")
+        void unterminatedTailNeverDisclosed() {
+            JsonObject tree = new JsonObject().put("secret", "pa${ss");
+
+            PlaceholderResolutionException ex = assertThrows(
+                    PlaceholderResolutionException.class, () -> PlaceholderResolver.resolveTree(tree, List.of()));
+
+            assertEquals(List.of("secret (malformed placeholder at index 2)"), ex.unresolvedReferences());
+            assertTrue(ex.getMessage().contains("secret (malformed placeholder at index 2)"), ex.getMessage());
+            assertFalse(ex.getMessage().contains("${ss"), ex.getMessage());
+            assertFalse(ex.getMessage().contains("ss"), ex.getMessage());
+            assertFalse(ex.getMessage().contains("pa$"), ex.getMessage());
+            for (String ref : ex.unresolvedReferences()) {
+                assertFalse(ref.contains("ss"), ref);
+            }
+        }
+
+        @Test
+        @DisplayName("nested path and array index locate the containing value: a.b[1]")
+        void nestedLocationRendering() {
+            JsonObject tree = new JsonObject()
+                    .put(
+                            "a",
+                            new JsonObject()
+                                    .put("b", new JsonArray().add("fine").add("x${zzq")));
+
+            PlaceholderResolutionException ex = assertThrows(
+                    PlaceholderResolutionException.class, () -> PlaceholderResolver.resolveTree(tree, List.of()));
+
+            assertEquals(List.of("a.b[1] (malformed placeholder at index 1)"), ex.unresolvedReferences());
+            assertFalse(ex.getMessage().contains("zzq"), ex.getMessage());
+        }
+
+        @Test
+        @DisplayName("blank key with a default ${:s3cret} → position only; the default text is not disclosed")
+        void blankKeyDefaultNotDisclosed() {
+            JsonObject tree = new JsonObject().put("k", "v=${:s3cret}");
+
+            PlaceholderResolutionException ex = assertThrows(
+                    PlaceholderResolutionException.class, () -> PlaceholderResolver.resolveTree(tree, List.of()));
+
+            assertEquals(List.of("k (malformed placeholder at index 2)"), ex.unresolvedReferences());
+            assertFalse(ex.getMessage().contains("s3cret"), ex.getMessage());
+        }
+
+        @Test
+        @DisplayName("valid reference followed by unterminated: ${real}${abc → index 7, text absent")
+        void offsetAfterValidReference() {
+            JsonObject tree = new JsonObject().put("real", "r").put("k", "${real}${abc");
+
+            PlaceholderResolutionException ex = assertThrows(
+                    PlaceholderResolutionException.class, () -> PlaceholderResolver.resolveTree(tree, List.of()));
+
+            assertEquals(List.of("k (malformed placeholder at index 7)"), ex.unresolvedReferences());
+            assertFalse(ex.getMessage().contains("abc"), ex.getMessage());
+        }
+
+        @Test
+        @DisplayName("malformed text reached through a reference is located by the referenced key")
+        void reachedThroughReference() {
+            JsonObject tree = new JsonObject().put("a", "${b}").put("b", "pa${zzq");
+
+            PlaceholderResolutionException ex = assertThrows(
+                    PlaceholderResolutionException.class, () -> PlaceholderResolver.resolveTree(tree, List.of()));
+
+            // Walked directly as 'b' and reached through 'a' with 'b' as the chain: one de-duplicated entry
+            assertEquals(List.of("b (malformed placeholder at index 2)"), ex.unresolvedReferences());
+            assertFalse(ex.getMessage().contains("zzq"), ex.getMessage());
+        }
+
+        @Test
+        @DisplayName("malformed text reached through a two-step chain is still one entry, located by its own key")
+        void reachedThroughChain() {
+            JsonObject tree =
+                    new JsonObject().put("top", "${a}").put("a", "${b}").put("b", "pa${zzq");
+
+            PlaceholderResolutionException ex = assertThrows(
+                    PlaceholderResolutionException.class, () -> PlaceholderResolver.resolveTree(tree, List.of()));
+
+            assertEquals(List.of("b (malformed placeholder at index 2)"), ex.unresolvedReferences());
+            assertFalse(ex.getMessage().contains("zzq"), ex.getMessage());
+        }
+
+        @Test
+        @DisplayName("malformed text inside a container reached through a reference: cfg.pw")
+        void reachedThroughContainerReference() {
+            JsonObject tree = new JsonObject().put("ref", "${cfg}").put("cfg", new JsonObject().put("pw", "pa${zzq"));
+
+            PlaceholderResolutionException ex = assertThrows(
+                    PlaceholderResolutionException.class, () -> PlaceholderResolver.resolveTree(tree, List.of()));
+
+            assertEquals(List.of("cfg.pw (malformed placeholder at index 2)"), ex.unresolvedReferences());
+            assertFalse(ex.getMessage().contains("zzq"), ex.getMessage());
+        }
+
+        @Test
+        @DisplayName("malformed text inside a default is located as '<key> default' with the position in the default")
+        void insideDefault() {
+            // The nested ${} is balanced, so the outer reference is well-formed; its default text is 'x${}'
+            JsonObject tree = new JsonObject().put("k", "${missing.key:x${}}");
+
+            PlaceholderResolutionException ex = assertThrows(
+                    PlaceholderResolutionException.class, () -> PlaceholderResolver.resolveTree(tree, List.of()));
+
+            assertEquals(List.of("missing.key default (malformed placeholder at index 1)"), ex.unresolvedReferences());
+        }
+
+        @Test
+        @DisplayName("bootstrap subtree: location is relative to the resolved array, e.g. [0].endpoint")
+        void bootstrapArrayLocation() {
+            JsonArray subtree = new JsonArray().add(new JsonObject().put("endpoint", "https://h${zzq"));
+
+            PlaceholderResolutionException ex = assertThrows(
+                    PlaceholderResolutionException.class,
+                    () -> PlaceholderResolver.resolveAgainstTree(subtree, new JsonObject()));
+
+            assertEquals(List.of("[0].endpoint (malformed placeholder at index 9)"), ex.unresolvedReferences());
+            assertFalse(ex.getMessage().contains("zzq"), ex.getMessage());
         }
     }
 

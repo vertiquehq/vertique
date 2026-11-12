@@ -17,6 +17,10 @@ import java.util.List;
  *   <li>A plain key ({@code "db.password"}) when the placeholder was a top-level reference.</li>
  *   <li>A chain rendering ({@code "a -> b -> a"}) when a cyclic or depth-exceeded path led to the
  *       failure.</li>
+ *   <li>A location with a fixed marker and a zero-based character position
+ *       ({@code "db.url (malformed placeholder at index 2)"}) when a value contains an
+ *       unterminated or blank-key reference. The reference's text is never included, because an
+ *       unterminated {@code ${} runs to the end of the value.</li>
  * </ul>
  *
  * <p>The list is immutable, lexicographically sorted, and de-duplicated across all failures
@@ -25,21 +29,25 @@ import java.util.List;
  *
  * <h2>NFR-CONF-002</h2>
  * <p>No resolved config <em>value</em> appears in the exception message or in
- * {@code unresolvedReferences()}. Only keys and chain renderings are exposed.
+ * {@code unresolvedReferences()}. Only keys, chain renderings, and malformed-reference locations
+ * (key plus character position) are exposed.
  *
  * @see PlaceholderResolver
  */
 public class PlaceholderResolutionException extends ConfigurationException {
 
-    /** Immutable, sorted, de-duplicated list of unresolved reference renderings (keys only). */
+    /**
+     * Immutable, sorted, de-duplicated list of unresolved reference renderings (keys, chains, and
+     * malformed-reference locations only).
+     */
     private final List<String> unresolvedReferences;
 
     /**
      * Constructs an exception with the given message and unresolved reference list.
      *
      * <p>The {@code unresolvedReferences} list must be non-null, non-empty, lexicographically
-     * sorted, and de-duplicated. Entries are reference renderings only (keys or chain strings) —
-     * never resolved values.
+     * sorted, and de-duplicated. Entries are reference renderings only (keys, chain strings, or
+     * malformed-reference locations) — never resolved values.
      *
      * @param message              diagnostic message; must not contain resolved values
      * @param unresolvedReferences immutable, sorted, de-duplicated list of unresolved reference
@@ -54,9 +62,11 @@ public class PlaceholderResolutionException extends ConfigurationException {
      * Returns the immutable, lexicographically sorted, de-duplicated list of unresolved reference
      * renderings collected during the resolution walk.
      *
-     * <p>Each entry is a key name ({@code "some.key"}) or a chain rendering
-     * ({@code "a -> b -> a"}) that describes the path that could not be resolved. Entries are
-     * reference renderings only — never config values (NFR-CONF-002).
+     * <p>Each entry is a key name ({@code "some.key"}), a chain rendering
+     * ({@code "a -> b -> a"}) that describes the path that could not be resolved, or a location
+     * with a character position ({@code "some.key (malformed placeholder at index 2)"}) for a
+     * malformed reference. Entries are reference renderings only — never config values and never
+     * placeholder text.
      *
      * @return non-null, non-empty list of unresolved reference strings
      */

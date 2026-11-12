@@ -380,6 +380,26 @@ class PlaceholderParserTest {
             List<Malformed> malformed = allMalformed(result);
             assertEquals(1, malformed.size());
             assertEquals("${abc", malformed.get(0).rawText());
+            assertEquals(0, malformed.get(0).offset());
+        }
+
+        @Test
+        @DisplayName("offset is the index of the opening ${ in the input: pa${ss → 2")
+        void unterminatedOffsetAfterLiteral() {
+            List<Segment> result = parse("pa${ss");
+            List<Malformed> malformed = allMalformed(result);
+            assertEquals(1, malformed.size());
+            assertEquals(2, malformed.get(0).offset());
+        }
+
+        @Test
+        @DisplayName("offset counts the escape as written: \\${x}y${ → 6")
+        void unterminatedOffsetAfterEscape() {
+            // The escape \${ occupies three input characters but emits two; the offset is in input coordinates
+            List<Segment> result = parse("\\${x}y${");
+            List<Malformed> malformed = allMalformed(result);
+            assertEquals(1, malformed.size());
+            assertEquals(6, malformed.get(0).offset());
         }
 
         @Test
@@ -409,6 +429,7 @@ class PlaceholderParserTest {
             List<Malformed> malformed = allMalformed(result);
             assertEquals(1, malformed.size());
             assertEquals("${:default}", malformed.get(0).rawText());
+            assertEquals(0, malformed.get(0).offset());
         }
 
         @Test
@@ -421,9 +442,10 @@ class PlaceholderParserTest {
             // One valid placeholder with key 'real'
             assertEquals(1, phs.size());
             assertEquals("real", phs.get(0).key());
-            // One Malformed for the unterminated '${abc'
+            // One Malformed for the unterminated '${abc', starting after the 7-character ${real}
             assertEquals(1, malformed.size());
             assertEquals("${abc", malformed.get(0).rawText());
+            assertEquals(7, malformed.get(0).offset());
         }
 
         @Test

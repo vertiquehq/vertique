@@ -202,7 +202,15 @@ stringified. Property-source values are always strings.
 - **Fail-closed.** A reference with no default that exhausts the chain aborts startup. The engine
   collects every failure across the whole tree walk and throws a single
   `PlaceholderResolutionException` carrying a sorted, de-duplicated list of unresolved renderings —
-  key names and chain strings only, never resolved values.
+  key names, chain strings, and malformed-reference locations only, never resolved values.
+- **A malformed reference is reported by position, not by text.** An unterminated `${` or a blank-key
+  `${}` / `${:default}` is recorded as `<location> (malformed placeholder at index N)`, where
+  `<location>` is the dotted path of the containing value (relative to the resolved subtree during
+  bootstrap, so `[0].endpoint` for a store declaration), the referenced key for a value reached
+  through a reference, or the referenced key plus ` default` for a default text, and `N` is the
+  zero-based index of the `${` in that text as written (for a default text, as it reads after the
+  outer reference's escapes were expanded). The text after `${` runs to the end of the value and may
+  be a secret, so it never appears in the exception or the startup log.
 - **A source error is not a miss.** An auth failure, network error, or malformed response aborts
   startup immediately. Source errors are never degraded into not-found and are never masked by a
   default.

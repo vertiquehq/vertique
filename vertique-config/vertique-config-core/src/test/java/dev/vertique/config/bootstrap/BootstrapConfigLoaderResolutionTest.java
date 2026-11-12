@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import dev.vertique.config.placeholder.PlaceholderResolutionException;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
+import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -494,6 +495,21 @@ class BootstrapConfigLoaderResolutionTest {
                     1,
                     StubSourceFactory.State.totalCloseCount.get(),
                     "Stub source must be closed exactly once after pass-3 failure");
+        }
+
+        @Test
+        @DisplayName("literal pa${ss under db.secret: reported by key and position; the tail never reaches the message")
+        void malformedReferenceReportedByPositionNotText() {
+            JsonObject deployment = deploymentWithSources(stubEntry("stub", new JsonObject().put("k", "v")))
+                    .put("db", new JsonObject().put("secret", "pa${ss"));
+
+            PlaceholderResolutionException ex =
+                    assertThrows(PlaceholderResolutionException.class, () -> BootstrapConfigLoader.load(deployment));
+
+            assertEquals(List.of("db.secret (malformed placeholder at index 2)"), ex.unresolvedReferences());
+            assertFalse(ex.getMessage().contains("${ss"), ex.getMessage());
+            assertFalse(ex.getMessage().contains("ss"), ex.getMessage());
+            assertEquals(1, StubSourceFactory.State.totalCloseCount.get(), "Stub source must be closed once");
         }
     }
 
