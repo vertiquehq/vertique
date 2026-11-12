@@ -20,11 +20,16 @@ import java.util.List;
  * Factory for the immutable, isolated config {@link ObjectMapper} the config-parsing seam uses.
  *
  * <p>{@link #lenient()} builds a <em>fresh</em> mapper that never shares state with Vert.x's
- * {@code DatabindCodec.mapper()} or any global mapper. It registers the four config modules —
- * {@link Jdk8Module}, {@link JavaTimeModule}, {@link KeyedCollectionModule}, and Vert.x's
- * {@link VertxModule} — enables lenient scalar coercion, and disables
- * {@code FAIL_ON_UNKNOWN_PROPERTIES} (extra keys ignored). This is the byte-for-byte default the
- * config parser has always used.
+ * {@code DatabindCodec.mapper()} or any global mapper. It registers the five config modules —
+ * {@link Jdk8Module}, {@link JavaTimeModule}, {@link KeyedCollectionModule}, the secret-masking
+ * module ({@link ConfigSecretMaskingModule}), and Vert.x's {@link VertxModule} — enables lenient
+ * scalar coercion, and disables {@code FAIL_ON_UNKNOWN_PROPERTIES} (extra keys ignored). This is the
+ * default the config parser uses.
+ *
+ * <p>The secret-masking module changes serialization only: a field whose dotted path
+ * {@code ConfigSecretRenderer} deems sensitive is written as {@code "***"} when set and omitted when
+ * absent, so a dump of a parsed record never carries the value of a secret-named field. The rule keys
+ * on names: a credential embedded in a URL-typed string is not recognised. Parsing is unaffected.
  *
  * <p>{@link #finalizeForConfig(ObjectMapper)} takes an application-supplied {@code @ConfigMapper}
  * override and re-layers the framework's mandatory modules and lenient policy over it <em>in
@@ -42,16 +47,16 @@ public final class DefaultConfigMapper {
     private DefaultConfigMapper() {}
 
     /**
-     * Builds the lenient config {@link ObjectMapper} — the byte-for-byte default the config parser
-     * has always used: lenient scalar coercion, {@code FAIL_ON_UNKNOWN_PROPERTIES} disabled, with the
-     * four config modules registered.
+     * Builds the lenient config {@link ObjectMapper} — the default the config parser uses: lenient
+     * scalar coercion, {@code FAIL_ON_UNKNOWN_PROPERTIES} disabled, with the five config modules
+     * registered.
      *
      * @return a freshly constructed, isolated lenient config mapper
      */
     public static ObjectMapper lenient() {
         return JsonMapper.builder()
                 .enable(MapperFeature.ALLOW_COERCION_OF_SCALARS)
-                // The four mandatory config modules, VertxModule last (see mandatoryModules): its
+                // The five mandatory config modules, VertxModule last (see mandatoryModules): its
                 // serializers/deserializers for JsonObject/JsonArray (and Instant/byte[]) round-trip
                 // those Vert.x types intact rather than binding to an empty object.
                 .addModules(mandatoryModules())
@@ -66,7 +71,7 @@ public final class DefaultConfigMapper {
      *
      * <p>Applied, all of which always win over the override:
      * <ul>
-     *   <li>the four {@link #mandatoryModules() mandatory modules} are re-layered — duplicate
+     *   <li>the five {@link #mandatoryModules() mandatory modules} are re-layered — duplicate
      *       registrations are skipped by Jackson via {@code getTypeId()}, so an override that already
      *       registered any of these keeps its instance and the rest are layered in;</li>
      *   <li>{@code FAIL_ON_UNKNOWN_PROPERTIES} disabled;</li>
@@ -93,19 +98,26 @@ public final class DefaultConfigMapper {
     }
 
     /**
-     * Builds a fresh instance of each of the four mandatory config modules, in canonical registration
+     * Builds a fresh instance of each of the five mandatory config modules, in canonical registration
      * order with {@link VertxModule} last. This is the single source of the mandatory-module list so
      * {@link #lenient()} and {@link #finalizeForConfig(ObjectMapper)} cannot drift apart.
      *
      * <p>Fresh instances are returned on every call because a Jackson module must not be shared across
      * the distinct mappers these two methods build. {@link VertxModule} is ordered last so its
-     * (de)serializers for the Vert.x JSON types win on the isolated lenient mapper; among these four
-     * distinct, disjoint-type modules the relative order is otherwise immaterial.
+     * (de)serializers for the Vert.x JSON types win on the isolated lenient mapper; the secret-masking
+     * module contributes only a bean-serializer modifier, so among these five modules the relative
+     * order is otherwise immaterial.
      *
-     * @return a list of the four mandatory modules, each a fresh instance, in order: {@link Jdk8Module},
-     *     {@link JavaTimeModule}, {@link KeyedCollectionModule}, then {@link VertxModule}
+     * @return a list of the five mandatory modules, each a fresh instance, in order: {@link Jdk8Module},
+     *     {@link JavaTimeModule}, {@link KeyedCollectionModule}, {@link ConfigSecretMaskingModule}, then
+     *     {@link VertxModule}
      */
     private static List<Module> mandatoryModules() {
-        return List.of(new Jdk8Module(), new JavaTimeModule(), new KeyedCollectionModule(), new VertxModule());
+        return List.of(
+                new Jdk8Module(),
+                new JavaTimeModule(),
+                new KeyedCollectionModule(),
+                new ConfigSecretMaskingModule(),
+                new VertxModule());
     }
 }

@@ -731,8 +731,11 @@ Merge order, most specific last: `kafka.schemaRegistry.*` → per-producer or pe
 
 Secret keys inside `properties`, `serdeProperties`, `schemaRegistry`, and the root connection
 properties are masked when a config object is rendered, so a startup log or a `ConfigurationException`
-never reveals a credential. `kafka.messageKeyHash.hmacSecret` is write-only — it deserializes in and
-is never serialized back out.
+never reveals a credential. `kafka.messageKeyHash.hmacSecret` deserializes in and stays readable; the
+config mapper behind `ConfigParser` serializes it as `"***"` when set and omits it when absent (the
+shared secret rule, `ConfigSecretRenderer` in `dev.vertique:vertique-core`), and `ConfigParser`
+rejects a literal `"***"` as its value. Only the config mapper masks; another `ObjectMapper` prints
+the secret.
 
 ### JSON mapper profile precedence
 

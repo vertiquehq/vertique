@@ -807,8 +807,14 @@ produced.
 
 Unknown keys are ignored. `keyPath` and `certPath` are a pair — mutual TLS needs both.
 
-`password`, `trustStorePassword`, and `properties` are write-only: they are read from configuration
-but never serialized back out by Jackson, and `toString()` renders them as `<redacted>`.
+`password` and `trustStorePassword` are read from configuration and stay readable through their
+accessors. The config mapper behind `ConfigParser` serializes each as `"***"` when set and omits it
+when absent, because the names match the shared secret rule (`ConfigSecretRenderer` in
+`dev.vertique:vertique-core`); `ConfigParser` rejects a literal `"***"` as their value, so a masked
+dump cannot be fed back as the password. `properties` stays write-only: the bag may carry a secret
+under any key, so it is never serialized back out. `toString()` renders all three as `<redacted>`.
+Only the config mapper masks — serializing the record with another `ObjectMapper` prints the
+passwords.
 
 ### Schema placement (`db.schemas`)
 

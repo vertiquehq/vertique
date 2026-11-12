@@ -63,9 +63,13 @@ import lombok.extern.jackson.Jacksonized;
  * }
  * }</pre>
  *
- * <p><strong>Secret hygiene.</strong> {@code password} and {@code placeholders} are read from
- * configuration but are {@link JsonProperty.Access#WRITE_ONLY}: Jackson never serializes them back
- * out, and the same holds for every nested {@link FlywayInstanceConfig}. {@link #toString()} renders
+ * <p><strong>Secret hygiene.</strong> {@code password} is read from configuration and stays readable;
+ * the config mapper behind {@code ConfigParser} serializes it as {@code "***"} when set and omits it
+ * when absent (its name matches the shared secret rule, {@code ConfigSecretRenderer}). The
+ * {@code placeholders} bag may hold a secret under any key, so it stays
+ * {@link JsonProperty.Access#WRITE_ONLY} and is never serialized back out. The same holds for every
+ * nested {@link FlywayInstanceConfig}. Only the config mapper masks: another {@code ObjectMapper}
+ * prints the password. {@link #toString()} renders
  * the password redacted, the placeholder keys without values, a {@code password=} parameter in
  * {@code jdbcUrl} masked and every instance in its redacted form, on the class and on its builder.
  */
@@ -94,9 +98,9 @@ public class FlywayConfig {
 
     /**
      * DDL password for migrations. If {@code null}, falls back to {@link
-     * dev.vertique.db.DbPoolConfig#password()}.
+     * dev.vertique.db.DbPoolConfig#password()}. Masked as {@code "***"} when the config mapper
+     * serializes the record.
      */
-    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     private final String password;
 
     // --- Migration locations ---
@@ -129,7 +133,8 @@ public class FlywayConfig {
     /**
      * Placeholder key-value pairs for template substitution in migration scripts. Flyway replaces
      * {@code ${key}} occurrences in SQL scripts with the corresponding value. Defaults to an empty
-     * map (no substitutions).
+     * map (no substitutions). Write-only: a placeholder value may be a secret under any key, so the
+     * bag is never serialized back out.
      */
     @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     @Builder.Default

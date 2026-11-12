@@ -1035,21 +1035,26 @@ class FlywayNamedConfigurationTest {
                     .toString()
                     .contains(SECRET_MARK));
         }));
-        mappers.forEach((kind, mapper) -> {
-            tests.add(dynamicTest("Jackson never serializes either type's secrets (" + kind + " mapper)", () -> {
-                String instanceJson = mapper.writeValueAsString(secretInstance());
-                String configJson = mapper.writeValueAsString(secretConfig());
+        tests.add(dynamicTest("the config mapper masks both types' passwords and omits the placeholders", () -> {
+            ObjectMapper mapper = mappers.get("framework");
+            String instanceJson = mapper.writeValueAsString(secretInstance());
+            String configJson = mapper.writeValueAsString(secretConfig());
 
-                assertFalse(instanceJson.contains(SECRET_MARK), instanceJson);
-                assertFalse(configJson.contains(SECRET_MARK), configJson);
-                assertTrue(instanceJson.contains("\"user\":\"inst_ddl\""), "non-secret fields still serialize");
-                Set<String> components = Stream.of(FlywayInstanceConfig.class.getRecordComponents())
-                        .map(java.lang.reflect.RecordComponent::getName)
-                        .collect(Collectors.toSet());
-                assertTrue(
-                        components.containsAll(new JsonObject(instanceJson).fieldNames()),
-                        "only record components serialize, never the unknown-key hook: " + instanceJson);
-            }));
+            assertFalse(instanceJson.contains(SECRET_MARK), instanceJson);
+            assertFalse(configJson.contains(SECRET_MARK), configJson);
+            assertEquals("***", new JsonObject(instanceJson).getString("password"), instanceJson);
+            assertEquals("***", new JsonObject(configJson).getString("password"), configJson);
+            assertFalse(new JsonObject(instanceJson).containsKey("placeholders"), instanceJson);
+            assertFalse(new JsonObject(configJson).containsKey("placeholders"), configJson);
+            assertTrue(instanceJson.contains("\"user\":\"inst_ddl\""), "non-secret fields still serialize");
+            Set<String> components = Stream.of(FlywayInstanceConfig.class.getRecordComponents())
+                    .map(java.lang.reflect.RecordComponent::getName)
+                    .collect(Collectors.toSet());
+            assertTrue(
+                    components.containsAll(new JsonObject(instanceJson).fieldNames()),
+                    "only record components serialize, never the unknown-key hook: " + instanceJson);
+        }));
+        mappers.forEach((kind, mapper) -> {
             tests.add(dynamicTest("Jackson still accepts secret input for both types (" + kind + " mapper)", () -> {
                 FlywayInstanceConfig instance = mapper.readValue(
                         "{\"name\":\"job\",\"user\":\"inst_ddl\",\"password\":\"" + INSTANCE_PASSWORD + "\","
