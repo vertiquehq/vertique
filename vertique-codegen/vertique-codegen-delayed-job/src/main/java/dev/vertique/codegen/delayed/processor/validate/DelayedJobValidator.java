@@ -24,12 +24,12 @@ import javax.lang.model.type.TypeMirror;
  *
  * <p>Enforces, within a single compilation unit:
  * <ul>
- *   <li><b>FR-CG007-004</b> — the contract must extend {@code DelayedJobClient<P>} with a resolvable
+ *   <li>the contract must extend {@code DelayedJobClient<P>} with a resolvable
  *       concrete payload type, and no two contracts may share a {@code name()}.</li>
- *   <li><b>FR-CG007-005</b> — emits a warning (or an error under
+ *   <li>emits a warning (or an error under
  *       {@code -Avertique.codegen.delayedjob.requireExecutor=true}) when no {@code DelayedJobExecutor}
  *       for the contract exists in the same compilation unit.</li>
- *   <li><b>FR-CG007-006</b> — emits an error when a same-unit executor's payload type {@code P} does
+ *   <li>emits an error when a same-unit executor's payload type {@code P} does
  *       not match the contract's.</li>
  * </ul>
  *
@@ -59,8 +59,8 @@ public final class DelayedJobValidator {
     /**
      * Validates every scanned contract model for the round and returns those eligible for emission.
      *
-     * <p>Shape and duplicate-name failures (FR-CG007-004) exclude a model from the returned list so
-     * its proxy is not emitted. Executor-alignment diagnostics (FR-CG007-005/006) are reported but do
+     * <p>Shape and duplicate-name failures exclude a model from the returned list so
+     * its proxy is not emitted. Executor-alignment diagnostics are reported but do
      * not, by themselves, block emission of an otherwise well-formed proxy.
      *
      * @param models    the scanned contract models for this round
@@ -135,7 +135,7 @@ public final class DelayedJobValidator {
     }
 
     /**
-     * FR-CG007-004 contract-shape: must be an interface, must extend {@code DelayedJobClient<P>} with a
+     * Contract-shape: must be an interface, must extend {@code DelayedJobClient<P>} with a
      * concrete {@code P}.
      *
      * <p>The interface check runs first so that an abstract class annotated with
@@ -166,7 +166,7 @@ public final class DelayedJobValidator {
         return true;
     }
 
-    /** FR-CG007-004 duplicate name within the compilation unit. */
+    /** Duplicate name within the compilation unit. */
     private boolean validateName(DelayedJobContractModel model, Map<String, TypeElement> namesSeen) {
         TypeElement existing = namesSeen.putIfAbsent(model.name(), model.contractType());
         if (existing != null) {
@@ -181,9 +181,9 @@ public final class DelayedJobValidator {
     }
 
     /**
-     * FR-CG007-005 / FR-CG007-006 same-unit executor presence and payload alignment.
+     * Same-unit executor presence and payload alignment.
      *
-     * <p>Note: the payload-mismatch error (FR-CG007-006) is defense-in-depth. The runtime SPI bound
+     * <p>Note: the payload-mismatch error is defense-in-depth. The runtime SPI bound
      * {@code DelayedJobExecutor<P, C extends DelayedJobClient<P>>} already forces {@code P} to equal the
      * contract's payload type, so {@code javac} rejects a mismatch before this processor runs. The check
      * is retained so a future relaxation of that bound (or an erased/raw executor binding) cannot slip a

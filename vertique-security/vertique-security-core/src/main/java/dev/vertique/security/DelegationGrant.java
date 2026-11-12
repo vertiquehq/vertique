@@ -15,12 +15,11 @@ import java.util.Objects;
  * carries the evidence that established the grant. {@link #evidenceRef()} is a <strong>reference</strong>
  * string (e.g. a consent-record id, an approval-workflow id) pointing at evidence held elsewhere; it
  * MUST NOT carry credential material, tokens, or the evidence content itself. This mirrors the
- * credential-free discipline {@link IdentitySnapshot} enforces for durable identity carriage
- * (FR-ID-CA-003 / NFR-ID2-003): a {@code DelegationGrant} is safe to include verbatim in audit output.
+ * credential-free discipline {@link IdentitySnapshot} enforces for durable identity carriage:
+ * a {@code DelegationGrant} is safe to include verbatim in audit output.
  *
  * <p>Grant-backed delegation is carried on the existing {@link DelegationContext#authorityId()} — the
- * grant id, and only the grant id. No parallel delegation representation is introduced
- * (PRD identity-002 FR-ID-DG-001).
+ * grant id, and only the grant id. No parallel delegation representation is introduced.
  *
  * <p>Evaluating whether a grant currently authorizes an (actor, subject, scope) triple is the job of
  * {@link DelegationGrantValidator}, not this record — a {@code DelegationGrant} is a pure value.

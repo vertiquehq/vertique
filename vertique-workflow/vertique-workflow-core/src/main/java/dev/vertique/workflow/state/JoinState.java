@@ -9,7 +9,7 @@ import java.time.Instant;
 import java.util.Objects;
 
 /**
- * Persisted state of a single fan-in join (PRD-WF-002).
+ * Persisted state of a single fan-in join.
  *
  * <p>Stored in {@code workflow_join_states}, primary key
  * {@code (workflow_id, fork_step_id, join_step_id)}. The CAS on {@link #version()} is the unique-

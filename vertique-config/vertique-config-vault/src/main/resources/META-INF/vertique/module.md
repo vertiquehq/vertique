@@ -234,7 +234,7 @@ The source config subtree is resolved in pass 1 (tree-only), so `address` and `a
 
 ## Security Notes
 
-NFR-CONF-002 applies throughout this module:
+The value-redaction rule applies throughout this module:
 
 - Secret values **never** appear in log output at any level, in exception messages, or in `toString()` output of any internal type.
 - Exception messages contain only: source instance name, path name, key name, HTTP status codes, and structural descriptions of the failure.

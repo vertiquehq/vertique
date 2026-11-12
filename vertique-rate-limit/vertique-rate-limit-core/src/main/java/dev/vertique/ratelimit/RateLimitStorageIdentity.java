@@ -16,16 +16,15 @@ import javax.crypto.spec.SecretKeySpec;
  * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
  * outside the maturity promise. Applications use the surface the module document lists.
  *
- * Pure-function storage-identity derivation ({@code contracts/rate-limit-runtime.md},
- * "Storage identity"). Package-private to {@code vertique-rate-limit-core} in v1 ({@code
- * spec.md} §14 defers a shared extraction).
+ * Pure-function storage-identity derivation. Package-private to {@code vertique-rate-limit-core}
+ * in v1.
  *
  * <p>{@link #canonicalInput} frames the canonical storage input shared by both modes.
  * {@link #local} returns it directly, with no HMAC and no secret. {@link #clustered} derives the
- * secret-scoped physical key ready for a Redis backend to use ({@code T009}); this class never
- * wires to an actual backend or validates the secret's minimum length — that is {@code T003}'s
- * startup-validation responsibility. No method here logs, throws with, or otherwise exposes a
- * resolved secret, HMAC output, or raw key (NFR-CONF-002).
+ * secret-scoped physical key ready for a Redis backend to use; this class never
+ * wires to an actual backend or validates the secret's minimum length — that is
+ * {@code RateLimiters}'s startup-validation responsibility. No method here logs, throws with, or otherwise exposes a
+ * resolved secret, HMAC output, or raw key.
  */
 final class RateLimitStorageIdentity {
 

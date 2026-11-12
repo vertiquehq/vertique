@@ -95,7 +95,7 @@ public abstract class DelayedJobModule {
     /**
      * Boundary provider that parses the {@code delayedJob} configuration section into a typed,
      * validated {@link DelayedJobsConfig}. This is the only delayed-job class permitted to inject the
-     * raw {@code @VertxConfig JsonObject} (config rule R2): the keyed {@code queues}/{@code contracts}
+     * raw {@code @VertxConfig JsonObject}: the keyed {@code queues}/{@code contracts}
      * objects are parsed into typed records (key → identity), validated, and indexed; all other
      * delayed-job runtime classes depend on the typed config or its indexes.
      *
@@ -131,7 +131,7 @@ public abstract class DelayedJobModule {
      * @param pgRepository    the PostgreSQL repository for transactional enqueueing
      * @param registrar       the handler registrar used to resolve handler names to event bus addresses
      * @param propagator      the durable context propagator for merging ambient durable context into
-     *                        job metadata at enqueue time (FR-CTX-177)
+     * job metadata at enqueue time
      * @param exceptionMapper the stage-2 exception mapper that translates data-access failures into
      *                        delayed-job-domain exceptions at the enqueue boundary
      * @return the singleton delayed job service
@@ -185,7 +185,7 @@ public abstract class DelayedJobModule {
      * @param coordinatorConfig  the coordinator configuration supplying timeout and flush interval
      * @param envelopeBuilder    the dispatch envelope builder for context-substrate capture
      * @param propagator         the durable context propagator for decoding persisted metadata into
-     *                           each poller's outgoing envelope caller-overrides (FR-CTX-177)
+     * each poller's outgoing envelope caller-overrides
      * @param registrar          the handler registrar supplying each handler's declared payload type;
      *                           lazy so that collecting the deployments does not build the contract
      *                           registry

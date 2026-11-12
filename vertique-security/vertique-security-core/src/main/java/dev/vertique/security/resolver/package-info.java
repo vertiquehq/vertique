@@ -5,11 +5,8 @@
  * Resolver SPI for mapping request authentication evidence to a canonical
  * {@link dev.vertique.security.SecurityIdentity}.
  *
- * <p>This package implements the contract described in PRD §7.5 and the Contract Appendix sections
- * "SecurityIdentityResolver", "SecurityIdentityResolutionContext", and
- * "AuthenticationEvidenceCollector". The chain runner (shipped in {@code rest-security} in a later
- * slice) sorts resolvers by {@code (priority, id)} and invokes them in order, stopping at the
- * first non-empty result.
+ * <p>The chain runner (shipped in {@code rest-security}) sorts resolvers by {@code (priority, id)}
+ * and invokes them in order, stopping at the first non-empty result.
  *
  * <p>Key types:
  * <ul>

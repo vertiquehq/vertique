@@ -26,8 +26,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Binds effective durable context for one binder-row engine drive (Contract Appendix C2; PRD
- * FR-WF-CTX-020/024/025).
+ * Binds effective durable context for one binder-row engine drive.
  *
  * <p>Instance-owned single-path drives — signal, cancel, retry, migrate, {@code taskCompleted},
  * {@code taskReassigned} — route through {@link #withBound}, which implements the
@@ -36,28 +35,27 @@ import org.slf4j.LoggerFactory;
  * <ul>
  *   <li><b>Gate</b> — when both {@code explicitCarrier} is {@code null} AND
  *       {@link WorkflowInstance#metadata()} is {@code null}, no bind happens at all; {@code drive}
- *       runs exactly as it did before this carrier existed (FR-WF-CTX-012).
+ * runs exactly as it did before this carrier existed.
  *   <li><b>Base</b> — the explicit carrier wins when present; otherwise the base is the ambient
  *       durable context captured via {@link DurableContextPropagator#capture(String)} for the
  *       {@link DispatchBoundary#WORKFLOW} boundary.
  *   <li><b>Instance fill</b> — when the instance carries non-null metadata, it is merged into the
  *       base with {@link MergePolicy#CALLER_WINS}: the base is authoritative for any namespace
- *       present on both sides, and the instance only fills namespaces the base lacks
- *       (FR-WF-CTX-020/024).
+ *       present on both sides, and the instance only fills namespaces the base lacks.
  * </ul>
  *
  * <p>The merged effective document is installed via
  * {@link InboundExecutionContextScope#installDurable(DurableMetadata, String)} — this composes the
  * durable bind with every registered {@code InboundContextInitializer} (e.g. correlation seeding),
  * so instance fill always lands <em>before</em> initializers run and a namespace the instance
- * supplied is never re-seeded (PRD AC-9). {@code drive} is invoked <em>inside</em> the same
+ * supplied is never re-seeded. {@code drive} is invoked <em>inside</em> the same
  * {@code try} block that installs the scope, exactly mirroring
  * {@link BranchTransitionEngine#driveBranchTransitions}'s scope-lifecycle shape: a synchronous
  * throw from {@code drive} is caught alongside a synchronous {@code installDurable} failure, the
  * scope is closed in the {@code catch}, and the exception is converted to a failed {@link Future} —
  * never propagated as a thrown exception. Once {@code drive} returns a {@link Future}, the scope
  * instead closes via {@link Future#eventually} so the binding survives the async drive and unwinds
- * on both success and failure (PRD NFR-WF-CTX-007 / FR-CTX-157b strictness propagation).
+ * on both success and failure.
  *
  * <p>Executor drives route through {@link #withRecordedBase} (and, for a branch drive,
  * {@link #withExecutorDocument}) instead. They bind only durable context and never an identity: the base is the
@@ -71,7 +69,7 @@ import org.slf4j.LoggerFactory;
  * <p>This class is a <b>binder-row</b> seam only — it must never be invoked for a branch-owned
  * drive (fork continuation, branch-targeted signal/timer/task). Those bind through
  * {@link BranchTransitionEngine#driveBranchTransitions}'s own carrier seam instead (the bind-once
- * routing rule, Contract Appendix C2/C3).
+ * routing rule).
  */
 @Singleton
 final class WorkflowContextBinder {
@@ -173,7 +171,7 @@ final class WorkflowContextBinder {
         // runs under the caller's own security context, or none, and never under the one the instance was started by.
         DurableMetadata instanceMetadata = withoutIdentity(instance.metadata());
         if (explicitCarrier == null && instanceMetadata == null) {
-            // Gate: no carrier signal at all — run as today, no new bind (FR-WF-CTX-012).
+            // Gate: no carrier signal at all — run as today, no new bind.
             return drive.get();
         }
 
@@ -283,7 +281,7 @@ final class WorkflowContextBinder {
     /**
      * Emits a debug-level log naming every namespace the instance fill contributed to the effective
      * document (i.e. present in {@code effective} but absent from {@code base}), when at least one
-     * such namespace exists (NFR-WF-CTX-008).
+     * such namespace exists.
      *
      * @param base      the base document before instance fill (explicit carrier or ambient capture)
      * @param effective the merged effective document

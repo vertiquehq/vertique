@@ -125,12 +125,12 @@ public final class JacksonDefaults {
      *       otherwise carry Jackson's stock limits.</li>
      *   <li>Re-register {@link VertxJsonSupport#module()} <strong>last</strong> so that Vert.x's
      *       {@code Instant} serializer overrides the one from {@code JavaTimeModule} — keeping
-     *       {@code Instant} output byte-identical to the raw Vert.x mapper (NFR-JSON-012).
+     * {@code Instant} output byte-identical to the raw Vert.x mapper.
      *       Because {@code MapperFeature.IGNORE_DUPLICATE_MODULE_REGISTRATIONS} is ON by default, the
      *       final registration is wrapped in a temporary toggle of that feature so it still takes effect
      *       even when a caller had already registered {@code VertxModule} on the mapper — otherwise the
-     *       re-registration would be a silent no-op and jsr310's serializer would stay authoritative
-     *       (FR-JSON-047). The toggle is scoped to this one registration and the feature is restored in a
+     *       re-registration would be a silent no-op and jsr310's serializer would stay authoritative.
+     * The toggle is scoped to this one registration and the feature is restored in a
      *       {@code finally} block to the value it had on entry.</li>
      * </ol>
      *
@@ -143,7 +143,7 @@ public final class JacksonDefaults {
         mapper.disable(DeserializationFeature.ADJUST_DATES_TO_CONTEXT_TIME_ZONE);
         // JDK8 Optional/OptionalInt/OptionalLong/OptionalDouble ser+deser (java.util.stream types are
         // serialize-only). Registered BEFORE the VertxModule re-registration below so that Vert.x's
-        // Instant serializer stays authoritative (NFR-JSON-012).
+        // Instant serializer stays authoritative.
         mapper.registerModule(new Jdk8Module());
         // Carry the raw Vert.x factory's stream-read limits explicitly. A copy() of Vert.x's mapper
         // already inherits them, but a fresh ObjectMapper does not — and the operator-tuned
@@ -151,7 +151,7 @@ public final class JacksonDefaults {
         // SystemJsonMapperProfile is the single file in this package that reads Vert.x's raw mapper.
         mapper.getFactory().setStreamReadConstraints(SystemJsonMapperProfile.rawStreamReadConstraints());
         // Re-register VertxModule LAST so Vert.x's Instant/JsonObject/Buffer serializers remain
-        // authoritative — they override JavaTimeModule's Instant serializer (NFR-JSON-012, FR-JSON-047).
+        // authoritative — they override JavaTimeModule's Instant serializer.
         //
         // MapperFeature.IGNORE_DUPLICATE_MODULE_REGISTRATIONS is ON by default, so if a CALLER already
         // registered VertxJsonSupport.module() on this mapper before calling applySystem(), a plain

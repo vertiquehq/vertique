@@ -32,7 +32,7 @@ import javax.lang.model.element.TypeElement;
  *       {@code "multiple @Inject constructors"})</li>
  * </ul>
  *
- * <p>Stricter than CG-002's
+ * <p>Stricter than the Dagger processor's
  * {@code dev.vertique.codegen.dagger.processor.support.Filters#validateSingleInjectConstructor},
  * which silently skips on zero constructors.
  */

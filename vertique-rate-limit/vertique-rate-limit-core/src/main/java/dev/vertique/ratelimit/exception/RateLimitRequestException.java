@@ -10,8 +10,7 @@ import java.util.Objects;
  * Safe programmatic request failure with a bounded reason. Messages are fixed from {@link
  * RateLimitRequestFailure} values only; no cause or request key is exposed.
  *
- * <p>This task mints this type only — a later task throws it for {@code COST_EXCEEDS_CAPACITY}
- * cost validation (contracts/rate-limit-runtime.md, "Exceptions").
+ * <p>Thrown for {@code COST_EXCEEDS_CAPACITY} cost validation.
  */
 public final class RateLimitRequestException extends BusinessRuleException {
 

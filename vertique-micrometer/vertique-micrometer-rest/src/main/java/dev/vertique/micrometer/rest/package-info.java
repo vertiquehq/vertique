@@ -9,7 +9,7 @@
  * but never modifies the request or response, and never submits audit records.
  *
  * <p>Zero-overhead when metrics are unconfigured: before {@code VertiqueApplication} bootstrap the
- * backing registry is an empty composite whose recording is a no-op (NFR-TEL-003). When
+ * backing registry is an empty composite whose recording is a no-op. When
  * {@code metrics.enabled=false} is supplied (via {@link dev.vertique.micrometer.MicrometerModule}
  * or an application-level binding), both the listener and interceptor skip all meter work
  * immediately.

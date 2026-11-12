@@ -27,8 +27,8 @@ import java.util.function.Supplier;
  * Unkeyed handle bound to one policy, resolved from {@link RateLimiters#limiter(String)}.
  *
  * <p>{@code acquire(...)} never fails its returned {@link Future} for quota reasons — it always
- * yields a {@link RateLimitDecision} (decision-first). {@code execute(...)} is the guarded wrapper
- * (contracts/rate-limit-runtime.md, "Handle semantics"): {@code PERMITTED}/{@code
+ * yields a {@link RateLimitDecision} (decision-first). {@code execute(...)} is the guarded
+ * wrapper: {@code PERMITTED}/{@code
  * BACKEND_FAILURE_OPEN}/{@code DISABLED} run the action exactly once, with no retry and no refund;
  * {@code QUOTA_EXCEEDED} fails with {@link RateLimitExceededException}; {@code
  * BACKEND_FAILURE_CLOSED} fails with {@link RateLimitUnavailableException}. A cost above policy
@@ -69,8 +69,8 @@ public final class RateLimiter {
 
     /**
      * Exposed for framework adapters that must classify a decision at their own boundary — e.g. an
-     * edge middleware's absent-origin classification (contracts/rest-adapter.md, "Rule composition
-     * semantics" — IP mechanism) — without independently re-deriving this handle's bound policy's
+     * edge middleware's absent-origin classification — without independently re-deriving this
+     * handle's bound policy's
      * {@code failureMode} from its own configuration source.
      *
      * @return this handle's bound policy's explicit backend-failure behavior
@@ -82,7 +82,7 @@ public final class RateLimiter {
     /**
      * Exposed for framework adapters that must validate a caller-declared cost against this
      * handle's bound policy's capacity at their own construction time — e.g. the REST edge
-     * middleware's rule-composition validation (contracts/rest-adapter.md, "Configuration") —
+     * middleware's rule-composition validation —
      * without independently re-deriving it from this handle's policy/algorithm internals. A cost
      * above this value fails {@link #acquire(RateLimitKey, long)}/{@link #execute(RateLimitKey,
      * long, Supplier)} with {@link RateLimitRequestException} ({@link
@@ -110,7 +110,7 @@ public final class RateLimiter {
      * Attempts to consume {@code cost} tokens against {@code key}. Never fails the returned future
      * for quota reasons — it always yields a {@link RateLimitDecision} (decision-first); a request
      * whose {@code cost} exceeds policy capacity fails the future instead, before the engine is
-     * ever consulted (contracts/rate-limit-runtime.md, "Handle semantics").
+     * ever consulted.
      *
      * @param key the caller-supplied key
      * @param cost tokens this request attempts to consume
@@ -178,8 +178,8 @@ public final class RateLimiter {
     }
 
     /**
-     * Guarded wrapper around {@link #acquire(RateLimitKey, long)} (contracts/rate-limit-runtime.md,
-     * "Handle semantics"): {@code PERMITTED}/{@code BACKEND_FAILURE_OPEN}/{@code DISABLED} run
+     * Guarded wrapper around {@link #acquire(RateLimitKey, long)}:
+     * {@code PERMITTED}/{@code BACKEND_FAILURE_OPEN}/{@code DISABLED} run
      * {@code action} exactly once; {@code QUOTA_EXCEEDED} fails with {@link
      * RateLimitExceededException}; {@code BACKEND_FAILURE_CLOSED} fails with {@link
      * RateLimitUnavailableException}. A synchronous {@code action} throw becomes a failed future; a
@@ -248,7 +248,7 @@ public final class RateLimiter {
      * Normalizes one backend result into a {@link RateLimitDecision} and, at this single
      * decision-completion point, dispatches the corresponding redacted {@link
      * RateLimitDecisionCompleted} event to every bound observer before returning the decision
-     * (contracts/rate-limit-runtime.md, "Observer SPI"). Observer dispatch never alters the
+     * (the observer SPI). Observer dispatch never alters the
      * decision already computed here.
      */
     private RateLimitDecision completeDecision(
@@ -273,7 +273,7 @@ public final class RateLimiter {
      * Classifies a backend result into an outcome: a present {@code failureCode} (e.g. {@code
      * CAPACITY_EXHAUSTED}) is a backend failure, classified through this policy's {@code
      * failureMode} into {@code BACKEND_FAILURE_OPEN}/{@code BACKEND_FAILURE_CLOSED}
-     * (contracts/rate-limit-runtime.md, "Failure classification"); otherwise the ordinary
+     * (failure classification); otherwise the ordinary
      * consumed/rejected mapping applies.
      */
     private RateLimitOutcome classifyOutcome(RateLimitBackendResult result) {
@@ -411,9 +411,8 @@ public final class RateLimiter {
     }
 
     /**
-     * Dispatches completion on the calling Vert.x context, when one is present, per
-     * contracts/rate-limit-runtime.md's async contract; without one, no thread affinity is
-     * promised.
+     * Dispatches completion on the calling Vert.x context, when one is present; without one, no
+     * thread affinity is promised.
      */
     private static <T> Future<T> dispatchOnCallingContext(Future<T> future) {
         Context context = Vertx.currentContext();

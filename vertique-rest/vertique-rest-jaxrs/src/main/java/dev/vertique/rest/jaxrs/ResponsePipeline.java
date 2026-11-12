@@ -78,7 +78,7 @@ class ResponsePipeline {
     /**
      * Routing-context data key marking a response as an <em>error</em> / {@code ProblemDetail} response.
      * Set by {@link ErrorPipeline#mapToResponse} for every error it maps, so the wire-writing path can
-     * apply the {@code FR-JSON-058A} vertx fail-open to error-body serialization only (a success-entity
+     * apply the vertx fail-open to error-body serialization only (a success-entity
      * serialization failure still propagates as a 500). The value is {@link Boolean#TRUE}; absence means
      * the response is a success entity.
      */
@@ -233,7 +233,7 @@ class ResponsePipeline {
      * completion event (see {@link RequestCompletionRecorder#recordWireFailure}) — never by
      * delaying or re-firing this hook, because observers must see the outcome while the routing
      * context and the tracing span are still active. Because {@code afterResponse} is an
-     * observe-only hook (FR-CORE-001.3 — it does not mutate the response), firing it at handoff is
+     * observe-only hook (it does not mutate the response), firing it at handoff is
      * safe and lets observers report the outcome the client was sent.
      *
      * <p><strong>Post-handoff wire failures</strong> are observed asynchronously: the completion
@@ -268,10 +268,9 @@ class ResponsePipeline {
                         return;
                     }
                     // Fire afterResponse AT WIRE HANDOFF so the single invocation reflects the outcome
-                    // written, while the completion future may still be pending (OTel SP-4).
+                    // written, while the completion future may still be pending.
                     // forEachSwallowSync catches Exception and swallows per-hook failures, routing each
                     // to the onFailure logger so one throwing observer cannot abort the rest.
-                    // (FR-CORE-001.3)
                     Combinators.forEachSwallowSync(
                             hooks,
                             hook -> hook.afterResponse(ctx, finalResponse),
@@ -647,17 +646,17 @@ class ResponsePipeline {
             // No body: HEAD, 304, 204, 412, etc.
             return httpResponse.end();
         } else if (Boolean.TRUE.equals(ctx.get(KEY_ERROR_RESPONSE))) {
-            // Error / ProblemDetail body: serialize with the FR-JSON-058A vertx fail-open.
+            // Error / ProblemDetail body: serialize with the vertx fail-open.
             return serializeErrorWithFailOpen(ctx, response);
         } else {
-            // Success entity: delegate directly (a serialization failure propagates as a 500 — slice 3.1).
+            // Success entity: delegate directly (a serialization failure propagates as a 500).
             return serializer.serialize(ctx, response);
         }
     }
 
     /**
      * Serializes an error / {@code ProblemDetail} body, failing open to the {@code vertx} mapper when the
-     * resolved profile mapper throws (FR-JSON-058A).
+     * resolved profile mapper throws.
      *
      * <p>The status code, the {@code application/problem+json} media type, and all response headers are
      * already set on the wire by {@link #applyToWire}; the profile mapper throws inside
@@ -666,7 +665,7 @@ class ResponsePipeline {
      * {@link dev.vertique.rest.jaxrs.request.BoundRequest#KEY_RESOLVED_BODY_MAPPER}) — which makes the
      * JSON body encoder fall back to {@code Json.encode} — and re-serialize, preserving the mapped status
      * and media type. The fail-open is confined to the body bytes; it never alters the status, the RFC
-     * 9457 media type, or the exception-mapping chain (FR-JSON-059), and never escalates to a bare 500.
+     * 9457 media type, or the exception-mapping chain, and never escalates to a bare 500.
      *
      * <p>Only a <em>synchronous</em> throw drives the fail-open: it means nothing was written, so the
      * retry is safe. A failed wire-completion future is a post-handoff failure and is never retried —

@@ -14,7 +14,7 @@ import java.util.Objects;
  * {@code beforeAuthSetup}/{@code afterAuthSetup} phases.
  *
  * <p>Unlike the transitional {@code RouterBuilderRouterSetup}, the real {@link Router} exists upfront
- * (routing is built directly on a plain {@link Router}, PRD-REST-017 FR-001), so {@link #router()}
+ * (routing is built directly on a plain {@link Router}), so {@link #router()}
  * returns it rather than throwing. {@link #security()} remains unsupported: the global setup surface
  * has no single security scheme to scope a {@link SecuritySchemeRegistry} to — scheme handlers are
  * configured per scheme via {@link dev.vertique.rest.core.security.SecuritySchemeHandler}, each given a

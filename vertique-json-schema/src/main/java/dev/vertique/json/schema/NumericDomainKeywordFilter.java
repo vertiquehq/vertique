@@ -14,7 +14,7 @@ import java.util.Set;
  * {@code exclusiveMaximum}, and {@code multipleOf} at any conjunctive location whose effective,
  * explicitly declared {@code type} excludes both {@code number} and {@code integer}.
  *
- * <p><strong>Why this exists (PRD §6.2 wire-honesty).</strong> A numeric constraint — a Jakarta
+ * <p><strong>Why this exists (wire-honesty).</strong> A numeric constraint — a Jakarta
  * {@code @DecimalMin}, a Swagger {@code @Schema(multipleOf = ...)} — targets the <em>materialized
  * Java value</em>, not the wire representation a profile override may substitute for it. Neither
  * {@code JakartaValidationModule} nor {@code Swagger2Module} has visibility into a profile's declared

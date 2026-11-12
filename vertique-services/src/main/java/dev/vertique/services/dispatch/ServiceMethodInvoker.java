@@ -45,8 +45,8 @@ import lombok.extern.slf4j.Slf4j;
  *   <li>Decode and install the dispatch-context map via {@link InboundDispatchScope#install},
  *       merged with an ambient {@link InvocationOrigin} so
  *       {@link dev.vertique.services.interceptor.ServiceAuthorizationInterceptor} and any other
- *       in-scope reader observe the real ingress boundary kind (identity-002 P2.S5b-ii). The merge
- *       is root-ingress-aware (identity-002 review fix W_f): when the decoded context already
+ *       in-scope reader observe the real ingress boundary kind. The merge
+ *       is root-ingress-aware: when the decoded context already
  *       carries an upstream {@link InvocationOrigin} or a {@link DeferredExecutionOrigin} (e.g. a
  *       delayed-job, cron, or outbox-relay dispatch), that provenance is preserved/derived instead
  *       of being clobbered, so deferred work stays distinguishable from an ordinary synchronous
@@ -131,7 +131,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
 
     /**
      * Full constructor including the optional service-dispatch context registry used to decode
-     * inbound carrier values into typed bindings (FR-CTX-072–076).
+     * inbound carrier values into typed bindings.
      *
      * @param contextRegistry the service-dispatch context registry, or {@code null} to skip
      *                        decoder-driven validation (legacy behavior — caller-supplied raw
@@ -150,7 +150,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
 
     /**
      * Full constructor including the injected {@link InboundDispatchScope} used to install the
-     * sanitized dispatch-context map per-dispatch (FR-CTX-071) and to read by-FQCN raw values
+     * sanitized dispatch-context map per-dispatch and to read by-FQCN raw values
      * during reflective arg extraction. Pass {@code null} to fall back to the framework's static
      * scope helpers (used by legacy tests that bypass Dagger).
      *
@@ -263,7 +263,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
         //
         // When the substrate's InboundExecutionContextScope is available (production wiring),
         // installDispatch runs the inbound install AND all registered InboundContextInitializers
-        // (e.g. CorrelationContextSeeder for FR-COR-125 first-ingress seeding when no upstream
+        // (e.g. CorrelationContextSeeder for first-ingress seeding when no upstream
         // value was decoded) in one composed scope. Legacy test constructors that bypass Dagger
         // fall back to the plain InboundDispatchScope.install path.
         //
@@ -328,7 +328,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
                         fireOnComplete(finalCtx, result, startTime, endTime);
 
                         // 4. Fire afterDispatch async handlers and collect their join future so
-                        //    the dispatch-context scope (FR-CTX-071) stays open until they settle.
+                        // the dispatch-context scope stays open until they settle.
                         Future<Void> afterDispatchSettled = fireAfterDispatch(finalCtx, result);
 
                         // 5. Reply or recover. Capture the reply/recovery future so the scope
@@ -435,12 +435,12 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
      * carrier shape {@link InboundDispatchScope#install(Map)} /
      * {@link InboundExecutionContextScope#installDispatch(Map, String)} expect — into the decoded
      * dispatch-context map, so an invocation origin is always the ambient invocation origin for the
-     * lifetime of the same install scope (identity-002 P2.S5b-ii). Readers such as
+     * lifetime of the same install scope. Readers such as
      * {@link dev.vertique.services.interceptor.ServiceAuthorizationInterceptor} observe it via
      * {@code contextHolder.current(InvocationOrigin.class)}.
      *
      * <p>The merged origin is resolved by {@link #resolveInvocationOrigin} — root-ingress-aware
-     * rather than an unconditional overwrite (identity-002 review fix W_f): a delayed-job, cron, or
+     * rather than an unconditional overwrite: a delayed-job, cron, or
      * outbox-relay dispatch carries a {@link DeferredExecutionOrigin} (installed by the trusted
      * framework boundary that produced it — {@code DelayedJobPoller}, {@code CronJobDispatcher}, or
      * {@code ServiceOutboxDestinationHandler} — none of which depend on {@code vertique-security-core}
@@ -463,7 +463,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
     /**
      * Resolves the {@link InvocationOrigin} to seed for this dispatch, preferring root-ingress
      * provenance already present in the decoded dispatch-context map over this invoker's own
-     * boundary (identity-002 review fix W_f).
+     * boundary.
      *
      * <p>Precedence:
      *
@@ -631,7 +631,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
      * returns a {@link Future} that completes when all interceptor futures settle. Failures
      * from individual interceptors are logged at WARN and do not affect the returned future —
      * the caller can safely chain {@code .eventually(scope::close)} so the dispatch-context
-     * scope (FR-CTX-071) remains open for the lifetime of afterDispatch async work.
+     * scope remains open for the lifetime of afterDispatch async work.
      *
      * @param ctx    the dispatch context
      * @param result the dispatch result (success or failure)
@@ -734,7 +734,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
 
     /**
      * Reads the holder value for the given DISPATCH_CONTEXT parameter and validates it against
-     * the declared parameter type via {@code param.type().isInstance(value)} (AC-CTX-006).
+     * the declared parameter type via {@code param.type().isInstance(value)}.
      *
      * <p>This is the final type-safety gate before reflection: a wrong-type value that slipped
      * past the decoder/handler-declared validation in {@link #decodeDispatchContext} (e.g., the
@@ -771,7 +771,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
     /**
      * Walks the raw dispatch-context carrier map and, for each entry whose key matches a
      * registered {@link ServiceDispatchContextDecoder#key()}, invokes the decoder to produce the
-     * typed binding (FR-CTX-072..076). Entries with no matching decoder pass through unchanged so
+     * typed binding. Entries with no matching decoder pass through unchanged so
      * handler-declared {@code @DispatchContextValue} parameters and the {@link
      * dev.vertique.security.SecurityContext} compatibility path keep working.
      *
@@ -786,7 +786,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
         }
         java.util.HashMap<String, Object> result = null; // lazy: only allocate if we transform
 
-        // Pass 1: invoke registered decoders for matching carrier keys (FR-CTX-072..076).
+        // Pass 1: invoke registered decoders for matching carrier keys.
         if (contextRegistry != null) {
             for (Map.Entry<String, Object> entry : raw.entrySet()) {
                 ServiceDispatchContextDecoder<?> decoder = decoderForKey(entry.getKey());
@@ -805,7 +805,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
                 try {
                     decoded = decoder.decode(entry.getValue(), new ServiceDispatchDecodeContext("service-dispatch"));
                 } catch (RuntimeException re) {
-                    // FR-CTX-051 + FR-CTX-132: a thrown decoder is treated as a decode failure
+                    // A thrown decoder is treated as a decode failure
                     // with a throttled WARN — must not break dispatch.
                     warningThrottle.once(
                             "throw|" + meta.address() + "|" + decoder.getClass().getName(),
@@ -825,7 +825,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
                     warningThrottle.once(
                             "null|" + meta.address() + "|" + decoder.getClass().getName(),
                             k -> log.warn(
-                                    "[{}] ServiceDispatchContextDecoder {} returned null for key {} (FR-CTX-051) — dropping entry (further occurrences suppressed)",
+                                    "[{}] ServiceDispatchContextDecoder {} returned null for key {} — dropping entry (further occurrences suppressed)",
                                     meta.address(),
                                     decoder.getClass().getName(),
                                     carrierKey));
@@ -858,7 +858,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
         }
 
         // Pass 2: validate handler-declared @DispatchContextValue parameter types via
-        // type.isInstance(value) for entries that have no registered decoder (FR-CTX-075).
+        // type.isInstance(value) for entries that have no registered decoder.
         // Wrong-type values must not reach reflection invocation — drop with a throttled WARN.
         Map<String, Object> view = result == null ? raw : result;
         for (ParamMeta param : meta.handlerParams()) {

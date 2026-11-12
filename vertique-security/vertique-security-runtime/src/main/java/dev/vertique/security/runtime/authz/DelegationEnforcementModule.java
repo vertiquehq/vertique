@@ -10,8 +10,7 @@ import dev.vertique.security.DelegationGrantValidator;
 import dev.vertique.security.authz.AuthorizationNarrower;
 
 /**
- * Opt-in Dagger module that activates delegation-grant enforcement in the authorization engine
- * (PRD identity-002 FR-ID-DG-006).
+ * Opt-in Dagger module that activates delegation-grant enforcement in the authorization engine.
  *
  * <p>Contributes {@link DelegationEnforcementNarrower} into the {@code Set<AuthorizationNarrower>}
  * multibinding declared by {@link SecurityAuthzModule}, so it folds into the

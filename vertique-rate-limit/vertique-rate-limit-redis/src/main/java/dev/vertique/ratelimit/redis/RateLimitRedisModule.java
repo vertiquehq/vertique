@@ -24,12 +24,11 @@ import io.vertx.redis.client.Redis;
 import jakarta.inject.Singleton;
 
 /**
- * Dagger contribution for the CLUSTERED Redis rate-limit backend
- * (contracts/rate-limit-runtime.md, "Redis integration contract"). Owns no client, pool,
+ * Dagger contribution for the CLUSTERED Redis rate-limit backend. Owns no client, pool,
  * credential, TLS, topology, or shutdown lifecycle of the shared Redis client itself beyond what
  * {@code vertique-redis-core}'s {@link RedisConnectionModule} already owns — this module reads
- * the shared client through {@link RedisClientRegistry} and never closes it itself (T009's own
- * scope note; {@code vertique-redis-core}'s {@code RedisClientShutdownStep} closes it exactly
+ * the shared client through {@link RedisClientRegistry} and never closes it itself
+ * ({@code vertique-redis-core}'s {@code RedisClientShutdownStep} closes it exactly
  * once). It does, however, contribute an INFRA-phase ({@link
  * dev.vertique.core.lifecycle.LifecyclePhase#INFRA}) {@link RedisRateLimitFenceLifecycle} shutdown
  * step so the CLUSTERED rate-limit runtime closes — and fences any in-flight {@code
@@ -37,8 +36,7 @@ import jakarta.inject.Singleton;
  * teardown (see {@link RedisRateLimitFenceLifecycle}'s own javadoc).
  *
  * <p>App composition installs this module alongside {@link RateLimitCoreModule} for any
- * application declaring a {@code CLUSTERED} policy (contracts/rate-limit-runtime.md, "Dagger
- * wiring").
+ * application declaring a {@code CLUSTERED} policy.
  */
 @Module(includes = {RateLimitCoreModule.class, RedisConnectionModule.class})
 public abstract class RateLimitRedisModule {
@@ -53,18 +51,18 @@ public abstract class RateLimitRedisModule {
 
     /**
      * Contributes the CLUSTERED {@link RateLimitBackend}, built from the shared client for {@code
-     * rateLimit.redis.connection} (contracts/rate-limit-runtime.md, "Redis integration contract" —
-     * the exact, frozen {@code Bucket4jVertx.casBasedBuilder(...)} construction chain, performed
+     * rateLimit.redis.connection} (the exact, frozen {@code Bucket4jVertx.casBasedBuilder(...)}
+     * construction chain, performed
      * only inside {@link Bucket4jRedisRateLimitBackend#redis}, never as a Dagger binding itself).
      * {@code rateLimit.redis.*} is eagerly validated here, at this provider's own construction,
-     * parsed through the canonical injected {@link ConfigParser} (docs/standards/config.md rule
-     * R10) into {@link RateLimitRedisConfig} — {@code connection}/{@code namespace} required,
+     * parsed through the canonical injected {@link ConfigParser}
+     * into {@link RateLimitRedisConfig} — {@code connection}/{@code namespace} required,
      * non-blank, with no default; {@code operationTimeoutMs}/{@code expirationSlackMs} required,
      * bounds-checked, with no default — so a misconfigured bound fails application startup before
      * any {@code consume(...)} is attempted, never lazily against a silently-defaulted 0 ms
      * deadline. {@code rateLimit.keyDerivation.secret} presence/length remain {@link
-     * dev.vertique.ratelimit.RateLimiters}'s own startup-validation responsibility (T003/T004's
-     * ownership); this provider only reads the raw value through.
+     * dev.vertique.ratelimit.RateLimiters}'s own startup-validation responsibility; this provider
+     * only reads the raw value through.
      *
      * @param config the raw application configuration
      * @param parser the framework's config-parsing seam

@@ -10,7 +10,7 @@
  * <ul>
  *   <li>{@code scan} — APT-side scanners for the {@code @KafkaListener} (router/handler) and
  *       {@code @KafkaSource} (service-impl) consumption models, plus parameter classification</li>
- *   <li>{@code validate} — compile-time consumer-shape validators (FR-CG006-005)</li>
+ *   <li>{@code validate} — compile-time consumer-shape validators</li>
  *   <li>{@code emit} — source emitter for {@code {Consumer}_BindingMeta}</li>
  * </ul>
  */

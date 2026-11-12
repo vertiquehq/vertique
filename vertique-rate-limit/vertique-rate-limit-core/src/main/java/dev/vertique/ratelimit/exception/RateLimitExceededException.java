@@ -11,11 +11,11 @@ import java.util.Objects;
  * Guarded-execution quota denial. Exposes only the safe {@link RateLimitDecision}; internal
  * causes never cross this boundary.
  *
- * <p>Extends {@link TooManyRequestsException} (T020) so an application/framework graph with no
+ * <p>Extends {@link TooManyRequestsException} so an application/framework graph with no
  * rate-limit-specific {@code ExceptionMapper} installed still renders this as {@code 429} — with
  * {@code Retry-After} threaded from {@code decision.retryAfter()} — via the framework's default
  * exception mapper, wired by {@code RestModule}. {@link
- * TooManyRequestsException} extends {@code VertiqueException} directly (T021 W1) — never {@code
+ * TooManyRequestsException} extends {@code VertiqueException} directly — never {@code
  * BusinessRuleException}/{@code ValidationException} — so an application's own {@code
  * ExceptionMapper<ValidationException>} can never out-rank that 429 default for this exception.
  */

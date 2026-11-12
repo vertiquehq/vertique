@@ -17,8 +17,8 @@ import java.util.Objects;
  * projects free-form attributes out — see {@link IdentitySnapshotFactory}; the sole exception is a
  * bounded {@code system.reason} entry on a {@link PrincipalType#SYSTEM SYSTEM}-typed actor).
  * Durable principal identity is the {@code (type, id)} tuple, which MUST be stable and unique
- * within the security trust domain without consulting {@code attributes} (PRD identity-002
- * FR-ID-CA-012): applications using tenant-, issuer-, or realm-local identifiers MUST namespace or
+ * within the security trust domain without consulting {@code attributes}: applications using
+ * tenant-, issuer-, or realm-local identifiers MUST namespace or
  * otherwise qualify {@code id} before constructing the ref (canonical application-generated
  * identifiers — UUIDs or URNs — are preferred over bare usernames). The framework treats
  * {@code id} as opaque and never parses scoping delimiters out of it.

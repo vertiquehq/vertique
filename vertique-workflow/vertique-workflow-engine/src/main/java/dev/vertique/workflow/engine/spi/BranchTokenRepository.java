@@ -12,7 +12,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Repository SPI for {@link BranchToken} rows (PRD-WF-002 fork/join).
+ * Repository SPI for {@link BranchToken} rows (fork/join).
  *
  * <p>Generic over the transaction-handle type {@code TX} so the workflow engine can depend on this
  * interface without binding to a specific database client.

@@ -31,15 +31,15 @@ import lombok.extern.slf4j.Slf4j;
  * asynchronous {@link Future} failures — are caught and logged by the per-observer {@link #safe}
  * wrapper so that one misbehaving observer cannot:
  * <ul>
- *   <li>prevent other observers from receiving the event (AC-SE-6)</li>
- *   <li>alter the authentication or authorization result that produced the event (AC-SE-6)</li>
+ *   <li>prevent other observers from receiving the event</li>
+ *   <li>alter the authentication or authorization result that produced the event</li>
  * </ul>
  *
  * <p>Observer invocation ordering is not guaranteed. Observers must be idempotent and self-ordered
  * if ordering within a downstream pipeline matters.
  *
  * <p>Long-running or blocking work must be offloaded inside the observer (e.g. via
- * {@code vertx.executeBlocking(...)}) — the emitter does not force-offload observer work (AC-SE-7).
+ * {@code vertx.executeBlocking(...)}) — the emitter does not force-offload observer work.
  *
  * <p>The emitter is transport-neutral and lives in {@code vertique-security-runtime} so any
  * enforcement layer (REST, WebSocket, services, jobs) can emit security events. It is wired to the

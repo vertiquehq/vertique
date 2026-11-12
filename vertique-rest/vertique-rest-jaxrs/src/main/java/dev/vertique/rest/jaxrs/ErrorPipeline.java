@@ -142,7 +142,7 @@ public class ErrorPipeline {
         // 2. Store original error for downstream access
         ctx.data().put(RequestInterceptor.ORIGINAL_ERROR_KEY, cause);
 
-        // FR-JSON-058A: mark this as an error response so the wire-writing path applies the vertx
+        // Mark this as an error response so the wire-writing path applies the vertx
         // fail-open to error-body serialization only. mapToResponse is invoked exclusively on error
         // paths (never for a success entity), so this unambiguously tags error/ProblemDetail bodies.
         ctx.data().put(ResponsePipeline.KEY_ERROR_RESPONSE, Boolean.TRUE);

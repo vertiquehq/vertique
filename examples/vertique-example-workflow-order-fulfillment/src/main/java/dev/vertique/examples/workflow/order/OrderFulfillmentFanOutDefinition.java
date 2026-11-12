@@ -19,7 +19,7 @@ import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 
 /**
- * ALL_REQUIRED fan-out order-fulfillment workflow definition (PRD-WF-002 §A.5.1).
+ * ALL_REQUIRED fan-out order-fulfillment workflow definition.
  *
  * <p>Demonstrates parallel fan-out/fan-in: inventory reservation, payment authorization, and
  * fraud screening run as independent durable branches. Each branch dispatches a service call,
@@ -47,7 +47,7 @@ import jakarta.inject.Singleton;
  * into the shared {@link FanOutOrderState}. Because branches execute concurrently, later
  * stateUpdater calls may clobber earlier ones if they write overlapping fields — each updater here
  * writes to a distinct field ({@code reservationId}, {@code chargeId}, {@code screeningRef}), so
- * there is no collision. See PRD-WF-002 §NOT-IMPLEMENTED: branch state propagation for details.
+ * there is no collision. Cross-branch state propagation is not implemented.
  */
 @Singleton
 public final class OrderFulfillmentFanOutDefinition

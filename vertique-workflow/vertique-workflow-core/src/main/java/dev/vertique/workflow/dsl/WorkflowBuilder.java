@@ -136,8 +136,8 @@ public final class WorkflowBuilder<S> {
     private final Map<String, Function<Object, WorkflowSubjectRef>> subjectResolvers = new HashMap<>();
 
     /**
-     * Branch-result reducers keyed by CallbackId value; populated by JoinScope terminators
-     * (PRD-WF-002). Each reducer has runtime type
+     * Branch-result reducers keyed by CallbackId value; populated by JoinScope terminators.
+     * Each reducer has runtime type
      * {@code BiFunction<Object, Map<String, BranchResult>, Object>}.
      */
     private final Map<String, BiFunction<Object, Map<String, BranchResult>, Object>> branchResultReducers =
@@ -336,9 +336,9 @@ public final class WorkflowBuilder<S> {
      *
      * <p>Example — signal wait with timeout:
      * <pre>{@code
-     *   wf.waitForSignal("wait-shipped", "order.shipped", ShippedEvent.class)
-     *     .onSignal((s, e) -> s.withTracking(e.trackingCode()))
-     *     .toStepOnSignal("done")
+     *   wf.waitForSignal("wait-shipped", "order.shipped", ShippedEvent.class).
+     * onSignal((s, e) -> s.withTracking(e.trackingCode())).
+     * toStepOnSignal("done")
      *     .timeoutAfter(Duration.ofHours(24))
      *     .onTimeout(s -> s.withTimedOut(true))
      *     .toStepOnTimeout("timed-out");
@@ -529,7 +529,7 @@ public final class WorkflowBuilder<S> {
      *
      * <p>The file-defined workflow compiler in {@code vertique-workflow-definition} uses this
      * overload to embed a stable expression/route fingerprint into the callback id so that semantic
-     * changes to route expressions propagate to the plan hash (FR-WF-DEF-055, AC #8 of PRD-WF-003).
+     * changes to route expressions propagate to the plan hash.
      *
      * <p>Code-first definitions should continue to use {@link #decide(String, Function)}; this
      * overload is for tools that own the callback-id namespace (e.g., the document compiler).
@@ -654,7 +654,7 @@ public final class WorkflowBuilder<S> {
         return this;
     }
 
-    // --- PRD-WF-002 fork/join entry points ---
+    // --- fork/join entry points ---
 
     /**
      * Begins a fan-out fork at the given step id.
@@ -1765,8 +1765,7 @@ public final class WorkflowBuilder<S> {
          * validation</b>, but the field still participates in the {@code task-complete} idempotency
          * fingerprint — retries with different reviewed-version values surface as
          * {@link dev.vertique.workflow.exception.WorkflowIdempotencyConflictException}. Pass the same
-         * value (typically {@code null}) on every retry of the same logical command. See
-         * ADR-0055 (validation contract) and ADR-0057 (fingerprint v2) for details.
+         * value (typically {@code null}) on every retry of the same logical command.
          *
          * @return this builder for chaining
          */
@@ -1907,7 +1906,7 @@ public final class WorkflowBuilder<S> {
      * {@link WaitSignalNode#nextStepId()} because those were already accepted at cycle 1 without
      * cross-reference validation; adding them now would be a broader scope change. The cycle-2
      * additions are validated here because their step ids are the first to be explicitly required
-     * by the plan spec (§3.9).
+     * by the plan spec.
      *
      * @throws WorkflowDefinitionException if any referenced step id is not declared in the plan
      */
@@ -2085,7 +2084,7 @@ public final class WorkflowBuilder<S> {
                         update(digest, n.payloadCallbackId().value());
                     }
                     case ForkNode n -> {
-                        // PRD-WF-002 A.4.8: branches in declaration order, joinStepId, retry policy.
+                        // Fork: branches in declaration order, joinStepId, retry policy.
                         update(digest, Integer.toString(n.branches().size()));
                         for (BranchStart b : n.branches()) {
                             update(digest, b.branchId());
@@ -2099,7 +2098,7 @@ public final class WorkflowBuilder<S> {
                         update(digest, rp.backoff().name());
                     }
                     case JoinNode n -> {
-                        // PRD-WF-002 A.4.8: policy variant, reducer callback, next/failure routes.
+                        // Join: policy variant, reducer callback, next/failure routes.
                         update(digest, n.policy().getClass().getSimpleName());
                         update(digest, n.branchResultReducerCallbackId().value());
                         update(digest, n.nextStepId());

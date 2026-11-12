@@ -131,8 +131,8 @@ public abstract class WebSocketModule {
      * Optional binding for the core action {@link Authorizer}. Present when the authorization engine
      * ({@code SecurityAuthzModule}) is in the component; absent otherwise. Threaded by
      * {@link WebSocketMount.Factory} into the {@link dev.vertique.rest.security.SecurityPolicyEnforcer}
-     * so a class-level {@code @RequiresAction} gate is enforced once at upgrade (FR-AUTHZ-048,
-     * ADR-0115). Declared here so a WebSocket-only component (no authz engine) still satisfies the
+     * so a class-level {@code @RequiresAction} gate is enforced once at upgrade.
+     * Declared here so a WebSocket-only component (no authz engine) still satisfies the
      * factory's injection; coalesces with {@code AuthModule}'s declaration when both are present.
      *
      * @return the optional core {@link Authorizer} binding declaration

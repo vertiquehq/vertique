@@ -90,7 +90,7 @@ import java.util.function.Consumer;
  * the borrow require {@link BuilderBorrowDetector} to judge it sound (a Lombok {@code @Builder
  * @Jacksonized} type, or the exact shape it generates). A property Jackson's introspection reports no
  * accessor for at all — a Lombok {@code @Builder} type's constrained private field with no {@code
- * @Getter} (BG1) — still
+ * @Getter} — still
  * publishes by type, with no borrowed constraint, since the floor has nothing to join it by; a {@link
  * jakarta.validation.Validator} supplement, when one is active, still renders the constraint for that
  * one property by its own field-name join, independent of the floor's own borrow. The backing storage
@@ -283,7 +283,7 @@ public final class AnnotationJsonSchemaGenerator {
      * <p>{@code true} only for a profile-aware generator ({@link #forInputProfile(JsonMapperProfile)}
      * / {@link #forOutputProfile(JsonMapperProfile)}) whose profile declares at least one applicable
      * schema-type override — the only case in which a member's declared numeric Java type can end up
-     * with a non-numeric effective wire type (PRD §6.2 wire-honesty). {@code
+     * with a non-numeric effective wire type (wire-honesty). {@code
      * withVictoolsDefaults()} never substitutes a wire type for a Java type, so this is always {@code
      * false} for that mode.
      */
@@ -964,7 +964,7 @@ public final class AnnotationJsonSchemaGenerator {
                 // unsatisfiable, and is refused before it can be canonicalized and handed to a consumer.
                 DisjointTypeDetector.requireNoDisjointTypes(generated);
                 if (suppressInapplicableNumericKeywords) {
-                    // PRD §6.2 wire-honesty: a Jakarta numeric-domain constraint (e.g. @DecimalMin)
+                    // Wire-honesty: a Jakarta numeric-domain constraint (e.g. @DecimalMin)
                     // must not be advertised against a wire type an override replaced with a non-number.
                     NumericDomainKeywordFilter.suppressInapplicableNumericKeywords(generated);
                 }
@@ -986,7 +986,7 @@ public final class AnnotationJsonSchemaGenerator {
                 throw alreadyBounded;
             } catch (RuntimeException failed) {
                 // A walk failure is still a generation failure: it normalizes to the module's bounded
-                // type rather than escaping as raw, unbounded third-party text (FR-JSON-075/076).
+                // type rather than escaping as raw, unbounded third-party text.
                 throw Diagnostics.failure(
                         "post-generation validation of the generated JSON Schema failed for "
                                 + Diagnostics.typeIdentity(type),

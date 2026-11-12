@@ -21,8 +21,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Builds the transport-neutral per-operation admission interceptor for {@code @RateLimited}
- * (contracts/rate-limit-aop.md).
+ * Builds the transport-neutral per-operation admission interceptor for {@code @RateLimited}.
  *
  * <p>The aspect never inspects the intercepted target's transport: the same logic applies whether
  * the annotated method belongs to a plain service or a JAX-RS resource, because it only ever
@@ -35,7 +34,7 @@ final class RateLimitedAspect implements AspectProvider<RateLimited> {
 
     /**
      * Dagger-resolved constructor. {@link RateLimitAdapterSupport} is not itself a bound Dagger
-     * type (contracts/rate-limit-runtime.md, "Framework adapter seam"); it is reached through the
+     * type; it is reached through the
      * already-bound {@link RateLimiters#adapterSupport()} instead of introducing a new binding.
      */
     @Inject

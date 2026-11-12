@@ -14,7 +14,7 @@ import java.util.UUID;
  * SPI for persisting job execution state.
  *
  * <p>This interface is intentionally left without an implementation in this module — it serves
- * as a stable contract for Phase 2 ({@code vertique-job-postgresql}) and any custom
+ * as a stable contract for {@code vertique-job-postgresql} and any custom
  * persistence adapters.
  *
  * <p>The cron module works without a {@code JobRepository}: executions are tracked in-memory

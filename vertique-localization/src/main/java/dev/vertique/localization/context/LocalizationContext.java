@@ -50,7 +50,7 @@ import java.util.Optional;
  * @param locale            the request locale (never {@code null})
  * @param zone              the request time zone (never {@code null}; never derived from
  *                          {@link java.util.TimeZone#getDefault()} for framework-produced
- *                          contexts — see PRD FR-LOC-203)
+ *                          contexts)
  * @param currency          optional ISO 4217 currency override (e.g. {@code "EUR"})
  * @param calendar          optional BCP 47 {@code -u-ca} subtag override (e.g.
  *                          {@code "gregory"})
@@ -73,7 +73,7 @@ public record LocalizationContext(
         implements ContextValue {
 
     /**
-     * Compact constructor enforcing FR-LOC-200 invariants:
+     * Compact constructor enforcing the record's invariants:
      * <ul>
      *   <li>Reject {@code null} locale and {@code null} zone with {@link NullPointerException}.</li>
      *   <li>Normalize {@code null} {@link Optional} sub-fields to {@link Optional#empty()}.</li>

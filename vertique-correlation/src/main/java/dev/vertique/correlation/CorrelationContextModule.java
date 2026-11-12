@@ -45,8 +45,8 @@ import dev.vertique.core.correlation.CorrelationIdGenerator;
  *       schemaVersion enforcement, and header re-validation on decode).</li>
  *   <li>{@code @Provides @IntoSet InboundContextInitializer} for {@link CorrelationContextSeeder}
  *       so the substrate's {@code InboundExecutionContextScope} seeds a fresh
- *       {@link CorrelationContext} on every inbound boundary that arrives without one
- *       (FR-COR-125).</li>
+ *       {@link CorrelationContext} on every inbound boundary that arrives without one.
+ * </li>
  * </ul>
  *
  * <p>REST-specific ingress wiring (middleware, ProtocolCorrelationSpec/Contributor multibinds,
@@ -73,8 +73,7 @@ public abstract class CorrelationContextModule {
      * {@link CorrelationContextMutator#setTrace} with the resolved {@link dev.vertique.core.correlation.TraceReference}.
      * When absent (no tracer wired) the middleware skips the trace enrichment step entirely.
      *
-     * <p>At most one implementation may be on the graph — tracing is OpenTelemetry-only (see
-     * ADR-0098 / PRD D3).
+     * <p>At most one implementation may be on the graph — tracing is OpenTelemetry-only.
      *
      * @return the optional binding declaration (never invoked directly)
      */
@@ -120,7 +119,7 @@ public abstract class CorrelationContextModule {
      * Durable metadata encoder for {@link CorrelationContext}. Justified as bespoke (rather than
      * the generic {@code DurableJsonContextCodecs} helper) because it must filter the session
      * block and protocol-correlation list by their {@code durableSafe} flags and stamp the
-     * envelope's {@code schemaVersion} (FR-COR-143 / FR-COR-144 / FR-COR-148).
+     * envelope's {@code schemaVersion}.
      *
      * @param impl the singleton encoder
      * @return the multibinding contribution
@@ -150,7 +149,7 @@ public abstract class CorrelationContextModule {
 
     /**
      * First-ingress {@link InboundContextInitializer} that mints a fresh
-     * {@link CorrelationContext} when no upstream-decoded value is present (FR-COR-125).
+     * {@link CorrelationContext} when no upstream-decoded value is present.
      * {@code InboundExecutionContextScope} invokes registered initializers after the inbound
      * install step; if a decoder already produced a context, this seeder returns
      * {@code ContextScopes.noop()}.

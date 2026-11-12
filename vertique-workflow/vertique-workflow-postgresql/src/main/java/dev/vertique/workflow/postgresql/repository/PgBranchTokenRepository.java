@@ -29,8 +29,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * PostgreSQL-backed repository for {@link BranchToken} rows in {@code workflow_branch_tokens}
- * (PRD-WF-002).
+ * PostgreSQL-backed repository for {@link BranchToken} rows in {@code workflow_branch_tokens}.
  *
  * <p>Branch transitions use optimistic concurrency on {@code version}; the
  * {@link #updateOptimistic} method returns the affected row count so callers can detect a stale

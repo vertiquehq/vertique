@@ -6,8 +6,7 @@ package dev.vertique.ratelimit.spi;
 import dev.vertique.ratelimit.TokenBucketRateLimit;
 
 /**
- * One admission request against a {@link RateLimitBackend} (contracts/rate-limit-runtime.md,
- * "Backend seam" — the exact contract-final shape).
+ * One admission request against a {@link RateLimitBackend}.
  *
  * @param storageKey canonical per-policy, per-key storage identity
  * @param algorithm the requesting policy's token-bucket algorithm

@@ -9,7 +9,7 @@ import java.util.Objects;
 
 /**
  * The capability-minimized durable principal key used to re-resolve a reconstructed principal's
- * <strong>current</strong> authority (PRD identity-002 §14.3 Phase-2 Appendix, A8/FR-ID-CA-012).
+ * <strong>current</strong> authority.
  *
  * <p>{@code id} is treated as <strong>opaque</strong>: the framework never parses tenant, issuer,
  * or realm delimiters out of it, mirroring {@link PrincipalRef}'s {@code (type, id)} durable

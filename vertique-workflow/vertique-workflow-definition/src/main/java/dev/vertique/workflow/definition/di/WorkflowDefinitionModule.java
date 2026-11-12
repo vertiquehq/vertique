@@ -70,13 +70,12 @@ import java.util.Set;
  *   <li>{@link dev.vertique.workflow.definition.compiler.DecisionRouteCompiler},
  *       {@link dev.vertique.workflow.definition.compiler.WorkflowDefinitionCompiler} — registered
  *       as concrete {@code @Singleton} beans; they are injected directly without interface
- *       bindings (simpler, per the Slice F plan).</li>
+ *       bindings (simpler).</li>
  * </ul>
  *
  * <p>This module is SQL-free and depends only on {@code vertique-workflow-core},
- * {@code vertique-core}, and Jackson. It must remain optional per NFR-WF-DEF-001 and must not
- * leak its dependencies into {@code workflow-core} or {@code workflow-postgresql} per
- * NFR-WF-DEF-003 / NFR-WF-DEF-007.
+ * {@code vertique-core}, and Jackson. It must remain optional and must not
+ * leak its dependencies into {@code workflow-core} or {@code workflow-postgresql}.
  */
 @Module
 public abstract class WorkflowDefinitionModule {
@@ -193,7 +192,7 @@ public abstract class WorkflowDefinitionModule {
      * Binds {@link CelExpressionProfile} as the singleton {@link ExpressionProfile}.
      *
      * <p>To replace the expression engine, provide an alternative implementation and re-bind this
-     * method — no other class in the module requires changes (NFR-WF-DEF-007).
+     * method — no other class in the module requires changes.
      *
      * @param impl the singleton CEL implementation; non-null
      * @return the profile interface

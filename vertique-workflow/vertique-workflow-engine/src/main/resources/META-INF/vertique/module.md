@@ -1027,8 +1027,8 @@ deployment.
 
 Package-private binder-row seam that binds effective durable context for **instance-owned,
 single-path drives**: `signal`, `cancel`, `retry`, `migrate`, `taskCompleted`, and `taskReassigned`. It implements the bind
-gate and the base-wins/instance-fill composition described in `dev.vertique:vertique-workflow-core`
-§ Durable Context on the Instance:
+gate and the base-wins/instance-fill composition described in the "Durable Context on the Instance"
+section of `dev.vertique:vertique-workflow-core`:
 
 ```java
 <T> Future<T> withBound(

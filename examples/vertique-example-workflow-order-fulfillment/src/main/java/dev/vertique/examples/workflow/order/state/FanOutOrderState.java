@@ -14,7 +14,7 @@ import java.util.Map;
  *
  * <p>Serialized to/from JSONB by the workflow engine. Used by
  * {@link dev.vertique.examples.workflow.order.OrderFulfillmentFanOutDefinition}.
- * Branch signal callbacks in the PRD-WF-002 branch model decode from the parent instance's
+ * Branch signal callbacks in the workflow branch model decode from the parent instance's
  * {@code state_json} via the stateUpdater; this record accumulates the results of all three
  * parallel branches (inventory, payment, fraud) so each can contribute independently.
  *

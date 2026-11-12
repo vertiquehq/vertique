@@ -30,8 +30,7 @@ import lombok.extern.slf4j.Slf4j;
  * <strong>current</strong> authority live, at authorization time, rather than trusting the durable
  * snapshot's captured claims — <strong>except</strong> when the reconstruction's own
  * {@link ReconstructionMarker#mode()} is {@link ReconstructedAuthorityMode#CAPTURED}, in which case
- * the captured claims already carried by the context ARE current authority and are evaluated as-is
- * (PRD identity-002 §14.3 Phase-2 Appendix).
+ * the captured claims already carried by the context ARE current authority and are evaluated as-is.
  *
  * <p>This is the <strong>outermost</strong> authorizer in the wired chain:
  * {@code ReconstructedAuthorityResolvingAuthorizer} &rarr; {@link NarrowingAuthorizer} &rarr;
@@ -55,7 +54,7 @@ import lombok.extern.slf4j.Slf4j;
  *       dev.vertique.security.SecurityIdentity#subject() subject()} — is resolved to a durable
  *       {@link PrincipalKey} and re-resolved <em>exactly once</em> per
  *       {@link #authorize(AuthorizationRequest)} call via {@link PrincipalAuthorityResolver} —
- *       never cached across dispatches. Per FR-ID-DG-006, v1 delegation resolves only the acting
+ *       never cached across dispatches. In v1, delegation resolves only the acting
  *       principal's own authority (intersected with any grant scope by a downstream narrower);
  *       subject-authority evaluation (impersonation) is explicitly out of v1 scope, so the
  *       subject-of-record is never the resolved principal here. The resolved claims replace the
@@ -128,7 +127,7 @@ public final class ReconstructedAuthorityResolvingAuthorizer implements Authoriz
             return evaluateCaptured(request);
         }
         // ATTRIBUTION_ONLY (the only other sanctioned marker value): live-resolve the CONTEXT'S OWN
-        // ACTOR — never the subject-of-record. Per FR-ID-DG-006, subject-authority evaluation
+        // ACTOR — never the subject-of-record. In v1, subject-authority evaluation
         // (impersonation) is out of v1 scope; both resumeAsPrincipal (actor == the resumed
         // principal) and deferredExecution (actor == the executing service) resolve the acting
         // principal's own current authority.

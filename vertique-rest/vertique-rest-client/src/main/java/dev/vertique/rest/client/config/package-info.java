@@ -14,7 +14,7 @@
  * never on the raw {@link io.vertx.core.json.JsonObject}.
  *
  * <p>The {@code webClient} component is an intentionally-open Vert.x {@code WebClientOptions}
- * pass-through bag (config rule R9) whose 7 framework duration keys are normalized to Vert.x-native
+ * pass-through bag whose 7 framework duration keys are normalized to Vert.x-native
  * names at parse time.
  */
 package dev.vertique.rest.client.config;

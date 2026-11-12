@@ -27,35 +27,34 @@ import java.util.stream.Collectors;
  * <p>Default {@link JsonMapperProfileRegistry} that validates the discovered profiles at construction
  * time and exposes constant-time, immutable resolution thereafter.
  *
- * <p>Construction order (NFR-JSON-002A — all validation is eager, in the {@code @Inject} ctor):
+ * <p>Construction order (all validation is eager, in the {@code @Inject} ctor):
  *
  * <ol>
  *   <li>The built-in {@code system} profile ({@link SystemJsonMapperProfile}) is seeded
  *       <strong>separately</strong> from the application set and is <strong>not</strong> probed —
  *       its mapper is a trusted copy of Vert.x's {@code DatabindCodec.mapper()} carrying the
- *       baseline recipe (FR-JSON-007A, FR-JSON-015E).
+ *       baseline recipe.
  *   <li>The built-in {@code vertique} profile ({@link VertiqueJsonMapperProfile}) is likewise seeded
- *       <strong>separately</strong> and is <strong>not</strong> probed (FR-JSON-043, FR-JSON-045): its
+ * <strong>separately</strong> and is <strong>not</strong> probed: its
  *       opinionated mapper applies {@code NON_NULL} inclusion, which the structural round-trip probe
  *       (it round-trips a {@code JsonObject} with a null field) would falsely reject.
  *   <li>The built-in {@code vertique-strict} profile ({@link VertiqueStrictJsonMapperProfile}) is
- *       likewise seeded <strong>separately</strong> and is <strong>not</strong> probed (json-004): it
+ *       likewise seeded <strong>separately</strong> and is <strong>not</strong> probed: it
  *       inherits the same {@code NON_NULL} inclusion, and additionally requires the string wire form
  *       for {@code BigDecimal} — neither of which the probe payload is written against.
  *   <li>Each application-contributed profile is validated, in this order and <strong>before</strong>
  *       the probe runs: the retired {@code vertx} id is rejected naming the rename to {@code system}
  *       (it is a <em>retired reserved</em> id and cannot be re-registered); an id equal to one of the
  *       reserved built-in ids ({@link SystemJsonMapperProfile#ID},
- *       {@link VertiqueJsonMapperProfile#ID}, {@link VertiqueStrictJsonMapperProfile#ID}) is rejected
- *       (FR-JSON-005, FR-JSON-044, json-004); a mapper with Jackson <em>default typing</em> active is
- *       rejected (every profile role binds untrusted input); a duplicate application id is rejected
- *       (FR-JSON-004); only then is the mapper run through the structural round-trip probe
- *       (FR-JSON-015C).
+ *       {@link VertiqueJsonMapperProfile#ID}, {@link VertiqueStrictJsonMapperProfile#ID}) is rejected;
+ *       a mapper with Jackson <em>default typing</em> active is
+ *       rejected (every profile role binds untrusted input); a duplicate application id is rejected;
+ * only then is the mapper run through the structural round-trip probe.
  * </ol>
  *
- * <p>The resulting {@link JsonProfileId}-keyed map is immutable; lookups are {@code O(1)}
- * (NFR-JSON-001). Resolving an unknown id throws {@link JsonProfileConfigurationException} with a
- * message listing every discovered id (FR-JSON-008); resolving the retired {@code vertx} id names
+ * <p>The resulting {@link JsonProfileId}-keyed map is immutable; lookups are {@code O(1)}.
+ * Resolving an unknown id throws {@link JsonProfileConfigurationException} with a
+ * message listing every discovered id; resolving the retired {@code vertx} id names
  * the rename instead.
  */
 @Singleton
@@ -213,7 +212,7 @@ public final class DefaultJsonMapperProfileRegistry implements JsonMapperProfile
         return mapper.getDeserializationConfig().getDefaultTyper(null) != null;
     }
 
-    // --- Round-trip probe (FR-JSON-015C) ---
+    // --- Round-trip probe ---
 
     /**
      * Runs the structural round-trip probe for an application profile mapper: serializes then
@@ -227,8 +226,8 @@ public final class DefaultJsonMapperProfileRegistry implements JsonMapperProfile
     private static void probe(JsonProfileId id, ObjectMapper mapper) {
         // No explicit null field: a mapper that omits nulls is applying a serialization-inclusion
         // policy, not corrupting structure, and NON_NULL inclusion is exactly what JacksonDefaults
-        // applies. Probing a null-bearing payload rejected every application profile seeded the way
-        // ADR-0135 and the module document both sanction (GH-240).
+        // applies. Probing a null-bearing payload would reject every application profile seeded the way
+        // the module document sanctions.
         JsonObject objectSample = new JsonObject()
                 .put("string", "value")
                 .put("number", 42)

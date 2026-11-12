@@ -50,7 +50,7 @@ import java.util.Objects;
  * @param errorMessage human-readable error description; null when no error
  * @param createdAt timestamp when this instance was created
  * @param updatedAt timestamp of the most recent state mutation
- * @param metadata durable context captured at start time (ADR-0065 carrier shape); {@code null}
+ * @param metadata durable context captured at start time (durable-metadata carrier shape); {@code null}
  *     when no ambient durable context was present at start (empty capture) or for instances
  *     started before this carrier existed. Immutable for the lifetime of the instance — no
  *     {@code with*} updater exists for this field; every updater passes it through unchanged.

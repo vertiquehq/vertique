@@ -13,8 +13,8 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Fail-closed freshness policy applied at snapshot decode (PRD-ID-002 §14.6 amendment A9, the F5
- * replay defense). After {@link IdentitySnapshotCodec#decode(byte[])} has verified a snapshot's HMAC,
+ * Fail-closed freshness policy applied at snapshot decode (the replay defense). After
+ * {@link IdentitySnapshotCodec#decode(byte[])} has verified a snapshot's HMAC,
  * {@link #check(IdentitySnapshot)} rejects a snapshot whose temporal envelope is malformed, impossibly
  * future-dated, or past its effective expiry — so a tampered or stale durable row cannot be replayed
  * into a live identity.
@@ -32,7 +32,7 @@ import java.util.Optional;
  * The snapshot-lifetime budget is anchored on the <em>immutable</em>
  * {@link IdentitySnapshotContent#capturedAt()} rather than {@code issuedAt}, so a chained re-encode
  * (which mints a fresh {@code issuedAt}) cannot renew authority that has already aged out. With both
- * budgets absent — the sub-slice default before operators configure them — only the signed
+ * budgets absent — the default before operators configure them — only the signed
  * {@code expiresAt} bounds the snapshot.
  *
  * <p>The verifier reapplies its <em>current</em> budgets on every decode (it does not trust a

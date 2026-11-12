@@ -873,8 +873,8 @@ verticle instance in this framework's stateless multi-instance deployment model 
 Composition fails before any route mounts for any of these:
 
 - **a duplicate tool name** — two contributions publishing the same name;
-- **an unsupported or uncompilable schema** — a descriptor whose input or output schema JSON-005
-  cannot generate, or the compiled `vertx-json-schema` validator cannot accept;
+- **an unsupported or uncompilable schema** — a descriptor whose input or output schema
+  `vertique-json-schema` cannot generate, or the compiled `vertx-json-schema` validator cannot accept;
 - **a restricted registry with no configured authentication scheme** — when the server is enabled
   with no `mcp.authenticationScheme`, the endpoint establishes only a canonical anonymous identity, so
   every registered tool must be reachable without authentication (public or unreachable); a
@@ -883,7 +883,7 @@ Composition fails before any route mounts for any of these:
   check reads the policy's requirements, never the closed placeholder the tool's descriptor
   publishes). An unconfigured registry containing only public and/or deny-all tools is allowed. This
   composition validator seam is independent of, and in addition to, the existing per-scheme
-  optional-capability check (§4.5): a configured scheme whose selected
+  optional-capability check: a configured scheme whose selected
   `RouteAuthHandler.createOptionalHandler()` capability is absent still fails composition regardless
   of registry content;
 - **an invalid typed access policy** — see [Typed access policies](#typed-access-policies), which
@@ -916,7 +916,7 @@ The effective tool-payload profile is resolved once per tool at composition time
 2. the declaring type's `@JsonProfile`;
 3. the MCP boundary default `mcp.jsonProfile`;
 4. the global default `json.jsonProfile`;
-5. the `vertique` profile (issue #440).
+5. the `vertique` profile.
 
 The first two tiers are resolved at compile time by `vertique-codegen-mcp`, which rejects a blank
 annotation value; the server resolves the remaining tail against the `JsonMapperProfileRegistry`. An
@@ -1020,9 +1020,9 @@ exactly three: a refused plain part, a targetless plain part, and a plain discri
 beside an unfoldable `$ref` sibling, each closed exactly as described above.
 
 After hardening, the document is re-serialized deterministically (recursive UTF-16 key ordering,
-compact encoding) through MCP's own package-private writer — never through JSON-005's canonicalizer,
-which is package-private inside `vertique-json-schema`, and never through a profile's payload mapper.
-A declared structured-output schema is published exactly as JSON-005 generates it: output is
+compact encoding) through MCP's own package-private writer — never through the canonicalizer that is
+package-private inside `vertique-json-schema`, and never through a profile's payload mapper.
+A declared structured-output schema is published exactly as `vertique-json-schema` generates it: output is
 server-produced and carries no argument-object boundary to close. None of this schema work happens on
 the request path; it runs exactly once per tool, during composition.
 
@@ -1256,7 +1256,7 @@ application handler ever runs:
    generated invoker's `prepare(...)` is never called. This stage is also the legitimate request-time
    replacement for the withdrawn startup polymorphism check: an unknown polymorphic discriminator
    fails here, before invocation, exactly like an unknown property on a closed schema.
-2. **INP-001 canonicalization and sanitization**, applied by the generated invoker's `prepare(...)` at
+2. **Input-processing canonicalization and sanitization**, applied by the generated invoker's `prepare(...)` at
    `InputLocation.PAYLOAD` — never `InputLocation.BODY`, at every traversal depth. A custom
    `Canonicalizer`/`Sanitizer`/`CharacterPolicy` that branches on `InputLocation.BODY` silently covers
    nothing on MCP; there is no BODY compatibility mode.

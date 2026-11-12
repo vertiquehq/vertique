@@ -15,8 +15,7 @@ import java.util.OptionalLong;
  * {@code resetAfter} is a hint (not a reservation) for the duration until the bucket is full again
  * absent further consumption. Both are relative durations.
  *
- * <p>This record's shape is frozen from the package's baseline task onward; no later task changes
- * it (contracts/rate-limit-runtime.md, "Decision model").
+ * <p>This record's shape is frozen.
  */
 public record RateLimitDecision(
         String policyName,

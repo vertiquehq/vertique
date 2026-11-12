@@ -679,7 +679,7 @@ public class JwtBearerSecuritySchemeHandler implements SecuritySchemeHandler, Ha
 
         // safeAttributes — non-secret claims for identity resolution and correlation consumers;
         // no raw token material included. client_id/azp feed DefaultSecurityIdentityResolver;
-        // sid/jti are surfaced for FR-COR-100 consumers. Only actual JSON string values are copied —
+        // sid/jti are surfaced for session-correlation consumers. Only actual JSON string values are copied —
         // JsonObject.getString would coerce objects/arrays/numbers into text and leak structured
         // claim contents into supposedly-safe metadata.
         Map<String, Object> safeAttributes = new HashMap<>();

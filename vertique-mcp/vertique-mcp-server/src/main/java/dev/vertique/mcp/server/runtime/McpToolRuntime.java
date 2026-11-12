@@ -74,8 +74,7 @@ public final class McpToolRuntime<I> implements McpStructuredOutputWriter {
     }
 
     /**
-     * The wire property name the generated {@code OptionalProbe} canary's sole component carries
-     * (contract §4.1).
+     * The wire property name the generated {@code OptionalProbe} canary's sole component carries.
      */
     private static final String OPTIONAL_PROBE_PROPERTY = "value";
 
@@ -84,8 +83,8 @@ public final class McpToolRuntime<I> implements McpStructuredOutputWriter {
 
     /**
      * Behaviorally proves that this tool's effective JSON profile mapper materializes
-     * {@code Optional<T>} the way an {@code Optional<T>} tool parameter's contract requires (contract
-     * §4.1): an omitted property and an explicit JSON {@code null} both resolve to {@code
+     * {@code Optional<T>} the way an {@code Optional<T>} tool parameter's contract requires: an
+     * omitted property and an explicit JSON {@code null} both resolve to {@code
      * Optional.empty()}, and a present property resolves to {@code Optional.of(value)}.
      *
      * <p>Called once, during composition, from the constructor of every generated invoker whose tool
@@ -144,12 +143,12 @@ public final class McpToolRuntime<I> implements McpStructuredOutputWriter {
     private String materializationFailureMessage(String detail) {
         return "MCP tool '" + descriptor.name() + "': the effective JSON profile mapper cannot materialize "
                 + "Optional<T> arguments correctly (" + detail + "). Optional-materialization capability is "
-                + "proven behaviorally, never inferred from registered module ids (contract §4.1).";
+                + "proven behaviorally, never inferred from registered module ids.";
     }
 
     /**
-     * Returns the wire-to-Java field name projection of this tool's effective profile mapper (contract
-     * §4.7 point 2), composed once during composition and reused for every request.
+     * Returns the wire-to-Java field name projection of this tool's effective profile mapper,
+     * composed once during composition and reused for every request.
      *
      * <p>The generated invoker's {@code prepare()} passes this resolver to {@code
      * InputObjectProcessor#processInput} and, once during composition, to {@code

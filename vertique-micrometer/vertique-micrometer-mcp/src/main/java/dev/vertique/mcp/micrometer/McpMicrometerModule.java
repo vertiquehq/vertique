@@ -11,8 +11,7 @@ import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.micrometer.MetricsConfig;
 
 /**
- * Dagger module that contributes the Micrometer MCP server metrics observer via multibinding
- * (contract §4.10).
+ * Dagger module that contributes the Micrometer MCP server metrics observer via multibinding.
  *
  * <p>The only public type in {@code vertique-micrometer-mcp}; {@link McpServerMetricsObserver} stays
  * package-private per the frozen type inventory.

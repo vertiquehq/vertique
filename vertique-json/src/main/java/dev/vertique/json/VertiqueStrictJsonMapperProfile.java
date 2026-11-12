@@ -31,7 +31,7 @@ import java.util.List;
  * the {@code vertx} and {@code vertique} profiles, under the reserved id {@code vertique-strict}.
  * Like the {@code vertique} profile it owns its own {@link ObjectMapper} — built once from
  * {@link JacksonDefaults#apply(ObjectMapper)} — so it never mutates Vert.x's shared
- * {@code DatabindCodec.mapper()} (json-004).
+ * {@code DatabindCodec.mapper()}.
  *
  * <p><strong>Strict posture.</strong> On top of the {@code vertique} defaults this profile registers
  * the three opt-in serdes as a single {@code vertique-strict} Jackson module:
@@ -40,8 +40,7 @@ import java.util.List;
  *   <li>{@link BigDecimalAsStringSerializer} — a typed {@link BigDecimal} property is written as a
  *       quoted JSON <em>string</em> via {@link BigDecimal#toPlainString()}: never scientific
  *       notation, and numerically exact — the scale is preserved exactly for a non-negative scale,
- *       while a negative-scale value is written in expanded plain form and re-reads with scale 0
- *       (json-004 R2-4).
+ *       while a negative-scale value is written in expanded plain form and re-reads with scale 0.
  *   <li>{@link BigDecimalStrictStringDeserializer} — a typed {@link BigDecimal} property is read
  *       <em>only</em> from a JSON string matching the bounded plain-decimal grammar
  *       {@code -?[0-9]+(\.[0-9]+)?} of at most 100 characters. JSON numbers, exponent forms,
@@ -53,7 +52,7 @@ import java.util.List;
  *       {@code "42"} / {@code "true"}.
  * </ul>
  *
- * <p><strong>{@code BigDecimal} map keys are bounded too (json-004).</strong> A {@code Map<BigDecimal,
+ * <p><strong>{@code BigDecimal} map keys are bounded too.</strong> A {@code Map<BigDecimal,
  * ?>} key is parsed by the nested {@link BigDecimalKeyDeserializer}, registered on the same
  * {@code vertique-strict} module via {@code SimpleModule.addKeyDeserializer}. It enforces the exact
  * same bounded plain-decimal grammar as {@link BigDecimalStrictStringDeserializer} — by delegating to
@@ -61,7 +60,7 @@ import java.util.List;
  * key cannot smuggle an exponent-notation literal (e.g. {@code "1e-2000000000"}) past the value-side
  * bound and amplify into a huge-scale {@code BigDecimal} on the way back out.
  *
- * <p><strong>{@code BigDecimal} map keys are written in bounded plain form too (json-004 R2-3).</strong>
+ * <p><strong>{@code BigDecimal} map keys are written in bounded plain form too.</strong>
  * The nested {@link BigDecimalKeySerializer}, registered via {@code SimpleModule.addKeySerializer},
  * writes a {@code Map<BigDecimal, ?>} key through the same
  * {@link BigDecimalAsStringSerializer#boundedPlainString(BigDecimal)} bound that the value-side
@@ -85,7 +84,7 @@ import java.util.List;
  * static {@code DatabindCodec} parser helpers keep accepting it, as that codec's own contract
  * documents. The MCP envelope codec already rejects a repeated key under every profile.
  *
- * <p>The same feature is the signal JSON-005 reads to decide how it describes several
+ * <p>The same feature is the signal the schema generator reads to decide how it describes several
  * {@code @JsonAlias} spellings of one property: under this profile they are published as mutually
  * exclusive, so a body carrying a property under two spellings is rejected at the gate, while the
  * binder itself accepts it under every profile. No separate flag or configuration key decides that.
@@ -107,8 +106,7 @@ import java.util.List;
  * <p>This type is package-private, is seeded separately from application-contributed profiles, and
  * is <strong>probe-exempt</strong>: the registry's structural round-trip probe round-trips a
  * {@code JsonObject} carrying a null field, which the inherited {@code NON_NULL} inclusion would
- * drop. Applications must not contribute a profile with the reserved {@code vertique-strict} id
- * (json-004).
+ * drop. Applications must not contribute a profile with the reserved {@code vertique-strict} id.
  *
  * @see VertiqueJsonMapperProfile
  * @see JacksonDefaults
@@ -120,12 +118,12 @@ final class VertiqueStrictJsonMapperProfile implements JsonMapperProfile {
 
     /**
      * The single independent {@link ObjectMapper} backing this profile, built once at construction.
-     * It is never the shared Vert.x {@code DatabindCodec.mapper()} (json-004).
+     * It is never the shared Vert.x {@code DatabindCodec.mapper()}.
      */
     private final ObjectMapper mapper = buildMapper();
 
     /**
-     * The single JSON Schema type override this profile declares (FR-JSON-089): a {@code BigDecimal}
+     * The single JSON Schema type override this profile declares: a {@code BigDecimal}
      * {@link JsonSchemaTypeOverride.Direction#BOTH} override describing the bounded, string-typed
      * wire form {@link BigDecimalAsStringSerializer} and {@link BigDecimalStrictStringDeserializer}
      * actually produce and accept. Built once, statically, and returned as the same stable,
@@ -138,7 +136,7 @@ final class VertiqueStrictJsonMapperProfile implements JsonMapperProfile {
      * Builds the {@code BigDecimal} schema fragment {@link #SCHEMA_OVERRIDES} declares, from the
      * shared {@link BigDecimalStrictStringDeserializer} grammar constants — never a second,
      * independently maintained copy of the bound or the pattern, so the published schema and the
-     * serde's accepted grammar cannot drift apart (FR-JSON-089).
+     * serde's accepted grammar cannot drift apart.
      *
      * <p>The fragment describes the wire form both strict {@code BigDecimal} serdes agree on: a JSON
      * string ({@code "type":"string"}), tagged {@code "format":"decimal"}, bounded to
@@ -174,7 +172,7 @@ final class VertiqueStrictJsonMapperProfile implements JsonMapperProfile {
         // through BigDecimalAsStringSerializer on the way out and silently restring the wire shape.
         m.disable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
         // A repeated identical key is a parse error under this profile, where every other built-in
-        // mapper keeps the last value. It is also the signal JSON-005 reads to decide that several
+        // mapper keeps the last value. It is also the signal the schema generator reads to decide that several
         // @JsonAlias spellings of one property are published as mutually exclusive, so the profile's
         // schema rule and its parser agree by construction rather than through a second flag.
         m.enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
@@ -188,11 +186,11 @@ final class VertiqueStrictJsonMapperProfile implements JsonMapperProfile {
         return m;
     }
 
-    // --- BigDecimal map-key bound (json-004) ---
+    // --- BigDecimal map-key bound ---
 
     /**
      * Bounded {@code BigDecimal} key {@link JsonSerializer} for {@code Map<BigDecimal, ?>} keys under
-     * the {@code vertique-strict} profile (json-004 R2-3).
+     * the {@code vertique-strict} profile.
      *
      * <p>Delegates to the shared {@link BigDecimalAsStringSerializer#boundedPlainString(BigDecimal)}
      * helper — the same write-side length bound a {@code BigDecimal} <em>value</em> is held to —
@@ -295,7 +293,7 @@ final class VertiqueStrictJsonMapperProfile implements JsonMapperProfile {
      * <p>Returns the single independent {@link ObjectMapper} this profile owns — built once from the
      * {@code vertique} defaults plus the strict overlay and returned as-is, never copied or wrapped.
      * This mapper is the profile's own instance, so the {@code vertique-strict} profile never mutates
-     * Vert.x's shared {@code DatabindCodec.mapper()} (json-004).
+     * Vert.x's shared {@code DatabindCodec.mapper()}.
      *
      * @return the {@link ObjectMapper} backing the {@code vertique-strict} profile
      */
@@ -309,7 +307,7 @@ final class VertiqueStrictJsonMapperProfile implements JsonMapperProfile {
      *
      * <p>Returns the same stable, unmodifiable one-element list on every call: a single
      * {@code BigDecimal} {@link JsonSchemaTypeOverride.Direction#BOTH} override built from the
-     * {@link BigDecimalStrictStringDeserializer} grammar constants (FR-JSON-089).
+     * {@link BigDecimalStrictStringDeserializer} grammar constants.
      *
      * @return the single-element list containing the {@code BigDecimal} override
      */

@@ -21,7 +21,7 @@ import javax.lang.model.util.Types;
  * Collects the effective set of resource methods for a JAX-RS resource class, mirroring the
  * semantics of the runtime {@code ResourceScanner.collectMethods}.
  *
- * <p>Extracted from {@code JaxRsResourceProcessor} (CG-010) so that both the CG-009 validator
+ * <p>Extracted from {@code JaxRsResourceProcessor} so that both the validator
  * pipeline and the {@link EffectiveJaxRsContractResolver} share the same method-discovery logic.
  *
  * <p>Algorithm:
@@ -38,7 +38,7 @@ import javax.lang.model.util.Types;
  *   <li>Then add every {@code default} method of the transitively implemented interfaces (BFS
  *       order, {@link JaxRsHierarchy#allInterfaces}) that the class inherits: one that no inherited
  *       method of the superclass chain overrides and no method of a more specific interface
- *       overrides (issue #630). A superclass's private method with the same signature is not
+ *       overrides. A superclass's private method with the same signature is not
  *       inherited and never shadows a default.</li>
  * </ol>
  *

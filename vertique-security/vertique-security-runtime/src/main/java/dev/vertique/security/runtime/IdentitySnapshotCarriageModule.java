@@ -19,8 +19,7 @@ import java.time.Clock;
 
 /**
  * Dagger module that wires the config-backed identity-snapshot keyset and registers the
- * snapshot's durable-carriage encoder/decoder pair into the substrate's multibinding sets
- * (PRD-ID-002 §14.3 "Durable carriage").
+ * snapshot's durable-carriage encoder/decoder pair into the substrate's multibinding sets.
  *
  * <p>Reads the {@code identity.snapshot} section of the application config and provides:
  * <ul>
@@ -100,8 +99,8 @@ public abstract class IdentitySnapshotCarriageModule {
 
     /**
      * Provides the config-backed {@link SnapshotFreshnessPolicy}: the operator-configured freshness
-     * budgets and clock skew from {@link IdentitySnapshotConfig}, over the system UTC clock (PRD-ID-002
-     * §14.6 amendment A9, the F5 freshness defense).
+     * budgets and clock skew from {@link IdentitySnapshotConfig}, over the system UTC clock (the
+     * freshness defense).
      *
      * @param config the parsed identity-snapshot configuration supplying the freshness budgets and
      *               clock skew
@@ -134,8 +133,8 @@ public abstract class IdentitySnapshotCarriageModule {
      * {@link dev.vertique.security.SecurityContext}.
      *
      * @param holder the context holder the factory reads the ambient
-     *               {@link dev.vertique.security.authz.InvocationOrigin} from at capture time
-     *               (identity-002 P2.S5b-i); must not be {@code null}
+     *               {@link dev.vertique.security.authz.InvocationOrigin} from at capture time;
+     *               must not be {@code null}
      * @return a new {@link DefaultIdentitySnapshotFactory}; never {@code null}
      */
     @Provides

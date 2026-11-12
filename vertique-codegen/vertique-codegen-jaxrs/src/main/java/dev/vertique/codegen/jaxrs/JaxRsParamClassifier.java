@@ -19,7 +19,7 @@ import javax.lang.model.util.Types;
  * same ordered dispatch as the runtime {@code ResourceScanner.resolveParams}.
  *
  * <p>Promoted from the package-private {@code BodyFormValidator.classify(VariableElement)} method
- * (CG-010) so that both the compile-time validator pipeline and the effective-contract resolver
+ * so that both the compile-time validator pipeline and the effective-contract resolver
  * can share the same classification logic without coupling to a specific validator class.
  *
  * <p>Dispatch order (must be kept in sync with the runtime {@code ResourceScanner.resolveParams}):

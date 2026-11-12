@@ -31,7 +31,7 @@ import java.util.Optional;
  * name are a configuration error: silently keeping whichever the Dagger {@code Set} iteration recorded
  * last would make it non-deterministic which authentication handler guards the scheme. The collector
  * therefore <em>detects</em> a duplicate and fails startup with a {@link RestConfigurationException}
- * naming the conflicting scheme and the contributing handler classes (finding W5).
+ * naming the conflicting scheme and the contributing handler classes.
  */
 final class SecuritySchemeHandlerCollector {
 
@@ -43,7 +43,7 @@ final class SecuritySchemeHandlerCollector {
      * startup with a {@link RestConfigurationException} if a handler for the same
      * {@link SecuritySchemeHandler#schemeName()} was already recorded by a different contributor — two
      * handlers claiming the same scheme would otherwise silently overwrite, with the Dagger set
-     * iteration order deciding which authentication handler wins (finding W5).
+     * iteration order deciding which authentication handler wins.
      *
      * @param contributor the scheme handler that owns the scheme name; must not be {@code null}
      * @param handler     the authentication handler to record; must not be {@code null}

@@ -20,7 +20,7 @@ import java.util.List;
  * keyed object {@code methods.{method}}, parsed via {@link KeyedBy @KeyedBy("method")} which injects
  * each method key into {@link KafkaProducerMethodConfig#method()}.
  *
- * <p>The {@code serdeProperties} bag is an intentionally open property bag (config rule R9) whose
+ * <p>The {@code serdeProperties} bag is an intentionally open property bag whose
  * values are kept intact for runtime use; its secret keys are masked only when this record is
  * rendered to a string (see {@link #toString()}).
  *

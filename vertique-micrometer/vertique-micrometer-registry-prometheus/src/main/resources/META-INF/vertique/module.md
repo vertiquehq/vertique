@@ -42,7 +42,7 @@ makes rollback and test isolation correct without a second construction path.
 **Scrape endpoint on the management port only.** `PrometheusScrapeEndpoint` implements
 `ManagementEndpointContributor` and mounts the scrape route on the management router at
 `#contribute(Router)` time, never on the application HTTP router. The management port is protected
-by network policy (NFR-TEL-005) — metric names, label values, and (when enabled) exemplar trace
+by network policy — metric names, label values, and (when enabled) exemplar trace
 and span IDs are visible to anyone with access to that port. Never expose the management port on a
 public network interface.
 
@@ -203,7 +203,7 @@ Example config:
 }
 ```
 
-### Exposure Guidance (NFR-TEL-005)
+### Exposure Guidance
 
 The `/metrics` endpoint exists **only on the management port**. The management port is protected by
 network policy, not authentication. Metric names, label values, and — when exemplars are enabled —

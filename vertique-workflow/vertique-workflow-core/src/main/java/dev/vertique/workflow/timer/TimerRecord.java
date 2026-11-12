@@ -25,7 +25,7 @@ import java.util.UUID;
  * enforces this at construction time.
  *
  * <p>The {@link #metadata()} field carries durable propagation context in wire-format key/value
- * pairs (FR-CTX-178). It is captured when the timer is scheduled, and the executor binds it when
+ * pairs. It is captured when the timer is scheduled, and the executor binds it when
  * the timer's command runs, so the durable context survives the wait.
  *
  * @param timerId              stable UUID identifying this timer; primary key in

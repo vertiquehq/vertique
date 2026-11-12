@@ -9,7 +9,7 @@ import io.vertx.core.Future;
 
 /**
  * Service contract used to exercise the {@code @RateLimited} annotation through a generated typed
- * client and the AOP proxy (T013, TP-002 — transport-neutrality proof).
+ * client and the AOP proxy (transport-neutrality proof).
  */
 @ServiceContract(namespace = "rate-limit", value = "probe")
 public interface RateLimitProbeService {

@@ -36,7 +36,7 @@ import java.util.Set;
 /**
  * INTERNAL framework seam: the client factory calls this class; it has no public members, is not an application contract and sits outside the maturity promise.
  *
- * <p>Validates a workflow contract interface against the rules in §8.3 of the implementation plan.
+ * <p>Validates a workflow contract interface against the contract rules listed below.
  *
  * <p>This class is called by {@link WorkflowClientFactory} before creating a proxy. All validation is
  * performed eagerly at proxy-creation time so contract violations are surfaced at application startup

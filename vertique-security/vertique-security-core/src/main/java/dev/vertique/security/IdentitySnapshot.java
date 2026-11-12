@@ -8,12 +8,11 @@ import java.util.Objects;
 
 /**
  * Immutable, signed, credential-free durable envelope carrying an {@link IdentitySnapshotContent}
- * across a durability boundary — e.g. a scheduled job, an outbox relay, or a workflow resume
- * (PRD-ID-002 §14.6 Phase-2 Contract Appendix, amendment A9).
+ * across a durability boundary — e.g. a scheduled job, an outbox relay, or a workflow resume.
  *
  * <p>Schema v2 splits the captured identity dimension ({@link #content()}) from the durable envelope
  * that signs and binds it: the {@link #carrier()} pins the snapshot to the specific durable row it was
- * written for (the F5 replay defense), {@link #issuedAt()}/{@link #expiresAt()} bound its temporal
+ * written for (the replay defense), {@link #issuedAt()}/{@link #expiresAt()} bound its temporal
  * validity, and {@link #integrity()} is the mandatory MAC over the whole envelope. There is
  * deliberately no evidence/token component anywhere in the tree; the snapshot is never valid without an
  * integrity envelope.
@@ -36,7 +35,7 @@ import java.util.Objects;
  * @param schemaVersion the snapshot schema version; must be greater than zero ({@code 2} for this
  *                      schema)
  * @param content       the credential-free captured identity dimension
- * @param carrier       the durable row-carrier this snapshot is signed for (F5 replay defense)
+ * @param carrier       the durable row-carrier this snapshot is signed for (replay defense)
  * @param issuedAt      when the durable envelope was minted (signed) by the codec
  * @param expiresAt     the signed expiry bound of the durable envelope
  * @param integrity     the mandatory signed envelope proving this snapshot's authenticity and

@@ -42,8 +42,8 @@ public final class DurableMetadata {
     public static final String CONTEXT_KEY = "context";
 
     /**
-     * Maximum number of namespaces permitted in a decoded document. Defense-in-depth bound per
-     * ADR-0147 — far above any legitimate durable-context namespace count (the framework registers
+     * Maximum number of namespaces permitted in a decoded document. Defense-in-depth bound,
+     * far above any legitimate durable-context namespace count (the framework registers
      * on the order of single digits of namespace types), so no legitimate caller can trip it; the
      * bound exists solely to cap the cost of decoding a malformed or adversarial carrier. Not
      * exposed as configuration.
@@ -52,7 +52,7 @@ public final class DurableMetadata {
 
     /**
      * Maximum encoded size, in bytes, permitted for a decoded namespaces document. Defense-in-depth
-     * bound per ADR-0147 — 256 KiB is far above any legitimate durable-context payload (correlation
+     * bound — 256 KiB is far above any legitimate durable-context payload (correlation
      * IDs, locale tags, tenant identifiers), so no legitimate caller can trip it; the bound exists
      * solely to cap the cost of decoding a malformed or adversarial carrier. Not exposed as
      * configuration.
@@ -60,8 +60,8 @@ public final class DurableMetadata {
     static final int MAX_ENCODED_SIZE_BYTES = 262_144;
 
     /**
-     * Maximum nesting depth permitted within a single namespace body. Defense-in-depth bound per
-     * ADR-0147 — 32 levels is far above any legitimate durable-context body shape, so no legitimate
+     * Maximum nesting depth permitted within a single namespace body. Defense-in-depth bound —
+     * 32 levels is far above any legitimate durable-context body shape, so no legitimate
      * caller can trip it; the bound exists solely to cap the cost of decoding a malformed or
      * adversarial carrier. Enforced via an iterative stack walk (never recursive) so the bound
      * check itself cannot stack-overflow on an adversarial input. Not exposed as configuration.
@@ -118,7 +118,7 @@ public final class DurableMetadata {
      * ({@link #MAX_NAMESPACES}), nesting depth within each namespace body
      * ({@link #MAX_NESTING_DEPTH}, checked via an iterative stack walk), and total encoded size
      * ({@link #MAX_ENCODED_SIZE_BYTES}, computed with a single {@link JsonObject#toBuffer()} pass).
-     * See ADR-0147 — these bounds are far above any legitimate use and exist only to cap the cost of
+     * These bounds are far above any legitimate use and exist only to cap the cost of
      * decoding a malformed or adversarial carrier.
      *
      * @param namespaces the {@code {namespace: body}} object; {@code null} yields {@link #empty()}

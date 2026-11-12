@@ -22,8 +22,8 @@ import java.util.UUID;
  * @param cause human-readable reason for the cancellation (e.g., {@code "WORKFLOW_CANCELLED"})
  * @param cancelledBy the actor who triggered the cancellation
  * @param commandCorrelationId the correlation id bound to the ambient execution context at the
- *     point this entry was appended, or {@code null} when no correlation context was bound (PRD
- *     FR-WF-CTX-050/051). Additive field — history rows written before this field existed
+ *     point this entry was appended, or {@code null} when no correlation context was bound.
+ *     Additive field — history rows written before this field existed
  *     deserialize with {@code null}.
  */
 public record TaskCancelledHistoryPayload(

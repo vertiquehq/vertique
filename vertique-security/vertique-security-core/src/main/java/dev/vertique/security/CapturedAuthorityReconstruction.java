@@ -8,8 +8,7 @@ import dev.vertique.core.context.DurableCarrierDescriptor;
 /**
  * Privileged service that reconstructs a {@link SecurityContext} from a credential-free
  * {@link IdentitySnapshot}, presenting the snapshot's <strong>captured</strong> authorization
- * claims as the reconstructed context's <strong>current</strong> authority — Mode 3 of PRD
- * identity-002 §14.3 Phase-2 Appendix (FR-ID-CA-010).
+ * claims as the reconstructed context's <strong>current</strong> authority (Mode 3).
  *
  * <p>This is a <strong>distinct privileged type</strong>, deliberately not a third method on
  * {@link IdentityReconstruction}: {@link IdentityReconstruction}'s default reconstruction (Mode
@@ -21,10 +20,10 @@ import dev.vertique.core.context.DurableCarrierDescriptor;
  * An application enables Mode 3 by explicitly installing that module, which is visible at code
  * review.
  *
- * <p>Both entry points share {@link IdentityReconstruction}'s trust boundary (FR-ID-CA-008): they
+ * <p>Both entry points share {@link IdentityReconstruction}'s trust boundary: they
  * re-verify the snapshot's integrity envelope, confirm the snapshot's signed {@link
  * IdentitySnapshot#carrier()} matches the {@code expectedCarrier} the trusted receive-side
- * infrastructure supplies (the F5 replay defense), and additionally enforce a <strong>per-target-kind
+ * infrastructure supplies (the replay defense), and additionally enforce a <strong>per-target-kind
  * allowlist</strong>: the snapshot's carrier {@link SnapshotCarrierBinding#target()}'s {@link
  * dev.vertique.core.context.DurableTarget#kind() kind} must be one of the implementation's
  * configured allowed kinds, or reconstruction fails closed. Every allowed kind is required (by
@@ -37,7 +36,7 @@ import dev.vertique.core.context.DurableCarrierDescriptor;
  * whose carrier target kind is not allowlisted throws {@link IdentityReconstructionException}
  * before any {@link SecurityContext} is built — there is never a partial or unbound result.
  *
- * <p><strong>Event-silent.</strong> Per FR-ID-CA-007, reconstruction itself never emits any
+ * <p><strong>Event-silent.</strong> Reconstruction itself never emits any
  * {@link dev.vertique.security.events.SecurityEventObserver} event — a plain interface method
  * cannot invoke an injected emitter by construction, and this contract preserves that discipline
  * deliberately. The consuming infrastructure that invokes {@code CapturedAuthorityReconstruction}

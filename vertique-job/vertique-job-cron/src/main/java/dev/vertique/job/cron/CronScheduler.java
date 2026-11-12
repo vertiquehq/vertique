@@ -162,7 +162,7 @@ public class CronScheduler {
      *                              event bus addresses, once per admitted fire
      * @param eventBusClient        the event bus client for dispatch protocol sends
      * @param envelopeBuilder       envelope builder used to construct outgoing job-dispatch
-     *                              envelopes through the context substrate (FR-CTX-015); tests
+     * envelopes through the context substrate; tests
      *                              that do not exercise context propagation pass
      *                              {@link dev.vertique.context.DispatchEnvelopeBuilder#forTesting()}
      */
@@ -188,7 +188,7 @@ public class CronScheduler {
 
     /**
      * Full constructor including the {@link dev.vertique.context.DispatchEnvelopeBuilder}
-     * used to construct outgoing job-dispatch envelopes through the context substrate (FR-CTX-015).
+     * used to construct outgoing job-dispatch envelopes through the context substrate.
      *
      * @param vertx                   the Vert.x instance for timer management and event bus dispatch
      * @param interceptors            the set of job interceptors to invoke around each dispatch
@@ -204,7 +204,7 @@ public class CronScheduler {
      * @param progressFlushIntervalMs interval in milliseconds for flushing progress snapshots;
      *                                {@code 0} disables
      * @param envelopeBuilder         envelope builder used to construct outgoing job-dispatch
-     *                                envelopes through the context substrate (FR-CTX-015)
+     * envelopes through the context substrate
      */
     public CronScheduler(
             Vertx vertx,
@@ -252,7 +252,7 @@ public class CronScheduler {
      * @param progressFlushIntervalMs interval in milliseconds for flushing progress snapshots;
      *                                {@code 0} disables
      * @param envelopeBuilder         envelope builder used to construct outgoing job-dispatch
-     *                                envelopes through the context substrate (FR-CTX-015)
+     * envelopes through the context substrate
      * @param tickPlanner             planner computing each tick's nominal fire instant and real
      *                                timer delay; must not be {@code null}
      */
@@ -270,7 +270,7 @@ public class CronScheduler {
         if (maxConcurrentJobs <= 0) {
             throw new IllegalArgumentException("maxConcurrentJobs must be positive, got: " + maxConcurrentJobs);
         }
-        java.util.Objects.requireNonNull(envelopeBuilder, "envelopeBuilder must not be null (FR-CTX-015)");
+        java.util.Objects.requireNonNull(envelopeBuilder, "envelopeBuilder must not be null");
         this.tickPlanner = java.util.Objects.requireNonNull(tickPlanner, "tickPlanner must not be null");
         this.vertx = vertx;
         this.maxConcurrentJobs = maxConcurrentJobs;
@@ -755,8 +755,8 @@ public class CronScheduler {
      * {@link CronTargetReference.ServiceTarget}, and
      * {@link CronTargetReference.EventBusTarget#address()} for the other — rather than from
      * {@link CronJobDefinition#handlerAddress()}, which is only a copy the registrar derives from
-     * the target and leaves {@code null} for service targets. Trusting the derived copy is what
-     * produced the defect ADR-0201 records; the target is the authority. Both variants are then
+     * the target and leaves {@code null} for service targets. The derived copy is not trusted;
+     * the target is the authority. Both variants are then
      * subject to the same non-blank check, so no caller can produce an execution record with a
      * {@code null} or blank {@link JobExecution#handler()} — including a caller that builds a
      * definition directly rather than going through {@link CronJobRegistrar}.
@@ -784,7 +784,7 @@ public class CronScheduler {
      * because the built-in {@code DefaultServiceTargetResolver} snapshots its indexes with
      * {@code Map.copyOf} at construction. "Per fire" therefore means <em>fixed at fire
      * admission</em>. A mutable or reloadable {@link ServiceTargetResolver} implementation would
-     * invalidate that assumption; see ADR-0201.
+     * invalidate that assumption.
      *
      * @param job the cron job whose target is being resolved
      * @return the non-blank effective event bus address, or {@code null} when the target cannot be

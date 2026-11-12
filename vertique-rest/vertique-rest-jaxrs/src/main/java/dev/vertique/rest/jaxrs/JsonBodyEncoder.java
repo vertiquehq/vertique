@@ -22,9 +22,9 @@ import jakarta.ws.rs.core.Response;
  * present: if the request path stashed an {@link ObjectMapper} on the routing context under
  * {@link BoundRequest#KEY_RESOLVED_BODY_MAPPER} (a non-{@code vertx} {@code @JsonProfile} resolved for
  * the method, or the configured default), the success entity is serialized via that mapper so the
- * response is symmetric with the request binding ({@code FR-JSON-055/056}). When the stash is absent
+ * response is symmetric with the request binding. When the stash is absent
  * (the {@code vertx} default — no profile and no configured default), serialization stays byte-for-byte
- * on {@link Json#encode} ({@code FR-JSON-057}). Either way the Content-Type defaults to
+ * on {@link Json#encode}. Either way the Content-Type defaults to
  * {@code application/json}.
  *
  * <p>This encoder accepts entities when the effective Content-Type is either unset ({@code null}) or

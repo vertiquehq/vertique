@@ -19,7 +19,7 @@ import org.slf4j.LoggerFactory;
  * <p>Invoked by the REST ingress middleware on the Vert.x event loop; must be cheap and
  * non-blocking.
  *
- * <h2>Validity vs sampling (SP-10)</h2>
+ * <h2>Validity vs sampling</h2>
  * <p>This resolver returns a {@link TraceReference} for any <em>valid</em> span context,
  * regardless of whether the trace is sampled for export. An unsampled trace has valid trace and
  * span ids — those ids can be written into log MDC so that log entries remain correlatable even
@@ -58,7 +58,7 @@ final class OpenTelemetryTraceReferenceResolver implements TraceReferenceResolve
      * Returns the current OpenTelemetry span's trace and span ids, if a valid span is active.
      *
      * <p>A {@link TraceReference} is returned only when {@link SpanContext#isValid()} is
-     * {@code true}. Sampling is deliberately NOT checked — see class javadoc (SP-10).
+     * {@code true}. Sampling is deliberately NOT checked — see class javadoc.
      *
      * <p>Any exception from the OpenTelemetry API is caught, logged at WARN with the exception
      * class name only (no throwable attached — cause-free logging posture), and

@@ -21,8 +21,8 @@ import java.util.Objects;
  * <p>The {@code reference} component flows into the minted SYSTEM security context's {@code
  * system.reason} attribute and onward into the audit trail. Because a deferred boundary identifier
  * can be influenced by attacker-controlled input (a job type, an event type), {@code reference} is
- * bounded to {@value #MAX_REFERENCE_LENGTH} characters and must contain no control characters, per
- * ADR-0165's security invariant. Two construction paths enforce this:
+ * bounded to {@value #MAX_REFERENCE_LENGTH} characters and must contain no control characters.
+ * Two construction paths enforce this:
  *
  * <ul>
  *   <li>The <strong>compact constructor</strong> (direct {@code new}) is <em>strict</em>: it is the

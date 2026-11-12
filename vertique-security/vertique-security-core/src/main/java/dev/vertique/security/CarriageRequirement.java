@@ -5,7 +5,7 @@ package dev.vertique.security;
 
 /**
  * Operator-declared expectation for whether a durable dispatch target must carry a verified
- * identity snapshot (PRD-ID-002 §14.6 A9 "expected-but-absent carriage detection").
+ * identity snapshot ("expected-but-absent carriage detection").
  *
  * <p>Config maps each durable-target kind (the {@code dev.vertique.core.context.DeferredExecutionOrigin#kind()}
  * / durable-target kind string, e.g. {@code "delayed-job"}, {@code "cron"}, {@code "outbox-relay"})
@@ -21,9 +21,9 @@ public enum CarriageRequirement {
      * that arrives with no snapshot is an {@link SnapshotDegradationReason#EXPECTED_ABSENT}
      * degradation, not a silently-tolerated gap.
      *
-     * <p>Forward hook: once Mode 2/3 (see PRD-ID-002 §14.6 S3/S4) are installable, any target-kind
+     * <p>Forward hook: once Mode 2/3 are installable, any target-kind
      * enrolled in Mode 2/3 will be forced to {@code REQUIRED} regardless of its configured value —
-     * that coupling lands in Phase-2 S3/S4 and is not implemented by this enum alone.
+     * that coupling is not implemented by this enum alone.
      */
     REQUIRED,
 
@@ -36,7 +36,7 @@ public enum CarriageRequirement {
      * <em>present</em> snapshot on a FORBIDDEN target — verified or not — is refused fail-closed by
      * the receive-side reconstruction initializer rather than reconstructed: the target is declared
      * to never carry identity, so verification status is irrelevant once a snapshot arrives here at
-     * all (F4 security review, PRD-ID-002 §14.6 A9).
+     * all.
      */
     FORBIDDEN
 }

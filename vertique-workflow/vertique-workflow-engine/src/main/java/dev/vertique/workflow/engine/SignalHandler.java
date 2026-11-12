@@ -63,8 +63,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Package-private collaborator owning the workflow-signal delivery paths.
  *
- * <p>This class is extracted from {@link WorkflowEngine} as part of the Phase-1 decomposition
- * (PRD-WF-006, Slice C6). It absorbs:
+ * <p>This class is extracted from {@link WorkflowEngine}. It owns:
  * <ul>
  *   <li>{@link #applyBranchSignal} — branch-scoped signal resumption: clears the branch wait, runs
  *       the {@link WaitSignalNode} state updater, drives the branch forward via
@@ -199,8 +198,8 @@ final class SignalHandler {
      * @param payload the incoming signal payload; coerced to the declared type
      * @param tx the active transaction
      * @param effectiveBaseOverride when non-null, the already-computed effective durable context
-     *     document ({@code explicitCarrier.merge(instance.metadata(), MergePolicy.CALLER_WINS)},
-     *     PRD-WF-007 Contract Appendix C3) to bind for the branch drive instead of the branch
+     *     document ({@code explicitCarrier.merge(instance.metadata(), MergePolicy.CALLER_WINS)})
+     *     to bind for the branch drive instead of the branch
      *     token's own {@code metadata()}; {@code null} preserves today's behavior
      * @return a {@link Future} that completes when the branch resumption (and any join) is applied
      */

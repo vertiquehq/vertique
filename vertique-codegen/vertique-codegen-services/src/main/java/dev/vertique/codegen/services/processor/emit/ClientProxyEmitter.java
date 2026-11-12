@@ -29,7 +29,7 @@ import javax.lang.model.type.TypeMirror;
 
 /**
  * Emits one {@code {Contract}_ServiceClientProxy} static client proxy per source-root
- * {@code @ServiceContract} interface (CG-015 Track D).
+ * {@code @ServiceContract} interface.
  *
  * <p>The generated class is the compile-time counterpart of the JDK dynamic proxy built by
  * {@code ServiceClientFactory}: it implements the contract interface directly, so dispatch involves
@@ -38,15 +38,15 @@ import javax.lang.model.type.TypeMirror;
  * {@link Identifiers#generatedClassName(TypeElement, String)}, so a nested contract
  * {@code Outer.Inner} yields {@code Outer_Inner_ServiceClientProxy}.
  *
- * <p><strong>Metadata ownership (CG-015 D1).</strong> Only two things are baked at annotation-
+ * <p><strong>Metadata ownership.</strong> Only two things are baked at annotation-
  * processing time: the method universe (one override per {@link OperationModel}) and the operation-id
  * string constants used to look metadata up. Everything that drives dispatch —
  * {@code oneWay}, the payload parameter index, and the {@code SecurityContext} parameter index — is
  * derived at <em>construction</em> time from the runtime {@code ServiceMethodMeta} carried by the
  * injected {@code ContractEntry}. Baking those from the source signature would silently diverge from
- * a registry built by a different mechanism (issue #88).
+ * a registry built by a different mechanism.
  *
- * <p><strong>Fail-fast (CG-015 §4.2).</strong> The generated constructor resolves every baked
+ * <p><strong>Fail-fast.</strong> The generated constructor resolves every baked
  * operation id against {@code entry.operations()} and throws {@link IllegalStateException} on the
  * first miss. The message always starts with the pinned literal
  * {@code "Service client contract mismatch: "} — the same prefix {@code ServiceClientFactory} uses —
@@ -76,7 +76,7 @@ import javax.lang.model.type.TypeMirror;
  * }</pre>
  *
  * <p>{@code equals}/{@code hashCode} are deliberately <em>not</em> overridden: the dynamic proxy
- * uses identity semantics for both, and the static proxy must match (FR-CG015-005).
+ * uses identity semantics for both, and the static proxy must match.
  */
 public final class ClientProxyEmitter {
 
@@ -110,7 +110,7 @@ public final class ClientProxyEmitter {
     private static final String SUFFIX = "_ServiceClientProxy";
 
     /**
-     * Pinned prefix of every contract↔registry mismatch message (CG-015 §4.2). Deliberately
+     * Pinned prefix of every contract↔registry mismatch message. Deliberately
      * duplicated with {@code ServiceClientFactory}'s package-private constant — no shared symbol can
      * cross into user packages without new public API — and kept in sync by tests on both sides.
      */
@@ -379,8 +379,8 @@ public final class ClientProxyEmitter {
      *
      * <p>The body is uniform across every operation: collect the declared arguments into an array,
      * pick the payload by the runtime-derived index, add the caller's explicit
-     * {@code SecurityContext} argument as an override only when no ambient one is bound
-     * (FR-CTX-063), build the envelope, then branch on the <em>runtime</em> {@code oneWay} flag.
+     * {@code SecurityContext} argument as an override only when no ambient one is bound,
+     * build the envelope, then branch on the <em>runtime</em> {@code oneWay} flag.
      * The single unchecked cast at the end is what the declared {@code Future<T>} return type needs;
      * it is why the method carries {@code @SuppressWarnings("unchecked")}.
      *

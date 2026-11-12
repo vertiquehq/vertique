@@ -296,7 +296,7 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
      * <p>Executes on the provided {@link SqlClient} so the insert participates in the caller's
      * transaction. The {@code metadata} document is serialized via {@link OutboxMetadata#toJson()}
      * and stored in the {@code metadata} JSONB column. {@code carrierId} is persisted into the
-     * first-class, {@code NOT NULL UNIQUE} {@code carrier_id} column (PRD identity-002 F3b) — never
+     * first-class, {@code NOT NULL UNIQUE} {@code carrier_id} column — never
      * into {@code metadata} — so it cannot be forged via application-writable input. Returns the
      * surrogate primary key assigned by the database via {@code RETURNING id}.
      */

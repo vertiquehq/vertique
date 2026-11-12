@@ -53,7 +53,7 @@ import java.util.TreeSet;
  *       {@link PlaceholderResolutionException} is thrown with a sorted, de-duplicated list.</li>
  * </ol>
  *
- * <h2>NFR-CONF-002</h2>
+ * <h2>Value redaction</h2>
  * <p>No resolved config <em>value</em> appears in any log message, exception message,
  * {@code toString()}, or other observable output produced by this class. Only keys, chain
  * renderings (using {@code ->} notation), and — for a malformed reference — a location with a
@@ -166,7 +166,7 @@ public final class PlaceholderResolver {
      *
      * <p>All method calls are single-threaded; no synchronization is required.
      *
-     * <h2>NFR-CONF-002</h2>
+     * <h2>Value redaction</h2>
      * <p>Resolved values are never stored in, or retrieved from, the failure set or the
      * resolution stack. The stack contains only key names; failures contain only key names, chain
      * renderings, and — for a malformed reference — the location of the containing value plus the

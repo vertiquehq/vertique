@@ -62,11 +62,11 @@ import jakarta.inject.Singleton;
  *   <li>{@link ResourceModule} — non-resource JAX-RS extension bindings</li>
  *   <li>{@link RateLimitAopModule} — {@code @RateLimited} aspect binding</li>
  *   <li>{@link RestRateLimitModule} — the rate-limit runtime plus the {@code 429}/{@code 503}
- *       exception mappers for {@code HelloResource#greetLimited} (T013)</li>
+ * exception mappers for {@code HelloResource#greetLimited}</li>
  *   <li>{@code GeneratedAopModule} — auto-generated {@code $AopProxy} substitution for {@link
  *       dev.vertique.examples.hello.resource.HelloResource} (emitted by {@code
  *       vertique-codegen-aop} once any method carries an {@code @Aspect}-family annotation such as
- *       {@code @RateLimited}; plan.md Pre-flight finding 1 — reached only through {@code
+ *       {@code @RateLimited}; reached only through {@code
  *       Provider.get()})</li>
  * </ul>
  */

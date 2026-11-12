@@ -77,7 +77,7 @@ public enum WorkflowEntryType {
     /** A reminder timer for a human task fired; no workflow state change (cycle 4+). */
     TASK_REMINDER_FIRED,
 
-    // --- PRD-WF-002 fan-out / fan-in (cycle 6+) -----------------------------------------------
+    // --- fan-out / fan-in -----------------------------------------------------------------------
 
     /** A {@link dev.vertique.workflow.plan.ForkNode} was dispatched: branch tokens and join state created. */
     FORK_DISPATCHED,
@@ -130,7 +130,7 @@ public enum WorkflowEntryType {
     /** The join failed; the workflow advanced via the join's failureStepId. */
     FAN_IN_FAILED,
 
-    // --- PRD-WF-002 branch-owned durable waits (slice 3 / slice 4) -------------------------
+    // --- branch-owned durable waits ---------------------------------------------------------
 
     /** A human task was created on behalf of a fork branch. */
     BRANCH_TASK_CREATED,
@@ -181,7 +181,7 @@ public enum WorkflowEntryType {
      */
     BRANCH_LATE_CALLBACK_IGNORED,
 
-    // --- PRD-WF-003 migration (cycle 7+) ---
+    // --- migration ---
 
     /**
      * An instance was migrated from one definition version to another by an application-registered

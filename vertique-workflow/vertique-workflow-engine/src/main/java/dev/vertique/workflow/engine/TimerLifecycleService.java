@@ -55,8 +55,8 @@ import java.util.function.Supplier;
 /**
  * Package-private collaborator owning the timer-fire paths and timer helpers.
  *
- * <p>This class is extracted from {@link WorkflowEngine} as part of the Phase-1 decomposition
- * (PRD-WF-006, Slice C8). The workflow executor runs a recorded {@code TIMER} command through
+ * <p>This class is extracted from {@link WorkflowEngine}. The workflow executor runs a recorded
+ * {@code TIMER} command through
  * {@link #runTimer}; the service also owns the supporting helpers:
  * <ul>
  *   <li>{@link #runTimer} — the executor entry: validates the pin, locks the timer row and fires it.</li>
@@ -78,8 +78,7 @@ import java.util.function.Supplier;
  * when it handles a {@link TimerNode}, a {@link WaitSignalNode} with a timeout, or a
  * {@link dev.vertique.workflow.plan.HumanTaskNode} with a due date; it reaches it through a lazy
  * {@code Provider<TimerLifecycleService>}. The lazy {@code Provider} on the driver side is what
- * breaks the Dagger constructor cycle (replacing the transient C5 {@code Provider<WorkflowEngine>}
- * back-edge the driver previously used for {@code resolveFireAt}).
+ * breaks the Dagger constructor cycle.
  *
  * <p><b>Timer→task edge.</b> {@link #runTimer} runs a {@code TASK_DUE} or {@code TASK_REMINDER}
  * timer through {@link TaskLifecycleService}, so this service injects
@@ -109,7 +108,7 @@ final class TimerLifecycleService {
     private final SignalWaits signalWaits;
 
     /**
-     * Binder-row seam for the instance-owned (non-branch) timer drives (Contract Appendix C2): the
+     * Binder-row seam for the instance-owned (non-branch) timer drives: the
      * single-path branch of {@link #fired}. The branch-owned fire path
      * ({@link #doBranchTimerFired}) MUST NOT use this binder — the bind-once routing rule reserves
      * branch-owned drives for the {@link BranchTransitionEngine} carrier seam. Never {@code null} —
@@ -826,7 +825,7 @@ final class TimerLifecycleService {
     /**
      * Appends a {@code TIMER_CANCELLED} history entry for the given timer and cause.
      *
-     * <p>Canonical owner of this helper (PRD-WF-006 §4, Slice C8). {@link SignalHandler} delegates to
+     * <p>Canonical owner of this helper. {@link SignalHandler} delegates to
      * this method for its signal-arrived timeout-timer cancellation. {@link TaskLifecycleService}
      * keeps its own private copy for its task-completion due-date cancel path to avoid a
      * {@code timer → task → timer} Dagger cycle (this service injects {@link TaskLifecycleService}
@@ -882,8 +881,8 @@ final class TimerLifecycleService {
     }
 
     /**
-     * Resolves the runtime workflow for {@code inst} and enforces the plan-hash drift guard
-     * (PRD-WF-002 round-1 fix H2 + round-2 single-path adjacent fix). Synchronous helper used by the
+     * Resolves the runtime workflow for {@code inst} and enforces the plan-hash drift guard.
+     * Synchronous helper used by the
      * branch timer-fire paths that need both lookups before any row mutation; the caller wraps the
      * thrown exception in a failed Future. Mirrors the inline pattern used in the single-path
      * callbacks (e.g. {@link #handleTimerFiredStandalone}).

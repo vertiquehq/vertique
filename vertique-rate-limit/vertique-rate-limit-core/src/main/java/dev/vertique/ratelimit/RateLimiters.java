@@ -50,7 +50,7 @@ public final class RateLimiters {
     private static final Pattern UNRESOLVED_PLACEHOLDER_PATTERN = Pattern.compile("^\\$\\{.*}$");
 
     /**
-     * {@code rateLimit.enabled}'s config default (contracts/rate-limit-runtime.md, "Configuration").
+     * {@code rateLimit.enabled}'s config default.
      * The single source of truth for this default; {@code RateLimitCoreModule} resolves the
      * configured value against this same constant rather than redeclaring it.
      */
@@ -70,8 +70,7 @@ public final class RateLimiters {
      * (default-or-custom) {@link RateLimitSubjectResolver} that {@link #adapterSupport()}'s handle
      * uses for identity framing, and the resolved {@code rateLimit.enabled} root kill switch — when
      * {@code false}, every {@code acquire(...)} across every handle this runtime resolves yields a
-     * {@code DISABLED} decision without engaging any backend (contracts/rate-limit-runtime.md,
-     * "Configuration" — {@code rateLimit.enabled}).
+     * {@code DISABLED} decision without engaging any backend.
      *
      * @param policies every declared policy, already resolved to one flat set (config replaces a
      *     same-name programmatic policy wholesale — {@code
@@ -234,8 +233,6 @@ public final class RateLimiters {
      * contract.
      */
     private static final RateLimitBackend UNREACHABLE_DISABLED_BACKEND = request -> {
-        throw new IllegalStateException(
-                "BUG: a disabled policy's handle must never invoke its backend (contracts/rate-limit-runtime.md, "
-                        + "\"Backend seam\")");
+        throw new IllegalStateException("BUG: a disabled policy's handle must never invoke its backend");
     };
 }

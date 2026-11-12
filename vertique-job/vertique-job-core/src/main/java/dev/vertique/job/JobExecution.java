@@ -43,7 +43,7 @@ import java.util.UUID;
  * @param progress      latest progress snapshot, or {@code ProgressSnapshot#EMPTY}
  * @param parameters    static parameters provided at scheduling time (immutable copy)
  * @param attributes    runtime attributes set by interceptors or handlers (immutable copy)
- * @param metadata      durable context-propagation metadata (FR-CTX-177) persisted as
+ * @param metadata durable context-propagation metadata persisted as
  *                      {@code {"context":{...}}} JSONB. Captured at enqueue via
  *                      {@code DurableContextPropagator.mergeCaptured(..., DELAYED_JOB)} and
  *                      decoded on poll via
@@ -157,7 +157,7 @@ public record JobExecution(
      * Compact constructor that defensively copies the maps to ensure immutability.
      * The {@code payload} field is left as-is because it is an opaque reference.
      *
-     * <p>{@code metadata} carries durable context-propagation metadata (FR-CTX-177) as a
+     * <p>{@code metadata} carries durable context-propagation metadata as a
      * {@link DurableMetadata} namespaced document. Persisted into
      * {@code job_executions.metadata JSONB} via {@link DurableMetadata#toCarrier()} so the
      * original ambient durable context survives the delayed-job persistence hop. On poll,

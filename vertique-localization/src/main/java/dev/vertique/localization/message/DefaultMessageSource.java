@@ -18,25 +18,24 @@ import java.util.ResourceBundle;
  *
  * <p>Instances are produced exclusively by {@link DefaultMessageSourceFactory#create(MessageSourceOptions)}.
  * Once constructed, this class is safe to share across threads because all fields are final
- * and {@link MessageFormat} instances are created per-call rather than shared (NFR-LOC-001,
- * NFR-LOC-002).
+ * and {@link MessageFormat} instances are created per-call rather than shared.
  *
- * <h2>Candidate-locale ordering (FR-LOC-064)</h2>
+ * <h2>Candidate-locale ordering</h2>
  * <ol>
  *   <li>The requested locale.</li>
  *   <li>The configured {@linkplain LocalizationConfig#defaultLocale() default locale}, when
  *       different from the requested locale.</li>
  *   <li>{@link Locale#getDefault()}, only when
  *       {@linkplain LocalizationConfig#fallbackToSystemLocale()} is {@code true} and it differs
- *       from both prior candidates. Evaluated per-call, never cached at construction (PRD §12).</li>
+ *       from both prior candidates. Evaluated per-call, never cached at construction.</li>
  * </ol>
  *
- * <h2>Basename ordering (FR-LOC-065)</h2>
+ * <h2>Basename ordering</h2>
  * <p>For each candidate locale: primary basename first, then fallback basenames in declaration
- * order. The first bundle that contains the code wins (FR-LOC-066). A missing bundle does not
- * terminate the search; later candidates are always tried (FR-LOC-069).
+ * order. The first bundle that contains the code wins. A missing bundle does not
+ * terminate the search; later candidates are always tried.
  *
- * <h2>Missing-message resolution (FR-LOC-070..072)</h2>
+ * <h2>Missing-message resolution</h2>
  * <ul>
  *   <li>{@code defaultMessage != null} → format that string and return it.</li>
  *   <li>{@link LocalizationConfig#useCodeAsDefaultMessage()} is {@code true} (throwing overloads
@@ -130,7 +129,7 @@ class DefaultMessageSource implements MessageSource {
      * {@inheritDoc}
      *
      * <p>Returns {@code defaultMessage} formatted with the supplied args when the code cannot be
-     * resolved (FR-LOC-070, FR-LOC-084).
+     * resolved.
      */
     @Override
     public String getMessage(String code, String defaultMessage, Locale locale, Object... args) {
@@ -143,7 +142,7 @@ class DefaultMessageSource implements MessageSource {
             return format(pattern, locale, args);
         }
 
-        // No pattern found — defaultMessage wins over useCodeAsDefaultMessage (FR-LOC-070)
+        // No pattern found — defaultMessage wins over useCodeAsDefaultMessage
         if (defaultMessage != null) {
             return format(defaultMessage, locale, args);
         }
@@ -158,7 +157,7 @@ class DefaultMessageSource implements MessageSource {
      *
      * <p>{@code findMessage} never applies {@code useCodeAsDefaultMessage}; it returns
      * {@link Optional#empty()} whenever no bundle entry exists for the code,
-     * regardless of the config flag (FR-LOC-086a).
+     * regardless of the config flag.
      */
     @Override
     public Optional<String> findMessage(String code, Locale locale, Object... args) {
@@ -178,8 +177,7 @@ class DefaultMessageSource implements MessageSource {
      *
      * <p>Iterates {@link MessageResolvable#codes()} in order via {@link #findMessage} (which does
      * not apply {@code useCodeAsDefaultMessage}). Falls back to
-     * {@link MessageResolvable#defaultMessage()} if present, or throws for the first code
-     * (FR-LOC-087..089).
+     * {@link MessageResolvable#defaultMessage()} if present, or throws for the first code.
      */
     @Override
     public String getMessage(MessageResolvable resolvable, Locale locale) {
@@ -188,7 +186,7 @@ class DefaultMessageSource implements MessageSource {
 
         Object[] args = resolvable.args().toArray();
 
-        // Try each code in order (FR-LOC-087)
+        // Try each code in order
         for (String code : resolvable.codes()) {
             Optional<String> found = findMessage(code, locale, args);
             if (found.isPresent()) {
@@ -196,22 +194,22 @@ class DefaultMessageSource implements MessageSource {
             }
         }
 
-        // No code matched — use defaultMessage if available (FR-LOC-088)
+        // No code matched — use defaultMessage if available
         if (resolvable.defaultMessage() != null) {
             return format(resolvable.defaultMessage(), locale, args);
         }
 
-        // No match and no default — throw for the first code (FR-LOC-089)
+        // No match and no default — throw for the first code
         throw noSuchMessage(resolvable.codes().get(0));
     }
 
     // --- Candidate-locale walk ---
 
     /**
-     * Builds the ordered list of candidate locales for a single lookup (FR-LOC-064).
+     * Builds the ordered list of candidate locales for a single lookup.
      *
      * <p>{@link Locale#getDefault()} is read per-call to capture dynamic JVM changes without
-     * requiring a source rebuild (PRD §12 impl note).
+     * requiring a source rebuild.
      *
      * @param requestedLocale the locale supplied by the caller
      * @return an ordered, de-duplicated list of locales to attempt; never empty
@@ -223,7 +221,7 @@ class DefaultMessageSource implements MessageSource {
             return defaultDiffers ? List.of(requestedLocale, defaultLocale) : List.of(requestedLocale);
         }
 
-        Locale systemLocale = Locale.getDefault(); // read per-call (PRD §12)
+        Locale systemLocale = Locale.getDefault(); // read per-call
         boolean systemDiffers = !systemLocale.equals(requestedLocale) && !systemLocale.equals(defaultLocale);
 
         if (!defaultDiffers && !systemDiffers) {
@@ -242,10 +240,10 @@ class DefaultMessageSource implements MessageSource {
 
     /**
      * Resolves the raw message pattern for {@code code} by walking the candidate-locale chain and,
-     * for each locale, the primary then fallback basenames (FR-LOC-065..069).
+     * for each locale, the primary then fallback basenames.
      *
      * <p>A {@link MissingResourceException} from a missing bundle or missing key does not fail
-     * the search — the next basename or candidate locale is tried immediately (FR-LOC-069).
+     * the search — the next basename or candidate locale is tried immediately.
      *
      * @param code            the message code to look up
      * @param requestedLocale the locale requested by the caller
@@ -253,7 +251,7 @@ class DefaultMessageSource implements MessageSource {
      */
     private String resolvePattern(String code, Locale requestedLocale) {
         for (Locale candidate : candidateLocales(requestedLocale)) {
-            // FR-LOC-064 priority: ROOT may satisfy only the configured-default candidate.
+            // Candidate priority: ROOT may satisfy only the configured-default candidate.
             // Earlier candidates (requested != default) and later candidates (system fallback)
             // never accept ROOT — otherwise the framework's prioritised candidate-walk would be
             // short-circuited by JDK's internal ROOT fallback for the wrong locale.
@@ -272,7 +270,7 @@ class DefaultMessageSource implements MessageSource {
      * Attempts to retrieve a single message code from the specified bundle and locale.
      *
      * <p>Returns {@code null} if the bundle does not exist for the locale, or the code is absent
-     * from the bundle (FR-LOC-069). Any {@link MissingResourceException} is caught and treated as
+     * from the bundle. Any {@link MissingResourceException} is caught and treated as
      * a miss so the outer loop can continue with the next basename or candidate locale.
      *
      * <p>When a non-ROOT candidate locale is requested and the JDK can only find the ROOT bundle
@@ -282,18 +280,18 @@ class DefaultMessageSource implements MessageSource {
      *   <li>{@code acceptRoot=false} — the ROOT match is <em>skipped</em>. Used for any candidate
      *       that is not the configured {@code defaultLocale}: the framework's candidate-walk
      *       should reach the configured default before falling back to the base bundle, otherwise
-     *       JDK's internal ROOT fallback would short-circuit the prioritised chain (FR-LOC-064 —
-     *       system fallback must not steal precedence from the configured default).</li>
+     *       JDK's internal ROOT fallback would short-circuit the prioritised chain (system
+     *       fallback must not steal precedence from the configured default).</li>
      *   <li>{@code acceptRoot=true} — the ROOT match is <em>accepted</em>. Used only for the
      *       configured-default candidate so a base-bundle-only deployment (only
-     *       {@code messages.properties}, no locale-specific variant) resolves messages
-     *       (FR-LOC-068).</li>
+     *       {@code messages.properties}, no locale-specific variant) resolves messages.
+     * </li>
      * </ul>
      *
      * <p>The ROOT bundle remains reachable as the parent of any locale-specific bundle (via
      * {@link ResourceBundle#getString}'s parent-chain traversal), so codes absent from the
      * locale-specific file but present in {@code messages.properties} are still found for any
-     * locale that HAS a locale-specific bundle (FR-LOC-068).
+     * locale that HAS a locale-specific bundle.
      *
      * @param basename    the resource bundle base name
      * @param locale      the candidate locale
@@ -306,7 +304,7 @@ class DefaultMessageSource implements MessageSource {
         try {
             ResourceBundle bundle = ResourceBundle.getBundle(basename, locale, classLoader, bundleControl);
             // ROOT-fallback filter: skip the ROOT bundle unless the caller (configured-default
-            // candidate) explicitly accepts it. Preserves FR-LOC-064 priority — system fallback
+            // candidate) explicitly accepts it. Preserves the candidate priority — system fallback
             // may not steal precedence from the configured default's ROOT match.
             if (!acceptRoot && !locale.equals(Locale.ROOT) && bundle.getLocale().equals(Locale.ROOT)) {
                 return null;
@@ -320,20 +318,20 @@ class DefaultMessageSource implements MessageSource {
     // --- Formatting ---
 
     /**
-     * Formats the given {@code pattern} according to the formatting rules (FR-LOC-080..084).
+     * Formats the given {@code pattern} according to the formatting rules.
      *
      * <ul>
      *   <li>If {@code args} is {@code null} or empty AND
      *       {@link LocalizationConfig#alwaysUseMessageFormat()} is {@code false}, return
-     *       the raw pattern unchanged (FR-LOC-080).</li>
+     * the raw pattern unchanged.</li>
      *   <li>Otherwise, construct a new {@link MessageFormat} with the requested locale and apply it.
-     *       A new instance is created per call — {@code MessageFormat} is not thread-safe
-     *       (NFR-LOC-002, FR-LOC-082).</li>
+     *       A new instance is created per call — {@code MessageFormat} is not thread-safe.
+     * </li>
      * </ul>
      *
      * @param pattern  the raw message pattern; must not be {@code null}
-     * @param locale   the formatting locale (always the <em>requested</em> locale, FR-LOC-082)
-     * @param args     optional format arguments; {@code null} is treated as no args (FR-LOC-083)
+     * @param locale   the formatting locale (always the <em>requested</em> locale)
+     * @param args optional format arguments; {@code null} is treated as no args
      * @return the formatted message string
      */
     private String format(String pattern, Locale locale, Object... args) {
@@ -341,7 +339,7 @@ class DefaultMessageSource implements MessageSource {
         if (!hasArgs && !alwaysUseMessageFormat) {
             return pattern;
         }
-        // Always use the requested locale for formatting (FR-LOC-082)
+        // Always use the requested locale for formatting
         MessageFormat mf = new MessageFormat(pattern, locale);
         Object[] safeArgs = (args == null) ? new Object[0] : args;
         return mf.format(safeArgs);
@@ -350,8 +348,7 @@ class DefaultMessageSource implements MessageSource {
     // --- Helpers ---
 
     /**
-     * Validates that {@code code} is not blank; throws {@link NoSuchMessageException} if it is
-     * (FR-LOC-062).
+     * Validates that {@code code} is not blank; throws {@link NoSuchMessageException} if it is.
      *
      * @param code the code to validate; must be non-null (caller guarantees this)
      * @throws NoSuchMessageException if the code is blank

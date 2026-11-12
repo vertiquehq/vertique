@@ -17,7 +17,7 @@ import java.util.OptionalLong;
  * <p>{@link #bufferedView()} returns the original {@link Buffer} unchanged (no copy). The
  * underlying {@code byte[]} is extracted lazily via {@link Buffer#getBytes()} only on the first
  * call to {@link #bufferedStream()} or {@link #copyPrefix(int)} — callers that only use
- * {@link #bufferedView()} incur no extraction cost (FR-AUD-405).
+ * {@link #bufferedView()} incur no extraction cost.
  */
 final class BufferBackedPayloadSource implements PayloadSource {
 

@@ -12,7 +12,7 @@ import javax.lang.model.type.TypeMirror;
 
 /**
  * Validates that each {@code @KafkaHandler} method returns {@code void} or
- * {@code Future<Void>} (FR-CG006-005).
+ * {@code Future<Void>}.
  *
  * <p>The return type check uses {@link CodegenContext#unwrapFuture} to strip the
  * {@code Future<X>} wrapper: after unwrapping, only {@code Void} (the boxed type) or the

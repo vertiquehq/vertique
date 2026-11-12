@@ -10,7 +10,7 @@ import jakarta.inject.Singleton;
 import java.util.Objects;
 
 /**
- * Fails composition when no {@link InputObjectProcessor} binding exists (contract §4.7).
+ * Fails composition when no {@link InputObjectProcessor} binding exists.
  *
  * <p>Every {@code McpServerModule} composition requires a direct, non-{@code Optional}
  * {@link InputObjectProcessor} binding — Dagger compilation is the startup gate, even when the
@@ -21,10 +21,10 @@ import java.util.Objects;
  * {@link InputObjectProcessor} fails Dagger code generation before any route mounts, naming the
  * missing type.
  *
- * <p>This validator performs no INP traversal, policy resolution, or request-time processing of its
+ * <p>This validator performs no input-processing traversal, policy resolution, or request-time processing of its
  * own — {@link InputObjectProcessor#processInput} is never called here. The request-time pipeline
- * that calls it is out of this class's scope, and MCP defines no ADR-0214-rejected shortcut API of
- * its own to reach it early.
+ * that calls it is out of this class's scope, and MCP defines no shortcut API of its own to reach
+ * it early.
  */
 @Singleton
 final class McpInputProcessingCompositionValidator implements ComposeValidator {

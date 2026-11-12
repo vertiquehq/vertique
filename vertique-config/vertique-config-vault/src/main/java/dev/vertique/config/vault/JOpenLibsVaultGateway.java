@@ -50,7 +50,7 @@ import java.util.Map;
  * {@link io.github.jopenlibs.vault.VaultException} on non-200 responses — no additional
  * status inspection is needed for authentication.
  *
- * <h2>Driver exception sanitization (NFR-CONF-002)</h2>
+ * <h2>Driver exception sanitization</h2>
  * <p>The jopenlibs driver embeds raw HTTP response bodies in {@link VaultException} messages for
  * non-2xx reads and failed logins (format: {@code "...\nResponse body: <body>"}). Propagating the
  * driver message verbatim would expose unbounded, untrusted content (e.g. a proxy 502 HTML page)
@@ -244,7 +244,7 @@ class JOpenLibsVaultGateway implements VaultGateway {
             return Files.readString(Paths.get(jwtPath)).trim();
         } catch (IOException e) {
             // IOException message is path + OS error description — safe to include.
-            // Cause is not attached per NFR-CONF-002 cause-severing discipline.
+            // Cause is not attached per the cause-severing discipline.
             throw new VaultReadException(
                     "<config>", "IOException reading Kubernetes JWT from '" + jwtPath + "': " + e.getMessage());
         }
@@ -258,7 +258,7 @@ class JOpenLibsVaultGateway implements VaultGateway {
      * <p>The driver message is intentionally discarded. It may contain raw HTTP response bodies
      * (format: {@code "...\nResponse body: <body>"}) for non-2xx reads and failed logins — an
      * untrusted proxy 502 HTML page or a Vault error body in the cause chain would reach startup
-     * logs as unbounded text. The driver cause is NOT attached per NFR-CONF-002.
+     * logs as unbounded text. The driver cause is NOT attached.
      *
      * <p>This method is package-private to allow direct unit testing of the sanitization logic
      * without constructing a real {@link Vault} instance.

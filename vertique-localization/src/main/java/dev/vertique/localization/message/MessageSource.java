@@ -18,18 +18,18 @@ import java.util.Optional;
  *   <li>A {@code null} {@code code} argument causes {@link NullPointerException}.</li>
  *   <li>A blank {@code code} argument causes {@link NoSuchMessageException}.</li>
  *   <li>A {@code null} {@code locale} argument causes {@link NullPointerException}.</li>
- *   <li>A {@code null} {@code args} array is treated identically to an empty args array
- *       (FR-LOC-083); null elements inside {@code args} are forwarded to {@code MessageFormat}
+ *   <li>A {@code null} {@code args} array is treated identically to an empty args array;
+ * null elements inside {@code args} are forwarded to {@code MessageFormat}
  *       unchanged.</li>
  * </ul>
  *
- * <h2>Formatting contract (FR-LOC-080..089)</h2>
+ * <h2>Formatting contract</h2>
  * <p>When {@code args} is empty or absent, message patterns without placeholders are returned
  * as-is. Implementations may optionally skip the {@code MessageFormat} pass in this case unless
  * {@link dev.vertique.localization.config.LocalizationConfig#alwaysUseMessageFormat()} is
- * {@code true}. Full {@code MessageFormat} implementation is delivered in Slice 3.
+ * {@code true}.
  *
- * <h2>Binding note (FR-LOC-011)</h2>
+ * <h2>Binding note</h2>
  * <p>{@code MessageSource} instances are application-scoped and are <em>not</em> provided by the
  * framework's Dagger module. Each application creates its own instance(s) via
  * {@link MessageSourceFactory}.

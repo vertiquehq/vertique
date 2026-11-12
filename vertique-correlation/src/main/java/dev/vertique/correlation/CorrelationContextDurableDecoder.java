@@ -53,7 +53,7 @@ import java.util.Objects;
  *   <li>Invalid header name/value on any {@link ProtocolCorrelationRef} → warning.</li>
  * </ul>
  *
- * <p>Unknown OPTIONAL fields in the JSON are ignored (FR-COR-152) via the
+ * <p>Unknown OPTIONAL fields in the JSON are ignored via the
  * {@code @JsonIgnoreProperties(ignoreUnknown=true)} on {@link CorrelationEnvelope}.
  */
 @Singleton
@@ -111,7 +111,7 @@ public final class CorrelationContextDurableDecoder implements DurableContextMet
                     json);
         }
 
-        // FR-COR-145: every failure mode — internal DecodeFailure or IllegalArgumentException
+        // Every failure mode — internal DecodeFailure or IllegalArgumentException
         // raised by value-record constructors on blank required fields — unwinds into a single
         // ContextDecodeWarning instead of propagating.
         try {

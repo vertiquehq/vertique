@@ -11,7 +11,7 @@ import java.util.Locale;
 /**
  * Shared, array-aware redactor for log-safe rendering of config that may carry secrets.
  *
- * <p>Open property bags ({@link JsonObject}/{@link JsonArray} pass-through subtrees — config rule R9)
+ * <p>Open property bags ({@link JsonObject}/{@link JsonArray} pass-through subtrees)
  * and credential-bearing URIs both routinely carry secrets ({@code sasl.password},
  * {@code ssl.keyStorePassword}, {@code basic.auth.user.info}, SFTP {@code user:pass@host} authority,
  * {@code …?password=…} query params). The framework keeps the live values intact for runtime use but

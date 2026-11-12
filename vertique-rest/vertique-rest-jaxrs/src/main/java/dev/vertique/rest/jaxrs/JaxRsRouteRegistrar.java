@@ -197,7 +197,6 @@ public class JaxRsRouteRegistrar {
      *                                present while the {@code Authorizer} is absent; an operation that
      *                                declares {@code @RequiresAction} then fails startup (fail-closed)
      *                                rather than failing closed per-request when the gate evaluates
-     *                                (finding W2)
      * @param jaxRsConfig             JAX-RS routing configuration; supplies the default request JSON
      *                                profile ({@link JaxRsConfig#jsonProfile()}, config key
      *                                {@code jaxrs.jsonProfile}) used when a resource method selects no
@@ -339,7 +338,6 @@ public class JaxRsRouteRegistrar {
      *                                present while the {@code Authorizer} is absent; an operation that
      *                                declares {@code @RequiresAction} then fails startup (fail-closed)
      *                                rather than failing closed per-request when the gate evaluates
-     *                                (finding W2)
      * @param jaxRsConfig             JAX-RS routing configuration; supplies the default request JSON
      *                                profile ({@link JaxRsConfig#jsonProfile()}, config key
      *                                {@code jaxrs.jsonProfile}) used when a resource method selects no
@@ -1438,7 +1436,7 @@ public class JaxRsRouteRegistrar {
      *       present while the {@code Authorizer} is absent; the gate would then fail closed per-request
      *       (the enforcer NPEs on the missing authorizer and denies) instead of the graph being
      *       rejected at boot →
-     *       {@link RouteRegistrationViolation.ViolationType#REQUIRES_ACTION_INVALID} (finding W2).</li>
+     *       {@link RouteRegistrationViolation.ViolationType#REQUIRES_ACTION_INVALID}.</li>
      *   <li><strong>Unregistered action</strong> — a parseable action absent from the
      *       {@link ActionRegistry} →
      *       {@link RouteRegistrationViolation.ViolationType#REQUIRES_ACTION_INVALID}.</li>
@@ -1453,7 +1451,7 @@ public class JaxRsRouteRegistrar {
      * @param authorizerAvailable whether the core action {@link dev.vertique.security.authz.Authorizer}
      *                            is installed; when {@code false} a present {@code @RequiresAction} fails
      *                            startup because no {@code Authorizer} would be available to enforce the
-     *                            gate (fail-closed, finding W2)
+     *                            gate (fail-closed)
      * @param routeViolations     the accumulator to which any startup violation is added
      * @return the resolved, registered {@link ActionRef}, or {@link Optional#empty()} when the
      *     operation declares no enforceable action gate (including when a violation was recorded)
@@ -1564,7 +1562,7 @@ public class JaxRsRouteRegistrar {
             // action gate. ActionRegistry and Authorizer are bound through separate optional seams, so
             // this incomplete graph would otherwise pass startup and only fail closed per-request when
             // the enforcer evaluates the gate (NPE on the missing authorizer). Fail closed at boot
-            // instead (finding W2).
+            // instead.
             routeViolations.add(new RouteRegistrationViolation(
                     operationId,
                     RouteRegistrationViolation.ViolationType.REQUIRES_ACTION_INVALID,

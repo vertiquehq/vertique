@@ -30,7 +30,7 @@ import jakarta.inject.Singleton;
  * <p><b>Registry lifecycle note:</b> The {@link MeterRegistry} binding delegates to
  * {@link MeterRegistryHolder#registry()}, which holds an empty
  * {@link io.micrometer.core.instrument.composite.CompositeMeterRegistry} before bootstrap.
- * Recording to it before bootstrap is a no-op (NFR-TEL-003). The registry is populated with
+ * Recording to it before bootstrap is a no-op. The registry is populated with
  * real backends only after the application launches via {@code VertiqueApplication}, which
  * triggers {@link MicrometerMetricsContributor}.
  *
@@ -51,7 +51,7 @@ public abstract class MicrometerModule {
     /**
      * Provides the application-wide {@link MeterRegistry} from the global holder.
      *
-     * <p>Before bootstrap this is an empty composite whose recording is a no-op (NFR-TEL-003).
+     * <p>Before bootstrap this is an empty composite whose recording is a no-op.
      * After bootstrap it is the fully assembled composite contributed by all registered backend
      * providers.
      *

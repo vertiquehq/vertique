@@ -18,10 +18,10 @@ import java.util.Objects;
 import java.util.UUID;
 
 /**
- * The sanctioned Mode-3 activation entry point (PRD identity-002 §14.3 Phase-2 Appendix, §14.6
- * P2.S4b) — the "consuming infrastructure" that {@link CapturedAuthorityReconstruction}'s javadoc
+ * The sanctioned Mode-3 activation entry point — the "consuming infrastructure" that
+ * {@link CapturedAuthorityReconstruction}'s javadoc
  * reserves for emitting the activation-audit event once captured authority is actually put into
- * effect. {@link CapturedAuthorityReconstruction} itself stays event-silent (FR-ID-CA-007): a
+ * effect. {@link CapturedAuthorityReconstruction} itself stays event-silent: a
  * plain interface method cannot invoke an injected emitter by construction, and this type is what
  * closes that gap on the caller's side rather than reconstruction's.
  *
@@ -29,7 +29,7 @@ import java.util.UUID;
  * Both entry points invoke the matching {@link CapturedAuthorityReconstruction} method, then fan
  * out a {@link CapturedAuthorityActivatedEvent} via {@link SecurityEventEmitter} and resolve only
  * once that emission completes. {@link SecurityEventEmitter#emit} always succeeds — per {@code
- * SecurityEventEmitter}'s AC-SE-6 per-observer isolation, a synchronously-thrown or
+ * SecurityEventEmitter}'s per-observer isolation, a synchronously-thrown or
  * asynchronously-failed observer is caught, logged, and treated as settled, never retried or
  * escalated — and its returned future resolving means every registered
  * {@link SecurityEventObserver} has been invoked and has settled, one way or the other. A caller

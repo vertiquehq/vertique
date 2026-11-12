@@ -22,7 +22,7 @@ import lombok.Singular;
  *     .build();
  * }</pre>
  *
- * <h2>Validation invariants (FR-LOC-030..036)</h2>
+ * <h2>Validation invariants</h2>
  * <ul>
  *   <li>{@link #basename} must not be {@code null} or blank (IAE).</li>
  *   <li>{@link #fallbackBasenames} elements must not be {@code null} (IAE) or blank (IAE).</li>

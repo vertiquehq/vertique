@@ -55,7 +55,7 @@ final class KafkaRecordDispatcher {
     /**
      * Type-agnostic routing deserializer built once for any router that has at least one property
      * route. Built from the entry's merged serde config so endpoint registry/auth settings apply
-     * during route selection (FR-AVRO-007/009; NFR-AVRO-002 build-once). {@code null} for
+     * during route selection (built once). {@code null} for
      * non-routers and for property-less (header/default-only) routers.
      */
     private final KafkaDeserializer<Object> routingDeserializer;
@@ -107,7 +107,7 @@ final class KafkaRecordDispatcher {
                 && entry.routes().stream().anyMatch(KafkaRecordDispatcher::isPropertyRoute);
         // Build the type-agnostic routing deserializer once, only for a router that has at least
         // one property route (threading the entry's merged serde config so endpoint registry/auth
-        // settings apply during selection — FR-AVRO-007/009; NFR-AVRO-002 build-once). A
+        // settings apply during selection — built once). A
         // header/default-only router never needs it, and the provider's routingDeserializer is
         // optional per format.
         this.routingDeserializer = hasPropertyRoute
@@ -137,7 +137,7 @@ final class KafkaRecordDispatcher {
      * Deserializes the raw record bytes using the appropriate deserializer. For router kind, the
      * routing value carried in {@link RouteResult} is converted to the route's target type via the
      * SPI's {@link KafkaSerdeRegistry#convertRouted}, reusing the already-decoded value to avoid a
-     * second parse (FR-AVRO-007). For binding/handler kind, uses the entry-level deserializer.
+     * second parse. For binding/handler kind, uses the entry-level deserializer.
      *
      * @param record the Kafka consumer record (for topic and header context)
      * @param rawBytes the raw value bytes
@@ -169,8 +169,7 @@ final class KafkaRecordDispatcher {
                     // Property match: delegate to the SPI to convert/reuse the pre-decoded routing
                     // value (avoids a second wire-byte parse for both JSON and Avro). The provider's
                     // default implementation reuses when assignable and throws DeserializationException
-                    // otherwise — preventing a bad discriminator/schema dispatching the wrong type
-                    // (FR-AVRO-007).
+                    // otherwise — preventing a bad discriminator/schema dispatching the wrong type.
                     return serdeRegistry.convertRouted(
                             entry.valueFormat(),
                             routeResult.routingValue(),
@@ -220,7 +219,7 @@ final class KafkaRecordDispatcher {
      * {@link KafkaSerdeRegistry#routingDeserializer} yields the format's intermediate routing value
      * (a parsed object tree, a decoded record, etc.), and
      * {@link KafkaSerdeRegistry#matchValue} reads the discriminator field from it — the dispatcher
-     * never touches format-specific types directly (FR-AVRO-007). The matched routing value is
+     * never touches format-specific types directly. The matched routing value is
      * carried in the {@link RouteResult} so {@link #deserializeRecord} can convert it to the route's
      * target type without a second parse.
      *
@@ -320,15 +319,15 @@ final class KafkaRecordDispatcher {
      *
      * <p>Before constructing the dispatch envelope, inbound Kafka record headers are bound into
      * the current {@link dev.vertique.core.context.ContextHolder} scope via
-     * {@link InboundExecutionContextScope#installDurable(Map, String)} (FR-CTX-174). The substrate
+     * {@link InboundExecutionContextScope#installDurable(Map, String)}. The substrate
      * helper also runs registered {@code InboundContextInitializer}s — notably the correlation
      * seeder, so records arriving without an encoded CorrelationContext still get a freshly seeded
-     * one bound (FR-COR-125). The scope is closed in the terminal handler of the dispatch future
+     * one bound. The scope is closed in the terminal handler of the dispatch future
      * regardless of outcome.
      *
      * <p>The dispatch envelope is built through {@link DispatchEnvelopeBuilder#build(Object, Map, String)}
      * so that any registered {@link dev.vertique.core.context.ServiceDispatchContextEncoder}s
-     * automatically capture context values from the holder into the outgoing envelope (FR-CTX-015).
+     * automatically capture context values from the holder into the outgoing envelope.
      *
      * <p>When a {@code stableTargetId} is provided, dispatch goes through
      * {@link ServiceRequestSender} for supervisor check and error enrichment:
@@ -369,8 +368,7 @@ final class KafkaRecordDispatcher {
         // duplicated-context invariant violation thrown from bindFrom — flows through a failed
         // future. KafkaConsumerVerticle invokes us from an async onComplete callback that cannot
         // recover a synchronous throw out of its chain. Vert.x Kafka dispatches each record on a
-        // duplicated context, so the substrate's duplicated-context guard accepts the bind
-        // (FR-CTX-174).
+        // duplicated context, so the substrate's duplicated-context guard accepts the bind.
         ContextHolder.Scope durableScope = null;
         ContextHolder.Scope mdcScope = null;
         Future<Void> dispatchFuture;
@@ -436,7 +434,7 @@ final class KafkaRecordDispatcher {
             return Future.failedFuture(e);
         }
 
-        // Close MDC + durable scopes in every terminal branch (FR-CTX-157). MDC closes first so
+        // Close MDC + durable scopes in every terminal branch. MDC closes first so
         // its restoration sees the durable scope's bindings still in place — symmetric with the
         // bind order above.
         final ContextHolder.Scope finalMdcScope = mdcScope;
@@ -473,10 +471,10 @@ final class KafkaRecordDispatcher {
         // Vert.x Kafka dispatches each record on a duplicated context, so we bind durable header
         // metadata into the holder for the handler invocation. Handlers that produce downstream
         // messages or call services observe the same DurablePropagationMetadata and decoded
-        // typed values as the event-bus dispatch path (FR-CTX-174). Going through
+        // typed values as the event-bus dispatch path. Going through
         // InboundExecutionContextScope.installDurable also runs registered
         // InboundContextInitializers (including the correlation seeder), so handlers see a bound
-        // CorrelationContext even when the inbound record carries no encoded one (FR-COR-125).
+        // CorrelationContext even when the inbound record carries no encoded one.
         // installDurable is invoked inside the same defensive try block as the handler call so
         // any synchronous failure — including a duplicated-context invariant violation —
         // converts to a failed future instead of escaping the async callback.

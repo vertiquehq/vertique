@@ -39,8 +39,7 @@ import java.util.Map;
  * Package-private collaborator responsible for the single-path LIFO compensation flow of a
  * {@code FAILED} workflow instance.
  *
- * <p>This class is extracted from {@link WorkflowEngine} as part of the Phase-1 decomposition
- * (PRD-WF-006, Slice C3). It is the single-path counterpart to
+ * <p>This class is extracted from {@link WorkflowEngine}. It is the single-path counterpart to
  * {@link BranchCompensationOrchestrator}, which handles branch-scoped (fork) compensation.
  *
  * <p>When an instance reaches a {@link dev.vertique.workflow.plan.FailNode}, this service:

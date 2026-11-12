@@ -49,7 +49,7 @@ import lombok.extern.slf4j.Slf4j;
  *       <strong>endpoint/class level only</strong> and enforced once at upgrade; any of them on a
  *       lifecycle method fails startup rather than being silently ignored. A class-level
  *       {@link RequiresAction} must parse as a canonical {@link ActionRef} and be registered in the
- *       {@link ActionRegistry}, or startup fails (fail-closed; FR-AUTHZ-048, ADR-0115). A class-level
+ *       {@link ActionRegistry}, or startup fails (fail-closed). A class-level
  *       {@link RequiresPolicy} resolves to the same security policy and action gate its inline
  *       declarations would, and its action is validated the same way.</li>
  * </ul>
@@ -295,7 +295,7 @@ class WebSocketEndpointScanner {
      * <p>WebSocket authorization happens once at upgrade, so a method-level {@code @RequiresAction}
      * (which would imply per-message/lifecycle enforcement) cannot be honored and must be rejected
      * rather than silently ignored — preserving the fail-closed invariant on
-     * {@link RequiresAction}. Per-message enforcement is a deferred future PEP (ADR-0115).
+     * {@link RequiresAction}. Per-message enforcement is a deferred future PEP.
      *
      * @param clazz     the endpoint class, used for the error message
      * @param onOpen    the {@link OnOpen} method, or {@code null}
@@ -315,7 +315,7 @@ class WebSocketEndpointScanner {
                 throw new IllegalArgumentException("@RequiresAction on WebSocket lifecycle method "
                         + clazz.getSimpleName() + "." + m.getName()
                         + " is not supported: WebSocket authorizes once at upgrade, so @RequiresAction is"
-                        + " endpoint/class-level only (FR-AUTHZ-048, ADR-0115). Move it to the "
+                        + " endpoint/class-level only. Move it to the "
                         + clazz.getSimpleName() + " class, or remove it.");
             }
         }

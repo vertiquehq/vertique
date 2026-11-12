@@ -40,11 +40,11 @@ import javax.lang.model.element.TypeElement;
  *       {@link BeanAccessorEmitter} (deduplicated across all interfaces in the round).</li>
  * </ol>
  *
- * <p>Interfaces annotated with {@link NoAutoWire} are skipped (respects the CG-002 opt-out
+ * <p>Interfaces annotated with {@link NoAutoWire} are skipped (respects the auto-wire opt-out
  * convention).
  *
  * <p>The processor runs a single emit round via the {@code emitted} guard flag — no accumulation
- * across rounds. This mirrors the pattern established by CG-002's {@code AutoWireProcessor}.
+ * across rounds. This mirrors the pattern established by {@code AutoWireProcessor}.
  *
  * <p>Processor options:
  * <ul>

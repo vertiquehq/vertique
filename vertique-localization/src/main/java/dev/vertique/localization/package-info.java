@@ -16,7 +16,7 @@
  *   <li>{@link dev.vertique.localization.context} — the {@code LocalizationContext} record plus its
  *       shipped propagation adapters: a {@code LocalizationContextHolder} facade, an identity
  *       service-dispatch codec, and a durable codec carrying the single {@code localization}
- *       namespace (registered via {@code @IntoSet} in {@code LocalizationModule}). See ADR 0066.</li>
+ *       namespace (registered via {@code @IntoSet} in {@code LocalizationModule}).</li>
  * </ul>
  *
  * <p>This module never depends on any REST module (enforced by Maven Enforcer); REST-side

@@ -65,13 +65,13 @@ import lombok.extern.slf4j.Slf4j;
  *   <li>{@link SecurityPolicy.None} — {@code null} (no handler needed)</li>
  * </ul>
  *
- * <p><strong>Emission ownership (ADR-0114).</strong> The enforcement layer — not the decision
+ * <p><strong>Emission ownership.</strong> The enforcement layer — not the decision
  * point — owns emission. Every handler this class installs emits <em>exactly one</em>
  * {@link dev.vertique.security.events.AuthorizationDecisionEvent} per authorization attempt,
  * for both permit and deny. {@link SecurityPolicy.AuthenticatedOnly} emits a permit (reason
  * {@link AuthzReasonCodes#PERMITTED}) on the {@code ctx.next()} path as well as a deny on the
  * fail-closed path, matching the {@link SecurityPolicy.DenyAll}/{@link SecurityPolicy.Constrained}/
- * composed paths (FR-AUTHZ-050). The fail-closed short-circuits that historically emitted nothing
+ * composed paths. The fail-closed short-circuits that historically emitted nothing
  * also emit: {@link SecurityPolicy.DenyAll} (reason {@link AuthzReasonCodes#DENY_ALL});
  * {@link SecurityPolicy.AuthenticatedOnly} with a missing/anonymous {@code SecurityContext} and a
  * {@link SecurityPolicy.Constrained} route with a missing {@code SecurityContext} (reason
@@ -130,7 +130,7 @@ public class SecurityPolicyEnforcer {
      * {@code null} when the authorization engine is not installed.
      *
      * <p>This is {@code null} only in deployments with no authz engine — and a {@code @RequiresAction}
-     * route in such a deployment is rejected at startup (fail-closed invariant, slice 11), so the
+     * route in such a deployment is rejected at startup (fail-closed invariant), so the
      * combined handler is built only when {@code requiredAction} is present, which guarantees this
      * field is non-{@code null} on every path that reads it.
      */
@@ -180,7 +180,7 @@ public class SecurityPolicyEnforcer {
      * @param authorizer                 the optional core action {@link Authorizer} used to evaluate the
      *                                   {@code @RequiresAction} gate; empty when the authorization engine
      *                                   is not installed (in which case no {@code @RequiresAction} route
-     *                                   can pass startup validation — slice 11). Must not be {@code null};
+     *                                   can pass startup validation). Must not be {@code null};
      *                                   {@link Optional#empty()} signals "engine absent".
      * @param resilience                 the application's resilience runtime, which bounds the role/scope
      *                                   and action gates; must not be {@code null}
@@ -230,7 +230,7 @@ public class SecurityPolicyEnforcer {
      * @param authorizer                 the optional core action {@link Authorizer} used to evaluate the
      *                                   {@code @RequiresAction} gate; empty when the authorization engine
      *                                   is not installed (in which case no {@code @RequiresAction} route
-     *                                   can pass startup validation — slice 11). Must not be {@code null};
+     *                                   can pass startup validation). Must not be {@code null};
      *                                   {@link Optional#empty()} signals "engine absent".
      * @param authorizationGateConfig    the optional operator-configured gate deadline; empty defaults
      *                                   to {@link AuthorizationGateConfig#defaults()}
@@ -296,7 +296,7 @@ public class SecurityPolicyEnforcer {
     /**
      * Creates an authorization handler that AND-composes the Jakarta role/scope policy with the
      * {@code @RequiresAction} action gate, emitting <em>exactly one</em> combined
-     * {@link AuthorizationDecisionEvent} per attempt (ADR-0113 / ADR-0114).
+     * {@link AuthorizationDecisionEvent} per attempt.
      *
      * <p>A handler is installed whenever the {@code policy} is {@linkplain SecurityPolicy#isRestrictive()
      * restrictive} <strong>or</strong> a {@code requiredAction} is present. In particular an
@@ -324,7 +324,7 @@ public class SecurityPolicyEnforcer {
      * emits exactly one event.
      *
      * <p>{@code @RequiresAction} cannot occur with {@link SecurityPolicy.PermitAll} or
-     * {@link SecurityPolicy.DenyAll} (rejected at compile time and at startup, slice 11), so those
+     * {@link SecurityPolicy.DenyAll} (rejected at compile time and at startup), so those
      * combinations are not reachable here.
      *
      * @param policy         the security policy to enforce; must not be {@code null}
@@ -348,7 +348,7 @@ public class SecurityPolicyEnforcer {
 
     /**
      * Builds the role/scope-only handler for a policy with no {@code @RequiresAction} gate, preserving
-     * the established per-variant behavior (ADR-0114 emission ownership).
+     * the established per-variant behavior (the enforcer owns event emission).
      *
      * <p>{@link SecurityPolicy.None} and {@link SecurityPolicy.PermitAll} install no handler;
      * {@link SecurityPolicy.DenyAll} fails closed; {@link SecurityPolicy.AuthenticatedOnly} requires a
@@ -365,7 +365,7 @@ public class SecurityPolicyEnforcer {
             case SecurityPolicy.None ignored -> null;
             case SecurityPolicy.DenyAll ignored ->
                 ctx -> {
-                    // Fail-closed blanket deny — emit one deny event then short-circuit (FR-054).
+                    // Fail-closed blanket deny — emit one deny event then short-circuit.
                     // Capture the correlation bound at entry (this path is synchronous, but doing
                     // so keeps every emission site uniform) and record the real route, not a
                     // placeholder, so the event identifies which endpoint denied.
@@ -392,7 +392,7 @@ public class SecurityPolicyEnforcer {
                     boolean authenticated = secCtx != null
                             && secCtx.identity().actor().type() != dev.vertique.security.PrincipalType.ANONYMOUS;
                     if (!authenticated) {
-                        // Fail-closed: missing/anonymous identity emits one deny event (FR-054)
+                        // Fail-closed: missing/anonymous identity emits one deny event
                         // recording the real route so the denied endpoint is identifiable.
                         emitDecision(
                                 AuthorizationDecision.deny(AuthzReasonCodes.AUTHENTICATION_REQUIRED),
@@ -404,7 +404,7 @@ public class SecurityPolicyEnforcer {
                     } else {
                         // Permit path: emit one permit event (reason PERMITTED) before proceeding so
                         // AuthenticatedOnly satisfies the exactly-one-event-per-attempt contract on the
-                        // permit path too (FR-AUTHZ-050 / ADR-0114), matching the DenyAll/Constrained/
+                        // permit path too, matching the DenyAll/Constrained/
                         // composed paths that already emit on permit.
                         emitDecision(
                                 AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED),
@@ -439,7 +439,7 @@ public class SecurityPolicyEnforcer {
      * {@link AuthorizationDecision}, instead of driving a {@link RoutingContext}.
      *
      * <p>This is the non-HTTP counterpart to {@link #createHandler(SecurityPolicy, Optional)}: it
-     * mirrors that method's contract exactly (ADR-0113 / ADR-0114) — the same role/scope-plus-action
+     * mirrors that method's contract exactly — the same role/scope-plus-action
      * AND-composition, the same fail-fast ordering, the same first-failing-predicate
      * {@code reasonCode}, the same {@code rolesSatisfied}/{@code actionSatisfied}/{@code
      * actionEvaluated} safe attributes, and the same fail-closed handling of a contract-violating
@@ -522,7 +522,7 @@ public class SecurityPolicyEnforcer {
 
         // Capture correlation once at entry, before any async hop — mirrors buildComposedHandler so
         // an off-context gate completion (remote PDP / async Authorizer) still emits the inbound
-        // correlation (FR-054).
+        // correlation.
         CorrelationContext correlation = captureCorrelation();
 
         if (requiredAction.isEmpty()
@@ -616,7 +616,7 @@ public class SecurityPolicyEnforcer {
 
             // Role/scope permitted and an action gate is present → evaluate it. authorizer is
             // guaranteed non-null here because a present requiredAction implies the engine is
-            // installed (slice 11). Built as an explicit 5-arg AuthorizationRequest reusing the SAME
+            // installed. Built as an explicit 5-arg AuthorizationRequest reusing the SAME
             // origin passed to decide(), not a fresh ambient read — mirrors buildComposedHandler's
             // reuse of authzRequest.origin().
             ActionRef action = requiredAction.get();
@@ -799,7 +799,7 @@ public class SecurityPolicyEnforcer {
     /**
      * Builds an async authorization handler for the given constrained policy. The handler calls
      * {@link AuthorizationDecisionPoint#decide(AuthorizationRequest)} and emits exactly one
-     * {@link AuthorizationDecisionEvent} per invocation (ADR-0114):
+     * {@link AuthorizationDecisionEvent} per invocation:
      * <ul>
      *   <li>missing {@code SecurityContext} → emit deny ({@link AuthzReasonCodes#AUTHENTICATION_REQUIRED}),
      *       then {@code ctx.fail(401)}</li>
@@ -833,7 +833,7 @@ public class SecurityPolicyEnforcer {
             // app-provided async AuthorizationDecisionPoint (the documented remote-PDP pattern) may
             // complete its Future off this context, where the holder no longer sees the request
             // correlation; capturing here ensures the emitted event carries the inbound correlation
-            // rather than degrading to unbound() after the async hop (FR-054).
+            // rather than degrading to unbound() after the async hop.
             CorrelationContext correlation = captureCorrelation();
             String path = pathOf(ctx);
             String method = methodOf(ctx);
@@ -841,7 +841,7 @@ public class SecurityPolicyEnforcer {
             SecurityContext secCtx = securityRuntime.current();
             if (secCtx == null) {
                 log.warn("SecurityContext not bound when evaluating constrained policy; treating as 401");
-                // Fail-closed: no bound identity emits one deny event (FR-054). There is no
+                // Fail-closed: no bound identity emits one deny event. There is no
                 // SecurityContext to attach, so build the event against an anonymous stand-in,
                 // recording the real route so the denied endpoint is identifiable.
                 emitDecision(
@@ -946,7 +946,7 @@ public class SecurityPolicyEnforcer {
         ctx.fail(403);
     }
 
-    // --- @RequiresAction composition (ADR-0113 / ADR-0114) ---
+    // --- @RequiresAction composition ---
 
     /**
      * Builds the handler that AND-composes the role/scope gate with the action gate, emitting exactly
@@ -972,7 +972,7 @@ public class SecurityPolicyEnforcer {
 
         return ctx -> {
             // Capture correlation at handler entry (before any async hop) so an off-context action gate
-            // completion (remote PDP / async Authorizer) still emits the inbound correlation (FR-054).
+            // completion (remote PDP / async Authorizer) still emits the inbound correlation.
             CorrelationContext correlation = captureCorrelation();
             String path = pathOf(ctx);
             String method = methodOf(ctx);
@@ -1056,7 +1056,7 @@ public class SecurityPolicyEnforcer {
                 }
 
                 // Role/scope permitted → evaluate the action gate. authorizer is guaranteed non-null
-                // because a present requiredAction implies the engine is installed (slice 11).
+                // because a present requiredAction implies the engine is installed.
                 // Built as an explicit 5-arg AuthorizationRequest reusing authzRequest.origin() — the
                 // SAME InvocationOrigin captured at handler entry, not a fresh currentOrigin() read
                 // here. This callback runs after the role/scope gate's async hop (a remote/async
@@ -1397,7 +1397,7 @@ public class SecurityPolicyEnforcer {
         return Map.copyOf(ctx);
     }
 
-    // --- Event emission (ADR-0114) ---
+    // --- Event emission ---
 
     /**
      * Captures the {@link CorrelationContext} bound on the current Vert.x context, minting a
@@ -1408,7 +1408,7 @@ public class SecurityPolicyEnforcer {
      * event reflects the correlation of the inbound request even when the decision resolves on a
      * different context (e.g. a remote-PDP {@link AuthorizationDecisionPoint} whose Future completes
      * off this context). Reading the holder lazily at emit time would observe a missing binding after
-     * such a hop, wrongly degrading the event's correlation (FR-054).
+     * such a hop, wrongly degrading the event's correlation.
      *
      * <p>When no ambient correlation is bound, a generated UUID join key is used rather than
      * {@link CorrelationContext#unbound()}: authorization audit adapters mint {@code sourceEventId}
@@ -1494,12 +1494,12 @@ public class SecurityPolicyEnforcer {
 
     /**
      * Emits the one {@link AuthorizationDecisionEvent} for the given request/decision pair. Emission
-     * is best-effort and failure-isolated by the emitter (ADR-0062) and never throws.
+     * is best-effort and failure-isolated by the emitter and never throws.
      *
      * <p>The {@code correlation} is captured by the caller at handler entry (see
      * {@link #captureCorrelation()}) rather than read here, so it reflects the inbound request even
      * when the decision resolved on a different Vert.x context. A missing ambient correlation is
-     * supplied as a generated joinable context so it cannot mask the security outcome (FR-054) and
+     * supplied as a generated joinable context so it cannot mask the security outcome and
      * remains safe for audit {@code sourceEventId} minting.
      *
      * @param request     the authorization request that was evaluated; must not be {@code null}

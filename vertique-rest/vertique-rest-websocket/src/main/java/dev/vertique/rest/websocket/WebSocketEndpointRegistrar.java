@@ -121,7 +121,7 @@ class WebSocketEndpointRegistrar {
      * <p>Because the {@link ActionRegistry} and the {@code Authorizer} are bound through separate
      * optional seams, a non-default graph can have the registry present while the {@code Authorizer} is
      * absent. A {@code @RequiresAction} endpoint in such a graph fails startup (fail-closed) rather than
-     * failing closed per-request when the enforcer evaluates the gate (finding W2).
+     * failing closed per-request when the enforcer evaluates the gate.
      */
     private final @Nullable Authorizer authorizer;
 
@@ -203,7 +203,7 @@ class WebSocketEndpointRegistrar {
      *                                     engine is absent. Because the registry and the {@code Authorizer}
      *                                     are bound through separate optional seams, an endpoint declaring
      *                                     {@code @RequiresAction} fails startup (fail-closed) when the
-     *                                     registry is present but the {@code Authorizer} is absent (W2)
+     *                                     registry is present but the {@code Authorizer} is absent
      */
     WebSocketEndpointRegistrar(
             WebSocketMessageCodec messageCodec,
@@ -398,7 +398,7 @@ class WebSocketEndpointRegistrar {
      * Fails registration closed when no identity pipeline is bound ({@link #securityPolicyEnforcer}
      * is {@code null}) and at least one endpoint declares a restrictive {@link SecurityPolicy}
      * (deny-all, authenticated-only, constrained: {@code @DenyAll}, {@code @RolesAllowed},
-     * {@code @Authorized}) or a class-level {@code @RequiresAction} (security review, FR-010).
+     * {@code @Authorized}) or a class-level {@code @RequiresAction}.
      *
      * <p>Runs before any endpoint reaches {@link #installAuthenticationHandler}, so a restrictive
      * endpoint never registers open (the {@code @DenyAll} case, today served open) and a graph that
@@ -563,11 +563,10 @@ class WebSocketEndpointRegistrar {
      *   <li>the core action {@link Authorizer} is absent — the enforcer would have no function to call
      *       to decide the gate and would fail closed per-request via an NPE. Because the
      *       {@link ActionRegistry} and the {@code Authorizer} are bound through separate optional seams,
-     *       a non-default graph can have the registry present while the {@code Authorizer} is absent
-     *       (finding W2).</li>
+     *       a non-default graph can have the registry present while the {@code Authorizer} is absent.</li>
      * </ul>
      * Accepting the annotation in either case would be a silent authorization bypass or a per-request
-     * fail-closed instead of a boot-time rejection (FR-AUTHZ-048, ADR-0115). The scanner already
+     * fail-closed instead of a boot-time rejection. The scanner already
      * rejects a {@code @RequiresAction} when the authz engine ({@link ActionRegistry}) is absent; these
      * checks cover the complementary cases where the engine is present but the enforcer or the
      * {@code Authorizer} is not.
@@ -592,7 +591,7 @@ class WebSocketEndpointRegistrar {
             // Enforcement pipeline present, but no core Authorizer is installed to decide the action
             // gate. ActionRegistry and Authorizer are bound through separate optional seams, so this
             // incomplete graph would otherwise pass startup and only fail closed per-request when the
-            // enforcer evaluates the gate (NPE on the missing authorizer). Fail closed at boot (W2).
+            // enforcer evaluates the gate (NPE on the missing authorizer). Fail closed at boot.
             throw new IllegalStateException("@RequiresAction('"
                     + meta.requiredAction().get().value() + "') on WebSocket endpoint "
                     + meta.instance().getClass().getName()
@@ -638,7 +637,7 @@ class WebSocketEndpointRegistrar {
      * endpoint ({@link SecurityPolicy.None} with a present {@code requiredAction}) must still
      * authenticate: without an auth handler no {@link AuthenticationEvidence} is appended, identity
      * resolution falls back to anonymous, and the action gate would evaluate an anonymous identity
-     * rather than the real caller (FR-AUTHZ-048, ADR-0115).
+     * rather than the real caller.
      *
      * @param meta  the endpoint metadata containing the security policy, action gate, and auth scheme
      * @param route the route on which to install the handler
@@ -661,7 +660,7 @@ class WebSocketEndpointRegistrar {
      * evaluates the policy.
      *
      * <p>The enforcer composes the role/scope policy with the class-level {@code @RequiresAction}
-     * action gate (FR-AUTHZ-048, ADR-0115): both gates are evaluated once at upgrade and the
+     * action gate: both gates are evaluated once at upgrade and the
      * connection is permitted only when both pass. An action-only endpoint
      * ({@link SecurityPolicy.None} with a present {@code requiredAction}) is still enforced.
      *
@@ -787,7 +786,7 @@ class WebSocketEndpointRegistrar {
      * channel with the {@link WebSocketChannelAdapter} (when present), and — only after registration
      * succeeds — invokes {@link OnOpen} and resumes the paused socket.
      *
-     * <p><b>Registration-gated ordering (F-W5).</b> Channel registration is asynchronous. Scope
+     * <p><b>Registration-gated ordering.</b> Channel registration is asynchronous. Scope
      * ownership transfer to the binding, the {@link OnOpen} invocation, and {@code ws.resume()} are
      * sequenced onto the registration future's success branch via {@link #invokeOnOpenAndResume}.
      * If registration <em>fails</em>, the bootstrap fails closed: {@link OnOpen} is never invoked,
@@ -807,7 +806,7 @@ class WebSocketEndpointRegistrar {
      * was not yet registered, so this second deregister is the one that actually releases the
      * binding's scope (the manager's {@code deregister} is idempotent).
      *
-     * <p><b>Owner-context marshaling (F-W5 round-4).</b> The entire registration-completion body is
+     * <p><b>Owner-context marshaling.</b> The entire registration-completion body is
      * re-dispatched onto the WebSocket's owner event-loop context via
      * {@link io.vertx.core.Context#runOnContext} (see {@link #completeRegistration}). A custom
      * asynchronous {@link dev.vertique.security.channel.ChannelIdentityManager} may complete its
@@ -890,7 +889,7 @@ class WebSocketEndpointRegistrar {
         // the manager takes ownership of the scope only once registration SUCCEEDS — from that point
         // the manager drives the scope lifecycle via the binding. Registration is asynchronous, so the
         // ownership transfer, the @OnOpen invocation, and ws.resume() are sequenced onto the
-        // registration future's success branch only. A registration FAILURE fails closed (F-W5):
+        // registration future's success branch only. A registration FAILURE fails closed:
         // @OnOpen is never invoked and the socket is never resumed; the adapter has already released
         // the binding's scope on the failed-register path (WebSocketChannelAdapter#onOpen), so the
         // registrar must NOT close the scope again here. When the adapter is absent (security module

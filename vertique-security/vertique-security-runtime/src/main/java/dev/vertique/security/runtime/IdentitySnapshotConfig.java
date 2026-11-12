@@ -16,8 +16,7 @@ import java.util.Optional;
 /**
  * Root configuration record for the identity-snapshot durable-carriage subsystem, deserialized
  * from the {@code identity.snapshot} section of the application config via
- * {@link dev.vertique.core.config.ConfigParser} (PRD-ID-002 §14.3 "Durable carriage", §14.6 A9
- * "expected-but-absent carriage detection").
+ * {@link dev.vertique.core.config.ConfigParser}.
  *
  * @param captureEnabled     the global capture kill-switch consulted by {@link IdentitySnapshotCapture};
  *                           defaults to {@code true} when omitted

@@ -21,8 +21,8 @@ import java.util.UUID;
  * Package-private collaborator responsible for emitting {@code WORKFLOW_EVENT} side-effect intents
  * and building attribute maps for lifecycle events.
  *
- * <p>This class is extracted from {@link WorkflowEngine} as part of the Phase-1 decomposition
- * (PRD-WF-006, Slice C1). It is a leaf in the dependency graph: it depends only on
+ * <p>This class is extracted from {@link WorkflowEngine}. It is a leaf in the dependency graph: it
+ * depends only on
  * {@link RecorderRouter} and {@link Clock}, and has no reference to the transition driver or
  * fork/join coordinator.
  *

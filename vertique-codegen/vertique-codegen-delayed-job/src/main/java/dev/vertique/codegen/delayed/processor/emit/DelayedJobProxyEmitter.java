@@ -37,7 +37,7 @@ import javax.lang.model.element.TypeElement;
  * </ul>
  *
  * <p>The class lands in the contract's own package (never the {@code -Avertique.codegen.package}
- * override) so {@code DelayedJobClientFactory} can resolve it by name; see ADR-0070/ADR-0071.
+ * override) so {@code DelayedJobClientFactory} can resolve it by name.
  */
 public final class DelayedJobProxyEmitter {
 

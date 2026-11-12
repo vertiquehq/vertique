@@ -11,8 +11,7 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Default extension point for protocol-defined correlation headers (FR-COR-094, Context
- * contribution model level 6).
+ * Default extension point for protocol-defined correlation headers.
  *
  * <p>Each spec declares one HTTP header that the correlation ingress middleware should consider
  * when building the live {@link dev.vertique.core.correlation.CorrelationContext}. Specs are
@@ -65,7 +64,7 @@ public interface ProtocolCorrelationSpec {
 
     /**
      * Whether the resolved value is safe to write into durable metadata. Durable encoders filter
-     * out protocol refs with {@code durableSafe == false} (FR-COR-148).
+     * out protocol refs with {@code durableSafe == false}.
      *
      * @return {@code true} when this value may appear in durable propagation
      */

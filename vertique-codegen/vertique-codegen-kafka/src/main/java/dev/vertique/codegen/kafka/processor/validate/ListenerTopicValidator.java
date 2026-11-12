@@ -9,7 +9,7 @@ import dev.vertique.codegen.kafka.processor.scan.ListenerModel;
 
 /**
  * Validates that a {@link dev.vertique.kafka.KafkaListener @KafkaListener}'s {@code topic()}
- * attribute is not blank (FR-CG006-005).
+ * attribute is not blank.
  *
  * <p>An empty or whitespace-only topic prevents the consumer from being bound to any Kafka topic
  * at runtime. This check applies to both Model 3 router and Model 4 direct-handler listeners.

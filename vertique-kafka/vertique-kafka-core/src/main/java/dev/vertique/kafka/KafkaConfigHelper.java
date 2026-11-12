@@ -106,8 +106,7 @@ public final class KafkaConfigHelper {
      * Builds the merged serde-config view handed to a {@code KafkaSerdeProvider}: the resolved
      * {@code serdeProperties} map plus the canonical {@code schemaRegistry} block, optionally
      * carrying the resolved JSON mapper profile id. This is the single definition of that view
-     * shape, used by both the consumer config and the producer factory and read by every provider
-     * (FR-AVRO-009, FR-JSON-035).
+     * shape, used by both the consumer config and the producer factory and read by every provider.
      *
      * <p>The top-level {@code "jsonProfile"} key is added <strong>only</strong> when
      * {@code jsonProfile} is non-null and non-blank, so the {@code vertx}/default serde path
@@ -136,7 +135,7 @@ public final class KafkaConfigHelper {
      * default path: because no {@code "jsonProfile"} key is added, the produced bag is
      * byte-for-byte identical to the pre-profile shape, so the {@code vertx}/default serde path is
      * unchanged. The producer factory and every caller that carries no declaration-time profile use
-     * this overload (ADR-0127); per-consumer config can still inject a profile through the
+     * this overload; per-consumer config can still inject a profile through the
      * three-argument form upstream.
      *
      * @param schemaRegistry the {@code kafka.schemaRegistry} block (registry URL etc.)

@@ -312,8 +312,8 @@ output construction directions, whose fragment is
 
 The fragment is built from the same `BigDecimalStrictStringDeserializer` grammar constants the
 deserializer itself enforces — the bound and the pattern are never duplicated as a second literal —
-so a schema generator consuming this profile's overrides cannot drift from the wire grammar above
-(FR-JSON-089). The `system` and `vertique` built-in profiles declare no overrides.
+so a schema generator consuming this profile's overrides cannot drift from the wire grammar above.
+The `system` and `vertique` built-in profiles declare no overrides.
 
 ### Invariants & Gotchas
 

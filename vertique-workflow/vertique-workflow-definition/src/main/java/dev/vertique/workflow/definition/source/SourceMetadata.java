@@ -12,7 +12,7 @@ import java.util.Objects;
  *
  * <p>Source metadata is stored with the definition row as its provenance for management and
  * audit surfaces. It never crosses into the runtime engine — the engine sees only
- * {@code WorkflowPlan} and callbacks (FR-WF-DEF-026).
+ * {@code WorkflowPlan} and callbacks.
  *
  * @param sourceType a non-blank, application-defined label for the origin type (e.g., {@code "file"},
  *     {@code "cms"}, {@code "upload"}); used to classify the source in management UIs

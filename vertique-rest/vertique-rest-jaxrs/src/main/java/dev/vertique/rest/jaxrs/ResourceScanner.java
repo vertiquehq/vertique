@@ -368,7 +368,7 @@ class ResourceScanner {
      *       A {@code @Context}-annotated parameter is always {@code CONTEXT} even when its type is
      *       not natively injectable, so {@link RouteValidator} can reject it instead of letting it
      *       fall through to {@code BODY}. Annotations are preserved so the validator can detect
-     *       {@code @Context} + binding-annotation conflicts (FR-REST-166/167/179).
+     *       {@code @Context} + binding-annotation conflicts.
      *   <li>{@link RequestPreconditions} — conditional request preconditions injected directly.
      *   <li>{@link PathParam}, {@link QueryParam}, {@link HeaderParam}, {@link CookieParam} —
      *       annotated scalar params (with optional {@link DefaultValue} fallback)
@@ -398,7 +398,7 @@ class ResourceScanner {
             Annotation[] mergedParamAnnotations =
                     AnnotationResolver.resolveParameterAnnotations(method, i, annotationView);
 
-            // FR-REST-166/167/179: single CONTEXT source. A @Context-annotated parameter is
+            // Single CONTEXT source. A @Context-annotated parameter is
             // ALWAYS CONTEXT (even if its type is non-injectable) so RouteValidator can reject it
             // instead of letting it fall through to BODY. Annotations are preserved so the
             // validator can detect @Context + binding-annotation conflicts.
@@ -486,7 +486,7 @@ class ResourceScanner {
                         param.getType(),
                         componentType,
                         // genericType stays null for FORM: ResourceMethodMeta.ParamMeta documents it as
-                        // the full generic type for BODY parameters only (ADR-0191), and the FORM
+                        // the full generic type for BODY parameters only, and the FORM
                         // collection path needs only type() + componentType() to materialize.
                         null,
                         resolveDefaultValue(mergedParamAnnotations),

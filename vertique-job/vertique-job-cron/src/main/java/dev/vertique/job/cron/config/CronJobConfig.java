@@ -30,7 +30,7 @@ import jakarta.annotation.Nullable;
  * {@code enabled} (default {@code true}) and {@code maxAttempts} (default {@code 3}) carry concrete
  * defaults, since both paths apply the same default for those two.
  *
- * <p>{@code parameters} is an intentionally-open user payload (config rule R9): its values are a
+ * <p>{@code parameters} is an intentionally-open user payload: its values are a
  * domain-defined dictionary passed verbatim to the handler via
  * {@link dev.vertique.job.JobDispatchContext#parameters()}, and round-trips through
  * {@link dev.vertique.core.config.ConfigParser} with its values intact. Because that payload may carry
@@ -55,7 +55,7 @@ import jakarta.annotation.Nullable;
  * @param target the target reference ({@code "service:..."} or {@code "eventbus:..."}); presence of
  *     a non-{@code null} {@code target} on an entry without a matching annotation marks a config-only
  *     job, or {@code null} for an annotation-override-only entry
- * @param parameters the open user payload passed to the handler (config rule R9); never {@code null}
+ * @param parameters the open user payload passed to the handler; never {@code null}
  *     after construction (empty when no parameters configured)
  */
 public record CronJobConfig(
@@ -134,7 +134,7 @@ public record CronJobConfig(
     /**
      * Renders this job config with the open {@code parameters} payload redacted so a log line or
      * exception message never leaks a secret. {@code parameters} is an intentionally-open user payload
-     * (config rule R9) that may carry secrets at any depth — including under array indices. The default
+     * that may carry secrets at any depth — including under array indices. The default
      * record {@code toString()} (and {@code CronConfig.toString()}, which renders the job list) would
      * render it verbatim; this override delegates the {@code parameters} bag to the framework-wide
      * {@link ConfigSecretRenderer#redactBag(JsonObject)}, which masks credential-bearing keys at every

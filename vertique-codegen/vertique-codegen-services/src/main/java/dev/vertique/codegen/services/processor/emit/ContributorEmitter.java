@@ -33,20 +33,20 @@ import javax.lang.model.type.TypeMirror;
  * Emits a single {@code {Contract}_ContractContributor} class per contract group (one or more
  * validated {@link ContractModel}s for the same contract type).
  *
- * <p>CG-011 W4 changes the emission model from per-impl to per-group:
+ * <p>The emission model is per-group rather than per-impl:
  * <ul>
  *   <li>Each contract group produces exactly one {@code _ContractContributor}.</li>
  *   <li>The contributor's {@code @Inject} constructor accepts one {@code Provider<Impl>} per
- *       candidate in the group, enabling lazy instantiation (NFR-CG011-002).</li>
+ *       candidate in the group, enabling lazy instantiation.</li>
  *   <li>The {@code contribute(JsonObject)} method applies the <em>size-aware contract</em>:
  *     <ul>
  *       <li><strong>Single-impl, unconditional</strong>: always returns the entry.</li>
  *       <li><strong>Single-impl, conditional</strong>: returns the entry if the condition is met;
- *           returns {@code List.of()} (NOT throw) if not (FR-CG011-011).</li>
+ *           returns {@code List.of()} (NOT throw) if not.</li>
  *       <li><strong>Multi-impl</strong>: walks all conditional candidates; if exactly one matches,
  *           returns it. If none matches and an unconditional default exists, returns the default.
- *           If none matches and no default exists, throws {@link ServiceRegistrationException}
- *           (FR-CG011-013). If more than one matches, throws (FR-CG011-013).</li>
+ *           If none matches and no default exists, throws {@link ServiceRegistrationException}.
+ *           If more than one matches, throws.</li>
  *     </ul>
  *   </li>
  * </ul>
@@ -457,7 +457,7 @@ public final class ContributorEmitter {
                 // Unconditional single impl — always return the entry
                 body.addStatement("return $L($L.get(), config)", buildEntryMethodName, providerField);
             } else {
-                // Conditional single impl — return empty list when condition not met (FR-CG011-011)
+                // Conditional single impl — return empty list when condition not met
                 String conditionsConst = Conditions.constantName(key);
                 body.beginControlFlow("if ($T.matchesAll(config, $L))", Conditions.PROPERTY_CONDITION, conditionsConst);
                 body.addStatement("return $L($L.get(), config)", buildEntryMethodName, providerField);

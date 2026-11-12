@@ -13,7 +13,7 @@ package dev.vertique.workflow.exception;
  * <em>absent</em> ({@code ClassNotFoundException}), the factory silently falls back to the reflective
  * JDK dynamic proxy. A proxy that is present-but-broken instead indicates a build/codegen
  * inconsistency (e.g. a stale generated class after an annotation change), which must fail loudly
- * rather than be masked by the fallback path. See ADR-0073.
+ * rather than be masked by the fallback path.
  */
 public class WorkflowClientProxyLinkageException extends WorkflowConfigurationException {
 

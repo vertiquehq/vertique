@@ -141,8 +141,8 @@ public abstract class AuthModule {
      * Optional binding for a custom synchronous {@link AuthorizationPolicy} (core SPI).
      *
      * <p>When an application provides this binding, {@link SecurityPolicyEnforcer} wraps it in a
-     * {@link SyncPolicyDecisionPoint} so the sync policy participates in the async pipeline. Per
-     * ADR-0114 the enforcement layer ({@code SecurityPolicyEnforcer}) — not the decision point —
+     * {@link SyncPolicyDecisionPoint} so the sync policy participates in the async pipeline. The
+     * enforcement layer ({@code SecurityPolicyEnforcer}) — not the decision point —
      * emits exactly one {@link dev.vertique.security.events.AuthorizationDecisionEvent} per
      * decision; the wrapped {@link AuthorizationPolicy} (and the {@link SyncPolicyDecisionPoint}
      * around it) does not emit. Takes precedence over the default {@link VertxProviderDecisionPoint},
@@ -174,7 +174,7 @@ public abstract class AuthModule {
      * {@link dev.vertique.security.authz.Authorizer}); it is empty otherwise. The
      * {@link SecurityPolicyEnforcer} composes the action gate only when an operation carries a present
      * {@code @RequiresAction}, and a present {@code @RequiresAction} can only pass startup validation
-     * when the engine is installed (slice 11). Mirrors the optional-presence idiom used for the
+     * when the engine is installed. Mirrors the optional-presence idiom used for the
      * {@code ActionRegistry} binding in {@code RestModule}.
      *
      * @return the optional core {@code Authorizer} binding
@@ -198,7 +198,7 @@ public abstract class AuthModule {
 
     /**
      * Declares the optional {@link AuthorizationGateConfig} binding, defaulting to {@link
-     * AuthorizationGateConfig#defaults()} when absent (issue #417, R42).
+     * AuthorizationGateConfig#defaults()} when absent.
      *
      * <p>Bounds every {@link SecurityPolicyEnforcer#decide} role/scope and action gate future.
      * {@link AuthorizationGateConfigModule} is the opt-in companion that config-drives this value

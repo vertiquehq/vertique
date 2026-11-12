@@ -34,7 +34,7 @@ import dagger.Module;
  * OpenTelemetry API contract.
  *
  * <p>Zero-overhead when tracing is unconfigured: the module uses the OpenTelemetry API only
- * (no SDK in compile scope, per NFR-TEL-002). No configuration gate is provided by design —
+ * (no SDK in compile scope). No configuration gate is provided by design —
  * enrichment is always attempted and silently becomes a no-op when no recording span is present.
  *
  * <p>Contributed bindings:
