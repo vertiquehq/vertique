@@ -55,8 +55,9 @@ import java.util.TreeSet;
  *
  * <h2>NFR-CONF-002</h2>
  * <p>No resolved config <em>value</em> appears in any log message, exception message,
- * {@code toString()}, or other observable output produced by this class. Only keys and chain
- * renderings (using {@code ->} notation) are ever exposed.
+ * {@code toString()}, or other observable output produced by this class. Only keys, chain
+ * renderings (using {@code ->} notation), and — for a malformed reference — a location with a
+ * character position are ever exposed; the text of a malformed reference is not.
  *
  * @see PlaceholderParser
  * @see TreeLookup
@@ -100,7 +101,7 @@ public final class PlaceholderResolver {
      */
     public static JsonObject resolveAgainstTree(JsonObject value, JsonObject tree) {
         ResolutionContext ctx = new ResolutionContext(tree, List.of(), true);
-        JsonObject result = ctx.walkObject(value, 0);
+        JsonObject result = ctx.walkObject(value, 0, "");
         ctx.throwIfFailures();
         return result;
     }
@@ -123,7 +124,7 @@ public final class PlaceholderResolver {
      */
     public static JsonArray resolveAgainstTree(JsonArray value, JsonObject tree) {
         ResolutionContext ctx = new ResolutionContext(tree, List.of(), true);
-        JsonArray result = ctx.walkArray(value, 0);
+        JsonArray result = ctx.walkArray(value, 0, "");
         ctx.throwIfFailures();
         return result;
     }
@@ -151,7 +152,7 @@ public final class PlaceholderResolver {
      */
     public static JsonObject resolveTree(JsonObject tree, List<ConfigPropertySource> sources) {
         ResolutionContext ctx = new ResolutionContext(tree, sources, false);
-        JsonObject result = ctx.walkObject(tree, 0);
+        JsonObject result = ctx.walkObject(tree, 0, "");
         ctx.throwIfFailures();
         return result;
     }
@@ -167,8 +168,10 @@ public final class PlaceholderResolver {
      *
      * <h2>NFR-CONF-002</h2>
      * <p>Resolved values are never stored in, or retrieved from, the failure set or the
-     * resolution stack. The stack contains only key names; failures contain only key names or
-     * chain renderings.
+     * resolution stack. The stack contains only key names; failures contain only key names, chain
+     * renderings, and — for a malformed reference — the location of the containing value plus the
+     * character position of the offending {@code ${}. The text of a malformed reference is never
+     * recorded, because an unterminated {@code ${} swallows the rest of the value.
      */
     private static final class ResolutionContext {
 
@@ -208,11 +211,15 @@ public final class PlaceholderResolver {
         private final ArrayDeque<String> stack = new ArrayDeque<>();
 
         /**
-         * Accumulated failure set — reference renderings only (keys, chain strings).
+         * Accumulated failure set — reference renderings only (keys, chain strings, malformed
+         * locations).
          *
          * <p>A {@link TreeSet} ensures sorted, de-duplicated iteration at exception time.
          */
         private final TreeSet<String> failures = new TreeSet<>();
+
+        /** Fixed marker that renders a malformed reference without quoting its text. */
+        private static final String MALFORMED_MARKER = "malformed placeholder at index ";
 
         /**
          * Constructs a new context for a single resolution pass.
@@ -233,15 +240,18 @@ public final class PlaceholderResolver {
          * Produces a new {@link JsonObject} with every {@link String} value resolved.
          * Nested objects and arrays are recursed. Non-string types are copied as-is.
          *
-         * @param obj   the object to walk; must not be {@code null}
-         * @param depth the current recursion depth for string resolution
+         * @param obj      the object to walk; must not be {@code null}
+         * @param depth    the current recursion depth for string resolution
+         * @param location the dotted path of {@code obj} within the walked root, or {@code ""}
+         *                 for the root itself; used only in failure renderings
          * @return a new {@link JsonObject} with resolved values
          */
-        JsonObject walkObject(JsonObject obj, int depth) {
+        JsonObject walkObject(JsonObject obj, int depth, String location) {
             JsonObject result = new JsonObject();
             for (String key : obj.fieldNames()) {
                 Object raw = obj.getValue(key);
-                result.put(key, walkValue(raw, depth));
+                String childLocation = location.isEmpty() ? key : location + "." + key;
+                result.put(key, walkValue(raw, depth, childLocation));
             }
             return result;
         }
@@ -249,14 +259,16 @@ public final class PlaceholderResolver {
         /**
          * Produces a new {@link JsonArray} with every element resolved.
          *
-         * @param arr   the array to walk; must not be {@code null}
-         * @param depth the current recursion depth (passed through for string resolution)
+         * @param arr      the array to walk; must not be {@code null}
+         * @param depth    the current recursion depth (passed through for string resolution)
+         * @param location the dotted path of {@code arr} within the walked root, or {@code ""}
+         *                 for the root itself; used only in failure renderings
          * @return a new {@link JsonArray} with resolved elements
          */
-        JsonArray walkArray(JsonArray arr, int depth) {
+        JsonArray walkArray(JsonArray arr, int depth, String location) {
             JsonArray result = new JsonArray();
             for (int i = 0; i < arr.size(); i++) {
-                result.add(walkValue(arr.getValue(i), depth));
+                result.add(walkValue(arr.getValue(i), depth, location + "[" + i + "]"));
             }
             return result;
         }
@@ -271,19 +283,21 @@ public final class PlaceholderResolver {
          *   <li>Other types (numerics, booleans, {@code null}) — returned unchanged.</li>
          * </ul>
          *
-         * @param value the raw value from the config tree; may be {@code null}
-         * @param depth the current nesting depth for string resolution
+         * @param value    the raw value from the config tree; may be {@code null}
+         * @param depth    the current nesting depth for string resolution
+         * @param location the dotted path of {@code value} within the walked root; used only in
+         *                 failure renderings
          * @return the resolved / recursed value
          */
-        private Object walkValue(Object value, int depth) {
+        private Object walkValue(Object value, int depth, String location) {
             if (value instanceof String s) {
-                return resolveString(s, depth);
+                return resolveString(s, depth, location);
             }
             if (value instanceof JsonObject obj) {
-                return walkObject(obj, depth);
+                return walkObject(obj, depth, location);
             }
             if (value instanceof JsonArray arr) {
-                return walkArray(arr, depth);
+                return walkArray(arr, depth, location);
             }
             // Integer, Long, Double, Boolean, null — pass through
             return value;
@@ -304,13 +318,21 @@ public final class PlaceholderResolver {
          * without being stringified.
          *
          * <p>Otherwise (CONCAT mode) every segment is resolved and stringified, then
-         * concatenated into a single {@link String}.
+         * concatenated into a single {@link String}. A {@link PlaceholderParser.Malformed} segment
+         * is passed through unchanged and recorded as a failure that names {@code location} and
+         * the segment's character position — never its text, which for an unterminated
+         * {@code ${} is the rest of the value.
          *
-         * @param value the config string to process; must not be {@code null}
-         * @param depth the current resolution depth
+         * @param value    the config string to process; must not be {@code null}
+         * @param depth    the current resolution depth
+         * @param location where {@code value} lives: a dotted config path for a walked value, the
+         *                 referenced key for a tree value reached through a reference, or the
+         *                 referenced key suffixed with {@code " default"} for a default text (whose
+         *                 positions count from the start of the default text, after escapes were
+         *                 expanded); used only in failure renderings
          * @return the resolved value; may be a non-{@link String} in WHOLE-VALUE mode
          */
-        private Object resolveString(String value, int depth) {
+        private Object resolveString(String value, int depth, String location) {
             List<PlaceholderParser.Segment> segments = PlaceholderParser.parse(value);
 
             // No placeholder/malformed segments AND no escape sequences → return unchanged.
@@ -338,8 +360,9 @@ public final class PlaceholderResolver {
                         sb.append(TreeLookup.stringify(resolved));
                     }
                     case PlaceholderParser.Malformed mal -> {
-                        // Record malformed as unresolved; pass the raw text through
-                        recordFailure(mal.rawText());
+                        // Record malformed as unresolved by location and position only — the raw
+                        // text runs to the end of the value and may be a secret. Pass it through.
+                        recordFailure(location + " (" + MALFORMED_MARKER + mal.offset() + ")");
                         sb.append(mal.rawText());
                     }
                 }
@@ -395,11 +418,14 @@ public final class PlaceholderResolver {
                 Optional<Object> treeResult = TreeLookup.find(tree, key);
                 if (treeResult.isPresent()) {
                     Object treeVal = treeResult.get();
+                    // Failures inside the referenced value are located by the key where the value
+                    // lives, so a value reached both directly and through a reference is one entry
+                    String location = key;
                     if (treeVal instanceof String s && PlaceholderParser.containsPlaceholder(s)) {
                         // Recursively resolve the string value found in the tree
                         stack.push(key);
                         try {
-                            return resolveString(s, depth + 1);
+                            return resolveString(s, depth + 1, location);
                         } finally {
                             stack.pop();
                         }
@@ -410,7 +436,7 @@ public final class PlaceholderResolver {
                         // to this key is detected as a cycle rather than looping.
                         stack.push(key);
                         try {
-                            return walkObject(obj.copy(), depth + 1);
+                            return walkObject(obj.copy(), depth + 1, location);
                         } finally {
                             stack.pop();
                         }
@@ -419,7 +445,7 @@ public final class PlaceholderResolver {
                         // Same logic as JsonObject: walk a copy with the key on the stack.
                         stack.push(key);
                         try {
-                            return walkArray(arr.copy(), depth + 1);
+                            return walkArray(arr.copy(), depth + 1, location);
                         } finally {
                             stack.pop();
                         }
@@ -450,8 +476,9 @@ public final class PlaceholderResolver {
 
             // --- Step 4: default ---
             if (defaultValue != null) {
-                // Parse and resolve the default text at depth+1; defaults may contain placeholders
-                return resolveString(defaultValue, depth + 1);
+                // Parse and resolve the default text at depth+1; defaults may contain placeholders.
+                // A malformed segment in the default is located relative to the default text.
+                return resolveString(defaultValue, depth + 1, key + " default");
             }
 
             // --- Step 5: record failure ---
@@ -484,7 +511,8 @@ public final class PlaceholderResolver {
         /**
          * Adds a reference rendering to the failure accumulator.
          *
-         * @param rendering a key name or chain rendering; must not contain resolved values
+         * @param rendering a key name, chain rendering, or malformed-reference location; must not
+         *                  contain resolved values or placeholder text
          */
         private void recordFailure(String rendering) {
             failures.add(rendering);
