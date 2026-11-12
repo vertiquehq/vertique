@@ -33,6 +33,11 @@ import lombok.extern.slf4j.Slf4j;
  *       from {@code event.operation().routeTemplate()}</li>
  *   <li>{@code operation} — the operation's OpenAPI operationId, read from
  *       {@code event.operation().operationId()}</li>
+ *   <li>{@code rest.application} — the name of the REST application the operation belongs to,
+ *       read from {@code event.operation().applicationName()}; {@code none} when the operation
+ *       belongs to no application (a hand-built or zero-declaration mount). The key is always
+ *       present, so one resource mounted by several applications under the same operationId and
+ *       route yields one series per application.</li>
  *   <li>{@code status} — HTTP response status code as a string (e.g. {@code 200})</li>
  *   <li>{@code outcome} — low-cardinality {@link HttpOutcome} bucket (e.g. {@code SUCCESS})</li>
  *   <li>{@code error.type} — {@code failureCode} when present, else {@code wireFailureCode}
@@ -68,6 +73,9 @@ public final class RestServerRequestMetricsListener implements RestRequestComple
     /** Tag name for the OpenAPI operationId. */
     static final String TAG_OPERATION = "operation";
 
+    /** Tag name for the owning REST application's name; a cardinality-guarded key. */
+    static final String TAG_APPLICATION = "rest.application";
+
     /** Tag name for the HTTP status code. */
     static final String TAG_STATUS = "status";
 
@@ -80,7 +88,11 @@ public final class RestServerRequestMetricsListener implements RestRequestComple
     /** Sentinel value used for the method tag when the value is unavailable. */
     static final String UNKNOWN = "UNKNOWN";
 
-    /** Sentinel value used for error.type when no failure was recorded. */
+    /**
+     * Sentinel value used for error.type when no failure was recorded, and for rest.application when
+     * the operation belongs to no application. {@code none} is a reserved application name, so the
+     * sentinel never collides with a declared application.
+     */
     static final String NONE = "none";
 
     private final MeterRegistry registry;
@@ -118,6 +130,8 @@ public final class RestServerRequestMetricsListener implements RestRequestComple
             String method = event.method() != null ? event.method() : UNKNOWN;
             String route = event.operation().routeTemplate();
             String operation = event.operation().operationId();
+            String applicationName = event.operation().applicationName();
+            String application = applicationName != null ? applicationName : NONE;
             String status = String.valueOf(event.statusCode());
             String outcome = HttpOutcome.from(event.statusCode()).name();
             // error.type (D1=A): failureCode wins when present; otherwise fall back to
@@ -131,6 +145,7 @@ public final class RestServerRequestMetricsListener implements RestRequestComple
                     TAG_METHOD, method,
                     TAG_ROUTE, route,
                     TAG_OPERATION, operation,
+                    TAG_APPLICATION, application,
                     TAG_STATUS, status,
                     TAG_OUTCOME, outcome,
                     TAG_ERROR_TYPE, errorType);

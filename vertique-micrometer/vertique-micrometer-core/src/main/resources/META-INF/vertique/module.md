@@ -227,9 +227,9 @@ in `maximumAllowableTags` handles this).
 The list only grows: entries are never removed or reordered. Adding a new `vertique.*` tag key to
 any adapter requires extending this list — this is a review-enforced constraint.
 
-The list ends with `rest.application`, the key for the REST server request meter's application
-tag. It is guarded ahead of its emitter: no meter emits it yet, but any `rest.application` tag on a
-`vertique.*` meter already has its values capped at `metrics.cardinality.maxTagValuesPerKey`
+The list ends with `rest.application`, the key under which `vertique-micrometer-rest`'s request
+timer (`vertique.rest.server.requests`) carries the owning REST application's name, `none` outside
+applications. Like every guarded key, its values are capped at `metrics.cardinality.maxTagValuesPerKey`
 (default `200`), and `metrics.tags.extra` cannot claim the key (see `TagPolicyValidator`).
 
 ### TagPolicyValidator
