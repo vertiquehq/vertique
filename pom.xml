@@ -161,7 +161,7 @@ SPDX-License-Identifier: EUPL-1.2
         <cel.version>0.14.0</cel.version>
         <zjsonpatch.version>0.6.4</zjsonpatch.version>
         <commons-collections4.version>4.4</commons-collections4.version>
-        <vault-java-driver.version>6.2.3</vault-java-driver.version>
+        <vault-java-driver.version>7.0.0</vault-java-driver.version>
         <aws.sdk.version>2.55.11</aws.sdk.version>
         <azure-keyvault-secrets.version>4.11.2</azure-keyvault-secrets.version>
         <azure-identity.version>1.18.7</azure-identity.version>
