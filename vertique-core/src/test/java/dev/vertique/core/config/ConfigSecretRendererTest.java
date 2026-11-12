@@ -61,6 +61,43 @@ class ConfigSecretRendererTest {
         }
     }
 
+    // --- isUriPath: the URL-key predicate ---
+
+    @Nested
+    @DisplayName("isUriPath")
+    class UriPath {
+
+        @Test
+        @DisplayName("matches url, uri, endpoint and connection-string names through the normalized path")
+        void matchesUrlNames() {
+            assertTrue(ConfigSecretRenderer.isUriPath("jdbcUrl"));
+            assertTrue(ConfigSecretRenderer.isUriPath("restClient.orders.baseUrl"));
+            assertTrue(ConfigSecretRenderer.isUriPath("redis.endpoints"));
+            assertTrue(ConfigSecretRenderer.isUriPath("camel.uri"));
+            assertTrue(ConfigSecretRenderer.isUriPath("sql.connection-string"));
+            assertTrue(ConfigSecretRenderer.isUriPath("sql.connection_string"));
+            assertTrue(ConfigSecretRenderer.isUriPath("s3.endpoint"));
+            assertTrue(ConfigSecretRenderer.isUriPath("JDBC_URL"));
+        }
+
+        @Test
+        @DisplayName(
+                "matches a look-alike such as security (contains uri) by design: redactUri leaves a plain string equal")
+        void lookAlikeMatches() {
+            assertTrue(ConfigSecretRenderer.isUriPath("security.audience"));
+            assertEquals("orders-api", ConfigSecretRenderer.redactUri("orders-api"));
+        }
+
+        @Test
+        @DisplayName("returns false for a path without a URL-naming token")
+        void nonUrlPath() {
+            assertFalse(ConfigSecretRenderer.isUriPath("host"));
+            assertFalse(ConfigSecretRenderer.isUriPath("bootstrap.servers"));
+            assertFalse(ConfigSecretRenderer.isUriPath("vault.address"));
+            assertFalse(ConfigSecretRenderer.isUriPath("password"));
+        }
+    }
+
     // --- redactBag: object recursion ---
 
     @Nested
