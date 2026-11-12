@@ -19,12 +19,15 @@ import java.util.Optional;
  * ({@link DefaultConfigParser}), so the two sides cannot drift apart.
  *
  * <p>The sensitivity rule itself is not defined here: every decision delegates to
- * {@link ConfigSecretRenderer#isSensitivePath(String)}. This class only fixes how a dotted path is
- * built while walking a value, with the walk of {@link ConfigSecretRenderer#redactBag(JsonObject)}:
- * object keys extend the path with a {@code .} separator, and array or collection elements inherit
- * their parent's path (an index is not part of the key shape the runtime flattens to). One deliberate
- * difference: {@code redactBag} prints {@code "***"} for a {@code null} secret, while serialization
- * omits an absent secret, so {@link #maskBag} drops a {@code null} sensitive entry.
+ * {@link ConfigSecretRenderer#isSensitivePath(String)} and {@link ConfigSecretRenderer#isUriPath(String)}.
+ * This class only fixes how a dotted path is built while walking a value, with the walk of
+ * {@link ConfigSecretRenderer#redactBag(JsonObject)}: object keys extend the path with a {@code .}
+ * separator, and array or collection elements inherit their parent's path (an index is not part of the
+ * key shape the runtime flattens to). Two deliberate differences from {@code redactBag}: it prints
+ * {@code "***"} for a {@code null} secret while serialization omits an absent secret, so
+ * {@link #maskValue} drops a {@code null} sensitive entry; and it leaves a URL-named string leaf as
+ * given, while {@link #maskValue} renders it through {@link ConfigSecretRenderer#redactUri(String)},
+ * so a bag's {@code toString()} prints a URL as given where a config-mapper dump masks its credentials.
  */
 final class ConfigSecretPaths {
 
@@ -42,26 +45,38 @@ final class ConfigSecretPaths {
     }
 
     /**
-     * Returns a copy of an open bag with every sensitive leaf masked, or the <em>same</em> instance
-     * when nothing in it is sensitive.
+     * Returns the log-safe rendering of a non-secret value at {@code path}, or the <em>same</em>
+     * instance when nothing in it needs masking.
      *
-     * <p>Handles {@link Map}, {@link JsonObject}, {@link Collection} and {@link JsonArray} values and
-     * recurses through any nesting of them. A sensitive entry whose value is {@code null} is dropped
-     * (absent secrets are omitted); any other sensitive entry becomes {@link ConfigSecretRenderer#MASK}
-     * whatever its shape, as in {@code redactBag}. Scalars and unknown types are copied as-is.
-     * The input is never mutated.
+     * <p>Two rules apply, by dotted path. A {@link String} at a path that
+     * {@link ConfigSecretRenderer#isUriPath(String) names a URL} is rendered through
+     * {@link ConfigSecretRenderer#redactUri(String)} and returned only when that differs from the
+     * input (compared by {@code equals}, because {@code redactUri} rebuilds any string with a query).
+     * An open bag — {@link Map}, {@link JsonObject}, {@link Collection}, {@link JsonArray}, nested to
+     * any depth — is copied with every sensitive entry masked and every URL-named string leaf redacted:
+     * a sensitive entry whose value is {@code null} is dropped (absent secrets are omitted); any other
+     * sensitive entry becomes {@link ConfigSecretRenderer#MASK} whatever its shape, as in
+     * {@code redactBag}. Other scalars and unknown types are returned as-is. The caller has already
+     * established that {@code path} itself is not sensitive. The input is never mutated.
      *
      * @param path the dotted path of {@code value} itself
-     * @param value the bag to mask
-     * @return a masked copy, or {@code value} itself when no leaf was masked
+     * @param value the value to mask
+     * @return a masked rendering, or {@code value} itself when nothing was masked
      */
-    static Object maskBag(String path, Object value) {
+    static Object maskValue(String path, Object value) {
+        if (value instanceof String text) {
+            if (!ConfigSecretRenderer.isUriPath(path)) {
+                return value;
+            }
+            String redacted = ConfigSecretRenderer.redactUri(text);
+            return redacted.equals(text) ? value : redacted;
+        }
         if (value instanceof JsonObject json) {
-            Object masked = maskBag(path, json.getMap());
+            Object masked = maskValue(path, json.getMap());
             return masked == json.getMap() ? json : new JsonObject(castMap(masked));
         }
         if (value instanceof JsonArray array) {
-            Object masked = maskBag(path, array.getList());
+            Object masked = maskValue(path, array.getList());
             return masked == array.getList() ? array : new JsonArray(castList(masked));
         }
         if (value instanceof Map<?, ?> map) {
@@ -77,7 +92,7 @@ final class ConfigSecretPaths {
                         copy.put(key, ConfigSecretRenderer.MASK);
                     }
                 } else {
-                    Object maskedValue = maskBag(fullKey, entryValue);
+                    Object maskedValue = maskValue(fullKey, entryValue);
                     changed |= maskedValue != entryValue;
                     copy.put(key, maskedValue);
                 }
@@ -88,7 +103,7 @@ final class ConfigSecretPaths {
             boolean changed = false;
             List<Object> copy = new ArrayList<>(collection.size());
             for (Object element : collection) {
-                Object maskedElement = maskBag(path, element);
+                Object maskedElement = maskValue(path, element);
                 changed |= maskedElement != element;
                 copy.add(maskedElement);
             }

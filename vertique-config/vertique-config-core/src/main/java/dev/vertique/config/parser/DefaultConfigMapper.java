@@ -28,8 +28,9 @@ import java.util.List;
  *
  * <p>The secret-masking module changes serialization only: a field whose dotted path
  * {@code ConfigSecretRenderer} deems sensitive is written as {@code "***"} when set and omitted when
- * absent, so a dump of a parsed record never carries the value of a secret-named field. The rule keys
- * on names: a credential embedded in a URL-typed string is not recognised. Parsing is unaffected.
+ * absent, so a dump of a parsed record never carries the value of a secret-named field; a string at a
+ * URL-named path ({@code jdbcUrl}, {@code baseUrl}) is written with its userinfo and credential query
+ * parameters masked through {@code ConfigSecretRenderer.redactUri}. Parsing is unaffected.
  *
  * <p>{@link #finalizeForConfig(ObjectMapper)} takes an application-supplied {@code @ConfigMapper}
  * override and re-layers the framework's mandatory modules and lenient policy over it <em>in

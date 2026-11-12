@@ -363,8 +363,15 @@ Absent any `@ConfigMapper` binding, the framework uses its own lenient default m
   `@JsonProperty("pwd")` renames a field out of the rule. An open bag (`Map`, `JsonObject`,
   collection, also held through an `Optional`) under a non-secret key is written with its sensitive
   entries masked at every depth, the walk `redactBag` applies to `toString()`, with `null` secret
-  entries dropped. The rule keys on names: a credential embedded in a URL-typed string (`jdbcUrl`)
-  serializes as given. The live value is untouched, deserialization is untouched, and so is any other
+  entries dropped. A string at a path `ConfigSecretRenderer.isUriPath` recognises (`jdbcUrl`,
+  `baseUrl`, `endpoints`, `uri`, `connectionString`; a field, an `Optional`, a list element or a bag
+  entry) is written as `ConfigSecretRenderer.redactUri` renders it: `user:pass@` and credential-named
+  query-parameter values become `***`, scheme, host, port and path stay visible, and a URL without
+  credentials serializes as given. Secret wins over URL (`tokenUrl` renders as `"***"`). The URL rule
+  covers `scheme://user:pass@host` and `?name=value` forms only — a scheme-less or semicolon-style
+  connection string, or a URL under a name without one of the tokens (`address`), serializes as given
+  — and it is one difference from `toString()`: `redactBag` leaves a URL inside a bag as given. The
+  live value is untouched, deserialization is untouched, and so is any other
   `ObjectMapper`: a record dumped through a REST or process mapper is not masked. A `@ConfigMapper`
   override gets the module too, provided it has not serialized anything before it is finalized; a
   custom serializer registered for a record type and `@JsonAnyGetter` entries bypass it, and the
@@ -374,7 +381,8 @@ Absent any `@ConfigMapper` binding, the framework uses its own lenient default m
 - **`ConfigParser` rejects the mask placeholder.** A secret-path leaf whose value is the literal
   `"***"` fails the parse with a `ConfigurationException` naming the dotted path (relative to the
   record, or to the entry for keyed collections), so a masked dump cannot be fed back as the secret.
-  The same literal under a non-secret key is an ordinary value.
+  The same literal under a non-secret key is an ordinary value, and a masked URL (`//***@host`,
+  `password=***`) is not recognised: fed back, it fails at connect time, not at startup.
 - **An `@ConfigMapper` override is finalized in place**, not copied — the framework layers its
   mandatory modules and lenient policy onto the very instance supplied and then owns it. Do not share
   that instance concurrently for another purpose.

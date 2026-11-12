@@ -24,8 +24,9 @@ import org.junit.jupiter.api.Test;
 /**
  * Pins the serialization half of the secret rule on the config mapper: a field whose dotted path is
  * sensitive renders as {@code "***"} when set and disappears when absent, nested and dot-spanning
- * paths are recognised, open bags are scrubbed by entry, non-secret fields are untouched, and the
- * behaviour holds on the lenient default, on a finalized {@code @ConfigMapper} override and through
+ * paths are recognised, open bags are scrubbed by entry, a string at a URL-named path is rendered
+ * through {@code redactUri} (secret wins over URL), non-secret fields are untouched, and the behaviour
+ * holds on the lenient default, on a finalized {@code @ConfigMapper} override and through
  * {@code convertValue}/{@code valueToTree}.
  */
 @DisplayName("ConfigSecretMaskingModule")
@@ -61,6 +62,19 @@ class ConfigSecretMaskingModuleTest {
     record ArrayShapedBag(String name, Map<String, String> headers) {}
 
     record Wrapped(String name, Optional<Map<String, String>> headers, Object extras, OptionalInt tokenCount) {}
+
+    /** URL-named string fields in every shape the serializer walks; {@code tokenUrl} is secret-named too. */
+    record Urls(
+            String jdbcUrl,
+            String baseUrl,
+            Optional<String> uri,
+            List<String> endpoints,
+            Map<String, String> endpointsByName,
+            String tokenUrl,
+            String host) {}
+
+    @JsonFormat(shape = JsonFormat.Shape.ARRAY)
+    record ArrayShapedUrl(String name, String baseUrl) {}
 
     private JsonNode tree(Object value) throws Exception {
         return mapper.readTree(mapper.writeValueAsString(value));
@@ -222,6 +236,112 @@ class ConfigSecretMaskingModuleTest {
             assertEquals(mapper.readTree(properties.encode()), json.get("properties"));
             assertEquals("b", json.get("headers").get("a").asText());
             assertEquals(0, json.get("items").size());
+        }
+    }
+
+    @Nested
+    @DisplayName("URL-named fields")
+    class UrlFields {
+
+        private static final String USERINFO_URL = "https://alice:" + SECRET + "@api.example:8443/v1/orders";
+        private static final String QUERY_URL =
+                "jdbc:postgresql://db.example:5432/app?password=" + SECRET + "&ssl=true";
+
+        @Test
+        @DisplayName("jdbcUrl and baseUrl mask userinfo and credential query parameters, keeping host and path")
+        void credentialsInUrlMasked() throws Exception {
+            JsonNode json = tree(new Urls(QUERY_URL, USERINFO_URL, Optional.empty(), List.of(), Map.of(), null, "h"));
+
+            assertFalse(json.toString().contains(SECRET), json.toString());
+            assertEquals(
+                    "jdbc:postgresql://db.example:5432/app?password=***&ssl=true",
+                    json.get("jdbcUrl").asText());
+            assertEquals(
+                    "https://***@api.example:8443/v1/orders",
+                    json.get("baseUrl").asText());
+            assertEquals("h", json.get("host").asText());
+        }
+
+        @Test
+        @DisplayName("a URL without credentials serializes byte-identical")
+        void plainUrlUntouched() throws Exception {
+            Urls urls = new Urls(
+                    "jdbc:postgresql://db.example:5432/app?ssl=true",
+                    "https://api.example/v1",
+                    Optional.empty(),
+                    List.of(),
+                    Map.of(),
+                    null,
+                    "h");
+
+            JsonNode json = tree(urls);
+
+            assertEquals(
+                    "jdbc:postgresql://db.example:5432/app?ssl=true",
+                    json.get("jdbcUrl").asText());
+            assertEquals("https://api.example/v1", json.get("baseUrl").asText());
+        }
+
+        @Test
+        @DisplayName("an Optional URL, list elements and bag entries at a URL-named path are redacted too")
+        void wrappedUrlsMasked() throws Exception {
+            JsonNode json = tree(new Urls(
+                    null,
+                    null,
+                    Optional.of(USERINFO_URL),
+                    List.of("redis://h1:6379", USERINFO_URL),
+                    Map.of("orders", QUERY_URL, "plain", "https://api.example"),
+                    null,
+                    "h"));
+
+            assertFalse(json.toString().contains(SECRET), json.toString());
+            assertEquals(
+                    "https://***@api.example:8443/v1/orders", json.get("uri").asText());
+            assertEquals("redis://h1:6379", json.get("endpoints").get(0).asText());
+            assertEquals(
+                    "https://***@api.example:8443/v1/orders",
+                    json.get("endpoints").get(1).asText());
+            assertEquals(
+                    "jdbc:postgresql://db.example:5432/app?password=***&ssl=true",
+                    json.get("endpointsByName").get("orders").asText());
+            assertEquals(
+                    "https://api.example",
+                    json.get("endpointsByName").get("plain").asText());
+        }
+
+        @Test
+        @DisplayName("a secret-named URL field masks whole: secret wins over URL")
+        void secretNamedUrlMaskedWhole() throws Exception {
+            JsonNode json =
+                    tree(new Urls(null, null, Optional.empty(), List.of(), Map.of(), "https://api.example/token", "h"));
+
+            assertEquals("***", json.get("tokenUrl").asText());
+        }
+
+        @Test
+        @DisplayName("a null URL field serializes as before")
+        void nullUrlUnchanged() throws Exception {
+            JsonNode json = tree(new Urls(null, null, Optional.empty(), List.of(), Map.of(), null, "h"));
+
+            assertTrue(json.get("jdbcUrl").isNull(), json.toString());
+            assertTrue(json.get("uri").isNull(), json.toString());
+        }
+
+        @Test
+        @DisplayName("an array-shaped bean redacts a URL positionally")
+        void arrayShapedUrlMasked() throws Exception {
+            JsonNode json = tree(new ArrayShapedUrl("n", USERINFO_URL));
+
+            assertTrue(json.isArray(), json.toString());
+            assertEquals("https://***@api.example:8443/v1/orders", json.get(1).asText());
+        }
+
+        @Test
+        @DisplayName("the live value and deserialization are untouched")
+        void liveValueIntact() throws Exception {
+            Urls parsed = mapper.readValue("{\"jdbcUrl\":\"" + QUERY_URL + "\",\"host\":\"h\"}", Urls.class);
+
+            assertEquals(QUERY_URL, parsed.jdbcUrl());
         }
     }
 
