@@ -38,7 +38,7 @@ starter or feature module. Depend on it **directly** when:
 Pair core with the module that implements the contract you are using: `vertique-config-core` for
 `ConfigParser`, `vertique-validation` for `BeanValidator`, `vertique-json` for the JSON profile
 registry, `vertique-context` and `vertique-correlation` for context propagation,
-`vertique-management` for health-check aggregation, `vertique-services` for typed event-bus service
+`vertique-management` for the HTTP health probes, `vertique-services` for typed event-bus service
 calls.
 
 ---
@@ -764,7 +764,8 @@ Every extension below is contributed through Dagger multibinding unless stated o
 
 Reports the health of one component. Classify each check with the `@Liveness` or `@Readiness`
 qualifier; `HealthCheckModule` declares both empty-by-default sets so a module can contribute
-without depending on `dev.vertique:vertique-management`, which is what reads them.
+without depending on `dev.vertique:vertique-management`, which serves them over HTTP. The sets are
+evaluated in process by `HealthCheckAggregator`, below, which the same module binds.
 
 ```java
 public interface HealthCheck {
@@ -803,8 +804,63 @@ exception, so a failure that cannot describe itself still yields a `DOWN` result
 second failure. It rejects a `null` cause with a `NullPointerException`. Return a completed future
 carrying a `DOWN` result rather than a failed future — a failed future or a thrown exception is
 still reported as `DOWN`, but with the error text instead of your diagnostic data. `name()` must be
-unique within its qualifier set and must not return `null`; the management endpoint reports a `null`
+unique within its qualifier set and must not return `null`; the aggregator reports a `null`
 name under the check's implementing class name.
+
+#### `HealthCheckAggregator` and `HealthReport`
+
+`HealthCheckAggregator` turns a check set into a verdict without an HTTP server. Inject it together
+with the qualified set to evaluate — `HealthCheckModule` binds it, unscoped, with the default
+five-second per-check timeout (`HealthCheckAggregator.DEFAULT_CHECK_TIMEOUT_SECONDS`) — or construct
+`new HealthCheckAggregator(checkTimeoutSeconds)` for another timeout; a zero or negative timeout is
+rejected with `IllegalArgumentException`.
+
+```java
+@Singleton
+public final class ReadinessGate {
+    private final HealthCheckAggregator aggregator;
+    private final Set<HealthCheck> readinessChecks;
+
+    @Inject
+    public ReadinessGate(HealthCheckAggregator aggregator, @Readiness Set<HealthCheck> readinessChecks) {
+        this.aggregator = aggregator;
+        this.readinessChecks = readinessChecks;
+    }
+
+    public Future<Boolean> ready() {
+        return aggregator.evaluate(readinessChecks).map(HealthReport::isUp);
+    }
+}
+```
+
+`evaluate(Set<HealthCheck>)` returns a `Future<HealthReport>`. `HealthReport` is a
+`record (HealthStatus status, List<Entry> checks)` with `isUp()`; each `Entry` is a
+`record (String name, HealthCheckResult result)` with `status()`. The rules are the same ones the
+management probes answer by:
+
+- Every check is started, in the set's iteration order, before any is waited for; the report holds
+  one entry per check in that order and is produced only once every check has settled or timed out.
+  An empty set is `UP` with no entries, and completes synchronously.
+- The status is `UP` only when every entry is `UP`. A report cannot claim `UP` while carrying a `DOWN`
+  entry: the canonical constructor rejects a status that contradicts the entries, and
+  `HealthReport.of(List<Entry>)` derives it.
+- A check that has not settled within the timeout is `DOWN`, described by the `TimeoutException`.
+- A failed future, an exception thrown from `check()`, or a `null` returned instead of a future is
+  `DOWN` with `HealthCheckResult.down(Throwable)` describing the failure; a future that succeeds with a
+  `null` result is `DOWN` with empty data. A `null` `name()` is reported under the implementing class
+  name and the check still runs; a `name()` that throws an exception is `DOWN` under the class name and
+  the check is not run. `name()` is called once per evaluation.
+- An `Error` thrown by `name()` or `check()` propagates synchronously out of `evaluate`, abandoning the
+  checks already started; an `Error` raised while a failure is being described (a `getMessage()` that
+  throws one) fails the returned future. The caller decides how to answer for a broken check.
+
+No Vert.x context is needed. The future completes on whichever thread settles the last check — a
+check's own thread or the timer thread that fires the timeout — and inline, before `evaluate`
+returns, when every check is already settled. A check that blocks indefinitely inside `name()`,
+`check()` or `getMessage()` stalls the evaluation with no future left to time out, and a future that
+reports itself failed with a `null` cause never settles it; neither is absorbed. The report carries each
+check's `data` as the check produced it and does not serialize it; a consumer that renders the data,
+such as the management probes, may still judge an entry `DOWN` when its data cannot be rendered.
 
 ### `ApplicationStartupStep` and `ApplicationShutdownStep`
 
