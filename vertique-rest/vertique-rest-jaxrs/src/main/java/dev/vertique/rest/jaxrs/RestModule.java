@@ -196,9 +196,11 @@ public abstract class RestModule {
     /**
      * Contributes the rest-jaxrs {@link MountCompositionValidator}: it rejects an application mount
      * that conflicts with a hand-built JAX-RS mount or with another application mount in the same
-     * mount set (as when compositions are merged), and rejects two operations on any JAX-RS mounts
-     * that share an operationId without sharing the same owner, once one or more applications are
-     * declared or any application mount is present.
+     * mount set (as when compositions are merged), and, once one or more applications are declared
+     * or any application mount is present, rejects two operations on different JAX-RS mounts that
+     * share an operationId without sharing the same owner when both mounts are hand-built or, under a
+     * contract-driven strategy, resolve to the same contract location; it logs a WARN for each
+     * operationId shared across mounts where at least one is an application mount.
      *
      * @param view       this composition's application view
      * @param config     the JAX-RS routing configuration, carrying the configured

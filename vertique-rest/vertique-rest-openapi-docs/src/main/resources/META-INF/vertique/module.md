@@ -2701,16 +2701,16 @@ stating that no documentation route is published for it.
 
 ### Operation ids and application identity
 
-Once any application is declared, operation ids are unique across all JAX-RS mounts, with one
-exemption: the same method of the same resource class keeps its id in every application that mounts
-it. Two distinct resource methods that share an id across mounts fail startup. This rule is kept
-until a later change scopes operation ids per mount (and, under a strategy that resolves operations
-from the mount's contract, such as `openapi-contract`, across the mounts sharing one contract
-location) and logs a startup WARN naming the applications that share an id; until then, no such
-WARN is logged.
+Operation ids are unique per mount, so each document is its own operation id namespace: two
+applications whose distinct resource methods share the id `list` each publish their own `list` in
+their own document. Two distinct resource methods still may not share an id across two mounts that
+resolve to one contract location under a strategy that resolves operations from the mount's contract,
+such as `openapi-contract`, or across two hand-built mounts; either fails startup. For every id more
+than one mount uses, at least one of them an application mount, `dev.vertique:vertique-rest-jaxrs`
+logs one startup WARN naming the applications by name and hand-built mounts by path.
 
-Code that keys state or decisions on the operation id alone can already conflate one resource method
-mounted by several applications. Key it on the application as well:
+Code that keys state or decisions on the operation id alone conflates operations of different
+applications that share an id. Key it on the application as well:
 
 - **Where the name is.** `RestOperationDescriptor.applicationName()`, `MountMeta.applicationName()`,
   and `OperationContext.operation().applicationName()`, all `null` for the legacy default mount and

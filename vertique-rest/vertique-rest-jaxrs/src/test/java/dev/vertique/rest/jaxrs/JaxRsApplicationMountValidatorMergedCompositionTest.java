@@ -24,6 +24,7 @@ import dev.vertique.rest.jaxrs.application.dupname.DupnameResourcesModule;
 import dev.vertique.rest.jaxrs.application.dupname.UnitOneRegistrationModule;
 import dev.vertique.rest.jaxrs.application.dupname.UnitTwoRegistrationModule;
 import dev.vertique.rest.jaxrs.application.dupname.UnitTwoRenamedRegistrationModule;
+import dev.vertique.rest.jaxrs.application.strategy.OpenApiContractPassThroughStrategy;
 import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Singleton;
@@ -38,7 +39,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * G2-05 (P02 review finding sec F-2): {@link JaxRsApplicationMountValidator} must reject an
- * application-mount pair conflict, and must scan cross-mount operationIds, even when the mounts it
+ * application-mount pair conflict, and must scan cross-mount operationIds (here, two distinct owners
+ * whose mounts share one contract location under a contract-driven strategy), even when the mounts it
  * is handed were merged from more than one composition into a single {@code Set<RouterMount>} — a
  * shape {@link JaxRsApplicationComposer} step 1b never sees, because step 1b runs per composition,
  * before that composition's own mounts are ever built. TP-020 (CX-001) extends this to a repeated
@@ -78,8 +80,8 @@ class JaxRsApplicationMountValidatorMergedCompositionTest {
     }
 
     @Test
-    @DisplayName("A cross-mount operationId collision between two application mounts is reported even when this "
-            + "validator instance's own view is empty")
+    @DisplayName("A cross-mount operationId collision between two application mounts sharing one contract location "
+            + "under a contract-driven strategy is reported even when this validator instance's own view is empty")
     void operationIdCollisionIsReportedWithAnEmptyRegistrationSet() {
         JaxRsRouterMount.Factory factory = TestFactories.builder().build();
         JaxRsRouterMount firstMount = factory.createApplicationMount(
@@ -87,7 +89,7 @@ class JaxRsApplicationMountValidatorMergedCompositionTest {
         JaxRsRouterMount secondMount = factory.createApplicationMount(
                 "/api/two/*", "openapi.json", Set.of(new MergedListResourceTwo()), "second", SecondApplication.class);
 
-        MountCompositionValidator validator = emptyViewValidator();
+        MountCompositionValidator validator = emptyViewContractValidator();
         List<String> violations = validator.validate(List.of(firstMount, secondMount));
 
         assertEquals(1, violations.size(), () -> "expected exactly one collision, got: " + violations);
@@ -173,6 +175,13 @@ class JaxRsApplicationMountValidatorMergedCompositionTest {
             leaf = new JsonObject().put(segments[i], leaf);
         }
         return leaf;
+    }
+
+    private static MountCompositionValidator emptyViewContractValidator() {
+        return new JaxRsApplicationMountValidator(
+                new RestApplications(List.of()),
+                JaxRsConfig.builder().validationStrategy("openapi-contract").build(),
+                Set.of(new OpenApiContractPassThroughStrategy()));
     }
 
     private static MountCompositionValidator emptyViewValidator() {

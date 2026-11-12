@@ -10,8 +10,8 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * TP-009's {@code partner} registration's sole listed resource (T023 contract, TP-009). Its
- * {@link #list()} method's default operationId ({@code "list"}) collides with
+ * The {@code partner} registration's sole listed resource. Its
+ * {@link #list()} method's default operationId ({@code "list"}) is shared with
  * {@link PublicListResource#list()}'s, but the two resource classes are unrelated, so they have no
  * common owner; see {@link PublicListResource}.
  */

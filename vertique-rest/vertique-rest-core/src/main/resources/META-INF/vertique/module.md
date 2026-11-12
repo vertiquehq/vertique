@@ -985,8 +985,8 @@ without a descriptor, such as one constructed with the five-argument constructor
 should handle `null` when the interceptor can see such contexts. An interceptor that keys state per
 operation includes the application name, so operations of different applications never share an
 entry. On a mount that belongs to no declared application the application name is `null`, so the
-key reads `null:<operationId>`, and the cross-mount operation-id uniqueness check runs only when
-applications are declared:
+key reads `null:<operationId>`. Operation ids are unique only within a mount, so two applications
+may each route an operation with the same id, and only the application name tells them apart:
 
 ```java
 public Future<Object> recoverOperation(OperationContext ctx, Throwable cause) {
