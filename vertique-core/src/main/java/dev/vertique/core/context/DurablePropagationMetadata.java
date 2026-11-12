@@ -14,8 +14,7 @@ import java.util.Objects;
  * {@code ContextHolder.current(DurablePropagationMetadata.class)}.
  *
  * <p>The framework does NOT provide a durable encoder for this type by default. Raw durable
- * metadata from one boundary must not be blindly republished onto another durable boundary
- * (FR-CTX-144).
+ * metadata from one boundary must not be blindly republished onto another durable boundary.
  *
  * @param boundary the durable boundary identifier from which this metadata was read
  * @param metadata the full durable metadata document at the boundary; never {@code null}

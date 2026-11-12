@@ -5,8 +5,8 @@ package dev.vertique.rest.ratelimit;
 
 /**
  * Governs how an edge {@link RateLimitEdgeRule} treats a request whose {@code HEADER} dimension
- * value is absent, or present more than once (contracts/rest-adapter.md, "Rule composition
- * semantics"). A repeated header is always treated as missing — never keyed on its first
+ * value is absent, or present more than once. A repeated header is always treated as missing —
+ * never keyed on its first
  * occurrence.
  */
 public enum MissingDimensionPolicy {

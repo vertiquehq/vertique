@@ -14,8 +14,8 @@ import dev.vertique.security.SecurityContext;
  * <p>Introspection answers "what can this actor do right now", computed as a pure, synchronous
  * function of the context's <em>currently held</em> {@link AuthorizationClaims}. A reconstructed
  * context's current authority, however, is re-resolved <strong>live</strong> at authorize-time by
- * Mode 2 ({@code ReconstructedAuthorityResolvingAuthorizer}, PRD identity-002 §14.3 Phase-2 Appendix,
- * FR-ID-CA-010) — the claims a reconstructed context carries at introspection time are not
+ * Mode 2 ({@code ReconstructedAuthorityResolvingAuthorizer}) — the claims a reconstructed context
+ * carries at introspection time are not
  * necessarily the claims that would actually govern a concrete
  * {@link Authorizer#authorize(AuthorizationRequest)} call for the same actor. Silently computing an
  * introspection answer from those attribution-only/stale claims would violate

@@ -37,7 +37,7 @@ import java.util.Optional;
  * <ul>
  *   <li>{@code safeFailureMessage} is a curated, bounded string and is NEVER a raw exception
  *       message, stack trace, SQL error, or upstream service detail. If no curated message is
- *       available it is {@code null} (§10.3 of the REST events spec).</li>
+ *       available it is {@code null}.</li>
  *   <li>{@code failureCode} is a low-cardinality classification string (e.g., an exception's
  *       simple class name), safe for use in metric labels.</li>
  *   <li>{@code safeAttributes} is an unmodifiable map; consumers must not attempt to cast values

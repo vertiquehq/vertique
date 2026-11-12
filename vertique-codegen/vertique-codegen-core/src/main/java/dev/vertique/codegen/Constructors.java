@@ -23,7 +23,7 @@ import javax.lang.model.util.ElementFilter;
  * and leaves <em>validation</em> (e.g., requiring exactly one) to the caller. This intentionally
  * differs from
  * {@code dev.vertique.codegen.dagger.processor.support.Filters#validateSingleInjectConstructor},
- * which has different semantics (silent skip on zero) and is still used by the CG-002
+ * which has different semantics (silent skip on zero) and is still used by the Dagger
  * {@code AutoWireProcessor}.
  *
  * <p>Usage:

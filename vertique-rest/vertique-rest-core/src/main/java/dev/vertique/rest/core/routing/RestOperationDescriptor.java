@@ -131,7 +131,7 @@ public interface RestOperationDescriptor {
     /**
      * Returns the operation's <strong>effective</strong> security policy — the base
      * {@link #securityPolicy()} with a single-scheme {@link SecurityRequirementSet}'s scopes folded in
-     * via {@link EffectiveSecurityPolicy#fold} — after first enforcing ADR-0124's fail-closed matrix
+     * via {@link EffectiveSecurityPolicy#fold} — after first enforcing the fail-closed matrix
      * via {@link EffectiveSecurityPolicy#enforceSupportedShape}.
      *
      * <p>This makes the effective policy a property of the operation rather than something each caller

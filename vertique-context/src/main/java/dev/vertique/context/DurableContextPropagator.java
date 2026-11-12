@@ -48,11 +48,11 @@ import org.slf4j.LoggerFactory;
  *   <li>{@link #decodeToDispatchContext(DurableMetadata, String)} — decodes metadata into an
  *       FQCN-keyed dispatch-context map without touching the holder.
  *   <li>{@link #sanitizeInboundCarrier(DurableMetadata)} — strips authenticated-only namespaces
- *       (ADR-0147) from a sender-supplied explicit carrier before it is bound.
+ * from a sender-supplied explicit carrier before it is bound.
  * </ul>
  *
  * <p>Decode failures are recoverable: a WARN is logged and the affected decoder's type is simply
- * not bound. Other decoders proceed normally (FR-CTX-118, FR-CTX-156).
+ * not bound. Other decoders proceed normally.
  *
  * <p>Durable producers MUST use {@link #mergeCaptured} and durable consumers MUST use
  * {@link #bindFrom}. Direct encoder/decoder calls bypass collision detection and atomic binding.
@@ -92,8 +92,8 @@ public final class DurableContextPropagator {
      * @param boundary the durable boundary identifier (e.g., {@code "kafka"}, {@code "outbox"})
      * @return the captured metadata document; never {@code null}
      * @throws IllegalStateException if any encoder returns a non-empty document whose namespaces
-     *                               differ from exactly {@code Set.of(encoder.namespace())}
-     *                               (FR-CTX-120); an encoder returning {@link DurableMetadata#empty()}
+     *                               differ from exactly {@code Set.of(encoder.namespace())};
+     * an encoder returning {@link DurableMetadata#empty()}
      *                               is skipped rather than treated as a violation
      */
     public DurableMetadata capture(String boundary) {
@@ -102,8 +102,8 @@ public final class DurableContextPropagator {
 
     /**
      * Captures the currently bound context values, threading the given durable row-carrier binding
-     * (F5 row binding, PRD identity-002) and, optionally, an intended fire-time (F5 doomed-expiry
-     * detection, PRD identity-002 §14.6 A9) into the {@link DurableEncodeContext} each encoder
+     * (row binding) and, optionally, an intended fire-time (doomed-expiry
+     * detection) into the {@link DurableEncodeContext} each encoder
      * receives.
      *
      * @param boundary the durable boundary identifier (e.g., {@code "kafka"}, {@code "outbox"})
@@ -115,8 +115,8 @@ public final class DurableContextPropagator {
      *                 be {@code null}
      * @return the captured metadata document; never {@code null}
      * @throws IllegalStateException if any encoder returns a non-empty document whose namespaces
-     *                               differ from exactly {@code Set.of(encoder.namespace())}
-     *                               (FR-CTX-120); an encoder returning {@link DurableMetadata#empty()}
+     *                               differ from exactly {@code Set.of(encoder.namespace())};
+     * an encoder returning {@link DurableMetadata#empty()}
      *                               is skipped rather than treated as a violation
      * @throws dev.vertique.core.exception.DurableEncodeRejectedException if any encoder rejects the
      *                               entire capture operation (see
@@ -137,9 +137,9 @@ public final class DurableContextPropagator {
      * rules:
      * <ul>
      *   <li>If a captured namespace already appears in {@code callerContext} AND the encoder's type
-     *       is currently bound → {@link IllegalStateException} (FR-CTX-153).
+     * is currently bound → {@link IllegalStateException}.
      *   <li>If a captured namespace already appears in {@code callerContext} but the encoder's type
-     *       is NOT currently bound → the caller namespace passes through unchanged (FR-CTX-154).
+     * is NOT currently bound → the caller namespace passes through unchanged.
      *   <li>Otherwise the captured namespace is added to the merged result.
      * </ul>
      *
@@ -147,7 +147,7 @@ public final class DurableContextPropagator {
      * @param boundary      the durable boundary identifier
      * @return the merged metadata document; never {@code null}
      * @throws IllegalStateException if a namespace collision is detected and the encoder's type is
-     *                               currently bound (FR-CTX-153)
+     * currently bound
      */
     public DurableMetadata mergeCaptured(DurableMetadata callerContext, String boundary) {
         return mergeCaptured(callerContext, boundary, Optional.empty(), Optional.empty());
@@ -157,7 +157,7 @@ public final class DurableContextPropagator {
      * Carrier-aware {@link #mergeCaptured(DurableMetadata, String)}: identical merge semantics, but
      * threads the supplied durable row-carrier binding into the {@link DurableEncodeContext} each
      * encoder receives so a boundary that owns a persisted row (e.g. a delayed-job row) can bind the
-     * captured durable envelope to that exact row (F5 row binding, PRD identity-002). A durable
+     * captured durable envelope to that exact row (row binding). A durable
      * envelope signed for one row's carrier then cannot be transplanted onto another.
      *
      * @param callerContext the caller-provided metadata to merge into; must not be {@code null}
@@ -166,7 +166,7 @@ public final class DurableContextPropagator {
      *                      {@code null}
      * @return the merged metadata document; never {@code null}
      * @throws IllegalStateException if a namespace collision is detected and the encoder's type is
-     *                               currently bound (FR-CTX-153)
+     * currently bound
      */
     public DurableMetadata mergeCaptured(
             DurableMetadata callerContext, String boundary, DurableCarrierDescriptor carrier) {
@@ -178,8 +178,8 @@ public final class DurableContextPropagator {
      * Fire-time-aware {@link #mergeCaptured(DurableMetadata, String, DurableCarrierDescriptor)}:
      * identical merge semantics, but additionally threads the supplied intended dispatch/fire time
      * into the {@link DurableEncodeContext} each encoder receives, so an encoder can detect that
-     * content it is about to sign would already be stale by the time the row fires (F5 doomed-expiry
-     * detection, PRD identity-002 §14.6 A9). Only the delayed-job schedule path populates this today —
+     * content it is about to sign would already be stale by the time the row fires (doomed-expiry
+     * detection). Only the delayed-job schedule path populates this today —
      * cron, outbox, and Kafka have no fixed fire time and keep using the carrier-only overload.
      *
      * @param callerContext the caller-provided metadata to merge into; must not be {@code null}
@@ -190,7 +190,7 @@ public final class DurableContextPropagator {
      *                      {@code null}
      * @return the merged metadata document; never {@code null}
      * @throws IllegalStateException if a namespace collision is detected and the encoder's type is
-     *                               currently bound (FR-CTX-153)
+     * currently bound
      * @throws dev.vertique.core.exception.DurableEncodeRejectedException if any encoder rejects the
      *                               entire capture operation because the row is doomed to expire
      *                               before {@code fireTime} (see
@@ -218,13 +218,13 @@ public final class DurableContextPropagator {
                 if (owningEncoder != null
                         && holder.current(owningEncoder.type()).isPresent()) {
                     throw new IllegalStateException(
-                            "Durable context metadata namespace collision: namespace '%s' is already present in caller metadata and encoder %s has type %s currently bound (FR-CTX-153)"
+                            "Durable context metadata namespace collision: namespace '%s' is already present in caller metadata and encoder %s has type %s currently bound"
                                     .formatted(
                                             ns,
                                             owningEncoder.getClass().getName(),
                                             owningEncoder.type().getName()));
                 }
-                // Caller namespace wins (FR-CTX-154) — do not overwrite
+                // Caller namespace wins — do not overwrite
             } else {
                 merged = merged.with(ns, captured.body(ns).orElseThrow());
             }
@@ -236,12 +236,12 @@ public final class DurableContextPropagator {
      * Decodes metadata from the durable boundary's native carrier and authoritatively installs
      * typed bindings plus raw {@link DurablePropagationMetadata} into {@link ContextHolder}.
      *
-     * <p>Always binds {@link DurablePropagationMetadata} first (FR-CTX-141, FR-CTX-155). Then
+     * <p>Always binds {@link DurablePropagationMetadata} first. Then
      * invokes each registered decoder with the full {@code metadata} document. Successfully decoded
      * values are added to the binding map. Decode failures are logged at WARN level and do not
-     * prevent other decoders from binding their values (FR-CTX-156).
+     * prevent other decoders from binding their values.
      *
-     * <p><b>Authoritative semantics (FR-CTX-178).</b> The metadata represents the full durable
+     * <p><b>Authoritative semantics.</b> The metadata represents the full durable
      * snapshot taken at the boundary's producer site. Every type registered with the
      * {@link DurableContextMetadataRegistry} that is <i>not</i> decoded from this metadata is
      * <i>cleared</i> for the scope's lifetime, so a subsequent {@link #mergeCaptured} inside the
@@ -250,10 +250,10 @@ public final class DurableContextPropagator {
      * leak that ambient context into any timer it creates.
      *
      * <p>The returned scope unwinds all bindings (typed + raw metadata) AND re-installs every
-     * cleared value when closed (FR-CTX-157).
+     * cleared value when closed.
      *
      * <p>{@code bindFrom} is the durable-consumer API for installing values into
-     * {@link ContextHolder}. Per FR-CTX-157b it MUST be called on a duplicated Vert.x context;
+     * {@link ContextHolder}. It MUST be called on a duplicated Vert.x context;
      * callers that cannot guarantee that — e.g. transport relays whose callback runs on a
      * non-duplicated context such as the outbox-service destination handler — MUST use
      * {@link #decodeToDispatchContext(DurableMetadata, String)} instead, which materialises the
@@ -278,7 +278,7 @@ public final class DurableContextPropagator {
      * Carrier-aware {@link #bindFrom(DurableMetadata, String)}: identical binding semantics, but
      * threads the supplied durable row-carrier binding into the {@link DurableDecodeContext} each
      * decoder receives so a boundary that owns a persisted row can verify the decoded durable envelope
-     * was signed for that exact row (F5 row binding, PRD identity-002).
+     * was signed for that exact row (row binding).
      *
      * @param metadata the full durable metadata document from the boundary's native carrier; must not
      *                 be {@code null}
@@ -307,10 +307,10 @@ public final class DurableContextPropagator {
         }
         Map<Class<?>, Object> bindings = new HashMap<>();
 
-        // Always bind DurablePropagationMetadata (FR-CTX-141)
+        // Always bind DurablePropagationMetadata
         bindings.put(DurablePropagationMetadata.class, new DurablePropagationMetadata(boundary, metadata));
 
-        // Invoke each decoder with the full DurableMetadata document (FR-CTX-116)
+        // Invoke each decoder with the full DurableMetadata document
         DurableDecodeContext ctx = new DurableDecodeContext(boundary, carrier);
         for (DurableContextMetadataDecoder<?> decoder : registry.decoders()) {
             decodeOne(decoder, metadata, ctx, bindings);
@@ -340,10 +340,10 @@ public final class DurableContextPropagator {
      * Once the receiving {@code ServiceMethodInvoker} dispatches the envelope on its duplicated
      * event-bus context, the values are installed into the holder there.
      *
-     * <p>The returned map always contains {@link DurablePropagationMetadata} keyed by its FQCN
-     * (FR-CTX-141). Each registered decoder is then invoked with the full {@code metadata} document;
+     * <p>The returned map always contains {@link DurablePropagationMetadata} keyed by its FQCN.
+     * Each registered decoder is then invoked with the full {@code metadata} document;
      * successful decodes contribute one entry to the map keyed by the decoder's value type FQCN.
-     * Decoder exceptions are logged at WARN level and do not block other decoders (FR-CTX-156).
+     * Decoder exceptions are logged at WARN level and do not block other decoders.
      *
      * @param metadata the full durable metadata document from the boundary's native carrier; must
      *                 not be {@code null}
@@ -359,8 +359,8 @@ public final class DurableContextPropagator {
      * Carrier-aware {@link #decodeToDispatchContext(DurableMetadata, String)}: identical decode
      * semantics, but threads the supplied durable row-carrier binding into the
      * {@link DurableDecodeContext} each decoder receives so a boundary that owns a persisted row (e.g.
-     * a delayed-job row) can verify the decoded durable envelope was signed for that exact row (F5 row
-     * binding, PRD identity-002). A durable envelope signed for a different row's carrier then fails
+     * a delayed-job row) can verify the decoded durable envelope was signed for that exact row (row
+     * binding). A durable envelope signed for a different row's carrier then fails
      * closed at the receiving decoder.
      *
      * @param metadata the full durable metadata document from the boundary's native carrier; must not
@@ -396,7 +396,7 @@ public final class DurableContextPropagator {
     /**
      * Strips every namespace whose registered {@link DurableContextMetadataDecoder} declares
      * {@link DurableContextMetadataDecoder#acceptsExplicitCarrier()} {@code == false} from a
-     * sender-supplied explicit carrier (ADR-0147).
+     * sender-supplied explicit carrier.
      *
      * <p>A namespace with no registered decoder passes through unchanged — it is inert, since
      * {@link #bindFrom} and the drive-time binder only bind namespaces owned by a registered decoder.
@@ -424,7 +424,7 @@ public final class DurableContextPropagator {
             sanitized = sanitized.without(namespace);
         }
         log.warn(
-                "Stripped authenticated-only namespace(s) {} from an inbound explicit carrier — these namespaces must never be accepted from a sender-supplied carrier (ADR-0147)",
+                "Stripped authenticated-only namespace(s) {} from an inbound explicit carrier — these namespaces must never be accepted from a sender-supplied carrier",
                 toStrip);
         return sanitized;
     }
@@ -456,15 +456,15 @@ public final class DurableContextPropagator {
         DurableMetadata single = encoder.encode(current.get(), ctx);
         if (single.isEmpty()) {
             // Encoder contract: an empty document signals "nothing legitimate to encode for the
-            // currently bound value" — skip merging this namespace rather than treating it as an
-            // FR-CTX-120 violation.
+            // currently bound value" — skip merging this namespace rather than treating it as a
+            // contract violation.
             return accumulator;
         }
         Set<String> actualNamespaces = single.namespaces();
         Set<String> expectedNamespaces = Set.of(encoder.namespace());
         if (!actualNamespaces.equals(expectedNamespaces)) {
             throw new IllegalStateException(
-                    "DurableContextMetadataEncoder '%s' returned a document with namespaces %s but declared namespace '%s' — encoder must return exactly one namespace matching namespace() (FR-CTX-120)"
+                    "DurableContextMetadataEncoder '%s' returned a document with namespaces %s but declared namespace '%s' — encoder must return exactly one namespace matching namespace()"
                             .formatted(encoder.getClass().getName(), actualNamespaces, encoder.namespace()));
         }
         return accumulator.merge(single, MergePolicy.FAIL_ON_CONFLICT);
@@ -472,8 +472,7 @@ public final class DurableContextPropagator {
 
     /**
      * Decodes a single decoder's namespace from the full metadata document and adds a successful
-     * result to the bindings map. Failures are logged at WARN and do not affect other decoders
-     * (FR-CTX-156).
+     * result to the bindings map. Failures are logged at WARN and do not affect other decoders.
      *
      * @param decoder  the decoder to invoke
      * @param metadata the full durable metadata document
@@ -490,7 +489,7 @@ public final class DurableContextPropagator {
         try {
             result = decoder.decode(metadata, ctx);
         } catch (Exception e) {
-            // FR-CTX-132: throttle WARN per (boundary, decoder class, reason). A misconfigured
+            // Throttle WARN per (boundary, decoder class, reason). A misconfigured
             // decoder would otherwise flood logs on every record.
             warningThrottle.once(
                     "throw|" + ctx.boundary() + "|" + decoder.getClass().getName(),

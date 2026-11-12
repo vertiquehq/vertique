@@ -33,7 +33,7 @@ import java.util.Set;
  * Default {@link BoundRequest} implementation that binds the values of a Vert.x
  * {@link RoutingContext} request against an operation's declared parameter model.
  *
- * <p>Binding rules (FR-024):
+ * <p>Binding rules:
  *
  * <ul>
  *   <li><b>Multiplicity is type-driven</b> by the matching {@link ParamDescriptor}: a parameter
@@ -108,8 +108,7 @@ public final class DefaultBoundRequest implements BoundRequest {
         this.headers = bindMultiMap(raw.headers(), params, ParamLocation.HEADER, true);
         this.cookies = bindCookies(raw.cookies(), params);
 
-        // FR-JSON-024/024A: a JSON profile other than the process codec's resolved for this method (slice 2.1) is
-        // stashed
+        // A JSON profile other than the process codec's resolved for this method is stashed
         // on the routing context under KEY_RESOLVED_BODY_MAPPER. When present, that profile mapper
         // owns the FIRST PARSE of a JSON body (applying its strict parser features); when absent
         // (the process codec), the body path below is byte-for-byte identical to today.
@@ -206,7 +205,7 @@ public final class DefaultBoundRequest implements BoundRequest {
     /**
      * Binds the request body in its <em>actual wire shape</em>, content-type-aware, so the decoders
      * and validation gate downstream receive the {@link JsonObject}/{@link JsonArray}/{@link String}/
-     * scalar/{@link Buffer} value they expect rather than a raw buffer (FR-024). The body buffer is
+     * scalar/{@link Buffer} value they expect rather than a raw buffer. The body buffer is
      * read once off the already-buffered {@code ctx.body()}; no stream is re-read.
      *
      * <p>Binding rules:
@@ -234,7 +233,7 @@ public final class DefaultBoundRequest implements BoundRequest {
      * <p>Type-conversion of the bound wire shape to the method-argument type remains the decoders'
      * job; this method only produces the correct wire shape.
      *
-     * <p>When a non-{@code vertx} JSON profile applies to the dispatched method (FR-JSON-024/024A),
+     * <p>When a non-{@code vertx} JSON profile applies to the dispatched method,
      * {@code profileMapper} is non-{@code null} and performs the first parse of a JSON-content-type
      * body (see {@link #bindJsonBody}); a body it rejects surfaces as an HTTP 400. When
      * {@code profileMapper} is {@code null} (the {@code vertx} default) every branch below is
@@ -273,7 +272,7 @@ public final class DefaultBoundRequest implements BoundRequest {
             return RequestValue.of(buffer);
         }
 
-        // No usable content type (null/blank). When a profile other than the process codec's applies (FR-JSON-024A), a
+        // No usable content type (null/blank). When a profile other than the process codec's applies, a
         // JSON-shaped body ('{'/'[' as the first non-whitespace, BOM-skipped, byte) must still be
         // FIRST-PARSED by the profile mapper — JsonRequestBodyDecoder.canDecode returns true for a null
         // content type, so this body would otherwise dispatch but with the strict first parse skipped.
@@ -307,7 +306,7 @@ public final class DefaultBoundRequest implements BoundRequest {
      * JSON value via {@link Json#decodeValue(Buffer)}; malformed JSON falls back to the raw
      * {@link Buffer} so the failure is surfaced downstream, not in the binder.
      *
-     * <p>When {@code profileMapper} is non-{@code null} (a non-{@code vertx} profile, FR-JSON-024A)
+     * <p>When {@code profileMapper} is non-{@code null} (a non-{@code vertx} profile)
      * the profile mapper performs the FIRST PARSE of the raw {@code buffer} for ALL body shapes,
      * applying the profile's strict parser features (e.g. {@code STRICT_DUPLICATE_DETECTION},
      * {@code FAIL_ON_TRAILING_TOKENS}) uniformly: the body shape is detected from the first
@@ -348,7 +347,7 @@ public final class DefaultBoundRequest implements BoundRequest {
     }
 
     /**
-     * Performs the profile-aware first parse of a JSON-content-type body (FR-JSON-024A): the
+     * Performs the profile-aware first parse of a JSON-content-type body: the
      * resolved profile mapper deserializes the raw {@code buffer} to a {@link JsonObject},
      * {@link JsonArray}, or scalar {@link Object} (the profile mapper carries Vert.x JSON support
      * via the startup probe), so the profile's strict parser features run on the first parse for
@@ -526,8 +525,8 @@ public final class DefaultBoundRequest implements BoundRequest {
      * <ul>
      *   <li><b>{@link ParamLocation#HEADER}</b> matches <em>case-insensitively</em>. The map is keyed by
      *       lower-cased name and extraction lower-cases the declared name before its lookup, so the
-     *       descriptor half must be equally tolerant. It is load-bearing rather than cosmetic: RFC 9113
-     *       §8.2.1 requires HTTP/2 to transmit header field names in lower case, so with ALPN enabled
+     *       descriptor half must be equally tolerant. It is load-bearing rather than cosmetic:
+     *       RFC 9113 §8.2.1 requires HTTP/2 to transmit header field names in lower case, so with ALPN enabled
      *       the wire name of a {@code @HeaderParam("X-Tags")} declaration is {@code x-tags} for
      *       <em>every</em> HTTP/2 client. A case-sensitive match there would leave a
      *       collection-declared parameter scalar-wrapped — dropping every value past the first — while

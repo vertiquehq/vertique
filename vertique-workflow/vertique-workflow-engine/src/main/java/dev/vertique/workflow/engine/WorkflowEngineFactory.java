@@ -124,11 +124,11 @@ public final class WorkflowEngineFactory {
         // supplied initializer set, and thread the same instance into BranchTransitionEngine so
         // binder-row drives (WorkflowContextBinder, wired inside the WorkflowEngine constructor
         // below) and branch-owned drives (BranchTransitionEngine.driveBranchTransitions) share
-        // identical scope/initializer wiring in factory assembly — factory initializer parity now
-        // covers branch drives too, not just binder rows (review finding: the two-constructor split
-        // previously left branchEngine's inboundExecScope null, silently dropping registered
-        // InboundContextInitializers — e.g. correlation seeding — from every factory-assembled
-        // branch drive). A null propagator preserves legacy behavior exactly: no scope is built and
+        // identical scope/initializer wiring in factory assembly — factory initializer parity
+        // covers branch drives too, not just binder rows (a null inboundExecScope on branchEngine
+        // would silently drop registered InboundContextInitializers — e.g. correlation seeding —
+        // from every factory-assembled branch drive). A null propagator preserves legacy behavior
+        // exactly: no scope is built and
         // BranchTransitionEngine falls back to its no-initializer constructor (plain
         // propagator.bindFrom path, itself skipped when propagator is null).
         dev.vertique.context.InboundExecutionContextScope inboundExecScope = propagator == null

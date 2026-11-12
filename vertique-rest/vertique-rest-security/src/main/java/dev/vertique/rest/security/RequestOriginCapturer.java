@@ -24,26 +24,25 @@ import lombok.extern.slf4j.Slf4j;
  * Builds a {@link RequestOrigin} from an inbound {@link HttpServerRequest} by applying the
  * trusted-proxy CIDR policy from {@link RequestOriginConfig}.
  *
- * <p>Implements the trusted-proxy + forwarded-header rules from PRD identity-001 §7.11
- * (AC-RO-1..9):
+ * <p>Implements the following trusted-proxy + forwarded-header rules:
  * <ul>
- *   <li><strong>AC-RO-1</strong>: No proxy configured — {@code clientIp == remoteIp}.</li>
- *   <li><strong>AC-RO-2</strong>: Trusted proxy — {@code clientIp} is the leftmost untrusted
+ *   <li><strong>No proxy configured</strong> — {@code clientIp == remoteIp}.</li>
+ *   <li><strong>Trusted proxy</strong> — {@code clientIp} is the leftmost untrusted
  *       entry obtained by walking the {@code X-Forwarded-For} chain right-to-left, peeling off
  *       trusted entries.</li>
- *   <li><strong>AC-RO-3</strong>: Untrusted peer — chain is still parsed and exposed in
+ *   <li><strong>Untrusted peer</strong> — chain is still parsed and exposed in
  *       {@code forwardedFor} for observability; {@code clientIp == remoteIp}.</li>
- *   <li><strong>AC-RO-5</strong>: If raw XFF entry count exceeds
+ *   <li><strong>Chain cap</strong> — if the raw XFF entry count exceeds
  *       {@link RequestOriginConfig#forwardedForCap()}, the entire chain is discarded
  *       ({@code forwardedForChainRejected=true}, {@code entries=[]}). The {@code rejectedCount}
  *       reflects the raw entry count.</li>
- *   <li><strong>AC-RO-6</strong>: Invalid IPs (parse failure) are silently dropped; each
+ *   <li><strong>Invalid entries</strong> — invalid IPs (parse failure) are silently dropped; each
  *       increments {@code forwardedForRejectedCount}; they do not cause chain rejection.</li>
- *   <li><strong>AC-RO-7</strong>: Untrusted peer — scheme and host are taken from the actual
+ *   <li><strong>Untrusted peer, scheme and host</strong> — scheme and host are taken from the actual
  *       connection, ignoring {@code X-Forwarded-Proto} / {@code X-Forwarded-Host}.</li>
- *   <li><strong>AC-RO-8</strong>: TLS facts are populated from {@code SSLSession} when present,
+ *   <li><strong>TLS facts</strong> — populated from {@code SSLSession} when present,
  *       regardless of trust configuration.</li>
- *   <li><strong>AC-RO-9</strong>: IPv6-mapped IPv4 addresses (e.g., {@code ::ffff:1.2.3.4}) are
+ *   <li><strong>Mapped addresses</strong> — IPv6-mapped IPv4 addresses (e.g., {@code ::ffff:1.2.3.4}) are
  *       normalized to their plain IPv4 form in both {@code remoteIp} and chain entries.</li>
  * </ul>
  *
@@ -93,7 +92,7 @@ public final class RequestOriginCapturer {
         // An unresolved peer is never trusted, so forwarded headers cannot supply its client IP.
         boolean peerTrusted = !RequestOrigin.UNKNOWN.equals(remoteIp) && isPeerTrusted(remoteIp);
 
-        // Always parse X-Forwarded-For for observability (AC-RO-3).
+        // Always parse X-Forwarded-For for observability.
         List<String> rawXff = parseXffHeader(request);
         ChainParseResult chain = sanitizeAndCapChain(rawXff);
 
@@ -164,7 +163,7 @@ public final class RequestOriginCapturer {
 
     /**
      * Normalizes an IP address string, converting IPv6-mapped IPv4 addresses
-     * (e.g., {@code ::ffff:1.2.3.4}) to their plain IPv4 form (AC-RO-9).
+     * (e.g., {@code ::ffff:1.2.3.4}) to their plain IPv4 form.
      *
      * @param raw the raw IP string from the socket or XFF header entry
      * @return normalized IP string; {@code raw} unchanged if not an IPv6-mapped IPv4 address
@@ -449,11 +448,11 @@ public final class RequestOriginCapturer {
      * Sanitizes and caps a raw XFF entry list.
      *
      * <p>If the raw entry count exceeds {@link RequestOriginConfig#forwardedForCap()}, the entire
-     * chain is rejected (AC-RO-5): {@code rejected=true}, {@code entries=[]},
+     * chain is rejected: {@code rejected=true}, {@code entries=[]},
      * {@code rejectedCount=rawEntries.size()}.
      *
      * <p>Otherwise, each entry is parsed as an IP literal without name resolution. Invalid entries
-     * (parse failure) are silently dropped and counted in {@code rejectedCount} (AC-RO-6). Valid entries
+     * (parse failure) are silently dropped and counted in {@code rejectedCount}. Valid entries
      * are normalized via {@link #normalizeIp(String)}.
      *
      * @param rawEntries the raw trimmed XFF entries
@@ -464,12 +463,12 @@ public final class RequestOriginCapturer {
             return new ChainParseResult(List.of(), 0, false);
         }
 
-        // AC-RO-5: cap exceeded → drop entire chain.
+        // Cap exceeded → drop entire chain.
         if (rawEntries.size() > config.forwardedForCap()) {
             return new ChainParseResult(List.of(), rawEntries.size(), true);
         }
 
-        // AC-RO-6: validate each entry individually.
+        // Validate each entry individually.
         // Only IP literals are accepted. The syntactic parse never resolves names, so attacker-supplied
         // entries cannot reach the OS resolver from the event loop.
         List<String> valid = new ArrayList<>(rawEntries.size());
@@ -510,7 +509,7 @@ public final class RequestOriginCapturer {
 
     /**
      * Extracts {@link TlsFacts} from the request's {@link SSLSession} when the connection uses
-     * TLS. Returns {@link Optional#empty()} for plain HTTP connections (AC-RO-8).
+     * TLS. Returns {@link Optional#empty()} for plain HTTP connections.
      *
      * @param request the inbound request
      * @return {@link TlsFacts} wrapped in {@link Optional}, or empty for non-TLS

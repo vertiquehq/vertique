@@ -13,7 +13,7 @@ import java.util.Optional;
  * Immutable, credential-free capture of the full identity dimension of a {@link SecurityContext} at a
  * point in time — the captured <em>content</em> of an {@link IdentitySnapshot}, separated from the
  * durable envelope ({@code carrier}, {@code issuedAt}, {@code expiresAt}, {@code integrity}) that
- * signs and binds it (PRD-ID-002 §14.6 Phase-2 Contract Appendix, amendment A9).
+ * signs and binds it.
  *
  * <p>{@link IdentitySnapshotFactory#capture(SecurityContext)} produces this content directly, with no
  * placeholder integrity/carrier — the durable encoder assembles and signs the surrounding

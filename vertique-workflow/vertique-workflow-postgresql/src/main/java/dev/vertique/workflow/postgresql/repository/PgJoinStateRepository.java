@@ -26,12 +26,11 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * PostgreSQL-backed repository for {@link JoinState} rows in {@code workflow_join_states}
- * (PRD-WF-002).
+ * PostgreSQL-backed repository for {@link JoinState} rows in {@code workflow_join_states}.
  *
  * <p>The {@code (workflow_id, fork_step_id, join_step_id)} primary key plus the {@code version}
  * CAS guarantee that exactly one branch wins the race when multiple sibling branches complete
- * concurrently — see PRD-WF-002 §D7.
+ * concurrently.
  */
 @Singleton
 public final class PgJoinStateRepository extends PgSqlRepository implements JoinStateRepository<SqlClient> {
@@ -148,7 +147,7 @@ public final class PgJoinStateRepository extends PgSqlRepository implements Join
 
     /**
      * Looks up the join state with {@code FOR UPDATE} row locking. Used when serialising the
-     * race-join decision (PRD-WF-002 §A.4.6 winner election).
+     * race-join decision (winner election).
      *
      * @param workflowId parent workflow instance
      * @param forkStepId fork step id

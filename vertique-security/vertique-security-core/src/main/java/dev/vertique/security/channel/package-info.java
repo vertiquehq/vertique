@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: EUPL-1.2
 
 /**
- * Long-lived connection identity management SPI (PRD §7.12).
+ * Long-lived connection identity management SPI.
  *
  * <p>Provides the transport-neutral contract for tracking and refreshing channel-bound
  * {@link dev.vertique.security.SecurityContext} across WebSocket, SSE, and future

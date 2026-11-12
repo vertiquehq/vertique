@@ -20,7 +20,7 @@ import java.math.BigDecimal;
  * in {@code "1.50"} round-trip as scale 2). A <strong>negative</strong>-scale value is instead
  * written in its expanded plain form — {@code new BigDecimal("1E+2")} writes {@code "100"}, and a
  * negative-scale zero (e.g. from {@code 1E+200 - 1E+200}) writes {@code "0"} — and re-reads with
- * scale 0, not the original negative scale (json-004 R2-4).
+ * scale 0, not the original negative scale.
  *
  * <p>This serializer is part of a <strong>matched opt-in pair</strong> with
  * {@link BigDecimalStrictStringDeserializer}: register both together on an application-owned
@@ -32,7 +32,7 @@ import java.math.BigDecimal;
  * <p><strong>Note:</strong> using this serializer changes the wire shape — a {@code BigDecimal}
  * field will be a JSON string on the wire, not a number. Clients must expect a string.
  *
- * <p><strong>Write-side length bound (json-004).</strong> The plain-string form written here is
+ * <p><strong>Write-side length bound.</strong> The plain-string form written here is
  * bounded to the same {@value BigDecimalStrictStringDeserializer#MAX_LENGTH} characters that
  * {@link BigDecimalStrictStringDeserializer} enforces on read, via the shared
  * {@link BigDecimalStrictStringDeserializer#MAX_LENGTH} constant. Without this bound, a
@@ -51,7 +51,7 @@ public final class BigDecimalAsStringSerializer extends JsonSerializer<BigDecima
     /**
      * Serializes {@code value} as a JSON string using its bounded {@link BigDecimal#toPlainString()}
      * form, computed by {@link #boundedPlainString(BigDecimal)}; see that method's javadoc for the
-     * exact rejection bound (including the negative-scale zero exemption, json-004 R2-2).
+     * exact rejection bound (including the negative-scale zero exemption).
      *
      * @param value the {@link BigDecimal} to serialize; never {@code null} (Jackson skips null values)
      * @param gen   the {@link JsonGenerator} to write into
@@ -78,8 +78,8 @@ public final class BigDecimalAsStringSerializer extends JsonSerializer<BigDecima
      * Jackson generator/provider.
      *
      * <p>Shared by {@link #serialize(BigDecimal, JsonGenerator, SerializerProvider)} (JSON string
-     * values) and the {@code vertique-strict} profile's {@code BigDecimal} map-key serializer
-     * (json-004 R2-3), so the write-side length bound is enforced identically for both a decimal
+     * values) and the {@code vertique-strict} profile's {@code BigDecimal} map-key serializer,
+     * so the write-side length bound is enforced identically for both a decimal
      * <em>value</em> and a decimal <em>map key</em> — a map key cannot bypass the value-side bound
      * and re-emerge from {@link BigDecimal#toString()}'s scientific notation, which the profile's own
      * bounded key deserializer would then reject on read.
@@ -89,7 +89,7 @@ public final class BigDecimalAsStringSerializer extends JsonSerializer<BigDecima
      * {@link BigDecimal#precision()} rejects any value whose plain-string length is <em>guaranteed</em>
      * to exceed the bound, without ever calling {@link BigDecimal#toPlainString()}. A negative scale
      * beyond the bound is exempted for a <strong>zero-valued</strong> {@code value}
-     * ({@link BigDecimal#signum()} {@code == 0}, json-004 R2-2): ordinary arithmetic (e.g. subtracting
+     * ({@link BigDecimal#signum()} {@code == 0}): ordinary arithmetic (e.g. subtracting
      * two equal huge round numbers) can produce a zero with an arbitrarily negative scale whose
      * {@code toPlainString()} is still the single character {@code "0"} — the huge negative scale
      * alone does not guarantee an over-length plain form for a zero value the way it does for a
@@ -111,7 +111,7 @@ public final class BigDecimalAsStringSerializer extends JsonSerializer<BigDecima
         int precision = value.precision();
         // Cheap pre-check: a scale magnitude or precision beyond maxLength already guarantees the
         // plain-string form exceeds it, so reject before ever paying for toPlainString() — except a
-        // negative scale on a zero-valued BigDecimal, whose plain form is always just "0" (R2-2).
+        // negative scale on a zero-valued BigDecimal, whose plain form is always just "0".
         if (scale > maxLength || (scale < -maxLength && value.signum() != 0) || precision > maxLength) {
             throw new IllegalArgumentException(boundViolationMessage(maxLength, scale, precision, null));
         }

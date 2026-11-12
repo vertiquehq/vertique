@@ -18,7 +18,7 @@ import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
  *
  * <p>The runtime, annotation-driven producer ({@code AnnotationSchemaSource}, using victools) ships in
  * the {@code vertique-rest-validation} module. A build-time codegen producer that synthesizes schemas
- * at compile time is deferred (NG9 in PRD-REST-017).
+ * at compile time is deferred.
  */
 @FunctionalInterface
 public interface OperationSchemaSource {

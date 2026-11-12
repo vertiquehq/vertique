@@ -98,13 +98,13 @@ supplement on top when one is:
   Jakarta module renders for a field or getter; `@Email` and Hibernate-only constraints stay
   untranslated by the floor. A family keyword never loosens a stricter
   `@Min`/`@Max`/`@DecimalMin`/`@DecimalMax` bound declared on the same member. **Builder
-  borrow assumption (owner ruling, `spike/deserializer-driven-schema`, round 2).** A builder method is
-  assumed to set the built property of that same wire name. The borrow now splits on whether that
+  borrow assumption.** A builder method is
+  assumed to set the built property of that same wire name. The borrow splits on whether that
   built-type property has a getter:
   - **Getter-backed property: borrowed unconditionally, for any builder.** This is exactly what
-    `main`'s field walk always did — it published every getter-backed field's constraints regardless
-    of what any builder method's body did with the value before assigning it — so the round-2 ruling
-    restores that behavior rather than gate it on the builder's own shape. A hand-written builder that
+    the plain field walk does — it publishes every getter-backed field's constraints regardless
+    of what any builder method's body does with the value before assigning it — so the borrow
+    keeps that behavior rather than gate it on the builder's own shape. A hand-written builder that
     transforms the value before assigning it (dividing cents into whole units, say) still has its
     getter-backed built field's constraint borrowed, exactly as a genuine Lombok builder's does.
   - **Getter-less property (the private, no-accessor case): bounded to the shape `BuilderBorrowDetector`
@@ -126,8 +126,8 @@ supplement on top when one is:
     unresolved, not that it must; one that does not reproduce it gets no borrowed constraint at all,
     and its property is published by type only.
 
-  The Bean Validation supplement's join for a builder method follows this same two-branch rule (round 2
-  correction), evaluated against the same resolved built-type property the floor's own borrow shares
+  The Bean Validation supplement's join for a builder method follows this same two-branch rule,
+  evaluated against the same resolved built-type property the floor's own borrow shares
   (see "The join" below): when the built type's Jackson-introspected property for that wire name has a
   getter and a backing field, `MetadataConstraintSource` joins unconditionally, exactly as the floor
   does — so a constraint declared through an XML mapping, or on a member Jackson does not merge
@@ -164,7 +164,7 @@ supplement on top when one is:
   left something unset. Every keyword it proposes is either an **addition** — merged onto the floor's own
   rendering only where the floor left that keyword unset — or a **correction**, for the one named
   set of shapes the floor is known to render incorrectly or not at all (`@Range`, `@Length`, `@URL`,
-  and a `@Pattern` flag — vertiquehq/vertique-dev#606): those replace the floor's rendering for that
+  and a `@Pattern` flag): those replace the floor's rendering for that
   keyword unconditionally. The supplement never removes a keyword the floor already rendered
   correctly, including one declared in a non-`Default` Bean Validation group — the floor has no
   notion of validation groups at all, so a `@NotNull(groups = Admin.class)` on a plain field still
@@ -195,8 +195,7 @@ shape: a built-type property that merely *shares* the builder method's wire name
 assigned by a different member entirely is borrowed from anyway — the module reads Jackson's own
 property identity, never a builder method's body, so it cannot distinguish "this wire name happens to
 match" from "this builder method actually sets this field."
-**Setter-only field-borrow fallback (owner ruling,
-`spike/deserializer-driven-schema`).** The floor itself joins a setter to its backing field through
+**Setter-only field-borrow fallback.** The floor itself joins a setter to its backing field through
 Jackson's own `BeanPropertyDefinition#getField()` — the field Jackson associates with the same
 wire-named property, guaranteed by construction to be the one the setter's value corresponds to. That
 accessor is `null` whenever Jackson's property definition carries no field member at all — for
@@ -289,7 +288,7 @@ When both the floor and a correction set the same bound keyword (`minimum`/`maxi
 `maxProperties`), the stricter of the two wins — the larger value for a "min" keyword, the smaller for
 a "max" one. For `pattern`, where "stricter" has no total order, a correction whose value genuinely
 differs from the floor's is combined with it as an `allOf` of two single-`pattern` subschemas instead
-of replacing it, so a client must satisfy both. The one exception is `#606`'s own flagged-`@Pattern`
+of replacing it, so a client must satisfy both. The one exception is the flagged-`@Pattern`
 rendering: when the correction's pattern is exactly the floor's own regexp wrapped in an inline
 modifier group, it is the *same* `@Pattern` annotation rendered twice at different fidelity, not two
 annotations in conflict, and the flag-aware rendering still replaces the floor's outright.
@@ -326,9 +325,9 @@ A builder type is filled through its builder rather than through the field. A bu
 constraint is borrowed from the built type's Jackson-introspected property of the same wire name —
 never a raw field-name scan. When that property has a getter, the borrow is unconditional, for any
 builder — a Lombok `@Builder @Jacksonized` type, a hand-written builder that reproduces its shape, or
-a hand-written builder that does not (round 2, owner ruling). When the property has no getter, the
+a hand-written builder that does not. When the property has no getter, the
 borrow stays bounded to the shape the builder borrow detector can vouch for: a Lombok
-`@Builder @Jacksonized` type, or the exact shape it generates by construction. **Closed (BG1):** a
+`@Builder @Jacksonized` type, or the exact shape it generates by construction. **Limitation:** a
 constrained private field with no `@Getter` at all is invisible to Jackson's own introspection, so
 the floor has nothing to join the builder method to — that one property still publishes, by type
 only, with no borrowed constraint; it is not the whole document that stays unconstrained. When a
@@ -369,8 +368,8 @@ from the settable-property check outright: a no-argument getter such as `Buffer#
 mutable-collection getter such as `JsonArray#getList()` makes plain reflective introspection report a
 property for these well-known wrapper types even though neither is ever bound as a bean.
 
-**A `DelegatingDeserializer` wrapper is unwrapped before this decision, bounded to a pure forwarder
-(W2 owner ruling; W-1, round 5 review finding, `spike/deserializer-driven-schema`).** A mapper-wide
+**A `DelegatingDeserializer` wrapper is unwrapped before this decision, bounded to a pure
+forwarder.** A mapper-wide
 `BeanDeserializerModifier` that wraps *every* bean deserializer in a forwarding `DelegatingDeserializer`
 subclass is a legitimate, if unusual, module shape — but the generator does not simply trust that the
 wrapper forwards; it checks. Unwrapping proceeds through `getDelegatee()` only while the wrapper's own
@@ -381,10 +380,10 @@ reach the original bean deserializer unchanged. For that bounded shape the gener
 down to its ultimate delegate, mirroring the existing `TypeWrappedDeserializer` unwrap, and describes
 the wrapped bean from the delegate rather than refusing it as an opaque type-level override; the same
 bound applies at all three seams the generator unwraps a `DelegatingDeserializer` at — the
-root/nested-reference seat, the member-level case-insensitive inline path (S-1, round 5 review
-finding), and the `@JsonUnwrapped` unwrapped-child loop (C-1, round 6 finding): an unwrapped child's
+root/nested-reference seat, the member-level case-insensitive inline path, and the `@JsonUnwrapped`
+unwrapped-child loop: an unwrapped child's
 own root deserializer is unwrapped the same bounded way before the loop asks Jackson for its
-unwrapping deserializer, so a mapper-wide forwarding wrapper no longer leaves the child's own bean
+unwrapping deserializer, so a mapper-wide forwarding wrapper cannot leave the child's own bean
 deserializer hidden behind it. A `DelegatingDeserializer` subclass that overrides any of the three
 methods — accepting a wire form of its own before, or instead of, ever reaching the delegate — is *not*
 unwrapped: it is treated as a replaced deserializer and refused exactly like the shape described above,
@@ -395,8 +394,8 @@ directly (`SimpleModule.addDeserializer(...)`, or a `BeanDeserializerModifier` t
 other than a pure-forwarding `DelegatingDeserializer` wrapping the original bean deserializer) is not a
 `DelegatingDeserializer` chain to unwrap, and stays refused exactly as described above — the remedy for
 that shape is still a `JsonSchemaTypeOverride`. **An `@JsonUnwrapped` child's own
-`unwrappingDeserializer(...)` result decides its fate, matching Jackson's own bound (C-1, round 7
-finding).** When that call returns the very same deserializer instance back, that is Jackson's own
+`unwrappingDeserializer(...)` result decides its fate, matching Jackson's own bound.** When that
+call returns the very same deserializer instance back, that is Jackson's own
 documented signal that the deserializer does not support unwrapping at all — `MapDeserializer`, the
 abstract-type-id-resolving deserializer, the untyped-`Object`/`JsonNode` deserializers,
 `OptionalDeserializer`, and others all take this path — and `BeanDeserializerBase.resolve()` then
@@ -411,17 +410,17 @@ root seam's own refusal shape immediately above: the root seam separately descri
 returns nothing for a polymorphic base (left to the Jackson module's own subtype resolver), and
 describes an opaque foreign type as unconstrained — none of which the unwrapped-child loop repeats,
 since the parent's own first property loop already publishes any of those shapes left un-unwrapped as
-an ordinary nested property, and repeating them here would duplicate rather than protect that path. A
-prior round 6 fix (C-1) refused every such child outright regardless of which of the two instances
-`unwrappingDeserializer(...)` returned, so generation failed with a diagnostic for every DTO with an
-unwrapped `Map`, abstract `@JsonTypeInfo` base, `Object`, `JsonNode`, or `Optional` member; this is the
-corrected bound.
+an ordinary nested property, and repeating them here would duplicate rather than protect that path.
+Refusing every such child outright regardless of which of the two instances
+`unwrappingDeserializer(...)` returned would fail generation with a diagnostic for every DTO with an
+unwrapped `Map`, abstract `@JsonTypeInfo` base, `Object`, `JsonNode`, or `Optional` member, which is
+why the bound is drawn here.
 
 **A case-insensitively bound `@JsonUnwrapped` child is refused, at every seam a wrapper can hide it
 behind.** `requireCaseSensitive` runs immediately once an unwrapped child resolves to a bean
-deserializer, so the C-1 unwrap fix above also restores this refusal under a mapper-wide forwarding
-wrapper: before the fix, the wrapper left the child's root deserializer un-unwrapped, the loop's own
-`instanceof BeanDeserializerBase` check failed first, and generation silently succeeded with the
+deserializer, so the bounded unwrap above also preserves this refusal under a mapper-wide forwarding
+wrapper: without it, the wrapper would leave the child's root deserializer un-unwrapped, the loop's own
+`instanceof BeanDeserializerBase` check would fail first, and generation would silently succeed with the
 child's property simply missing instead of refusing the genuinely case-insensitive binding.
 
 **A delegating `@JsonCreator`** — object-delegating (`Mode.DELEGATING` over a single non-array-like

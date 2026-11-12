@@ -31,7 +31,7 @@ import java.util.function.Function;
  * </ul>
  *
  * <p>Null return from a snapshot or restore function always throws {@link NullPointerException}
- * per FR-CTX-050 (no null returns from encode, no null returns from decode-restore).
+ * (no null returns from encode, no null returns from decode-restore).
  */
 public final class ServiceDispatchCodecs {
 
@@ -42,7 +42,7 @@ public final class ServiceDispatchCodecs {
     /**
      * Returns an encoder that applies {@code snapshotFn} to the live value and emits the result as
      * the wire value. A null return from {@code snapshotFn} throws {@link NullPointerException} at
-     * encode time per FR-CTX-050.
+     * encode time.
      *
      * @param type       the context value type this encoder handles; must not be {@code null}
      * @param snapshotFn the function that produces an immutable snapshot from the live value; must
@@ -131,7 +131,7 @@ public final class ServiceDispatchCodecs {
         @Override
         public Object encode(T value, ServiceDispatchEncodeContext context) {
             Object snapshot = snapshotFn.apply(value);
-            return Objects.requireNonNull(snapshot, "snapshotFn must not return null (FR-CTX-050)");
+            return Objects.requireNonNull(snapshot, "snapshotFn must not return null");
         }
     }
 

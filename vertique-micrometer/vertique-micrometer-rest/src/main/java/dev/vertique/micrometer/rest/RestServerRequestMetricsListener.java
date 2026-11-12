@@ -120,7 +120,7 @@ public final class RestServerRequestMetricsListener implements RestRequestComple
             String operation = event.operation().operationId();
             String status = String.valueOf(event.statusCode());
             String outcome = HttpOutcome.from(event.statusCode()).name();
-            // error.type (D1=A): failureCode wins when present; otherwise fall back to
+            // error.type: failureCode wins when present; otherwise fall back to
             // wireFailureCode (a truncated-response signal — see RestRequestCompletedEvent); a
             // 200-status series may therefore carry a non-"none" error.type.
             String errorType = event.failureCode() != null

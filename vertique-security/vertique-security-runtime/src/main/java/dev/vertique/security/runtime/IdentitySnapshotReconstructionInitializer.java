@@ -26,9 +26,8 @@ import java.util.Optional;
 
 /**
  * Receive-side {@link InboundContextInitializer} that binds the correct {@link SecurityContext}
- * for a deferred dispatch per the frozen binding-precedence rule (PRD-ID-002 §14.3 "Frozen
- * binding-precedence rule", §14.3 amendment A6 "deferred-execution provenance gate", §14.6
- * amendment A9 "origin-or-verified mint evidence"):
+ * for a deferred dispatch per the frozen binding-precedence rule, the deferred-execution
+ * provenance gate, and the origin-or-verified mint evidence rule:
  *
  * <ol>
  *   <li><b>Case 1 (live)</b> — a live {@link SecurityContext} is already bound; no-op (idempotent), a
@@ -38,7 +37,7 @@ import java.util.Optional;
  *       dev.vertique.core.context.DurableCarrierDescriptor)} reconstructs the context, which is then bound.
  *       A verified snapshot is HMAC-trusted, so this case mints/reconstructs regardless of whether a
  *       {@link DeferredExecutionOrigin} is present — <em>unless</em> case 2f below refuses it first.
- *   <li><b>Case 2f (FORBIDDEN refusal, F4 security review)</b> — before case 2 or case 3 runs, a
+ *   <li><b>Case 2f (FORBIDDEN refusal)</b> — before case 2 or case 3 runs, a
  *       <em>present</em> {@link IdentitySnapshotContext} — verified or unverifiable — whose resolved
  *       target-kind is {@link CarriageRequirement#FORBIDDEN} is refused outright:
  *       {@link #degradeWithoutContext(SnapshotDegradationReason)} binds only the
@@ -47,7 +46,7 @@ import java.util.Optional;
  *       otherwise verify — must never mint an identity; verification status is irrelevant once the
  *       target is FORBIDDEN.
  *   <li><b>Case 3 (degrade)</b> — an {@link IdentitySnapshotContext} is bound but the identity could
- *       not be verified. Per the origin-or-verified mint evidence rule (A9), an unverifiable snapshot
+ *       not be verified. Per the origin-or-verified mint evidence rule, an unverifiable snapshot
  *       mints a service {@link SecurityContext} <em>only</em> when a {@link DeferredExecutionOrigin}
  *       proves the dispatch is deferred execution — an unverifiable (potentially garbage) snapshot is,
  *       unlike case 2, not itself trust evidence:
@@ -68,14 +67,14 @@ import java.util.Optional;
  *       {@link IdentitySnapshotContext#unverifiable(SnapshotDegradationReason)} context bound by
  *       {@link IdentitySnapshotDurableDecoder} (case 3a — the durable snapshot failed HMAC / decode /
  *       schema verification on the receive side), and a verified-at-decode snapshot whose
- *       reconstruction re-verification (FR-ID-CA-008) nonetheless throws
+ * reconstruction re-verification nonetheless throws
  *       {@link IdentityReconstructionException} (case 3b, defense-in-depth) — both apply the same
  *       origin gate.
  *   <li><b>Case 4 (bounded mint)</b> — no {@link IdentitySnapshotContext} is bound but a
  *       {@link DeferredExecutionOrigin} <em>proves</em> the dispatch is deferred execution (a durable
  *       delayed job, a cron trigger, or an outbox relay) — a service context is minted via
  *       {@link #mintServiceContext(SecurityIdentity)} from the origin-resolved executing identity, no
- *       subject. When the resolved target-kind (§14.6 A9, below) is
+ *       subject. When the resolved target-kind (below) is
  *       {@link CarriageRequirement#REQUIRED}, an {@link SnapshotDegradationReason#EXPECTED_ABSENT}
  *       {@link SnapshotDegradationMarker} is bound <em>in addition to</em> the minted context — a
  *       REQUIRED target that dispatches with no snapshot at all is a degradation, not a silent gap.
@@ -85,14 +84,14 @@ import java.util.Optional;
  *       target-kind is {@link CarriageRequirement#OPTIONAL} or {@link CarriageRequirement#FORBIDDEN}.
  *       Minting a SYSTEM context here would over-broadly privilege any context-empty service
  *       dispatch, so the initializer fails closed and {@code ServiceAuthorizationInterceptor} treats
- *       the unbound context as {@code AUTHENTICATION_REQUIRED} (PRD-ID-002 §14.3 A6). When the
+ *       the unbound context as {@code AUTHENTICATION_REQUIRED}. When the
  *       resolved target-kind is {@link CarriageRequirement#REQUIRED}, an
  *       {@link SnapshotDegradationReason#EXPECTED_ABSENT} {@link SnapshotDegradationMarker} is bound
  *       instead of the plain no-op — no origin proves deferred execution here, so still no
  *       {@link SecurityContext} is minted, but the missing expected carriage is no longer silent.
  * </ol>
  *
- * <p><b>Expected-but-absent carriage detection (§14.6 A9).</b> Cases 4 and 5 additionally resolve
+ * <p><b>Expected-but-absent carriage detection.</b> Cases 4 and 5 additionally resolve
  * the dispatch's durable-target kind — {@link DeferredExecutionOrigin#kind()} when an origin is
  * present, else the {@link InboundContextInitializationContext#boundary()} string — and look up its
  * {@link CarriageRequirement} via the injected {@link IdentitySnapshotConfig}. Operator-declared
@@ -118,7 +117,7 @@ import java.util.Optional;
  * identity keyed on the boundary string.
  *
  * <p>Registered via {@code @Provides @IntoSet InboundContextInitializer} by the execution-path
- * wiring that installs it (not this class — see slice P1.S5c).
+ * wiring that installs it (not this class).
  */
 public final class IdentitySnapshotReconstructionInitializer implements InboundContextInitializer {
 
@@ -147,7 +146,7 @@ public final class IdentitySnapshotReconstructionInitializer implements InboundC
      *                                {@code Optional} (an empty {@code Optional} selects the built-in
      *                                {@link #DEFAULT_RESOLVER})
      * @param config                  the identity-snapshot config supplying per-target-kind
-     *                                {@link CarriageRequirement} lookups (§14.6 A9); must not be
+     *                                {@link CarriageRequirement} lookups; must not be
      *                                {@code null}. Injected directly rather than through a dedicated
      *                                lookup type — {@link IdentitySnapshotConfig} already exposes
      *                                {@link IdentitySnapshotConfig#carriageRequirementFor(String)} and
@@ -202,7 +201,7 @@ public final class IdentitySnapshotReconstructionInitializer implements InboundC
 
         IdentitySnapshotContext bound = snapshotContext.orElseThrow();
 
-        // Case 2f (FORBIDDEN refusal, F4 security review): a FORBIDDEN target-kind never mints an
+        // Case 2f (FORBIDDEN refusal): a FORBIDDEN target-kind never mints an
         // identity from a carried snapshot, verified or not — this runs BEFORE any
         // verification/reconstruction attempt so a present snapshot on a FORBIDDEN target cannot slip
         // through case 2's "verified snapshot always reconstructs" rule. Only the degradation marker
@@ -213,7 +212,7 @@ public final class IdentitySnapshotReconstructionInitializer implements InboundC
 
         // Case 3a: the durable decoder already determined the carried snapshot was present but
         // unverifiable (bad HMAC / unknown key / decode / schema) — degrade without ever
-        // reconstructing a subject. Per the origin-or-verified mint evidence rule (A9), a service
+        // reconstructing a subject. Per the origin-or-verified mint evidence rule, a service
         // identity is resolved and a context minted ONLY when a DeferredExecutionOrigin proves the
         // dispatch is deferred execution; otherwise only the degradation marker is bound.
         Optional<SnapshotDegradationReason> unverifiableReason = bound.unverifiableReason();
@@ -230,8 +229,8 @@ public final class IdentitySnapshotReconstructionInitializer implements InboundC
         // evidence, unlike the unverifiable case above.
         SecurityIdentity serviceIdentity = resolveService(origin, context);
         try {
-            // Reconstruction re-verifies integrity per FR-ID-CA-008 as defense-in-depth. The
-            // receive-side decoder already performed the F5 carrier check against the trusted
+            // Reconstruction re-verifies integrity as defense-in-depth. The
+            // receive-side decoder already performed the carrier check against the trusted
             // dispatch carrier before binding this verified context; the initializer has no
             // dispatch-carrier fact of its own here, so it passes the snapshot's own signed carrier as
             // the expected carrier (a self-match) — real dispatch-carrier propagation to this seam
@@ -275,7 +274,7 @@ public final class IdentitySnapshotReconstructionInitializer implements InboundC
      *       {@link SecurityIdentity#delegation()}, or {@link SecurityIdentity#client()} fails
      *       <em>closed</em> with an {@link IllegalArgumentException}. Deferred execution mints a
      *       service-only context (no subject, no request-client provenance) per the frozen
-     *       binding-precedence rule (PRD-ID-002 §14.3), so this is the resolver-contract chokepoint
+     * binding-precedence rule, so this is the resolver-contract chokepoint
      *       that stops a subject/delegation/client-bearing identity from ever reaching
      *       {@link #mintServiceContext(SecurityIdentity)} — whose actor-type guard alone would let
      *       the whole identity (subject included) through into the minted context.
@@ -310,8 +309,8 @@ public final class IdentitySnapshotReconstructionInitializer implements InboundC
     }
 
     /**
-     * Resolves the durable-target kind used to look up the dispatch's {@link CarriageRequirement}
-     * (§14.6 A9): the {@link DeferredExecutionOrigin#kind()} when an origin is present (a
+     * Resolves the durable-target kind used to look up the dispatch's {@link CarriageRequirement}:
+     * the {@link DeferredExecutionOrigin#kind()} when an origin is present (a
      * durable-target kind string such as {@code "delayed-job"}, {@code "cron"}, or
      * {@code "outbox-relay"}), otherwise the {@link InboundContextInitializationContext#boundary()}
      * string — the best available target-kind evidence when no origin marker was bound.
@@ -332,7 +331,7 @@ public final class IdentitySnapshotReconstructionInitializer implements InboundC
      * method), while a {@link PrincipalType#SERVICE} actor uses
      * {@link SecurityContexts#unauthenticated(SecurityIdentity)} (a {@code none()} authentication
      * method) — stamping {@code custom("system")} on a SERVICE actor would misattribute it as
-     * system-acting (ADR-0163).
+     * system-acting.
      *
      * @param serviceIdentity the resolved executing identity to carry as the context's actor
      * @return the minted {@link SecurityContext}
@@ -376,7 +375,7 @@ public final class IdentitySnapshotReconstructionInitializer implements InboundC
      * Binds only a {@link SnapshotDegradationMarker} carrying the given typed reason — no
      * {@link SecurityContext} is minted. This is the origin-absent counterpart of {@link #degrade}
      * for the unverifiable-snapshot paths (case 3a/3b): per the origin-or-verified mint evidence
-     * rule (PRD-ID-002 §14.6 amendment A9), an unverifiable snapshot mints a service context only
+     * rule, an unverifiable snapshot mints a service context only
      * when a {@link DeferredExecutionOrigin} proves the dispatch is deferred execution. Without that
      * evidence, minting a fallback context here would let an attacker who writes a garbage,
      * unverifiable durable row with no origin marker end up strictly better off under
@@ -400,7 +399,7 @@ public final class IdentitySnapshotReconstructionInitializer implements InboundC
      * Binds a {@link SnapshotDegradationMarker} carrying
      * {@link SnapshotDegradationReason#EXPECTED_ABSENT} — the no-snapshot counterpart of
      * {@link #degrade}/{@link #degradeWithoutContext} for cases 4 and 5's carriage-required
-     * detection (§14.6 A9): a {@link CarriageRequirement#REQUIRED} target-kind dispatched with no
+     * detection: a {@link CarriageRequirement#REQUIRED} target-kind dispatched with no
      * {@link IdentitySnapshotContext} bound at all, not merely an unverifiable one. Binding the
      * marker alone (the caller composes it with a minted context scope on case 4, or returns it alone
      * on case 5) still lets the async degradation gate fire and apply the configured

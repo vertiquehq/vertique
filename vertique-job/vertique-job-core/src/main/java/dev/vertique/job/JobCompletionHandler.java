@@ -17,7 +17,7 @@ import lombok.extern.slf4j.Slf4j;
  * delegate DB updates without duplicating retry/dead-letter logic.
  *
  * <p>If no {@link JobRepository} is provided ({@code null}), completion handling is a no-op —
- * this supports the in-memory-only mode used by cron Phase 1.
+ * this supports the in-memory-only cron mode.
  */
 @Slf4j
 public class JobCompletionHandler {

@@ -34,8 +34,7 @@ import java.util.Objects;
  * regardless of this flag</b> (see {@link dev.vertique.workflow.ops.TaskCompletionCommand}), so
  * retries with different reviewed-version values surface as
  * {@link dev.vertique.workflow.exception.WorkflowIdempotencyConflictException} on every task —
- * stability-required or not. ADR-0055 covers the validation contract; ADR-0057 covers the
- * fingerprint contract.
+ * stability-required or not.
  *
  * @param stepId unique step identifier within the plan
  * @param assignment how the initial assignee is determined at task-creation time; may be a literal

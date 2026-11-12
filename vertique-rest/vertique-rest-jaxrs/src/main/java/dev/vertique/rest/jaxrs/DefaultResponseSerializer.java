@@ -147,7 +147,7 @@ public class DefaultResponseSerializer implements ResponseSerializer {
                 applyEncoderHeaders(httpResponse, ct, len);
                 // endOnFailure(false): the pipeline — not the serializer — owns terminal cleanup for a
                 // failed stream, so the completion future can surface the wire failure before the
-                // response is ended. The stream is piped, never buffered (FR-RESTSER-013 / NFR-003).
+                // response is ended. The stream is piped, never buffered.
                 yield stream.pipe().endOnFailure(false).to(httpResponse);
             }
         };

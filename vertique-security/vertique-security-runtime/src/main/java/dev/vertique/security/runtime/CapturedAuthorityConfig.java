@@ -12,7 +12,7 @@ import java.util.Set;
 /**
  * Configuration record for the Mode-3 captured-authority reconstruction opt-in, deserialized from
  * the {@code identity.snapshot.capturedAuthority} section of the application config via {@link
- * dev.vertique.core.config.ConfigParser} (PRD-ID-002 §14.3 Phase-2 Appendix, §14.6 P2.S4).
+ * dev.vertique.core.config.ConfigParser}.
  *
  * <p>{@link #allowedTargetKinds()} is the per-durable-target-kind allowlist {@link
  * DefaultCapturedAuthorityReconstruction} enforces before ever trusting a snapshot's captured

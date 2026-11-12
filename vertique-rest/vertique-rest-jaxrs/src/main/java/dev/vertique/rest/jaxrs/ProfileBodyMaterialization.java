@@ -8,8 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.exception.ValidationException;
 
 /**
- * Shared profile-mapper materialization helpers for the request-body binding/decoding layers
- * (FR-JSON-022/023/024B).
+ * Shared profile-mapper materialization helpers for the request-body binding/decoding layers.
  *
  * <p>Centralizes the one rule every profile-aware materialization site obeys: bind the request body
  * via the resolved non-{@code vertx} profile {@link ObjectMapper} so its strict materialization

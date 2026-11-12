@@ -10,7 +10,7 @@ import io.vertx.core.json.JsonObject;
  * Centralized secret-key predicate and log-safe rendering for Kafka open property bags.
  *
  * <p>Kafka {@code properties}, {@code serdeProperties}, {@code connectionProperties}, and the
- * {@code schemaRegistry} block are intentionally open bags (config rule R9) whose schema Vertique does
+ * {@code schemaRegistry} block are intentionally open bags whose schema Vertique does
  * not own — they pass arbitrary Kafka/registry native properties straight to the client. Such a bag may
  * carry credentials ({@code sasl.password}, {@code sasl.jaas.config}, other {@code *secret*} keys, and
  * Confluent Schema Registry basic-auth credentials such as {@code basic.auth.user.info}), supplied

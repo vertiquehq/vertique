@@ -16,8 +16,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Encapsulates the conditional request headers from an HTTP request and provides RFC 9110
- * §13.2.2 compliant precondition evaluation.
+ * Encapsulates the conditional request headers from an HTTP request and provides
+ * RFC 9110 §13.2.2 compliant precondition evaluation.
  *
  * <p>Developers may inject a {@code RequestPreconditions} as a JAX-RS resource method parameter
  * to perform early evaluation of conditional headers before executing expensive operations:
@@ -147,8 +147,8 @@ public final class RequestPreconditions {
     // --- Evaluate overloads ---
 
     /**
-     * Evaluates conditional request headers against the given ETag, following RFC 9110
-     * §13.2.2 evaluation order.
+     * Evaluates conditional request headers against the given ETag, following
+     * RFC 9110 §13.2.2 evaluation order.
      *
      * <p>Returns a {@link Response} with status {@code 304 Not Modified} or
      * {@code 412 Precondition Failed} when the conditions match, or {@code null} when

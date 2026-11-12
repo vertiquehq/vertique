@@ -14,10 +14,5 @@
  * {@code GeneratedEventsModule}, so {@code Event<X>} is reliably injectable; an event type that is
  * fired but unobserved still gets a valid no-op publisher. Observer methods must return {@code void} —
  * a non-{@code void} return is a compile error.
- *
- * <p><strong>Slice 3.2 scaffold:</strong> {@link dev.vertique.codegen.events.EventsProcessor} is a
- * NO-OP stub for the red phase — it is a real {@link javax.annotation.processing.Processor} (registered
- * via {@code META-INF/services}) but emits nothing and claims no annotations, so the slice-3.2 tests
- * fail until the emitter is implemented (GREEN, not part of this slice's scaffold).
  */
 package dev.vertique.codegen.events;

@@ -40,7 +40,7 @@ import java.util.UUID;
  * </ul>
  *
  * <p>The {@link #claimOrResolveStart} method uses an {@code INSERT ... ON CONFLICT DO UPDATE
- * RETURNING} pattern (§3.7) that is race-safe under {@code READ COMMITTED}. {@code DO UPDATE}
+ * RETURNING} pattern that is race-safe under {@code READ COMMITTED}. {@code DO UPDATE}
  * serializes with concurrent inserters: if a concurrent transaction has an uncommitted conflicting
  * row, PostgreSQL waits for that transaction to commit or roll back before the {@code UPDATE}
  * branch executes, so {@code RETURNING} always observes the committed winner. This is safer than
@@ -81,7 +81,7 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
 
     /**
      * Race-safe upsert for start dedup. Includes the {@code fingerprint} column so the engine can
-     * detect version-pinning conflicts (FR-WF-DEF-070): when the caller supplies an explicit
+     * detect version-pinning conflicts: when the caller supplies an explicit
      * {@code requestedDefinitionVersion}, a conflict row whose fingerprint differs from the incoming
      * one is rejected with {@link dev.vertique.workflow.exception.WorkflowIdempotencyConflictException}.
      *
@@ -230,7 +230,7 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
 
     /**
      * Atomically claims a start dedup slot or resolves an existing one, recording the definition
-     * version fingerprint for idempotency-conflict detection (FR-WF-DEF-070).
+     * version fingerprint for idempotency-conflict detection.
      *
      * <p>Executes:
      *
@@ -527,7 +527,7 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
 
     /**
      * Variant of {@link #claimOrResolveSignal} that accepts a caller-supplied {@code (dedup_namespace, key)}
-     * pair directly. Used by the branch-aware signal path (PRD-WF-002 §D11/§FR-WF-PAR-026): the
+     * pair directly. Used by the branch-aware signal path: the
      * branch path uses {@link dev.vertique.workflow.dedup.WorkflowDedupScopes#signalKey} which
      * folds the branch identity into the dedup key so two sibling branches sharing the same
      * caller-supplied {@code dedupKey} cannot collide.
@@ -549,7 +549,7 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
                         Future.failedFuture(exceptionMapper.translate(t, "workflow_dedup claimOrResolveSignalScoped")));
     }
 
-    // --- Dispatch dedup (PRD-WF-002) ---
+    // --- Dispatch dedup ---
 
     /**
      * Race-safe upsert for branch service-dispatch idempotency. Mirrors the signal-dedup pattern:
@@ -562,11 +562,11 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
     private final String sqlClaimOrResolveDispatch;
 
     /**
-     * Atomically claims a branch service-dispatch dedup slot or resolves an existing one
-     * (PRD-WF-002 §D6). Returns {@code true} iff this caller inserted the row and should proceed
+     * Atomically claims a branch service-dispatch dedup slot or resolves an existing one.
+     * Returns {@code true} iff this caller inserted the row and should proceed
      * with routing the side-effect intent; {@code false} iff a prior committed transaction
      * already held the row and the caller should skip routing (the dispatch was already
-     * recorded — FR-WF-PAR-038).
+     * recorded).
      *
      * <p>Use {@link WorkflowDedupScopes#dispatchScope(WorkflowInstanceId)} and
      * {@link WorkflowDedupScopes#dispatchKey(String, String, String, String, String)} to build the

@@ -48,9 +48,8 @@ import java.util.TreeMap;
  * registered tool set or a published schema changes. A later slice's cursor codec binds this digest to
  * invalidate a stale cursor across deployments.
  *
- * <p>Not part of the application-facing public surface: package-private per the frozen artifact
- * inventory ({@code contracts/type-and-module-inventory.md} § 7), exactly like its owned {@link
- * McpSchemaRegistry}. Its owning proofs ({@code McpSchemaStartupTest},
+ * <p>Not part of the application-facing public surface: package-private by design, exactly like its
+ * owned {@link McpSchemaRegistry}. Its owning proofs ({@code McpSchemaStartupTest},
  * {@code McpOptionalCapabilityStartupTest}) live in this same package for exactly that reason —
  * package-private access requires it, matching {@code McpValidatorConcurrencyTest}'s established
  * precedent.

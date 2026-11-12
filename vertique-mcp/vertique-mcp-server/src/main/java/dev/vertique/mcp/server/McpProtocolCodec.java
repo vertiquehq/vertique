@@ -59,8 +59,8 @@ final class McpProtocolCodec {
     static final int INTERNAL_ERROR = -32603;
 
     /**
-     * The implementation-defined JSON-RPC server-error-range code (contract §4.7 — "Header/body
-     * mismatch is HTTP 400 with -32020") this class's {@link #validateNegotiation} settles as. It is
+     * The implementation-defined JSON-RPC server-error-range code (header/body mismatch is HTTP 400
+     * with -32020) this class's {@link #validateNegotiation} settles as. It is
      * reserved for HTTP header/body disagreement and Phase-1 negotiation policy, never official
      * per-method schema violations.
      */
@@ -93,7 +93,7 @@ final class McpProtocolCodec {
     /** The {@code error.data} member carrying a {@link NegotiationReason} constant. */
     private static final String DATA_REASON = "reason";
 
-    // --- Protocol negotiation (contract §4.7) ---
+    // --- Protocol negotiation ---
 
     private static final String HEADER_PROTOCOL_VERSION = "MCP-Protocol-Version";
     private static final String HEADER_METHOD = "Mcp-Method";
@@ -105,7 +105,7 @@ final class McpProtocolCodec {
 
     /**
      * The plain, un-prefixed {@code _meta} keys {@link #extractBodyTraceContext}
-     * reads (MCP 2026-07-28 §_meta, OpenTelemetry trace context) — deliberately distinct from the
+     * reads (MCP 2026-07-28, {@code _meta} / OpenTelemetry trace context) — deliberately distinct from the
      * {@code io.modelcontextprotocol/}-prefixed negotiation keys above: W3C trace propagation is a
      * Vertique-owned extension of the same {@code _meta} object, not an official MCP protocol field.
      * {@code baggage} is reserved upstream too but has no consumer here and is never read.
@@ -131,9 +131,9 @@ final class McpProtocolCodec {
 
     /**
      * The two {@code tools/call} {@code CallToolRequestParams} fields the official schema permits for
-     * multi-round-trip tool execution (MRTR) that Phase 1 deliberately does not implement (contract
-     * §4.7 — "Phase 1 rejects {@code inputResponses}/{@code requestState} rather than pretending to
-     * support MRTR"). Present only on {@code CallToolRequestParams} (and {@code
+     * multi-round-trip tool execution (MRTR) that Phase 1 deliberately does not implement: Phase 1
+     * rejects {@code inputResponses}/{@code requestState} rather than pretending to support MRTR.
+     * Present only on {@code CallToolRequestParams} (and {@code
      * ReadResourceRequestParams}, which Phase 1 never exposes) in the vendored schema — never on
      * {@code RequestParams} ({@code server/discover}) or {@code PaginatedRequestParams} ({@code
      * tools/list}) — so this check applies only to {@code tools/call}.
@@ -236,7 +236,7 @@ final class McpProtocolCodec {
     }
 
     /**
-     * Validates protocol negotiation for one already envelope-validated request (contract §4.7):
+     * Validates protocol negotiation for one already envelope-validated request:
      * the universally required {@code MCP-Protocol-Version} / {@code Mcp-Method}
      * headers and the method-applicable {@code Mcp-Name} header against their body-mirrored values,
      * supported protocol-version policy, and — for {@code tools/call} only — the rejected reserved
@@ -259,10 +259,10 @@ final class McpProtocolCodec {
      * <em>values</em> are compared case-sensitively; header <em>name</em> lookup is case-insensitive
      * ({@link MultiMap#get(String)}'s own contract). This method does not implement
      * the contract's "Base64 sentinel values are decoded before comparison" clause: no concrete
-     * sentinel syntax is specified anywhere in this feature's governance corpus, and the three values
+     * sentinel syntax is specified anywhere, and the three values
      * compared here (the fixed protocol-version literal, the fixed method-string enum, and a tool name
      * already bounded to {@code [A-Za-z0-9_.-]{1,128}} once resolved) never need one. The vendored schema's {@code x-mcp-header}/{@code Mcp-Param-*}
-     * argument-mirroring mechanism (§4.7 — "Phase 1 emits no {@code x-mcp-header}") is the more
+     * argument-mirroring mechanism (Phase 1 emits no {@code x-mcp-header}) is the more
      * plausible owner of that clause, and Phase 1 does not implement it either.
      *
      * <p><strong>{@code _meta} shape.</strong> {@code params._meta} must be an object; {@code
@@ -280,7 +280,7 @@ final class McpProtocolCodec {
      *
      * <p><strong>Reserved fields.</strong> A {@code tools/call} {@code params} containing {@code
      * inputResponses} or {@code requestState} — schema-permitted MRTR fields Phase 1 does not implement
-     * — fails negotiation (contract §4.7). The pinned schema itself permits both fields, so the
+     * — fails negotiation. The pinned schema itself permits both fields, so the
      * official-schema check above does not catch this either; it is Phase 1's own policy, not a schema
      * violation.
      *
@@ -362,8 +362,8 @@ final class McpProtocolCodec {
 
     /**
      * Extracts this request's optional body trace reference from {@code params._meta.traceparent} /
-     * {@code params._meta.tracestate}. MCP 2026-07-28 §_meta, OpenTelemetry trace
-     * context reserves these exact un-prefixed keys for W3C trace-context propagation — see {@link
+     * {@code params._meta.tracestate}. MCP 2026-07-28 ({@code _meta} / OpenTelemetry trace
+     * context) reserves these exact un-prefixed keys for W3C trace-context propagation — see {@link
      * #META_TRACEPARENT}'s own note on why they are never namespaced under {@link
      * #META_PROTOCOL_VERSION}'s {@code io.modelcontextprotocol/} prefix.
      *

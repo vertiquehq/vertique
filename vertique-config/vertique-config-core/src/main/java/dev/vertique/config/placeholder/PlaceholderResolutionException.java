@@ -27,7 +27,7 @@ import java.util.List;
  * collected during a single walk. It is never {@code null} and never empty (an exception with no
  * failures is a programming error).
  *
- * <h2>NFR-CONF-002</h2>
+ * <h2>Value redaction</h2>
  * <p>No resolved config <em>value</em> appears in the exception message or in
  * {@code unresolvedReferences()}. Only keys, chain renderings, and malformed-reference locations
  * (key plus character position) are exposed.

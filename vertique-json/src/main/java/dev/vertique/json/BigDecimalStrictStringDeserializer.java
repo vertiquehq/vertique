@@ -73,7 +73,7 @@ public final class BigDecimalStrictStringDeserializer extends JsonDeserializer<B
      * Maximum accepted length, in characters, of the decimal literal carried by the JSON string.
      *
      * <p>Package-private (not {@code private}) so {@link BigDecimalAsStringSerializer} enforces the
-     * identical write-side bound off the same constant — the pair cannot drift apart (json-004).
+     * identical write-side bound off the same constant — the pair cannot drift apart.
      */
     static final int MAX_LENGTH = 100;
 
@@ -95,7 +95,7 @@ public final class BigDecimalStrictStringDeserializer extends JsonDeserializer<B
      * substring rather than requiring the whole string to be one.
      *
      * <p>Package-private (not {@code private}) so the {@code vertique-strict} profile's declared
-     * {@link dev.vertique.core.json.JsonSchemaTypeOverride} fragment (FR-JSON-089) is built directly
+     * {@link dev.vertique.core.json.JsonSchemaTypeOverride} fragment is built directly
      * from this derivation — never from a second, independently maintained copy of the grammar — so
      * the published schema and the serde's accepted grammar cannot drift apart.
      */
@@ -116,7 +116,7 @@ public final class BigDecimalStrictStringDeserializer extends JsonDeserializer<B
      * <p><strong>Message hygiene.</strong> The rejection message never echoes the submitted string —
      * only its length and the expected grammar are named — so a malicious or malformed request body
      * cannot smuggle attacker-controlled text into a log line via this exception's message
-     * (log-injection hygiene, json-004).
+     * (log-injection hygiene).
      *
      * @param p    the {@link JsonParser} positioned at the value token
      * @param ctxt the {@link DeserializationContext} for error reporting
@@ -151,10 +151,10 @@ public final class BigDecimalStrictStringDeserializer extends JsonDeserializer<B
      * the {@code vertique-strict} profile's {@code BigDecimal} map-key deserializer, so the length and
      * grammar bound is enforced identically for both a decimal <em>value</em> and a decimal
      * <em>map key</em> — a JSON object key cannot smuggle an exponent-notation literal past the
-     * value-side bound (json-004).
+     * value-side bound.
      *
      * <p><strong>Message hygiene.</strong> The thrown message never echoes {@code text} — only its
-     * length and the expected grammar are named (log-injection hygiene, json-004).
+     * length and the expected grammar are named (log-injection hygiene).
      *
      * @param text the candidate decimal literal, exactly as read from a JSON string value or a JSON
      *             object's map key

@@ -14,7 +14,7 @@ package dev.vertique.core.context;
  *
  * <p>Each encoder owns exactly one short namespace name (e.g. {@code "correlation"},
  * {@code "localization"}). Implementations MUST return either a {@link DurableMetadata} document
- * whose only namespace is {@link #namespace()} (FR-CTX-120), or {@link DurableMetadata#empty()} to
+ * whose only namespace is {@link #namespace()}, or {@link DurableMetadata#empty()} to
  * signal that the currently bound value has nothing legitimate to encode for this namespace (e.g. a
  * receive-side value that carries only a degradation marker, with no content to durably re-sign).
  * {@link DurableContextPropagator} treats an empty document as "skip this namespace" and does not
@@ -22,7 +22,7 @@ package dev.vertique.core.context;
  * {@link #namespace()} is a contract violation and fails the produce/enqueue operation.
  *
  * <p>Durable encode and durable decode are independent capabilities. A type MAY support encode
- * without providing a decoder (FR-CTX-005).
+ * without providing a decoder.
  *
  * <p>An implementation MAY throw {@link dev.vertique.core.exception.DurableEncodeRejectedException}
  * from {@link #encode} to reject the entire enclosing capture/merge operation — distinct from

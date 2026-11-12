@@ -21,7 +21,7 @@ import java.security.NoSuchAlgorithmException;
  * <p>The output is a 64-character lower-case hexadecimal string. It is stable across JVM restarts
  * and independent of the {@link CompiledExpression#handle()} implementation type.
  *
- * <p>Used by {@code DecisionRouteCompiler} (Slice F) to fold route fingerprints into
+ * <p>Used by {@code DecisionRouteCompiler} to fold route fingerprints into
  * {@code CallbackId.value()} so that route changes propagate automatically to the plan hash.
  */
 public final class ExpressionFingerprint {

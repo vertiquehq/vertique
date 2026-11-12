@@ -14,7 +14,7 @@ import io.vertx.core.Future;
  * event and never throws to signal a denial — every outcome (permit, deny, or fail-closed) is
  * reported as a succeeded {@link Future} carrying an {@link AuthorizationDecision} with a stable
  * {@link AuthzReasonCodes reason code}. Event emission is the responsibility of the per-surface
- * enforcement layer (PEP), not the engine (see ADR-0114).
+ * enforcement layer (PEP), not the engine.
  *
  * <p>The framework default ({@code DefaultAuthorizer}) is a synchronous in-memory function of the
  * actor's roles and the requested action; it always returns an already-completed future.

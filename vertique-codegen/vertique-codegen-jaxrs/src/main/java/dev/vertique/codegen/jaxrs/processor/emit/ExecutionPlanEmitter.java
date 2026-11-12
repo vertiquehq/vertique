@@ -37,8 +37,7 @@ import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 
 /**
- * Emitter for per-method {@code {Resource}_{methodName}_{idx}_ExecutionPlan} companions
- * (CG-010 step 4d, slice 2).
+ * Emitter for per-method {@code {Resource}_{methodName}_{idx}_ExecutionPlan} companions.
  *
  * <p>For each eligible verb-bearing method in a validated
  * {@link dev.vertique.codegen.jaxrs.EffectiveResourceContract}, this emitter generates a
@@ -175,7 +174,7 @@ public final class ExecutionPlanEmitter {
 
         // ClassName.get(TypeElement) yields the source-form nested name (Outer.InnerResource)
         // when the resource is a static nested class. JaxRsCandidateScanner only surfaces top-level
-        // root elements today, but the four CG-010 emitters use this same idiom for consistency.
+        // root elements today, but the four emitters use this same idiom for consistency.
         ClassName resourceClass = ClassName.get(concreteClass);
         ClassName planClass = ClassName.get(pkg, planSimpleName);
 
@@ -183,7 +182,7 @@ public final class ExecutionPlanEmitter {
 
         // Declaring class binary name — used as the resourceClass argument in resolveContext calls so
         // error messages match what the runtime passes via meta.method().getDeclaringClass().getName()
-        // (Outer$Inner, not Outer.Inner; vertiquehq/vertique-dev#636).
+        // (Outer$Inner, not Outer.Inner).
         TypeElement declaringType = (TypeElement) method.concreteMethod().getEnclosingElement();
         String declaringClassFqn = ctx.elements().getBinaryName(declaringType).toString();
 
@@ -398,7 +397,7 @@ public final class ExecutionPlanEmitter {
 
             CodeBlock.Builder init = CodeBlock.builder();
 
-            // name (preserve null vs blank parity — CG-009 blank-name parity)
+            // name (preserve null vs blank parity with the runtime)
             if (pc.name() == null) {
                 init.add(
                         "new $T(null, $T.$L, $L, ",
@@ -434,13 +433,13 @@ public final class ExecutionPlanEmitter {
                 init.add("null, ");
             }
 
-            // parameterMetadata — composed ParameterMetadata view, literal-first (GitHub issue #162):
+            // parameterMetadata — composed ParameterMetadata view, literal-first:
             // runtime-retained parameter annotations are materialized at compile time into a standalone
             // ParameterMetadata implementation. A parameter whose annotations are all literalizable is
             // fully reflection-free; a parameter carrying an unliteralizable annotation (nested/float/
             // double/char member) additionally keeps a LAZY reflective fallback
             // (GeneratedJaxRsReflectiveAnnotations), consulted only when findAnnotation/annotationsLazy()
-            // fires, so codegen stays byte-for-byte at parity with the reflective scan (ADR-0146) — do
+            // fires, so codegen stays byte-for-byte at parity with the reflective scan — do
             // NOT optimize the fallback away. Input policies still come from the precomputed POL{n}
             // constant; this view exists solely for findAnnotation/hasAnnotation/annotationsLazy()
             // consumers (e.g. a ParamConverterProvider bridged from JAX-RS).
@@ -982,7 +981,7 @@ public final class ExecutionPlanEmitter {
 
     /**
      * Returns the erased binary FQN of {@code type} — for strings the generated code resolves at
-     * runtime. Delegates to {@link TypeMirrorFqn} so the three CG-010 emitters share one source of
+     * runtime. Delegates to {@link TypeMirrorFqn} so the three emitters share one source of
      * truth on nested-type and array form.
      */
     private String erasedFqn(TypeMirror type) {

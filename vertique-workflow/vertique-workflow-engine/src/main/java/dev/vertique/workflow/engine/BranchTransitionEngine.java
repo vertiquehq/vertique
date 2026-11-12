@@ -62,7 +62,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Drives transitions for a single fork-group branch (PRD-WF-002 §D3, §D6, §D8).
+ * Drives transitions for a single fork-group branch.
  *
  * <p>Branches own their own optimistic-concurrency token ({@link BranchToken#version()}); sibling
  * branches do not contend on each other. The engine drives a branch through nodes until one of:
@@ -70,13 +70,13 @@ import java.util.UUID;
  *   <li>the branch reaches a durable wait (signal / timer / task);</li>
  *   <li>the branch reaches a terminal status (COMPLETED / FAILED);</li>
  *   <li>the branch records a side-effect intent that the dispatch-dedup gate skipped because the
- *       same intent was already recorded by an earlier attempt (FR-WF-PAR-038).</li>
+ * same intent was already recorded by an earlier attempt.</li>
  * </ul>
  *
  * <p>Service-dispatch handling INSERTS a {@code dispatch}-kind row into {@code workflow_dedup}
  * INSIDE this engine (NOT inside {@code OutboxSideEffectRecorder}); the recorder remains a pure
  * outbox adapter so the {@code workflow-services} → {@code workflow-postgresql} module-boundary
- * direction is preserved (round-3 finding R3-1).
+ * direction is preserved.
  *
  * <p>Supports {@link ServiceDispatchNode}, {@link WaitSignalNode} (with and without timeout),
  * {@link TimerNode}, {@link HumanTaskNode}, {@link DecisionNode}, {@link CompleteNode}, and
@@ -122,7 +122,7 @@ final class BranchTransitionEngine {
      * {@link BranchToken#metadata()} into the holder for the dispatch lifetime via
      * {@code bindFrom(..., DispatchBoundary.WORKFLOW)}. The scope is closed on
      * {@code Future.eventually(...)} so the binding survives the async {@code recorders.route(...)}
-     * chain (FR-CTX-178).
+     * chain.
      */
     private final dev.vertique.context.DurableContextPropagator propagator;
 
@@ -274,8 +274,8 @@ final class BranchTransitionEngine {
      * @param instanceScope the definition scope and start scope of the owning instance
      * @param tx the active transaction
      * @param effectiveBaseOverride when non-null, the already-computed effective durable context
-     *     document to bind for this drive instead of {@link BranchToken#metadata()} (Contract
-     *     Appendix C3). Branch-recovery and branch-targeted explicit-carrier callers pass the
+     *     document to bind for this drive instead of {@link BranchToken#metadata()}.
+     *     Branch-recovery and branch-targeted explicit-carrier callers pass the
      *     merged {@code carrier.merge(instance.metadata(), MergePolicy.CALLER_WINS)} document here;
      *     every other call site passes {@code null}, preserving today's behavior of binding
      *     {@code token.metadata()} unchanged
@@ -346,11 +346,11 @@ final class BranchTransitionEngine {
         // capturing into the timer row's metadata column) cannot accidentally pull
         // in ambient context that did not cross the workflow boundary. Production callers reach
         // this on a duplicated context — the dispatcher's per-message duplicate is preserved
-        // through pool.withTransaction by vertx-sql-client 5.x. Per FR-CTX-157b, bindFrom is
+        // through pool.withTransaction by vertx-sql-client 5.x. bindFrom is
         // strict: it throws on a non-duplicated Vert.x context; tests that drive the engine
         // directly must establish a duplicate before entering pool.withTransaction.
         //
-        // effectiveBaseOverride (Contract Appendix C3): when the caller has already computed the
+        // effectiveBaseOverride: when the caller has already computed the
         // merged carrier-authoritative + instance-fill document (branch recovery, branch-targeted
         // explicit-carrier signal), bind that instead of the raw token.metadata() fallback below.
         // token.metadata() is never null — BranchToken's compact constructor normalizes a null
@@ -459,7 +459,7 @@ final class BranchTransitionEngine {
             RuntimeWorkflow rw,
             InstanceScope instanceScope,
             SqlClient tx) {
-        // PRD-WF-002 §D6: dispatch-dedup gate runs FIRST so retried branch transitions skip
+        // The dispatch-dedup gate runs FIRST so retried branch transitions skip
         // re-emission when an earlier attempt already recorded the intent.
         String scope = WorkflowDedupScopes.dispatchScope(token.workflowId());
         String key = WorkflowDedupScopes.dispatchKey(
@@ -998,7 +998,7 @@ final class BranchTransitionEngine {
         return Json.decodeValue(Buffer.buffer(json), rw.stateType());
     }
 
-    // --- Slice 4 helpers ---
+    // --- Branch-owned wait helpers ---
 
     /**
      * Resolves the absolute fire instant for a {@link TimerSpec} in a branch context, using the

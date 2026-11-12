@@ -16,13 +16,13 @@ package dev.vertique.codegen.dagger.processor;
  *       (e.g., {@code GeneratedKafkaConsumersModule}).</li>
  * </ul>
  *
- * <p>JAX-RS resource binding is owned by {@code vertique-codegen-jaxrs} (CG-010), which generates
- * {@code GeneratedJaxRsResourcesModule} via {@code JaxRsPipelineProcessor}. CG-002 does not emit
+ * <p>JAX-RS resource binding is owned by {@code vertique-codegen-jaxrs}, which generates
+ * {@code GeneratedJaxRsResourcesModule} via {@code JaxRsPipelineProcessor}. This processor does not emit
  * {@code @JaxRsResources} bindings.
  *
- * <p>Service-contract bindings are owned by {@code vertique-codegen-services} (CG-005), which
+ * <p>Service-contract bindings are owned by {@code vertique-codegen-services}, which
  * generates a separate {@code GeneratedServicesModule} populated with
- * {@code @Provides @IntoSet ServiceContractContributor} bindings; CG-002 does not emit them.
+ * {@code @Provides @IntoSet ServiceContractContributor} bindings; this processor does not emit them.
  */
 public enum Qualifier {
     /**

@@ -19,7 +19,7 @@ package dev.vertique.workflow.plan;
  *
  * <p>Race policies ({@code FirstSuccessJoinPolicy}, {@code FirstFailureJoinPolicy}) are valid only
  * for race-safe branch groups; the plan validator rejects compensable steps and {@link
- * RaceSafety#NORMAL} branches under those policies (PRD-WF-002 FR-WF-PAR-011/054). Future quorum
+ * RaceSafety#NORMAL} branches under those policies. Future quorum
  * and partial-success policies will be additive permits with their own state.
  */
 public sealed interface JoinPolicy permits AllRequiredJoinPolicy, FirstSuccessJoinPolicy, FirstFailureJoinPolicy {}

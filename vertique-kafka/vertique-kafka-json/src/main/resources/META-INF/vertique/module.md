@@ -41,7 +41,7 @@ The backing `ObjectMapper` is resolved per endpoint with a two-tier precedence, 
 
 `JsonMapperProfileRegistry` and `JsonConfig` are available because `KafkaJsonModule` includes `JsonRuntimeModule`. The global-tier mapper is computed once in the `JsonSerdeProvider` constructor (an unknown `json.jsonProfile` fails fast at startup; the per-binding `kafka.jsonProfile` is additionally validated by a `ComposeValidator`).
 
-The per-binding profile (tier 1) is selected by placing `@JsonProfile("profile-id")` (`dev.vertique.core.json.JsonProfile`) on the `@KafkaListener` or `@KafkaProducer` **type**. Placing it on a method instead of the type is rejected at build time (FR-JSON-066). When the annotation is absent, resolution falls through to the global default (the `vertique` floor) above.
+The per-binding profile (tier 1) is selected by placing `@JsonProfile("profile-id")` (`dev.vertique.core.json.JsonProfile`) on the `@KafkaListener` or `@KafkaProducer` **type**. Placing it on a method instead of the type is rejected at build time. When the annotation is absent, resolution falls through to the global default (the `vertique` floor) above.
 
 ### Trust boundary: no validation gate on JSON consumer deserialization
 
@@ -193,7 +193,7 @@ topic is used only in the failure message.
 
 `@Singleton ComposeValidator` contributed by `KafkaJsonModule` to the `VALIDATE`-phase multibinding. Validates the Kafka per-boundary default profile id (`kafka.jsonProfile`) against the `JsonMapperProfileRegistry` at `@Inject` construction time.
 
-A non-blank `kafka.jsonProfile` that names an unknown profile throws `JsonProfileConfigurationException` immediately at the `VALIDATE` phase — before any consumer or producer is started — even when zero bindings are active or when a more-specific per-binding profile would shadow the boundary default at runtime. This closes the lazy-resolution gap for inert or shadowed configured defaults (FR-JSON-050).
+A non-blank `kafka.jsonProfile` that names an unknown profile throws `JsonProfileConfigurationException` immediately at the `VALIDATE` phase — before any consumer or producer is started — even when zero bindings are active or when a more-specific per-binding profile would shadow the boundary default at runtime. This closes the lazy-resolution gap for inert or shadowed configured defaults.
 
 ---
 

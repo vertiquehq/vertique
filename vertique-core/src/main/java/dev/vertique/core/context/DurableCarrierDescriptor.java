@@ -9,8 +9,8 @@ import java.util.Objects;
  * Identifies the durable row-carrier a piece of propagated context is bound to.
  *
  * <p>A carrier descriptor pins an in-flight durable envelope to the specific persisted row (the
- * {@code carrierId}) and the {@link DurableTarget} that row was written for. It backs the F5 replay
- * defense of PRD identity-002: when a durable metadata blob is decoded at a boundary, the decoder
+ * {@code carrierId}) and the {@link DurableTarget} that row was written for. It backs the replay
+ * defense: when a durable metadata blob is decoded at a boundary, the decoder
  * can confirm the blob is being reinstated against the same carrier identity it was encoded for,
  * rather than a replayed or mismatched one.
  *

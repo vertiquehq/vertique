@@ -23,14 +23,14 @@ import java.util.Set;
  * Dagger module wiring the JSON mapper profile runtime.
  *
  * <p>Consumer modules ({@code rest-jaxrs}, {@code rest-client}, {@code kafka-json}) install this via
- * {@code @Module(includes = JsonRuntimeModule.class)} (FR-JSON-007B). It declares the empty
+ * {@code @Module(includes = JsonRuntimeModule.class)}. It declares the empty
  * application multibinding seed for {@link JsonMapperProfile} (so an app that contributes no
  * profiles still wires) and binds {@link JsonMapperProfileRegistry} to
  * {@link DefaultJsonMapperProfileRegistry}.
  *
  * <p>The three built-in profiles ({@code system}, {@code vertique}, {@code vertique-strict}) are
  * <strong>not</strong> contributed into the set here — they are seeded inside
- * {@link DefaultJsonMapperProfileRegistry} separately from application profiles (FR-JSON-007A).
+ * {@link DefaultJsonMapperProfileRegistry} separately from application profiles.
  */
 @Module
 public abstract class JsonRuntimeModule {
@@ -56,7 +56,7 @@ public abstract class JsonRuntimeModule {
 
     /**
      * Parses the {@code json} configuration section into a typed {@link JsonConfig} at the Dagger
-     * provider boundary, via the injected canonical {@link ConfigParser} (config.md R10).
+     * provider boundary, via the injected canonical {@link ConfigParser}.
      *
      * <p>The section carries both keys: {@code json.jsonProfile} (the managed-edge default, floor
      * {@code vertique}) and {@code json.systemProfile} (the process-codec profile, floor

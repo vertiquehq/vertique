@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: EUPL-1.2
 
 /**
- * CG-009 — Annotation processor that validates JAX-RS resource classes at compile time,
+ * Annotation processor that validates JAX-RS resource classes at compile time,
  * providing faster developer feedback and deterministic CI catch for annotation-visible defects.
  *
  * <p>Anchored on {@code @Path}-annotated concrete classes. For each resource class, the

@@ -31,11 +31,11 @@ import java.util.Set;
 /**
  * Default {@link CapturedAuthorityReconstruction} implementation — the Mode-3 counterpart of
  * {@link DefaultIdentityReconstruction}, provided only by the opt-in {@code
- * CapturedAuthorityReconstructionModule} (PRD identity-002 §14.3 Phase-2 Appendix, §14.6 P2.S4).
+ * CapturedAuthorityReconstructionModule}.
  *
  * <p>Both entry points reuse the exact trust-boundary checks {@link DefaultIdentityReconstruction}
  * applies — re-verifying the snapshot's integrity envelope <em>and</em> its current freshness via
- * {@link IdentitySnapshotCodec#verifyForUse(IdentitySnapshot)} and confirming the F5 carrier binding
+ * {@link IdentitySnapshotCodec#verifyForUse(IdentitySnapshot)} and confirming the carrier binding
  * against the caller-supplied {@code expectedCarrier} — duplicated here (rather than shared via a
  * common helper) so this privileged, opt-in type has no compile-time coupling to the
  * general-reconstruction class. After those checks pass, an additional per-target-kind allowlist
@@ -191,7 +191,7 @@ final class DefaultCapturedAuthorityReconstruction implements CapturedAuthorityR
     }
 
     /**
-     * Enforces the F5 carrier-binding check: the snapshot's signed {@link IdentitySnapshot#carrier()}
+     * Enforces the carrier-binding check: the snapshot's signed {@link IdentitySnapshot#carrier()}
      * must match the trusted receive-side {@code expectedCarrier} on both {@code carrierId} and
      * {@code target}. Mirrors {@code DefaultIdentityReconstruction.verifyCarrier}.
      *

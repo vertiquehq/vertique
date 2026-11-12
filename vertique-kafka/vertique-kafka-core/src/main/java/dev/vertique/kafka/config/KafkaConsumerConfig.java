@@ -21,7 +21,7 @@ import jakarta.annotation.Nullable;
  * <p>Components that must distinguish "absent" from a concrete default stay nullable boxed values
  * with no defaulting — {@code worker} and {@code format} are inherited from a higher level when
  * unset, so {@code null} is meaningful and preserved. The {@code properties} and {@code serdeProperties}
- * bags are intentionally open property bags (config rule R9) whose values are kept intact for runtime
+ * bags are intentionally open property bags whose values are kept intact for runtime
  * use; their secret keys are masked only when this record is rendered to a string (see
  * {@link #toString()}).
  *

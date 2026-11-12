@@ -6,8 +6,8 @@ package dev.vertique.workflow.definition.expression;
 /**
  * Classifies the compile-time result type of a {@link CompiledExpression}.
  *
- * <p>Only {@link #BOOLEAN} is accepted by route validation in Slice F; the full set is exposed so
- * the expression profile can evolve to support richer routing logic in future slices.
+ * <p>Only {@link #BOOLEAN} is accepted by route validation; the full set is exposed so
+ * the expression profile can evolve to support richer routing logic.
  */
 public enum ExpressionType {
 

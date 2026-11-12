@@ -29,8 +29,8 @@ import java.util.UUID;
  * @param reviewedSubjectVersion the subject-object version the reviewer supplied at completion
  *     time; {@code null} when the caller did not supply a version or when stability was not enforced
  * @param commandCorrelationId the correlation id bound to the ambient execution context at the
- *     point this entry was appended, or {@code null} when no correlation context was bound (PRD
- *     FR-WF-CTX-050/051). Additive field — history rows written before this field existed
+ *     point this entry was appended, or {@code null} when no correlation context was bound.
+ *     Additive field — history rows written before this field existed
  *     deserialize with {@code null}.
  */
 public record TaskCompletedHistoryPayload(

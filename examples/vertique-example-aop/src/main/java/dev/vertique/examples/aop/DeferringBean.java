@@ -8,11 +8,11 @@ import jakarta.inject.Singleton;
 
 /**
  * A bean with a <em>synchronous-returning</em> method carrying the deliberately-deferring
- * {@link Deferring @Deferring} custom aspect — the runtime fixture for the FR-013-05 sync-defer guard
+ * {@link Deferring @Deferring} custom aspect — the runtime fixture for the sync-defer guard
  * proof.
  *
  * <p>{@link #compute(String)} returns a plain {@link String} (not a {@code Future}), so the generated
- * {@code DeferringBean$AopProxy} override emits the sync-unwrap path plus the FR-013-05 guard. Because
+ * {@code DeferringBean$AopProxy} override emits the sync-unwrap path plus the sync-defer guard. Because
  * {@link DeferringAspect} returns a never-completing future, calling {@code compute(...)} through the
  * proxy trips that guard and throws an {@link IllegalStateException} — the behavioral proof that a
  * sync-returning method cannot carry a deferring aspect.
@@ -29,7 +29,7 @@ public class DeferringBean {
 
     /**
      * Computes a value synchronously. Intercepted by {@link Deferring @Deferring}, whose aspect defers
-     * completion; through the proxy this trips the FR-013-05 sync-defer guard and throws
+     * completion; through the proxy this trips the sync-defer guard and throws
      * {@link IllegalStateException}. Called directly (un-proxied) it simply returns the value.
      *
      * @param input the input to echo into the result

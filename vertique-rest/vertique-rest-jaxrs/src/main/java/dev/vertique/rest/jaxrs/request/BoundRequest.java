@@ -9,7 +9,7 @@ import java.util.Map;
 
 /**
  * Typed binding facade over a Vert.x {@code RoutingContext.request()}, exposing the decoded request
- * parameters and body as transport-neutral {@link RequestValue} instances (FR-024).
+ * parameters and body as transport-neutral {@link RequestValue} instances.
  *
  * <p>The four parameter maps expose path, query, header, and cookie values. Header and cookie
  * lookups are case-insensitive. Multiplicity is type-driven by the operation's declared parameters:
@@ -29,14 +29,14 @@ public interface BoundRequest {
      * {@link BoundRequest} before dispatch, so the generated-runtime SPI's
      * {@code GeneratedJaxRsSupport.deserializeBody} can read the already-bound body without
      * re-binding it. Replaces the retired Vert.x OpenAPI router validated-request key on the
-     * rest-jaxrs request hot path (FR-024).
+     * rest-jaxrs request hot path.
      */
     String KEY_META_DATA_BOUND_REQUEST = "vertique.rest.jaxrs.boundRequest";
 
     /**
      * Routing-context data key under which {@code ResourceMethodInvoker} stashes the per-request
      * resolved request-body {@code ObjectMapper} when a non-{@code vertx} JSON profile applies to the
-     * dispatched resource method (FR-JSON-020). The key is absent when the effective profile is
+     * dispatched resource method. The key is absent when the effective profile is
      * {@code vertx} (the default), so a reader treats absence as "use the existing default body
      * path". Consumers in the binding/materialization layers read this to (de)serialize the request
      * body with the selected profile mapper.
@@ -45,8 +45,8 @@ public interface BoundRequest {
 
     /**
      * Routing-context data key set by a matched operation route's per-route failure handler to mark
-     * that the <em>error</em>-body mapper has already been decided for the matched route
-     * (FR-JSON-058/058A). The marker is independent of {@link #KEY_RESOLVED_BODY_MAPPER}: a matched
+     * that the <em>error</em>-body mapper has already been decided for the matched route.
+     * The marker is independent of {@link #KEY_RESOLVED_BODY_MAPPER}: a matched
      * route whose effective profile is a non-{@code vertx} profile stashes its mapper under
      * {@code KEY_RESOLVED_BODY_MAPPER} <em>and</em> sets this marker; a matched route whose effective
      * profile is {@code vertx} sets only this marker (leaving {@code KEY_RESOLVED_BODY_MAPPER} absent

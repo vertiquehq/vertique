@@ -19,7 +19,7 @@ import javax.tools.Diagnostic;
  *
  * <p>The static formatters ({@link #mustReturnFuture}, {@link #duplicateOperation},
  * {@link #unsupportedAnnotation}, {@link #expectedRecord}) form an externally-stable contract:
- * downstream processors (CG-002+) MUST use these methods so that error messages stay consistent
+ * downstream processors MUST use these methods so that error messages stay consistent
  * across the codegen series. The exact string values are tested in {@code DiagnosticsTest}.
  *
  * <p>Obtain an instance via {@link CodegenContext#diagnostics()}.
@@ -139,8 +139,8 @@ public final class Diagnostics {
      * Returns the standard error message for a type that has more than one constructor annotated
      * with {@code @Inject}.
      *
-     * <p>This formatter is part of the externally-stable contract established by CG-001 and first
-     * used by CG-002's {@code AutoWireProcessor}. Downstream processors MUST use this method for
+     * <p>This formatter is part of the externally-stable contract and is
+     * used by {@code AutoWireProcessor}. Downstream processors MUST use this method for
      * duplicate-inject-constructor errors so that message wording stays consistent across the
      * codegen series.
      *
@@ -156,8 +156,8 @@ public final class Diagnostics {
      * Returns the standard error message for a {@code @Path} placeholder that has no matching
      * {@code @PathParam} on the method.
      *
-     * <p>This formatter is part of the externally-stable contract established by CG-001 and first
-     * used by CG-003's {@code PathPlaceholderValidator}. Downstream processors MUST use this method
+     * <p>This formatter is part of the externally-stable contract and is
+     * used by {@code PathPlaceholderValidator}. Downstream processors MUST use this method
      * so that error messages stay consistent across the codegen series.
      *
      * @param placeholder the placeholder name (without braces), e.g. {@code "id"}
@@ -172,8 +172,8 @@ public final class Diagnostics {
      * Returns the standard error message for a {@code @PathParam} annotation that has no matching
      * placeholder in the method's {@code @Path}.
      *
-     * <p>This formatter is part of the externally-stable contract established by CG-001 and first
-     * used by CG-003's {@code PathPlaceholderValidator}. Downstream processors MUST use this method
+     * <p>This formatter is part of the externally-stable contract and is
+     * used by {@code PathPlaceholderValidator}. Downstream processors MUST use this method
      * so that error messages stay consistent across the codegen series.
      *
      * @param paramName the {@code @PathParam} name (e.g. {@code "id"})
@@ -184,7 +184,7 @@ public final class Diagnostics {
         return "@PathParam(\"%s\") on %s has no matching placeholder in @Path".formatted(paramName, context);
     }
 
-    // --- T003 shared selector-path and proxyability formatters ---
+    // --- Shared selector-path and proxyability formatters ---
 
     /** Returns the family-prefixed diagnostic for a blank selector path. */
     public static String selectorPathBlank(String family) {
@@ -247,7 +247,7 @@ public final class Diagnostics {
         return "%s methods must be instance methods that can be overridden".formatted(family);
     }
 
-    // --- T011 resilience validation formatters ---
+    // --- Resilience validation formatters ---
 
     /** Returns the diagnostic for a resilience declaration without a method-level anchor. */
     public static String resilienceDeclarationRequiresAnchor() {
@@ -339,14 +339,14 @@ public final class Diagnostics {
         return "@Bulkhead(mode = QUEUE).queueTimeoutMs must be between 1 and 60000";
     }
 
-    // --- CG-009 JAX-RS validation formatters ---
+    // --- JAX-RS validation formatters ---
 
     /**
      * Returns the standard error message for conflicting security annotations at the same
      * declaration level (class or method). Mirrors the base wording of the runtime channel in
      * {@code ResourceScanner} (security-annotation conflict path).
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-009.
+     * <p>This formatter is part of the externally-stable contract.
      *
      * @param level       a human-readable description of the declaration level
      *                    (e.g. {@code "class-level"} or {@code "method-level"})
@@ -382,7 +382,7 @@ public final class Diagnostics {
      * value array. Mirrors the base wording of the runtime channel in {@code ResourceScanner}
      * (empty-roles-allowed path).
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-009.
+     * <p>This formatter is part of the externally-stable contract.
      *
      * @param level a human-readable description of the declaration level
      *              (e.g. {@code "class-level"} or {@code "method-level"})
@@ -399,7 +399,7 @@ public final class Diagnostics {
      * Mirrors the exact wording of the runtime channel in {@code RouteValidator}
      * (multiple-body-params path): {@code "Method ClassName.methodName() has N body parameters; …"}.
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-009.
+     * <p>This formatter is part of the externally-stable contract.
      *
      * @param resourceClassName the simple name of the resource class (e.g. {@code "HelloResource"})
      * @param methodName        the simple name of the resource method (e.g. {@code "create"})
@@ -417,7 +417,7 @@ public final class Diagnostics {
      * {@code RouteValidator} (form-and-body-conflict path):
      * {@code "Method ClassName.methodName() mixes @FormParam/…"}.
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-009.
+     * <p>This formatter is part of the externally-stable contract.
      *
      * @param resourceClassName the simple name of the resource class (e.g. {@code "HelloResource"})
      * @param methodName        the simple name of the resource method (e.g. {@code "upload"})
@@ -431,9 +431,9 @@ public final class Diagnostics {
 
     /**
      * Returns the standard error message when a method declares more than one HTTP verb
-     * annotation (Tier-B build-time-only guardrail introduced by CG-009).
+     * annotation (build-time-only guardrail).
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-009.
+     * <p>This formatter is part of the externally-stable contract.
      *
      * @param methodName the simple name of the resource method (e.g. {@code "handle"})
      * @param verbs      the HTTP verb annotation simple names present on the method
@@ -446,7 +446,7 @@ public final class Diagnostics {
                 methodName, String.join(", ", verbs));
     }
 
-    // --- CG-010 contract-conflict formatters ---
+    // --- Contract-conflict formatters ---
 
     /**
      * Returns the standard compile-time error message when two implemented interfaces carry
@@ -518,7 +518,7 @@ public final class Diagnostics {
                 context, kind, directValue, interfaceName, interfaceValue);
     }
 
-    // --- CG-012 Track B delayed-job formatters ---
+    // --- Delayed-job formatters ---
 
     /**
      * Returns the standard compile-time error message when a {@code @DelayedJobContract} annotation is
@@ -526,7 +526,7 @@ public final class Diagnostics {
      * the target must be an interface (the runtime {@code DelayedJobClientFactory.create} also requires
      * one via an explicit {@code isInterface()} check).
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-012 Track B and used
+     * <p>This formatter is part of the externally-stable contract and is used
      * by {@code DelayedJobContractProcessor}. The check runs before the {@code isAssignable} check so
      * that an abstract class annotated with {@code @DelayedJobContract} yields a clear diagnostic
      * instead of a generated-source compile error from {@code implements SomeClass}.
@@ -542,7 +542,7 @@ public final class Diagnostics {
      * Returns the standard compile-time error message when a {@code @DelayedJobContract} interface does
      * not extend {@code DelayedJobClient<P>} directly with a concrete payload type.
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-012 Track B and used
+     * <p>This formatter is part of the externally-stable contract and is used
      * by {@code DelayedJobContractProcessor}.
      *
      * @param contractFqn the fully-qualified name of the offending contract interface
@@ -575,7 +575,7 @@ public final class Diagnostics {
      * {@code @DelayedJobContract} interface cannot be resolved (e.g. raw {@code DelayedJobClient} or a
      * forwarding type variable).
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-012 Track B.
+     * <p>This formatter is part of the externally-stable contract.
      *
      * @param contractFqn the fully-qualified name of the contract interface
      * @return the formatted error message
@@ -589,7 +589,7 @@ public final class Diagnostics {
      * Returns the standard compile-time error message when two {@code @DelayedJobContract} interfaces in
      * the same compilation unit declare the same {@code name()}.
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-012 Track B.
+     * <p>This formatter is part of the externally-stable contract.
      *
      * @param name      the duplicated contract name
      * @param contractA the fully-qualified name of the first contract
@@ -607,7 +607,7 @@ public final class Diagnostics {
      * promoted to an error under the {@code vertique.codegen.delayedjob.requireExecutor} option (the executor
      * may legitimately live in another module).
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-012 Track B.
+     * <p>This formatter is part of the externally-stable contract.
      *
      * @param contractFqn the fully-qualified name of the contract interface
      * @return the formatted message
@@ -620,7 +620,7 @@ public final class Diagnostics {
      * Returns the standard compile-time error message when a same-unit {@code DelayedJobExecutor}'s payload
      * type does not match the payload type declared by its contract.
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-012 Track B.
+     * <p>This formatter is part of the externally-stable contract.
      *
      * @param executorFqn the fully-qualified name of the executor
      * @param executorP   the executor's resolved payload type
@@ -638,7 +638,7 @@ public final class Diagnostics {
      * Returns the standard compile-time error message when a {@code @DelayedJobContract} interface
      * declares its own abstract method, which the generated proxy cannot implement.
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-012 Track B. The check
+     * <p>This formatter is part of the externally-stable contract. The check
      * covers methods declared on the contract <em>and</em> inherited through intermediate interfaces,
      * whether {@code abstract} or {@code default}: an extra {@code abstract} method would leave the
      * generated proxy uncompilable, while a {@code default} method would execute in the generated proxy but
@@ -653,13 +653,13 @@ public final class Diagnostics {
                 .formatted(contractFqn, methodName);
     }
 
-    // --- CG-012 Track A Kafka consumer formatters ---
+    // --- Kafka consumer formatters ---
 
     /**
      * Returns the standard compile-time error message when a {@code @KafkaHandler} method declares
      * zero or more than one payload parameter.
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-012 Track A.
+     * <p>This formatter is part of the externally-stable contract.
      *
      * @param className   simple name of the {@code @KafkaListener} interface (e.g. {@code "OrderRouter"})
      * @param methodName  simple name of the handler method (e.g. {@code "onOrder"})
@@ -675,7 +675,7 @@ public final class Diagnostics {
      * Returns the standard compile-time error message when a {@code @KafkaHandler} method does not
      * return {@code void} or {@code Future<Void>}.
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-012 Track A.
+     * <p>This formatter is part of the externally-stable contract.
      *
      * @param className  simple name of the {@code @KafkaListener} interface
      * @param methodName simple name of the handler method
@@ -689,7 +689,7 @@ public final class Diagnostics {
      * Returns the standard compile-time error message when a {@code @KafkaListener}'s
      * {@code topic()} attribute is blank.
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-012 Track A.
+     * <p>This formatter is part of the externally-stable contract.
      *
      * @param className the simple name of the {@code @KafkaListener}-annotated type
      * @return the formatted error message
@@ -703,7 +703,7 @@ public final class Diagnostics {
      * satisfy the mutual-exclusion rule: exactly one of {@code matchHeader}, {@code matchProperty},
      * or {@code defaultHandler = true} must be set.
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-012 Track A.
+     * <p>This formatter is part of the externally-stable contract.
      *
      * @param className  simple name of the {@code @KafkaListener} interface
      * @param methodName simple name of the handler method
@@ -723,7 +723,7 @@ public final class Diagnostics {
      * header vs. a property — sharing the same name and value are <em>not</em> duplicates and are not
      * reported here; they can both be meaningful.)
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-012 Track A.
+     * <p>This formatter is part of the externally-stable contract.
      *
      * @param className    simple name of the {@code @KafkaListener} interface
      * @param selectorKind the selector kind, {@code "header"} or {@code "property"}
@@ -746,8 +746,7 @@ public final class Diagnostics {
      * contract interface — placing it on the interface would mean the annotation is part of the
      * public API contract rather than an infrastructure wiring decision.
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-012 Track A
-     * (Slice 5).
+     * <p>This formatter is part of the externally-stable contract.
      *
      * @param className  simple name of the interface that carries the misplaced annotation
      * @param methodName simple name of the annotated method
@@ -767,7 +766,7 @@ public final class Diagnostics {
      * {@code .class} literal for the value type. The reflective path also errors in this case.
      * The fix is to parameterize the implementation: {@code implements KafkaRecordHandler<MyEvent>}.
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-012 Track A.
+     * <p>This formatter is part of the externally-stable contract.
      *
      * @param className the simple name of the offending {@code @KafkaListener} class
      * @return the formatted error message
@@ -789,8 +788,7 @@ public final class Diagnostics {
      *   <li>Model 4 direct handler — class implementing {@code KafkaRecordHandler<V>}</li>
      * </ul>
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-012 Track A
-     * (Slice 6).
+     * <p>This formatter is part of the externally-stable contract.
      *
      * @param className the simple name of the offending {@code @KafkaListener} type
      * @return the formatted error message
@@ -811,7 +809,7 @@ public final class Diagnostics {
      * reflective parity: the reflective {@code KafkaConsumerScanner.resolveRouteValueType} reads
      * {@code params[0]} as the payload type, so {@code params[0]} must be the payload.
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-012 Track A.
+     * <p>This formatter is part of the externally-stable contract.
      *
      * @param className  simple name of the {@code @KafkaListener} interface
      * @param methodName simple name of the handler method
@@ -833,7 +831,7 @@ public final class Diagnostics {
      * This formatter produces the compile-time parity diagnostic when the codegen processor detects
      * the same mismatch via the APT type system.
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-012 Track A.
+     * <p>This formatter is part of the externally-stable contract.
      *
      * @param className      the simple name of the offending {@code @KafkaListener} class
      * @param annotatedType  the human-readable name of {@code @KafkaListener.valueType()} as declared
@@ -847,7 +845,7 @@ public final class Diagnostics {
                 .formatted(className, annotatedType, resolvedType);
     }
 
-    // --- CG-012 Track C workflow contract formatters ---
+    // --- Workflow contract formatters ---
     //
     // These mirror the exact wording of WorkflowProxyContractException (the runtime channel in
     // WorkflowProxyValidator) so that a contract-shape mistake reads identically whether caught at
@@ -860,7 +858,7 @@ public final class Diagnostics {
      * type that is not an interface. The generated proxy {@code implements} the contract, so the target
      * must be an interface (the reflective path likewise builds a JDK dynamic proxy, which requires one).
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-012 Track C.
+     * <p>This formatter is part of the externally-stable contract.
      *
      * @param typeFqn the fully-qualified name of the offending type
      * @return the formatted error message
@@ -1188,7 +1186,7 @@ public final class Diagnostics {
                 .formatted(contractFqn, signature);
     }
 
-    // --- CG-013 Events observer-signature formatters ---
+    // --- Events observer-signature formatters ---
 
     /**
      * Returns the standard compile-time error message when an {@code @Observes}-annotated parameter
@@ -1198,7 +1196,7 @@ public final class Diagnostics {
      * that cannot consume a return value; returning anything other than {@code void} is therefore a
      * contract violation that is rejected at compile time.
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-013 Events and
+     * <p>This formatter is part of the externally-stable contract and is
      * used by {@code EventsProcessor}. The message contains the word {@code void} so that the test
      * harness's {@code assertErrorMessage("void")} assertion can locate it by substring.
      *
@@ -1219,8 +1217,8 @@ public final class Diagnostics {
      * compilable. The {@code "single"} substring is used by {@code assertErrorMessage("single")}
      * in the test harness to locate this diagnostic.
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-013 Events and
-     * used by {@code EventsProcessor} (P3-W2).
+     * <p>This formatter is part of the externally-stable contract and is
+     * used by {@code EventsProcessor}.
      *
      * @param methodFqn the fully-qualified {@code Type.method} name of the offending observer method
      * @return the formatted error message
@@ -1240,8 +1238,8 @@ public final class Diagnostics {
      * works. The {@code "Object"} substring is used by {@code assertErrorMessage("Object")} in the
      * test harness to locate this diagnostic.
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-013 Events and
-     * used by {@code EventsProcessor} (P3-W5).
+     * <p>This formatter is part of the externally-stable contract and is
+     * used by {@code EventsProcessor}.
      *
      * @param methodFqn the fully-qualified {@code Type.method} name of the offending observer method
      * @return the formatted error message
@@ -1267,8 +1265,8 @@ public final class Diagnostics {
      * word {@code "accessible"} so that tests can locate it via
      * {@code assertErrorMessage("accessible")}.
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-013 Events and
-     * used by {@code EventsProcessor} (W2).
+     * <p>This formatter is part of the externally-stable contract and is
+     * used by {@code EventsProcessor}.
      *
      * @param methodFqn the fully-qualified {@code Type.method} name of the offending observer method
      * @return the formatted error message
@@ -1293,8 +1291,8 @@ public final class Diagnostics {
      * <p>This formatter contains the word {@code "parameterized"} so that tests can locate it via
      * {@code assertErrorMessage("parameterized")}.
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-013 Events and
-     * used by {@code EventsProcessor} (W3).
+     * <p>This formatter is part of the externally-stable contract and is
+     * used by {@code EventsProcessor}.
      *
      * @param typeName a human-readable description of the parameterized type (e.g.
      *                 {@code "Box<String>"} or the FQN of the {@code @Observes} parameter type)
@@ -1305,7 +1303,7 @@ public final class Diagnostics {
                 .formatted(typeName);
     }
 
-    // --- CG-013 AOP intercepted-return formatters ---
+    // --- AOP intercepted-return formatters ---
 
     /**
      * Returns the standard compile-time error message when the aspect-carrying bean class is not
@@ -1319,7 +1317,7 @@ public final class Diagnostics {
      * source. Requiring {@code public} on the aspect-carrying bean is consistent with the
      * {@code @Observes} observer accessibility rule.
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-013 and used by
+     * <p>This formatter is part of the externally-stable contract and is used by
      * {@code AopProcessor}. The message contains the word {@code "public"} so that tests can locate
      * it via {@code assertErrorMessage("must be public")}.
      *
@@ -1341,7 +1339,7 @@ public final class Diagnostics {
      * emitter to render an invalid back-cast to the wildcard element type in the generated override.
      * Both are rejected with this diagnostic so the author supplies a concrete {@code Future<X>}.
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-013 and used by
+     * <p>This formatter is part of the externally-stable contract and is used by
      * {@code AopProcessor}. The {@code wildcard} flag selects the wording: the raw form names the
      * return as <em>raw (unparameterized)</em>, the wildcard form contains the word {@code wildcard}.
      *
@@ -1380,7 +1378,7 @@ public final class Diagnostics {
      *
      * <p>Each refusal is a hard compile error emitted <em>before</em> proxy emission, so the build
      * fails with this clear diagnostic instead of a confusing generated-source {@code javac} error.
-     * This formatter is part of the externally-stable contract introduced by CG-013 and used by
+     * This formatter is part of the externally-stable contract and is used by
      * {@code AopProcessor}.
      *
      * @param elementFqn the fully-qualified name of the offending class, or {@code Type.method} of the
@@ -1399,11 +1397,11 @@ public final class Diagnostics {
      * attribute kind ({@code char} / {@code float} / {@code double}, or an array of one of those).
      *
      * <p>An unsupported attribute kind is a hard compile error rather than a silent reflective
-     * {@code asMethod()} fallback (which would break the reflection-free guarantee, FR-013-13 /
-     * FR-013-09c). The message names the annotation, the offending member, and its kind so the
+     * {@code asMethod()} fallback (which would break the reflection-free guarantee).
+     * The message names the annotation, the offending member, and its kind so the
      * author can locate it.
      *
-     * <p>This formatter is part of the externally-stable contract introduced by CG-013 and used by
+     * <p>This formatter is part of the externally-stable contract and is used by
      * {@code MetadataEmitter} via {@code AopProxyEmitter}.
      *
      * @param annotationFqn the fully-qualified name of the annotation type being materialized

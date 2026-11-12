@@ -5,7 +5,7 @@
  * APT helper library for annotation processor development in the Vertique framework.
  *
  * <p>This package is the root of {@code vertique-codegen-core}, a compile-time-only helper library
- * that downstream annotation-processor modules (CG-002+) depend on for shared APT bootstrapping,
+ * that downstream annotation-processor modules depend on for shared APT bootstrapping,
  * type resolution, annotation mirror utilities, diagnostic formatting, and Dagger module code
  * generation via Palantir JavaPoet.
  *

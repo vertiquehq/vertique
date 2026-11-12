@@ -14,8 +14,6 @@ import dev.vertique.workflow.ops.WorkflowInstanceId;
  * {@link dev.vertique.workflow.ops.WorkflowOperations#migrate} when the
  * {@link WorkflowMigrationRegistry} returns {@link java.util.Optional#empty()} for the
  * instance's current pinned version and the requested target version.
- *
- * <p>PRD-WF-003 §7.4.
  */
 public final class WorkflowMigrationHandlerMissingException extends WorkflowException {
 

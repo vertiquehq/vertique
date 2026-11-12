@@ -18,10 +18,10 @@ import io.vertx.core.Future;
  * <p>A decision point is a <strong>pure evaluator</strong>: it returns a decision and emits no
  * event. The enforcement layer ({@link SecurityPolicyEnforcer}) emits exactly one
  * {@link dev.vertique.security.events.AuthorizationDecisionEvent} per authorization attempt,
- * composing every predicate (role/scope + action) into that single event (ADR-0114).
+ * composing every predicate (role/scope + action) into that single event.
  *
- * <p><strong>Migration note.</strong> An earlier contract (AC-SE-5) required every decision point to
- * emit its own event. That contract is superseded by ADR-0114: app-provided decision points that
+ * <p><strong>Migration note.</strong> An earlier contract required every decision point to
+ * emit its own event. That contract is superseded: app-provided decision points that
  * emit today MUST stop emitting, otherwise an authorization attempt produces duplicate events.
  *
  * <p>The framework provides two default implementations:
@@ -60,7 +60,7 @@ public interface AuthorizationDecisionPoint {
      *
      * <p>Implementations are pure evaluators and MUST NOT emit an
      * {@link dev.vertique.security.events.AuthorizationDecisionEvent} — the enforcement layer
-     * emits exactly one event per authorization attempt (ADR-0114).
+     * emits exactly one event per authorization attempt.
      *
      * @param request the authorization request containing the security context, action, and resource;
      *                must not be {@code null}

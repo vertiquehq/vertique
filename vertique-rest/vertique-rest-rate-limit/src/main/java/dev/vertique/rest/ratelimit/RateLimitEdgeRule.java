@@ -14,12 +14,10 @@ import java.util.OptionalInt;
 import java.util.OptionalLong;
 
 /**
- * One declared edge admission rule — the exact contract-final public record
- * (contracts/rest-adapter.md, "Edge limiter"). {@code cost} is deliberately {@link OptionalLong}
- * (not the primitive {@code long} {@code spec.md} §8.2 states): the plan's own resolution
- * instruction treats {@code contracts/rest-adapter.md} as authoritative for this task's class
- * inventory, since omitted cost must inherit the referenced policy's {@code defaultCost} — a
- * primitive {@code long} could never distinguish "omitted" from "explicitly zero".
+ * One declared edge admission rule. {@code cost} is deliberately {@link OptionalLong}
+ * (not a primitive {@code long}): an omitted cost must inherit the referenced policy's
+ * {@code defaultCost}, and a primitive {@code long} could never distinguish "omitted" from
+ * "explicitly zero".
  *
  * @param policy the {@code rateLimit.policies.<name>} this rule evaluates against; required
  * @param key the ordered key dimensions this rule composes; non-empty; {@code GLOBAL} only alone
@@ -39,15 +37,15 @@ public record RateLimitEdgeRule(
         MissingDimensionPolicy missingDimension,
         OptionalInt ipv6PrefixBits) {
 
-    /** {@code rateLimit.rest.edge.rules[].ipv6PrefixBits}'s default (contracts/rest-adapter.md). */
+    /** {@code rateLimit.rest.edge.rules[].ipv6PrefixBits}'s default. */
     public static final int DEFAULT_IPV6_PREFIX_BITS = 64;
 
     private static final int MIN_IPV6_PREFIX_BITS = 8;
     private static final int MAX_IPV6_PREFIX_BITS = 128;
 
     /**
-     * Compact constructor — validates every field per contracts/rest-adapter.md's "Rule
-     * composition semantics" and "Configuration" tables, and defensively copies {@code key}.
+     * Compact constructor — validates every field's bounds and the rule's composition, and
+     * defensively copies {@code key}.
      *
      * @throws ConfigurationException on any bounds/composition violation
      */

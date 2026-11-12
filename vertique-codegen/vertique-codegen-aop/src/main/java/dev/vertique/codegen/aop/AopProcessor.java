@@ -48,9 +48,9 @@ import javax.lang.model.util.ElementFilter;
  *
  * <p>This class is registered via {@code META-INF/services/javax.annotation.processing.Processor}.
  *
- * <p><strong>Slice 1.2 scope:</strong> this implements the emission pipeline — trigger discovery,
+ * <p>This processor implements the emission pipeline — trigger discovery,
  * bean collection, proxy + metadata + annotation-literal emission, and the generated module —
- * plus the binding-origin / proxyability <em>diagnostics</em> (FR-013-03, FR-013-03a). A bean
+ * plus the binding-origin / proxyability <em>diagnostics</em>. A bean
  * carrying an aspect-annotated method is a hard compile error when it:
  * <ul>
  *   <li>is constructed by {@code @AssistedInject} or carries {@code @Assisted} constructor
@@ -87,7 +87,7 @@ public final class AopProcessor extends AbstractProcessor {
      * FQNs of {@code <Ann>$AopLiteral} classes already written to the {@code Filer} this compilation.
      * The literal class is per-aspect-type (its package and shape are stable regardless of attribute
      * values), so two beans sharing the same aspect must write it once — a second write triggers a
-     * Filer "Attempt to recreate a file" error (Bug F2). This set deduplicates the writes across the
+     * Filer "Attempt to recreate a file" error. This set deduplicates the writes across the
      * per-bean {@link AopProxyEmitter#emit} calls.
      */
     private final Set<String> emittedLiteralFqns = new HashSet<>();
@@ -286,7 +286,7 @@ public final class AopProcessor extends AbstractProcessor {
      *   <li>a {@code private} intercepted method — not visible to a subclass, so not overrideable;
      *   <li>a {@code static} intercepted method — not an instance method, so not overrideable;
      *   <li>an intercepted method whose {@code throws} clause names a method type variable — the
-     *       generated sync guard would emit a non-reifiable {@code instanceof E} (R3-1).
+     *       generated sync guard would emit a non-reifiable {@code instanceof E}.
      * </ul>
      *
      * @param bean    the candidate aspect bean (named in the class-level diagnostic)
@@ -364,7 +364,7 @@ public final class AopProcessor extends AbstractProcessor {
     /**
      * Returns {@code true} when any of the method's declared {@code throws} types is a type variable
      * (e.g. {@code <E extends IOException> … throws E}). Such a throw makes the generated sync guard
-     * emit a non-reifiable {@code instanceof E} (R3-1), so the method cannot be proxied.
+     * emit a non-reifiable {@code instanceof E}, so the method cannot be proxied.
      *
      * @param method the intercepted method to inspect
      * @return {@code true} if the method declares a type-variable {@code throws}

@@ -18,7 +18,7 @@ import java.util.List;
  * Stateless runtime helper bag exposed to generated JAX-RS resource descriptor and bean-param
  * model implementations.
  *
- * <p>Generated companions created by the CG-010 pipeline reference user-author types via
+ * <p>Generated companions created by the codegen pipeline reference user-author types via
  * string FQN constants (never {@code .class} literals) to stay compatible with inaccessible
  * or private nested types. This class provides the resolution layer that converts those FQN
  * strings to the corresponding {@link Class} or {@link Method} objects at the first call from

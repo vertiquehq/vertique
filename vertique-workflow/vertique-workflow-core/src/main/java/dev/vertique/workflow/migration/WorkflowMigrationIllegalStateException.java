@@ -16,8 +16,6 @@ import dev.vertique.workflow.ops.WorkflowInstanceId;
  *       {@code CANCELLED}, {@code COMPENSATED}, or {@code EXPIRED}).</li>
  *   <li>The source instance has active fork-branch state that cannot be safely migrated.</li>
  * </ul>
- *
- * <p>PRD-WF-003 §7.4.
  */
 public final class WorkflowMigrationIllegalStateException extends WorkflowException {
 

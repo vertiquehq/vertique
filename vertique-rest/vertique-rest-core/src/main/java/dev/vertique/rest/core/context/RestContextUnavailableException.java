@@ -6,15 +6,14 @@ package dev.vertique.rest.core.context;
 import dev.vertique.rest.core.RestConfigurationException;
 
 /**
- * Thrown at request dispatch time when a required REST context parameter cannot be resolved
- * (FR-REST-174).
+ * Thrown at request dispatch time when a required REST context parameter cannot be resolved.
  *
  * <p>This exception is raised by {@link RestContextResolution#require} when the resolver chain
  * returns no value for the requested type. It signals a configuration or wiring error: the
  * resource method declared a context parameter of a type that no registered
  * {@link RestContextResolver} can supply for the current request.
  *
- * <p>The exception message follows the exact FR-REST-174 format:
+ * <p>The exception message follows this exact format:
  *
  * <pre>
  * Missing REST context parameter &lt;SimpleType&gt; for &lt;resourceClass&gt;#&lt;methodName&gt;.
@@ -38,7 +37,7 @@ public class RestContextUnavailableException extends RestConfigurationException 
     private final String methodName;
 
     /**
-     * Constructs the exception with the FR-REST-174 message derived from the given arguments.
+     * Constructs the exception with the fixed-format message derived from the given arguments.
      *
      * @param type          the context value type that could not be resolved; must not be
      *                      {@code null}
@@ -83,7 +82,7 @@ public class RestContextUnavailableException extends RestConfigurationException 
     }
 
     /**
-     * Builds the FR-REST-174 error message for the given type, resource class, and method name.
+     * Builds the fixed-format error message for the given type, resource class, and method name.
      *
      * @param type          the unresolvable context type
      * @param resourceClass the resource class name

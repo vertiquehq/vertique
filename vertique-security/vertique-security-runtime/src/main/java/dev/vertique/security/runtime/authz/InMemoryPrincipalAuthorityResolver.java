@@ -13,8 +13,8 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Framework-shipped, in-memory {@link PrincipalAuthorityResolver} reference implementation (PRD
- * identity-002 §14.3 Phase-2 Appendix, Mode 2).
+ * Framework-shipped, in-memory {@link PrincipalAuthorityResolver} reference implementation
+ * (Mode 2).
  *
  * <p>Holds a fixed, immutable map of seeded {@link PrincipalKey} → {@link AuthorizationClaims}
  * pairs supplied at construction time — the same dependency-clean-default shape as

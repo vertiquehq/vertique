@@ -62,7 +62,7 @@ WARN carries only the exception class name, never the throwable or its message. 
 registry can never affect dispatch processing.
 
 **Zero-overhead when unconfigured.** Before `VertiqueApplication` bootstrap the injected
-`MeterRegistry` is an empty composite whose recording is a no-op (NFR-TEL-003). When the optional
+`MeterRegistry` is an empty composite whose recording is a no-op. When the optional
 `MetricsConfig` binding is absent (i.e., `MicrometerModule` is not installed), the interceptor
 defaults to enabled.
 

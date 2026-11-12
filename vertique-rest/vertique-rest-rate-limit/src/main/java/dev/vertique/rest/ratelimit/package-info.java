@@ -3,7 +3,7 @@
 
 /**
  * REST HTTP mapping for the provider-neutral rate-limit runtime, plus an optional pre-
- * authorization edge admission {@code Middleware} (contracts/rest-adapter.md).
+ * authorization edge admission {@code Middleware}.
  *
  * <p>This adapter owns exactly two things:
  * <ol>

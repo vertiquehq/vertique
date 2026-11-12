@@ -9,7 +9,7 @@ import java.util.Optional;
 
 /**
  * One backend's answer to a {@link RateLimitBackendRequest}, normalized from the engine's native
- * probe (contracts/rate-limit-runtime.md, "Bucket4j translation contract").
+ * probe.
  *
  * @param consumed {@code true} when the request was admitted and tokens were consumed
  * @param remaining whole tokens available immediately after this decision

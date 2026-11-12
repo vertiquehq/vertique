@@ -216,7 +216,7 @@ public record ServiceMethodMeta(
      * Reflection-free {@link ParameterMetadata} view over a {@link ParamMeta}, supplying the
      * parameter's index positionally and reporting no annotations.
      *
-     * <p>This is the slice-0.4 superset proof that the neutral {@code dev.vertique.core.codegen}
+     * <p>This is the superset proof that the neutral {@code dev.vertique.core.codegen}
      * SPI composes with the services parameter model: {@link #name()} and {@link #type()} delegate
      * to the wrapped {@code ParamMeta}, while the domain-specific {@code source}/{@code lookupKey}
      * fields stay on {@code ParamMeta} itself. The reflective {@link #genericType()} accessor is

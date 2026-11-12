@@ -49,7 +49,7 @@ public record AuthenticationAssurance(
         Objects.requireNonNull(providerLevel, "providerLevel");
         // Encounter order is part of the record's contract and is load-bearing: the snapshot
         // integrity tag signs the serialized amr array, so decode -> re-serialize must
-        // reproduce the stored element order (vertique-dev#181).
+        // reproduce the stored element order.
         SequencedSet<String> copy = amr == null ? new LinkedHashSet<>() : new LinkedHashSet<>(amr);
         copy.forEach(method -> Objects.requireNonNull(method, "amr element"));
         amr = Collections.unmodifiableSequencedSet(copy);

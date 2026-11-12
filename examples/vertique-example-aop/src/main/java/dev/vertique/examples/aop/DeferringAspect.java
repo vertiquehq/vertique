@@ -12,7 +12,7 @@ import jakarta.inject.Singleton;
 
 /**
  * {@link AspectProvider} for the {@link Deferring @Deferring} custom aspect that deliberately defers
- * completion — used to prove the FR-013-05 sync-defer guard end-to-end.
+ * completion — used to prove the sync-defer guard end-to-end.
  *
  * <p>The interceptor it builds calls {@link dev.vertique.aop.Invocation#proceed() proceed()} (so the
  * downstream chain and the terminal {@code super} call actually run) but discards that result and
@@ -54,7 +54,7 @@ public final class DeferringAspect implements AspectProvider<Deferring> {
             // Run the downstream chain (and the terminal super call) for real, then deliberately
             // discard its result and return a future that NEVER settles synchronously. On a
             // sync-returning method this makes the around-chain fail to complete in time, tripping
-            // the FR-013-05 guard the generated proxy emits.
+            // the sync-defer guard the generated proxy emits.
             invocation.proceed();
             Promise<Object> neverCompletes = Promise.promise();
             return neverCompletes.future();

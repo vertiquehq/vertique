@@ -576,7 +576,7 @@ final class KafkaConsumerScanner {
         log.info("Scanning @KafkaListener routing interface '{}' on {}", name, cls.getSimpleName());
 
         // Read the type-level @JsonProfile annotation as the sole per-binding profile selector, and
-        // reject any method-level @JsonProfile placement (FR-JSON-066). An illegal placement records a
+        // reject any method-level @JsonProfile placement. An illegal placement records a
         // violation and aborts this listener so the registrar fails fast at boot
         // (KafkaRegistrationException / ConfigurationException).
         int violationsBefore = violations.size();
@@ -781,7 +781,7 @@ final class KafkaConsumerScanner {
         }
 
         // Read the type-level @JsonProfile annotation as the sole per-binding profile selector, and
-        // reject any method-level @JsonProfile placement (FR-JSON-066). An illegal placement records a
+        // reject any method-level @JsonProfile placement. An illegal placement records a
         // violation and aborts this listener so the registrar fails fast at boot
         // (KafkaRegistrationException / ConfigurationException).
         int violationsBefore = violations.size();
@@ -824,7 +824,7 @@ final class KafkaConsumerScanner {
         }
     }
 
-    // --- @JsonProfile resolution (FR-JSON-066) ---
+    // --- @JsonProfile resolution ---
 
     /**
      * Resolves the effective JSON mapper profile for a reflectively-scanned {@code @KafkaListener}
@@ -847,8 +847,8 @@ final class KafkaConsumerScanner {
     }
 
     /**
-     * Rejects a method-level {@link JsonProfile} on a reflectively-scanned {@code @KafkaListener} type
-     * (FR-JSON-066). {@code @JsonProfile} selects a profile for the whole listener and must be placed
+     * Rejects a method-level {@link JsonProfile} on a reflectively-scanned {@code @KafkaListener} type.
+     * {@code @JsonProfile} selects a profile for the whole listener and must be placed
      * at TYPE level; a method-level placement on either a router interface or a direct-handler class
      * records a violation naming the offending method, aborting boot via the registrar.
      *

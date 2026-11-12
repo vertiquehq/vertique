@@ -14,8 +14,8 @@ import dev.vertique.security.SecurityIdentity;
  *
  * <p>The {@link DeferredExecutionOrigin} carries the provenance {@code kind} (delayed-job, cron, or
  * outbox-relay) and a {@code reference} — the specific job-type / cron-name / event-type — which is
- * the audit reason attributed to the resolved identity. The frozen serviceIdentity source per
- * PRD-ID-002 §14.3 "Frozen binding-precedence rule" is per execution path (delayed job →
+ * the audit reason attributed to the resolved identity. The frozen serviceIdentity source under
+ * the frozen binding-precedence rule is per execution path (delayed job →
  * {@code SystemIdentities.scheduledJob(reason=jobType)}, inbox → per-handler configured service
  * identity, cron → {@code SystemIdentities.scheduledJob(cronName)}) — this interface does not
  * hardcode any of those; an application binds its own resolver instance (or a per-handler configured

@@ -650,7 +650,7 @@ public final class EffectiveJaxRsContractResolver {
         // @DefaultValue
         String defaultValue = resolveDefaultValue(concreteParam, paramIndex, method, resourceClass);
 
-        // Merged annotation sources (GitHub issue #162): concreteParam plus the matching parameter
+        // Merged annotation sources: concreteParam plus the matching parameter
         // on each superclass/interface override that declares it, mirroring the runtime
         // AnnotationResolver.resolveParameterAnnotations merge so a converter-decision marker
         // annotation declared only on an interface method is not lost when the codegen path
@@ -735,7 +735,7 @@ public final class EffectiveJaxRsContractResolver {
 
     /**
      * Resolves the full list of parameter elements whose annotation mirrors back the effective
-     * annotation set for a parameter (GitHub issue #162), mirroring the runtime
+     * annotation set for a parameter, mirroring the runtime
      * {@code AnnotationResolver.resolveParameterAnnotations} merge at compile time: the concrete
      * parameter, then the matching parameter on each superclass in the chain that declares the
      * method, then the matching parameter on each transitively implemented interface (BFS order via

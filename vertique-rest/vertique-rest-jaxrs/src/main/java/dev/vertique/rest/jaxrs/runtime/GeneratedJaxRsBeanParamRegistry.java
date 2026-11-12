@@ -8,7 +8,7 @@ import java.util.Optional;
 /**
  * Process-wide singleton registry for generated JAX-RS bean-param model companions.
  *
- * <p>For each {@code @BeanParam} or {@code @RequestParams} type {@code Foo}, the CG-010
+ * <p>For each {@code @BeanParam} or {@code @RequestParams} type {@code Foo}, the codegen
  * pipeline emits a {@code Foo_BeanParamModel} companion in the same package. This registry
  * locates and caches those companions via a {@link ClassValue}-backed lookup so that
  * {@code ParameterExtractor} can use the fast generated model path instead of the reflective

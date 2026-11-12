@@ -14,8 +14,7 @@ import java.util.function.Consumer;
  *
  * <p>Once-per-key WARN-log throttler used by the context substrate. Each unique key fires the
  * provided log action exactly once per process lifetime — useful for decode-warning logs that
- * would otherwise flood at one entry per record under a misbehaving encoder/decoder pair
- * (FR-CTX-132).
+ * would otherwise flood at one entry per record under a misbehaving encoder/decoder pair.
  *
  * <p>The key is a tuple identifier composed by the caller (typically
  * {@code "<boundary>|<decoderClass>|<reason>"}). The first call with a given key invokes

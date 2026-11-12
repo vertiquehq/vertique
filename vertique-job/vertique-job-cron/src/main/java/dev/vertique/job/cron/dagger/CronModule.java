@@ -62,7 +62,7 @@ public abstract class CronModule {
      * @param vertx                 the Vert.x instance
      * @param interceptors          the set of job interceptors contributed via Dagger multibinding
      * @param serviceTargetResolver resolver for stable service target ids to event bus addresses
-     * @param envelopeBuilder       dispatch envelope builder for FR-CTX-015 context capture
+     * @param envelopeBuilder       dispatch envelope builder for dispatch-context capture
      * @return the singleton cron scheduler
      */
     @Provides

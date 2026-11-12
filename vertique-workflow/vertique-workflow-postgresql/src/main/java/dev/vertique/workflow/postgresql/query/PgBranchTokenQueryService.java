@@ -17,7 +17,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Read-only query API for PRD-WF-002 branch tokens and join states (PRD §7.6 / NFR-WF-PAR-003).
+ * Read-only query API for fork/join branch tokens and join states.
  *
  * <p>Wraps {@link PgBranchTokenRepository} and {@link PgJoinStateRepository} with workflow-aware
  * filtering. All methods borrow a connection from the read pool via {@link Pool#withConnection}

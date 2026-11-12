@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Fluent scope for declaring a fan-out fork (PRD-WF-002).
+ * Fluent scope for declaring a fan-out fork.
  *
  * <p>Returned by {@link WorkflowBuilder#fork(String)}. Captures the branch declarations and the
  * fork-group retry policy; on {@link #join(String)} the captured state is materialised as a

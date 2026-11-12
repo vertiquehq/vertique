@@ -775,7 +775,7 @@ final class McpCompletionCoordinator {
     /**
      * Publishes the completion to every retained observation and completion listener, isolating
      * their failures, and bracketing the whole dispatch loop with every retained {@link
-     * McpCompletionScope} (contract §4.10).
+     * McpCompletionScope}.
      *
      * @param terminal the terminal the completion is built from
      * @param transport the transport outcome the completion records

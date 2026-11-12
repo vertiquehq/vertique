@@ -27,7 +27,7 @@ import java.util.Map;
  * record (or the {@code name -> RestClientConfig} index), never on the raw {@link JsonObject}.
  *
  * <p>The {@code webClient} component is an intentionally-open Vert.x {@code WebClientOptions}
- * pass-through bag (the framework does not own its schema — config rule R9). Because a Vert.x
+ * pass-through bag (the framework does not own its schema). Because a Vert.x
  * {@link JsonObject} field cannot round-trip through the shared {@link ConfigParser} mapper (it lacks
  * the Vert.x Jackson serializers, so a mapped {@code JsonObject} would come back empty), the
  * {@code webClient} subtree is read directly from the source section in {@link #indexFromConfig} and
@@ -173,7 +173,7 @@ public record RestClientConfig(
 
     /**
      * Parses the {@code restClient.defaults} reserved sub-object from the root config into a typed
-     * {@link RestClientDefaults} record using the canonical {@link ConfigParser} (config rule R10).
+     * {@link RestClientDefaults} record using the canonical {@link ConfigParser}.
      *
      * <p>The reserved {@code defaults} key is excluded from the keyed client map produced by
      * {@link #indexFromConfig} — it is parsed separately by this method. The caller (the Dagger
@@ -187,7 +187,7 @@ public record RestClientConfig(
      * {@code null}.
      *
      * @param rootConfig the root application config, qualified {@code @VertxConfig} at the boundary
-     * @param parser the injected config parser — used to parse the section (config rule R10)
+     * @param parser the injected config parser — used to parse the section
      * @return the parsed {@link RestClientDefaults}; never {@code null}
      */
     public static RestClientDefaults defaultsFromConfig(JsonObject rootConfig, ConfigParser parser) {
@@ -289,7 +289,7 @@ public record RestClientConfig(
     /**
      * Renders this client config with secrets redacted so a log line or exception message never leaks
      * a credential. The {@code webClient} bag is an open Vert.x {@code WebClientOptions} pass-through
-     * (config rule R9) that can carry {@code ssl} key-store/trust-store passwords at any depth, and
+     * that can carry {@code ssl} key-store/trust-store passwords at any depth, and
      * {@code baseUrl} can embed credentials in its authority userinfo ({@code https://user:pass@host}).
      * The default record {@code toString()} would render both verbatim; this override delegates to the
      * framework-wide {@link ConfigSecretRenderer} — masking the {@code webClient} bag at every depth

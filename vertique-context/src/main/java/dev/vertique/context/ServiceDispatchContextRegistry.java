@@ -22,15 +22,15 @@ import java.util.Set;
  *
  * <p>Boot-time validation in the constructor enforces:
  * <ul>
- *   <li>No duplicate encoder keys across all registered encoders (FR-CTX-045).
- *   <li>No duplicate decoder keys across all registered decoders (FR-CTX-045).
- *   <li>No duplicate encoder types (FR-CTX-046).
- *   <li>No duplicate decoder types (FR-CTX-046).
- *   <li>Empty encoder and decoder sets are valid (FR-CTX-044).
+ * <li>No duplicate encoder keys across all registered encoders.
+ * <li>No duplicate decoder keys across all registered decoders.
+ * <li>No duplicate encoder types.
+ * <li>No duplicate decoder types.
+ * <li>Empty encoder and decoder sets are valid.
  * </ul>
  *
  * <p>Encoder and decoder validation are independent: a type may have only an encoder, only a
- * decoder, both, or neither (FR-CTX-047).
+ * decoder, both, or neither.
  *
  * <p>Framework code MUST inject this registry rather than raw multibinding sets so validation
  * happens once at application bootstrap and cannot be skipped by individual call sites.

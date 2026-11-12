@@ -24,7 +24,7 @@ import java.lang.reflect.Method;
  * {@link WorkflowSignalContributor#handleSignal(WorkflowSignalRequest)}) and MUST NOT be populated
  * from untrusted or end-user input — the relay is trusted to supply only carriers it produced
  * itself. Authenticating the provenance of a caller-supplied carrier at this boundary is tracked as
- * a follow-up (ADR-0147).
+ * a follow-up.
  */
 public interface WorkflowSignalEndpoint {
 

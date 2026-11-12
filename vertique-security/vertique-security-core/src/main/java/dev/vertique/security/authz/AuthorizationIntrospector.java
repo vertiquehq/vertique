@@ -25,8 +25,8 @@ import java.util.Set;
  * {@link Authorizer} uses. For a <strong>reconstructed</strong> context, the invariant does not apply
  * at all: the framework's exposed implementation ({@code NarrowingIntrospector}) rejects introspection
  * outright with {@link ReconstructedContextIntrospectionUnsupportedException} rather than compute an
- * answer that could silently disagree with a reconstructed context's live-resolved authority (Mode 2,
- * PRD identity-002 FR-ID-CA-010) — see that exception's javadoc for the full rationale.
+ * answer that could silently disagree with a reconstructed context's live-resolved authority
+ * (Mode 2) — see that exception's javadoc for the full rationale.
  *
  * <p>The default implementation is <strong>in-memory and synchronous</strong>: it returns directly
  * rather than via a {@link io.vertx.core.Future}, because the decision is a pure function of the

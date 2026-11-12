@@ -25,7 +25,7 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * {@link McpRequestLifecycleObserver} implementation that captures the current Vert.x HTTP server
  * span at {@link #open} and enriches that exact retained span at logical settlement — never a span
- * resolved from {@code Span.current()} at callback time (contract §4.10 amendment).
+ * resolved from {@code Span.current()} at callback time.
  *
  * <p>Contributed to the {@link McpRequestLifecycleObserver} multibinding by {@link
  * McpOpenTelemetryModule}. {@link #open} resolves {@link Span#current()} exactly once and retains
@@ -51,7 +51,7 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p><b>{@code mcp.protocol.version}.</b> Set only when {@link
  * McpRequestTerminalEvent#protocolVersion()} is non-{@code null} — i.e. only when this request's
- * protocol negotiation actually completed (contract §4.7). A request rejected at or before
+ * protocol negotiation actually completed. A request rejected at or before
  * negotiation, or one whose terminal event predates negotiation in the fixed pipeline (a
  * cheap-admission rejection, a malformed envelope), carries no value here and none is emitted: this
  * observer never falls back to a hardcoded version literal, exactly as the frozen {@code
@@ -73,8 +73,7 @@ import lombok.extern.slf4j.Slf4j;
  * Malformed body trace data (a {@code traceState} that does not parse as W3C {@code key=value}
  * entries) is caught, logged at WARN with a bounded diagnostic (the exception class name only — never
  * the raw trace data), and produces no link; every other enrichment attribute is still recorded. No
- * span status is ever set here: transport status remains owned by Vert.x HTTP tracing (contract
- * §4.10).
+ * span status is ever set here: transport status remains owned by Vert.x HTTP tracing.
  *
  * <p><b>Completion scope.</b> The session returned by {@link #open} also implements
  * {@link dev.vertique.mcp.lifecycle.McpCompletionScope}: {@code openCompletionScope()} re-makes the
@@ -94,7 +93,7 @@ import lombok.extern.slf4j.Slf4j;
 @Singleton
 final class McpServerSpanObserver implements McpRequestLifecycleObserver {
 
-    /** Experimental RPC system attribute key, isolated behind an internal constant (contract §4.10). */
+    /** Experimental RPC system attribute key, isolated behind an internal constant. */
     static final AttributeKey<String> RPC_SYSTEM_NAME = AttributeKey.stringKey("rpc.system.name");
 
     /** Experimental MCP method-name attribute key. */
@@ -115,12 +114,12 @@ final class McpServerSpanObserver implements McpRequestLifecycleObserver {
     /** Experimental GenAI tool-name attribute key, set only for a resolved tool identity. */
     static final AttributeKey<String> GEN_AI_TOOL_NAME = AttributeKey.stringKey("gen_ai.tool.name");
 
-    /** The frozen {@code rpc.system.name} value for every MCP request (contract §4.10). */
+    /** The frozen {@code rpc.system.name} value for every MCP request. */
     static final String RPC_SYSTEM_JSONRPC = "jsonrpc";
 
     /**
      * Bounded fallback attribute value for an unrecognized client-provided {@link McpMethod},
-     * mirroring the sibling Micrometer adapter's {@code _OTHER} tag convention (FR-MCP-203).
+     * mirroring the sibling Micrometer adapter's {@code _OTHER} tag convention.
      */
     static final String OTHER_METHOD_TAG = "_OTHER";
 
@@ -137,7 +136,7 @@ final class McpServerSpanObserver implements McpRequestLifecycleObserver {
     /**
      * Captures {@link Span#current()} exactly once, at the moment this method runs, and retains it
      * on the returned session for later enrichment — the one capture point this whole class exists
-     * to prove out (contract §4.10 amendment). Never re-resolves {@code Span.current()} at any
+     * to prove out. Never re-resolves {@code Span.current()} at any
      * later callback.
      *
      * @param startedAt unused beyond the SPI contract; enrichment is timestamp-free
@@ -219,7 +218,7 @@ final class McpServerSpanObserver implements McpRequestLifecycleObserver {
      * Sets the frozen bounded attribute set on {@code span} from {@code terminal} — never a span
      * status, and never a rename.
      *
-     * <p>Guarded on {@link Span#isRecording()} (P05 review remediation): the span's validity is
+     * <p>Guarded on {@link Span#isRecording()}: the span's validity is
      * checked once at {@link #open}, but a late terminal callback can observe a span that has
      * already ended by the time this method runs. Setting attributes on a non-recording span is
      * harmless but emits SDK warnings, so this mirrors the same guard {@code
@@ -246,7 +245,7 @@ final class McpServerSpanObserver implements McpRequestLifecycleObserver {
 
     /**
      * Maps a recognized {@link McpMethod} to its bounded attribute value, collapsing {@link
-     * McpMethod#OTHER} to {@value #OTHER_METHOD_TAG} (FR-MCP-203).
+     * McpMethod#OTHER} to {@value #OTHER_METHOD_TAG}.
      *
      * @param method the terminal event's recognized method class; never {@code null}
      * @return the bounded attribute value; never {@code null}

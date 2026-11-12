@@ -10,7 +10,7 @@ package dev.vertique.security;
  * (e.g. a scheduled job, an outbox relay, or a workflow resume).
  *
  * <p>This type exists as its own interface because capture was split off {@link SecurityContexts}'s
- * general-context assembly (PRD identity-002 amendment A2) — not because it is a supported
+ * general-context assembly — not because it is a supported
  * swap-in extension point. For V1 it is a fixed, framework-wired implementation: {@code
  * IdentitySnapshotCarriageModule} installs {@code DefaultIdentitySnapshotFactory} as this type's
  * sole implementation via an unconditional {@code @Provides} binding, with no
@@ -21,7 +21,7 @@ package dev.vertique.security;
  * {@code PrincipalRef}/{@code ClientRef}/{@code AuthorityClaim} verbatim. Free-form attribute
  * maps on those types are projected to a framework-owned allowlist at capture rather than carried
  * through, so captured content stays credential-free and bounded regardless of what an
- * upstream resolver placed in those maps (PRD identity-002 FR-ID-CA-003/A7). Because
+ * upstream resolver placed in those maps. Because
  * {@code IdentitySnapshotCodec} performs no independent content re-validation of a snapshot's
  * attribute maps at encode time — it only signs the envelope it assembles — any substitute
  * implementation hand-wired outside {@code IdentitySnapshotCarriageModule} is solely responsible

@@ -12,7 +12,7 @@ import java.util.Optional;
 
 /**
  * Pluggable strategy that decides whether — and how — a REST operation's request is validated before
- * dispatch (FR-004/FR-005). A strategy is selected by its {@link #id()} (a string, not an enum, so
+ * dispatch. A strategy is selected by its {@link #id()} (a string, not an enum, so
  * applications can contribute their own strategies) and asked, at router-build time, to produce an
  * optional per-operation validation gate.
  *

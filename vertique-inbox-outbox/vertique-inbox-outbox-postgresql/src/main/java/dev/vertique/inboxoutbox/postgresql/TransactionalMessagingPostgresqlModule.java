@@ -256,7 +256,7 @@ public abstract class TransactionalMessagingPostgresqlModule {
      * @param composeValidator compose-time validation guard; its presence as a parameter forces
      *                         Dagger to construct the validator (and the cron bindings it depends
      *                         on) during graph construction, providing the manual-path guarantee
-     *                         until Phase 5 migrates examples off manual choreography
+     *                         for applications that still deploy the relay themselves
      * @return a singleton set containing the relay verticle deployment descriptor
      */
     @Provides

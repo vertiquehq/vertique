@@ -21,8 +21,8 @@ public interface RouterSetup {
      * {@link UnsupportedOperationException} when the router is not yet available — notably during the
      * {@code beforeAuthSetup}/{@code afterAuthSetup} phases of the transitional RouterBuilder-based
      * setup, where the {@link Router} does not exist until routing is built. The router becomes
-     * reliably available once routing is built directly on a plain {@link Router} (PRD-REST-017
-     * FR-001). A lifecycle hook that needs the {@link Router} during the transitional era should use
+     * reliably available once routing is built directly on a plain {@link Router}. A lifecycle hook
+     * that needs the {@link Router} during the transitional era should use
      * {@link dev.vertique.rest.core.lifecycle.RouterLifecycleHook#afterRouterCreated(Router)} instead.
      *
      * @return the router under construction

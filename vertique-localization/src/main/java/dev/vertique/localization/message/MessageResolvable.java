@@ -16,7 +16,7 @@ import java.util.List;
  * present, it is returned instead. If no default is present and no code resolves,
  * {@link NoSuchMessageException} is thrown.
  *
- * <h2>Constructor invariants (FR-LOC-022..024)</h2>
+ * <h2>Constructor invariants</h2>
  * <ul>
  *   <li>{@link #codes} must not be {@code null} (NPE) and must not be empty (IAE).</li>
  *   <li>Null elements inside {@code codes} throw {@link NullPointerException} (via

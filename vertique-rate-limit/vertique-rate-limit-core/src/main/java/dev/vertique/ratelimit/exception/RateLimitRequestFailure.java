@@ -6,8 +6,7 @@ package dev.vertique.ratelimit.exception;
 /**
  * Bounded reason a {@link RateLimitRequestException} was thrown. {@code UNKNOWN_POLICY} is
  * deliberately absent: an unknown policy name fails synchronously at handle creation
- * ({@code RateLimiters.limiter(...)}), not as a request failure (contracts/rate-limit-runtime.md,
- * "Exceptions").
+ * ({@code RateLimiters.limiter(...)}), not as a request failure.
  */
 public enum RateLimitRequestFailure {
     COST_EXCEEDS_CAPACITY,

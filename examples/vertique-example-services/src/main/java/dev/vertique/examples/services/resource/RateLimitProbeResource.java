@@ -20,8 +20,8 @@ import jakarta.ws.rs.core.MediaType;
 
 /**
  * REST resource exercising the programmatic {@link RateLimiters} handle and the {@code
- * @RateLimited}-annotated {@link RateLimitProbeService} side by side (T013, spec.md §4.4
- * programmatic usage + §13 item 9 transport-neutrality proof), proving both entry points resolve
+ * @RateLimited}-annotated {@link RateLimitProbeService} side by side (programmatic usage and
+ * transport-neutrality proof), proving both entry points resolve
  * through the same runtime rather than two independent counters.
  */
 @Path("/rate-limit-probe")
@@ -48,7 +48,7 @@ public class RateLimitProbeResource {
 
     /**
      * Calls {@link RateLimiters#limiter(String)}/{@code acquire(...)} directly against {@link
-     * RateLimitProbeService#POLICY_NAME}'s policy — the programmatic usage pattern (spec.md §4.4).
+     * RateLimitProbeService#POLICY_NAME}'s policy — the programmatic usage pattern.
      * {@code acquire(...)} never fails for quota reasons (decision-first), so the resolved outcome
      * is always reported in the {@code 200} response body, including {@code QUOTA_EXCEEDED}.
      *
@@ -68,7 +68,7 @@ public class RateLimitProbeResource {
     /**
      * Invokes the {@code @RateLimited}-annotated service method through the generated typed
      * client; a quota denial surfaces as {@code RateLimitExceededException}, mapped to {@code 429}
-     * by {@code RestRateLimitModule} (contracts/rest-adapter.md).
+     * by {@code RestRateLimitModule}.
      *
      * @return a future completing with a fixed admitted outcome, or failing once the shared bucket
      *     is exhausted

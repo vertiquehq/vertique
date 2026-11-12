@@ -434,7 +434,7 @@ only this type adaptation; configuration, registry, and optional bindings remain
 
 When no backends are on the classpath (or all are disabled), the injected `MeterRegistry` is an
 empty `CompositeMeterRegistry`. Micrometer's empty composite short-circuits all recording
-operations to a no-op. This satisfies NFR-TEL-003: the module has no measurable hot-path cost
+operations to a no-op. The module has no measurable hot-path cost
 when metrics are not in use.
 
 Measured on JVM 21 (3 × 1 million counter increment runs):

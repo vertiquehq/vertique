@@ -132,7 +132,7 @@ The config flag `metrics.prometheus.exemplars.enabled=true` is read by `Promethe
 in the Dagger graph, the endpoint wires the `DeferredSpanContext` to the live implementation.
 
 Exemplar trace IDs are visible in the OpenMetrics scrape output on the management port. See the
-exposure guidance in `vertique-micrometer-registry-prometheus`'s documentation (NFR-TEL-005):
+exposure guidance in `vertique-micrometer-registry-prometheus`'s documentation:
 never expose the management port to public networks. Exemplar trace and span IDs are per-sample
 annotations attached at scrape time — they are not meter tags, so `vertique-micrometer-core`'s
 cardinality guard (which bounds distinct tag *values* per key) does not apply to them.

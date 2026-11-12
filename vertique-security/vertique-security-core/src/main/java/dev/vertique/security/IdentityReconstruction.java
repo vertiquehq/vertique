@@ -10,11 +10,11 @@ import dev.vertique.core.context.DurableCarrierDescriptor;
  * {@link IdentitySnapshot} captured across a durability boundary (a scheduled job, an outbox
  * relay, or a workflow resume).
  *
- * <p>This is the trust boundary named by FR-ID-CA-008: both entry points re-verify the
+ * <p>This is the reconstruction trust boundary: both entry points re-verify the
  * snapshot's {@link SnapshotIntegrity} envelope before minting any context, reusing the
  * runtime codec's canonical verification rather than re-implementing it, and confirm the
  * snapshot's signed {@link IdentitySnapshot#carrier()} matches the {@code expectedCarrier} the
- * trusted receive-side infrastructure supplies (the F5 replay defense — a snapshot signed for one
+ * trusted receive-side infrastructure supplies (the replay defense — a snapshot signed for one
  * durable row cannot be transplanted onto another). Reconstruction is fail-closed — a {@code null}
  * snapshot, a snapshot that fails integrity verification, or a snapshot whose carrier does not match
  * the expected carrier throws {@link IdentityReconstructionException} before any
@@ -38,8 +38,7 @@ import dev.vertique.core.context.DurableCarrierDescriptor;
  *
  * <p>A reconstructed context's {@link SecurityContext#authorization()} is empty: the content's
  * {@link IdentitySnapshotContent#authorizationClaims()} are attribution only (audit lineage on the
- * snapshot), never presented as current authority. Current authority is resolved by mode per
- * FR-ID-CA-010.
+ * snapshot), never presented as current authority. Current authority is resolved by mode.
  *
  * <p><strong>Privileged boundary.</strong> This service is provided only by a dedicated
  * privileged Dagger module installed on framework infrastructure components (job execution,

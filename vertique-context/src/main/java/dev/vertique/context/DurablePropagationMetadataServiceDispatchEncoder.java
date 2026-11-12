@@ -16,10 +16,9 @@ import dev.vertique.core.context.ServiceDispatchEncodeContext;
  *
  * <p>Passes the {@link DurablePropagationMetadata} value through unchanged into the
  * service-dispatch context map. This allows service handlers invoked from a durable consumer
- * (Kafka, outbox) to inspect the raw durable metadata during the same in-process dispatch chain
- * (FR-CTX-143).
+ * (Kafka, outbox) to inspect the raw durable metadata during the same in-process dispatch chain.
  *
- * <p>No durable encoder is provided for this type (FR-CTX-144): raw durable metadata from one
+ * <p>No durable encoder is provided for this type: raw durable metadata from one
  * boundary must not be blindly republished onto another durable boundary.
  */
 public final class DurablePropagationMetadataServiceDispatchEncoder

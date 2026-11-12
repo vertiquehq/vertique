@@ -37,7 +37,7 @@ import java.util.function.Supplier;
 
 /**
  * Validates a parsed {@link WorkflowDefinitionDocument} against all structural, semantic, and
- * registry-resolution rules defined in PRD-WF-003 (FR-WF-DEF-101/102/103).
+ * registry-resolution rules of the document format.
  *
  * <p>The validator always accumulates ALL violations before returning — it never short-circuits on
  * the first error. This ensures document authors receive a complete list of problems in a single
@@ -82,7 +82,7 @@ import java.util.function.Supplier;
  *   <li>{@code TASK_DECISION_APPLICATOR_UNKNOWN} — task decision {@code applicator} id not
  *       registered in the {@link dev.vertique.workflow.definition.callbacks.StateReducerRegistry}.
  *       Decision applicators share the {@code StateReducerRegistry} namespace because the function
- *       shape ({@code BiFunction<S, Object, S>}) is identical. If a future slice introduces a
+ *       shape ({@code BiFunction<S, Object, S>}) is identical. If a future version introduces a
  *       dedicated registry, this rule's lookup will be updated.</li>
  *   <li>{@code ASSIGNMENT_MODE_INVALID} — assignment {@code mode} is not one of
  *       {@code "user"}, {@code "role"}, {@code "queue"}, {@code "user-from-state"},
@@ -96,10 +96,10 @@ import java.util.function.Supplier;
  *       {@code offsets} and {@code interval} set, or has an empty {@code offsets} list.</li>
  *   <li>{@code DUE_DATE_PARTIAL} — a {@link HumanTaskStep.DueBlock} is present but missing one or
  *       more of {@code at}, {@code onDueMutator}, {@code next}.</li>
- *   <li>{@code DECISION_DEFAULT_MISSING} — a {@link DecisionStep} has no {@code default} route
- *       (FR-WF-DEF-054).</li>
+ *   <li>{@code DECISION_DEFAULT_MISSING} — a {@link DecisionStep} has no {@code default} route.
+ * </li>
  *   <li>{@code DECISION_ROUTE_MIXED_PREDICATE} — a {@link DecisionStep.RouteEntry} has both
- *       {@code when} and {@code condition} set, or neither (FR-WF-DEF-057). The {@code routeIndex}
+ * {@code when} and {@code condition} set, or neither. The {@code routeIndex}
  *       field of the {@link Violation} identifies the offending route.</li>
  *   <li>{@code DECISION_ROUTE_TO_UNKNOWN} — a {@link DecisionStep.RouteEntry} {@code to} field
  *       does not resolve to a step id.</li>
@@ -978,7 +978,7 @@ public final class WorkflowDefinitionDocumentValidator {
                     sid,
                     null,
                     "DECISION_DEFAULT_MISSING",
-                    "decision step '" + sid + "' has no `default` route (FR-WF-DEF-054)"));
+                    "decision step '" + sid + "' has no `default` route"));
         } else {
             checkStepReference(
                     definitionId,
@@ -1052,7 +1052,7 @@ public final class WorkflowDefinitionDocumentValidator {
                     routeIndex,
                     "DECISION_ROUTE_MIXED_PREDICATE",
                     "route #" + routeIndex + " of decision step '" + stepId
-                            + "' declares both `when` and `condition` — exactly one must be set (FR-WF-DEF-057)"));
+                            + "' declares both `when` and `condition` — exactly one must be set"));
         } else if (!hasWhen && !hasCondition) {
             violations.add(new Violation(
                     definitionId,
@@ -1061,7 +1061,7 @@ public final class WorkflowDefinitionDocumentValidator {
                     routeIndex,
                     "DECISION_ROUTE_MIXED_PREDICATE",
                     "route #" + routeIndex + " of decision step '" + stepId
-                            + "' has neither `when` nor `condition` — exactly one must be set (FR-WF-DEF-057)"));
+                            + "' has neither `when` nor `condition` — exactly one must be set"));
         }
 
         // WHEN_BLANK
@@ -1762,8 +1762,8 @@ public final class WorkflowDefinitionDocumentValidator {
     /**
      * If {@code expr} starts with {@code "ref:"}, checks that the referenced timer resolver id is
      * registered and that its {@code stateType} matches the document's {@code stateType}.
-     * Non-{@code "ref:"} strings are left unvalidated at this slice — duration/instant parsing is
-     * the compiler's job (Slice F).
+     * Non-{@code "ref:"} strings are left unvalidated here — duration/instant parsing is
+     * the compiler's job.
      *
      * @param resolvedStateType the document's resolved state class; {@code null} when unresolvable
      */
@@ -1799,7 +1799,7 @@ public final class WorkflowDefinitionDocumentValidator {
                     "timer `ref` expression",
                     violations);
         }
-        // Non-ref strings: defer to Slice F compiler.
+        // Non-ref strings: defer to the compiler.
     }
 
     /**

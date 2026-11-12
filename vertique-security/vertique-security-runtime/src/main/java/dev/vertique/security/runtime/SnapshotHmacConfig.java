@@ -18,8 +18,7 @@ import java.util.stream.Stream;
 /**
  * Root configuration record for the {@link SnapshotHmac} keyset backing
  * {@link IdentitySnapshotCodec}, deserialized from the {@code identity.snapshot.hmacKeys} section
- * of the application config via {@link dev.vertique.core.config.ConfigParser}
- * (PRD-ID-002 §14.3 "Durable carriage").
+ * of the application config via {@link dev.vertique.core.config.ConfigParser}.
  *
  * <p>Carries exactly one required active signing key plus zero or more previous (rotated-out)
  * keys retained for verification during a rotation grace window — a snapshot signed under a

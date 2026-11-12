@@ -11,7 +11,7 @@ import javax.lang.model.element.ExecutableElement;
  *
  * <p>Stores only the statically-knowable data extracted from the annotation at compile time.
  * Runtime concerns such as binding-name derivation, event-bus address resolution, and payload-type
- * lookup are deferred to the runtime loader ({@code KafkaConsumerScanner}) — see ADR-0072.
+ * lookup are deferred to the runtime loader ({@code KafkaConsumerScanner}).
  *
  * @param method           the annotated implementation method element
  * @param name             value of {@code @KafkaSource#name()} — may be {@code ""} (auto-derived at runtime)

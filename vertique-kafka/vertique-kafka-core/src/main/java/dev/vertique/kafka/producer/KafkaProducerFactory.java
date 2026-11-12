@@ -114,7 +114,7 @@ public class KafkaProducerFactory {
      * @param kafkaConfig   the typed {@code kafka} config (supplies the producer index, global format,
      *                      schema registry, and the connection / global-producer property bags)
      * @param propagator    the durable context propagator used to merge captured metadata into outgoing
-     *                      record headers (FR-CTX-173)
+     * record headers
      * @param serdeRegistry the value-format serde registry used to select a per-method serializer
      */
     public KafkaProducerFactory(
@@ -132,7 +132,7 @@ public class KafkaProducerFactory {
      * @param kafkaConfig   the typed {@code kafka} config (supplies the producer index, global format,
      *                      schema registry, and the connection / global-producer property bags)
      * @param propagator    the durable context propagator used to merge captured metadata into outgoing
-     *                      record headers (FR-CTX-173)
+     * record headers
      * @param serdeRegistry the value-format serde registry used to select a per-method serializer
      * @param captureHooks  the set of producer capture hooks; sorted by {@link OrderedExtension#comparator()}
      *                      at construction time
@@ -527,11 +527,11 @@ public class KafkaProducerFactory {
      * Resolves the per-method value serializer, mirroring {@link #resolveMethodTopics}. The format is
      * selected per method via {@link KafkaSerdeRegistry#resolveFormat} with the producer precedence
      * <strong>{@code producers.{name}.{method}.format} &gt; {@code producers.{name}.format} &gt;
-     * {@code kafka.format} &gt; auto-detect(method value type) &gt; json</strong> (FR-AVRO-003), so a
+     * {@code kafka.format} &gt; auto-detect(method value type) &gt; json</strong>, so a
      * producer interface may mix formats across methods. The serde config handed to the provider is
      * the already-merged view {@code method.serdeProperties &gt; producer.serdeProperties} plus the
-     * canonical {@code kafka.schemaRegistry} (FR-AVRO-009). Requesting a format with no registered
-     * provider fails fast here, naming the endpoint (FR-AVRO-010).
+     * canonical {@code kafka.schemaRegistry}. Requesting a format with no registered
+     * provider fails fast here, naming the endpoint.
      *
      * @param producerInterface the producer interface
      * @param producerName the resolved producer name (for error messages)
@@ -555,12 +555,12 @@ public class KafkaProducerFactory {
                 : new JsonObject();
         String producerFormat = producerConfig != null ? producerConfig.format() : null;
         String producerConfigProfile = producerConfig != null ? producerConfig.jsonProfile() : null;
-        // FR-JSON-066: @JsonProfile selects a profile for the whole producer and must be placed at TYPE
+        // @JsonProfile selects a profile for the whole producer and must be placed at TYPE
         // level. A method-level placement is rejected once at producer-build time (before the serializer
         // loop), so it fails even if that method has no serde work.
         rejectMethodLevelJsonProfile(producerInterface);
         // The annotation-tier profile is the lowest-precedence non-vertx default; resolve it once outside
-        // the loop (FR-JSON-036C) from the type-level @JsonProfile annotation (a blank or absent value
+        // the loop from the type-level @JsonProfile annotation (a blank or absent value
         // means "no annotation default").
         String producerAnnProfile = resolveAnnotationProfile(producerInterface);
         Map<String, KafkaProducerMethodConfig> methodIndex = methodIndex(producerConfig);
@@ -590,7 +590,7 @@ public class KafkaProducerFactory {
                             e);
                 }
                 // Effective JSON profile: method config > producer config > @KafkaProducer annotation >
-                // kafka.jsonProfile boundary default > vertx (FR-JSON-036C / FR-JSON-052).
+                // kafka.jsonProfile boundary default > vertx.
                 // The json.jsonProfile global tier and the vertx floor are applied in kafka-json
                 // (JsonSerdeProvider.resolveMapper), which sees the bag id via the serde config.
                 // Only the JSON serde provider reads it; non-JSON providers ignore it.
@@ -765,7 +765,7 @@ public class KafkaProducerFactory {
         return KafkaConfigHelper.serdeConfig(schemaRegistry, merged, jsonProfile);
     }
 
-    // --- @JsonProfile resolution (FR-JSON-066) ---
+    // --- @JsonProfile resolution ---
 
     /**
      * Resolves the producer-annotation-tier JSON mapper profile from the type-level {@link JsonProfile}
@@ -789,7 +789,7 @@ public class KafkaProducerFactory {
     }
 
     /**
-     * Rejects a method-level {@link JsonProfile} on a {@code @KafkaProducer} interface (FR-JSON-066).
+     * Rejects a method-level {@link JsonProfile} on a {@code @KafkaProducer} interface.
      * {@code @JsonProfile} selects a profile for the whole producer and must be placed at TYPE level; a
      * method-level placement fails fast at producer-build time, naming the offending method.
      *

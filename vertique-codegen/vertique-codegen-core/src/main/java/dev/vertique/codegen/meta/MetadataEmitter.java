@@ -277,7 +277,7 @@ public final class MetadataEmitter {
      * Emits a standalone {@code ParameterMetadata} implementation with an optional reflective
      * fallback for annotations that could not be materialized into literals.
      *
-     * <p>This is the parity-first variant used by {@code vertique-codegen-jaxrs} (ADR-0146). JAX-RS
+     * <p>This is the parity-first variant used by {@code vertique-codegen-jaxrs}. JAX-RS
      * resource parameters routinely carry annotations this literal emitter cannot render — most
      * commonly Swagger's {@code @Parameter}, whose {@code schema} member defaults to a nested
      * {@code @Schema} instance. Rather than silently omit such annotations (which would make codegen
@@ -701,7 +701,7 @@ public final class MetadataEmitter {
                         .build());
 
         // Optional reflective fallback for annotations that could not be materialized into literals
-        // (ADR-0146 parity-first policy). When present, findAnnotation checks literals first then the
+        // (parity-first policy). When present, findAnnotation checks literals first then the
         // reflective array, and annotationsLazy returns the full merged reflective set (defensively
         // copied). When null, the impl is purely literal-backed and never reflects.
         boolean hasReflectiveFallback = reflectiveFallbackSupplier != null;
@@ -754,7 +754,7 @@ public final class MetadataEmitter {
      * matches each materialized literal by {@code type == <Ann>.class} first, then — when a reflective
      * fallback is present — scans {@code REFLECTIVE_FALLBACK.get()} for an annotation whose
      * {@link Annotation#annotationType()} equals {@code type}, so an annotation that could not be
-     * materialized into a literal is still resolvable (ADR-0146 parity-first policy). With no literals
+     * materialized into a literal is still resolvable (parity-first policy). With no literals
      * and no fallback the body collapses to {@code Optional.<A>empty()}.
      *
      * @param annotations          the materialized annotation literals, parallel to {@code literalFields}
@@ -799,7 +799,7 @@ public final class MetadataEmitter {
      * carries the full merged effective set, so it supersedes the literal subset). The backing array
      * is a per-route singleton passed directly to external {@code ParamConverterProvider}s by
      * {@code ParamConversionResolver}; cloning prevents an external mutation from corrupting it for
-     * every subsequent request (ADR-0146).
+     * every subsequent request.
      *
      * @param annotationArray        the {@code Annotation[]} array type name
      * @param hasReflectiveFallback  whether a {@code REFLECTIVE_FALLBACK} supplier field is present
@@ -870,7 +870,7 @@ public final class MetadataEmitter {
      * it receives (a technically legal {@code Annotation[]} caller, since nothing about the JAX-RS
      * contract forbids it) would otherwise corrupt the shared array for every subsequent request on
      * that route/method. Cloning trades one array allocation per {@code annotationsLazy()} call
-     * (already gated to only fire when a JAX-RS provider is registered, per ADR-0142) for eliminating
+     * (already gated to only fire when a JAX-RS provider is registered) for eliminating
      * a cross-request data-corruption hazard.
      *
      * @param annotationArray the {@code Annotation[]} array type name, reused from the enclosing
@@ -909,7 +909,7 @@ public final class MetadataEmitter {
      * <p>Primitives, arrays, and {@code void} are delegated to JavaPoet's
      * {@link TypeName#get(TypeMirror)} visitor. This replaces the earlier {@code DeclaredType}-only
      * cast, which threw a {@link ClassCastException} on primitive/array/void return and parameter
-     * types (the slice-0.2 watch-item). Erasure preserves array depth, so {@code int[]} erases to
+     * types. Erasure preserves array depth, so {@code int[]} erases to
      * {@code int[]} and renders as {@code int[].class}.
      *
      * @param mirror the type mirror to erase and render; must not be {@code null}
@@ -924,8 +924,7 @@ public final class MetadataEmitter {
         // whose thin DeclaredType mocks cannot drive JavaPoet's full TypeName.get(TypeMirror)
         // visitor; collapsing the whole method to that single call NPEs on those mocks.
         // Primitives, arrays, and void are delegated to JavaPoet's visitor, which renders them as the
-        // correct {@code int.class} / {@code int[].class} / {@code void.class} literals (the slice-0.2
-        // watch-item).
+        // correct {@code int.class} / {@code int[].class} / {@code void.class} literals.
         if (erased instanceof DeclaredType declared && declared.asElement() instanceof TypeElement element) {
             return ClassName.get(element);
         }

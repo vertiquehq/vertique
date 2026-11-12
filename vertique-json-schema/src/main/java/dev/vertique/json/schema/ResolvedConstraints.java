@@ -18,7 +18,7 @@ import java.util.Map;
  * does not merge annotations for) without ever taking back what the floor
  * already stated correctly. A {@code correction} is merged unconditionally, because it targets one of
  * the small, named set of shapes the floor is known to render incorrectly for that constraint
- * (vertiquehq/vertique-dev#606: {@code @Range}, {@code @Length}, {@code @URL}, and a {@code @Pattern}
+ * ({@code @Range}, {@code @Length}, {@code @URL}, and a {@code @Pattern}
  * flag) — never a keyword the floor gets right.
  *
  * <p>Both maps use the same value-type convention: {@link Long} or {@link Integer} for a plain

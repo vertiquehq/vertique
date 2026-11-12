@@ -21,9 +21,9 @@ import org.slf4j.LoggerFactory;
  * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
  * outside the maturity promise. Applications use the surface the module document lists.
  *
- * One policy's bounded local Bucket4j registry (contracts/rate-limit-runtime.md, "Local engine
- * contract"). Every enabled LOCAL policy owns exactly one instance, sized by its own resolved
- * {@code maxTrackedKeys} budget — never a pool shared across policies (§7.2, R2 amendment). {@link
+ * One policy's bounded local Bucket4j registry. Every enabled LOCAL policy owns exactly one
+ * instance, sized by its own resolved {@code maxTrackedKeys} budget — never a pool shared across
+ * policies. {@link
  * LocalBucket4jRateLimitBackend} owns routing each request to the right per-policy instance and is
  * this class's only production caller.
  *
@@ -42,7 +42,7 @@ import org.slf4j.LoggerFactory;
  * — never on a background timer. Every proof in {@code LocalRateLimitRegistryTest} triggers a sweep
  * this same way (either explicitly, or implicitly through an at-capacity admission).
  *
- * <p><strong>Sweep throttling (T021 W2).</strong> An at-capacity admission's own inline sweep is
+ * <p><strong>Sweep throttling.</strong> An at-capacity admission's own inline sweep is
  * itself rate-limited to at most once per {@code cleanupIntervalMs} (tracked as {@link
  * #lastSweepAtMs}, guarded by the same {@link #admissionMonitor} the sweep already runs under): a
  * second at-capacity admission landing within that interval of the previous sweep skips the scan
@@ -51,7 +51,7 @@ import org.slf4j.LoggerFactory;
  * This applies only to the demand-driven sweep this class triggers for itself; {@link #sweep()}'s
  * unconditional, caller-invoked form is untouched and never throttled.
  *
- * <p><strong>Saturation observability (T021 W3).</strong> Key-space saturation ({@code
+ * <p><strong>Saturation observability.</strong> Key-space saturation ({@code
  * CAPACITY_EXHAUSTED}) previously had no log signal anywhere in the LOCAL backend/registry — under
  * {@code failureMode: OPEN} it silently disabled a limiter with nothing but the
  * {@code vertique.ratelimit.failures{code="capacity-exhausted"}} counter to notice by. The first

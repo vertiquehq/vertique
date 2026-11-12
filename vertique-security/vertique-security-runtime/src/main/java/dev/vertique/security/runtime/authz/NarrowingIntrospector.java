@@ -46,7 +46,7 @@ import java.util.stream.Collectors;
  * {@link #capabilities} throw {@link ReconstructedContextIntrospectionUnsupportedException} when
  * {@code ctx.}{@link SecurityContext#reconstruction() reconstruction()} is present, <em>before</em>
  * consulting the base introspector or any narrower. A reconstructed context's current authority is
- * resolved live at authorize-time by Mode 2 (PRD identity-002 FR-ID-CA-010) — computing an
+ * resolved live at authorize-time by Mode 2 — computing an
  * introspection answer from the context's currently held claims could silently disagree with what
  * {@code authorize()} would actually decide for the same actor, which would be an invisible Agreement
  * invariant violation. This decorator is the natural guard point: it is the framework's exposed
@@ -102,7 +102,7 @@ public final class NarrowingIntrospector implements AuthorizationIntrospector {
             throw new ReconstructedContextIntrospectionUnsupportedException(
                     "Capability introspection (allowedActions()/capabilities()) is unsupported for a "
                             + "reconstructed SecurityContext: current authority is resolved live at "
-                            + "authorize-time (Mode 2, PRD identity-002 FR-ID-CA-010); call "
+                            + "authorize-time (Mode 2); call "
                             + "Authorizer.authorize(...) for the specific action instead.");
         }
     }

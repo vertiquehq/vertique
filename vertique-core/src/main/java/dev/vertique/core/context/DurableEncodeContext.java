@@ -15,12 +15,12 @@ import java.util.Optional;
  * existing encoder implementations.
  *
  * @param boundary the durable boundary identifier (e.g., {@code "kafka"}, {@code "outbox"})
- * @param carrier the durable row-carrier binding for the F5 replay defense of PRD identity-002;
+ * @param carrier the durable row-carrier binding for the replay defense;
  *     empty when the boundary carries no carrier identity. Never {@code null}.
  * @param fireTime the intended dispatch/fire time of the durable row being encoded (e.g. a delayed
  *     job's scheduled {@code runAt}), so an encoder can detect that content it is about to sign would
- *     already be stale by the time the row fires (F5 doomed-expiry detection, PRD identity-002 §14.6
- *     A9). Empty for boundaries with no fixed fire time (cron, outbox, Kafka) — only the delayed-job
+ *     already be stale by the time the row fires (doomed-expiry detection).
+ *     Empty for boundaries with no fixed fire time (cron, outbox, Kafka) — only the delayed-job
  *     schedule path populates it today. Never {@code null}.
  */
 public record DurableEncodeContext(

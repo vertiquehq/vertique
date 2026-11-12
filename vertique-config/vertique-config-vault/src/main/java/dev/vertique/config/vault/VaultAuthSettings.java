@@ -33,7 +33,7 @@ sealed interface VaultAuthSettings
      */
     record Token(String token) implements VaultAuthSettings {
 
-        /** Redacted representation — the token must never appear in logs or messages (NFR-CONF-002). */
+        /** Redacted representation — the token must never appear in logs or messages. */
         @Override
         public String toString() {
             return "Token[token=***]";
@@ -57,7 +57,7 @@ sealed interface VaultAuthSettings
      */
     record AppRole(String roleId, String secretId) implements VaultAuthSettings {
 
-        /** Redacted representation — credentials must never appear in logs or messages (NFR-CONF-002). */
+        /** Redacted representation — credentials must never appear in logs or messages. */
         @Override
         public String toString() {
             return "AppRole[roleId=***, secretId=***]";

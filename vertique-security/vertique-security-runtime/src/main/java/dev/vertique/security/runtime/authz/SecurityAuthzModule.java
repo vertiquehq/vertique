@@ -57,9 +57,9 @@ import java.util.stream.Collectors;
  *       bounded by {@link PrincipalAuthorityResolutionConfig#resolutionTimeoutMs()} — so every installed
  *       resolver is bounded, never just the ones an application remembers to wrap itself — before
  *       wrapping the narrowing-decorated {@link Authorizer} with {@link ReconstructedAuthorityResolvingAuthorizer}
- *       — the opt-in Mode-2 live re-resolution of a reconstructed context's current authority (PRD
- *       identity-002 §14.3 Phase-2 Appendix). With no resolver bound, the exposed {@link Authorizer} is
- *       unchanged from Phase 1, and {@link Resilience} / {@link PrincipalAuthorityResolutionConfig} are
+ *       — the opt-in Mode-2 live re-resolution of a reconstructed context's current authority.
+ *       With no resolver bound, the exposed {@link Authorizer} is unchanged, and
+ *       {@link Resilience} / {@link PrincipalAuthorityResolutionConfig} are
  *       resolved but never used.</li>
  *   <li>Declares an optional {@link PrincipalAuthorityResolutionConfig} binding ({@link BindsOptionalOf},
  *       defaulting to {@link PrincipalAuthorityResolutionConfig#defaults()} when absent) for the Mode-2
@@ -67,7 +67,7 @@ import java.util.stream.Collectors;
  *       companion that config-drives it instead of using the hardcoded default.</li>
  * </ul>
  *
- * <p><strong>Startup ordering (FR-008):</strong> the {@link ActionRegistry} is constructed first
+ * <p><strong>Startup ordering:</strong> the {@link ActionRegistry} is constructed first
  * (from all contributed {@link ActionContributor}s). The shared {@link #authzResolution} provider
  * then validates <em>every</em> contributed {@link PolicyDefinitionSource} against the registry
  * polymorphically (via {@link PolicyDefinitionSource#validateAgainst(ActionRegistry)} — the core
@@ -138,8 +138,8 @@ public abstract class SecurityAuthzModule {
      *
      * <p>{@code Optional<PrincipalAuthorityResolver>} resolves to {@link Optional#empty()} unless an
      * application module binds a concrete {@link PrincipalAuthorityResolver} — that binding <em>is</em>
-     * the Mode-2 opt-in (PRD identity-002 §14.3 Phase-2 Appendix). With no resolver bound, every
-     * reconstructed context's current authority stays the Phase-1
+     * the Mode-2 opt-in. With no resolver bound, every
+     * reconstructed context's current authority stays the
      * {@link dev.vertique.security.authz.ReconstructedAuthorityMode#ATTRIBUTION_ONLY} default —
      * unchanged, byte-identical behavior. This mirrors the existing
      * {@code @BindsOptionalOf IdentitySnapshotCapture} / {@code ServiceIdentityResolver} pattern used
@@ -231,7 +231,7 @@ public abstract class SecurityAuthzModule {
      *       {@link PolicyDefinitionSource#validateAgainst(ActionRegistry)} — no {@code instanceof} on
      *       any concrete subtype, so a config-backed source is validated identically to the in-memory
      *       default.</li>
-     *   <li><strong>Duplicate-name rejection (FR-018).</strong> The policies of all sources are
+     *   <li><strong>Duplicate-name rejection.</strong> The policies of all sources are
      *       merged; if two sources contribute a policy with the same {@link PolicyDefinition#name()}
      *       the merge fails fast with an {@link IllegalStateException} naming <em>both</em>
      *       contributing sources (mirrors {@link DefaultActionRegistry}'s duplicate-action handling).</li>
@@ -263,10 +263,10 @@ public abstract class SecurityAuthzModule {
      * TimeoutPrincipalAuthorityResolver} (per {@link PrincipalAuthorityResolutionConfig#resolutionTimeoutMs()},
      * defaulting when unconfigured) and then further wrapped by
      * {@link ReconstructedAuthorityResolvingAuthorizer} as the outermost decorator, activating Mode-2
-     * live re-resolution of a reconstructed context's current authority (PRD identity-002 §14.3
-     * Phase-2 Appendix). With an empty narrower set and no resolver bound, the exposed binding is
+     * live re-resolution of a reconstructed context's current authority. With an empty narrower
+     * set and no resolver bound, the exposed binding is
      * behavior-identical to the base {@link DefaultAuthorizer} — reconstructed contexts stay
-     * {@link dev.vertique.security.authz.ReconstructedAuthorityMode#ATTRIBUTION_ONLY} (Phase-1
+     * {@link dev.vertique.security.authz.ReconstructedAuthorityMode#ATTRIBUTION_ONLY} (the default
      * behavior, byte-identical), and {@code resilience}/{@code resolutionConfig} are resolved but unused.
      *
      * @param registry        the authoritative action registry; must not be {@code null}
@@ -309,7 +309,7 @@ public abstract class SecurityAuthzModule {
      * Provides the {@link AuthorizationIntrospector} singleton: the default in-memory engine built
      * on the <em>same</em> shared {@link AuthzResolution} as the {@link Authorizer} (so the
      * introspector's set-valued answer and the authorizer's single-action verdict are guaranteed to
-     * agree, AC-22), wrapped by {@link NarrowingIntrospector} so any installed
+     * agree), wrapped by {@link NarrowingIntrospector} so any installed
      * {@link AuthorizationNarrower}s annotate its capabilities. With an empty narrower set the
      * exposed binding is behavior-identical to the base {@link DefaultAuthorizationIntrospector}.
      *
@@ -334,7 +334,7 @@ public abstract class SecurityAuthzModule {
      *
      * <p>Validation is polymorphic ({@link PolicyDefinitionSource#validateAgainst(ActionRegistry)});
      * the core never depends on a concrete source subtype. Duplicate {@link PolicyDefinition#name()}
-     * values across two sources are a startup error naming both sources (FR-018), rather than the
+     * values across two sources are a startup error naming both sources, rather than the
      * silent last-wins that the downstream catalogue index would otherwise apply.
      *
      * @param sources  the contributed sources; must not be {@code null}

@@ -40,7 +40,7 @@ public record DelegationContext(
      * {@code CapturedAuthorityReconstruction#deferredExecutionWithCapturedAuthority}) — never a
      * grant-backed delegation scheme such as {@code "psd2-pis"} or {@code "impersonation"}.
      *
-     * <p>Per FR-ID-DG-006, v1 delegation enforcement (actor-authority &cap; grant-scope) applies
+     * <p>In v1, delegation enforcement (actor-authority &cap; grant-scope) applies
      * only to genuinely grant-backed delegation. A {@code DelegationContext} carrying this kind
      * represents framework-scheduled work resuming under the executing service's own authority
      * (resolved live by Mode 2) — not a grant to validate. An

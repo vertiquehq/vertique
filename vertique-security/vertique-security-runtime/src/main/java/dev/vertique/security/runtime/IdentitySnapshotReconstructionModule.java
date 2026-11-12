@@ -15,7 +15,7 @@ import java.util.Optional;
 
 /**
  * Dagger module that wires the receive-side identity-snapshot reconstruction path into deferred
- * execution boundaries (PRD-ID-002 §14.3 "Frozen binding-precedence rule", §14.6 slice P1.S5c).
+ * execution boundaries.
  *
  * <p>Includes {@link IdentitySnapshotCarriageModule} (config-backed HMAC keyset, codec, and the
  * durable encoder/decoder pair), {@link PrivilegedIdentityModule} ({@link IdentityReconstruction}),

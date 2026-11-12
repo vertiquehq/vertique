@@ -232,7 +232,7 @@ public interface WorkflowCallbackRegistry {
     }
 
     /**
-     * Retrieves the branch-result reducer registered under the given callback id (PRD-WF-002).
+     * Retrieves the branch-result reducer registered under the given callback id.
      *
      * <p>Reducers have type {@code BiFunction<S, Map<String, BranchResult>, S>}. The fan-in
      * machinery passes the current workflow state and a map of per-branch results keyed by

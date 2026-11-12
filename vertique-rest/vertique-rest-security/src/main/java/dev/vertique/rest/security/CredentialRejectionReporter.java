@@ -22,8 +22,7 @@ import java.util.Optional;
  *
  * <p>Auth handlers call this when verification of presented credential material fails (malformed
  * token, expired token, invalid signature, unknown registry entry, certificate chain rejected,
- * HMAC mismatch, etc.). The {@code reasonCode} is a stable identifier propagated into audit; see
- * PRD §7.13 for the canonical reason-code vocabulary.
+ * HMAC mismatch, etc.). The {@code reasonCode} is a stable identifier propagated into audit.
  *
  * <p>{@code safeAttributes} MAY carry redacted/structured failure context (decoded JWT header
  * without payload, certificate chain summary, retry count). MUST NOT carry raw token material,

@@ -75,8 +75,8 @@ import lombok.extern.slf4j.Slf4j;
  *     .build(UserClient.class);
  *
  * // Dagger-injected
- * UserClient client = factory.builder()
- *     .baseUrl("http://user-service:8080")
+ * UserClient client = factory.builder().
+ * baseUrl("http://user-service:8080")
  *     .build(UserClient.class);
  * }</pre>
  *
@@ -506,7 +506,7 @@ public final class RestClientBuilder {
      * <p>The profile is resolved at {@link #build(Class)} time from the injected
      * {@link JsonMapperProfileRegistry}. An explicit
      * {@link #objectMapper(com.fasterxml.jackson.databind.ObjectMapper)} still wins over any profile
-     * selection (FR-JSON-027).
+     * selection.
      *
      * <p>Precedence at build time (highest to lowest): explicit {@code objectMapper} &gt; config
      * {@code restClient.&lt;name&gt;.jsonProfile} &gt; this builder-level profile &gt;
@@ -546,7 +546,7 @@ public final class RestClientBuilder {
      *
      * <p>Called by {@link RestClientFactory#builder()} alongside the other seed methods
      * ({@link #configIndex(Map)}, etc.). A standalone {@code new RestClientBuilder(vertx)} leaves
-     * this {@code null}; the precedence-resolution logic (slice 3.2) will handle the null case.
+     * this {@code null}; the precedence-resolution logic handles the null case.
      *
      * @param registry the registry to use; {@code null} is accepted (standalone builder case)
      * @return this builder
@@ -914,7 +914,7 @@ public final class RestClientBuilder {
                     + "'. Set it via builder.baseUrl(...), @RestClient(value = \"...\"), or external config.");
         }
 
-        // Effective ObjectMapper resolved by JSON-profile precedence (FR-JSON-030A):
+        // Effective ObjectMapper resolved by JSON-profile precedence:
         // explicit objectMapper > config jsonProfile > builder jsonProfile > @JsonProfile > vertique.
         ObjectMapper effectiveMapper = resolveEffectiveMapper(effectiveConfig, clientInterface, clientName);
 
@@ -1209,11 +1209,11 @@ public final class RestClientBuilder {
 
     /**
      * Resolves the effective {@link ObjectMapper} for this client by the frozen JSON-profile
-     * precedence (FR-JSON-030A), highest to lowest:
+     * precedence, highest to lowest:
      *
      * <ol>
      *   <li>an explicit {@link #objectMapper(ObjectMapper)} — used outright, the registry is never
-     *       consulted (FR-JSON-027);</li>
+     * consulted;</li>
      *   <li>the external per-client config {@code restClient.&lt;name&gt;.jsonProfile}
      *       ({@code effectiveConfig.jsonProfile()}, when non-blank);</li>
      *   <li>the builder-level {@link #jsonProfile(JsonProfileId)} (when set);</li>
@@ -1244,11 +1244,11 @@ public final class RestClientBuilder {
      *     {@link JsonMapperProfileRegistry} was seeded (standalone builder)
      * @throws dev.vertique.core.json.JsonProfileConfigurationException if the selected profile id is
      *     not registered in the resolved registry
-     * @throws IllegalStateException if a method-level {@link JsonProfile} is present (FR-JSON-066)
+     * @throws IllegalStateException if a method-level {@link JsonProfile} is present
      */
     ObjectMapper resolveEffectiveMapper(
             @Nullable RestClientConfig effectiveConfig, Class<?> clientInterface, String clientName) {
-        // FR-JSON-066: reject a method-level @JsonProfile before any early-return. This must run even
+        // Reject a method-level @JsonProfile before any early-return. This must run even
         // when an explicit objectMapper short-circuits resolution below, otherwise an explicit-mapper
         // client could carry a silently-ignored method-level @JsonProfile.
         validateNoMethodLevelJsonProfile(clientInterface);
@@ -1374,7 +1374,7 @@ public final class RestClientBuilder {
     }
 
     /**
-     * FR-JSON-066: rejects a method-level {@link JsonProfile} on a {@link RestClient} interface.
+     * Rejects a method-level {@link JsonProfile} on a {@link RestClient} interface.
      *
      * <p>{@code @JsonProfile} on a rest-client interface is honored only at TYPE level — the builder
      * resolves a single {@link ObjectMapper} at client-build time, so a method-level annotation would

@@ -144,7 +144,7 @@ Fixed defaults applied by the provider (not overridable via `serdeProperties` wi
 | `apicurio.registry.retry-count` | yes | yes | `3` (bounded retries; override via `serdeProperties`) |
 | `apicurio.registry.retry-backoff-ms` | yes | yes | `300` (override via `serdeProperties`) |
 
-Registry-call bounding (NFR-AVRO-002): the JDK client adapter applies a 30s connect timeout and the retry knobs above bound retry storms; the worker-threading contract keeps blocking calls off the event loop. Apicurio 3.3.3 has no config-map key for a per-request socket read timeout (a custom registry client would be needed — see the PRD's Deferred items).
+Registry-call bounding: the JDK client adapter applies a 30s connect timeout and the retry knobs above bound retry storms; the worker-threading contract keeps blocking calls off the event loop. Apicurio 3.3.3 has no config-map key for a per-request socket read timeout (a custom registry client would be needed; this is a known, deferred gap).
 
 #### Invariants and Gotchas
 

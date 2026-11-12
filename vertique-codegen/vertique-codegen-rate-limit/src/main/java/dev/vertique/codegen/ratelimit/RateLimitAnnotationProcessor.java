@@ -22,8 +22,7 @@ import javax.lang.model.element.TypeElement;
 
 /**
  * Compile-time validation for {@code @RateLimited} usage: policy-name syntax, {@code cost}, selector
- * paths, and proxyability preconditions ({@code contracts/rate-limit-aop.md}, "Compile-time
- * validation").
+ * paths, and proxyability preconditions.
  *
  * <p>Generates no sources of its own — {@link #process} always returns {@code false} — and exists
  * purely to fail the build on invalid usage that would otherwise only surface at runtime.

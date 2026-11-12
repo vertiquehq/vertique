@@ -170,7 +170,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      */
     private final BranchTransitionEngine branchEngine;
     /**
-     * Captures the ambient durable context at workflow start (PRD-WF-007 AC-1, FR-WF-CTX-010/012).
+     * Captures the ambient durable context at workflow start.
      * Start is capture-only: {@link #doCreateInstance} calls {@link DurableContextPropagator#capture}
      * but never installs a new durable scope around the start drive.
      */
@@ -184,26 +184,26 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /** Leaf collaborator for scheduling and cancelling {@link dev.vertique.workflow.timer.TimerPurpose#TASK_REMINDER} timers. */
     private final ReminderScheduler reminderScheduler;
     /**
-     * Collaborator owning fork dispatch and join evaluation (PRD-WF-002). Injected eagerly; the
+     * Collaborator owning fork dispatch and join evaluation. Injected eagerly; the
      * coordinator holds a lazy {@code Provider<WorkflowTransitionDriver>} back-edge so the
      * driver↔fork/join mutual recursion does not form a Dagger constructor cycle.
      */
     private final ForkJoinCoordinator forkJoin;
 
     /**
-     * Collaborator owning the core state-machine transition driver (PRD-WF-006, slice C5). The
+     * Collaborator owning the core state-machine transition driver. The
      * facade injects it eagerly and calls {@link WorkflowTransitionDriver#driveTransitions} from its
      * lifecycle entrypoints (start / signal / cancel / retry / migrate and the task/timer callbacks).
-     * The driver reaches the timer helper {@code resolveFireAt} (moved to
-     * {@link TimerLifecycleService} in C8) through a lazy {@code Provider<TimerLifecycleService>} and
+     * The driver reaches the timer helper {@code resolveFireAt} (on
+     * {@link TimerLifecycleService}) through a lazy {@code Provider<TimerLifecycleService>} and
      * its task-creation helpers ({@code resolveAssignment}, {@code appendTaskCreatedHistory}, static
-     * {@code buildTaskRecord}, moved to {@link TaskLifecycleService} in C7) through a lazy
-     * {@code Provider<TaskLifecycleService>}. After C8 the driver no longer references this facade.
+     * {@code buildTaskRecord}, on {@link TaskLifecycleService}) through a lazy
+     * {@code Provider<TaskLifecycleService>}. The driver does not reference this facade.
      */
     private final WorkflowTransitionDriver driver;
 
     /**
-     * Collaborator owning the workflow-signal delivery paths (PRD-WF-006, Slice C6). The facade's
+     * Collaborator owning the workflow-signal delivery paths. The facade's
      * public {@code signal(...)} transaction entrypoints open the transaction via the runner and
      * delegate their bodies to {@link SignalHandler#applyBranchSignal} / {@link
      * SignalHandler#doApplySignal}. Injected eagerly; the handler references the driver and the
@@ -212,7 +212,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     private final SignalHandler signalHandler;
 
     /**
-     * Collaborator owning the human-task lifecycle callback paths (PRD-WF-006, Slice C7). The
+     * Collaborator owning the human-task lifecycle callback paths. The
      * facade's {@code TransactionalTaskCallbacks} entrypoints
      * ({@code taskCompleted}/{@code taskReassigned})
      * delegate their bodies to this service. It drives the state machine forward after a task
@@ -224,7 +224,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     private final TaskLifecycleService taskLifecycle;
 
     /**
-     * Collaborator owning the timer-fire paths (PRD-WF-006, Slice C8). The executor runs a recorded
+     * Collaborator owning the timer-fire paths. The executor runs a recorded
      * timer command through it. It drives the state machine forward after a timer fires
      * via the {@link WorkflowTransitionDriver} and {@link ForkJoinCoordinator}, and runs the
      * task due-date and reminder fires of {@link TaskLifecycleService} (so it injects the task
@@ -234,7 +234,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     private final TimerLifecycleService timerLifecycle;
 
     /**
-     * Collaborator owning the instance-migration flow (PRD-WF-006, Slice C9). The facade's public
+     * Collaborator owning the instance-migration flow. The facade's public
      * {@code migrate(...)} transaction entrypoints open the transaction via the runner and delegate
      * their bodies to {@link MigrationExecutor#migrate}. The executor owns the opt-in registry and
      * the null-registry {@link UnsupportedOperationException} fail-fast guard. Injected eagerly; it
@@ -244,8 +244,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     private final MigrationExecutor migrationExecutor;
 
     /**
-     * Binder-row seam for instance-owned single-path drives (engine assembly seam, Contract
-     * Appendix C2). Wraps {@code signal}/{@code cancel}/{@code retry} drive bodies after the
+     * Binder-row seam for instance-owned single-path drives (engine assembly seam).
+     * Wraps {@code signal}/{@code cancel}/{@code retry} drive bodies after the
      * instance is loaded (the {@code migrate} entrypoint delegates its wrap to
      * {@link MigrationExecutor}; the task/timer lifecycle callbacks delegate theirs to
      * {@link TaskLifecycleService} / {@link TimerLifecycleService}). Never {@code null} — the
@@ -576,7 +576,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * Dagger-managed singletons.
      *
      * <p>The {@code propagator} parameter is stored on the facade (used by
-     * {@link #doCreateInstance} to capture the ambient durable context at start, PRD-WF-007 AC-1) in
+     * {@link #doCreateInstance} to capture the ambient durable context at start) in
      * addition to being threaded into the {@link ForkJoinCoordinator} for branch-creation capture. A
      * {@code null} propagator is tolerated for legacy test callers that do not exercise durable-context
      * capture — {@link #doCreateInstance} then persists {@code null} instance metadata.
@@ -689,7 +689,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         // driver↔fork/join wiring below) so TaskLifecycleService and TimerLifecycleService can take
         // it as a constructor argument. inboundExecScope is the SAME scope instance the factory
         // threaded into branchEngine — not rebuilt here — so binder-row drives and branch-owned
-        // drives run identical registered initializers (factory initializer parity, review finding).
+        // drives run identical registered initializers (factory initializer parity).
         WorkflowContextBinder builtContextBinder = propagator == null
                 ? WorkflowContextBinder.noop()
                 : new WorkflowContextBinder(propagator, inboundExecScope);
@@ -1980,7 +1980,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     }
 
     /**
-     * Resolves the subject ref for a new workflow instance using the ADR-0056 precedence rule:
+     * Resolves the subject ref for a new workflow instance using the following precedence rule:
      *
      * <ol>
      *   <li>If {@code cmd.subjectRef()} is non-null, use it directly — the resolver is NOT invoked
@@ -2078,7 +2078,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     }
 
     /**
-     * Branch-aware signal overload (PRD-WF-002 §D11). When both {@code forkStepId} and
+     * Branch-aware signal overload. When both {@code forkStepId} and
      * {@code branchId} are non-null, the signal is recorded for the matching branch; when both are null
      * this is the instance-level signal path; mixed-null is rejected.
      */
@@ -2129,11 +2129,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     }
 
     /**
-     * Explicit-carrier signal overload (PRD-WF-007, Contract Appendix C4). Overrides the interface
+     * Explicit-carrier signal overload. Overrides the interface
      * default so a non-null {@code signalMetadata} is honored instead of failing fast.
      *
-     * <p>A non-null {@code signalMetadata} requires durable-context propagation to be wired (C4
-     * no-silent-drop principle): when {@code propagator} is {@code null} this overload fails fast with an
+     * <p>A non-null {@code signalMetadata} requires durable-context propagation to be wired
+     * (no-silent-drop principle): when {@code propagator} is {@code null} this overload fails fast with an
      * {@link UnsupportedOperationException} instead of silently accepting and then discarding the caller's carrier.
      * This check runs first, before the duplicate lookup or sanitization.
      *
@@ -2142,7 +2142,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * whose registered decoder declares itself authenticated-only, and stripped of the identity-snapshot namespace.
      * The result is bounded like a payload and stored on the recorded command as its explicit carrier; the executor
      * binds it when it applies the signal. A losing delivery on a duplicate dedup key resolves to a no-op before any
-     * carrier is stored (FR-WF-CTX-042).
+     * carrier is stored.
      *
      * <p>A {@code null} {@code signalMetadata} delegates to the interface default, which in turn
      * calls the legacy 7-arg {@link #signal(WorkflowInstanceId, String, Object, String, String,
@@ -2159,7 +2159,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * @param tx the active SQL transaction; must not be null
      * @return a {@link Future} that completes when the signal is recorded, or fails with
      *     {@link UnsupportedOperationException} when {@code signalMetadata} is non-null but durable
-     *     context propagation is not wired (C4 no-silent-drop)
+     *     context propagation is not wired (no-silent-drop)
      */
     @Override
     public Future<Void> signal(
@@ -2197,7 +2197,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             return signalToBranch(id, signalName, payload, signalDedupKey, forkStepId, branchId, tx, checkIntake);
         }
         if (propagator == null) {
-            // No-silent-drop (C4): an explicit carrier with no durable-context propagation wired has
+            // No-silent-drop: an explicit carrier with no durable-context propagation wired has
             // nowhere to be bound. Silently accepting the carrier here would look like a successful
             // recording to the caller while the carrier is dropped on the floor; fail fast instead.
             return Future.failedFuture(new UnsupportedOperationException(
@@ -2863,7 +2863,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                                 + id.value() + "': already in terminal status " + inst.status()));
                     }
 
-                    // Binder-row bind (Contract Appendix C2): instance-owned cancel drive. Every history entry the
+                    // Binder-row bind: instance-owned cancel drive. Every history entry the
                     // cancellation writes is logged with the canceller.
                     return history.nextSequence(id, tx).compose(from -> contextBinder
                             .withBound(inst, null, () -> doCancel(id, reason, inst, canceller, tx))
@@ -3235,20 +3235,20 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 () -> migrationExecutor.record(id, targetScope, targetVersion, tx));
     }
 
-    // --- State machine driver — extracted to WorkflowTransitionDriver (slice C5) ---
+    // --- State machine driver — extracted to WorkflowTransitionDriver ---
     //
     // driveTransitions/Step and the per-node handlers (handleServiceDispatch / handleWaitSignal
     // (+timeout) / handleDecision / handleComplete / handleFail / handleTimerNode /
-    // handleHumanTaskNode (+due-date)) now live in WorkflowTransitionDriver. The facade injects the
+    // handleHumanTaskNode (+due-date)) live in WorkflowTransitionDriver. The facade injects the
     // driver eagerly and calls driver.driveTransitions(...) from its lifecycle entrypoints. The
     // driver↔fork/join cycle is broken with the coordinator holding a lazy
     // Provider<WorkflowTransitionDriver>. The task-creation helpers (resolveAssignment /
-    // buildTaskRecord / appendTaskCreatedHistory) moved to TaskLifecycleService in slice C7; the
+    // buildTaskRecord / appendTaskCreatedHistory) live in TaskLifecycleService; the
     // driver reaches them through a lazy Provider<TaskLifecycleService>. The timer helper
-    // resolveFireAt moved to TimerLifecycleService in slice C8; the driver reaches it through a lazy
-    // Provider<TimerLifecycleService> and no longer references this facade.
+    // resolveFireAt lives in TimerLifecycleService; the driver reaches it through a lazy
+    // Provider<TimerLifecycleService> and does not reference this facade.
 
-    // --- TransactionalTaskCallbacks (delegated to TaskLifecycleService, slice C7) ---
+    // --- TransactionalTaskCallbacks (delegated to TaskLifecycleService) ---
 
     /**
      * {@inheritDoc}
@@ -3441,7 +3441,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     }
 
     // ===================================================================================
-    // PRD-WF-002: Fork dispatch + join evaluation — extracted to ForkJoinCoordinator (slice C4).
+    // Fork dispatch + join evaluation — extracted to ForkJoinCoordinator.
     // The cancelBranchOwnedWaits helper below stays on the engine because the single-path cancel
     // flow also uses it; the coordinator reaches it via the lazy Provider<WorkflowEngine> edge.
     // ===================================================================================

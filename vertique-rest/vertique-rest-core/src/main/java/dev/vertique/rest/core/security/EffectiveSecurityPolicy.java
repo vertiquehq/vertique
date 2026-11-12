@@ -28,7 +28,7 @@ import java.util.List;
  * the fold only ever <em>adds</em> the set's scopes.
  *
  * <p><strong>Single source of truth for the fail-closed matrix.</strong> {@link #enforceSupportedShape}
- * is the authoritative implementation of ADR-0124's V1 fail-closed matrix. The rest-jaxrs
+ * is the authoritative implementation of the V1 fail-closed matrix. The rest-jaxrs
  * {@code JaxRsRouteRegistrar} calls it unconditionally for every operation (independent of whether the
  * optional {@code DefaultSecurityPolicyValidator} is wired), and that validator delegates to it too, so
  * the matrix is enforced from exactly one place. Placing it here — next to {@link #fold} — keeps the
@@ -41,7 +41,7 @@ public final class EffectiveSecurityPolicy {
 
     /**
      * Fails startup ({@link RestConfigurationException}) when the operation declares a security shape
-     * whose V1 enforcement is deferred — ADR-0124's fail-closed matrix. This is the single source of
+     * whose V1 enforcement is deferred — the fail-closed matrix. This is the single source of
      * truth for the matrix: the rest-jaxrs route registrar calls it for every operation and the
      * rest-security {@code DefaultSecurityPolicyValidator} delegates to it.
      *

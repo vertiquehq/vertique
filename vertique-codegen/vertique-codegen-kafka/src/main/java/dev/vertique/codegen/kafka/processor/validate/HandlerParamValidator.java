@@ -13,7 +13,7 @@ import java.util.List;
 
 /**
  * Validates the payload-parameter arity and ordering of each {@code @KafkaHandler} method within
- * a Model 3 router listener (FR-CG006-005).
+ * a Model 3 router listener.
  *
  * <p>A "payload" parameter is one that is not a recognized context type (i.e., not assignable to
  * {@code KafkaRecordContext} or {@code SecurityContext}, and whose type is not annotated with

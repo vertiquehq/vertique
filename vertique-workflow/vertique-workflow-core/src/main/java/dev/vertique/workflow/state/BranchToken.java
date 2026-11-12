@@ -11,7 +11,7 @@ import java.util.Objects;
 import java.util.UUID;
 
 /**
- * Persisted execution token for a single fork-group branch (PRD-WF-002).
+ * Persisted execution token for a single fork-group branch.
  *
  * <p>Each branch in a {@link dev.vertique.workflow.plan.ForkNode} gets exactly one branch token,
  * stored in {@code workflow_branch_tokens}. The token carries the branch's current step, status,
@@ -20,7 +20,7 @@ import java.util.UUID;
  * contend on each other.
  *
  * <p>The {@link #metadata()} field carries durable propagation context in wire-format key/value
- * pairs (FR-CTX-178). It is captured at branch-creation time by
+ * pairs. It is captured at branch-creation time by
  * {@code ForkJoinCoordinator} in {@code vertique-workflow-engine} via
  * {@code DurableContextPropagator.mergeCaptured(..., WORKFLOW)} and persisted in
  * {@code workflow_branch_tokens.metadata JSONB}. Before each service-dispatch or recovery

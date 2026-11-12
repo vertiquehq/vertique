@@ -24,7 +24,7 @@ import java.util.Objects;
  * {@code {"roleId":"..."}} / {@code {"queueName":"..."}} — with no wrapper or type discriminator.
  * {@link JsonTypeInfo.Id#DEDUCTION} deserialization picks the correct permit by which field is
  * present, so this wire shape is preserved byte-for-byte while still allowing
- * {@code TaskAssignment} to round-trip through Jackson (ADR-0048).
+ * {@code TaskAssignment} to round-trip through Jackson.
  *
  * <p>Three permits:
  * <ul>

@@ -8,7 +8,7 @@ import java.util.Optional;
 /**
  * Process-wide singleton registry for generated JAX-RS resource descriptor companions.
  *
- * <p>For each concrete JAX-RS resource class {@code Foo}, the CG-010 pipeline emits a
+ * <p>For each concrete JAX-RS resource class {@code Foo}, the codegen pipeline emits a
  * {@code Foo_JaxRsDescriptor} companion in the same package. This registry locates and caches
  * those companions via a {@link ClassValue}-backed lookup so that
  * {@code JaxRsRouteRegistrar} can use the fast generated descriptor path instead of the
@@ -26,8 +26,8 @@ import java.util.Optional;
  *
  * <p>Lookup uses {@code resource.getClass()} exactly — no superclass walk. A registry-side
  * hierarchy walk would silently match descriptors through subclasses or proxies, registering
- * resources the runtime currently skips. Inherited-resource and proxy support is a separate
- * future PRD.
+ * resources the runtime currently skips. Inherited-resource and proxy support is out of scope
+ * for this registry.
  *
  * <h2>Cache-miss policy</h2>
  *

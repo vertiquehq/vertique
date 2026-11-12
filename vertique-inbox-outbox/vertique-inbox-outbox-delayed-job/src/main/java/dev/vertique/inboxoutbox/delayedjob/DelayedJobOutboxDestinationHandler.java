@@ -27,14 +27,14 @@ import lombok.extern.slf4j.Slf4j;
  * {@link DestinationType} is {@link DestinationType#DELAYED_JOB}. It reads the execution
  * defaults from {@link dev.vertique.inboxoutbox.OutboxDeliveryMetadata#delayedJob()} — a
  * {@link DelayedJobControl} snapshot persisted at publish time by
- * {@link TransactionalDelayedJobPublisher} (FR-TM-039) — and enqueues a {@link DelayedJob}
- * via {@link DelayedJobService} using the standalone (non-transactional) enqueue path
- * (FR-TM-065), since the relay operates outside the original write transaction.
+ * {@link TransactionalDelayedJobPublisher} — and enqueues a {@link DelayedJob}
+ * via {@link DelayedJobService} using the standalone (non-transactional) enqueue path,
+ * since the relay operates outside the original write transaction.
  *
  * <p>Durable propagation context is forwarded from {@link OutboxEnvelope#metadata()} directly
- * into {@link DelayedJob#metadata()} so context captured at publish time (FR-CTX-175) survives
- * the relay hop and is decoded by {@code DelayedJobPoller.dispatch} on the consume side
- * (FR-CTX-177). The envelope {@code headers} are application/transport-only and are not
+ * into {@link DelayedJob#metadata()} so context captured at publish time survives
+ * the relay hop and is decoded by {@code DelayedJobPoller.dispatch} on the consume side.
+ * The envelope {@code headers} are application/transport-only and are not
  * forwarded to the job: no application header reaches it, neither in the job's payload nor in its
  * metadata.
  *
@@ -113,11 +113,11 @@ public class DelayedJobOutboxDestinationHandler implements OutboxDestinationHand
      * <p>The destination field of the envelope is used to resolve the target metadata. Scheduling
      * defaults (queue, priority, maxAttempts) are read from the persisted
      * {@link DelayedJobControl} snapshot in
-     * {@code envelope.metadata().delivery().delayedJob()} (FR-TM-064). A missing snapshot is a
+     * {@code envelope.metadata().delivery().delayedJob()}. A missing snapshot is a
      * permanent authoring error — retrying would not help. Durable propagation context from
-     * {@code envelope.metadata().context()} is forwarded verbatim into {@link DelayedJob#metadata()}
-     * (FR-CTX-177). The job is enqueued via the standalone (non-transactional)
-     * {@link DelayedJobService#enqueue(DelayedJob)} path (FR-TM-065).
+     * {@code envelope.metadata().context()} is forwarded verbatim into {@link DelayedJob#metadata()}.
+     * The job is enqueued via the standalone (non-transactional)
+     * {@link DelayedJobService#enqueue(DelayedJob)} path.
      *
      * <p>The returned {@link Future} always completes successfully with an
      * {@link OutboxPublishResult} — it never propagates a failed future.
@@ -136,7 +136,7 @@ public class DelayedJobOutboxDestinationHandler implements OutboxDestinationHand
                     OutboxPublishResult.unresolvable("Unknown delayed-job target: " + envelope.destination()));
         }
 
-        // 2. Read snapshotted defaults from metadata.delivery.delayedJob (FR-TM-064).
+        // 2. Read snapshotted defaults from metadata.delivery.delayedJob.
         //    Absent snapshot = authoring bug; permanent failure, do not retry.
         DelayedJobControl snapshot = envelope.metadata() != null
                 ? envelope.metadata().delivery().delayedJob().orElse(null)
@@ -149,7 +149,7 @@ public class DelayedJobOutboxDestinationHandler implements OutboxDestinationHand
         // 3. Build DelayedJob — unwrap scalar payloads stored via PayloadCodec. The durable
         //    propagation context captured at publish is forwarded verbatim from the outbox row's
         //    metadata into the replacement delayed job so downstream handlers observe the same
-        //    context (FR-CTX-178).
+        // context.
         Object payload = (envelope.payload() instanceof io.vertx.core.json.JsonObject jo)
                 ? PayloadCodec.decode(jo)
                 : envelope.payload();
@@ -166,7 +166,7 @@ public class DelayedJobOutboxDestinationHandler implements OutboxDestinationHand
                 .scopeKey(envelope.scopeKey())
                 .build();
 
-        // 4. Enqueue — standalone, NOT transactional (FR-TM-065)
+        // 4. Enqueue — standalone, NOT transactional
         return delayedJobService
                 .enqueue(job)
                 .map(id -> (OutboxPublishResult) OutboxPublishResult.success())

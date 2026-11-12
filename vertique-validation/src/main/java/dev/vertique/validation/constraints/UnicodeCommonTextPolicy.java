@@ -11,7 +11,7 @@ import java.util.Set;
 /**
  * Character policy that permits common text characters suitable for structured user input.
  *
- * <p>Per FR-REST-178C, allowed characters are:
+ * <p>Allowed characters are:
  * <ul>
  *   <li><b>Unicode category L</b> (letters): {@link Character#LOWERCASE_LETTER},
  *       {@link Character#UPPERCASE_LETTER}, {@link Character#TITLECASE_LETTER},

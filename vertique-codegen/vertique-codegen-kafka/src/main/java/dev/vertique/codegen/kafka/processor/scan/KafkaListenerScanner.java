@@ -96,7 +96,7 @@ public final class KafkaListenerScanner {
 
         // Read the type-level @JsonProfile annotation (by FQN string match, no module dep) as the
         // sole per-binding profile selector. A method-level @JsonProfile on a listener type is
-        // rejected here (FR-JSON-066).
+        // rejected here.
         rejectMethodLevelJsonProfile(type);
         String jsonProfile = resolveEffectiveProfile(type);
 
@@ -110,7 +110,7 @@ public final class KafkaListenerScanner {
         return scanHandler(type, name, topic, groupId, errorStrategy, commitStrategy, deadLetterTopic, jsonProfile);
     }
 
-    // --- @JsonProfile resolution (FR-JSON-066) ---
+    // --- @JsonProfile resolution ---
 
     /**
      * Resolves the effective JSON mapper profile for a {@code @KafkaListener} type from the
@@ -130,7 +130,7 @@ public final class KafkaListenerScanner {
     }
 
     /**
-     * Rejects a method-level {@code @JsonProfile} on a {@code @KafkaListener} type (FR-JSON-066).
+     * Rejects a method-level {@code @JsonProfile} on a {@code @KafkaListener} type.
      * {@code @JsonProfile} selects a profile for the whole listener and must be placed at TYPE
      * level; a method-level placement on either a router interface or a direct-handler class is a
      * compile error naming the offending method.
@@ -315,7 +315,7 @@ public final class KafkaListenerScanner {
      * <p>The value type {@code V} is resolved via
      * {@link dev.vertique.codegen.TypeResolver#resolveTypeArgument} against {@code KafkaRecordHandler}.
      * A {@code null} result (raw type / forwarding variable) is preserved in the model; validators
-     * in Slice 4 will report that as a compile error.
+     * report that as a compile error.
      *
      * @param type             the class element
      * @param name             binding name

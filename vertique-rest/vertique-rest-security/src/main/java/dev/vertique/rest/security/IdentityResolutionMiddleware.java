@@ -93,7 +93,7 @@ import lombok.extern.slf4j.Slf4j;
  * run inside the route handler chain (after auth, before operation) so it is added via
  * {@code route.addHandler()} by {@link IdentityResolutionContributor}.
  *
- * <p><strong>Duplicate resolver guard (NFR-ID-003):</strong> Two resolvers with the same
+ * <p><strong>Duplicate resolver guard:</strong> Two resolvers with the same
  * {@code (priority, id)} pair are a configuration error. The constructor throws
  * {@link IllegalStateException} at startup, naming both conflicting classes.
  *
@@ -197,7 +197,7 @@ public final class IdentityResolutionMiddleware implements Handler<RoutingContex
      *
      * <p>Sorts the resolver set by {@code (priority, id)} in ascending order. Throws
      * {@link IllegalStateException} at construction if any two resolvers share the same
-     * {@code (priority, id)} pair (NFR-ID-003).
+     * {@code (priority, id)} pair.
      *
      * @param resolvers               the set of identity resolvers contributed via Dagger
      *                                multibinding; must not be {@code null}
@@ -240,7 +240,7 @@ public final class IdentityResolutionMiddleware implements Handler<RoutingContex
         List<SecurityIdentityResolver> sorted = new ArrayList<>(resolvers);
         sorted.sort(OrderedExtension.comparator());
 
-        // Detect duplicate (priority, id) pairs — fail loudly at startup per NFR-ID-003.
+        // Detect duplicate (priority, id) pairs — fail loudly at startup.
         // Keyed by a typed (priority, id) composite, independent of sort order: OrderedExtension
         // sorts phase-first, so two resolvers sharing a (priority, id) but differing in phase would
         // not be adjacent in the sorted list.

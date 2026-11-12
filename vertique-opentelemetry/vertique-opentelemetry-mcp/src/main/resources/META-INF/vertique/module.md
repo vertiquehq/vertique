@@ -141,7 +141,7 @@ Owns no module-local configuration keys. Body-trace linking is gated by `mcp.bod
 ## Dependencies
 
 - `io.opentelemetry:opentelemetry-api` — `Span`, `SpanContext`, `TraceFlags`, `TraceState`,
-  `AttributeKey`; no OpenTelemetry SDK dependency (NFR-TEL-002).
+  `AttributeKey`; no OpenTelemetry SDK dependency.
 - `dev.vertique:vertique-mcp-core` — `McpRequestLifecycleObserver`, `McpRequestObservation`,
   `McpRequestTerminalObservation`, `McpRequestTerminalEvent`, and the bounded lifecycle enums.
 - `dev.vertique:vertique-core` — `dev.vertique.core.correlation.TraceReference`, the framework's
