@@ -3,6 +3,8 @@
 
 package dev.vertique.codegen.aop;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
+
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
 import javax.tools.JavaFileObject;
@@ -90,13 +92,20 @@ class AopProxyEmitTest {
     }
 
     @Test
-    @DisplayName("the generated proxy is reflection-free — no Method.invoke or getDeclaredMethod or .getAnnotation(")
+    @DisplayName("the generated proxy is reflection-free outside the opt-in asMethod() body — no Method.invoke, "
+            + "getDeclaredMethod, .getAnnotation( or .asMethod( call")
     void generatedProxyHasNoReflection() {
-        ProcessorTestHarness.run(new AopProcessor(), greeterBean())
+        var result = ProcessorTestHarness.run(new AopProcessor(), greeterBean())
                 .assertSuccess()
-                .assertGeneratedSourceDoesNotContain(PROXY_FQN, "getDeclaredMethod")
                 .assertGeneratedSourceDoesNotContain(PROXY_FQN, "Method.invoke")
-                .assertGeneratedSourceDoesNotContain(PROXY_FQN, ".getAnnotation(");
+                .assertGeneratedSourceDoesNotContain(PROXY_FQN, ".getAnnotation(")
+                .assertGeneratedSourceDoesNotContain(PROXY_FQN, ".asMethod(");
+        // The nested metadata impl implements the opt-in reflective asMethod(); its body is the one place
+        // getDeclaredMethod may appear. Everything else — overrides, chain, constant accessors — is reflection-free.
+        assertFalse(
+                GeneratedSources.withoutAsMethodBodies(GeneratedSources.of(result, PROXY_FQN))
+                        .contains("getDeclaredMethod"),
+                "the generated proxy must not call getDeclaredMethod outside asMethod()");
     }
 
     @Test

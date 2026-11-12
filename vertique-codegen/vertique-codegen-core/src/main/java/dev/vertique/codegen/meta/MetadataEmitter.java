@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
@@ -39,7 +40,8 @@ import javax.lang.model.util.Types;
  * annotations this module documents and never calls this type.
  *
  * <p>Reusable JavaPoet emitter that, given a method element, generates a {@code MethodMetadata}
- * implementation whose accessors return compile-time constants and never reflect at call time.
+ * implementation whose constant-only accessors return compile-time constants and never reflect at call
+ * time; only the opt-in {@code asMethod()} accessor reflects, lazily, when a consumer calls it.
  *
  * <p>The generated class implements {@code dev.vertique.core.codegen.MethodMetadata} and carries a
  * nested {@code ParameterMetadataImpl implements dev.vertique.core.codegen.ParameterMetadata} for
@@ -58,15 +60,18 @@ import javax.lang.model.util.Types;
  * {@link dev.vertique.codegen.dagger.DaggerModuleWriter} references Dagger annotations.
  *
  * <p><strong>Scope note:</strong> the method-level <em>and</em> parameter-level
- * {@code findAnnotation}/{@code hasAnnotation} surfaces are reflection-free and literal-backed (Phase 2
- * slice 2.1). For each runtime-retained method annotation supplied by the caller, the impl bakes a
+ * {@code findAnnotation}/{@code hasAnnotation} surfaces are reflection-free and literal-backed.
+ * For each runtime-retained method annotation supplied by the caller, the impl bakes a
  * {@code static final <Ann>} literal constant and resolves the method-level {@code findAnnotation} by a
  * {@code type == <Ann>.class} match, with {@code hasAnnotation} delegating to it — never
  * {@link Method#getAnnotation}. Likewise, each parameter's runtime-retained annotations are baked as
  * {@code PARAM_<p>_ANNOTATION_<i>} literal constants and passed to the nested
  * {@code ParameterMetadataImpl}, whose parameter-level {@code findAnnotation} matches the looked-up
  * {@code type} against each literal's {@code annotationType()} — never {@code Parameter.getAnnotation}.
- * The opt-in reflective-accessor group ({@code asMethod}, {@code genericType}) remains stubbed;
+ * The opt-in reflective accessor {@code asMethod()} is emitted as a lazy, cached
+ * {@code declaringType().getDeclaredMethod(name(), parameterTypes())} lookup (see
+ * {@link #asMethodAccessor}); it is the only reflective call site in the generated class, and
+ * generated proxy overrides never call it. Parameter-level {@code genericType()} remains stubbed;
  * {@code genericReturnType()} is emitted as a reflection-free {@link Type} graph so generated
  * consumers can inspect declared payload types without a method lookup. The constant-only core
  * accessors are fully real.
@@ -83,6 +88,9 @@ public final class MetadataEmitter {
 
     /** Simple name of the nested parameter-metadata implementation class. */
     private static final String PARAM_IMPL_SIMPLE_NAME = "ParameterMetadataImpl";
+
+    /** Name of the generated {@code volatile Method} field that caches the {@code asMethod()} result. */
+    private static final String AS_METHOD_CACHE_FIELD = "resolvedMethod";
 
     private MetadataEmitter() {}
 
@@ -220,7 +228,8 @@ public final class MetadataEmitter {
         return builder.addMethod(findAnnotation(methodAnnotations, literalFieldNames))
                 .addMethod(hasAnnotation())
                 .addMethod(genericReturnTypeAccessor(method, types))
-                .addMethod(asMethodStub())
+                .addField(asMethodCacheField())
+                .addMethod(asMethodAccessor(method, types))
                 .addType(parameterMetadataImpl(paramImpl));
     }
 
@@ -415,7 +424,7 @@ public final class MetadataEmitter {
                 .build();
     }
 
-    // --- MethodMetadata annotation lookup (reflection-free, literal-backed) + reflective-group stubs ---
+    // --- MethodMetadata annotation lookup (reflection-free, literal-backed) + opt-in reflective asMethod() ---
 
     /**
      * Emits the reflection-free {@code findAnnotation(Class<A>)} for the method-level metadata impl.
@@ -491,21 +500,68 @@ public final class MetadataEmitter {
     }
 
     /**
-     * Emits an {@code asMethod} accessor from the reflective-accessor group.
+     * Emits the {@code private volatile Method resolvedMethod;} cache backing {@link #asMethodAccessor}.
      *
-     * <p>Not part of the reflection-free guarantee; throws {@link UnsupportedOperationException}
-     * until the reflective-accessor group is implemented (Phase 2).
+     * <p>The field is {@code volatile} so that a resolved {@code Method} published by one thread is
+     * seen fully constructed by every other thread; it is deliberately not guarded by a lock. The
+     * race is benign: two threads that both observe {@code null} both call
+     * {@code Class.getDeclaredMethod}, which returns equal copies of the same declared method, and
+     * the last write wins without changing what any caller observes.
      */
-    private static MethodSpec asMethodStub() {
+    private static FieldSpec asMethodCacheField() {
+        return FieldSpec.builder(Method.class, AS_METHOD_CACHE_FIELD, Modifier.PRIVATE, Modifier.VOLATILE)
+                .build();
+    }
+
+    /**
+     * Emits the opt-in reflective {@code asMethod()} accessor: a lazy, cached
+     * {@code declaringType().getDeclaredMethod(name(), parameterTypes())} lookup.
+     *
+     * <p>This is the one reflective call site in the generated metadata and is not part of the
+     * reflection-free guarantee: generated proxy overrides never call it, so a consumer that never
+     * calls {@code asMethod()} never triggers the lookup. The first call resolves the {@link Method}
+     * through the constant-only accessors ({@code declaringType()}, {@code name()},
+     * {@code parameterTypes()} — all compile-time constants) and caches it in the field emitted by
+     * {@link #asMethodCacheField}; later calls return the published instance. A lookup miss — the
+     * declaring class on the runtime classpath no longer declares the method — is reported as an
+     * {@link IllegalStateException} that names the expected signature, with the
+     * {@link NoSuchMethodException} as its cause. Native-image consumers must register the declaring
+     * type's methods for reflection; the generated code adds no registration of its own.
+     */
+    private static MethodSpec asMethodAccessor(ExecutableElement method, Types types) {
         return MethodSpec.methodBuilder("asMethod")
                 .addAnnotation(Override.class)
                 .addModifiers(Modifier.PUBLIC)
                 .returns(Method.class)
+                .addComment("Lazy and cached; the volatile field makes the publish safe and the race benign:")
+                .addComment("concurrent first callers resolve equal Method copies and the last write wins.")
+                .addStatement("$T method = $N", Method.class, AS_METHOD_CACHE_FIELD)
+                .beginControlFlow("if (method == null)")
+                .beginControlFlow("try")
+                .addStatement("method = declaringType().getDeclaredMethod(name(), parameterTypes())")
+                .nextControlFlow("catch ($T e)", NoSuchMethodException.class)
                 .addStatement(
-                        "throw new $T($S)",
-                        UnsupportedOperationException.class,
-                        "asMethod is part of the reflective-accessor group (Phase 2)")
+                        "throw new $T($S, e)",
+                        IllegalStateException.class,
+                        "Method " + methodSignature(method, types) + " is not declared on its declaring type")
+                .endControlFlow()
+                .addStatement("$N = method", AS_METHOD_CACHE_FIELD)
+                .endControlFlow()
+                .addStatement("return method")
                 .build();
+    }
+
+    /**
+     * Renders {@code <DeclaringType>.<name>(<erased param types>)} for the {@code asMethod()} failure
+     * message, e.g. {@code com.example.Greeter.greet(java.lang.String)}.
+     */
+    private static String methodSignature(ExecutableElement method, Types types) {
+        String declaring =
+                ClassName.get((TypeElement) method.getEnclosingElement()).canonicalName();
+        String params = method.getParameters().stream()
+                .map(p -> erasedTypeName(p.asType(), types).toString())
+                .collect(Collectors.joining(", "));
+        return declaring + "." + method.getSimpleName() + "(" + params + ")";
     }
 
     // --- Nested ParameterMetadataImpl ---
@@ -571,7 +627,7 @@ public final class MetadataEmitter {
                         .addStatement(
                                 "throw new $T($S)",
                                 UnsupportedOperationException.class,
-                                "genericType is part of the reflective-accessor group (Phase 2)")
+                                "genericType is part of the reflective-accessor group")
                         .build())
                 .build();
     }
@@ -688,7 +744,7 @@ public final class MetadataEmitter {
                         .addStatement(
                                 "throw new $T($S)",
                                 UnsupportedOperationException.class,
-                                "genericType is part of the reflective-accessor group (Phase 2)")
+                                "genericType is part of the reflective-accessor group")
                         .build())
                 .build();
     }

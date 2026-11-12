@@ -415,7 +415,7 @@ framework's own scanners provide the implementations.
 | `findAnnotation(Class<A>)` | `Optional<A>` | reflection-free |
 | `hasAnnotation(Class<? extends Annotation>)` | `boolean` | reflection-free |
 | `genericReturnType()` | `Type` | reflection-free on generated metadata; reflective on scan metadata |
-| `asMethod()` | `Method` | reflective |
+| `asMethod()` | `Method` | reflective; opt-in, resolved lazily on the first call and cached on generated metadata |
 
 `ParameterMetadata`:
 
@@ -435,6 +435,14 @@ framework's own scanners provide the implementations.
   `genericReturnType()` — is safe on the critical path and needs no GraalVM `reflect-config.json`
   entry. `asMethod()`, `ParameterMetadata.genericType()`, and `annotationsLazy()` remain reflective;
   the scan-path implementation of `genericReturnType()` is reflective too.
+- `asMethod()` is implemented on both paths and opt-in. Generated metadata resolves the `Method` on
+  the first call through `declaringType().getDeclaredMethod(name(), parameterTypes())` and caches it;
+  scan metadata returns the wrapped `Method`. Generated proxy overrides and the framework's built-in
+  `AspectProvider`s never call it, so a consumer that never calls it stays reflection-free. A
+  GraalVM native-image consumer that does call it needs a `reflect-config.json` entry registering
+  the declaring type's methods (`allDeclaredMethods`, or the specific method). A declaring class
+  that no longer declares the method surfaces as an `IllegalStateException` naming the expected
+  signature, with the `NoSuchMethodException` as its cause.
 - On the codegen path, annotation lookups query compile-time-captured annotation literals, not live
   runtime annotations. An annotation added after compilation — by a dynamic proxy or a bytecode
   agent — is invisible. Only `@Retention(RUNTIME)` annotations are ever visible.
