@@ -115,7 +115,8 @@ class FindAnnotationReflectionFreeTest {
                 proxy.contains(".getAnnotation("),
                 "The reflection-free findAnnotation must not call getAnnotation(...); generated source:\n" + proxy);
         assertFalse(
-                proxy.contains("getDeclaredMethod"),
-                "The reflection-free findAnnotation must not call getDeclaredMethod(...); generated source:\n" + proxy);
+                GeneratedSources.withoutAsMethodBodies(proxy).contains("getDeclaredMethod"),
+                "The reflection-free findAnnotation must not call getDeclaredMethod(...); only the opt-in asMethod() "
+                        + "body may; generated source:\n" + proxy);
     }
 }
