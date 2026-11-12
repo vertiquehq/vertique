@@ -793,8 +793,8 @@ RequestOriginConfig originConfig() {
 |---|---|---|
 | `trustedProxyCidrs` | empty | CIDR ranges whose members may set forwarded headers; empty trusts nothing |
 | `forwardedForCap` | `16` | Maximum `X-Forwarded-For` entries; a longer chain is dropped entirely and flagged rejected. Must be `>= 0`; `0` disables the chain |
-| `trustForwardedScheme` | `false` | Honour `X-Forwarded-Proto` — only when the direct peer is trusted |
-| `trustForwardedHost` | `false` | Honour `X-Forwarded-Host` — only when the direct peer is trusted |
+| `trustForwardedScheme` | `false` | Honour `X-Forwarded-Proto` — only when the direct peer is trusted and the request carries a valid `X-Forwarded-For` chain |
+| `trustForwardedHost` | `false` | Honour `X-Forwarded-Host` — only when the direct peer is trusted and the request carries a valid `X-Forwarded-For` chain |
 
 Resolution rules:
 
@@ -806,11 +806,15 @@ Resolution rules:
   (`010.1.1.1`) are rejected, not resolved or reinterpreted.
 - `clientIp` uses the forwarded chain **only** when the direct peer matches a trusted CIDR;
   otherwise it is the direct peer address.
-- Forwarded scheme and host are honoured only when both the corresponding flag is set and the direct
-  peer is trusted.
+- Forwarded scheme and host are honoured only when three conditions hold together: the
+  corresponding flag is set, the direct peer is trusted, **and** the request carries a valid
+  `X-Forwarded-For` chain (at least one accepted entry, and not rejected by `forwardedForCap`).
+  A trusted proxy that sends `X-Forwarded-Proto` or `X-Forwarded-Host` without an `X-Forwarded-For`
+  chain is ignored for scheme and host: both come from the connection.
 
 A non-empty `trustedProxyCidrs` is what makes forwarded headers trustworthy. Setting
-`trustForwardedScheme` or `trustForwardedHost` without it changes nothing.
+`trustForwardedScheme` or `trustForwardedHost` without it changes nothing, and neither flag has an
+effect on a request whose `X-Forwarded-For` chain is absent, empty after sanitization, or rejected.
 
 ### Authorization gate deadline (`AuthorizationGateConfig`)
 
