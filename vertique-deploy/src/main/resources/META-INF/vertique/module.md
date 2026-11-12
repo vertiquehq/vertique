@@ -30,16 +30,24 @@ host that cannot use the runner calls `VerticleDeploymentManager` directly.
 
 ## Core Concepts
 
-**Phase, then priority.** Every deployment names one of the four verticle phases (`BOOTSTRAP`,
-`INFRA`, `SERVICES`, `EDGE`) and a priority within it. Deployment runs phase by phase in that order
-and, inside a phase, priority group by priority group in ascending order, with the verticles of one
-group deployed in parallel. Undeployment is the exact reverse. This ordering model is a value on the
-record, deliberately distinct from the `OrderedExtension` model other extension points use; the
-divergence is documented under Extension Points and is part of the module's contract.
+**Phase, then priority, then name.** `VerticleDeployment` implements `LifecycleOrdered`.
+The manager sorts by its canonical comparator: phase ascending, priority ascending, and
+`orderKey()` ascending. A deployment's `orderKey()` is its name. Each deployment must finish
+starting before the next begins, including deployments with equal priority. Shutdown awaits
+each undeployment in reverse comparator order and continues after individual failures.
+
+**Migration from parallel priority groups.** Equal-priority deployments now start sequentially
+by name. A verticle must not wait during startup for a later deployment to start; put dependencies
+in earlier phases or give them lower priorities, and remove cyclic startup dependencies.
+This ordering applies between deployment descriptors. Instances within one descriptor remain
+managed by Vert.x through `DeploymentOptions.instances`.
 
 **Invocation-scoped rollback.** On failure, `deployPhase` and `deployAll` each undeploy only the
 verticles the failing call started; earlier deployments, including others in the same phase, are
-left running. A verticle deployed directly through `VerticleDeployer` is outside both.
+left running. Cleanup runs sequentially in reverse successful-start order, attempts every stop
+even after a cleanup failure, and preserves the original startup failure. No later deployment
+is attempted after a startup failure. A verticle deployed directly through `VerticleDeployer`
+is outside both rollback scopes.
 
 **Supervision is one-for-one.** `VerticleSupervisor` restarts each named verticle independently,
 de-duplicating concurrent reports per name, with exponential backoff inside a sliding restart budget,
@@ -60,7 +68,9 @@ public record VerticleDeployment(
     DeploymentOptions options,             // instances, threading model, config, etc.
     LifecyclePhase phase,                  // coarse startup/shutdown ordering
     int priority                           // fine-grained ordering within phase (lower = first)
-) {}
+) implements LifecycleOrdered {
+    @Override public String orderKey() { return name; }
+}
 ```
 
 The `phase` must be one of the four verticle-subset phases: `BOOTSTRAP`, `INFRA`, `SERVICES`, or
@@ -99,11 +109,13 @@ public VerticleDeployer(Vertx vertx) { ... }
 |--------|-------------|
 | `deploy(VerticleDeployment)` | Deploys a single verticle; fails if name is already tracked |
 | `undeploy(String name)` | Undeploys a tracked verticle by name; tracking retained on failure |
-| `undeployAll()` | Undeploys all tracked verticles in reverse startup order (EDGE → SERVICES → INFRA → BOOTSTRAP, high priority first); in-flight deployments are skipped |
+| `undeployAll()` | Undeploys all tracked verticles in reverse startup order (EDGE → SERVICES → INFRA → BOOTSTRAP, high priority first, then names descending); in-flight deployments are skipped |
 | `deploymentId(String name)` | Returns the Vert.x deployment ID, or `null` if not deployed or deployment in flight |
 | `evict(String name, String expectedId)` | CAS-removes a stale tracking entry when the verticle is known dead; used by `VerticleSupervisor` for stale-tracking recovery |
 
-Within the same priority group, all verticles deploy in parallel with `Future.join` (wait-all) semantics.
+Direct `deploy()` calls do not orchestrate other deployments; use the manager for ordered startup.
+`undeployAll()` sorts all tracked deployments in reverse lifecycle order, using name as the
+final tie-break, and waits for each stop before attempting the next.
 
 ### `VerticleDeploymentManager`
 
@@ -118,7 +130,7 @@ public VerticleDeploymentManager(VerticleDeployer deployer, Set<VerticleDeployme
 
 | Method | Description |
 |--------|-------------|
-| `deployAll()` | Deploys all multibinding-registered verticles, phase by phase, priority group by priority group; uses invocation-scoped rollback (only undeploys what the current call started) |
+| `deployAll()` | Deploys all multibinding-registered verticles, sequentially by phase, priority, then name; uses invocation-scoped rollback (only undeploys what the current call started) |
 | `deployPhase(LifecyclePhase)` | Deploys only the verticles registered for the given phase; transactional per phase — rolls back that phase only on failure |
 
 Both methods are **framework choreography primitives**, not application entry points. Application
@@ -135,7 +147,7 @@ drops every contribution registered to an omitted phase — there is no error an
 transactional-outbox relay; omitting it from a manual chain means none of that work ever runs, while
 startup still reports success.
 
-`deployAll()` is the exhaustive primitive — it loops every phase, so it never drops a contribution. It
+`deployAll()` is the exhaustive primitive — it sorts all contributions across all phases. It
 exists for a manual host that genuinely cannot drive its lifecycle through
 `VertiqueApplicationBootstrap`; it is not the recommended path for an ordinary application, which
 should delegate to the runner instead.
@@ -232,7 +244,11 @@ interface AppComponent {
 
 Contribute verticle deployments to the multibinding. `VerticleDeploymentManager` picks them up at startup.
 
-**Ordering note:** `VerticleDeployment` is deliberately **not** an `OrderedExtension`. It is a value record with its own `LifecyclePhase phase()` component (must be a verticle-subset phase; validated at construction) and is ordered via `groupingBy(priority, TreeMap)` where same-priority verticles within a phase deploy **in parallel** — it has no total order by design. Imposing `OrderedExtension` would change those semantics and collide on `phase()`.
+**Ordering note:** `VerticleDeployment` implements `LifecycleOrdered` and returns its deployment
+name from `orderKey()`. It does not implement `OrderedExtension`, whose `phase()` returns a
+different enum. Use distinct priorities for dependencies within a phase; equal-priority
+names provide a deterministic tie-break. Startup steps for a phase still run before that
+phase's verticle deployments; the runner does not merge the two sets by priority.
 
 ```java
 // In an app module
