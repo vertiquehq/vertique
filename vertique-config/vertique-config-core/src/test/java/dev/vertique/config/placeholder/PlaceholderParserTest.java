@@ -607,6 +607,44 @@ class PlaceholderParserTest {
         }
     }
 
+    // --- needsResolution: placeholder or escape ---
+
+    @Nested
+    @DisplayName("needsResolution: true when the parse would change the input")
+    class NeedsResolutionTests {
+
+        @Test
+        @DisplayName("plain text → false")
+        void plainTextFalse() {
+            assertFalse(PlaceholderParser.needsResolution("no placeholders here"));
+        }
+
+        @Test
+        @DisplayName("${key} → true")
+        void placeholderTrue() {
+            assertTrue(PlaceholderParser.needsResolution("${key}"));
+        }
+
+        @Test
+        @DisplayName("unterminated ${abc → true")
+        void malformedTrue() {
+            assertTrue(PlaceholderParser.needsResolution("${abc"));
+        }
+
+        @Test
+        @DisplayName("escaped-only \\${b} → true, although containsPlaceholder is false")
+        void escapedOnlyTrue() {
+            assertTrue(PlaceholderParser.needsResolution("\\${b}"));
+            assertFalse(PlaceholderParser.containsPlaceholder("\\${b}"));
+        }
+
+        @Test
+        @DisplayName("a backslash not followed by ${ → false")
+        void loneBackslashFalse() {
+            assertFalse(PlaceholderParser.needsResolution("C:\\path\\$x"));
+        }
+    }
+
     // --- Whitespace key rule ---
 
     @Nested
