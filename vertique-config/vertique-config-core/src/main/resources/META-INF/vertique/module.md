@@ -169,7 +169,9 @@ For each key the engine consults, in order:
 
 1. **Tree probe** — flat-key probe first (finds `DB_PASSWORD` as stored flat by the env store), then a
    dot-path walk descending nested `JsonObject`s for a key like `db.host`. A JSON `null` counts as
-   not-found. The tree already reflects the full env / system-property / `--conf` hierarchy.
+   not-found. The tree already reflects the full env / system-property / `--conf` hierarchy. A string
+   found by the probe is resolved like a walked value — its references resolved and its escapes
+   expanded — so `a: "\${b}"` reads as the text `${b}` both in place and through `${a}`.
 2. **Declared property sources**, in list order; the first non-empty hit wins. Source values are
    **literal** — a `${...}` inside a secret value passes through unchanged.
 3. **Default** — if every chain step missed and a default was declared, the default text is itself

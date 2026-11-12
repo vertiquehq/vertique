@@ -516,6 +516,67 @@ class PlaceholderResolverTest {
 
             assertEquals(List.of("a default (malformed placeholder at index 5)"), ex.unresolvedReferences());
         }
+
+        @Test
+        @DisplayName("an escaped tree value reads the same through a reference as in place: a: '\\${b}', ${a} → '${b}'")
+        void escapedTreeValueThroughReferenceIsUnescaped() {
+            // 'b' is present so that a second parse of the expanded text would show up as 'b-value'
+            JsonObject tree =
+                    new JsonObject().put("a", "\\${b}").put("b", "b-value").put("x", "${a}");
+
+            JsonObject result = PlaceholderResolver.resolveTree(tree, List.of());
+
+            assertEquals("${b}", result.getString("a"), "walked value");
+            assertEquals("${b}", result.getString("x"), "value reached through a reference");
+        }
+
+        @Test
+        @DisplayName("an escaped tree value reached through a nested reference: ${a} → ${c} → '\\${b}' → '${b}'")
+        void escapedTreeValueThroughNestedReferenceIsUnescaped() {
+            JsonObject tree = new JsonObject()
+                    .put("c", "\\${b}")
+                    .put("a", "${c}")
+                    .put("b", "b-value")
+                    .put("x", "${a}");
+
+            JsonObject result = PlaceholderResolver.resolveTree(tree, List.of());
+
+            assertEquals("${b}", result.getString("c"));
+            assertEquals("${b}", result.getString("a"));
+            assertEquals("${b}", result.getString("x"));
+        }
+
+        @Test
+        @DisplayName(
+                "an escaped tree value reached through a reference in a concatenation: pre-${a}-post → 'pre-${b}-post'")
+        void escapedTreeValueThroughReferenceInConcatenation() {
+            JsonObject tree = new JsonObject().put("a", "\\${b}").put("x", "pre-${a}-post");
+
+            JsonObject result = PlaceholderResolver.resolveTree(tree, List.of());
+
+            assertEquals("pre-${b}-post", result.getString("x"));
+        }
+
+        @Test
+        @DisplayName("an escaped tree value reached through a default's reference: ${missing:${a}} → '${b}'")
+        void escapedTreeValueThroughDefaultReferenceIsUnescaped() {
+            JsonObject tree = new JsonObject().put("a", "\\${b}").put("x", "${missing:${a}}");
+
+            JsonObject result = PlaceholderResolver.resolveTree(tree, List.of());
+
+            assertEquals("${b}", result.getString("x"));
+        }
+
+        @Test
+        @DisplayName("a source value is literal: a source-served '\\${b}' keeps its backslash")
+        void escapedSourceValueStaysLiteral() {
+            StubPropertySource src = new StubPropertySource("s1", Map.of("s", "\\${b}"));
+            JsonObject tree = new JsonObject().put("x", "${s}");
+
+            JsonObject result = PlaceholderResolver.resolveTree(tree, List.of(src));
+
+            assertEquals("\\${b}", result.getString("x"));
+        }
     }
 
     // --- Arrays ---

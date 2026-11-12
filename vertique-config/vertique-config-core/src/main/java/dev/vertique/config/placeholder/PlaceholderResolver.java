@@ -308,9 +308,9 @@ public final class PlaceholderResolver {
         /**
          * Resolves all placeholders in a single string value.
          *
-         * <p>If the string has no placeholders (no {@link PlaceholderParser.Placeholder} or
-         * {@link PlaceholderParser.Malformed} segments), the original string is returned
-         * unchanged.
+         * <p>If the parse would leave the string as it is — no {@link PlaceholderParser.Placeholder}
+         * or {@link PlaceholderParser.Malformed} segment and no escape, see
+         * {@link PlaceholderParser#needsResolution} — the original string is returned unchanged.
          *
          * <p>If the parsed result is exactly one {@link PlaceholderParser.Placeholder} segment
          * and nothing else (WHOLE-VALUE mode), the resolved typed value is returned directly —
@@ -333,17 +333,11 @@ public final class PlaceholderResolver {
          * @return the resolved value; may be a non-{@link String} in WHOLE-VALUE mode
          */
         private Object resolveString(String value, int depth, String location) {
-            List<PlaceholderParser.Segment> segments = PlaceholderParser.parse(value);
-
-            // No placeholder/malformed segments AND no escape sequences → return unchanged.
-            // We detect "no escape transformation" by checking if all segments are Literals
-            // whose concatenation equals the original string (i.e., no \${ was processed).
-            // The simpler equivalent: if hasPlaceholder is false AND the string contains no
-            // escape trigger sequence, the parsed text equals the input.
-            boolean hasPlaceholder = segments.stream().anyMatch(s -> !(s instanceof PlaceholderParser.Literal));
-            if (!hasPlaceholder && !value.contains("\\${")) {
+            // No placeholder, no malformed segment and no escape → the parse would be the identity.
+            if (!PlaceholderParser.needsResolution(value)) {
                 return value;
             }
+            List<PlaceholderParser.Segment> segments = PlaceholderParser.parse(value);
 
             // WHOLE-VALUE mode: single Placeholder segment (no surrounding literals)
             if (segments.size() == 1 && segments.get(0) instanceof PlaceholderParser.Placeholder ph) {
@@ -380,11 +374,14 @@ public final class PlaceholderResolver {
          *       record a failure with a depth note and return the raw {@code ${...}} text.</li>
          *   <li><strong>Tree probe</strong> — consult {@link TreeLookup#find} unless the key is
          *       currently on the resolution stack (cycle / self-reference). A string result with
-         *       placeholders is recursively resolved; a {@link JsonObject} or {@link JsonArray}
+         *       placeholders or escapes is re-parsed and resolved exactly like a walked value, so
+         *       {@code \${b}} reads as the text {@code ${b}} through a reference as it does in
+         *       place; a {@link JsonObject} or {@link JsonArray}
          *       value causes the key to be pushed on the stack, a walked copy of the container to
          *       be returned, and the key to be popped — so that any placeholder inside the
-         *       container that refers back to the same key is detected as a cycle. A plain string
-         *       or non-string scalar is returned directly (type preserved).</li>
+         *       container that refers back to the same key is detected as a cycle. A string the
+         *       parse would leave as is, or a non-string scalar, is returned directly (type
+         *       preserved).</li>
          *   <li><strong>Sources in declared order, memoized</strong> — each source is consulted
          *       at most once per key. A {@link ConfigPropertySourceException} propagates
          *       immediately.</li>
@@ -423,8 +420,10 @@ public final class PlaceholderResolver {
                     // Failures inside the referenced value are located by the key where the value
                     // lives, so a value reached both directly and through a reference is one entry
                     String location = key;
-                    if (treeVal instanceof String s && PlaceholderParser.containsPlaceholder(s)) {
-                        // Recursively resolve the string value found in the tree
+                    if (treeVal instanceof String s && PlaceholderParser.needsResolution(s)) {
+                        // Re-parse the string value found in the tree exactly as the walk would:
+                        // its placeholders are resolved and its escapes expanded, so the value
+                        // reads the same through the reference as in place.
                         stack.push(key);
                         try {
                             return resolveString(s, depth + 1, location);
@@ -452,7 +451,8 @@ public final class PlaceholderResolver {
                             stack.pop();
                         }
                     }
-                    // Non-string scalar or plain string — return directly (type preserved)
+                    // Non-string scalar, or a string the parse would leave as is — return directly
+                    // (type preserved)
                     return treeVal;
                 }
             }

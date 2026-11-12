@@ -204,9 +204,11 @@ final class PlaceholderParser {
 
     /**
      * Returns {@code true} if the input contains at least one {@link Placeholder} or
-     * {@link Malformed} segment — i.e., if placeholder resolution needs to be performed.
+     * {@link Malformed} segment — i.e., if the input holds a live reference.
      *
-     * <p>An escaped {@code \${...}} does NOT count; it produces only a {@link Literal}.
+     * <p>An escaped {@code \${...}} does NOT count; it produces only a {@link Literal}. The engine's
+     * test for whether a string must go through the parser at all is {@link #needsResolution},
+     * which also accepts an escape.
      *
      * <p>Uses a fast {@link String#indexOf(String)} pre-check: if the input contains no
      * {@code ${} sequence it cannot contain any placeholder or malformed segment and
@@ -220,6 +222,23 @@ final class PlaceholderParser {
             return false;
         }
         return parse(input).stream().anyMatch(s -> !(s instanceof Literal));
+    }
+
+    /**
+     * Returns {@code true} if parsing {@code input} would change it — i.e., if it
+     * {@linkplain #containsPlaceholder contains a placeholder} or an escape sequence {@code \${}
+     * that the scan turns into the literal {@code ${}.
+     *
+     * <p>This is the engine's test for whether a string value must go through the parser. It is
+     * applied to a walked value and to a tree value reached through a reference alike, so a value
+     * reads the same either way: {@code \${b}} yields the text {@code ${b}} in place and through
+     * {@code ${a}}.
+     *
+     * @param input the string to inspect; must not be {@code null}
+     * @return {@code true} if the parsed text or segments differ from the input
+     */
+    static boolean needsResolution(String input) {
+        return input.contains("\\${") || containsPlaceholder(input);
     }
 
     // --- Private helpers ---
