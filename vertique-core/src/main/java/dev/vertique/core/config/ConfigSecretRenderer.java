@@ -28,6 +28,12 @@ import java.util.Locale;
  *       {@code //} and {@code @}) and the value of any credential-bearing query parameter.</li>
  * </ul>
  *
+ * <p>{@link #isUriPath(String)} is the companion predicate for the second shape: it names the dotted
+ * paths ({@code jdbcUrl}, {@code baseUrl}, {@code endpoints}, {@code uri}, {@code connectionString})
+ * whose string value is a URL the config mapper renders through {@code redactUri} when it serializes a
+ * configuration record. A path that names a secret always wins: callers test {@code isSensitivePath}
+ * first and mask the whole value, so a {@code tokenUrl} renders as {@link #MASK}, not as a URL.
+ *
  * <p>The secret-path predicate is the <em>union</em> of every token any module needs, so a bag
  * rendered through this redactor is masked consistently regardless of which module owns it. Besides
  * the dotted-substring tokens ({@code password}, {@code secret}, {@code token}, {@code passphrase},
@@ -69,6 +75,15 @@ public final class ConfigSecretRenderer {
      */
     private static final List<String> NORMALIZED_SECRET_TOKENS = List.of("apikey", "accesskey", "secretkey");
 
+    /**
+     * Separator-normalized URL tokens. A path names a URL-valued string when its normalized form —
+     * lower-cased with {@code .}, {@code -}, and {@code _} stripped — contains any of these, so
+     * {@code jdbcUrl}, {@code base-url}, {@code redis.endpoints}, {@code uri} and
+     * {@code connection_string} all match. The set may widen in a minor release (widening only adds
+     * masking) and never narrows.
+     */
+    private static final List<String> URI_TOKENS = List.of("url", "uri", "endpoint", "connectionstring");
+
     private ConfigSecretRenderer() {}
 
     /**
@@ -99,6 +114,37 @@ public final class ConfigSecretRenderer {
         }
         String normalized = lower.replace(".", "").replace("-", "").replace("_", "");
         return NORMALIZED_SECRET_TOKENS.stream().anyMatch(normalized::contains);
+    }
+
+    /**
+     * Returns {@code true} when the dotted config path names a URL-valued string: its
+     * <em>separator-normalized</em> form — lower-cased with {@code .}, {@code -}, and {@code _} stripped
+     * — contains {@code url}, {@code uri}, {@code endpoint} or {@code connectionstring}. The match is a
+     * substring match, so {@code jdbcUrl}, {@code restClient.orders.baseUrl}, {@code redis.endpoints}
+     * and {@code sql.connection-string} are recognized at any depth and in any casing or separator
+     * convention.
+     *
+     * <p>The predicate is deliberately biased towards matching: a missed name leaks a credential, while
+     * a wrong match costs at most a rewritten non-URL string that happens to contain {@code //…@} or a
+     * credential-named {@code ?name=value}, because {@link #redactUri(String)} returns a string equal to
+     * its input otherwise. Look-alikes such as {@code security} and {@code during} (both contain
+     * {@code uri}) therefore match by design.
+     * Names that do not contain one of the tokens — {@code address}, {@code host},
+     * {@code bootstrap.servers} — are not recognized even when they hold a URL.
+     *
+     * <p>A secret path takes precedence: callers test {@link #isSensitivePath(String)} first, so a path
+     * that is both ({@code tokenUrl}) is masked whole as {@link #MASK}.
+     *
+     * @param dottedPath the full dotted path of a config leaf (must not be {@code null})
+     * @return {@code true} when the path names a URL-valued string
+     */
+    public static boolean isUriPath(String dottedPath) {
+        String normalized = dottedPath
+                .toLowerCase(Locale.ROOT)
+                .replace(".", "")
+                .replace("-", "")
+                .replace("_", "");
+        return URI_TOKENS.stream().anyMatch(normalized::contains);
     }
 
     /**

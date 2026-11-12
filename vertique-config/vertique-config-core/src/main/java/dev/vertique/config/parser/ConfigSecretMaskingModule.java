@@ -27,7 +27,9 @@ import java.util.OptionalLong;
 
 /**
  * Jackson module that masks secrets when the config mapper <em>serializes</em> a configuration
- * record, so a debug dump of a parsed record follows the same rule as the record's {@code toString()}.
+ * record, so a debug dump of a parsed record follows the shared secret rule the record's
+ * {@code toString()} is written against (a record's own extra redaction, such as a {@code ;password=}
+ * property in a JDBC URL, is not replayed here).
  *
  * <p>Every bean property whose dotted path within the serialized document
  * {@link ConfigSecretRenderer#isSensitivePath(String) names a secret} is written as
@@ -45,10 +47,24 @@ import java.util.OptionalLong;
  * its sensitive entries masked at every depth, the same walk {@code redactBag} applies to a
  * {@code toString()}; a sensitive entry that is {@code null} is dropped, as an absent field is.
  *
- * <p>The rule keys on names, through the serialized property name: a credential embedded in a
- * URL-typed string ({@code jdbcUrl}, {@code baseUrl}) is not recognised and serializes as given.
- * Deserialization is untouched; the matching guard on input is {@code ConfigParser}'s rejection of
- * a literal {@code "***"} at a sensitive path. The module is registered on every config mapper
+ * <p>A {@link CharSequence} at a path that {@link ConfigSecretRenderer#isUriPath(String) names a URL}
+ * ({@code jdbcUrl}, {@code baseUrl}, {@code endpoints}, {@code uri}) — a field, an {@link Optional},
+ * a list element or a bag entry — is written as {@link ConfigSecretRenderer#redactUri(String)} renders
+ * it: the authority userinfo and credential-named query-parameter values are masked, scheme, host,
+ * port and path stay visible. A URL without credentials, and any other string, serializes as given
+ * through the regular writer. The secret rule wins: a path that is both ({@code tokenUrl}) renders as
+ * {@code "***"}. This is one difference from {@code toString()}: {@code redactBag} does not apply the
+ * URL rule to bag leaves. A masked bag or URL is written through the provider's default serializer for
+ * its value, so a property-level serializer annotation on such a field is bypassed.
+ *
+ * <p>The URL rule covers {@code scheme://user:pass@host} and {@code ?name=value} forms only, with the
+ * userinfo percent-encoded: a raw {@code /}, {@code ?} or {@code #} inside a password ends the
+ * authority early, only the first authority of a comma-joined value is masked, and a scheme-less or
+ * semicolon-style connection string, a {@link java.net.URI}, {@link java.net.URL} or array-typed value,
+ * and a URL under a name without one of the tokens ({@code address}) serialize as given.
+ * Deserialization is untouched; the matching guard on input is
+ * {@code ConfigParser}'s rejection of a literal {@code "***"} at a sensitive path, which does not
+ * recognise a masked URL ({@code //***@host}). The module is registered on every config mapper
  * ({@code DefaultConfigMapper}) and on nothing else: a record serialized through another
  * {@code ObjectMapper} is not masked by it. Properties written by a custom serializer registered for
  * the record type and {@code @JsonAnyGetter} entries are outside its reach; the members of a
@@ -86,7 +102,8 @@ final class ConfigSecretMaskingModule extends SimpleModule {
 
     /**
      * A property writer that masks or omits its property when the dotted path is sensitive, scrubs an
-     * open bag it holds, and otherwise behaves exactly like the writer it was copied from.
+     * open bag it holds, redacts a URL-named string, and otherwise behaves exactly like the writer it
+     * was copied from.
      */
     static final class MaskingPropertyWriter extends BeanPropertyWriter {
 
@@ -118,7 +135,7 @@ final class ConfigSecretMaskingModule extends SimpleModule {
                 return;
             }
             Object bag = unwrap(get(bean));
-            Object masked = ConfigSecretPaths.maskBag(path, bag);
+            Object masked = ConfigSecretPaths.maskValue(path, bag);
             if (masked != bag) {
                 gen.writeFieldName(getName());
                 prov.defaultSerializeValue(masked, gen);
@@ -140,7 +157,7 @@ final class ConfigSecretMaskingModule extends SimpleModule {
                 return;
             }
             Object bag = unwrap(get(bean));
-            Object masked = ConfigSecretPaths.maskBag(path, bag);
+            Object masked = ConfigSecretPaths.maskValue(path, bag);
             if (masked != bag) {
                 prov.defaultSerializeValue(masked, gen);
                 return;

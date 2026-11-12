@@ -1310,13 +1310,27 @@ rejects a literal `"***"` at such a path so a masked dump cannot be fed back as 
 secret component whose serialized name the rule recognises therefore needs no
 `@JsonProperty(access = WRITE_ONLY)`; it stays readable from configuration and through its accessor.
 An open bag that may hold a secret under any key keeps `WRITE_ONLY`. Only the config mapper masks —
-a record serialized with another `ObjectMapper` prints the secret — the rule keys on names, so a
-credential embedded in a URL-typed string is not recognised, and the substring rule also masks
+a record serialized with another `ObjectMapper` prints the secret — and the substring rule also masks
 look-alikes such as `keyStorePath` or `maxTokens`.
+
+`isUriPath` names the string fields the config mapper renders through `redactUri` instead of as given:
+a field whose dotted path contains `url`, `uri`, `endpoint` or `connectionstring` after lower-casing
+and separator stripping (`jdbcUrl`, `baseUrl`, `endpoints`, `connection-string`) has its authority
+userinfo and credential-named query-parameter values masked while scheme, host, port and path stay
+visible. A secret-named path wins (`tokenUrl` renders as `"***"`). The config mapper applies the rule
+to every string it walks at such a path — a field, an `Optional`, a list element, a bag entry — but
+`redactBag`, and so a bag's `toString()`, does not. The rule covers `scheme://user:pass@host` and
+`?name=value` forms only, with the userinfo percent-encoded: a raw `/`, `?` or `#` inside a password
+ends the authority early and leaves the rest visible, only the first authority of a comma-joined value
+is masked, a scheme-less or semicolon-style connection string is printed as given, a `java.net.URI`,
+`URL` or array-typed value is written as given, a URL under a name without one of the tokens
+(`address`, `host`) is not recognized, and a masked URL fed back to `ConfigParser` is not rejected
+(only the literal `"***"` at a secret path is).
 
 | Method | Behavior |
 |---|---|
 | `isSensitivePath(String dottedPath)` | `true` when the lower-cased path contains `password`, `secret`, `token`, `passphrase`, `credential`, `jaas.config`, `user.info`, `private.key`, `keystore`, or `truststore`; or when its separator-stripped, lower-cased form contains `apikey`, `accesskey`, or `secretkey`. |
+| `isUriPath(String dottedPath)` | `true` when the separator-stripped, lower-cased path contains `url`, `uri`, `endpoint` or `connectionstring`. Biased towards matching: `security` and `during` match through `uri`; a wrong match costs at most a rewritten non-URL string that contains `//…@` or a credential-named `?name=value`, because `redactUri` returns an equal string otherwise. The token set may widen in a minor release and never narrows. |
 | `redactBag(JsonObject bag)` | Renders a bag as a log-safe `String`, descending through nested objects *and* arrays and masking every leaf whose full dotted path is sensitive. |
 | `redactUri(String uri)` | Masks authority userinfo (`user:pass` between `//` and `@`) and the value of any credential-bearing query parameter. Best-effort; never throws. |
 
