@@ -34,7 +34,9 @@ startup-resolved credentials. Changing credential configuration does not change 
 an existing client; credential rotation therefore requires an application restart.
 
 Validation is performed while typed configuration is constructed. Diagnostics contain stable
-field-level messages and never include endpoint credentials or password material.
+field-level messages and never include endpoint credentials or password material: an
+invalid-endpoint diagnostic names no part of the endpoint and carries no cause, because a mistyped
+credential can sit anywhere in the text and the JDK's URI parse failure would quote it whole.
 `RedisConnectionConfig.toString()` also redacts `passwordSecret`.
 
 ## Redis client lifecycle

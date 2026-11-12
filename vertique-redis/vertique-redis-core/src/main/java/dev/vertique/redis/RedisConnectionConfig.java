@@ -5,6 +5,7 @@ package dev.vertique.redis;
 
 import dev.vertique.core.config.ConfigSecretRenderer;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.List;
 import java.util.Objects;
 
@@ -59,18 +60,25 @@ public record RedisConnectionConfig(
     }
 
     private static void validateEndpoint(String endpoint) {
+        requireNonBlank(endpoint, "endpoint");
+        URI uri;
         try {
-            URI uri = URI.create(requireNonBlank(endpoint, "endpoint"));
-            if (!("redis".equalsIgnoreCase(uri.getScheme()) || "rediss".equalsIgnoreCase(uri.getScheme()))
-                    || uri.getHost() == null
-                    || uri.getUserInfo() != null
-                    || uri.getFragment() != null
-                    || uri.getQuery() != null
-                    || (uri.getPort() == 0 || uri.getPort() < -1 || uri.getPort() > 65_535)) {
-                throw new IllegalArgumentException("endpoint must be a credential-free redis URI");
-            }
-        } catch (IllegalArgumentException invalid) {
-            throw new IllegalArgumentException("invalid Redis endpoint", invalid);
+            uri = new URI(endpoint);
+        } catch (URISyntaxException malformed) {
+            // Neither attach the cause nor echo the input: the URISyntaxException message quotes the whole
+            // raw endpoint, credentials included.
+            throw new IllegalArgumentException("invalid Redis endpoint: endpoint is not a valid URI");
+        }
+        if (!("redis".equalsIgnoreCase(uri.getScheme()) || "rediss".equalsIgnoreCase(uri.getScheme()))
+                || uri.getHost() == null
+                || uri.getUserInfo() != null
+                || uri.getFragment() != null
+                || uri.getQuery() != null
+                || uri.getPort() == 0
+                || uri.getPort() > 65_535) {
+            // No part of the endpoint is rendered: a mistyped credential can sit in the host or port
+            // position (redis://user:123456, redis://user@pass), so even parsed components are not safe.
+            throw new IllegalArgumentException("invalid Redis endpoint: endpoint must be a credential-free redis URI");
         }
     }
 
