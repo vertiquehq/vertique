@@ -6,6 +6,7 @@ package dev.vertique.rest.jaxrs;
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.core.util.AnnotationResolver;
+import dev.vertique.core.util.TypeResolver;
 import dev.vertique.core.validation.ValidateWith;
 import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.input.processing.ReflectiveInvocationPolicies;
@@ -220,9 +221,10 @@ class ResourceScanner {
                 continue;
             }
 
-            List<ResourceMethodMeta.ParamMeta> params = resolveParams(method, annotationView);
-            Class<?> responseBodyType = resolveResponseBodyType(method);
-            boolean returnsFuture = io.vertx.core.Future.class.isAssignableFrom(method.getReturnType());
+            List<ResourceMethodMeta.ParamMeta> params = resolveParams(method, annotationView, clazz);
+            Class<?> responseBodyType = resolveResponseBodyType(method, clazz);
+            boolean returnsFuture = io.vertx.core.Future.class.isAssignableFrom(rawType(
+                    TypeResolver.resolveMemberType(clazz, method.getGenericReturnType()), method.getReturnType()));
             boolean returnsVoid = responseBodyType == Void.class || method.getReturnType() == void.class;
             List<String> consumes = resolveConsumes(classAnnotations, methodAnnotations);
             List<String> produces = resolveProduces(classAnnotations, methodAnnotations);
@@ -389,10 +391,16 @@ class ResourceScanner {
      * @return ordered list of parameter metadata
      */
     List<ResourceMethodMeta.ParamMeta> resolveParams(Method method, Class<?> annotationView) {
+        return resolveParams(method, annotationView, annotationView);
+    }
+
+    private List<ResourceMethodMeta.ParamMeta> resolveParams(Method method, Class<?> annotationView, Class<?> context) {
         List<ResourceMethodMeta.ParamMeta> params = new ArrayList<>();
         Parameter[] parameters = method.getParameters();
         for (int i = 0; i < parameters.length; i++) {
             Parameter param = parameters[i];
+            Type resolvedType = TypeResolver.resolveMemberType(context, param.getParameterizedType());
+            Class<?> parameterType = rawType(resolvedType, param.getType());
             // Merge parameter annotations from the concrete method, superclasses, and the view's
             // interfaces.
             Annotation[] mergedParamAnnotations =
@@ -403,24 +411,24 @@ class ResourceScanner {
             // instead of letting it fall through to BODY. Annotations are preserved so the
             // validator can detect @Context + binding-annotation conflicts.
             boolean hasContextAnnotation = findParamAnnotation(mergedParamAnnotations, Context.class) != null;
-            if (hasContextAnnotation || RestContextTypes.isInjectable(param.getType())) {
+            if (hasContextAnnotation || RestContextTypes.isInjectable(parameterType)) {
                 params.add(new ResourceMethodMeta.ParamMeta(
                         null,
                         ResourceMethodMeta.ParamSource.CONTEXT,
-                        param.getType(),
+                        parameterType,
                         null,
                         null,
                         null,
                         mergedParamAnnotations));
-            } else if (RequestPreconditions.class.isAssignableFrom(param.getType())) {
+            } else if (RequestPreconditions.class.isAssignableFrom(parameterType)) {
                 params.add(new ResourceMethodMeta.ParamMeta(
                         null, ResourceMethodMeta.ParamSource.PRECONDITIONS, RequestPreconditions.class));
-            } else if (param.getType().isAnnotationPresent(RequestParams.class)) {
+            } else if (parameterType.isAnnotationPresent(RequestParams.class)) {
                 // Type-level check — annotation is on the parameter *type*, not the parameter itself
                 params.add(new ResourceMethodMeta.ParamMeta(
                         null,
                         ResourceMethodMeta.ParamSource.BEAN_PARAM,
-                        param.getType(),
+                        parameterType,
                         null,
                         null,
                         null,
@@ -429,7 +437,7 @@ class ResourceScanner {
                 params.add(new ResourceMethodMeta.ParamMeta(
                         null,
                         ResourceMethodMeta.ParamSource.BEAN_PARAM,
-                        param.getType(),
+                        parameterType,
                         null,
                         null,
                         null,
@@ -439,51 +447,51 @@ class ResourceScanner {
                 params.add(new ResourceMethodMeta.ParamMeta(
                         pp.value(),
                         ResourceMethodMeta.ParamSource.PATH,
-                        param.getType(),
+                        parameterType,
                         null,
                         null,
                         resolveDefaultValue(mergedParamAnnotations),
                         mergedParamAnnotations));
             } else if (findParamAnnotation(mergedParamAnnotations, QueryParam.class) != null) {
                 QueryParam qp = findParamAnnotation(mergedParamAnnotations, QueryParam.class);
-                Class<?> componentType = resolveComponentType(param);
+                Class<?> componentType = resolveComponentType(parameterType, resolvedType);
                 params.add(new ResourceMethodMeta.ParamMeta(
                         qp.value(),
                         ResourceMethodMeta.ParamSource.QUERY,
-                        param.getType(),
+                        parameterType,
                         componentType,
-                        param.getParameterizedType(),
+                        resolvedType,
                         resolveDefaultValue(mergedParamAnnotations),
                         mergedParamAnnotations));
             } else if (findParamAnnotation(mergedParamAnnotations, HeaderParam.class) != null) {
                 HeaderParam hp = findParamAnnotation(mergedParamAnnotations, HeaderParam.class);
-                Class<?> componentType = resolveComponentType(param);
+                Class<?> componentType = resolveComponentType(parameterType, resolvedType);
                 params.add(new ResourceMethodMeta.ParamMeta(
                         hp.value(),
                         ResourceMethodMeta.ParamSource.HEADER,
-                        param.getType(),
+                        parameterType,
                         componentType,
-                        param.getParameterizedType(),
+                        resolvedType,
                         resolveDefaultValue(mergedParamAnnotations),
                         mergedParamAnnotations));
             } else if (findParamAnnotation(mergedParamAnnotations, CookieParam.class) != null) {
                 CookieParam cp = findParamAnnotation(mergedParamAnnotations, CookieParam.class);
-                Class<?> componentType = resolveComponentType(param);
+                Class<?> componentType = resolveComponentType(parameterType, resolvedType);
                 params.add(new ResourceMethodMeta.ParamMeta(
                         cp.value(),
                         ResourceMethodMeta.ParamSource.COOKIE,
-                        param.getType(),
+                        parameterType,
                         componentType,
-                        param.getParameterizedType(),
+                        resolvedType,
                         resolveDefaultValue(mergedParamAnnotations),
                         mergedParamAnnotations));
             } else if (findParamAnnotation(mergedParamAnnotations, FormParam.class) != null) {
                 FormParam fp = findParamAnnotation(mergedParamAnnotations, FormParam.class);
-                Class<?> componentType = resolveComponentType(param);
+                Class<?> componentType = resolveComponentType(parameterType, resolvedType);
                 params.add(new ResourceMethodMeta.ParamMeta(
                         fp.value(),
                         ResourceMethodMeta.ParamSource.FORM,
-                        param.getType(),
+                        parameterType,
                         componentType,
                         // genericType stays null for FORM: ResourceMethodMeta.ParamMeta documents it as
                         // the full generic type for BODY parameters only, and the FORM
@@ -491,7 +499,7 @@ class ResourceScanner {
                         null,
                         resolveDefaultValue(mergedParamAnnotations),
                         mergedParamAnnotations));
-            } else if (isFileUploadList(param)) {
+            } else if (isListOf(resolvedType, FileUpload.class)) {
                 params.add(new ResourceMethodMeta.ParamMeta(
                         null,
                         ResourceMethodMeta.ParamSource.FILE_UPLOADS,
@@ -500,7 +508,7 @@ class ResourceScanner {
                         null,
                         null,
                         mergedParamAnnotations));
-            } else if (isEntityPartList(param)) {
+            } else if (isListOf(resolvedType, EntityPart.class)) {
                 params.add(new ResourceMethodMeta.ParamMeta(
                         null,
                         ResourceMethodMeta.ParamSource.ENTITY_PARTS,
@@ -513,9 +521,9 @@ class ResourceScanner {
                 params.add(new ResourceMethodMeta.ParamMeta(
                         null,
                         ResourceMethodMeta.ParamSource.BODY,
-                        param.getType(),
+                        parameterType,
                         null,
-                        param.getParameterizedType(),
+                        resolvedType,
                         null,
                         mergedParamAnnotations));
             }
@@ -555,7 +563,11 @@ class ResourceScanner {
      * @return the resolved response body type
      */
     Class<?> resolveResponseBodyType(Method method) {
-        Type returnType = method.getGenericReturnType();
+        return resolveResponseBodyType(method, method.getDeclaringClass());
+    }
+
+    private Class<?> resolveResponseBodyType(Method method, Class<?> context) {
+        Type returnType = TypeResolver.resolveMemberType(context, method.getGenericReturnType());
         if (returnType instanceof ParameterizedType pt) {
             if (io.vertx.core.Future.class.isAssignableFrom((Class<?>) pt.getRawType())) {
                 Type typeArg = pt.getActualTypeArguments()[0];
@@ -565,13 +577,26 @@ class ResourceScanner {
                 if (typeArg instanceof ParameterizedType nestedPt) {
                     return (Class<?>) nestedPt.getRawType();
                 }
-                return (Class<?>) typeArg;
+                return rawType(typeArg, Object.class);
             }
         }
         if (method.getReturnType() == void.class) {
             return Void.class;
         }
-        return method.getReturnType();
+        return rawType(returnType, method.getReturnType());
+    }
+
+    private static Class<?> rawType(Type type, Class<?> fallback) {
+        return rawType(type, fallback, java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()));
+    }
+
+    private static Class<?> rawType(Type type, Class<?> fallback, java.util.Set<Type> visiting) {
+        if (!visiting.add(type)) return fallback;
+        if (type instanceof Class<?> cls) return cls;
+        if (type instanceof ParameterizedType pt && pt.getRawType() instanceof Class<?> cls) return cls;
+        if (type instanceof java.lang.reflect.WildcardType wildcard && wildcard.getUpperBounds().length > 0)
+            return rawType(wildcard.getUpperBounds()[0], fallback, visiting);
+        return fallback;
     }
 
     // --- Private helpers ---
@@ -651,16 +676,18 @@ class ResourceScanner {
      */
     @Nullable
     private Class<?> resolveComponentType(Parameter param) {
+        return resolveComponentType(param.getType(), param.getParameterizedType());
+    }
+
+    private Class<?> resolveComponentType(Class<?> rawType, Type genericType) {
         // Array shape: T[] — restrict to sensible scalar element types (excludes byte[]/char[]
         // and other primitive arrays, which are binary/buffer body shapes, not multi-value params).
-        Class<?> rawType = param.getType();
         if (rawType.isArray()) {
             Class<?> componentType = rawType.getComponentType();
             return isScalarArrayComponent(componentType) ? componentType : null;
         }
 
         // Parameterized collection shape: List/Set/SortedSet/NavigableSet/Collection of a concrete type.
-        Type genericType = param.getParameterizedType();
         if (genericType instanceof ParameterizedType pt && isSupportedCollectionRawType(pt.getRawType())) {
             Type typeArg = pt.getActualTypeArguments()[0];
             if (typeArg instanceof Class<?> cls) {
@@ -740,7 +767,10 @@ class ResourceScanner {
      * @return {@code true} if the parameter generic type is {@code List<elementType>}
      */
     private boolean isListOf(Parameter param, Class<?> elementType) {
-        Type genericType = param.getParameterizedType();
+        return isListOf(param.getParameterizedType(), elementType);
+    }
+
+    private boolean isListOf(Type genericType, Class<?> elementType) {
         if (genericType instanceof ParameterizedType pt && pt.getRawType() == List.class) {
             Type typeArg = pt.getActualTypeArguments()[0];
             return typeArg == elementType;

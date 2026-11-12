@@ -582,31 +582,24 @@ class JaxRsRouteRegistrarTest {
     }
 
     @Test
-    @DisplayName("A non-overridden generic default binds its type-variable parameter as Object and fails startup")
-    void genericDefaultRoute_typeVariableParameterFailsStartup() {
-        RouteRegistrationException ex = assertThrows(
-                RouteRegistrationException.class,
-                () -> RegistrarTestSupport.registerAll(
-                        registrar,
-                        Set.of(new GenericDefaultResource()),
-                        router,
-                        RegistrarTestSupport.TEST_MOUNT_META,
-                        List.of(),
-                        List.of(),
-                        null,
-                        false,
-                        List.of(),
-                        List.of(),
-                        "OFF",
-                        null,
-                        null,
-                        null,
-                        false));
-
-        assertEquals(1, ex.violations().size(), ex.violations().toString());
-        assertEquals(
-                RouteRegistrationViolation.ViolationType.UNRESOLVABLE_PARAM_CONVERTER,
-                ex.violations().get(0).type());
+    @DisplayName("A non-overridden generic default binds its concrete parameter at startup")
+    void genericDefaultRoute_concreteParameterRegisters() {
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> RegistrarTestSupport.registerAll(
+                registrar,
+                Set.of(new GenericDefaultResource()),
+                router,
+                RegistrarTestSupport.TEST_MOUNT_META,
+                List.of(),
+                List.of(),
+                null,
+                false,
+                List.of(),
+                List.of(),
+                "OFF",
+                null,
+                null,
+                null,
+                false));
     }
 
     // --- File upload and content type tests ---

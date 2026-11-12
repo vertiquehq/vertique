@@ -3,12 +3,19 @@
 
 package dev.vertique.core.util;
 
+import java.lang.reflect.Array;
+import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.lang.reflect.TypeVariable;
+import java.lang.reflect.WildcardType;
 import java.util.ArrayDeque;
+import java.util.Arrays;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -37,6 +44,150 @@ import java.util.Set;
 public final class TypeResolver {
 
     private TypeResolver() {}
+
+    /** Resolves hierarchy variables in a type as viewed from the concrete class.
+     * Unbound variables are retained.
+     * @param context concrete hierarchy
+     * @param type declared type
+     * @return substituted type
+     */
+    public static Type resolveMemberType(Class<?> context, Type type) {
+        return substitute(type, GenericBindings.of(context), new HashSet<>());
+    }
+
+    private static Type substitute(Type type, Map<TypeVariable<?>, Type> bindings, Set<TypeVariable<?>> visiting) {
+        if (type instanceof TypeVariable<?> variable) {
+            Type bound = bindings.get(variable);
+            if (bound == null || !visiting.add(variable)) return type;
+            Type result = substitute(bound, bindings, visiting);
+            visiting.remove(variable);
+            return result;
+        }
+        if (type instanceof ParameterizedType pt) {
+            Type[] args = pt.getActualTypeArguments();
+            for (int i = 0; i < args.length; i++) args[i] = substitute(args[i], bindings, visiting);
+            Type owner = pt.getOwnerType();
+            Type resolvedOwner = owner == null ? null : substitute(owner, bindings, visiting);
+            if (Arrays.equals(args, pt.getActualTypeArguments()) && Objects.equals(owner, resolvedOwner)) return pt;
+            return new ResolvedParameterizedType(pt.getRawType(), resolvedOwner, args);
+        }
+        if (type instanceof WildcardType wildcard) {
+            Type[] upper = wildcard.getUpperBounds();
+            Type[] lower = wildcard.getLowerBounds();
+            for (int i = 0; i < upper.length; i++) upper[i] = substitute(upper[i], bindings, visiting);
+            for (int i = 0; i < lower.length; i++) lower[i] = substitute(lower[i], bindings, visiting);
+            if (Arrays.equals(upper, wildcard.getUpperBounds()) && Arrays.equals(lower, wildcard.getLowerBounds()))
+                return wildcard;
+            return new WildcardType() {
+                public Type[] getUpperBounds() {
+                    return upper.clone();
+                }
+
+                public Type[] getLowerBounds() {
+                    return lower.clone();
+                }
+
+                public boolean equals(Object other) {
+                    return other instanceof WildcardType w
+                            && Arrays.equals(upper, w.getUpperBounds())
+                            && Arrays.equals(lower, w.getLowerBounds());
+                }
+
+                public int hashCode() {
+                    return Arrays.hashCode(upper) ^ Arrays.hashCode(lower);
+                }
+
+                public String getTypeName() {
+                    if (lower.length > 0) return "? super " + lower[0].getTypeName();
+                    if (upper.length == 0 || upper[0] == Object.class) return "?";
+                    return "? extends " + upper[0].getTypeName();
+                }
+
+                public String toString() {
+                    return getTypeName();
+                }
+            };
+        }
+        if (type instanceof GenericArrayType array) {
+            Type component = substitute(array.getGenericComponentType(), bindings, visiting);
+            if (component instanceof Class<?> cls)
+                return Array.newInstance(cls, 0).getClass();
+            return new ResolvedGenericArrayType(component);
+        }
+        return type;
+    }
+
+    private record ResolvedGenericArrayType(Type component) implements GenericArrayType {
+        @Override
+        public Type getGenericComponentType() {
+            return component;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof GenericArrayType array && component.equals(array.getGenericComponentType());
+        }
+
+        @Override
+        public int hashCode() {
+            return component.hashCode();
+        }
+
+        @Override
+        public String getTypeName() {
+            return component.getTypeName() + "[]";
+        }
+
+        @Override
+        public String toString() {
+            return getTypeName();
+        }
+    }
+
+    private record ResolvedParameterizedType(Type raw, Type owner, Type[] arguments) implements ParameterizedType {
+        @Override
+        public Type[] getActualTypeArguments() {
+            return arguments.clone();
+        }
+
+        @Override
+        public Type getRawType() {
+            return raw;
+        }
+
+        @Override
+        public Type getOwnerType() {
+            return owner;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof ParameterizedType pt
+                    && Objects.equals(raw, pt.getRawType())
+                    && Objects.equals(owner, pt.getOwnerType())
+                    && Arrays.equals(arguments, pt.getActualTypeArguments());
+        }
+
+        @Override
+        public String getTypeName() {
+            String base =
+                    owner == null ? raw.getTypeName() : owner.getTypeName() + "$" + ((Class<?>) raw).getSimpleName();
+            if (arguments.length == 0) return base;
+            return base + "<"
+                    + Arrays.stream(arguments).map(Type::getTypeName).collect(java.util.stream.Collectors.joining(", "))
+                    + ">";
+        }
+
+        @Override
+        public String toString() {
+            return getTypeName();
+        }
+
+        @Override
+        public int hashCode() {
+            return Arrays.hashCode(arguments) ^ Objects.hashCode(owner) ^ Objects.hashCode(raw);
+        }
+    }
 
     /**
      * Resolves the first type argument (index {@code 0}) of the given {@code targetInterface}

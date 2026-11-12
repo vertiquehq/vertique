@@ -28,13 +28,11 @@ import javax.annotation.processing.Generated;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
-import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.ExecutableType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
-import javax.lang.model.util.Types;
 
 /**
  * Emitter for per-method {@code {Resource}_{methodName}_{idx}_ExecutionPlan} companions.
@@ -281,7 +279,9 @@ public final class ExecutionPlanEmitter {
         String resourcePkg = ctx.packageNameOf(concreteClass);
 
         // Check return type
-        TypeMirror returnType = method.concreteMethod().getReturnType();
+        TypeMirror returnType = ((ExecutableType)
+                        ctx.types().asMemberOf((DeclaredType) concreteClass.asType(), method.concreteMethod()))
+                .getReturnType();
         if (!isTypeAccessible(returnType, resourcePkg, elements)) {
             return false;
         }
@@ -305,20 +305,22 @@ public final class ExecutionPlanEmitter {
             }
         }
 
-        // Gate 4: declared parameter types must erase like their types as resource members
-        Types types = ctx.types();
-        ExecutableType memberType =
-                (ExecutableType) types.asMemberOf((DeclaredType) concreteClass.asType(), method.concreteMethod());
-        List<? extends VariableElement> declared = method.concreteMethod().getParameters();
-        for (int i = 0; i < declared.size(); i++) {
-            TypeMirror declaredErasure = types.erasure(declared.get(i).asType());
-            TypeMirror memberErasure =
-                    types.erasure(memberType.getParameterTypes().get(i));
-            if (!types.isSameType(declaredErasure, memberErasure)) {
+        // A raw cast of a parameterized member can make same-erasure overloads ambiguous.
+        for (int i = 0; i < method.params().size(); i++) {
+            TypeMirror type = method.params().get(i).type();
+            if (type instanceof DeclaredType declared
+                    && !declared.getTypeArguments().isEmpty()
+                    && !ctx.types()
+                            .isSameType(
+                                    ctx.types().erasure(type),
+                                    ctx.types()
+                                            .erasure(method.concreteMethod()
+                                                    .getParameters()
+                                                    .get(i)
+                                                    .asType()))) {
                 return false;
             }
         }
-
         return true;
     }
 
