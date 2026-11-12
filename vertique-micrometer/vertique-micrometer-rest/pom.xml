@@ -105,6 +105,19 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>micrometer-registry-prometheus</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Named REST applications and the JAX-RS router for the application-tag integration proof,
+             and the real config parser its REST composition needs (ConfigParser stubs cannot serve the
+             typed section parses). -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-rest-jaxrs</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-config-core</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

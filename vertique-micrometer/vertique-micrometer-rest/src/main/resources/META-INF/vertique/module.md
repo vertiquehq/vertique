@@ -56,13 +56,13 @@ dispatch layer.
 detected; those requests are counted as regular requests. This is a documented limitation.
 
 **Auth-rejected and pre-dispatch requests.** A request denied after it matched a JAX-RS operation
-route (401, 403, 415, or a validation 400) carries its real `route` and `operation` tags, because
-the framework records the operation before authentication. A request that no JAX-RS operation
-claimed is not timed: `ROOT` rejections, 404/405 routing misses, JAX-RS mount-level rejections
-before any operation route matched, MCP requests, and failed WebSocket upgrades. The timer therefore
-has no `UNKNOWN` `route` or `operation` series. For transport-wide counts, use Vert.x's native HTTP
-server metrics (`metrics.vertx.httpServer` in `vertique-micrometer-core`, default `true` when its
-Vert.x metrics are enabled).
+route (401, 403, 415, or a validation 400) carries its real `route`, `operation` and
+`rest.application` tags, because the framework records the operation before authentication. A
+request that no JAX-RS operation claimed is not timed: `ROOT` rejections, 404/405 routing misses,
+JAX-RS mount-level rejections before any operation route matched, MCP requests, and failed WebSocket
+upgrades. The timer therefore has no `UNKNOWN` `route` or `operation` series. For transport-wide
+counts, use Vert.x's native HTTP server metrics (`metrics.vertx.httpServer` in
+`vertique-micrometer-core`, default `true` when its Vert.x metrics are enabled).
 
 **Per-event registry lookup (no meter cache, D-L).** Both adapters call
 `Timer.builder(...).tags(...).register(registry)` on every event. Micrometer's internal registry
@@ -114,6 +114,7 @@ framework synthetic operations (see **API document reads** below).
 | `method` | HTTP method string, e.g. `GET` | Falls back to `UNKNOWN` when unavailable |
 | `route` | OpenAPI path template, e.g. `/orders/{id}` | The operation's route template, `event.operation().routeTemplate()`; never `UNKNOWN` |
 | `operation` | OpenAPI operationId | The operation's operationId, `event.operation().operationId()`; never `UNKNOWN` |
+| `rest.application` | The owning REST application's name, else `none` | `event.operation().applicationName()`; `none` for an operation of a hand-built or zero-declaration mount. Always present. `none` is a reserved application name, so it never collides with a declared one |
 | `status` | HTTP response status code as a string, e.g. `200` | Always a numeric string |
 | `outcome` | Low-cardinality bucket: `INFORMATIONAL`, `SUCCESS`, `REDIRECTION`, `CLIENT_ERROR`, `SERVER_ERROR`, `UNKNOWN` | Derived by integer division of the status code by 100; status 0 or outside 100–599 → `UNKNOWN` |
 | `error.type` | `failureCode`, else `wireFailureCode`, else `none` | Simple class name of the pipeline-mapped failure (e.g. `IllegalStateException`); when absent, falls back to the post-handoff wire-failure classification on `RestRequestCompletedEvent` (e.g. `ConnectionClosed`) |
@@ -125,16 +126,19 @@ across the composite. See `vertique-micrometer-core`'s module reference for the 
 **API document reads.** A read of a protected API document, and its `401` or `403` denial,
 completes as a REST operation completion whose operation is a framework synthetic operation. It is
 timed in `vertique.rest.server.requests` with `operation` `apidocs:<name>:json` or
-`apidocs:<name>:yaml` and `route` `/<name>/openapi.json` or `/<name>/openapi.yaml`: the descriptor's
-route template, the document path relative to the documentation prefix (`apidocs.path`), which it
-does not include. `method` is the request's method, so a `HEAD` read is tagged `HEAD`. A public
+`apidocs:<name>:yaml`, `rest.application` `<name>` (the documented application) and `route`
+`/<name>/openapi.json` or `/<name>/openapi.yaml`: the descriptor's route template, the document
+path relative to the documentation prefix (`apidocs.path`), which it does not include. `method` is the request's method, so a `HEAD` read is tagged `HEAD`. A public
 document read is claimed by no operation route, completes as an `HttpRequestCompletedEvent`, and is
 not timed there. Vert.x's native HTTP server metrics count document reads with every other request.
 
-**No application tag yet.** The timer does not carry the application name (`rest.application`).
-When one resource is mounted by more than one application with the same operationId and route, both
-mounts produce identical tags and their series merge until the meter adds the `rest.application`
-tag.
+**Application tag.** Every series carries `rest.application`: the name of the application whose
+mount served the operation, or `none` outside applications. One resource mounted by several
+applications under the same operationId and mount-relative route (which the mount validator permits
+for one owner) therefore records one series per application instead of merging them. When the
+registry comes from `MicrometerModule`, the key is cardinality-guarded in `vertique-micrometer-core`
+and cannot be claimed by `metrics.tags.extra`.
+Dashboards that aggregate the timer across applications must sum over `rest.application`.
 
 **`error.type` on a 200-status series.** Because `error.type` falls back to `wireFailureCode`, a
 timer sample tagged `status=200` MAY carry a non-`none` `error.type` — that combination (`status`
