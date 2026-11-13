@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.inboxoutbox`
 > **Artifact:** `vertique-inbox-outbox-core`
-> **Depends on:** `dev.vertique:vertique-core`, `dev.vertique:vertique-db-core`
+> **Depends on:** `dev.vertique:vertique-core`, `dev.vertique:vertique-db-core`, `dev.vertique:vertique-security-core`
 
 Provides the core write APIs and relay contracts for Transactional Messaging. `InboxService` deduplicates inbound messages within the same transaction as business logic. `OutboxService` records outbound side-effects atomically with business writes. The relay SPI (`OutboxDestinationHandler`) allows adapter modules to publish recorded entries to their respective destinations after commit.
 
@@ -128,6 +128,7 @@ OutboxEntry.builder()
 - **Row scope and `ScopeContext` are independent.** A handler that partitions data by scope chooses one source, compares the other when both are present, fails on a mismatch, and authorizes access itself. Do not assume the two agree.
 - **`aggregateId` ordering is global across scopes.** Entries that share an `aggregateId` stay in order whatever their scope, so two scopes that reuse an id order against each other. Keep aggregate ids unique across scopes, for example `<scope>:<id>`.
 - **A custom `OutboxRepository` must persist `scopeKey`.** `OutboxRepository.insert` receives the entry; an implementation that drops `scopeKey` returns rows that read `default`.
+- **A custom `OutboxRepository` must implement `cleanupDiscarded`.** It deletes `DISCARDED` entries past the retention window, in batches, and must not delete an entry an operator brought back in the meantime; `OutboxMaintenanceService` calls it with the dead-letter and published cleanups.
 - **Inbox deduplication is not scoped.** `InboxService` keys on `(messageId, source)` only.
 
 #### Header model
@@ -156,7 +157,7 @@ Domain record representing a persisted outbox row. Carries all relay state field
 | `headers` | `Map<String, String>` | Application/transport headers only (no framework keys); an unmodifiable copy — see [Header model](#header-model) |
 | `scheduledAt` | `Instant` | Optional scheduled publish time |
 | `availableAt` | `Instant` | Earliest publish time after backoff |
-| `state` | `OutboxEntryState` | `PENDING`, `PROCESSING`, `PUBLISHED`, `DEAD_LETTER` |
+| `state` | `OutboxEntryState` | `PENDING`, `PROCESSING`, `PUBLISHED`, `DEAD_LETTER`, `DISCARDED` |
 | `attempt` | `int` | Current attempt count (incremented at retry) |
 | `maxAttempts` | `int` | Maximum attempts before dead-letter |
 | `claimedAt` | `Instant` | When the relay claimed this row |
@@ -178,6 +179,7 @@ Relay state machine for outbox rows.
 | `PROCESSING` | Claimed by relay; publication in progress |
 | `PUBLISHED` | Successfully published to destination |
 | `DEAD_LETTER` | Exhausted attempts or permanent failure |
+| `DISCARDED` | Dropped by an operator through `OutboxOperations.discard`; never claimed by the relay and removed after the discarded retention period |
 
 ### `OutboxEnvelope`
 
@@ -303,6 +305,85 @@ Publish-side access to the application/transport headers for an outbound message
 
 The record is the canonical six-component form with `scopeKey` last; a public five-argument constructor without it remains and reads `default`.
 
+### Reading and administering entries
+
+`OutboxQueryService` and `OutboxOperations` are the in-process API an administration adapter (for example a REST module) uses to look at outbox entries and act on them. They are programmatic only: this module exposes no endpoint, and neither service performs authorization or takes an acting identity. The adapter authorizes the caller and records who acted. Both administer the configured store as a whole and neither filters on nor returns an entry's `scopeKey`, so they are a platform-operator surface, not a scope-isolation boundary. Carrier, security and context metadata are never returned.
+
+```java
+public interface OutboxQueryService {
+    Future<PagedResult<OutboxEntrySummary>> list(OutboxQuery query, PageCursor cursor);
+    Future<Optional<OutboxEntryDetail>> getById(long entryId);
+    Future<Optional<OutboxEntryPayload>> getPayload(long entryId);
+}
+
+public interface OutboxOperations {
+    Future<OutboxTransition> retry(long entryId, OutboxEntryState expectedState);
+    Future<OutboxTransition> discard(long entryId, OutboxEntryState expectedState);
+}
+```
+
+**Listing.**
+
+- **State is required.** An `OutboxQuery` names at least one `OutboxEntryState`, and never `PUBLISHED`: published entries are the largest set, no index serves them, and nothing needs to browse them, so listing them fails with `ValidationException` (`getById` still reads one). The other filters are optional exact matches: `destinationType`, `destination`, `eventType`, `aggregateType`, `aggregateId`, plus `createdFrom`/`createdBefore` and `updatedFrom`/`updatedBefore` ranges (start inclusive, end exclusive).
+- **Order.** `OutboxSort` is `UPDATED_AT_DESC` (default), `UPDATED_AT_ASC`, `CREATED_AT_DESC` or `CREATED_AT_ASC`, always tie-broken by entry id in the same direction. `updatedAt` is when the entry entered its current state, so for a dead letter it is when it failed.
+- **Paging.** Keyset paging with `dev.vertique.db.query.PageCursor` and `PagedResult`, as in the workflow query service. A page size is 1 to 200 (`OutboxQueryService.MAX_PAGE_SIZE`); 50 is the default. A cursor that is not shaped like a listing cursor fails with `ValidationException`, but one is not bound to the query that produced it; an adapter that hands cursors to untrusted callers must bind them.
+- **Live reads.** Each page reads the live table, so an entry that changes state between two pages can be missed or repeated.
+- **Indexes.** `DEAD_LETTER` and `DISCARDED` listings are served by partial indexes, so listing dead letters stays cheap however large the table is. `PENDING` and `PROCESSING` entries are listed from the indexes the relay already uses, then sorted; that is cheap while the backlog is small. The listing indexes cover only the two states that rarely change, so they add nothing to the relay's insert, claim and publish path.
+- **What a row carries.** `OutboxEntrySummary` holds identity, state, destination, event and aggregate, attempt counts, `errorType`, `createdAt` and `updatedAt`. `OutboxEntryDetail` adds `availableAt`, `scheduledAt`, `publishedAt`, the relay lease (`claimedAt`, `claimedBy`) and `lastError` cut at 4096 characters with `lastErrorTruncated`. Neither carries payload, headers or metadata.
+- **Payload.** `getPayload` returns the stored JSON text and the application headers. The size check and the read are one statement, so content larger than `inboxOutbox.query.maxPayloadBytes` (default 1 MiB, at most 16 MiB) is never transferred and the call fails with `OutboxPayloadTooLargeException`.
+
+**Commands.** Each runs in its own transaction, locks the row, and takes the state the caller last saw, so a stale decision never acts on an entry that has moved on.
+
+| Command | Accepted expected state | Result |
+|---------|-------------------------|--------|
+| `retry` | `DEAD_LETTER`, `DISCARDED` | Entry returns to `PENDING`: attempt reset to 0, lease and last error cleared, available now (or at its `scheduledAt` when that is still ahead), relay woken when the transaction commits. |
+| `discard` | `PENDING`, `DEAD_LETTER`, `DISCARDED` | Entry becomes `DISCARDED`: attempt count and last error kept, lease cleared. An already `DISCARDED` entry succeeds with `changed = false`, whatever state the caller expected. |
+
+- **Failures.** An id that is not positive or an expected state a command cannot act on fails with `ValidationException`; an unknown id with `OutboxEntryNotFoundException`; an entry that is not in the expected state with `OutboxEntryStateException`, whose `current()` says where it is. `PROCESSING` and `PUBLISHED` entries are never touched.
+- **A second retry** finds the entry `PENDING` and fails with `OutboxEntryStateException`; a caller can read that as "already requeued".
+- **Discarding `PENDING` drops a promise.** The row was recorded by a committed business transaction and nothing tells the code that recorded it, so for example a workflow still waits for the result of a discarded side effect. Discarding the oldest `PENDING` entry of an aggregate also releases the later entries of that aggregate to the relay.
+- **Retry can reorder an aggregate.** A retried entry is delivered after later entries of the same aggregate that were delivered while it was parked.
+- **Undo.** `retry` on a `DISCARDED` entry brings it back until the maintenance job removes it after `inboxOutbox.cleanup.discardedRetentionDays` (1 to 3650; a value outside that range fails when the config is built, because zero would purge every discarded entry at the next cleanup).
+- **Failures from the store** leave the services as `InboxOutboxPersistenceException` with a message that carries no SQL, driver text or payload; `retryable()` is `true` for a lock timeout.
+
+#### Listening to commands
+
+An `OutboxOperationListener` is told how each `retry` and `discard` ended. Contribute one with `@Provides @IntoSet`; the set is declared by `TransactionalMessagingModule` and is empty by default. An administration adapter that has to record who acted on an entry listens here instead of wrapping the service.
+
+```java
+public interface OutboxOperationListener {
+    void onOutboxEntryChanged(OutboxEntryChange change);
+    default void onOutboxCommandFailed(OutboxCommandFailure failure) {}
+}
+```
+
+- **Committed or failed.** `onOutboxEntryChanged` is called only after the command's transaction commit is confirmed, with the entry id, the `previous` and `current` state and `changed`. A discard of an already `DISCARDED` entry is still reported, with `changed = false`. `onOutboxCommandFailed` is called for a command that was refused as invalid, found no entry, found the entry in another state, hit a persistence failure, or whose commit failed or could not be confirmed. For a persistence failure the outcome of a commit lost on the way may be unknown: read the entry's state in the table.
+- **One call, one id.** Both events carry the same `callId` for the same call, so a consumer can pair them; every call has its own id. `expectedState` of a failure is `null` only when the caller passed `null`, which the command refuses as invalid.
+- **Security snapshot.** `security` is the standard `dev.vertique.security.SecurityContextSnapshot` of the `SecurityContext` bound in the `ContextHolder` when the command was called, taken before any asynchronous hop, so rebinding the context later does not change it. It is `null` when no `SecurityContext` was bound to the call, in both events: a system caller such as a workflow executor or a job binds none, so its commands are reported without a snapshot and otherwise behave the same. A system caller that wants attribution must bind its own `SecurityContext` before calling. `occurredAt` is stamped with it when the call was made, not when the transaction committed (a failure's `occurredAt` is when it was observed). `toString()` of both events never shows the snapshot.
+- **No content.** Events carry no payload, headers, last-error text or message text. A failure carries only the simple class name of the failure the caller receives (`errorType`), never its message.
+- **At most once.** A crash between the commit and the notification loses the event; the entry's state in the table is the source of truth. A listener runs on the thread that completes the command, which is not ordered relative to the caller's own result future, and it must not block. Every listener gets every event, in no particular order.
+- **Isolation.** A listener that throws never changes what the caller receives and never stops the other listeners. An `Exception`, `LinkageError`, `AssertionError` or `StackOverflowError` is logged by class name (the failure itself at debug level) and swallowed, as for `OutboxPublishObserver`; any other `Error` is not caught.
+- **Default branch.** `OutboxOperationType` (`RETRY`, `DISCARD`) grows additively, so a listener must have a default branch for a value it does not know.
+- **The relay is separate.** Nothing is reported to the relay's `OutboxPublishObserver`: it sees publish attempts, not operator commands.
+
+```java
+@Provides
+@IntoSet
+static OutboxOperationListener operatorAudit(AuditTrail audit) {
+    return new OutboxOperationListener() {
+        @Override
+        public void onOutboxEntryChanged(OutboxEntryChange change) {
+            audit.record(change.operation().name(), change.entryId(), change.callId(), change.security());
+        }
+
+        @Override
+        public void onOutboxCommandFailed(OutboxCommandFailure failure) {
+            audit.recordFailure(failure.operation().name(), failure.entryId(), failure.callId(), failure.errorType());
+        }
+    };
+}
+```
+
 ### Exceptions
 
 | Exception | Extends | Description |
@@ -321,7 +402,7 @@ inbox-outbox adapters and sibling framework modules; their Javadoc marks them IN
 outside this module's compatibility promise. Applications install the store adapter module
 (`TransactionalMessagingPostgresqlModule`), which includes the core wiring, alongside the
 destination adapters they need (`TransactionalMessagingServiceModule`,
-`TransactionalMessagingKafkaModule`, `TransactionalMessagingDelayedJobModule`), and program against `OutboxService`, `InboxService`, the
+`TransactionalMessagingKafkaModule`, `TransactionalMessagingDelayedJobModule`), and program against `OutboxService`, `InboxService`, `OutboxQueryService`, `OutboxOperations`, `OutboxOperationListener`, the
 record and result types, `ClaimScope`, `DestinationType`, `RelayCapabilities`, and the extension
 points below.
 
@@ -343,8 +424,12 @@ points below.
     "cleanup": {
       "publishedRetentionDays": 7,
       "deadLetterRetentionDays": 30,
+      "discardedRetentionDays": 7,
       "inboxRetentionDays": 30,
       "cleanupBatchSize": 1000
+    },
+    "query": {
+      "maxPayloadBytes": 1048576
     }
   },
   "cron": {
@@ -358,7 +443,7 @@ points below.
 
 Cleanup cadence is owned by the framework's cron infrastructure, not by the cleanup config block itself. The legacy `cleanupIntervalHours` field was removed from the cleanup config; configs that still set it are accepted (and the value ignored) via `@JsonIgnoreProperties`. Tune cadence via `cron.jobs.<id>.cron` — e.g. `cron.jobs.outbox-cleanup.cron` (default above) and `cron.jobs.outbox-stale-lease-recovery.cron`.
 
-Config classes: `OutboxRelayConfig` (`inboxOutbox.relay`), `InboxOutboxCleanupConfig` (`inboxOutbox.cleanup`).
+Config classes: `OutboxRelayConfig` (`inboxOutbox.relay`), `InboxOutboxCleanupConfig` (`inboxOutbox.cleanup`), `OutboxQueryConfig` (`inboxOutbox.query`).
 
 ---
 

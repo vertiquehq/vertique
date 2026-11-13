@@ -173,4 +173,17 @@ public interface OutboxRepository {
      * @return a {@link Future} that completes with the number of records deleted
      */
     Future<Integer> cleanupDeadLetter(int retentionDays, int batchSize);
+
+    /**
+     * Deletes discarded outbox entries older than the given retention period, measured from the moment they
+     * were discarded.
+     *
+     * <p>Records are deleted in batches to avoid long-running transactions. A row that an operator brought back
+     * in the meantime is not deleted.
+     *
+     * @param retentionDays number of days to retain discarded outbox entries
+     * @param batchSize     maximum number of records to delete in a single operation
+     * @return a {@link Future} that completes with the number of records deleted
+     */
+    Future<Integer> cleanupDiscarded(int retentionDays, int batchSize);
 }

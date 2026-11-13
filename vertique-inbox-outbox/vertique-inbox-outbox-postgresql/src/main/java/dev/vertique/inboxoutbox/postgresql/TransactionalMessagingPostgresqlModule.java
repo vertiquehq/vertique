@@ -10,6 +10,7 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
+import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.lifecycle.ComposeValidator;
 import dev.vertique.core.lifecycle.LifecyclePhase;
 import dev.vertique.db.DbSchemas;
@@ -28,8 +29,12 @@ import dev.vertique.inboxoutbox.OutboxRepository;
 import dev.vertique.inboxoutbox.OutboxService;
 import dev.vertique.inboxoutbox.RelayCapabilities;
 import dev.vertique.inboxoutbox.TransactionalMessagingModule;
+import dev.vertique.inboxoutbox.ops.OutboxOperationListener;
+import dev.vertique.inboxoutbox.ops.OutboxOperations;
 import dev.vertique.inboxoutbox.postgresql.compose.InboxOutboxPostgresqlComposeValidator;
 import dev.vertique.inboxoutbox.postgresql.maintenance.OutboxMaintenanceCron;
+import dev.vertique.inboxoutbox.query.OutboxQueryConfig;
+import dev.vertique.inboxoutbox.query.OutboxQueryService;
 import dev.vertique.logging.LoggingContextModule;
 import dev.vertique.services.Services;
 import io.vertx.core.DeploymentOptions;
@@ -37,6 +42,7 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import jakarta.inject.Singleton;
+import java.time.Clock;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -132,6 +138,74 @@ public abstract class TransactionalMessagingPostgresqlModule {
     }
 
     /**
+     * Provides the {@link PgOutboxQueryService}, applying the schema mapping for the {@code inbox-outbox}
+     * instance when a {@link DbSchemas} binding exists, so its statements address the same {@code outbox} table
+     * as the repository.
+     *
+     * <p>A binding exposes no endpoint by itself; an administration adapter has to be installed to use it.
+     *
+     * @param pool    the PostgreSQL connection pool
+     * @param mapper  the PostgreSQL failure mapper
+     * @param schemas the optional schema placement; absent means unqualified table names
+     * @param config  the query configuration
+     * @return the scoped PostgreSQL outbox query service
+     */
+    @Provides
+    @Singleton
+    static PgOutboxQueryService pgOutboxQueryService(
+            Pool pool, PgDbExceptionMapper mapper, Optional<DbSchemas> schemas, OutboxQueryConfig config) {
+        return new PgOutboxQueryService(pool, mapper, schemas.orElseGet(DbSchemas::empty), config);
+    }
+
+    /**
+     * Provides the {@link OutboxQueryService} binding, delegating to the PostgreSQL implementation.
+     *
+     * @param impl the PostgreSQL outbox query service
+     * @return the {@link OutboxQueryService} to use throughout the application
+     */
+    @Provides
+    @Singleton
+    static OutboxQueryService outboxQueryService(PgOutboxQueryService impl) {
+        return impl;
+    }
+
+    /**
+     * Provides the {@link PgOutboxOperations}, applying the schema mapping for the {@code inbox-outbox}
+     * instance when a {@link DbSchemas} binding exists.
+     *
+     * @param pool      the PostgreSQL connection pool
+     * @param mapper    the PostgreSQL failure mapper
+     * @param schemas   the optional schema placement; absent means unqualified table names
+     * @param holder    the context holder the security context of a command is read from when it is called
+     * @param listeners the listeners contributed by applications and adapter modules, told how each command ended;
+     *                  empty when nothing listens
+     * @return the scoped PostgreSQL outbox operations service
+     */
+    @Provides
+    @Singleton
+    static PgOutboxOperations pgOutboxOperations(
+            Pool pool,
+            PgDbExceptionMapper mapper,
+            Optional<DbSchemas> schemas,
+            ContextHolder holder,
+            Set<OutboxOperationListener> listeners) {
+        return new PgOutboxOperations(
+                pool, mapper, schemas.orElseGet(DbSchemas::empty), holder, listeners, Clock.systemUTC());
+    }
+
+    /**
+     * Provides the {@link OutboxOperations} binding, delegating to the PostgreSQL implementation.
+     *
+     * @param impl the PostgreSQL outbox operations service
+     * @return the {@link OutboxOperations} to use throughout the application
+     */
+    @Provides
+    @Singleton
+    static OutboxOperations outboxOperations(PgOutboxOperations impl) {
+        return impl;
+    }
+
+    /**
      * Provides the {@link InboxService} binding, delegating to the default implementation.
      *
      * @param impl the default inbox service
@@ -205,6 +279,24 @@ public abstract class TransactionalMessagingPostgresqlModule {
         return parser.parse(
                 JsonConfigPaths.navigateObject(JsonConfigPaths.navigateObject(config, "inboxOutbox"), "cleanup"),
                 InboxOutboxCleanupConfig.class);
+    }
+
+    /**
+     * Provides {@link OutboxQueryConfig} as a Dagger {@link Singleton} binding for the outbox query service.
+     *
+     * <p>Deserialised from the {@code inboxOutbox.query} section of the application config; an absent section
+     * yields the defaults.
+     *
+     * @param config the application configuration root
+     * @param parser the injected config parser
+     * @return the query configuration
+     */
+    @Provides
+    @Singleton
+    static OutboxQueryConfig outboxQueryConfig(@VertxConfig JsonObject config, ConfigParser parser) {
+        return parser.parse(
+                JsonConfigPaths.navigateObject(JsonConfigPaths.navigateObject(config, "inboxOutbox"), "query"),
+                OutboxQueryConfig.class);
     }
 
     /**

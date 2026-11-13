@@ -10,12 +10,13 @@ SPDX-License-Identifier: EUPL-1.2
 > **Artifact:** `vertique-inbox-outbox-postgresql`
 > **Depends on:** `dev.vertique:vertique-inbox-outbox-core`, `dev.vertique:vertique-db-postgresql`
 > (which brings `dev.vertique:vertique-db-core` for `DbSchemas` and `MigrationDefinition`),
-> `dev.vertique:vertique-core`, `dev.vertique:vertique-context`, `dev.vertique:vertique-deploy`,
+> `dev.vertique:vertique-core`, `dev.vertique:vertique-context`, `dev.vertique:vertique-security-core`
+> (the `SecurityContextSnapshot` of listener reports), `dev.vertique:vertique-deploy`,
 > `dev.vertique:vertique-logging`, `dev.vertique:vertique-services`, `dev.vertique:vertique-job-cron`
 > (the maintenance cron jobs). `dev.vertique:vertique-db-flyway` is test-scope here; the application
 > supplies the migration runner.
 
-PostgreSQL persistence and relay engine for Transactional Messaging. Provides `DefaultInboxService` and `DefaultOutboxService` (the only implementations of the core write APIs), `PgInboxOutboxRepository` (claim/lease queries, stale recovery), `OutboxRelay` (relay verticle with POLLING and LISTEN_NOTIFY strategies), and the Flyway migration that creates the `inbox` and `outbox` tables. `InboxOutboxMigrationsModule` declares those migrations as the `inbox-outbox` migration instance for named Flyway instances, and the optional `db.schemas.inbox-outbox` setting places both tables in one schema for the migrations and the repository.
+PostgreSQL persistence and relay engine for Transactional Messaging. Provides `DefaultInboxService` and `DefaultOutboxService` (the only implementations of the core write APIs), `PgInboxOutboxRepository` (claim/lease queries, stale recovery), `OutboxRelay` (relay verticle with POLLING and LISTEN_NOTIFY strategies), `PgOutboxQueryService` and `PgOutboxOperations` (the store implementations of the core `OutboxQueryService` and `OutboxOperations`), and the Flyway migration that creates the `inbox` and `outbox` tables. `InboxOutboxMigrationsModule` declares those migrations as the `inbox-outbox` migration instance for named Flyway instances, and the optional `db.schemas.inbox-outbox` setting places both tables in one schema for the migrations and the repository.
 
 ---
 
@@ -53,7 +54,8 @@ cannot complete a row another node now owns.
 - `markUnresolvable(long entryId, String claimedBy, Duration delay)` — returns an owned row to `PENDING` after the delay without incrementing attempt (the `unresolvable` outcome)
 - `reclaimStale(Duration leaseTimeout)` — returns stale `PROCESSING` rows to `PENDING` without incrementing attempt; deliberately unguarded, because its job is to take rows from nodes that are gone
 - `cleanupPublished(int retentionDays, int batchSize)` — batch-deletes `PUBLISHED` rows past retention
-- `cleanupDeadLetter(int retentionDays, int batchSize)` — batch-deletes `DEAD_LETTER` rows past retention
+- `cleanupDeadLetter(int retentionDays, int batchSize)` — batch-deletes `DEAD_LETTER` rows past retention; candidates are locked with `FOR UPDATE SKIP LOCKED` and the delete re-checks state and age, so a row an operator is retrying is skipped or kept
+- `cleanupDiscarded(int retentionDays, int batchSize)` — the same for `DISCARDED` rows, aged from the moment they were discarded
 
 **Claim eligibility filter (applied in SQL):**
 - `state = 'PENDING'`
@@ -172,6 +174,22 @@ The exception message names only the destination TYPE and reason category — ne
 
 **Shutdown:** On `stop()`, the poll timer and LISTEN connection are closed. In-flight publish calls complete independently.
 
+### `PgOutboxQueryService` and `PgOutboxOperations`
+
+The store implementations of the core `OutboxQueryService` and `OutboxOperations`; the API, its rules and its failure types are documented in `dev.vertique:vertique-inbox-outbox-core`. The module binds both, and `OutboxQueryConfig` (`inboxOutbox.query.maxPayloadBytes`), through `TransactionalMessagingPostgresqlModule`. A binding exposes no endpoint: an administration adapter has to be installed to use it.
+
+| Behaviour | What the implementation does |
+|-----------|------------------------------|
+| Schema placement | Every statement is built once and qualifies the `outbox` table with the schema mapped to the `inbox-outbox` instance, as `PgInboxOutboxRepository` does, so all three address the same table. |
+| Listing | One keyset-paged select through the shared `pagedQuery` of `vertique-db`, ordered by `updated_at` or `created_at` and then `id`. The state filter is written as a literal from the `OutboxEntryState` constants (never from caller text) so the partial indexes match; every other filter is a bound parameter. It selects no payload, headers, metadata or `scope_key`. |
+| Detail and payload | `getById` reads `last_error` cut in the database at 4096 characters. `getPayload` measures the combined UTF-8 size of payload and headers and returns the text in the same statement only when it fits. |
+| Commands | One transaction: READ COMMITTED set explicitly, `SET LOCAL lock_timeout` of 30 seconds, `SELECT state ... FOR UPDATE`, a state check against the caller's expectation, then an update that names the state again. A lock timeout is a retryable `InboxOutboxPersistenceException`. |
+| Retry | Sets `PENDING`, `attempt = 0`, clears `claimed_at`, `claimed_by`, `last_error` and `error_type`, sets `available_at` to the later of now and `scheduled_at`, and sends `pg_notify('transactional_outbox_channel', id)` inside the transaction, so the wake-up is delivered only when the retry commits. |
+| Discard | Sets `DISCARDED` and clears the lease; `attempt`, `last_error` and `error_type` stay as the record of why the entry was dropped. |
+| Listener reports | `PgOutboxOperations` reports each command to the contributed `Set<OutboxOperationListener>` (contract in `dev.vertique:vertique-inbox-outbox-core`). The call id, the instant and the `SecurityContextSnapshot` of the `SecurityContext` bound in the `ContextHolder` are captured at the start of `retry` or `discard`, before any asynchronous hop; with no listener nothing is captured. The committed report is sent when `pool.withTransaction` has confirmed the commit, never before; every other ending, including a refusal before the transaction starts, a rollback and a commit that fails, is reported as failed. Each listener call is isolated and its failure is reported through `ObserverFailureReporter` by class name; the caller's result is the same with or without listeners. |
+| Races | The relay's claim uses `FOR UPDATE SKIP LOCKED`, so a locked row is skipped; a row a command has moved no longer matches the claim. A command that finds the row claimed waits for the claim to commit and then reports `OutboxEntryStateException` with the new state. |
+| Relay ordering | A claim lets an entry go first only if no older entry of its aggregate is `PENDING` or `PROCESSING`. `DEAD_LETTER` and `DISCARDED` entries do not hold later entries back, so discarding the oldest `PENDING` entry releases the rest of its aggregate. |
+
 ### `OutboxRelayConfig` (owned by `dev.vertique:vertique-inbox-outbox-core`)
 
 This module provides its Dagger binding, deserialized from the `inboxOutbox.relay` section; the type
@@ -203,6 +221,7 @@ Deserialized from `inboxOutbox.cleanup`.
 |-------|---------|-------------|
 | `publishedRetentionDays` | `7` | Days to retain `PUBLISHED` outbox rows before cleanup |
 | `deadLetterRetentionDays` | `30` | Days to retain `DEAD_LETTER` outbox rows before cleanup |
+| `discardedRetentionDays` | `7` | Days to retain `DISCARDED` outbox rows before cleanup; the window an operator has to undo a discard |
 | `inboxRetentionDays` | `30` | Days to retain processed inbox dedup records before cleanup |
 | `cleanupBatchSize` | `1000` | Maximum records deleted per cleanup batch, across each table |
 
@@ -212,8 +231,8 @@ Deserialized from `inboxOutbox.cleanup`.
 
 The cluster-singleton maintenance path. `OutboxMaintenanceCron` is the `@CronJob` entry point (hence
 this module's compile dependency on `dev.vertique:vertique-job-cron`); it delegates to
-`OutboxMaintenanceService`, which reclaims stale leases and applies the retention cleanups through
-`PgInboxOutboxRepository`. `OutboxMaintenanceContract` is the service contract the cron target
+`OutboxMaintenanceService`, which reclaims stale leases and applies the retention cleanups (published, dead letter, discarded, inbox) through
+`PgInboxOutboxRepository`; a failure message says how many of the four failed. `OutboxMaintenanceContract` is the service contract the cron target
 resolves. Applications install the module and tune the cron through configuration; they do not call
 these types.
 
@@ -225,6 +244,7 @@ is frozen from this Stable release.** Every later schema change ships as `V2+`, 
 
 - `V1__create_inbox_outbox_tables.sql` — the `outbox` and `inbox` tables, their indexes and the `LISTEN/NOTIFY` trigger.
 - `V002__add_outbox_scope.sql` — adds `outbox.scope_key VARCHAR(255) NOT NULL DEFAULT 'default'`, so every existing row reads `default`. The default is a constant, so PostgreSQL 11 and later add the column without rewriting the table. The script sets `lock_timeout` to 30 s, which bounds only the wait for the table lock, and is safe to rerun. No index and no check constraint are added; `inbox` is unchanged.
+- `V003__add_outbox_listing_indexes.sql` — adds three partial indexes and nothing else: `idx_outbox_listing_updated` on `(updated_at DESC, id DESC)` and `idx_outbox_listing_created` on `(created_at DESC, id DESC)`, both for the states `DEAD_LETTER` and `DISCARDED` only, and `idx_outbox_discarded` on `updated_at` for `DISCARDED`. Rows enter those two states rarely, so the indexes add no cost to the relay's insert, claim and publish path. `PENDING` and `PROCESSING` listings use the relay's existing indexes and a sort, and `PUBLISHED` rows are deliberately not indexed, and cannot be listed. `state` has no check constraint, so the new `DISCARDED` value needs no change to existing columns. The index builds hold a lock that blocks inserts for the duration of the scan and `lock_timeout` bounds only the wait for it; a very large installation can create the indexes concurrently, under the same names, before it applies the script. The script sets `lock_timeout` to 30 s and is safe to rerun.
 
 **`outbox` table** — relay rows:
 
@@ -384,6 +404,7 @@ look in a schema the migration never filled.
 | `OutboxService` | Singleton | `DefaultOutboxService` backed by `PgInboxOutboxRepository` |
 | `PgInboxOutboxRepository` | Singleton | PostgreSQL repository, built from `Optional<DbSchemas>`: placed in the schema mapped to `inbox-outbox` when the component supplies `DbSchemas` (a component that installs `DbModule` gets it from `db.schemas.inbox-outbox`), unqualified when it does not. The `InboxRepository` and `OutboxRepository` bindings, both services, the maintenance cron and every relay instance resolve to this one instance, so they share one node identity (each relay instance appends a counter suffix to it for `claimed_by`) |
 | `Set<MigrationDefinition>` | `@IntoSet` | The `inbox-outbox` declaration from `InboxOutboxMigrationsModule`: location `classpath:db/migration/inbox-outbox`, no dependencies |
+| `PgOutboxOperations` / `OutboxOperations` | Singleton | Built from `Optional<DbSchemas>`, the `ContextHolder` bound by the included `ContextRuntimeModule` (no extra holder binding is needed or declared) and the contributed `Set<OutboxOperationListener>`, which is empty by default |
 | `OutboxRelayConfig` | Singleton | Relay configuration deserialized from `inboxOutbox.relay` |
 | `InboxOutboxCleanupConfig` | Singleton | Cleanup configuration deserialized from `inboxOutbox.cleanup` |
 | `Set<VerticleDeployment>` | `@ElementsIntoSet` | `OutboxRelay` verticle; SERVICES phase, priority 100. Every relay instance is given the contributed `Set<OutboxPublishObserver>`, sorted once per instance by `OrderedExtension` order |
