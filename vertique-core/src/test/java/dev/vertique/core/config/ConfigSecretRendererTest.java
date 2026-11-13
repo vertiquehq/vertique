@@ -53,6 +53,16 @@ class ConfigSecretRendererTest {
         }
 
         @Test
+        @DisplayName("matches privateKeyPem/private-key/private_key through the normalized path")
+        void privateKeyVariantsMatch() {
+            assertTrue(ConfigSecretRenderer.isSensitivePath("privateKeyPem"));
+            assertTrue(ConfigSecretRenderer.isSensitivePath("blob.cdn.cloudfront.privateKeyPem"));
+            assertTrue(ConfigSecretRenderer.isSensitivePath("private-key"));
+            assertTrue(ConfigSecretRenderer.isSensitivePath("private_key"));
+            assertTrue(ConfigSecretRenderer.isSensitivePath("PRIVATE_KEY_PEM"));
+        }
+
+        @Test
         @DisplayName("returns false for a non-secret path")
         void nonSecretPath() {
             assertFalse(ConfigSecretRenderer.isSensitivePath("bootstrap.servers"));
@@ -161,6 +171,22 @@ class ConfigSecretRendererTest {
             assertFalse(rendered.contains("ACC2"), "access-key value must be masked");
             assertFalse(rendered.contains("ACC3"), "access.key value must be masked");
             assertTrue(rendered.contains("broker:9092"), "non-secret value stays visible");
+            assertTrue(rendered.contains(ConfigSecretRenderer.MASK), "mask token present");
+        }
+
+        @Test
+        @DisplayName("masks a privateKeyPem leaf in a bag")
+        void privateKeyPemScrubbed() {
+            JsonObject bag = new JsonObject()
+                    .put("privateKeyPem", "-----BEGIN PRIVATE KEY-----PEM1")
+                    .put("private-key", "PEM2")
+                    .put("keyPairId", "K123");
+
+            String rendered = ConfigSecretRenderer.redactBag(bag);
+
+            assertFalse(rendered.contains("PEM1"), "privateKeyPem value must be masked");
+            assertFalse(rendered.contains("PEM2"), "private-key value must be masked");
+            assertTrue(rendered.contains("K123"), "non-secret value stays visible");
             assertTrue(rendered.contains(ConfigSecretRenderer.MASK), "mask token present");
         }
 

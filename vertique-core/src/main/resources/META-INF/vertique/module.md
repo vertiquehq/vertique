@@ -1329,7 +1329,7 @@ is masked, a scheme-less or semicolon-style connection string is printed as give
 
 | Method | Behavior |
 |---|---|
-| `isSensitivePath(String dottedPath)` | `true` when the lower-cased path contains `password`, `secret`, `token`, `passphrase`, `credential`, `jaas.config`, `user.info`, `private.key`, `keystore`, or `truststore`; or when its separator-stripped, lower-cased form contains `apikey`, `accesskey`, or `secretkey`. |
+| `isSensitivePath(String dottedPath)` | `true` when the lower-cased path contains `password`, `secret`, `token`, `passphrase`, `credential`, `jaas.config`, `user.info`, `private.key`, `keystore`, or `truststore`; or when its separator-stripped, lower-cased form contains `apikey`, `accesskey`, `secretkey`, or `privatekey` (so `privateKeyPem`, `private-key` and `private_key` all match). |
 | `isUriPath(String dottedPath)` | `true` when the separator-stripped, lower-cased path contains `url`, `uri`, `endpoint` or `connectionstring`. Biased towards matching: `security` and `during` match through `uri`; a wrong match costs at most a rewritten non-URL string that contains `//…@` or a credential-named `?name=value`, because `redactUri` returns an equal string otherwise. The token set may widen in a minor release and never narrows. |
 | `redactBag(JsonObject bag)` | Renders a bag as a log-safe `String`, descending through nested objects *and* arrays and masking every leaf whose full dotted path is sensitive. |
 | `redactUri(String uri)` | Masks authority userinfo (`user:pass` between `//` and `@`) and the value of any credential-bearing query parameter. Best-effort; never throws. |
