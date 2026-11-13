@@ -39,9 +39,9 @@ import java.util.Locale;
  * the dotted-substring tokens ({@code password}, {@code secret}, {@code token}, {@code passphrase},
  * {@code credential}, {@code jaas.config}, {@code user.info}, {@code private.key}, {@code keystore},
  * {@code truststore}), it also matches separator-normalized credential tokens ({@code apikey},
- * {@code accesskey}, {@code secretkey}) so {@code apiKey}/{@code api-key}/{@code api.key} and
- * {@code accessKey}/{@code access-key}/{@code access.key} are all masked regardless of casing or
- * separator.
+ * {@code accesskey}, {@code secretkey}, {@code privatekey}) so {@code apiKey}/{@code api-key}/{@code api.key},
+ * {@code accessKey}/{@code access-key}/{@code access.key} and {@code privateKeyPem}/{@code private-key}/
+ * {@code private_key} are all masked regardless of casing or separator.
  */
 public final class ConfigSecretRenderer {
 
@@ -70,10 +70,11 @@ public final class ConfigSecretRenderer {
      * lower-cased with {@code .}, {@code -}, and {@code _} separators stripped — contains any of these.
      * This catches common credential key names that vary only by separator/casing convention so all of
      * {@code apiKey}, {@code api-key}, {@code api.key}, {@code accessKey}, {@code access-key},
-     * {@code access.key}, {@code secretKey}, etc. match a single token regardless of how the operator
-     * spelled them.
+     * {@code access.key}, {@code secretKey}, {@code privateKeyPem}, {@code private-key}, etc. match a
+     * single token regardless of how the operator spelled them.
      */
-    private static final List<String> NORMALIZED_SECRET_TOKENS = List.of("apikey", "accesskey", "secretkey");
+    private static final List<String> NORMALIZED_SECRET_TOKENS =
+            List.of("apikey", "accesskey", "secretkey", "privatekey");
 
     /**
      * Separator-normalized URL tokens. A path names a URL-valued string when its normalized form —
@@ -96,9 +97,10 @@ public final class ConfigSecretRenderer {
      *       {@code user.info}, {@code private.key}, {@code keystore}, {@code truststore}); or</li>
      *   <li>its <em>separator-normalized</em> form — lower-cased with {@code .}, {@code -}, and
      *       {@code _} stripped — contains any of the normalized credential tokens ({@code apikey},
-     *       {@code accesskey}, {@code secretkey}), so that {@code apiKey}, {@code api-key},
-     *       {@code api.key}, {@code accessKey}, {@code access-key}, and {@code access.key} all match
-     *       regardless of separator/casing convention.</li>
+     *       {@code accesskey}, {@code secretkey}, {@code privatekey}), so that {@code apiKey},
+     *       {@code api-key}, {@code api.key}, {@code accessKey}, {@code access-key}, {@code access.key},
+     *       {@code privateKeyPem}, {@code private-key} and {@code private_key} all match regardless of
+     *       separator/casing convention.</li>
      * </ul>
      *
      * <p>The match is a substring match in both forms, so a nested path such as
