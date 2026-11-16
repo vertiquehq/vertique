@@ -6,6 +6,8 @@ package dev.vertique.rest.client;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.resilience.ResiliencePipeline;
+import dev.vertique.resilience.exception.BulkheadQueueTimeoutException;
+import dev.vertique.resilience.exception.BulkheadRejectedException;
 import dev.vertique.resilience.exception.CircuitOpenException;
 import dev.vertique.resilience.exception.ResilienceClosedException;
 import dev.vertique.resilience.exception.ResiliencePolicyException;
@@ -889,6 +891,12 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
         }
         if (failure instanceof CircuitOpenException) {
             return new RestClientUnavailableException("REST client circuit is open", failure);
+        }
+        if (failure instanceof BulkheadRejectedException) {
+            return new RestClientUnavailableException("REST client concurrency limit reached", failure);
+        }
+        if (failure instanceof BulkheadQueueTimeoutException) {
+            return new RestClientUnavailableException("REST client queue wait timed out", failure);
         }
         if (failure instanceof ResilienceClosedException) {
             return new RestClientUnavailableException("REST client runtime is closed", failure);

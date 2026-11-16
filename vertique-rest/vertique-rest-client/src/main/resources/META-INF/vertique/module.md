@@ -981,6 +981,10 @@ core.ConfigurationException
 └── RestClientConfigurationException  — wiring, config, or build-time failure
 ```
 
+Resilience failures reach the caller as these types: an open circuit, a bulkhead rejection or queue
+timeout, and a closed runtime surface as `RestClientUnavailableException`; a timeout surfaces as
+`RestClientTimeoutException`. The original resilience exception is kept as the cause.
+
 `catch (RestClientException)` therefore catches **only** `RestClientResponseException`. Transport
 failures are caught at `RestClientUnavailableException` (or `core.UnavailableException`); wiring
 failures at `RestClientConfigurationException` (or `core.ConfigurationException`).
