@@ -4,6 +4,7 @@
 package dev.vertique.rest.core.config;
 
 import com.fasterxml.jackson.annotation.JsonAnyGetter;
+import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import java.util.Collections;
 import java.util.Map;
@@ -17,8 +18,9 @@ import lombok.extern.jackson.Jacksonized;
  * Configuration for the default security and cache-control response headers applied to every
  * HTTP response by {@link dev.vertique.rest.core.middleware.DefaultHeadersMiddleware}.
  *
- * <p>Known fields map to well-known security headers. Unknown JSON keys captured via
- * {@link JsonAnyGetter} are emitted as additional custom headers.
+ * <p>Known fields map to well-known security headers. Unknown configuration keys are bound
+ * through the builder's {@link JsonAnySetter} and emitted as additional custom headers; a
+ * {@code null} value is ignored.
  *
  * <p>Example configuration:
  *
@@ -128,5 +130,25 @@ public class DefaultHeadersConfig {
             map.putAll(additionalHeaders);
         }
         return Collections.unmodifiableMap(map);
+    }
+
+    /**
+     * Builder customization that binds unknown configuration keys to custom headers.
+     */
+    public static class DefaultHeadersConfigBuilder {
+
+        /**
+         * Receives each configuration key that is not a known field and records it as a custom
+         * header. A {@code null} value is ignored.
+         *
+         * @param name  the header name (the configuration key)
+         * @param value the header value
+         */
+        @JsonAnySetter
+        void customHeader(String name, String value) {
+            if (value != null) {
+                header(name, value);
+            }
+        }
     }
 }

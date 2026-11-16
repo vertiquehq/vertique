@@ -811,6 +811,10 @@ Resolution rules:
   `X-Forwarded-For` chain (at least one accepted entry, and not rejected by `forwardedForCap`).
   A trusted proxy that sends `X-Forwarded-Proto` or `X-Forwarded-Host` without an `X-Forwarded-For`
   chain is ignored for scheme and host: both come from the connection.
+- A honoured `X-Forwarded-Proto` must be `http` or `https` (any case, stored lower-case); a
+  honoured `X-Forwarded-Host` must be a host name, IPv4 literal or bracketed IPv6 literal with an
+  optional `:port`. A blank, malformed or list-valued header is treated as absent, so that part
+  (scheme or host) comes from the connection while the rest of the origin is unaffected.
 
 A non-empty `trustedProxyCidrs` is what makes forwarded headers trustworthy. Setting
 `trustForwardedScheme` or `trustForwardedHost` without it changes nothing, and neither flag has an
