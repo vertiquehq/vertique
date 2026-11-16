@@ -776,9 +776,9 @@ public final class RestClientBuilder {
             // Override circuitBreaker (individual field overrides, not a full replacement)
             RestClientCircuitBreakerConfig cbConfig = effectiveConfig.circuitBreaker();
             if (cbConfig != null) {
-                if (effectiveCb == null) {
-                    effectiveCb = new CircuitBreakerOptions();
-                }
+                // Copy before applying overrides so a caller-supplied options object is never mutated.
+                effectiveCb =
+                        effectiveCb == null ? new CircuitBreakerOptions() : new CircuitBreakerOptions(effectiveCb);
                 if (cbConfig.maxFailures() != null) {
                     effectiveCb.setMaxFailures(cbConfig.maxFailures());
                 }
@@ -793,7 +793,9 @@ public final class RestClientBuilder {
             // Override pool
             RestClientPoolConfig poolConfig = effectiveConfig.pool();
             if (poolConfig != null) {
-                PoolOptions opts = effectivePoolOptions != null ? effectivePoolOptions : new PoolOptions();
+                // Copy before applying overrides so a caller-supplied options object is never mutated.
+                PoolOptions opts =
+                        effectivePoolOptions != null ? new PoolOptions(effectivePoolOptions) : new PoolOptions();
                 if (poolConfig.http1MaxSize() != null) {
                     opts.setHttp1MaxSize(poolConfig.http1MaxSize());
                 }
