@@ -194,6 +194,42 @@ class WorkflowClientFactorySelectionTest {
         }
     }
 
+    @Test
+    @DisplayName("generated and reflective proxies refuse a null or blank idempotency key and send nothing")
+    void generatedAndReflectiveProxiesRefuseAMissingIdempotencyKey() {
+        // Given a generated-proxy client and a reflective-proxy client, each with its own recording operations
+        DefaultWorkflowRegistry definitions = new DefaultWorkflowRegistry();
+        definitions.register(new SelectionDefinitions.Selection());
+        definitions.register(new SelectionDefinitions.Fallback());
+        RecordingWorkflowOperations generatedOps = new RecordingWorkflowOperations();
+        RecordingWorkflowOperations reflectiveOps = new RecordingWorkflowOperations();
+        SelectionWorkflow generated = new WorkflowClientFactory(generatedOps, definitions)
+                .client(SelectionDefinitions.Selection.class)
+                .create();
+        FallbackSelectionWorkflow reflective = new WorkflowClientFactory(reflectiveOps, definitions)
+                .client(SelectionDefinitions.Fallback.class)
+                .create();
+        assertThat(generated).isInstanceOf(SelectionWorkflow_WorkflowClientProxy.class);
+        assertThat(Proxy.isProxyClass(reflective.getClass())).isTrue();
+
+        for (String missing : new String[] {null, "", "   "}) {
+            // When each client starts with a start payload whose idempotency key is null, empty or blank
+            SelectionStartPayload payload = new SelectionStartPayload(missing);
+
+            // Then both refuse the start naming the field
+            assertThatThrownBy(() -> generated.start(payload))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("idempotencyKey");
+            assertThatThrownBy(() -> reflective.start(payload))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("idempotencyKey");
+        }
+
+        // And neither reached the operations
+        assertThat(generatedOps.starts()).isEmpty();
+        assertThat(reflectiveOps.starts()).isEmpty();
+    }
+
     private static void recordAll(SelectionWorkflow client) {
         WorkflowInstanceId id =
                 client.start(new SelectionStartPayload("order-1")).result();
