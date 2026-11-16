@@ -87,9 +87,8 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
     // --- Node identity ---
 
     /**
-     * Stable identifier for this repository instance, used as {@code locked_by} during job claim.
-     * Constructed from the hostname and a random suffix to differentiate multiple JVM instances
-     * running on the same host.
+     * This node's identity, stamped as {@code locked_by} during job claim. The coordinator must
+     * heartbeat under the same value for dead-node recovery to find this node's claims.
      */
     private final String nodeId;
 
@@ -121,8 +120,33 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
      *                                  single-segment PostgreSQL schema name
      */
     public PgJobRepository(Pool pool, PgDbExceptionMapper exceptionMapper, DbSchemas schemas) {
+        this(pool, exceptionMapper, schemas, resolveNodeId());
+    }
+
+    /**
+     * Creates a new PostgreSQL job repository that stamps the given node identity as
+     * {@code locked_by} on the executions it claims, and otherwise behaves like
+     * {@link #PgJobRepository(Pool, PgDbExceptionMapper, DbSchemas)}.
+     *
+     * <p>Pass the value the node's {@link dev.vertique.job.JobCoordinator} heartbeats under (the
+     * {@link dev.vertique.job.JobNodeId} binding), so that a surviving node's coordinator finds this
+     * node's claims when this node dies. {@link JobPostgresqlModule} does. The other constructors
+     * generate an identity of their own, which no coordinator shares.
+     *
+     * @param pool          the PostgreSQL connection pool
+     * @param exceptionMapper the PostgreSQL failure mapper for exception translation
+     * @param schemas       the schema placement shared with the migrations; never {@code null}
+     * @param nodeId        this node's identity; must not be {@code null} or blank
+     * @throws IllegalArgumentException if the schema mapped for the job instance is not a valid
+     *                                  single-segment PostgreSQL schema name, or if {@code nodeId}
+     *                                  is {@code null} or blank
+     */
+    public PgJobRepository(Pool pool, PgDbExceptionMapper exceptionMapper, DbSchemas schemas, String nodeId) {
         super(pool, exceptionMapper);
-        this.nodeId = resolveNodeId();
+        if (nodeId == null || nodeId.isBlank()) {
+            throw new IllegalArgumentException("nodeId must not be null or blank");
+        }
+        this.nodeId = nodeId;
 
         String executions = PgTableNames.qualify(schemas, JobMigrationsModule.INSTANCE_NAME, "job_executions");
         String logs = PgTableNames.qualify(schemas, JobMigrationsModule.INSTANCE_NAME, "job_logs");
@@ -264,6 +288,16 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
         // Append a random suffix to distinguish multiple instances on the same host
         String suffix = UUID.randomUUID().toString().substring(0, 8);
         return hostname + "-" + suffix;
+    }
+
+    /**
+     * Returns the node identity this repository stamps as {@code locked_by} on the executions it
+     * claims.
+     *
+     * @return the node identity
+     */
+    String nodeId() {
+        return nodeId;
     }
 
     // --- JobRepository ---

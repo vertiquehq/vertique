@@ -436,6 +436,10 @@ For durable outcomes on *every* path — including timeout, dead-node recovery a
 
 `DelayedJobModule` is the single module to include. It transitively includes `JobModule`,
 `JobPostgresqlModule`, `JobCoordinatorModule`, the context runtime and the logging context module.
+Through `JobCoordinatorModule` the application starts the `JobCoordinator` before the pollers deploy
+and stops it after they undeploy, so node heartbeats run and a surviving node re-enqueues (or dead-letters,
+when attempts are exhausted) an execution whose node died while it was `PROCESSING`. Set
+`job.coordinator.enabled: false` to turn that off.
 
 ```java
 @Component(modules = {VertxModule.class, DispatchModule.class, DbPostgresqlModule.class,

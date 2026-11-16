@@ -1547,6 +1547,66 @@ class CronSchedulerTest {
         }
 
         @Test
+        @DisplayName("a scheduler built with a node identity stamps it as lockedBy on the persisted execution")
+        void nodeIdentityIsStampedAsLockedBy(Vertx vertx, VertxTestContext ctx) {
+            JobRepository repo = mock(JobRepository.class);
+            when(repo.tryInsert(any(JobExecution.class)))
+                    .thenReturn(Future.succeededFuture(Optional.of(UUID.randomUUID())));
+
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    repo,
+                    resolverMapping(STABLE_TARGET_ID, RESOLVED_ADDRESS),
+                    testEventBusClient(vertx),
+                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
+                    0L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting(),
+                    "node-a-1234abcd");
+
+            scheduler.register(
+                    serviceTargetJob("node-identity-job", ExecutionMode.SINGLE_INSTANCE, OverlapPolicy.SKIP));
+            scheduler.start();
+
+            ArgumentCaptor<JobExecution> captor = ArgumentCaptor.forClass(JobExecution.class);
+            verify(repo, timeout(5000)).tryInsert(captor.capture());
+            ctx.verify(() -> assertEquals("node-a-1234abcd", captor.getValue().lockedBy()));
+            ctx.completeNow();
+        }
+
+        @Test
+        @DisplayName("a null or blank node identity is rejected at construction")
+        void blankNodeIdentityIsRejected(Vertx vertx) {
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () -> new CronScheduler(
+                            vertx,
+                            Set.of(),
+                            mock(JobRepository.class),
+                            resolverMapping(STABLE_TARGET_ID, RESOLVED_ADDRESS),
+                            testEventBusClient(vertx),
+                            CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
+                            0L,
+                            0L,
+                            DispatchEnvelopeBuilder.forTesting(),
+                            " "));
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () -> new CronScheduler(
+                            vertx,
+                            Set.of(),
+                            mock(JobRepository.class),
+                            resolverMapping(STABLE_TARGET_ID, RESOLVED_ADDRESS),
+                            testEventBusClient(vertx),
+                            CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
+                            0L,
+                            0L,
+                            DispatchEnvelopeBuilder.forTesting(),
+                            (String) null));
+        }
+
+        @Test
         @DisplayName("EVERY_INSTANCE service-target job persists the resolved handler address, not null")
         void everyInstanceServiceTargetPersistsResolvedHandler(Vertx vertx, VertxTestContext ctx) {
             JobRepository repo = mock(JobRepository.class);

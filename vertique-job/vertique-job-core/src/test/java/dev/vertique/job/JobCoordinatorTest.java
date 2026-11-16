@@ -3,14 +3,18 @@
 
 package dev.vertique.job;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.vertx.core.Future;
@@ -113,6 +117,52 @@ class JobCoordinatorTest {
         }
 
         @Test
+        @DisplayName("heartbeats under the node identity it was built with")
+        void heartbeatsUnderGivenNodeIdentity(Vertx vertx, VertxTestContext ctx) {
+            when(repository.serverHeartbeat(anyString())).thenReturn(Future.succeededFuture());
+
+            JobCoordinator coordinator = new JobCoordinator(vertx, repository, defaultConfig, "node-a-1234abcd");
+
+            coordinator
+                    .start()
+                    .onSuccess(v -> ctx.verify(() -> {
+                        assertEquals("node-a-1234abcd", coordinator.serverId());
+                        verify(repository, atLeastOnce()).serverHeartbeat("node-a-1234abcd");
+                        ctx.completeNow();
+                    }))
+                    .onFailure(ctx::failNow);
+        }
+
+        @Test
+        @DisplayName("rejects a null or blank node identity")
+        void rejectsBlankNodeIdentity(Vertx vertx) {
+            assertThrows(
+                    IllegalArgumentException.class, () -> new JobCoordinator(vertx, repository, defaultConfig, " "));
+            assertThrows(
+                    IllegalArgumentException.class, () -> new JobCoordinator(vertx, repository, defaultConfig, null));
+        }
+
+        @Test
+        @DisplayName("a second start while started arms nothing more")
+        void secondStartIsNoOp(Vertx vertx, VertxTestContext ctx) {
+            when(repository.serverHeartbeat(anyString())).thenReturn(Future.succeededFuture());
+            JobCoordinatorConfig slowTimers = JobCoordinatorConfig.builder()
+                    .nodeHeartbeatIntervalMs(60_000)
+                    .scanIntervalMs(60_000)
+                    .build();
+            JobCoordinator coordinator = new JobCoordinator(vertx, repository, slowTimers, "node-a-1234abcd");
+
+            coordinator
+                    .start()
+                    .compose(v -> coordinator.start())
+                    .onSuccess(v -> ctx.verify(() -> {
+                        verify(repository, times(1)).serverHeartbeat("node-a-1234abcd");
+                        ctx.completeNow();
+                    }))
+                    .onFailure(ctx::failNow);
+        }
+
+        @Test
         @DisplayName("disabled coordinator does not call serverHeartbeat or set timers")
         void disabledCoordinatorDoesNotStart(Vertx vertx, VertxTestContext ctx) {
             JobCoordinatorConfig disabled =
@@ -136,9 +186,10 @@ class JobCoordinatorTest {
     class Stop {
 
         @Test
-        @DisplayName("clean stop removes the server heartbeat row")
+        @DisplayName("clean stop with no claims held removes the server heartbeat row")
         void cleanStopRemovesServerHeartbeat(Vertx vertx, VertxTestContext ctx) {
             when(repository.serverHeartbeat(anyString())).thenReturn(Future.succeededFuture());
+            when(repository.findByLockedBy(anyString())).thenReturn(Future.succeededFuture(List.of()));
             when(repository.removeServer(anyString())).thenReturn(Future.succeededFuture());
 
             JobCoordinator coordinator = new JobCoordinator(vertx, repository, defaultConfig);
@@ -148,6 +199,39 @@ class JobCoordinatorTest {
                     .compose(v -> coordinator.stop())
                     .onSuccess(v -> ctx.verify(() -> {
                         verify(repository, atLeastOnce()).removeServer(coordinator.serverId());
+                        ctx.completeNow();
+                    }))
+                    .onFailure(ctx::failNow);
+        }
+
+        @Test
+        @DisplayName("stop keeps the heartbeat row while this node still holds PROCESSING claims")
+        void stopKeepsHeartbeatWhileClaimsHeld(Vertx vertx, VertxTestContext ctx) {
+            when(repository.serverHeartbeat(anyString())).thenReturn(Future.succeededFuture());
+            when(repository.findByLockedBy("node-a-1234abcd"))
+                    .thenReturn(Future.succeededFuture(List.of(execution(JobType.DELAYED, 0, 3))));
+
+            JobCoordinator coordinator = new JobCoordinator(vertx, repository, defaultConfig, "node-a-1234abcd");
+
+            coordinator
+                    .start()
+                    .compose(v -> coordinator.stop())
+                    .onSuccess(v -> ctx.verify(() -> {
+                        verify(repository, never()).removeServer(anyString());
+                        ctx.completeNow();
+                    }))
+                    .onFailure(ctx::failNow);
+        }
+
+        @Test
+        @DisplayName("stop without start touches no repository state")
+        void stopWithoutStartIsNoOp(Vertx vertx, VertxTestContext ctx) {
+            JobCoordinator coordinator = new JobCoordinator(vertx, repository, defaultConfig, "node-a-1234abcd");
+
+            coordinator
+                    .stop()
+                    .onSuccess(v -> ctx.verify(() -> {
+                        verifyNoInteractions(repository);
                         ctx.completeNow();
                     }))
                     .onFailure(ctx::failNow);
@@ -208,6 +292,8 @@ class JobCoordinatorTest {
                                     // abandonAndScheduleRetry must never be called for CRON jobs
                                     verify(repository, never())
                                             .abandonAndScheduleRetry(any(), any(), any(), any(), any(), anyInt());
+                                    when(repository.findByLockedBy(coordinator.serverId()))
+                                            .thenReturn(Future.succeededFuture(List.of()));
                                     coordinator.stop();
                                     ctx.completeNow();
                                 }));
@@ -253,6 +339,8 @@ class JobCoordinatorTest {
                                 verify(repository, never()).completeExecution(any(), any(), any(), any(), any());
                                 // scheduleRetry must NOT be called separately — replaced by atomic op
                                 verify(repository, never()).scheduleRetry(any(), any(), anyInt());
+                                when(repository.findByLockedBy(coordinator.serverId()))
+                                        .thenReturn(Future.succeededFuture(List.of()));
                                 coordinator.stop();
                                 ctx.completeNow();
                             })))
@@ -295,6 +383,8 @@ class JobCoordinatorTest {
                                                 eq(1));
                                 // removeServer must be skipped on a failed recovery
                                 verify(repository, never()).removeServer("dead-node");
+                                when(repository.findByLockedBy(coordinator.serverId()))
+                                        .thenReturn(Future.succeededFuture(List.of()));
                                 coordinator.stop();
                                 ctx.completeNow();
                             })))
@@ -340,6 +430,8 @@ class JobCoordinatorTest {
                                 // DEAD_LETTER must not be written for CRON
                                 verify(repository, never())
                                         .completeExecution(any(), eq(JobState.DEAD_LETTER), any(), any(), any());
+                                when(repository.findByLockedBy(coordinator.serverId()))
+                                        .thenReturn(Future.succeededFuture(List.of()));
                                 coordinator.stop();
                                 ctx.completeNow();
                             })))
@@ -382,6 +474,8 @@ class JobCoordinatorTest {
                                 // abandonAndScheduleRetry must NOT be called — exhausted
                                 verify(repository, never())
                                         .abandonAndScheduleRetry(any(), any(), any(), any(), any(), anyInt());
+                                when(repository.findByLockedBy(coordinator.serverId()))
+                                        .thenReturn(Future.succeededFuture(List.of()));
                                 coordinator.stop();
                                 ctx.completeNow();
                             })))
