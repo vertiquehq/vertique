@@ -24,7 +24,7 @@ Extends `PgSqlRepository` and implements `JobRepository`. All SQL operations use
 
 A version before scalar payloads cannot read a row holding a non-object payload, and such a row fails every claim of the batch that selects it. Finish rolling out before enqueuing scalar or list payloads, and drain those rows before rolling back. Rows with object payloads are unaffected in both directions.
 
-Generates a stable `nodeId` from the hostname and a random 8-character suffix, used as the `locked_by` value during job claiming and as the server identity for heartbeats.
+Stamps its node identity as `locked_by` on the executions it claims. `JobPostgresqlModule` passes the `@JobNodeId` value from `JobModule`, the same identity the `JobCoordinator` heartbeats under, so a surviving node's coordinator finds a dead node's claims by its heartbeat row. The constructors without a `nodeId` generate their own `<hostname>-<8-char suffix>` value, which no coordinator shares; build the repository by hand only with the four-argument constructor and the node's `@JobNodeId` value when a coordinator should recover its claims.
 
 **Constructors:**
 
@@ -33,9 +33,11 @@ Generates a stable `nodeId` from the hostname and a random 8-character suffix, u
 public PgJobRepository(Pool pool, PgDbExceptionMapper exceptionMapper)
 
 public PgJobRepository(Pool pool, PgDbExceptionMapper exceptionMapper, DbSchemas schemas)
+
+public PgJobRepository(Pool pool, PgDbExceptionMapper exceptionMapper, DbSchemas schemas, String nodeId)
 ```
 
-The two-argument constructor leaves every table unqualified, so tables resolve through the connection's default schema. The three-argument constructor qualifies every job table (`job_executions`, `job_logs`, `job_schedules`, `job_server_heartbeats`) with the schema that `schemas` maps to `job`; with no `job` entry its SQL is the same as the two-argument constructor's. The mapping is validated when the repository is constructed: a schema that is not a single valid PostgreSQL identifier throws `IllegalArgumentException` before any query runs (see `PgTableNames` in `dev.vertique:vertique-db-postgresql`). SQL in this document is shown with unqualified table names.
+The two-argument constructor leaves every table unqualified, so tables resolve through the connection's default schema. The three-argument constructor qualifies every job table (`job_executions`, `job_logs`, `job_schedules`, `job_server_heartbeats`) with the schema that `schemas` maps to `job`; with no `job` entry its SQL is the same as the two-argument constructor's. The four-argument constructor also takes the node identity to claim under and rejects a `null` or blank one with `IllegalArgumentException`. The mapping is validated when the repository is constructed: a schema that is not a single valid PostgreSQL identifier throws `IllegalArgumentException` before any query runs (see `PgTableNames` in `dev.vertique:vertique-db-postgresql`). SQL in this document is shown with unqualified table names.
 
 **Scope:** `save`, the transactional `save` and `tryInsert` write `JobExecution.scopeKey()` to `job_executions.scope_key`, and every read maps it back, so a custom `JobRepository` implementation must also persist `scopeKey` and return it unchanged, or its rows read `default`. Applications select the scope with `DelayedJobClientFactory.client(...).scope(...)` or `DelayedJob.scopeKey`; an unselected job is in `default`. The scope is a label, not authorization: it is not checked at enqueue, by id, or under a service principal, and the claim, retry, retention and cron de-duplication queries do not read it. Row scope and the ambient `ScopeContext` are independent, so a handler that partitions data chooses one source, compares the other when both are present, fails on a mismatch, and authorizes access itself.
 

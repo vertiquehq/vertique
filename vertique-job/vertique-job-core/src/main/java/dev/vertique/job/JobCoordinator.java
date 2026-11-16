@@ -64,7 +64,10 @@ public class JobCoordinator {
     private final JobRepository repository;
     private final JobCoordinatorConfig config;
 
-    /** Stable identity for this coordinator instance (hostname + random suffix). */
+    /**
+     * This node's identity: the heartbeat {@code server_id}, which must equal the {@code locked_by}
+     * value the node's repository stamps on its claims for dead-node recovery to find them.
+     */
     private final String serverId;
 
     private long heartbeatTimerId = -1;
@@ -73,17 +76,43 @@ public class JobCoordinator {
     // --- Constructor ---
 
     /**
-     * Creates a new {@code JobCoordinator}.
+     * Creates a new {@code JobCoordinator} with its own generated server identity.
+     *
+     * <p>The generated identity matches no repository's claim owner, so a coordinator built this way
+     * heartbeats but cannot recover the executions of a dead node that claimed under another value.
+     * Use {@link #JobCoordinator(Vertx, JobRepository, JobCoordinatorConfig, String)} with the node's
+     * {@link JobNodeId} value when the coordinator should recover claims; {@code JobCoordinatorModule}
+     * does.
      *
      * @param vertx      the Vert.x instance used for timer scheduling and event-bus access
      * @param repository the job repository for heartbeat writes and execution recovery
      * @param config     coordinator configuration (intervals, timeouts, enabled flag)
      */
     public JobCoordinator(Vertx vertx, JobRepository repository, JobCoordinatorConfig config) {
+        this(vertx, repository, config, resolveServerId());
+    }
+
+    /**
+     * Creates a new {@code JobCoordinator} that heartbeats under the given node identity.
+     *
+     * <p>Pass the same value the node's repository stamps as {@code locked_by} on the executions it
+     * claims (the {@link JobNodeId} binding), so that a surviving node's coordinator finds this node's
+     * executions by its heartbeat row when this node dies.
+     *
+     * @param vertx      the Vert.x instance used for timer scheduling and event-bus access
+     * @param repository the job repository for heartbeat writes and execution recovery
+     * @param config     coordinator configuration (intervals, timeouts, enabled flag)
+     * @param serverId   this node's identity; must not be {@code null} or blank
+     * @throws IllegalArgumentException if {@code serverId} is {@code null} or blank
+     */
+    public JobCoordinator(Vertx vertx, JobRepository repository, JobCoordinatorConfig config, String serverId) {
+        if (serverId == null || serverId.isBlank()) {
+            throw new IllegalArgumentException("serverId must not be null or blank");
+        }
         this.vertx = vertx;
         this.repository = repository;
         this.config = config;
-        this.serverId = resolveServerId();
+        this.serverId = serverId;
     }
 
     // --- Lifecycle ---

@@ -226,7 +226,13 @@ handler.handleCompletion(
 
 ### JobCoordinator
 
-Cluster-level lifecycle owner, constructed as `new JobCoordinator(vertx, repository, config)`.
+Cluster-level lifecycle owner, constructed as `new JobCoordinator(vertx, repository, config, serverId)`.
+`serverId` is this node's identity: the heartbeat row's `server_id`, which must equal the `locked_by`
+value the node's repository stamps on its claims, because recovery finds a dead node's executions by
+that value. `JobCoordinatorModule` passes the `@JobNodeId` binding, which `JobPostgresqlModule` and
+`CronPersistenceModule` also use. The older `new JobCoordinator(vertx, repository, config)` generates
+an identity of its own that no repository shares, so a coordinator built that way heartbeats but
+cannot recover a dead node's claims.
 
 | Method | Description |
 |---|---|
@@ -445,11 +451,16 @@ static JobExecutionStateTransitionListener myListener(MyStateTransitionListener 
 
 `JobModule` declares the empty `Set<JobInterceptor>` and
 `Set<JobExecutionStateTransitionListener>` multibindings so both resolve even when nothing is
-contributed. Include it whenever any job scheduling module is used — the scheduling modules already
-include it transitively.
+contributed. It also binds `@JobNodeId String`, this node's job-scheduling identity
+(`<hostname>-<8-char suffix>`, scoped once per component), which the coordinator heartbeats under and
+the PostgreSQL repository and persistence-backed cron scheduler stamp as `locked_by`. A custom
+`JobRepository` that records claim ownership should inject it rather than generate its own. Include
+`JobModule` whenever any job scheduling module is used — the scheduling modules already include it
+transitively.
 
-`JobCoordinatorModule` provides `JobCoordinatorConfig` (parsed from `job.coordinator`) and the
-singleton `JobCoordinator`, and requires a bound `JobRepository`. `CronPersistenceModule` and
+`JobCoordinatorModule` includes `JobModule` and provides `JobCoordinatorConfig` (parsed from
+`job.coordinator`) and the singleton `JobCoordinator`, built with the `@JobNodeId` identity, and
+requires a bound `JobRepository`. `CronPersistenceModule` and
 `DelayedJobModule` include it, so an application lists it explicitly only when wiring the coordinator
 without either of those. It does not call `start()`/`stop()` — the scheduling module that owns the
 lifecycle drives them.

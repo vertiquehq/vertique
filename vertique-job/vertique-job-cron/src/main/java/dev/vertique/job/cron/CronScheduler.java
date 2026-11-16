@@ -230,6 +230,58 @@ public class CronScheduler {
     }
 
     /**
+     * Full constructor that stamps the given node identity as {@code locked_by} on the executions
+     * this scheduler persists, and otherwise behaves like the nine-argument public constructor.
+     *
+     * <p>Pass the value the node's {@link dev.vertique.job.JobCoordinator} heartbeats under (the
+     * {@link dev.vertique.job.JobNodeId} binding), so that a surviving node's coordinator finds this
+     * node's tracked cron executions when this node dies; {@code CronPersistenceModule} does. The
+     * other constructors generate an identity of their own, which no coordinator shares.
+     *
+     * @param vertx                   the Vert.x instance for timer management and event bus dispatch
+     * @param interceptors            the set of job interceptors to invoke around each dispatch
+     * @param repository              optional job repository for persistent execution tracking and
+     *                                SINGLE_INSTANCE leader election; may be {@code null} for
+     *                                in-memory mode
+     * @param serviceTargetResolver   resolver for translating stable service target ids to runtime
+     *                                event bus addresses, once per admitted fire
+     * @param eventBusClient          the event bus client for dispatch protocol sends
+     * @param maxConcurrentJobs       the maximum number of jobs that can execute concurrently;
+     *                                must be positive
+     * @param executionTimeoutMs      per-execution timeout in milliseconds; {@code 0} disables
+     * @param progressFlushIntervalMs interval in milliseconds for flushing progress snapshots;
+     *                                {@code 0} disables
+     * @param envelopeBuilder         envelope builder used to construct outgoing job-dispatch
+     * envelopes through the context substrate
+     * @param nodeId                  this node's identity; must not be {@code null} or blank
+     * @throws IllegalArgumentException if {@code nodeId} is {@code null} or blank
+     */
+    public CronScheduler(
+            Vertx vertx,
+            Set<JobInterceptor> interceptors,
+            JobRepository repository,
+            ServiceTargetResolver serviceTargetResolver,
+            EventBusClient eventBusClient,
+            int maxConcurrentJobs,
+            long executionTimeoutMs,
+            long progressFlushIntervalMs,
+            dev.vertique.context.DispatchEnvelopeBuilder envelopeBuilder,
+            String nodeId) {
+        this(
+                vertx,
+                interceptors,
+                repository,
+                serviceTargetResolver,
+                eventBusClient,
+                maxConcurrentJobs,
+                executionTimeoutMs,
+                progressFlushIntervalMs,
+                envelopeBuilder,
+                new SystemCronTickPlanner(),
+                nodeId);
+    }
+
+    /**
      * Test seam constructor: the public full constructor's parameter list with the
      * {@link CronTickPlanner} appended.
      *
@@ -267,6 +319,32 @@ public class CronScheduler {
             long progressFlushIntervalMs,
             dev.vertique.context.DispatchEnvelopeBuilder envelopeBuilder,
             CronTickPlanner tickPlanner) {
+        this(
+                vertx,
+                interceptors,
+                repository,
+                serviceTargetResolver,
+                eventBusClient,
+                maxConcurrentJobs,
+                executionTimeoutMs,
+                progressFlushIntervalMs,
+                envelopeBuilder,
+                tickPlanner,
+                resolveNodeId());
+    }
+
+    private CronScheduler(
+            Vertx vertx,
+            Set<JobInterceptor> interceptors,
+            JobRepository repository,
+            ServiceTargetResolver serviceTargetResolver,
+            EventBusClient eventBusClient,
+            int maxConcurrentJobs,
+            long executionTimeoutMs,
+            long progressFlushIntervalMs,
+            dev.vertique.context.DispatchEnvelopeBuilder envelopeBuilder,
+            CronTickPlanner tickPlanner,
+            String nodeId) {
         if (maxConcurrentJobs <= 0) {
             throw new IllegalArgumentException("maxConcurrentJobs must be positive, got: " + maxConcurrentJobs);
         }
@@ -276,7 +354,10 @@ public class CronScheduler {
         this.maxConcurrentJobs = maxConcurrentJobs;
         this.repository = repository;
         this.serviceTargetResolver = serviceTargetResolver;
-        this.nodeId = resolveNodeId();
+        if (nodeId == null || nodeId.isBlank()) {
+            throw new IllegalArgumentException("nodeId must not be null or blank");
+        }
+        this.nodeId = nodeId;
         List<JobInterceptor> sortedInterceptors =
                 interceptors.stream().sorted(OrderedExtension.comparator()).toList();
         this.concurrency = new CronConcurrencyManager(maxConcurrentJobs);

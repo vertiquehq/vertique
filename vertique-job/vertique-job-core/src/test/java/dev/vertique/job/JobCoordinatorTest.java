@@ -3,7 +3,9 @@
 
 package dev.vertique.job;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -110,6 +112,32 @@ class JobCoordinatorTest {
                         ctx.completeNow();
                     }))
                     .onFailure(ctx::failNow);
+        }
+
+        @Test
+        @DisplayName("heartbeats under the node identity it was built with")
+        void heartbeatsUnderGivenNodeIdentity(Vertx vertx, VertxTestContext ctx) {
+            when(repository.serverHeartbeat(anyString())).thenReturn(Future.succeededFuture());
+
+            JobCoordinator coordinator = new JobCoordinator(vertx, repository, defaultConfig, "node-a-1234abcd");
+
+            coordinator
+                    .start()
+                    .onSuccess(v -> ctx.verify(() -> {
+                        assertEquals("node-a-1234abcd", coordinator.serverId());
+                        verify(repository, atLeastOnce()).serverHeartbeat("node-a-1234abcd");
+                        ctx.completeNow();
+                    }))
+                    .onFailure(ctx::failNow);
+        }
+
+        @Test
+        @DisplayName("rejects a null or blank node identity")
+        void rejectsBlankNodeIdentity(Vertx vertx) {
+            assertThrows(
+                    IllegalArgumentException.class, () -> new JobCoordinator(vertx, repository, defaultConfig, " "));
+            assertThrows(
+                    IllegalArgumentException.class, () -> new JobCoordinator(vertx, repository, defaultConfig, null));
         }
 
         @Test

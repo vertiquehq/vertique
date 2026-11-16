@@ -10,6 +10,7 @@ import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.job.JobCoordinator;
 import dev.vertique.job.JobCoordinatorConfig;
+import dev.vertique.job.JobNodeId;
 import dev.vertique.job.JobRepository;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -41,7 +42,7 @@ import jakarta.inject.Singleton;
  *     progressFlushIntervalMs: 10000
  * }</pre>
  */
-@Module
+@Module(includes = JobModule.class)
 public abstract class JobCoordinatorModule {
 
     /**
@@ -59,16 +60,20 @@ public abstract class JobCoordinatorModule {
     }
 
     /**
-     * Provides the singleton {@link JobCoordinator} wired with the bound repository and config.
+     * Provides the singleton {@link JobCoordinator} wired with the bound repository and config. It
+     * heartbeats under the {@link JobNodeId} value, the same identity the repository stamps on this
+     * node's claims.
      *
      * @param vertx      the Vert.x instance for timer scheduling and event-bus access
      * @param repository the job repository for heartbeat writes and execution recovery
      * @param config     the coordinator configuration
+     * @param nodeId     this node's job-scheduling identity
      * @return the singleton job coordinator
      */
     @Provides
     @Singleton
-    static JobCoordinator jobCoordinator(Vertx vertx, JobRepository repository, JobCoordinatorConfig config) {
-        return new JobCoordinator(vertx, repository, config);
+    static JobCoordinator jobCoordinator(
+            Vertx vertx, JobRepository repository, JobCoordinatorConfig config, @JobNodeId String nodeId) {
+        return new JobCoordinator(vertx, repository, config, nodeId);
     }
 }
