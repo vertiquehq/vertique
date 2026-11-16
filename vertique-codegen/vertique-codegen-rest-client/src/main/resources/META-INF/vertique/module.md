@@ -67,8 +67,8 @@ Generates `{ClientSimpleName}_RestClientProxy` in the origin interface's package
 
 - Static `Method` constants resolved once in the class initializer via `{Interface}.class.getDeclaredMethod(...)`. Signature-precise and overload-safe — matches the `Map<Method, ClientMethodMeta>` shape the runtime scanner already produces.
 - Constructor: `(RestClientDispatcher dispatcher, BeanParamAccessorRegistry registry, Map<Method, ClientMethodMeta> methodMetas)`. Per-method `ClientMethodMeta` references are stored in `final` fields for O(1) access on the hot path.
-- Each method body calls `dispatcher.newRequest(meta)`, then for every PATH/QUERY/HEADER/COOKIE parameter calls the matching `dispatcher.applyPathParam`/`applyQueryParam`/`applyHeaderParam`/`applyCookieParam(req, meta, name, value, defaultValue)` — passing the raw typed value, not a `.toString()`-serialized one — and finally calls `dispatcher.send(req, meta)`. Outbound serialization runs through the dispatcher's param-conversion resolver, so a `UUID`, `java.time` type, enum, or app-registered converter serializes consistently with the inbound jaxrs side. `@BeanParam` fields route through the same four `apply*Param` calls, keyed by each field's JAX-RS wire name.
-- A `null` required `@PathParam` (top-level or a `@BeanParam` field) with no `@DefaultValue` throws `RestClientException` from the generated proxy *before* the dispatcher call — the reflective fallback (`RestClientRequestFactory.collectParamsWithMeta`) fails identically, so both proxy flavors reject the call at the same point.
+- Each method body calls `dispatcher.newRequest(meta)`, then for every PATH/QUERY/HEADER/COOKIE parameter calls the matching `dispatcher.applyPathParam`/`applyQueryParam`/`applyHeaderParam`/`applyCookieParam(req, meta, name, value, defaultValue)` — passing the raw typed value, not a `.toString()`-serialized one — and finally calls `dispatcher.send(req, meta)`, all inside one `try` block whose `catch (Exception)` returns `Future.failedFuture(new RestClientException("Failed to build request for <method>", cause))` — the same delivery as the JDK proxy, so a construction failure never throws from the call site. Outbound serialization runs through the dispatcher's param-conversion resolver, so a `UUID`, `java.time` type, enum, or app-registered converter serializes consistently with the inbound jaxrs side. `@BeanParam` fields route through the same four `apply*Param` calls, keyed by each field's JAX-RS wire name.
+- A `null` required `@PathParam` (top-level or a `@BeanParam` field) with no `@DefaultValue` fails the returned future with `RestClientException` *before* the dispatcher call — the reflective fallback (`RestClientRequestFactory.collectParamsWithMeta`) fails identically, so both proxy flavors reject the call at the same point.
 
 Example for a two-parameter method:
 
@@ -100,15 +100,19 @@ public final class UserClient_RestClientProxy implements UserClient {
 
     @Override
     public Future<User> getUser(String id, PageRequest paging) {
-        RestRequestBuilder req = dispatcher.newRequest(metaGetUser);
-        if (id == null) {
-            throw new RestClientException("path param 'id' was null and has no @DefaultValue");
+        try {
+            RestRequestBuilder req = dispatcher.newRequest(metaGetUser);
+            if (id == null) {
+                throw new RestClientException("path param 'id' was null and has no @DefaultValue");
+            }
+            req = dispatcher.applyPathParam(req, metaGetUser, "id", id, null);
+            req = dispatcher.applyQueryParam(req, metaGetUser, "page", pageRequestAccessor.extract(paging, "page"), null);
+            req = dispatcher.applyQueryParam(req, metaGetUser, "size", pageRequestAccessor.extract(paging, "size"), null);
+            req = dispatcher.applyHeaderParam(req, metaGetUser, "X-Sort", pageRequestAccessor.extract(paging, "sort"), null);
+            return dispatcher.send(req, metaGetUser);
+        } catch (Exception _e_) {
+            return Future.failedFuture(new RestClientException("Failed to build request for getUser", _e_));
         }
-        req = dispatcher.applyPathParam(req, metaGetUser, "id", id, null);
-        req = dispatcher.applyQueryParam(req, metaGetUser, "page", pageRequestAccessor.extract(paging, "page"), null);
-        req = dispatcher.applyQueryParam(req, metaGetUser, "size", pageRequestAccessor.extract(paging, "size"), null);
-        req = dispatcher.applyHeaderParam(req, metaGetUser, "X-Sort", pageRequestAccessor.extract(paging, "sort"), null);
-        return dispatcher.send(req, metaGetUser);
     }
 }
 ```
@@ -244,13 +248,13 @@ These are compile errors (`ERROR`-level diagnostics), not warnings.
 
 ### PATH `null` Without `@DefaultValue`: Aligned Fail-Fast
 
-Both the generated proxy and the reflective fallback (`RestClientRequestFactory.collectParams`) throw `RestClientException` when a `@PathParam` — whether a top-level method parameter or a `@BeanParam` field — is `null` and no `@DefaultValue` is set. The message is:
+Both the generated proxy and the reflective fallback (`RestClientRequestFactory.collectParams`) raise `RestClientException` when a `@PathParam` — whether a top-level method parameter or a `@BeanParam` field — is `null` and no `@DefaultValue` is set. The message is:
 
 ```
 path param '<name>' was null and has no @DefaultValue
 ```
 
-Both paths fail fast with this descriptive exception. Applications that rely on a `null` path segment being silently omitted must add `@DefaultValue` or guard against `null` before calling the method.
+Both paths fail fast: the returned future fails with `RestClientException` ("Failed to build request for <method>") whose cause is the descriptive exception above. Applications that rely on a `null` path segment being silently omitted must add `@DefaultValue` or guard against `null` before calling the method.
 
 ---
 
@@ -264,7 +268,7 @@ Both paths fail fast with this descriptive exception. Applications that rely on 
 
 - **Bean-level fallback for un-accessible fields.** A bean with private fields and no getters (and no record components) will not receive a generated accessor. The processor emits a `NOTE` rather than a `WARNING` because the runtime handles such beans correctly via `ReflectiveBeanParamAccessor`. If maximum performance is required, add public getters or convert to a record.
 
-- **PATH `null` without `@DefaultValue` fails fast on both paths.** Both the generated proxy and the reflective fallback throw `RestClientException` when a `@PathParam` is `null` with no `@DefaultValue`. See "Runtime Integration" above.
+- **PATH `null` without `@DefaultValue` fails fast on both paths.** Both the generated proxy and the reflective fallback fail the returned future with `RestClientException` when a `@PathParam` is `null` with no `@DefaultValue`. See "Runtime Integration" above.
 
 ---
 

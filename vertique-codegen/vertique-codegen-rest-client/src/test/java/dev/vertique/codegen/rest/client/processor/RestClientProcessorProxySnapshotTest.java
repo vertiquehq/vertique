@@ -50,6 +50,38 @@ class RestClientProcessorProxySnapshotTest {
     }
 
     @Test
+    @DisplayName("generated proxy delivers request-construction failures as a failed future")
+    void generatedProxy_deliversConstructionFailuresAsFailedFuture() {
+        var result = ProcessorTestHarness.run(
+                new RestClientProcessor(),
+                RestClientProcessorFixtures.restClientAnnotation(),
+                RestClientProcessorFixtures.futureClass(),
+                SourceFiles.inline("dev.vertique.examples.client.UserClient", """
+                                package dev.vertique.examples.client;
+
+                                import dev.vertique.rest.client.RestClient;
+                                import io.vertx.core.Future;
+                                import jakarta.ws.rs.GET;
+                                import jakarta.ws.rs.Path;
+                                import jakarta.ws.rs.PathParam;
+
+                                @RestClient
+                                @Path("/users")
+                                public interface UserClient {
+                                    @GET
+                                    @Path("/{id}")
+                                    Future<String> findById(@PathParam("id") String id);
+                                }
+                                """));
+
+        result.assertSuccess();
+        result.assertGeneratedSourceContains(PROXY_FQN, "catch (Exception _e_)");
+        result.assertGeneratedSourceContains(
+                PROXY_FQN,
+                "Future.failedFuture(new RestClientException(\"Failed to build request for findById\", _e_))");
+    }
+
+    @Test
     @DisplayName("generated proxy has static Method constants in class initializer")
     void generatedProxy_hasStaticMethodConstants() {
         var result = ProcessorTestHarness.run(
