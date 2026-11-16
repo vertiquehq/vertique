@@ -12,6 +12,7 @@ import com.fasterxml.jackson.annotation.JsonUnwrapped;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import dev.vertique.core.config.ConfigSecret;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import java.util.List;
@@ -55,6 +56,53 @@ class ConfigSecretMaskingModuleTest {
     record Plain(String host, String region, int retries) {}
 
     record Tokens(int maxTokens, List<String> tokenScopes) {}
+
+    /** A marked bag on a record component, next to a neutral name and a secret name. */
+    record MarkedRecord(String name, @ConfigSecret Map<String, String> bag, String password) {}
+
+    /** A marked bag on a plain field with a getter, as a hand-written bean declares it. */
+    static final class MarkedBean {
+        private final String name;
+
+        @ConfigSecret
+        private final JsonObject bag;
+
+        MarkedBean(String name, JsonObject bag) {
+            this.name = name;
+            this.bag = bag;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public JsonObject getBag() {
+            return bag;
+        }
+    }
+
+    /** The marker on the accessor only, held through an {@link Optional}. */
+    static final class MarkedGetter {
+        private final Optional<List<String>> values;
+
+        MarkedGetter(Optional<List<String>> values) {
+            this.values = values;
+        }
+
+        @ConfigSecret
+        public Optional<List<String>> getValues() {
+            return values;
+        }
+    }
+
+    /** A marked scalar whose name matches no secret token, and a marked secret-named bag. */
+    record MarkedScalars(
+            @ConfigSecret String opaque,
+            @ConfigSecret int number,
+            @ConfigSecret JsonObject password) {}
+
+    @JsonFormat(shape = JsonFormat.Shape.ARRAY)
+    record MarkedArrayShaped(String name, @ConfigSecret Map<String, String> bag) {}
 
     @JsonFormat(shape = JsonFormat.Shape.ARRAY)
     record ArrayShaped(String name, String password) {}
@@ -455,6 +503,88 @@ class ConfigSecretMaskingModuleTest {
             assertEquals(SECRET, parsed.password());
             JsonArray none = new JsonArray();
             assertEquals(none, mapper.readValue("[]", JsonArray.class));
+        }
+    }
+
+    @Nested
+    @DisplayName("@ConfigSecret marker")
+    class Marker {
+
+        @Test
+        @DisplayName("a non-empty marked bag on a record component renders whole as ***, keys and values hidden")
+        void recordComponentBagMasked() throws Exception {
+            String json = mapper.writeValueAsString(new MarkedRecord("n", Map.of("anyKey", SECRET), null));
+
+            assertEquals("{\"name\":\"n\",\"bag\":\"***\"}", json);
+            assertFalse(json.contains("anyKey"));
+            assertFalse(json.contains(SECRET));
+        }
+
+        @Test
+        @DisplayName("an empty marked bag is written as given, so nothing configured stays visible")
+        void emptyBagWrittenAsIs() throws Exception {
+            assertEquals(
+                    "{\"name\":\"n\",\"bag\":{}}", mapper.writeValueAsString(new MarkedRecord("n", Map.of(), null)));
+            assertEquals(
+                    "{\"name\":\"n\",\"bag\":{}}", mapper.writeValueAsString(new MarkedBean("n", new JsonObject())));
+        }
+
+        @Test
+        @DisplayName("a null marked bag keeps the existing null handling")
+        void nullBagKeepsNullHandling() throws Exception {
+            assertEquals("{\"name\":\"n\",\"bag\":null}", mapper.writeValueAsString(new MarkedRecord("n", null, null)));
+        }
+
+        @Test
+        @DisplayName("the marker on a plain field is found through the property, with a JsonObject value")
+        void fieldBagMasked() throws Exception {
+            JsonNode json = mapper.valueToTree(new MarkedBean("n", new JsonObject().put("k", SECRET)));
+
+            assertEquals("***", json.get("bag").asText());
+            assertEquals("n", json.get("name").asText());
+        }
+
+        @Test
+        @DisplayName("the marker on the accessor alone masks a non-empty value held through an Optional")
+        void accessorMarkerThroughOptional() throws Exception {
+            assertEquals(
+                    "{\"values\":\"***\"}", mapper.writeValueAsString(new MarkedGetter(Optional.of(List.of(SECRET)))));
+            assertEquals("{\"values\":[]}", mapper.writeValueAsString(new MarkedGetter(Optional.of(List.of()))));
+        }
+
+        @Test
+        @DisplayName("the marker takes precedence over the path rule and works on any type")
+        void precedenceAndAnyType() throws Exception {
+            JsonNode json = mapper.valueToTree(new MarkedScalars("v", 7, new JsonObject().put("a", "b")));
+
+            assertEquals("***", json.get("opaque").asText());
+            assertEquals("***", json.get("number").asText());
+            assertEquals("***", json.get("password").asText());
+        }
+
+        @Test
+        @DisplayName("an empty marked string is written as given when its name is neutral")
+        void emptyStringWrittenAsIs() throws Exception {
+            JsonNode json = mapper.valueToTree(new MarkedScalars("", 0, new JsonObject()));
+
+            assertEquals("", json.get("opaque").asText());
+            assertEquals("***", json.get("password").asText(), "a secret-named path still masks when empty");
+        }
+
+        @Test
+        @DisplayName("an array-shaped record masks the marked bag as an element")
+        void arrayShapedMasked() throws Exception {
+            assertEquals("[\"n\",\"***\"]", mapper.writeValueAsString(new MarkedArrayShaped("n", Map.of("k", SECRET))));
+            assertEquals("[\"n\",{}]", mapper.writeValueAsString(new MarkedArrayShaped("n", Map.of())));
+        }
+
+        @Test
+        @DisplayName("the record keeps the live value and a plain mapper still prints it")
+        void liveValueUntouched() throws Exception {
+            MarkedRecord record = new MarkedRecord("n", Map.of("k", SECRET), null);
+
+            assertEquals(SECRET, record.bag().get("k"));
+            assertTrue(new ObjectMapper().writeValueAsString(record).contains(SECRET));
         }
     }
 }

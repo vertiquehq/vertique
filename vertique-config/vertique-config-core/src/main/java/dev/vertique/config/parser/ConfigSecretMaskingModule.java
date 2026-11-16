@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.ser.BeanPropertyWriter;
 import com.fasterxml.jackson.databind.ser.BeanSerializerModifier;
+import dev.vertique.core.config.ConfigSecret;
 import dev.vertique.core.config.ConfigSecretRenderer;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
@@ -41,6 +42,10 @@ import java.util.OptionalLong;
  * rendering changes. A sensitive property masks as one {@code "***"} whatever its type, so a nested
  * record or list under a secret-named key is never descended into, and a boolean or number whose
  * name happens to match the rule masks too.
+ *
+ * <p>A property marked {@link ConfigSecret} is written as {@code "***"} whole, whatever its path, when
+ * its value is non-empty; an empty map, collection, array or string and an absent value follow the
+ * regular rules below, so an unset bag stays visible as unset.
  *
  * <p>A property that is not itself sensitive but whose value (after unwrapping an {@link Optional}) is
  * an open bag ({@link Map}, {@link JsonObject}, {@link Collection}, {@link JsonArray}) is written with
@@ -125,6 +130,11 @@ final class ConfigSecretMaskingModule extends SimpleModule {
 
         @Override
         public void serializeAsField(Object bean, JsonGenerator gen, SerializerProvider prov) throws Exception {
+            if (isMarkedSecret(get(bean))) {
+                gen.writeFieldName(getName());
+                gen.writeString(ConfigSecretRenderer.MASK);
+                return;
+            }
             String path = ConfigSecretPaths.join(enclosingPath(gen), getName());
             if (ConfigSecretRenderer.isSensitivePath(path)) {
                 Object value = get(bean);
@@ -147,6 +157,10 @@ final class ConfigSecretMaskingModule extends SimpleModule {
         /** Array-shaped beans have no field names, so an absent secret writes {@code null}. */
         @Override
         public void serializeAsElement(Object bean, JsonGenerator gen, SerializerProvider prov) throws Exception {
+            if (isMarkedSecret(get(bean))) {
+                gen.writeString(ConfigSecretRenderer.MASK);
+                return;
+            }
             String path = ConfigSecretPaths.join(enclosingPath(gen), getName());
             if (ConfigSecretRenderer.isSensitivePath(path)) {
                 if (isAbsent(get(bean))) {
@@ -163,6 +177,30 @@ final class ConfigSecretMaskingModule extends SimpleModule {
                 return;
             }
             super.serializeAsElement(bean, gen, prov);
+        }
+
+        /**
+         * Whether the property carries {@link ConfigSecret} and holds a non-empty value, which is then
+         * written whole as the mask. The annotation is read through the property's merged members
+         * (field, accessor, constructor or builder parameter). An absent or empty value is left to the
+         * regular rules, so an unset bag stays visible as unset.
+         */
+        private boolean isMarkedSecret(Object value) {
+            if (getAnnotation(ConfigSecret.class) == null) {
+                return false;
+            }
+            Object content = unwrap(value);
+            return content != null && !isEmptyContent(content);
+        }
+
+        private static boolean isEmptyContent(Object content) {
+            return (content instanceof CharSequence text && text.isEmpty())
+                    || (content instanceof Map<?, ?> map && map.isEmpty())
+                    || (content instanceof Collection<?> collection && collection.isEmpty())
+                    || (content instanceof JsonObject json && json.isEmpty())
+                    || (content instanceof JsonArray array && array.isEmpty())
+                    || (content.getClass().isArray() && java.lang.reflect.Array.getLength(content) == 0)
+                    || isAbsent(content);
         }
 
         /** {@code null}, an empty {@link Optional} or an empty primitive optional counts as absent. */

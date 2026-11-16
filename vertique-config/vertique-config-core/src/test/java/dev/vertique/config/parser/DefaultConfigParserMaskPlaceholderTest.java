@@ -9,10 +9,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.config.ConfigParser;
+import dev.vertique.core.config.ConfigSecret;
 import dev.vertique.core.exception.ConfigurationException;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -27,6 +29,8 @@ class DefaultConfigParserMaskPlaceholderTest {
     record Credentials(String user, String password) {}
 
     record Server(String host, Credentials credentials, JsonObject properties, List<Credentials> fallbacks) {}
+
+    record Marked(String name, @ConfigSecret Map<String, String> bag) {}
 
     record Consumer(String name, String saslPassword, int threads) {}
 
@@ -132,5 +136,26 @@ class DefaultConfigParserMaskPlaceholderTest {
         assertEquals("***", dump.getString("password"));
 
         assertThrows(ConfigurationException.class, () -> parser.parse(dump, Credentials.class));
+    }
+
+    @Test
+    @DisplayName("a @ConfigSecret bag configured as the string *** fails binding without echoing a value")
+    void markedBagAsPlaceholderStringRejected() {
+        JsonObject section = new JsonObject().put("name", "visible-name").put("bag", "***");
+
+        ConfigurationException failure =
+                assertThrows(ConfigurationException.class, () -> parser.parse(section, Marked.class));
+
+        assertFalse(failure.getMessage().contains("visible-name"), failure.getMessage());
+        assertFalse(failure.getMessage().contains("***"), failure.getMessage());
+    }
+
+    @Test
+    @DisplayName("a @ConfigSecret bag configured as an object still binds and keeps its live values")
+    void markedBagAsObjectBinds() {
+        Marked parsed = parser.parse(
+                new JsonObject().put("name", "n").put("bag", new JsonObject().put("k", "v")), Marked.class);
+
+        assertEquals(Map.of("k", "v"), parsed.bag());
     }
 }
