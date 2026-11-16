@@ -8,6 +8,7 @@ import dev.vertique.resilience.adapter.CircuitFailureClassifier;
 import dev.vertique.resilience.exception.CircuitOpenException;
 import dev.vertique.resilience.exception.ResiliencePolicyException;
 import dev.vertique.resilience.exception.ResiliencePolicyFailureReason;
+import dev.vertique.resilience.spi.event.CircuitState;
 import dev.vertique.resilience.spi.event.ResilienceConcern;
 import io.vertx.core.Future;
 import java.nio.charset.StandardCharsets;
@@ -201,14 +202,7 @@ public final class ResiliencePipeline {
                             new CircuitOpenException(operationKey, circuitBreaker.stateKey())));
         }
         Supplier<Future<T>> retryOrTimeout = timeoutConfiguration != null || retryConfiguration != null
-                ? () -> resilience.executeCircuitBreakerPolicy(
-                        operationKey,
-                        timeoutConfiguration,
-                        retryConfiguration,
-                        operation,
-                        observation,
-                        contextOpen,
-                        executionRegistrar)
+                ? () -> executeTimeoutAndRetry(operation, observation)
                 : () -> observation.executeAttempt(operation);
         Supplier<Future<T>> protectedOperation = circuitBreaker == null
                 ? retryOrTimeout
@@ -235,6 +229,29 @@ public final class ResiliencePipeline {
         Future<T> outcome = retryOrTimeout.get();
         Future<T> fenced = executionRegistrar == null ? outcome : fenceContext(outcome);
         return finish(observation, fenced);
+    }
+
+    /**
+     * Runs the timeout and retry policy for one admitted logical call. A call admitted as the HALF_OPEN
+     * probe runs with a zero-retry plan: the probe is a single attempt, so a failing dependency cannot hold
+     * the breaker half-open through retries and backoff while every other call is rejected.
+     */
+    private <T> Future<T> executeTimeoutAndRetry(
+            Supplier<Future<T>> operation, ResilienceExecutionObservation observation) {
+        RetryConfig effectiveRetry = circuitBreaker != null && circuitBreaker.currentState() == CircuitState.HALF_OPEN
+                ? null
+                : retryConfiguration;
+        if (timeoutConfiguration == null && effectiveRetry == null) {
+            return observation.executeAttempt(operation);
+        }
+        return resilience.executeCircuitBreakerPolicy(
+                operationKey,
+                timeoutConfiguration,
+                effectiveRetry,
+                operation,
+                observation,
+                contextOpen,
+                executionRegistrar);
     }
 
     private Set<ResilienceConcern> enabledConcerns() {

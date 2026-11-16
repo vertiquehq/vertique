@@ -3530,8 +3530,10 @@ final class McpRequestDispatcher {
      * <p>Settlement is driven from {@link RoutingContext#addEndHandler}, which Vert.x Web multicasts to
      * every registered handler and which fires on normal end, on an exception, and on a connection
      * close. A failed outcome is a premature disconnect or a stream reset, classified by cause; a
-     * succeeded outcome is a normal end, already settled by the two-phase write path, so nothing is done
-     * with it. A failed outcome signalled from inside this request's own terminal {@code end()} call
+     * succeeded outcome is a normal end: MCP's two-phase write path has already settled it, or, when
+     * another handler answered the request, the observation {@code begin} opened is closed one context turn
+     * later with a cancelled, not-settled-by-MCP terminal (see {@link
+     * McpCompletionCoordinator#settleNotSettledByMcp}). A failed outcome signalled from inside this request's own terminal {@code end()} call
      * (see {@link McpCompletionCoordinator#endResponse}) was produced by that write rather than by
      * the peer: a response written outside the connection's read loop, such as from a timer task, is
      * reported that way over HTTP/2 although the write succeeds. It is settled one context turn
@@ -3577,8 +3579,8 @@ final class McpRequestDispatcher {
      * It never claims on a succeeded outcome, because
      * MCP settles a normal end only through its own write path, which has already claimed: a request
      * that ended normally without that write, because an earlier mount's failure handler took it or a
-     * reroute took it out of this mount, is not MCP's to report, and rest-core reports it instead.
-     * Neither {@link #begin} nor an admission rejection on a request's first entry into the mount
+     * reroute took it out of this mount, is not MCP's to report, and rest-core reports it instead; MCP only closes the observation it
+     * opened, without a claim. Neither {@link #begin} nor an admission rejection on a request's first entry into the mount
      * claims: {@link #begin} runs before MCP knows it will settle the request, and such an admission
      * rejection is written before any coordinator or hook exists. The claim reaches the emitter in time, because this hook is registered in {@link #begin},
      * after the emitter's own end handler, and Vert.x Web runs end handlers in reverse registration
@@ -3589,7 +3591,13 @@ final class McpRequestDispatcher {
             RoutingContext context, McpCompletionCoordinator coordinator, Instant startedAt) {
         context.addEndHandler(outcome -> {
             if (outcome.succeeded()) {
-                // A normal response end: the two-phase write path owns this settlement.
+                // A normal response end: the two-phase write path owns this settlement when it ran. When
+                // it did not, another handler answered the request, so close the observation begin opened
+                // without claiming the request, which rest-core reports.
+                int status = context.response().getStatusCode();
+                coordinator.settleNotSettledByMcp(
+                        () -> settlementTerminal(context, startedAt, McpErrorType.HTTP, status, null),
+                        context.response().headWritten());
                 return;
             }
             RequestCompletionRecorder.claimForOtherTransport(context);

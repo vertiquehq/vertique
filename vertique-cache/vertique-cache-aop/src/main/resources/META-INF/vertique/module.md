@@ -86,7 +86,11 @@ proxy and therefore bypasses caching and eviction entirely.
 `mode()` (default `CacheMode.DEFAULT`), `ttlSeconds()` (default `-1`), `subject()` (default
 `CacheIdentity.EFFECTIVE_PRINCIPAL`), and `anonymous()` (default `AnonymousCachePolicy.BYPASS`).
 Carries `@Aspect(ordering = 200)`. Place it on methods of Dagger-provided classes; it cannot be
-combined with `@CacheEvict` on the same method.
+combined with `@CacheEvict` on the same method. A synchronous method (return type other than
+`Future<T>`) always resolves to `LOCAL` unless `cache.caches.<name>.mode` overrides it: leaving
+`mode()` as `DEFAULT` stays `LOCAL` even under `cache.defaultMode: CLUSTERED`, an explicit
+`mode = CLUSTERED` is a compile-time error, and a configuration that still makes the effective mode
+`CLUSTERED` fails startup when the cache is built. A cache name shared by a synchronous and a `Future`-returning method must resolve to one mode: under `cache.defaultMode: CLUSTERED` the `Future` method's unset mode resolves to `CLUSTERED` while the synchronous one resolves to `LOCAL`, and registration fails with an incompatible-definitions error, so set `mode = LOCAL` on the `Future` method or use a `cache.caches.<name>.mode` override. A `@CacheEvict(clear = true)` clears the store of the definition a `@Cacheable` registered under that name, and the store of the declared or default mode while none is registered.
 
 ### @CacheEvict
 
