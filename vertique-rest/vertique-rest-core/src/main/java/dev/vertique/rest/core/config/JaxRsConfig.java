@@ -69,7 +69,7 @@ public class JaxRsConfig {
      *
      * <ul>
      *   <li>{@code "WARN"} (default) — log a warning for each unsupported media type</li>
-     *   <li>{@code "STRICT"} — throw a {@link dev.vertique.rest.core.RestConfigurationException} on the first mismatch</li>
+     *   <li>{@code "STRICT"} — throw a {@link dev.vertique.rest.core.RestConfigurationException} listing all mismatches</li>
      *   <li>{@code "OFF"} — skip validation entirely</li>
      * </ul>
      */
