@@ -4,6 +4,8 @@
 package dev.vertique.cache.aop;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.cache.CacheIdentity;
 import dev.vertique.cache.CacheMode;
@@ -74,6 +76,71 @@ class CacheResolutionTest {
                 .join();
 
         assertEquals(Duration.ZERO, store.lastTtl);
+    }
+
+    @Test
+    void synchronousDefaultModeResolvesToLocalUnderClusteredDefault() throws NoSuchMethodException {
+        var store = new CacheTestFixtures.RecordingStore();
+        var method = SyncTarget.class.getDeclaredMethod("plain", String.class);
+        var metadata = CacheTestFixtures.metadata(method, "user");
+        AtomicInteger targetCalls = new AtomicInteger();
+        var interceptor = new CacheableAspect(store, config(CacheMode.CLUSTERED, Map.of()), Set.of())
+                .interceptor(metadata, method.getAnnotation(Cacheable.class));
+
+        for (int call = 0; call < 2; call++) {
+            interceptor
+                    .intercept(CacheTestFixtures.invocation(metadata, new Object[] {"alice"}, targetCalls))
+                    .toCompletionStage()
+                    .toCompletableFuture()
+                    .join();
+        }
+
+        assertEquals(1, targetCalls.get(), "a synchronous method with no mode must be cached, not bypassed");
+        assertEquals(1, store.putCalls);
+    }
+
+    @Test
+    void synchronousMethodWithExplicitClusteredModeFailsAtStartup() throws NoSuchMethodException {
+        var method = SyncTarget.class.getDeclaredMethod("explicitClustered", String.class);
+        var metadata = CacheTestFixtures.metadata(method, "user");
+        var aspect = new CacheableAspect(
+                new CacheTestFixtures.RecordingStore(), config(CacheMode.LOCAL, Map.of()), Set.of());
+
+        var failure = assertThrows(
+                IllegalArgumentException.class,
+                () -> aspect.interceptor(metadata, method.getAnnotation(Cacheable.class)));
+
+        assertTrue(failure.getMessage().contains("clustered-sync"), failure.getMessage());
+    }
+
+    @Test
+    void synchronousMethodWithClusteredConfigurationOverrideFailsAtStartup() throws NoSuchMethodException {
+        var method = SyncTarget.class.getDeclaredMethod("plain", String.class);
+        var metadata = CacheTestFixtures.metadata(method, "user");
+        var aspect = new CacheableAspect(
+                new CacheTestFixtures.RecordingStore(),
+                config(CacheMode.LOCAL, Map.of("plain-sync", new CacheEntryConfig(CacheMode.CLUSTERED, -1, null))),
+                Set.of());
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> aspect.interceptor(metadata, method.getAnnotation(Cacheable.class)));
+    }
+
+    private static CacheConfig config(CacheMode defaultMode, Map<String, CacheEntryConfig> caches) {
+        return new CacheConfig(true, defaultMode, 60, 120, "system", 1_024, 1_048_576, 10_000, 100, caches);
+    }
+
+    static final class SyncTarget {
+        @Cacheable(name = "plain-sync", key = "0", subject = CacheIdentity.NONE)
+        String plain(String user) {
+            return "unused";
+        }
+
+        @Cacheable(name = "clustered-sync", key = "0", mode = CacheMode.CLUSTERED, subject = CacheIdentity.NONE)
+        String explicitClustered(String user) {
+            return "unused";
+        }
     }
 
     static final class Target {
