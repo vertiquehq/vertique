@@ -161,6 +161,9 @@ final class ForkJoinCoordinator {
      * applicator, onDueMutator, onTimeoutMutator) MUST pass the post-mutation
      * {@link WorkflowInstance} so the drive sees fresh {@code state_json} and {@code subjectRef}.
      *
+     * <p>The drive binds the branch token's carrier with the instance's durable context filling every
+     * namespace the carrier lacks; the carrier wins on a clash and the identity snapshot is never bound.
+     *
      * @param inst    the parent instance reflecting the current state (post-mutation if any)
      * @param cleared the branch token with wait fields cleared and {@code currentStepId} advanced
      * @param rw      the resolved runtime workflow
@@ -180,7 +183,7 @@ final class ForkJoinCoordinator {
                         rw,
                         BranchTransitionEngine.InstanceScope.of(inst),
                         tx,
-                        null,
+                        carrierWithInstanceFill(cleared, inst),
                         commandId)
                 .compose(advanced -> {
                     if (isBranchTerminal(advanced.status())) {
@@ -190,6 +193,23 @@ final class ForkJoinCoordinator {
                 })
                 // a branch that reached a signal wait applies the parked signals its wait accepts
                 .compose(done -> driverPvd.get().afterInlineDrive(inst.id(), tx));
+    }
+
+    /**
+     * Builds the durable document a branch drive binds: the token's own carrier, with the instance's carrier filling
+     * every namespace the token lacks. The token wins on a clash, and the identity snapshot is excluded from the
+     * instance side.
+     */
+    private static dev.vertique.core.context.DurableMetadata carrierWithInstanceFill(
+            BranchToken token, WorkflowInstance inst) {
+        dev.vertique.core.context.DurableMetadata instanceMetadata = inst.metadata();
+        if (instanceMetadata == null) {
+            return token.metadata();
+        }
+        return token.metadata()
+                .merge(
+                        instanceMetadata.without(WorkflowEngine.IDENTITY_SNAPSHOT_NAMESPACE),
+                        dev.vertique.core.context.DurableMetadata.MergePolicy.CALLER_WINS);
     }
 
     /**
