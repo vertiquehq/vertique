@@ -981,8 +981,9 @@ core.ConfigurationException
 └── RestClientConfigurationException  — wiring, config, or build-time failure
 ```
 
-Resilience failures reach the caller as these types: an open circuit, a bulkhead rejection or queue
-timeout, and a closed runtime surface as `RestClientUnavailableException`; a timeout surfaces as
+Resilience failures reach the caller as these types, including when they come from the re-dispatch
+that follows an accepted `recoverRequest`: an open circuit, a bulkhead rejection or queue timeout,
+and a closed runtime surface as `RestClientUnavailableException`; a timeout surfaces as
 `RestClientTimeoutException`. The original resilience exception is kept as the cause.
 
 `catch (RestClientException)` therefore catches **only** `RestClientResponseException`. Transport

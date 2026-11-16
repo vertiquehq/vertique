@@ -823,7 +823,7 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
                                     clientName,
                                     meta.methodMetadata().name(),
                                     recoveryErr);
-                            return Future.failedFuture(recoveryErr);
+                            return Future.failedFuture(mapFailureForRest(recoveryErr));
                         });
             });
         }
