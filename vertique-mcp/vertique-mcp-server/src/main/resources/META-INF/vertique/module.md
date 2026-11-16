@@ -319,7 +319,10 @@ failure before the envelope was classified, still report `OTHER`.
 Failures taken by another mount, and reroutes by an application `RouteAuthHandler`, work as follows:
 
 - **Not settled by MCP** — a request MCP admits but does not settle completes as an ordinary
-  rest-core request with one completion event, and MCP emits no terminal or completion for it. An
+  rest-core request with one completion event, and MCP closes the observation it opened at `begin`
+  with one terminal and one completion that record the request as `CANCELLED` with error type
+  `HTTP`, the status the other handler wrote, and transport outcome `WRITTEN`. MCP does not claim
+  the request, so rest-core still reports its one event. An
   authentication or identity failure taken by the failure handler of another mount that is ordered
   ahead of the MCP mount and matches the request's path produces one `HttpRequestCompletedEvent`. A
   request an application `RouteAuthHandler` reroutes out of the MCP mount, and that completes
@@ -338,14 +341,12 @@ Failures taken by another mount, and reroutes by an application `RouteAuthHandle
   the first pass's coordinator and the writer claims it: it gets one MCP completion and no
   `HttpRequestCompletedEvent`.
 
-**Known limitation: an observation MCP never settles stays open.** For a request MCP admitted but
-does not settle (the failure taken by another mount, or the reroute out of the mount that completes
-normally, above), MCP emits no terminal or completion, so the lifecycle observation it opened at
-`begin`, when the request passed admission and before authentication, is never closed. Observers
-therefore see that observation opened with no completion, and the in-flight gauge
-`vertique.mcp.server.active` (`vertique-micrometer-mcp`) stays one higher for each such request.
-This behavior predates the completion claim, which neither causes nor changes it. Nothing closes such
-an abandoned observation today.
+**An observation MCP does not settle is still closed.** For a request MCP admitted but does not
+settle (the failure taken by another mount, or the reroute out of the mount that completes normally,
+above), the end of the request closes the lifecycle observation MCP opened at `begin`, so the
+in-flight gauge `vertique.mcp.server.active` (`vertique-micrometer-mcp`) returns to zero. Observers
+and completion listeners see that request's one terminal and one completion with the outcome
+described above, not an observation that never completes.
 
 **Completion scope bracketing.** Immediately before the completion coordinator
 dispatches the one completion event to every retained observation and completion listener, it opens

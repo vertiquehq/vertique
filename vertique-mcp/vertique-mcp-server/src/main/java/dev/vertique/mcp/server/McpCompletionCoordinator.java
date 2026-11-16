@@ -714,6 +714,33 @@ final class McpCompletionCoordinator {
     }
 
     /**
+     * Settles a request that ended normally without this MCP coordinator settling it, so the observation
+     * {@code begin} opened is closed instead of staying open for good.
+     *
+     * <p>This happens when an earlier mount's failure handler takes a failure raised after {@code begin},
+     * or when a route handler reroutes the request out of the MCP mount: another handler wrote the
+     * response, MCP never reached its own write path, and no disconnect or reset will follow. The
+     * settlement runs one context turn later, never inline, because the end handlers can run inside the
+     * response's own {@code end()} call, before a handler that ended the response and then failed has
+     * thrown: the failure handler of the same turn must settle that request with its own terminal first.
+     * A request that MCP's write path, a failure handler, or a disconnect or reset already settled is left
+     * alone. Otherwise exactly one terminal and one completion are published, with the transport outcome
+     * {@code WRITTEN} (the response was written, by another handler), and the cancellation signal fires
+     * so no later stage works on the ended request.
+     *
+     * @param terminal supplies the terminal facts, called on the request-owning context only when this
+     *     call settles the request
+     * @param responseCommitted whether any response byte was committed when the request ended
+     */
+    void settleNotSettledByMcp(Supplier<McpRequestTerminalEvent> terminal, boolean responseCommitted) {
+        context.runOnContext(ignored -> {
+            if (!settled) {
+                completeOnContext(terminal.get(), McpTransportOutcome.WRITTEN, responseCommitted, clock.instant());
+            }
+        });
+    }
+
+    /**
      * Drives the completed-guard on the request-owning context, redispatching only from another context.
      *
      * @param terminal the terminal facts to publish before completion
