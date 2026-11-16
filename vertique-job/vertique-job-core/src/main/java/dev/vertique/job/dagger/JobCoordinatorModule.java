@@ -5,9 +5,11 @@ package dev.vertique.job.dagger;
 
 import dagger.Module;
 import dagger.Provides;
+import dagger.multibindings.IntoSet;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
+import dev.vertique.deploy.VerticleDeployment;
 import dev.vertique.job.JobCoordinator;
 import dev.vertique.job.JobCoordinatorConfig;
 import dev.vertique.job.JobNodeId;
@@ -29,6 +31,12 @@ import jakarta.inject.Singleton;
  * {@link dev.vertique.job.delayed.dagger.DelayedJobModule}, both of which transitively include
  * this module and consume {@link JobCoordinatorConfig} to configure per-execution timeouts and
  * progress-flush intervals.
+ *
+ * <p>The module also contributes a {@link VerticleDeployment} in the {@code SERVICES} phase that
+ * starts the coordinator when it deploys and stops it when it undeploys, so the application never
+ * calls {@link JobCoordinator#start()} or {@link JobCoordinator#stop()} itself. Its priority is below
+ * the delayed-job pollers' and the cron scheduler's, so it deploys before they claim anything and
+ * undeploys after they stop. With {@code job.coordinator.enabled: false} it does nothing.
  *
  * <p>Example YAML configuration:
  * <pre>{@code
@@ -75,5 +83,19 @@ public abstract class JobCoordinatorModule {
     static JobCoordinator jobCoordinator(
             Vertx vertx, JobRepository repository, JobCoordinatorConfig config, @JobNodeId String nodeId) {
         return new JobCoordinator(vertx, repository, config, nodeId);
+    }
+
+    /**
+     * Contributes the coordinator deployment, which starts the {@link JobCoordinator} when it deploys
+     * and stops it when it undeploys. Dagger includes this module once per component, so there is one
+     * deployment however many scheduling modules include it.
+     *
+     * @param coordinator the singleton job coordinator
+     * @return the coordinator deployment
+     */
+    @Provides
+    @IntoSet
+    static VerticleDeployment jobCoordinatorDeployment(JobCoordinator coordinator) {
+        return JobCoordinatorVerticle.deployment(coordinator);
     }
 }

@@ -73,6 +73,9 @@ public class JobCoordinator {
     private long heartbeatTimerId = -1;
     private long scanTimerId = -1;
 
+    /** Whether {@link #start()} armed the timers and {@link #stop()} has not yet run. */
+    private boolean started;
+
     // --- Constructor ---
 
     /**
@@ -121,25 +124,27 @@ public class JobCoordinator {
      * Starts the coordinator: issues an immediate heartbeat and schedules the periodic heartbeat
      * and dead-node scan timers.
      *
-     * <p>This method must be called from a Vert.x context (e.g., from a verticle's
-     * {@code start()} method). If {@link JobCoordinatorConfig#enabled()} is {@code false}, this
-     * method is a no-op and returns immediately.
+     * <p>{@code JobCoordinatorModule} contributes a verticle deployment that calls this method and
+     * {@link #stop()}, so an application that installs a scheduling module does not call them itself.
+     * If {@link JobCoordinatorConfig#enabled()} is {@code false}, this method is a no-op and returns
+     * immediately. Calling it again while started is also a no-op.
      *
-     * @return a succeeded future when the coordinator has started; failures from the initial
-     *         heartbeat write do not propagate — they are logged as warnings
+     * @return a future that succeeds once the initial heartbeat write has settled, so a caller that
+     *         waits for it claims nothing before this node's heartbeat row exists; a failed initial
+     *         write does not fail the future — it is logged as a warning and the periodic heartbeat
+     *         retries it
      */
     public Future<Void> start() {
         if (!config.enabled()) {
             log.debug("JobCoordinator is disabled — no timers started");
             return Future.succeededFuture();
         }
+        if (started) {
+            return Future.succeededFuture();
+        }
+        started = true;
 
         log.info("Starting JobCoordinator for server '{}'", serverId);
-
-        // Issue initial heartbeat immediately (do not wait for the first timer tick)
-        repository
-                .serverHeartbeat(serverId)
-                .onFailure(err -> log.warn("Initial node heartbeat failed: {}", err.getMessage()));
 
         // Schedule periodic heartbeat
         heartbeatTimerId = vertx.setPeriodic(config.nodeHeartbeatIntervalMs(), id -> repository
@@ -149,17 +154,31 @@ public class JobCoordinator {
         // Schedule periodic dead-node scan
         scanTimerId = vertx.setPeriodic(config.scanIntervalMs(), id -> scanForDeadNodes());
 
-        return Future.succeededFuture();
+        // Issue the initial heartbeat immediately (do not wait for the first timer tick) and complete
+        // once it settles, so the node's row exists before the claimers deploy
+        return repository
+                .serverHeartbeat(serverId)
+                .onFailure(err -> log.warn("Initial node heartbeat failed: {}", err.getMessage()))
+                .recover(err -> Future.succeededFuture());
     }
 
     /**
-     * Stops the coordinator: cancels all timers and removes this server's heartbeat row so other
-     * nodes know the shutdown was clean.
+     * Stops the coordinator: cancels all timers and, when this node holds no {@code PROCESSING}
+     * claims, removes its heartbeat row so other nodes know the shutdown was clean.
      *
-     * @return a future completed when this server's heartbeat row has been removed; the future
-     *         succeeds even if the delete fails (the row will naturally expire)
+     * <p>When executions claimed by this node are still {@code PROCESSING} — handlers still running
+     * as the node shuts down — the heartbeat row is kept. It then expires, and a surviving node's
+     * coordinator recovers whatever is still {@code PROCESSING} under this node's identity, which a
+     * deleted row would never let it find. A no-op when the coordinator was never started.
+     *
+     * @return a future completed when the claim check and any heartbeat removal have settled; the
+     *         future succeeds even if either fails (the row then expires and is handled by recovery)
      */
     public Future<Void> stop() {
+        if (!started) {
+            return Future.succeededFuture();
+        }
+        started = false;
         log.info("Stopping JobCoordinator for server '{}'", serverId);
 
         if (heartbeatTimerId != -1) {
@@ -171,10 +190,21 @@ public class JobCoordinator {
             scanTimerId = -1;
         }
 
-        // Remove this server's heartbeat row on clean shutdown so other nodes don't treat it
-        // as dead on their next scan
+        // Remove this server's heartbeat row on clean shutdown so other nodes don't treat it as dead
+        // on their next scan, unless it still holds claims that only dead-node recovery can reclaim.
         return repository
-                .removeServer(serverId)
+                .findByLockedBy(serverId)
+                .compose(claims -> {
+                    if (!claims.isEmpty()) {
+                        log.info(
+                                "Keeping heartbeat of server '{}' on shutdown: {} execution(s) still PROCESSING;"
+                                        + " a surviving node recovers them once it expires",
+                                serverId,
+                                claims.size());
+                        return Future.<Void>succeededFuture();
+                    }
+                    return repository.removeServer(serverId);
+                })
                 .onFailure(err -> log.warn("Failed to remove server heartbeat on shutdown: {}", err.getMessage()))
                 .recover(err -> Future.succeededFuture());
     }

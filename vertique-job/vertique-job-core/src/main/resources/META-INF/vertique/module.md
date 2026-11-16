@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.job`
 > **Artifact:** `vertique-job-core`
-> **Depends on:** core
+> **Depends on:** core, deploy
 
 `vertique-job-core` defines the vocabulary every Vertique scheduling module shares: the job execution
 record and its state machine, the `JobContext` handler-side API for progress, structured logging,
@@ -236,8 +236,8 @@ cannot recover a dead node's claims.
 
 | Method | Description |
 |---|---|
-| `start()` | Writes an immediate heartbeat, then starts the heartbeat and scan timers; a no-op when `enabled()` is `false` |
-| `stop()` | Cancels both timers and removes this node's heartbeat row; succeeds even if the delete fails |
+| `start()` | Writes an immediate heartbeat, then starts the heartbeat and scan timers; a no-op when `enabled()` is `false` or when already started |
+| `stop()` | Cancels both timers and, when this node holds no `PROCESSING` claims, removes its heartbeat row; a no-op when not started; succeeds even if a repository call fails |
 | `cancelExecution(UUID)` | Publishes on `job.cancel.<executionId>` and marks the execution `CANCELLED` |
 | `serverId()` | This node's identity, `<hostname>-<8-char suffix>` |
 
@@ -249,7 +249,15 @@ cooperative — the published signal sets the in-process flag, and the repositor
 decision durable even if the handler ignores it. The dead node's heartbeat row is deleted **only
 after every per-execution recovery write has committed**; if any fails, the row stays so the next
 scan rediscovers the node, because deleting it early would strand a still-`PROCESSING` orphan
-permanently.
+permanently. For the same reason `stop()` keeps this node's own row while executions it claimed are
+still `PROCESSING` (handlers still running at shutdown): the row expires and a surviving node recovers
+whatever is left. `start()` completes once its initial heartbeat write has settled.
+
+Applications do not call `start()` or `stop()`: `JobCoordinatorModule` deploys a verticle that does
+(see Module Dagger Bindings). The coordinator therefore writes a heartbeat to
+`job_server_heartbeats` every `nodeHeartbeatIntervalMs` and scans every `scanIntervalMs` on every node
+that installs a scheduling module with persistence; set `job.coordinator.enabled: false` to turn both
+off.
 
 ### JobCoordinatorConfig
 
@@ -462,8 +470,15 @@ transitively.
 `job.coordinator`) and the singleton `JobCoordinator`, built with the `@JobNodeId` identity, and
 requires a bound `JobRepository`. `CronPersistenceModule` and
 `DelayedJobModule` include it, so an application lists it explicitly only when wiring the coordinator
-without either of those. It does not call `start()`/`stop()` — the scheduling module that owns the
-lifecycle drives them.
+without either of those. It also contributes one `VerticleDeployment` named `job-coordinator` (one
+however many modules include it) whose verticle calls `start()` when it deploys and `stop()` when it
+undeploys. It deploys in the `SERVICES` phase at priority 50, below the priority 100 of the delayed-job
+pollers and the cron scheduler. Verticles deploy in ascending and undeploy in descending priority, so
+the claimers deploy only after the initial heartbeat write has settled (when that write fails, the next
+periodic heartbeat writes the row), heartbeats continue until
+every claimer has stopped, and the shutdown claim check sees the claims they made last. A host that
+does not deploy the `Set<VerticleDeployment>` must call `start()` and `stop()` itself, in that order
+around its claimers.
 
 ```java
 @Component(modules = {VertxModule.class, JobPostgresqlModule.class, JobCoordinatorModule.class})
@@ -479,3 +494,4 @@ public interface AppComponent { ... }
   transition event), `OrderedExtension` (interceptor ordering), and `ConfigParser` /
   `JsonConfigPaths` (the `job.coordinator` parse boundary).
 - **resilience** — the `BackoffStrategy` contract used for retry delays.
+- **deploy** — `VerticleDeployment`, through which `JobCoordinatorModule` deploys the coordinator.
