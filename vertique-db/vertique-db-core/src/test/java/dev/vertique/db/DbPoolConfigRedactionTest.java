@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Test;
  * <p>The password, the trust-store password, and the vendor properties bag are available to the
  * runtime but must never leak out. These tests pin both halves of the contract: each secret is
  * readable through its accessor after deserialization, yet the config mapper serializes the two
- * passwords as {@code "***"} and omits the write-only properties bag, and every secret is redacted
+ * passwords as {@code "***"} and renders the properties bag whole as {@code "***"}, and every secret is redacted
  * in {@link DbPoolConfig#toString()}.
  */
 @DisplayName("DbPoolConfig redaction")
@@ -58,7 +58,7 @@ class DbPoolConfigRedactionTest {
     }
 
     @Test
-    @DisplayName("the config mapper masks the passwords as *** and omits the write-only properties bag")
+    @DisplayName("the config mapper masks the passwords as *** and renders the properties bag whole as ***")
     void secrets_maskedByConfigMapper() throws Exception {
         String serialized = mapper.writeValueAsString(deserialized());
 
@@ -68,7 +68,8 @@ class DbPoolConfigRedactionTest {
         JsonObject json = new JsonObject(serialized);
         assertEquals("***", json.getString("password"));
         assertEquals("***", json.getString("trustStorePassword"));
-        assertFalse(json.containsKey("properties"), "properties key must not serialize");
+        assertEquals("***", json.getString("properties"), "the bag renders whole, keys and values hidden");
+        assertFalse(serialized.contains("sslpassword"), "the bag's key must not serialize");
         assertEquals("db.example", json.getString("host"), "non-secret fields still serialize");
     }
 
@@ -81,6 +82,21 @@ class DbPoolConfigRedactionTest {
 
         assertFalse(json.containsKey("password"), json.encode());
         assertFalse(json.containsKey("trustStorePassword"), json.encode());
+    }
+
+    @Test
+    @DisplayName("an empty or default properties bag serializes as {} and a builder-built populated bag masks")
+    void emptyPropertiesVisibleAndBuilderBuiltMasked() throws Exception {
+        JsonObject empty = new JsonObject(
+                mapper.writeValueAsString(DbPoolConfig.builder().host("h").build()));
+        assertEquals(new JsonObject(), empty.getJsonObject("properties"), empty.encode());
+
+        DbPoolConfig built = DbPoolConfig.builder()
+                .host("h")
+                .properties(Map.of("anyKey", PROPERTY_VALUE))
+                .build();
+        JsonObject masked = new JsonObject(mapper.writeValueAsString(built));
+        assertEquals("***", masked.getString("properties"), masked.encode());
     }
 
     @Test

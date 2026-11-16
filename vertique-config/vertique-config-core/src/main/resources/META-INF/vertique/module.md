@@ -369,7 +369,9 @@ Absent any `@ConfigMapper` binding, the framework uses its own lenient default m
   the record `ConfigSecretRenderer.isSensitivePath` (in `dev.vertique:vertique-core`) deems sensitive
   — `ssl.keyStorePassword`, `credentials`, `apiKey`, a `jaas` record's `config` — renders as `"***"`
   when it has a value and is omitted when it is `null` or an empty `Optional`; a secret-named record
-  or list masks as one `"***"`. The path uses the serialized property names, so a
+  or list masks as one `"***"`, and so does a non-empty property marked `@ConfigSecret` (in
+  `dev.vertique:vertique-core`) whatever its path — an open bag whose keys cannot be named in advance;
+  an empty one is written as given. The path uses the serialized property names, so a
   `@JsonProperty("pwd")` renames a field out of the rule. An open bag (`Map`, `JsonObject`,
   collection, also held through an `Optional`) under a non-secret key is written with its sensitive
   entries masked at every depth, the walk `redactBag` applies to `toString()`, with `null` secret

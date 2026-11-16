@@ -76,8 +76,8 @@ Lombok `@Builder` configuration value object. Deserialized from the `"flyway"` s
 **Secret hygiene:** `password` is read from configuration and stays readable; the config mapper
 behind `ConfigParser` serializes it as `"***"` when set and omits it when absent (its name matches
 the shared secret rule, `ConfigSecretRenderer` in `dev.vertique:vertique-core`), and `ConfigParser`
-rejects a literal `"***"` as its value. `placeholders` stays write-only — a placeholder value may be
-a secret under any key, so the bag is never serialized back out. Only the config mapper masks;
+rejects a literal `"***"` as its value. `placeholders` carries `@ConfigSecret` — a placeholder value may be
+a secret under any key, so the config mapper serializes the bag whole as `"***"` when non-empty (`{}` when empty). Only the config mapper masks;
 another `ObjectMapper` prints the password. `toString()` renders the password as `<redacted>`, the placeholder
 keys without their values, and a `password=` parameter in `jdbcUrl` masked, on the class and on its
 builder. The same holds for every nested `FlywayInstanceConfig`. The config mapper serializes `jdbcUrl`
@@ -90,7 +90,7 @@ former. Prefer `user` and `password` over credentials embedded in `jdbcUrl`.
 
 ### `FlywayInstanceConfig`
 
-Record holding the overrides of one named instance, bound from `flyway.instances.<name>`. Only `name` is required; every other component is `null` until resolution, and `null` means inherit. The fields are listed under [Instance overrides](#instance-overrides). `password` and `placeholders` are write-only and redacted in `toString()`.
+Record holding the overrides of one named instance, bound from `flyway.instances.<name>`. Only `name` is required; every other component is `null` until resolution, and `null` means inherit. The fields are listed under [Instance overrides](#instance-overrides). The config mapper serializes `password` and a non-empty `placeholders` map as `"***"` (`placeholders` carries `@ConfigSecret`); `toString()` redacts the password and prints only the placeholder keys.
 
 ### `FlywayMigrationRunner`
 

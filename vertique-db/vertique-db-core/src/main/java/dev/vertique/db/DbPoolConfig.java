@@ -5,9 +5,9 @@ package dev.vertique.db;
 
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonSetter;
 import com.fasterxml.jackson.annotation.Nulls;
+import dev.vertique.core.config.ConfigSecret;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -43,8 +43,9 @@ import lombok.extern.jackson.Jacksonized;
  * configuration and stay readable through their accessors; the config mapper behind
  * {@code ConfigParser} serializes them as {@code "***"} when set and omits them when absent, because
  * their names match the shared secret rule ({@code ConfigSecretRenderer}). The vendor
- * {@code properties} bag may carry a secret under any key, so it stays
- * {@link JsonProperty.Access#WRITE_ONLY} and is never serialized back out. {@link #toString()}
+ * {@code properties} bag may carry a secret under any key, so it is marked
+ * {@link ConfigSecret} and the config mapper serializes it whole as {@code "***"} when non-empty
+ * ({@code {}} when empty). {@link #toString()}
  * renders all three redacted, so a config dump, diagnostics endpoint, or log line cannot reveal them.
  * Only the config mapper masks: an application that serializes this record with another
  * {@code ObjectMapper} prints the passwords.
@@ -155,10 +156,10 @@ public class DbPoolConfig {
 
     /**
      * Vendor-specific connection properties (e.g., {@code ApplicationName} for PostgreSQL). Defaults
-     * to an empty map. Write-only: the bag may hold a secret under any key, so it is never serialized
-     * back out.
+     * to an empty map. The bag may hold a secret under any key, so the config mapper serializes it
+     * whole as {@code "***"} when non-empty.
      */
-    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
+    @ConfigSecret
     @Builder.Default
     private final Map<String, String> properties = Map.of();
 
