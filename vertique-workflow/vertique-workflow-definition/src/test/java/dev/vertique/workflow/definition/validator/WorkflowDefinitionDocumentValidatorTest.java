@@ -1525,6 +1525,97 @@ class WorkflowDefinitionDocumentValidatorTest {
                 .contains(INIT_MAPPER_ID);
     }
 
+    // --- Presence rules ---
+
+    @Nested
+    @DisplayName("Presence rules")
+    class PresenceRules {
+
+        private WorkflowDefinitionViolations validate(
+                String stateType,
+                String contract,
+                String startPayloadType,
+                String initialStateMapper,
+                List<StepNode> steps) {
+            WorkflowDefinitionDocument doc = new WorkflowDefinitionDocument(
+                    DEF_ID, DEF_VER, stateType, contract, startPayloadType, initialStateMapper, null, "svc", steps);
+            return new WorkflowDefinitionDocumentValidator(fullLookup).validate(doc);
+        }
+
+        private List<String> codes(WorkflowDefinitionViolations violations) {
+            return violations.toList().stream().map(Violation::code).toList();
+        }
+
+        @Test
+        @DisplayName("a null or blank stateType, contract, startPayloadType or initialStateMapper is reported once")
+        void missingScalarFieldsAreReported() {
+            List<StepNode> steps = validDocument().steps();
+            for (String missing : new String[] {null, "", "   "}) {
+                assertThat(codes(validate(missing, CONTRACT_FQN, PAYLOAD_FQN, INIT_MAPPER_ID, steps)))
+                        .containsExactly("STATE_TYPE_MISSING");
+                assertThat(codes(validate(STATE_FQN, missing, PAYLOAD_FQN, INIT_MAPPER_ID, steps)))
+                        .containsExactly("CONTRACT_MISSING");
+                assertThat(codes(validate(STATE_FQN, CONTRACT_FQN, missing, INIT_MAPPER_ID, steps)))
+                        .containsExactly("START_PAYLOAD_TYPE_MISSING");
+                assertThat(codes(validate(STATE_FQN, CONTRACT_FQN, PAYLOAD_FQN, missing, steps)))
+                        .containsExactly("INITIAL_STATE_MAPPER_MISSING");
+            }
+        }
+
+        @Test
+        @DisplayName("a missing field names the field and the violation carries the definition id and version")
+        void missingFieldNamesTheField() {
+            Violation violation = findFirstByCode(
+                    validate(
+                            STATE_FQN,
+                            CONTRACT_FQN,
+                            null,
+                            INIT_MAPPER_ID,
+                            validDocument().steps()),
+                    "START_PAYLOAD_TYPE_MISSING");
+
+            assertThat(violation.message()).contains("startPayloadType");
+            assertThat(violation.definitionId()).isEqualTo(DEF_ID);
+            assertThat(violation.definitionVersion()).isEqualTo(DEF_VER);
+        }
+
+        @Test
+        @DisplayName("null or empty steps is reported as STEPS_MISSING without failing")
+        void missingStepsAreReported() {
+            assertThat(codes(validate(STATE_FQN, CONTRACT_FQN, PAYLOAD_FQN, INIT_MAPPER_ID, null)))
+                    .contains("STEPS_MISSING");
+            assertThat(codes(validate(STATE_FQN, CONTRACT_FQN, PAYLOAD_FQN, INIT_MAPPER_ID, List.of())))
+                    .contains("STEPS_MISSING");
+        }
+
+        @Test
+        @DisplayName("a step with a null or blank id is reported with its position")
+        void stepWithoutIdIsReported() {
+            for (String missing : new String[] {null, "", "  "}) {
+                List<StepNode> steps = List.of(
+                        new ServiceStep("svc", "inventory.reserve", PAYLOAD_MAPPER_ID, null, "done"),
+                        new CompleteStep(missing));
+
+                WorkflowDefinitionViolations result =
+                        validate(STATE_FQN, CONTRACT_FQN, PAYLOAD_FQN, INIT_MAPPER_ID, steps);
+
+                assertThat(findFirstByCode(result, "STEP_ID_MISSING").message()).contains("position 1");
+            }
+        }
+
+        @Test
+        @DisplayName("every missing field is accumulated in one pass")
+        void missingFieldsAccumulate() {
+            assertThat(codes(validate(null, null, null, null, null)))
+                    .contains(
+                            "STATE_TYPE_MISSING",
+                            "CONTRACT_MISSING",
+                            "START_PAYLOAD_TYPE_MISSING",
+                            "INITIAL_STATE_MAPPER_MISSING",
+                            "STEPS_MISSING");
+        }
+    }
+
     // --- Assertion helpers ---
 
     /** Asserts that the violations aggregate contains at least one entry with the expected code. */

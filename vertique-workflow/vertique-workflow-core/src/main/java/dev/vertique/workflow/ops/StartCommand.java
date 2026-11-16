@@ -33,7 +33,7 @@ import jakarta.annotation.Nullable;
  * @param payload start payload passed to the definition's {@code init} function to derive initial
  *     state
  * @param idempotencyKey required caller-supplied key that makes start idempotent within the
- *     start scope and definition id; no random fallback
+ *     start scope and definition id; no random fallback; must not be blank
  * @param businessKey optional application-defined unique key within the start scope and definition id;
  *     stored on the instance and used for lookup
  * @param subjectRef optional reference to the domain entity this workflow acts on
@@ -57,19 +57,22 @@ public record StartCommand(
         @Nullable String requestedTargetScope) {
 
     /**
-     * Validates the contract name and the scope keys.
+     * Validates the contract name, the idempotency key and the scope keys.
      *
      * <p>A non-null {@code startScope} or {@code requestedTargetScope} must be nonblank, at most 255 code points
      * long, free of control, format and unpaired surrogate characters, and without leading or trailing
      * whitespace, the rules of a scope key. The message names
      * the field and never repeats the value.
      *
-     * @throws IllegalArgumentException if {@code contractName} is {@code null} or blank, or a non-null scope key
-     *     breaks the scope key rules
+     * @throws IllegalArgumentException if {@code contractName} or {@code idempotencyKey} is {@code null} or
+     *     blank, or a non-null scope key breaks the scope key rules
      */
     public StartCommand {
         if (contractName == null || contractName.isBlank()) {
             throw new IllegalArgumentException("contractName must not be blank");
+        }
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            throw new IllegalArgumentException("idempotencyKey must not be blank");
         }
         requireScopeKey(startScope, "startScope");
         requireScopeKey(requestedTargetScope, "requestedTargetScope");

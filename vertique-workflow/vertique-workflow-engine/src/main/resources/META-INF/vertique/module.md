@@ -156,7 +156,7 @@ a rejected completion reopens the task and the due date then runs with the seque
 without the identity-snapshot namespace. A `TIMER` segment binds that metadata as an executor drive: the identity-snapshot namespace is
 stripped from the metadata, from the command's own context and from the instance carrier, so a timer written by an earlier release that
 carries an identity snapshot binds no security context. The command itself stores no context. A branch timer binds the branch token's
-carrier, as every branch drive does.
+carrier with the instance carrier filling every namespace the token lacks (the token wins on a clash), as every branch drive does.
 
 There is no public timer callback: a timer fires only as its `TIMER` command, and the same holds for a task's due date and reminders.
 A branch failure inside a segment is handled by the segment's outcome and the command's retry, so there is no branch recovery sweep.
@@ -1074,8 +1074,8 @@ entry points, and never an identity:
   command and no context value. The segment classes it as a transient failure: it rolls back and retries with a backoff, never
   fails the instance and is reported stuck if it recurs, because the fault is the executor's environment.
 - **Branch drives.** A branch-addressed signal applied by the executor binds through
-  `withExecutorDocument` (called by `BranchTransitionEngine.driveExecutorBranchTransitions`): the explicit carrier merged with the
-  instance fill, else the branch token's own carrier, never the recorded context, with the same strip and refusal.
+  `withExecutorDocument` (called by `BranchTransitionEngine.driveExecutorBranchTransitions`): the explicit carrier, else the
+  branch token's own carrier, merged with the instance fill, never the recorded context, with the same strip and refusal.
 
 **Must not be used for branch-owned drives.** `WorkflowContextBinder` binds instance-owned drives
 only. Fork continuations, branch-targeted signals, and branch timers are branch-owned and bind
@@ -1099,9 +1099,11 @@ Future<BranchToken> driveBranchTransitions(
 
 By default the drive binds `token.metadata()` — the branch token's own persisted carrier. When
 `effectiveBaseOverride` is non-null, the drive binds that pre-merged document instead of
-`token.metadata()`. One caller passes a non-null override: the branch-targeted explicit-carrier signal path (an explicit signal
-carrier that must win over the branch token for that one transition). Every other call site passes
-`null`, preserving the original token-metadata bind unchanged.
+`token.metadata()`. Two callers pass a non-null override: the branch-targeted explicit-carrier signal path (an explicit signal
+carrier that must win over the branch token for that one transition), and `ForkJoinCoordinator#driveAndMaybeJoin`, which every
+branch timer, task and retry drive goes through (the token's carrier with the instance's carrier filling the namespaces the token
+lacks; the token wins on a clash and the identity snapshot is never bound). Every other call site passes `null`, preserving the
+original token-metadata bind unchanged.
 
 History entries appended during a bound drive may additionally record `commandCorrelationId` — see
 `WorkflowMigratedHistoryPayload` and the sibling command-history payloads for the field-level shape.

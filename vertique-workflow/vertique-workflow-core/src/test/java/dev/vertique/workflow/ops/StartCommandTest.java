@@ -14,7 +14,10 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-/** Checks that {@link StartCommand} refuses start and target scope keys that no scope can be named by. */
+/**
+ * Checks that {@link StartCommand} refuses a missing idempotency key, and start and target scope keys that no scope can
+ * be named by.
+ */
 class StartCommandTest {
 
     private static final String SUPPLEMENTARY = new String(Character.toChars(0x1F600));
@@ -111,6 +114,36 @@ class StartCommandTest {
         StartCommand command = command(null, null);
         assertThat(command.startScope()).isNull();
         assertThat(command.requestedTargetScope()).isNull();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("missingIdempotencyKeys")
+    @DisplayName("rejects a null or blank idempotency key")
+    void rejectsMissingIdempotencyKey(String caseName, String idempotencyKey) {
+        // When a command is built with a null, empty or blank idempotency key
+        // Then it is refused and names the field
+        assertThatThrownBy(() -> commandWithKey(idempotencyKey))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("idempotencyKey");
+    }
+
+    @Test
+    @DisplayName("accepts a nonblank idempotency key and carries it unchanged")
+    void acceptsNonblankIdempotencyKey() {
+        assertThat(commandWithKey(" key 1 ").idempotencyKey()).isEqualTo(" key 1 ");
+    }
+
+    static Stream<Arguments> missingIdempotencyKeys() {
+        return Stream.of(
+                Arguments.of("null", null),
+                Arguments.of("empty", ""),
+                Arguments.of("blank", "   "),
+                Arguments.of("a tab and a line feed", "\t\n"));
+    }
+
+    private static StartCommand commandWithKey(String idempotencyKey) {
+        return new StartCommand(
+                "purchase-approval", "purchase", new Object(), idempotencyKey, null, null, null, null, null);
     }
 
     private static StartCommand command(String startScope, String requestedTargetScope) {

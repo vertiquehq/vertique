@@ -92,7 +92,16 @@ final class CardinalityGuard {
             "code",
             // The REST server request timer carries the owning application's name under this key
             // ("none" outside applications); its values are capped and metrics.tags.extra cannot claim it.
-            "rest.application");
+            "rest.application",
+            // The workflow metrics observers emit these five keys: the executor command kind and the
+            // signal source's transport, contract, signal and definition. Their values come from
+            // application-declared targets, so the per-key value cap bounds them like any other
+            // guarded key and metrics.tags.extra cannot claim them.
+            "kind",
+            "transport",
+            "contract",
+            "signal",
+            "definition");
 
     /** Prevent instantiation — this class is a static factory only. */
     private CardinalityGuard() {}
