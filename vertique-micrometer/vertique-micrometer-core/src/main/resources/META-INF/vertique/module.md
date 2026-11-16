@@ -232,6 +232,11 @@ timer (`vertique.rest.server.requests`) carries the owning REST application's na
 applications. Like every guarded key, its values are capped at `metrics.cardinality.maxTagValuesPerKey`
 (default `200`), and `metrics.tags.extra` cannot claim the key (see `TagPolicyValidator`).
 
+After `rest.application` the list carries the five keys `vertique-micrometer-workflow` emits: `kind`
+(the executor command kind) and `transport`, `contract`, `signal` and `definition` (the signal source
+outcome meter). Their values come from targets the application declares, so they are bounded by the
+application; the per-key value cap still applies to them, and `metrics.tags.extra` cannot claim them.
+
 ### TagPolicyValidator
 
 Package-private static validator. Called at contributor startup on `MetricsConfig.TagsConfig`.
@@ -253,8 +258,16 @@ key and violated rule but never any part of the value. Rules:
 
 **Compatibility.** Every key added to `GUARDED_TAG_KEYS` becomes reserved. Configuration that sets
 `metrics.tags.extra.rest.application` now fails startup with a `ConfigurationException` naming the
-key; choose another key name (for example `application`, which is accepted). The rejection applies when metrics are
-active: the validator runs when metrics are enabled and at least one backend provider exists.
+key; choose another key name (for example `application`, which is accepted).
+
+The rejection applies when metrics are active: the validator runs when metrics are enabled and at least one
+backend provider exists.
+
+#### Behaviour change
+
+`kind`, `transport`, `contract`, `signal` and `definition` are now reserved too. Configuration that sets any
+of them under `metrics.tags.extra` fails startup with a `ConfigurationException` naming the key; rename the
+extra tag (for example `workflow_kind`) before upgrading.
 
 ### `@Timed` and `TimedAspect`
 

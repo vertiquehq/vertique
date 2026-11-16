@@ -151,6 +151,7 @@ class CardinalityGuardTest {
                     "code");
             List<String> expectedKeys = new ArrayList<>(baseline);
             expectedKeys.add("rest.application");
+            int expectedSize = expectedKeys.size();
 
             // And: a registry guarded with a cap of 3 values per key and no global meter cap
             SimpleMeterRegistry registry = registryWithGuard(cardinalityConfig(3, 0));
@@ -168,8 +169,8 @@ class CardinalityGuardTest {
             assertAll(
                     () -> assertEquals(
                             expectedKeys,
-                            CardinalityGuard.GUARDED_TAG_KEYS,
-                            "guarded keys must be the unchanged baseline followed by 'rest.application'"),
+                            CardinalityGuard.GUARDED_TAG_KEYS.subList(0, expectedSize),
+                            "guarded keys must start with the unchanged baseline followed by 'rest.application'"),
                     () -> {
                         for (String application : List.of("a", "b", "c")) {
                             Timer allowed = registry.find("vertique.rest.server.requests")
@@ -205,6 +206,51 @@ class CardinalityGuardTest {
                                     "non-vertique timer for rest.application=" + application + " must record");
                         }
                     });
+        }
+
+        @Test
+        @DisplayName("the workflow keys follow 'rest.application'; their values are capped on vertique meters only")
+        void workflowKeysAreGuardedGrowthOnlyKeys() {
+            // Given: the workflow adapter keys, appended after every earlier key
+            List<String> workflowKeys = List.of("kind", "transport", "contract", "signal", "definition");
+            int start = CardinalityGuard.GUARDED_TAG_KEYS.indexOf("rest.application") + 1;
+
+            // And: a registry guarded with a cap of 2 values per key and no global meter cap
+            SimpleMeterRegistry registry = registryWithGuard(cardinalityConfig(2, 0));
+            registries.add(registry);
+
+            // When: three values per key are recorded on a vertique meter and on a non-vertique meter
+            for (String key : workflowKeys) {
+                for (String value : List.of("a", "b", "c")) {
+                    registry.counter("vertique.test.workflow", key, value).increment();
+                    registry.counter("app.workflow", key, value).increment();
+                }
+            }
+
+            // Then: the keys are the last five entries, in this order
+            assertEquals(
+                    workflowKeys,
+                    CardinalityGuard.GUARDED_TAG_KEYS.subList(start, CardinalityGuard.GUARDED_TAG_KEYS.size()),
+                    "the workflow keys must be appended, in order, after 'rest.application'");
+
+            // And: the first two values of each key register on the vertique meter, the third is denied
+            for (String key : workflowKeys) {
+                for (String value : List.of("a", "b")) {
+                    assertNotNull(
+                            registry.find("vertique.test.workflow")
+                                    .tag(key, value)
+                                    .counter(),
+                            key + "=" + value + " must register on a vertique meter");
+                }
+                Counter denied =
+                        registry.find("vertique.test.workflow").tag(key, "c").counter();
+                assertTrue(
+                        denied == null || denied.count() == 0.0,
+                        key + "=c must be absent or accumulate nothing on a vertique meter");
+                assertNotNull(
+                        registry.find("app.workflow").tag(key, "c").counter(),
+                        key + "=c must stay registered on a non-vertique meter");
+            }
         }
     }
 

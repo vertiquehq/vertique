@@ -9,6 +9,7 @@ import dev.vertique.core.exception.ConfigurationException;
 import io.vertx.core.json.JsonObject;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -207,6 +208,28 @@ class TagPolicyValidatorTest {
 
             // And: a plain 'application' key is not caught by a substring or suffix match
             assertDoesNotThrow(() -> TagPolicyValidator.validate(tagsConfig(Map.of("application", "shop"))));
+        }
+    }
+
+    @Nested
+    class WorkflowKeysAreReserved {
+
+        @Test
+        @DisplayName("each workflow adapter key -> throws naming the key, never its value")
+        void workflowKeysThrow() {
+            for (String key : List.of("kind", "transport", "contract", "signal", "definition")) {
+                ConfigurationException ex = assertThrows(
+                        ConfigurationException.class,
+                        () -> TagPolicyValidator.validate(tagsConfig(Map.of(key, "zq7"))),
+                        "key '" + key + "' must be rejected");
+
+                String message = ex.getMessage();
+                assertTrue(message.contains(key), "message must name the key; got: " + message);
+                assertTrue(
+                        message.contains("framework-managed cardinality-guarded"),
+                        "message must state the key is framework-managed and guarded; got: " + message);
+                assertFalse(message.contains("zq7"), "message must not contain the configured value");
+            }
         }
     }
 
