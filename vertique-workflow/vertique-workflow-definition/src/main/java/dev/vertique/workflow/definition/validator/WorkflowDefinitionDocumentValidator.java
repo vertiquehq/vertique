@@ -53,6 +53,11 @@ import java.util.function.Supplier;
  * <ol>
  *   <li>{@code DEFINITION_ID_BLANK} — {@code definitionId} null or blank.</li>
  *   <li>{@code DEFINITION_VERSION_INVALID} — {@code definitionVersion < 1}.</li>
+ *   <li>{@code STATE_TYPE_MISSING}, {@code CONTRACT_MISSING}, {@code START_PAYLOAD_TYPE_MISSING},
+ *       {@code INITIAL_STATE_MAPPER_MISSING} — the field is null or blank.</li>
+ *   <li>{@code STEPS_MISSING} — {@code steps} is null or empty.</li>
+ *   <li>{@code STEP_ID_MISSING} — a step's {@code id} is null or blank; the message gives the step's position in
+ *       the steps list.</li>
  *   <li>{@code STATE_TYPE_UNRESOLVABLE} — {@code stateType} name not found.</li>
  *   <li>{@code CONTRACT_UNRESOLVABLE} — {@code contract} name not found.</li>
  *   <li>{@code CONTRACT_NOT_ANNOTATED} — resolved contract class is not annotated with
@@ -260,6 +265,7 @@ public final class WorkflowDefinitionDocumentValidator {
 
         // --- Document-level checks ---
         checkDefinitionIdAndVersion(doc, violations);
+        checkRequiredFieldsPresent(doc, violations);
 
         // Collect step ids early for forward-reference resolution.
         Set<String> stepIds = collectStepIds(doc);
@@ -401,6 +407,69 @@ public final class WorkflowDefinitionDocumentValidator {
     // --- Private implementation helpers ---
 
     /**
+     * Adds a {@code *_MISSING} violation for each required document field that is null or blank, and a
+     * {@code STEP_ID_MISSING} violation for each step without an id. The resolution rules skip a missing value, so
+     * this is the only rule that reports it.
+     */
+    private static void checkRequiredFieldsPresent(WorkflowDefinitionDocument doc, List<Violation> violations) {
+        String definitionId = blankFallback(doc.definitionId());
+        long definitionVersion = doc.definitionVersion();
+        requirePresent(
+                definitionId, definitionVersion, doc.stateType(), "STATE_TYPE_MISSING", "`stateType`", violations);
+        requirePresent(definitionId, definitionVersion, doc.contract(), "CONTRACT_MISSING", "`contract`", violations);
+        requirePresent(
+                definitionId,
+                definitionVersion,
+                doc.startPayloadType(),
+                "START_PAYLOAD_TYPE_MISSING",
+                "`startPayloadType`",
+                violations);
+        requirePresent(
+                definitionId,
+                definitionVersion,
+                doc.initialStateMapper(),
+                "INITIAL_STATE_MAPPER_MISSING",
+                "`initialStateMapper`",
+                violations);
+        if (doc.steps() == null || doc.steps().isEmpty()) {
+            violations.add(new Violation(
+                    definitionId,
+                    definitionVersion,
+                    null,
+                    null,
+                    "STEPS_MISSING",
+                    "`steps` must list at least one step"));
+            return;
+        }
+        List<StepNode> steps = doc.steps();
+        for (int i = 0; i < steps.size(); i++) {
+            StepNode step = steps.get(i);
+            if (step != null && (step.id() == null || step.id().isBlank())) {
+                violations.add(new Violation(
+                        definitionId,
+                        definitionVersion,
+                        null,
+                        null,
+                        "STEP_ID_MISSING",
+                        "the step at position " + i + " in `steps` has no `id`"));
+            }
+        }
+    }
+
+    private static void requirePresent(
+            String definitionId,
+            long definitionVersion,
+            @Nullable String value,
+            String code,
+            String fieldLabel,
+            List<Violation> violations) {
+        if (value == null || value.isBlank()) {
+            violations.add(new Violation(
+                    definitionId, definitionVersion, null, null, code, fieldLabel + " must not be blank"));
+        }
+    }
+
+    /**
      * Checks that {@code definitionId} is non-blank and {@code definitionVersion >= 1}.
      */
     private static void checkDefinitionIdAndVersion(WorkflowDefinitionDocument doc, List<Violation> violations) {
@@ -470,7 +539,7 @@ public final class WorkflowDefinitionDocumentValidator {
             String fieldLabel,
             List<Violation> violations) {
         if (fqn == null || fqn.isBlank()) {
-            // A blank FQN is reported by the relevant blank-id rule, not here.
+            // A null or blank name is reported by the field's presence rule (*_MISSING), not here.
             return null;
         }
         Optional<Class<?>> known = indexed.apply(fqn);
