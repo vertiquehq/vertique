@@ -376,7 +376,8 @@ public Response getItem(@PathParam("id") String id, RequestPreconditions precond
 
 `evaluate(...)` returns `null` when the request should proceed, a 304 for a satisfied
 `If-None-Match`/`If-Modified-Since` on GET or HEAD, and a 412 otherwise. `evaluate(Response)` reads
-the `ETag` and `Last-Modified` off an already-built response.
+the `ETag` and `Last-Modified` off an already-built response. When `If-None-Match` is present,
+`If-Modified-Since` is ignored (RFC 9110 §13.2.2), so a changed ETag is never overridden by an unchanged date.
 
 ### `@RequestParams`
 

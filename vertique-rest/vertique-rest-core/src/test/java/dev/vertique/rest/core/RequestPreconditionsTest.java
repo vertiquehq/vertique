@@ -368,6 +368,34 @@ class RequestPreconditionsTest {
         assertNull(result); // If-Match matched → proceed; If-Unmodified-Since skipped
     }
 
+    @Test
+    @DisplayName("Should ignore If-Modified-Since when If-None-Match is present and does not match (step 4 skipped)")
+    void shouldIgnoreIfModifiedSinceWhenIfNoneMatchPresentAndNotMatching() {
+        // If-None-Match: "old" does not match the current "new" ETag (step 3 passes)
+        // If-Modified-Since: resource not modified since threshold (would give 304 in step 4 alone)
+        // Result: step 4 skipped because If-None-Match is present → null (proceed with fresh body)
+        RoutingContext ctx = mockContext(HttpMethod.GET, "\"old\"", null, "Thu, 01 Jan 2015 00:00:00 GMT", null);
+        EntityTag etag = new EntityTag("new");
+        Instant lastModified = Instant.parse("2014-06-15T12:00:00Z");
+
+        Response result = RequestPreconditions.from(ctx).evaluate(etag, lastModified);
+
+        assertNull(result);
+    }
+
+    @Test
+    @DisplayName("Should return 304 when If-None-Match matches even if If-Modified-Since is present")
+    void shouldReturn304WhenIfNoneMatchMatchesWithIfModifiedSince() {
+        RoutingContext ctx = mockContext(HttpMethod.GET, "\"abc\"", null, "Thu, 01 Jan 2015 00:00:00 GMT", null);
+        EntityTag etag = new EntityTag("abc");
+        Instant lastModified = Instant.parse("2016-01-01T00:00:00Z"); // modified after threshold
+
+        Response result = RequestPreconditions.from(ctx).evaluate(etag, lastModified);
+
+        assertNotNull(result);
+        assertEquals(304, result.getStatus());
+    }
+
     // --- No conditions ---
 
     @Test

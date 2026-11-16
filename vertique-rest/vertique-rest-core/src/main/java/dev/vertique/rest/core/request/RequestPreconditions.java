@@ -203,8 +203,8 @@ public final class RequestPreconditions {
             }
         }
 
-        // RFC 9110 §13.2.2 — Step 4: If-Modified-Since (GET/HEAD only)
-        if (ifModifiedSince != null && lastModified != null && isGetOrHead()) {
+        // RFC 9110 §13.2.2 — Step 4: If-Modified-Since (GET/HEAD only, only if no If-None-Match)
+        if (ifNoneMatch == null && ifModifiedSince != null && lastModified != null && isGetOrHead()) {
             Instant threshold = parseHttpDate(ifModifiedSince);
             if (threshold != null && !lastModified.isAfter(threshold)) {
                 return buildNotModified(etag);
