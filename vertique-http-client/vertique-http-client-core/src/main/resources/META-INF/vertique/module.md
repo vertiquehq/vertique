@@ -118,6 +118,44 @@ settings.
 Extends `ConfigurationException`. Thrown by `build()` for an invalid name, base URL, read timeout or
 default header.
 
+### HttpExpectations
+
+`HttpExpectations.success()` accepts 2xx responses and `HttpExpectations.status(IntPredicate)` accepts
+the status codes the predicate accepts. Both are Vert.x `Expectation<HttpResponseHead>` values for
+use inside an attempt:
+
+```java
+client.execute(web -> web.post("/items").sendBuffer(body).expecting(HttpExpectations.success()));
+```
+
+A refused response fails with `HttpStatusRejectedException`.
+
+### Failures
+
+Transport failures (connection refused, DNS, TLS handshake, reset, an empty or truncated response, a
+pool-wait connect timeout) reach the caller unchanged as the Vert.x or JDK throwable; resilience
+failures pass through unchanged. Only failures the client itself originates are typed, in
+`dev.vertique.http.client.exception`. Every message is constant and carries no URI path, query,
+header value, body text or cause message.
+
+| Type | Extends | Thrown when | Extra accessors |
+| --- | --- | --- | --- |
+| `HttpClientTechnicalException` (abstract) | `TechnicalException` | Root of the technical failures | none |
+| `HttpClientUnavailableException` (abstract) | `UnavailableException` | Root of the failures that mean the client cannot serve the call | none |
+| `HttpClientValidationException` (abstract) | `ValidationException` | Root of the requests the client's policy refuses | none |
+| `HttpClientConfigurationException` | `ConfigurationException` | A builder or configuration setting is invalid | none |
+| `HttpEgressDeniedException` | `HttpClientValidationException` | The egress rules refused a target | `reason()`: `Reason` (`NO_HOST`, `USER_INFO`, `SCHEME`, `HOST`, `CONNECT_ADDRESS`, `VIRTUAL_HOST`, `PROXY`, `PLAIN_HTTP_CREDENTIALS`) |
+| `HttpCredentialException` | `HttpClientTechnicalException` | The credential source failed or returned an invalid value | `causeType()`; `getCause()` is always null |
+| `HttpBodyLimitException` | `HttpClientTechnicalException` | A byte bound was exceeded | `direction()`: `Direction` (`REQUEST`, `RESPONSE`, `EVENT`); `limitBytes()` |
+| `HttpStatusRejectedException` | `HttpClientTechnicalException` | A status check refused the response | `statusCode()`, `headers()` (read-only, no `Set-Cookie`), `retryAfter()`, `bodyExcerpt()` (at most 2048 bytes) |
+| `SseProtocolException` | `HttpClientTechnicalException` | Events were requested from a head that is not `text/event-stream` | `contentType()` (media type only) |
+| `HttpExchangeCancelledException` | `HttpClientTechnicalException` | The call was cancelled | none |
+| `HttpClientClosedException` | `HttpClientUnavailableException` | The client was closed before or during the call | none |
+
+`HttpStatusRejectedException` implements `RetryDelayHint`: `retryAfter()` is the `Retry-After` header
+as delta-seconds or an HTTP-date, zero for a past date, empty when absent or unparseable, and capped
+at 24 hours. `bodyExcerpt()` is filled only when the checked response has a buffered `Buffer` body.
+
 ---
 
 ## Extension Points
