@@ -24,9 +24,7 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
-import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
-import java.net.InetAddress;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -95,43 +93,15 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
     // --- Constructor ---
 
     /**
-     * Creates a new PostgreSQL job repository whose tables are not schema-qualified, so they resolve
-     * through the connection's default schema.
-     *
-     * @param pool          the PostgreSQL connection pool
-     * @param exceptionMapper the PostgreSQL failure mapper for exception translation
-     */
-    @Inject
-    public PgJobRepository(Pool pool, PgDbExceptionMapper exceptionMapper) {
-        this(pool, exceptionMapper, DbSchemas.empty());
-    }
-
-    /**
-     * Creates a new PostgreSQL job repository that qualifies every table reference with the schema
-     * mapped to the {@code job} instance, when {@code schemas} holds one. Without a
-     * mapping the statements are identical to those of the two-argument constructor.
-     *
-     * <p>The mapping is validated here, before any query runs.
-     *
-     * @param pool          the PostgreSQL connection pool
-     * @param exceptionMapper the PostgreSQL failure mapper for exception translation
-     * @param schemas       the schema placement shared with the migrations; never {@code null}
-     * @throws IllegalArgumentException if the schema mapped for the job instance is not a valid
-     *                                  single-segment PostgreSQL schema name
-     */
-    public PgJobRepository(Pool pool, PgDbExceptionMapper exceptionMapper, DbSchemas schemas) {
-        this(pool, exceptionMapper, schemas, resolveNodeId());
-    }
-
-    /**
      * Creates a new PostgreSQL job repository that stamps the given node identity as
-     * {@code locked_by} on the executions it claims, and otherwise behaves like
-     * {@link #PgJobRepository(Pool, PgDbExceptionMapper, DbSchemas)}.
+     * {@code locked_by} on the executions it claims and qualifies every table reference with the
+     * schema mapped to the {@code job} instance, when {@code schemas} holds one. Without a mapping the
+     * table names are not schema-qualified and resolve through the connection's default schema.
      *
      * <p>Pass the value the node's {@link dev.vertique.job.JobCoordinator} heartbeats under (the
      * {@link dev.vertique.job.JobNodeId} binding), so that a surviving node's coordinator finds this
-     * node's claims when this node dies. {@link JobPostgresqlModule} does. The other constructors
-     * generate an identity of their own, which no coordinator shares.
+     * node's claims when this node dies. {@link JobPostgresqlModule} does. The mapping is validated
+     * here, before any query runs.
      *
      * @param pool          the PostgreSQL connection pool
      * @param exceptionMapper the PostgreSQL failure mapper for exception translation
@@ -270,24 +240,6 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
                 + " LIMIT $2"
                 + " FOR UPDATE OF e SKIP LOCKED)"
                 + " DELETE FROM " + executions + " USING batch WHERE " + executions + ".id = batch.id";
-    }
-
-    /**
-     * Generates a node identifier from the hostname and a short random suffix.
-     * Falls back to {@code "unknown"} if hostname resolution fails.
-     *
-     * @return a stable node identifier for this JVM instance
-     */
-    private static String resolveNodeId() {
-        String hostname;
-        try {
-            hostname = InetAddress.getLocalHost().getHostName();
-        } catch (Exception e) {
-            hostname = "unknown";
-        }
-        // Append a random suffix to distinguish multiple instances on the same host
-        String suffix = UUID.randomUUID().toString().substring(0, 8);
-        return hostname + "-" + suffix;
     }
 
     /**

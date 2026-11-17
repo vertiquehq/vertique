@@ -104,7 +104,7 @@ class JobCoordinatorTest {
         void registersNodeHeartbeatOnStart(Vertx vertx, VertxTestContext ctx) {
             when(repository.serverHeartbeat(anyString())).thenReturn(Future.succeededFuture());
 
-            JobCoordinator coordinator = new JobCoordinator(vertx, repository, defaultConfig);
+            JobCoordinator coordinator = new JobCoordinator(vertx, repository, defaultConfig, "test-node");
 
             coordinator
                     .start()
@@ -167,7 +167,7 @@ class JobCoordinatorTest {
         void disabledCoordinatorDoesNotStart(Vertx vertx, VertxTestContext ctx) {
             JobCoordinatorConfig disabled =
                     JobCoordinatorConfig.builder().enabled(false).build();
-            JobCoordinator coordinator = new JobCoordinator(vertx, repository, disabled);
+            JobCoordinator coordinator = new JobCoordinator(vertx, repository, disabled, "test-node");
 
             coordinator
                     .start()
@@ -192,7 +192,7 @@ class JobCoordinatorTest {
             when(repository.findByLockedBy(anyString())).thenReturn(Future.succeededFuture(List.of()));
             when(repository.removeServer(anyString())).thenReturn(Future.succeededFuture());
 
-            JobCoordinator coordinator = new JobCoordinator(vertx, repository, defaultConfig);
+            JobCoordinator coordinator = new JobCoordinator(vertx, repository, defaultConfig, "test-node");
 
             coordinator
                     .start()
@@ -264,7 +264,7 @@ class JobCoordinatorTest {
                     .scanIntervalMs(50)
                     .nodeHeartbeatIntervalMs(60_000)
                     .build();
-            JobCoordinator coordinator = new JobCoordinator(vertx, repository, fastConfig);
+            JobCoordinator coordinator = new JobCoordinator(vertx, repository, fastConfig, "test-node");
 
             coordinator
                     .start()
@@ -319,7 +319,7 @@ class JobCoordinatorTest {
                     .scanIntervalMs(50)
                     .nodeHeartbeatIntervalMs(60_000)
                     .build();
-            JobCoordinator coordinator = new JobCoordinator(vertx, repository, fastConfig);
+            JobCoordinator coordinator = new JobCoordinator(vertx, repository, fastConfig, "test-node");
 
             coordinator
                     .start()
@@ -366,7 +366,7 @@ class JobCoordinatorTest {
                     .scanIntervalMs(50)
                     .nodeHeartbeatIntervalMs(60_000)
                     .build();
-            JobCoordinator coordinator = new JobCoordinator(vertx, repository, fastConfig);
+            JobCoordinator coordinator = new JobCoordinator(vertx, repository, fastConfig, "test-node");
 
             coordinator
                     .start()
@@ -409,7 +409,7 @@ class JobCoordinatorTest {
                     .scanIntervalMs(50)
                     .nodeHeartbeatIntervalMs(60_000)
                     .build();
-            JobCoordinator coordinator = new JobCoordinator(vertx, repository, fastConfig);
+            JobCoordinator coordinator = new JobCoordinator(vertx, repository, fastConfig, "test-node");
 
             coordinator
                     .start()
@@ -456,7 +456,7 @@ class JobCoordinatorTest {
                     .scanIntervalMs(50)
                     .nodeHeartbeatIntervalMs(60_000)
                     .build();
-            JobCoordinator coordinator = new JobCoordinator(vertx, repository, fastConfig);
+            JobCoordinator coordinator = new JobCoordinator(vertx, repository, fastConfig, "test-node");
 
             coordinator
                     .start()
@@ -505,7 +505,7 @@ class JobCoordinatorTest {
                                 ctx.completeNow();
                             }));
 
-            JobCoordinator coordinator = new JobCoordinator(vertx, repository, defaultConfig);
+            JobCoordinator coordinator = new JobCoordinator(vertx, repository, defaultConfig, "test-node");
             coordinator.cancelExecution(executionId).onFailure(ctx::failNow);
         }
 
@@ -519,7 +519,7 @@ class JobCoordinatorTest {
             when(repository.completeExecution(any(), any(), anyString(), any(), any()))
                     .thenReturn(Future.succeededFuture(Optional.empty()));
 
-            JobCoordinator coordinator = new JobCoordinator(vertx, repository, defaultConfig);
+            JobCoordinator coordinator = new JobCoordinator(vertx, repository, defaultConfig, "test-node");
 
             coordinator
                     .cancelExecution(executionId)

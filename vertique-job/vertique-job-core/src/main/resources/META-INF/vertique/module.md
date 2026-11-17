@@ -230,9 +230,13 @@ Cluster-level lifecycle owner, constructed as `new JobCoordinator(vertx, reposit
 `serverId` is this node's identity: the heartbeat row's `server_id`, which must equal the `locked_by`
 value the node's repository stamps on its claims, because recovery finds a dead node's executions by
 that value. `JobCoordinatorModule` passes the `@JobNodeId` binding, which `JobPostgresqlModule` and
-`CronPersistenceModule` also use. The older `new JobCoordinator(vertx, repository, config)` generates
-an identity of its own that no repository shares, so a coordinator built that way heartbeats but
-cannot recover a dead node's claims.
+`CronModule` and `CronPersistenceModule` also use.
+
+**Breaking change.** The `new JobCoordinator(vertx, repository, config)` constructor, which generated
+an identity of its own that no repository shared, is removed without a deprecation cycle; a
+coordinator built that way heartbeated but could not recover a dead node's claims. Pass the node's
+`@JobNodeId` value as `serverId`. `PgJobRepository` and `CronScheduler` lose their identity-generating
+constructors the same way (see `vertique-job-postgresql` and `vertique-job-cron`).
 
 | Method | Description |
 |---|---|

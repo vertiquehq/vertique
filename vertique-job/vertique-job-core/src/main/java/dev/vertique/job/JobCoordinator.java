@@ -5,7 +5,6 @@ package dev.vertique.job;
 
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import java.net.InetAddress;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -77,23 +76,6 @@ public class JobCoordinator {
     private boolean started;
 
     // --- Constructor ---
-
-    /**
-     * Creates a new {@code JobCoordinator} with its own generated server identity.
-     *
-     * <p>The generated identity matches no repository's claim owner, so a coordinator built this way
-     * heartbeats but cannot recover the executions of a dead node that claimed under another value.
-     * Use {@link #JobCoordinator(Vertx, JobRepository, JobCoordinatorConfig, String)} with the node's
-     * {@link JobNodeId} value when the coordinator should recover claims; {@code JobCoordinatorModule}
-     * does.
-     *
-     * @param vertx      the Vert.x instance used for timer scheduling and event-bus access
-     * @param repository the job repository for heartbeat writes and execution recovery
-     * @param config     coordinator configuration (intervals, timeouts, enabled flag)
-     */
-    public JobCoordinator(Vertx vertx, JobRepository repository, JobCoordinatorConfig config) {
-        this(vertx, repository, config, resolveServerId());
-    }
 
     /**
      * Creates a new {@code JobCoordinator} that heartbeats under the given node identity.
@@ -329,23 +311,6 @@ public class JobCoordinator {
     }
 
     // --- Internal helpers ---
-
-    /**
-     * Generates a stable server identifier from the hostname and a short random suffix.
-     * Falls back to {@code "unknown"} if hostname resolution fails.
-     *
-     * @return a unique server identifier for this JVM instance
-     */
-    private static String resolveServerId() {
-        String hostname;
-        try {
-            hostname = InetAddress.getLocalHost().getHostName();
-        } catch (Exception e) {
-            hostname = "unknown";
-        }
-        String suffix = UUID.randomUUID().toString().substring(0, 8);
-        return hostname + "-" + suffix;
-    }
 
     /**
      * Returns this coordinator's server identifier.

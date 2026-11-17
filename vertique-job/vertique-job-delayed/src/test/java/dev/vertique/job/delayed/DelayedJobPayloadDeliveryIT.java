@@ -18,6 +18,7 @@ import dev.vertique.core.eventbus.EventBusClient;
 import dev.vertique.core.eventbus.EventBusExceptionMapper;
 import dev.vertique.core.eventbus.LocalMessageCodec;
 import dev.vertique.db.DbPoolConfig;
+import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
@@ -243,7 +244,7 @@ class DelayedJobPayloadDeliveryIT {
                         .setPassword(config.password()))
                 .using(vertx)
                 .build();
-        repository = new PgJobRepository(pool, new PgDbExceptionMapper());
+        repository = new PgJobRepository(pool, new PgDbExceptionMapper(), DbSchemas.empty(), "test-node");
 
         vertx.eventBus().registerCodec(new LocalMessageCodec<>("dispatch.result"));
 
