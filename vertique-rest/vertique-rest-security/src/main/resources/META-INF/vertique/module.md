@@ -699,7 +699,7 @@ What the two modules put in the graph, and where each instance comes from:
 | `AuthEnforcementCapability` | `AuthModule` | the install signal the route registrar checks before accepting restrictive annotations |
 | `CredentialRejectionReporter` | `AuthModule` | `DefaultCredentialRejectionReporter` |
 | `ChannelIdentityManager` | `AuthModule` | `DefaultChannelIdentityManager` |
-| `RequestOriginConfig` | `AuthModule` | `RequestOriginConfig.defaults()` |
+| `RequestOriginCapturer` | `AuthModule` | built from the application's `RequestOriginConfig` when it binds one, else from `RequestOriginConfig.defaults()`; `@Singleton` |
 | `Set<OperationHandlerContributor>` | `AuthModule` | identity resolution, authorization, and action-gate authentication contributors |
 | `Set<Middleware>` | `AuthModule` | `OriginCaptureMiddleware` |
 
@@ -720,9 +720,11 @@ application with `Resilience.create(vertx)` and not per enforcer.
 |---|---|---|
 | `SecurityClaimMapper` | three-convention JWT mapper | `@Provides SecurityClaimMapper` |
 | `AuthorizationDecisionPoint` | claims-based evaluation | `@Provides AuthorizationDecisionPoint` |
-| `CredentialRejectionReporter` | assembles and emits `CredentialRejectedEvent` | `@Provides CredentialRejectionReporter` |
-| `ChannelIdentityManager` | in-memory registry with expiry timers | `@Binds ChannelIdentityManager` |
 | `RequestOriginConfig` | trust no proxy | `@Provides @Singleton RequestOriginConfig` |
+
+`RequestOriginConfig` is the only origin binding an application replaces. `CredentialRejectionReporter` and
+`ChannelIdentityManager` are fixed `AuthModule` bindings, so supplying a second binding of either type fails
+the Dagger build with a duplicate binding.
 
 ---
 

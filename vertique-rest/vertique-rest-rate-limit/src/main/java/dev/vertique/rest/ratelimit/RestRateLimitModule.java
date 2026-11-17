@@ -14,8 +14,8 @@ import dev.vertique.ratelimit.RateLimiters;
 import dev.vertique.ratelimit.dagger.RateLimitCoreModule;
 import dev.vertique.rest.core.middleware.Middleware;
 import dev.vertique.rest.core.middleware.MiddlewareScope;
+import dev.vertique.rest.core.security.AuthEnforcementCapability;
 import dev.vertique.rest.security.OriginCaptureMiddleware;
-import dev.vertique.rest.security.RequestOriginConfig;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.inject.Singleton;
@@ -40,18 +40,19 @@ public abstract class RestRateLimitModule {
     private RestRateLimitModule() {}
 
     /**
-     * Declares the optional {@link RequestOriginConfig} binding this module probes to decide
+     * Declares the optional {@link AuthEnforcementCapability} binding this module probes to decide
      * whether an {@code IP}-dimension edge rule may be declared. Resolves present only when the
      * application co-installs {@code vertique-rest-security}'s {@code AuthModule} — the only
-     * binding site for {@link RequestOriginConfig}, and therefore the same condition that gates
-     * whether {@link OriginCaptureMiddleware} is bound (its {@code @Inject} constructor's
-     * transitive dependency). Dagger's {@code @BindsOptionalOf} refuses to probe {@link
-     * OriginCaptureMiddleware} directly: a type with its own {@code @Inject} constructor is always
-     * considered present, so this module probes {@link RequestOriginConfig} instead — the plain
-     * {@code @Provides}-only binding {@code AuthModule} is the sole source of.
+     * binding site for {@link AuthEnforcementCapability}, and therefore the same condition that
+     * gates whether {@link OriginCaptureMiddleware} is bound. Dagger's {@code @BindsOptionalOf}
+     * refuses to probe {@link OriginCaptureMiddleware} directly: a type with its own {@code @Inject}
+     * constructor is always considered present, so this module probes the install signal {@code
+     * AuthModule} alone provides instead. The probe deliberately does not watch {@link
+     * dev.vertique.rest.security.RequestOriginConfig}, which an application may bind without
+     * installing {@code AuthModule}.
      */
     @BindsOptionalOf
-    abstract RequestOriginConfig optionalRequestOriginConfig();
+    abstract AuthEnforcementCapability optionalAuthEnforcementCapability();
 
     /**
      * Contributes the {@code 429} mapper unconditionally (always active regardless of the edge
@@ -102,19 +103,20 @@ public abstract class RestRateLimitModule {
      *
      * @param config the resolved edge config
      * @param rateLimiters the application-scoped rate-limit runtime
-     * @param originCaptureBinding the optional {@link RequestOriginConfig} binding probe — present
-     *     exactly when {@code AuthModule} (and therefore {@link OriginCaptureMiddleware}) is
-     *     co-installed
+     * @param authInstallSignal the optional {@link AuthEnforcementCapability} probe — present exactly
+     *     when {@code AuthModule} (and therefore {@link OriginCaptureMiddleware}) is co-installed
      * @return the contributed middleware
      */
     @Provides
     @IntoSet
     static Middleware rateLimitEdgeMiddlewareContribution(
-            RateLimitEdgeConfig config, RateLimiters rateLimiters, Optional<RequestOriginConfig> originCaptureBinding) {
+            RateLimitEdgeConfig config,
+            RateLimiters rateLimiters,
+            Optional<AuthEnforcementCapability> authInstallSignal) {
         if (!config.enabled()) {
             return NoOpMiddleware.INSTANCE;
         }
-        return new RateLimitEdgeMiddleware(config, rateLimiters, originCaptureBinding.isPresent());
+        return new RateLimitEdgeMiddleware(config, rateLimiters, authInstallSignal.isPresent());
     }
 
     /** Contributed instead of {@link RateLimitEdgeMiddleware} when the edge limiter is disabled. */
