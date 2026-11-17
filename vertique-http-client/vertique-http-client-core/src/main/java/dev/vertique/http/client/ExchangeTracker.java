@@ -3,10 +3,14 @@
 
 package dev.vertique.http.client;
 
+import dev.vertique.http.client.exception.HttpBodyLimitException;
+import dev.vertique.http.client.exception.HttpBodyLimitException.Direction;
 import io.vertx.core.Context;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpClientRequest;
+import io.vertx.core.http.HttpClientResponse;
+import io.vertx.core.http.HttpMethod;
 import io.vertx.core.internal.FutureInternal;
 import io.vertx.ext.web.client.impl.HttpContext;
 import java.util.concurrent.TimeoutException;
@@ -24,6 +28,7 @@ final class ExchangeTracker implements Handler<HttpContext<?>> {
     private final AttemptScope scope;
     private final Vertx vertx;
     private final long timeoutMs;
+    private final long maxResponseBytes;
 
     /**
      * Creates a tracker.
@@ -32,11 +37,25 @@ final class ExchangeTracker implements Handler<HttpContext<?>> {
      * @param vertx the Vert.x instance that runs the per-exchange timer
      * @param timeoutMs the timeout of each exchange in milliseconds, {@code 0} when the scope's owner
      *     bounds the attempt itself
+     * @param maxResponseBytes the most response body bytes a declared {@code Content-Length} may
+     *     announce, {@code 0} for no bound
      */
-    ExchangeTracker(AttemptScope scope, Vertx vertx, long timeoutMs) {
+    ExchangeTracker(AttemptScope scope, Vertx vertx, long timeoutMs, long maxResponseBytes) {
         this.scope = scope;
         this.vertx = vertx;
         this.timeoutMs = timeoutMs;
+        this.maxResponseBytes = maxResponseBytes;
+    }
+
+    /**
+     * Resets the exchange of a context because its response body went over the bound; the call fails
+     * with the body-limit failure.
+     */
+    static void overrun(HttpContext<?> ctx, long limit) {
+        AttemptScope.Exchange exchange = ctx.get(EXCHANGE);
+        if (exchange != null) {
+            exchange.reset(new HttpBodyLimitException(Direction.RESPONSE, limit));
+        }
     }
 
     @Override
@@ -68,6 +87,12 @@ final class ExchangeTracker implements Handler<HttpContext<?>> {
                     refuse(ctx, exchange, ctx.clientResponse().request());
                     return;
                 }
+                if (exchange != null && declaresTooMuch(ctx.clientResponse())) {
+                    Throwable cause = new HttpBodyLimitException(Direction.RESPONSE, maxResponseBytes);
+                    ctx.clientResponse().request().reset(0, cause);
+                    ctx.fail(cause);
+                    return;
+                }
             }
             case DISPATCH_RESPONSE, FAILURE -> {
                 AttemptScope.Exchange exchange = ctx.get(EXCHANGE);
@@ -80,6 +105,26 @@ final class ExchangeTracker implements Handler<HttpContext<?>> {
             }
         }
         ctx.next();
+    }
+
+    /** Whether the response head declares a body longer than the bound; a bodiless answer never does. */
+    private boolean declaresTooMuch(HttpClientResponse response) {
+        if (maxResponseBytes <= 0 || response.request().getMethod() == HttpMethod.HEAD) {
+            return false;
+        }
+        int status = response.statusCode();
+        if (status < 200 || status == 204 || status == 304) {
+            return false;
+        }
+        String declared = response.getHeader("Content-Length");
+        if (declared == null) {
+            return false;
+        }
+        try {
+            return Long.parseLong(declared.trim()) > maxResponseBytes;
+        } catch (NumberFormatException invalid) {
+            return false;
+        }
     }
 
     /**

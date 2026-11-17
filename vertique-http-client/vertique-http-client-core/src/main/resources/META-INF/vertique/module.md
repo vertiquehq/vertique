@@ -55,6 +55,14 @@ header that reaches the client without that check, and any header whose name sta
 `X-Vertique` are not reserved. Values given to `defaultHeader(...)` follow the same rules and are
 checked when the client is built.
 
+**Body bounds.** With `maxRequestBytes` above zero, Buffer, JSON and form bodies are measured as they
+will be encoded and refused with `HttpBodyLimitException` (`Direction.REQUEST`) before anything is
+sent; stream and multipart bodies cannot be measured and are refused too. A body exactly at the bound
+passes. `maxResponseBytes` applies whatever body codec the request uses: a declared `Content-Length`
+over the bound fails the request before the body is read, and a counting wrapper around the codec's
+stream stops passing bytes on at the bound, fails with `HttpBodyLimitException`
+(`Direction.RESPONSE`) and resets the exchange. Nothing is buffered to enforce either bound.
+
 **Attempt scope.** `execute` calls the attempt function once with a fresh `WebClient` scoped to that
 call. When the future the function returns settles, every exchange the attempt started that is still
 open is reset, and the scoped `WebClient` fails every later request with `IllegalStateException`
@@ -78,6 +86,8 @@ runtime the caller owns.
 | `name(String)` | Client name, `[A-Za-z0-9._~-]{1,128}`; default `default` |
 | `baseUrl(String)` | Default origin and path prefix for relative requests |
 | `readTimeout(long, TimeUnit)` | Read timeout setting of the client, not negative; default 30 seconds, `0` for none |
+| `maxRequestBytes(long)` | Most request body bytes sent, not negative; default `0` for no bound |
+| `maxResponseBytes(long)` | Most response body bytes read, not negative; default 10485760, `0` for no bound |
 | `webClientOptions(WebClientOptions)` | Copied; replaces the base options, which do not follow redirects |
 | `poolOptions(PoolOptions)` | Copied; sizes the shared connection pool |
 | `defaultHeader(String, String)` | Header added to every request that does not set it |
@@ -131,8 +141,8 @@ cancelled fails without sending. One signal may be shared by many calls; a settl
 
 ### HttpClientConfigurationException
 
-Extends `ConfigurationException`. Thrown by `build()` for an invalid name, base URL, read timeout or
-default header.
+Extends `ConfigurationException`. Thrown by `build()` for an invalid name, base URL, read timeout,
+negative body bound or default header.
 
 ### HttpExpectations
 
@@ -176,9 +186,9 @@ at 24 hours. `bodyExcerpt()` is filled only when the checked response has a buff
 
 ## Extension Points
 
-`dev.vertique.http.client.internal.FrameworkClientOptions` is INTERNAL: it exists for other
-framework modules, is outside the compatibility promise of this artifact, and application code must
-not use it.
+Every public type in `dev.vertique.http.client.internal` (`FrameworkClientOptions`,
+`BoundedBodyCodec`, `RetryAfter`) is INTERNAL: it exists for this module and other framework modules,
+is outside the compatibility promise of this artifact, and application code must not use it.
 
 ---
 

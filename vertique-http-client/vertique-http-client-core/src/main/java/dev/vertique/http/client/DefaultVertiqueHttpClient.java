@@ -93,7 +93,10 @@ final class DefaultVertiqueHttpClient implements VertiqueHttpClient {
 
     private WebClient scopedWebClient(AttemptScope scope, long exchangeTimeoutMs) {
         WebClient governed = WebClient.wrap(agent, webClientOptions);
-        governed.addInterceptor(new ExchangeTracker(scope, vertx, exchangeTimeoutMs));
+        // Order matters: PrepareInterceptor swaps the body codec by re-preparing the request, which runs
+        // PREPARE_REQUEST again for every interceptor registered before it. Each of those must tolerate the
+        // second pass, as ExchangeTracker does by keeping its exchange in the context.
+        governed.addInterceptor(new ExchangeTracker(scope, vertx, exchangeTimeoutMs, settings.maxResponseBytes()));
         governed.addInterceptor(new PrepareInterceptor(settings));
         return new GovernedWebClient(governed, settings);
     }

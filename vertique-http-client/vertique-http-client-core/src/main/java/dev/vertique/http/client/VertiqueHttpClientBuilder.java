@@ -39,6 +39,8 @@ public final class VertiqueHttpClientBuilder {
     private static final String DEFAULT_NAME = "default";
     private static final long DEFAULT_READ_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(30);
 
+    private static final long DEFAULT_MAX_RESPONSE_BYTES = 10_485_760L;
+
     static {
         FrameworkClientOptions.register(VertiqueHttpClientBuilder::disableHeaderValidation);
     }
@@ -51,6 +53,8 @@ public final class VertiqueHttpClientBuilder {
     private String name = DEFAULT_NAME;
     private String baseUrl;
     private long readTimeoutMs = DEFAULT_READ_TIMEOUT_MS;
+    private long maxRequestBytes;
+    private long maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES;
     private WebClientOptions webClientOptions;
     private PoolOptions poolOptions;
     private final Map<String, String> defaultHeaders = new LinkedHashMap<>();
@@ -122,6 +126,32 @@ public final class VertiqueHttpClientBuilder {
     }
 
     /**
+     * Sets the most bytes of a request body the client sends. Buffer, JSON and form bodies are measured
+     * encoded and refused over the bound before anything is sent; stream and multipart bodies cannot be
+     * measured and are refused while the bound is set. The default is {@code 0}, no bound.
+     *
+     * @param bytes the bound in bytes, not negative; {@code 0} means no bound
+     * @return this builder
+     */
+    public synchronized VertiqueHttpClientBuilder maxRequestBytes(long bytes) {
+        this.maxRequestBytes = bytes;
+        return this;
+    }
+
+    /**
+     * Sets the most bytes of a response body the client reads, whatever body codec the request uses. A
+     * declared {@code Content-Length} over the bound, or more received bytes, fail the request and
+     * reset the exchange. The default is 10485760 bytes; {@code 0} means no bound.
+     *
+     * @param bytes the bound in bytes, not negative; {@code 0} means no bound
+     * @return this builder
+     */
+    public synchronized VertiqueHttpClientBuilder maxResponseBytes(long bytes) {
+        this.maxResponseBytes = bytes;
+        return this;
+    }
+
+    /**
      * Sets the {@code WebClient} options. They are copied and replace the base options, which follow no
      * redirects.
      *
@@ -175,6 +205,9 @@ public final class VertiqueHttpClientBuilder {
         if (readTimeoutMs < 0) {
             throw new HttpClientConfigurationException("The read timeout must not be negative");
         }
+        if (maxRequestBytes < 0 || maxResponseBytes < 0) {
+            throw new HttpClientConfigurationException("A body byte bound must not be negative");
+        }
         Map<String, String> headers = validatedDefaultHeaders();
         BaseUrl base = baseUrl == null ? null : parseBaseUrl(baseUrl);
 
@@ -185,7 +218,13 @@ public final class VertiqueHttpClientBuilder {
             effective.setDefaultHost(base.host()).setDefaultPort(base.port()).setSsl(base.secure());
         }
         ClientSettings settings = new ClientSettings(
-                base == null ? "" : base.path(), base != null, validateHeaders, headers, readTimeoutMs);
+                base == null ? "" : base.path(),
+                base != null,
+                validateHeaders,
+                headers,
+                readTimeoutMs,
+                maxRequestBytes,
+                maxResponseBytes);
 
         HttpClientBuilder agentBuilder = vertx.httpClientBuilder().with(effective);
         if (poolOptions != null) {
