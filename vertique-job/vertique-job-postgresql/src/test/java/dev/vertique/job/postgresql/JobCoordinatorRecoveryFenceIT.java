@@ -200,7 +200,7 @@ class JobCoordinatorRecoveryFenceIT {
                 JobCoordinatorConfig.builder()
                         .nodeHeartbeatIntervalMs(200)
                         .nodeHeartbeatTimeoutMs(2_000)
-                        .scanIntervalMs(250)
+                        .scanIntervalMs(1_000)
                         .build(),
                 "surviving-node-" + UUID.randomUUID());
         await(coordinator.start());

@@ -411,6 +411,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
             String errorMessage,
             String errorType,
             ProgressSnapshot progress) {
+        java.util.Objects.requireNonNull(lockedBy, "lockedBy must not be null");
         return this.<JobExecution>query(sqlCompleteClaimed)
                 .params(Tuple.of(
                         executionId, newState.name(), errorMessage, errorType, toJsonObject(progress), lockedBy))
@@ -490,7 +491,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
             int nextAttempt) {
         return markAndScheduleRetry(
                 executionId,
-                lockedBy,
+                java.util.Objects.requireNonNull(lockedBy, "lockedBy must not be null"),
                 JobState.ABANDONED,
                 errorMessage,
                 errorType,
