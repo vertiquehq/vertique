@@ -186,6 +186,69 @@ public interface JobRepository {
             int nextAttempt);
 
     /**
+     * Completes an execution on behalf of dead-node recovery, only while the node that was found dead
+     * still holds the claim. It is {@link #completeExecution} with one more predicate: the row must still
+     * be {@code PROCESSING} and claimed by {@code lockedBy}. An execution that another node has claimed
+     * again since recovery read it matches no row, and recovery leaves it alone.
+     *
+     * <p>The default implementation cannot test the claim and delegates to {@link #completeExecution},
+     * which keeps a custom repository working with at-least-once recovery. A repository that records claim
+     * ownership overrides this method, and so must every decorator of one: a wrapper that does not forward
+     * this call to its delegate's fenced implementation removes the fence.
+     *
+     * @param executionId  the execution to complete
+     * @param lockedBy     the node identity recorded as the claim owner when recovery read the execution
+     * @param newState     the target state
+     * @param errorMessage the error message, or {@code null}
+     * @param errorType    the exception class name, or {@code null}
+     * @param progress     the final progress snapshot
+     * @return the persisted {@link JobExecution}, or {@link Optional#empty()} when no row transitioned
+     *         because the execution is no longer {@code PROCESSING} under {@code lockedBy}
+     */
+    default Future<Optional<JobExecution>> completeClaimedExecution(
+            UUID executionId,
+            String lockedBy,
+            JobState newState,
+            String errorMessage,
+            String errorType,
+            ProgressSnapshot progress) {
+        return completeExecution(executionId, newState, errorMessage, errorType, progress);
+    }
+
+    /**
+     * Records an interrupted execution and re-enqueues it on behalf of dead-node recovery, only while the
+     * node that was found dead still holds the claim. It is {@link #abandonAndScheduleRetry} with one more
+     * predicate on both writes: the row must still be {@code PROCESSING} and claimed by {@code lockedBy}.
+     * An execution that another node has claimed again since recovery read it matches no row, and recovery
+     * leaves it alone.
+     *
+     * <p>The default implementation cannot test the claim and delegates to {@link #abandonAndScheduleRetry},
+     * which keeps a custom repository working with at-least-once recovery. A repository that records claim
+     * ownership overrides this method, and so must every decorator of one: a wrapper that does not forward
+     * this call to its delegate's fenced implementation removes the fence.
+     *
+     * @param executionId     the interrupted execution to retry
+     * @param lockedBy        the node identity recorded as the claim owner when recovery read the execution
+     * @param errorMessage    the interruption message, or {@code null}
+     * @param errorType       the interruption type, or {@code null}
+     * @param progress        the final progress snapshot for the interrupted attempt
+     * @param nextScheduledAt when the retry should become eligible for claiming
+     * @param nextAttempt     the new attempt number (incremented from previous)
+     * @return the persisted {@code ABANDONED} snapshot, or {@link Optional#empty()} when no row transitioned
+     *         because the execution is no longer {@code PROCESSING} under {@code lockedBy}
+     */
+    default Future<Optional<JobExecution>> abandonClaimedAndScheduleRetry(
+            UUID executionId,
+            String lockedBy,
+            String errorMessage,
+            String errorType,
+            ProgressSnapshot progress,
+            Instant nextScheduledAt,
+            int nextAttempt) {
+        return abandonAndScheduleRetry(executionId, errorMessage, errorType, progress, nextScheduledAt, nextAttempt);
+    }
+
+    /**
      * Attempts to insert a {@link JobExecution} row, returning the generated ID on success or
      * {@link java.util.Optional#empty()} when a conflict prevents the insert (e.g., the
      * {@code ON CONFLICT DO NOTHING} clause matched an existing row).

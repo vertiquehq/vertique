@@ -257,6 +257,13 @@ permanently. For the same reason `stop()` keeps this node's own row while execut
 still `PROCESSING` (handlers still running at shutdown): the row expires and a surviving node recovers
 whatever is left. `start()` completes once its initial heartbeat write has settled.
 
+Every recovery write is **fenced by the claim**: it adds `locked_by = <dead server id>` (and requires the
+row to still be `PROCESSING`) to its predicate. When two surviving nodes read the same orphan, or another
+node claims it again between the scan's read and its write, the later write matches no row and recovery
+leaves the new claim alone, so the execution does not run twice. A fenced write that matches nothing is
+a normal outcome: the coordinator skips that execution, logs at `DEBUG`, writes nothing more for it, and
+still removes the dead node's heartbeat row once the other recoveries have committed.
+
 Applications do not call `start()` or `stop()`: `JobCoordinatorModule` deploys a verticle that does
 (see Module Dagger Bindings). The coordinator therefore writes a heartbeat to
 `job_server_heartbeats` every `nodeHeartbeatIntervalMs` and scans every `scanIntervalMs` on every node
@@ -336,6 +343,7 @@ without it (in-memory only); delayed jobs require it. Every method returns a `Fu
 |---|---|
 | Lifecycle | `save`, `updateState`, `claimNextJob`, `heartbeat`, `findStale`, `findById` |
 | Terminal + retry | `completeExecution`, `scheduleRetry`, `failAndScheduleRetry`, `abandonAndScheduleRetry` |
+| Dead-node recovery (default methods) | `completeClaimedExecution`, `abandonClaimedAndScheduleRetry` |
 | Leader election | `tryInsert` |
 | Auxiliary records | `saveLogs` |
 | Cron schedules | `saveSchedule`, `updateScheduleFireTimes`, `findSchedule` |
@@ -354,6 +362,13 @@ Obligations an implementation must honour:
   return the **pre-re-enqueue** snapshot (`FAILED` and `ABANDONED` respectively) even though the
   committed row is `ENQUEUED`, so an audit consumer sees the attempt that failed. `Optional.empty()`
   signals a no-op.
+- `completeClaimedExecution` and `abandonClaimedAndScheduleRetry` are the claim-fenced variants of
+  `completeExecution` and `abandonAndScheduleRetry` that `JobCoordinator` uses for dead-node recovery.
+  They take the claim owner (`lockedBy`) and must match a row only while it is still `PROCESSING` under
+  that owner, returning `Optional.empty()` otherwise. They are `default` methods that delegate to the
+  unfenced writes, so an existing implementation compiles and keeps **at-least-once** recovery; a
+  repository that records claim ownership overrides them to get exactly-one-recoverer. A decorator must
+  override and forward both to its delegate, or it removes the fence.
 - `tryInsert(execution)` is an insert-if-absent used for cron `SINGLE_INSTANCE` leader election: all
   nodes race on the same `(jobId, scheduledAt)` and only the winner receives the generated id.
 - `saveSchedule` is an upsert — code is the source of truth and overwrites the stored row on every

@@ -9,6 +9,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 
@@ -274,10 +275,14 @@ public class JobCoordinator {
      *
      * <p>For a {@link JobType#DELAYED} job with retries remaining, atomically records the
      * {@link JobState#ABANDONED} interruption and re-enqueues it via
-     * {@link JobRepository#abandonAndScheduleRetry} — one transaction, so a crash cannot strand the row
-     * in {@code ABANDONED}. A delayed job that has exhausted its attempts is dead-lettered. Other job
-     * types (e.g. {@link JobType#CRON}) are marked {@code ABANDONED}; the scheduler re-fires them on the
-     * next tick.
+     * {@link JobRepository#abandonClaimedAndScheduleRetry} — one transaction, so a crash cannot strand
+     * the row in {@code ABANDONED}. A delayed job that has exhausted its attempts is dead-lettered. Other
+     * job types (e.g. {@link JobType#CRON}) are marked {@code ABANDONED}; the scheduler re-fires them on
+     * the next tick.
+     *
+     * <p>Every write is fenced by the dead server's claim ({@code locked_by = deadServerId}): an execution
+     * that another node has claimed again since the scan read it matches no row. That result is skipped
+     * and logged at {@code DEBUG}; it neither fails the recovery nor triggers a later write.
      *
      * @param job          the orphaned execution to recover
      * @param deadServerId the server ID of the crashed node (used in the error message)
@@ -290,23 +295,45 @@ public class JobCoordinator {
         String errorType = "NodeCrashException";
         if (job.jobType() == JobType.DELAYED && job.attemptNumber() + 1 < job.maxAttempts()) {
             return repository
-                    .abandonAndScheduleRetry(
-                            job.id(), errorMessage, errorType, job.progress(), Instant.now(), job.attemptNumber() + 1)
+                    .abandonClaimedAndScheduleRetry(
+                            job.id(),
+                            deadServerId,
+                            errorMessage,
+                            errorType,
+                            job.progress(),
+                            Instant.now(),
+                            job.attemptNumber() + 1)
+                    .onSuccess(result -> logIfClaimMoved(result, job))
                     .onFailure(err ->
                             log.warn("Failed to abandon and re-enqueue execution '{}': {}", job.id(), err.getMessage()))
                     .mapEmpty();
         } else if (job.jobType() == JobType.DELAYED) {
             return repository
-                    .completeExecution(job.id(), JobState.DEAD_LETTER, errorMessage, errorType, job.progress())
+                    .completeClaimedExecution(
+                            job.id(), deadServerId, JobState.DEAD_LETTER, errorMessage, errorType, job.progress())
+                    .onSuccess(result -> logIfClaimMoved(result, job))
                     .onFailure(err ->
                             log.warn("Failed to dead-letter exhausted execution '{}': {}", job.id(), err.getMessage()))
                     .mapEmpty();
         } else {
             return repository
-                    .completeExecution(job.id(), JobState.ABANDONED, errorMessage, errorType, job.progress())
+                    .completeClaimedExecution(
+                            job.id(), deadServerId, JobState.ABANDONED, errorMessage, errorType, job.progress())
+                    .onSuccess(result -> logIfClaimMoved(result, job))
                     .onFailure(
                             err -> log.warn("Failed to mark execution '{}' ABANDONED: {}", job.id(), err.getMessage()))
                     .mapEmpty();
+        }
+    }
+
+    /**
+     * Logs a skipped recovery. A recovery write is fenced by the dead server's claim, so an empty result
+     * means the execution is no longer {@code PROCESSING} under it — another node recovered or claimed it
+     * again since this scan read it. That is a normal outcome, not an error: the execution is left alone.
+     */
+    private void logIfClaimMoved(Optional<JobExecution> result, JobExecution job) {
+        if (result.isEmpty()) {
+            log.debug("Skipped recovery of execution '{}': it is no longer claimed by the dead server", job.id());
         }
     }
 
