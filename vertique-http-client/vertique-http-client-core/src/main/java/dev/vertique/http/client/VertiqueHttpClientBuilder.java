@@ -193,7 +193,7 @@ public final class VertiqueHttpClientBuilder {
         }
         HttpClientAgent agent = agentBuilder.build();
         try {
-            VertiqueHttpClient client = new DefaultVertiqueHttpClient(name, agent, effective, settings);
+            VertiqueHttpClient client = new DefaultVertiqueHttpClient(vertx, name, agent, effective, settings);
             built.add(client);
             return client;
         } catch (RuntimeException failure) {

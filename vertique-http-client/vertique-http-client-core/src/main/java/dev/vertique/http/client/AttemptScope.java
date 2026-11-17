@@ -70,6 +70,9 @@ final class AttemptScope {
         private final AttemptScope scope;
         private volatile HttpClientRequest request;
         private volatile HttpClientResponse response;
+        private volatile boolean expired;
+        private volatile boolean done;
+        private volatile Runnable onFinish;
 
         private Exchange(AttemptScope scope) {
             this.scope = scope;
@@ -83,7 +86,8 @@ final class AttemptScope {
          */
         boolean attach(HttpClientRequest sent) {
             request = sent;
-            return !scope.hasEnded();
+            response = null; // a followed redirect reuses the exchange: never reset an earlier hop's response
+            return !expired && !scope.hasEnded();
         }
 
         /**
@@ -94,11 +98,43 @@ final class AttemptScope {
          */
         boolean attach(HttpClientResponse received) {
             response = received;
-            return !scope.hasEnded();
+            return !expired && !scope.hasEnded();
         }
 
         void finish() {
+            done = true;
+            Runnable cleanup = onFinish;
+            if (cleanup != null) {
+                cleanup.run();
+            }
             scope.finished(this);
+        }
+
+        /** Registers what runs when the exchange completes or fails. */
+        void onFinish(Runnable cleanup) {
+            onFinish = cleanup;
+        }
+
+        boolean isExpired() {
+            return expired;
+        }
+
+        /** Whether Vert.x has created a request for the exchange yet. */
+        boolean hasRequest() {
+            return request != null;
+        }
+
+        /**
+         * Marks the exchange as timed out.
+         *
+         * @return {@code false} when it already completed or failed
+         */
+        boolean expire() {
+            if (done) {
+                return false;
+            }
+            expired = true;
+            return true;
         }
 
         /**

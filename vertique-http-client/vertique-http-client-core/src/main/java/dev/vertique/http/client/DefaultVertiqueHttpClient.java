@@ -5,7 +5,6 @@ package dev.vertique.http.client;
 
 import io.vertx.core.Context;
 import io.vertx.core.Future;
-import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpClientAgent;
 import io.vertx.ext.web.client.WebClient;
@@ -16,6 +15,7 @@ import java.util.function.Function;
 /** The client {@link VertiqueHttpClientBuilder} builds: one agent, one scoped web client per call. */
 final class DefaultVertiqueHttpClient implements VertiqueHttpClient {
 
+    private final Vertx vertx;
     private final String name;
     private final HttpClientAgent agent;
     private final WebClientOptions webClientOptions;
@@ -25,12 +25,17 @@ final class DefaultVertiqueHttpClient implements VertiqueHttpClient {
     private final AtomicReference<Future<Void>> closeFuture = new AtomicReference<>();
 
     DefaultVertiqueHttpClient(
-            String name, HttpClientAgent agent, WebClientOptions webClientOptions, ClientSettings settings) {
+            Vertx vertx,
+            String name,
+            HttpClientAgent agent,
+            WebClientOptions webClientOptions,
+            ClientSettings settings) {
+        this.vertx = vertx;
         this.name = name;
         this.agent = agent;
         this.webClientOptions = webClientOptions;
         this.settings = settings;
-        this.webClient = scopedWebClient(clientScope);
+        this.webClient = scopedWebClient(clientScope, settings.readTimeoutMs());
     }
 
     @Override
@@ -61,26 +66,11 @@ final class DefaultVertiqueHttpClient implements VertiqueHttpClient {
             return Future.failedFuture(new IllegalStateException("The HTTP client is closed"));
         }
         Context caller = Vertx.currentContext();
-        AttemptScope scope = new AttemptScope();
-        Future<T> result;
-        try {
-            result = attempt.apply(scopedWebClient(scope));
-            if (result == null) {
-                result = Future.failedFuture(new IllegalStateException("The attempt returned no future"));
-            }
-        } catch (RuntimeException failure) {
-            result = Future.failedFuture(failure);
-        }
-        Promise<T> promise = Promise.promise();
-        result.onComplete(outcome -> {
-            scope.end();
-            if (caller == null || Vertx.currentContext() == caller) {
-                promise.handle(outcome);
-            } else {
-                caller.runOnContext(ignored -> promise.handle(outcome));
-            }
-        });
-        return promise.future();
+        Context context = caller != null ? caller : vertx.getOrCreateContext();
+        Long callTimeoutMs = options.readTimeoutMs();
+        long timeoutMs = callTimeoutMs != null ? callTimeoutMs : settings.readTimeoutMs();
+        CallExecution<T> call = new CallExecution<>(vertx, context, options.cancellationSignal(), timeoutMs);
+        return call.start(attempt, scopedWebClient(call.scope(), 0));
     }
 
     @Override
@@ -101,9 +91,9 @@ final class DefaultVertiqueHttpClient implements VertiqueHttpClient {
         }
     }
 
-    private WebClient scopedWebClient(AttemptScope scope) {
+    private WebClient scopedWebClient(AttemptScope scope, long exchangeTimeoutMs) {
         WebClient governed = WebClient.wrap(agent, webClientOptions);
-        governed.addInterceptor(new ExchangeTracker(scope));
+        governed.addInterceptor(new ExchangeTracker(scope, vertx, exchangeTimeoutMs));
         governed.addInterceptor(new PrepareInterceptor(settings));
         return new GovernedWebClient(governed, settings);
     }

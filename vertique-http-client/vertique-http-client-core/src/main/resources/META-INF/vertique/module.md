@@ -113,6 +113,22 @@ the agent and resets requests still open. Closing again returns the same future.
 Immutable options for a single `execute` call. `CallOptions.defaults()` selects the client's own
 settings.
 
+| Method | Effect |
+|---|---|
+| `readTimeout(long, TimeUnit)` | Attempt timeout of this call, above zero; replaces the client's `readTimeout` |
+| `noReadTimeout()` | No attempt timer for this call; of the two timeout methods the last call wins |
+| `cancellation(CancellationSignal)` | Binds the call to a signal a caller can cancel from any thread |
+
+The attempt timeout covers the whole attempt including the response body. When it fires, every
+exchange the attempt has open is reset and the call fails with a `java.util.concurrent.TimeoutException`
+with a constant message. A request sent straight through `webClient()` is one attempt bounded by the client's `readTimeout` in the same way, resetting just that exchange. A request still waiting for a pooled connection when the attempt ends sends
+nothing once the connection frees.
+
+`CancellationSignal.create()` makes a signal; `cancel()` works from any thread and repeating it does
+nothing. Cancelling resets the open exchanges of every call bound to the signal that has not settled
+and fails each with `HttpExchangeCancelledException`. A call started with a signal that is already
+cancelled fails without sending. One signal may be shared by many calls; a settled call leaves it.
+
 ### HttpClientConfigurationException
 
 Extends `ConfigurationException`. Thrown by `build()` for an invalid name, base URL, read timeout or
