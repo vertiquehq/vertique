@@ -28,6 +28,9 @@ final class GovernedWebClient implements WebClient {
     /** Message of the exception {@link #addInterceptor(Handler)} throws. */
     static final String INTERCEPTOR_REFUSED = "Interceptors cannot be added to a web client handed out by the client";
 
+    static final String TLS_UPDATE_REFUSED =
+            "TLS options of a web client handed out by the client are set on the client builder";
+
     private final WebClient delegate;
     private final String basePath;
     private final boolean hasBaseUrl;
@@ -114,11 +117,11 @@ final class GovernedWebClient implements WebClient {
         // the client owns the agent; closing a handed-out web client leaves the client usable
     }
 
-    // --- TLS reload: forwarded to the shared agent ---
+    // --- TLS: shared by every call of the client and set on its builder ---
 
     @Override
     public Future<Boolean> updateSSLOptions(ClientSSLOptions options, boolean force) {
-        return delegate.updateSSLOptions(options, force);
+        throw new UnsupportedOperationException(TLS_UPDATE_REFUSED);
     }
 
     // --- helpers ---

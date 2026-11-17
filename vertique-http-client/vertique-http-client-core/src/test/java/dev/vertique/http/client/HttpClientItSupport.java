@@ -14,7 +14,9 @@ import io.vertx.core.Vertx;
 import io.vertx.core.VertxOptions;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServer;
+import io.vertx.core.http.HttpServerOptions;
 import io.vertx.core.http.HttpServerRequest;
+import io.vertx.core.net.SelfSignedCertificate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -74,6 +76,14 @@ final class HttpClientItSupport {
         closers.add(closer);
     }
 
+    /** Registers a synchronous cleanup action. */
+    void track(Runnable cleanup) {
+        closers.add(() -> {
+            cleanup.run();
+            return Future.succeededFuture();
+        });
+    }
+
     /** Closes every tracked resource, then fails if the blocked-thread checker warned. */
     void closeResources() {
         List<Supplier<Future<?>>> reversed = new ArrayList<>(closers);
@@ -123,7 +133,20 @@ final class HttpClientItSupport {
 
     /** Starts a recording server on {@code 127.0.0.1} with a dynamic port. */
     RecordingServer server(RecordingServer.Responder responder) {
-        RecordingServer server = RecordingServer.start(vertx, responder);
+        RecordingServer server = RecordingServer.start(vertx, responder, new HttpServerOptions());
+        track(server::close);
+        return server;
+    }
+
+    /**
+     * Starts a recording HTTPS server on {@code 127.0.0.1} with a fresh self-signed certificate that
+     * no client trusts unless told to.
+     */
+    RecordingServer tlsServer(RecordingServer.Responder responder) {
+        SelfSignedCertificate certificate = SelfSignedCertificate.create();
+        RecordingServer server = RecordingServer.start(
+                vertx, responder, new HttpServerOptions().setSsl(true).setKeyCertOptions(certificate.keyCertOptions()));
+        track(certificate::delete);
         track(server::close);
         return server;
     }
@@ -202,13 +225,16 @@ final class HttpClientItSupport {
 
         private final HttpServer http;
 
-        private RecordingServer(HttpServer http) {
+        private final String scheme;
+
+        private RecordingServer(HttpServer http, String scheme) {
             this.http = http;
+            this.scheme = scheme;
         }
 
-        static RecordingServer start(Vertx vertx, Responder responder) {
-            HttpServer http = vertx.createHttpServer();
-            RecordingServer server = new RecordingServer(http);
+        static RecordingServer start(Vertx vertx, Responder responder, HttpServerOptions options) {
+            HttpServer http = vertx.createHttpServer(options);
+            RecordingServer server = new RecordingServer(http, options.isSsl() ? "https" : "http");
             Handler<HttpServerRequest> handler = request -> request.body().onSuccess(body -> {
                 MultiMap headers = MultiMap.caseInsensitiveMultiMap().addAll(request.headers());
                 server.requests.add(new RecordedRequest(request.method().name(), request.uri(), headers, body));
@@ -233,7 +259,7 @@ final class HttpClientItSupport {
         }
 
         String origin() {
-            return "http://127.0.0.1:" + port();
+            return scheme + "://127.0.0.1:" + port();
         }
 
         Future<Void> close() {

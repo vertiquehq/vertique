@@ -19,6 +19,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.RequestOptions;
+import io.vertx.core.net.ClientSSLOptions;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.impl.HttpContext;
@@ -420,6 +421,7 @@ class GovernedWebClientIT {
             onDirect = t;
         }
         AtomicReference<Throwable> onAttempt = new AtomicReference<>();
+        AtomicReference<Throwable> attemptSsl = new AtomicReference<>();
         AtomicReference<Future<Rejection>> attemptBadHeader = new AtomicReference<>();
         Future<String> attempt = client.execute(web -> {
             try {
@@ -427,6 +429,7 @@ class GovernedWebClientIT {
             } catch (Throwable t) {
                 onAttempt.set(t);
             }
+            attemptSsl.set(updateSslOptionsFailure(web));
             attemptBadHeader.set(rejection(getWithHeader(web, "X-A", "a\r\nX-B: b")));
             return attemptBadHeader.get().compose(r -> web.get("/").send()).map(HttpResponse::bodyAsString);
         });
@@ -445,6 +448,16 @@ class GovernedWebClientIT {
         await(direct.get("/").send());
         assertThat(invoked.get()).isZero();
 
+        // And updateSSLOptions(trustAll) on each of them throws UnsupportedOperationException with a
+        // constant message and no cause
+        Throwable sslOnDirect = updateSslOptionsFailure(direct);
+        for (Throwable refused : java.util.Arrays.asList(sslOnDirect, attemptSsl.get())) {
+            assertThat(refused).isInstanceOf(UnsupportedOperationException.class);
+            assertThat(refused.getCause()).isNull();
+            assertThat(refused.getMessage()).isNotBlank();
+        }
+        assertThat(sslOnDirect.getMessage()).isEqualTo(attemptSsl.get().getMessage());
+
         // And the governance hook is unchanged: an invalid header is still rejected without reaching a
         // server (through the attempt's WebClient above and through client.webClient() here)
         Rejection invalid = awaitRejection(getWithHeader(direct, "X-A", "a\r\nX-B: b"));
@@ -455,5 +468,35 @@ class GovernedWebClientIT {
         assertThat(server.requests)
                 .as("only the valid requests reached the server")
                 .hasSize(3);
+
+        // And after the refused trust-all update a request to a self-signed HTTPS server that the
+        // builder does not trust still fails the TLS handshake and the server records no request
+        RecordingServer tls = support.tlsServer((rq, body) -> rq.response().end("secret"));
+        VertiqueHttpClient tlsClient = client(tls.origin());
+        Throwable handshakeBefore = awaitFailure(tlsClient.webClient().get("/").send());
+        assertThat(handshakeBefore).isNotInstanceOf(UnsupportedOperationException.class);
+        assertThat(updateSslOptionsFailure(tlsClient.webClient())).isInstanceOf(UnsupportedOperationException.class);
+        Throwable handshakeAfter = awaitFailure(tlsClient.webClient().get("/").send());
+        assertThat(handshakeAfter).isNotInstanceOf(UnsupportedOperationException.class);
+        AtomicReference<Throwable> tlsAttemptRefusal = new AtomicReference<>();
+        Throwable handshakeInAttempt = awaitFailure(tlsClient.execute(web -> {
+            tlsAttemptRefusal.set(updateSslOptionsFailure(web));
+            return web.get("/").send();
+        }));
+        assertThat(tlsAttemptRefusal.get()).isInstanceOf(UnsupportedOperationException.class);
+        assertThat(handshakeInAttempt).isNotInstanceOf(UnsupportedOperationException.class);
+        assertThat(tls.requests)
+                .as("no request reached the untrusted HTTPS server")
+                .isEmpty();
+    }
+
+    /** Calls {@code updateSSLOptions} with trust-all on the WebClient and returns what it threw, or null. */
+    private static Throwable updateSslOptionsFailure(WebClient web) {
+        try {
+            web.updateSSLOptions(new ClientSSLOptions().setTrustAll(true), false);
+            return null;
+        } catch (Throwable thrown) {
+            return thrown;
+        }
     }
 }

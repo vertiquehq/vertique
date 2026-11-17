@@ -32,12 +32,14 @@ owns one Vert.x `HttpClientAgent`. Every `WebClient` the client hands out is a l
 over that agent, so they all share its connection pool.
 
 **Handed-out `WebClient` instances are delegates.** The `WebClient` from `webClient()` and the one
-passed to an attempt behave like a normal Vert.x `WebClient` with three differences:
+passed to an attempt behave like a normal Vert.x `WebClient` with four differences:
 
 - `close()` does nothing and leaves the client usable; `VertiqueHttpClient.close()` closes the agent.
 - `addInterceptor(...)` throws `UnsupportedOperationException`, so no second, ungoverned hook can be
   added. Wrappers built on a handed-out `WebClient`, such as `OAuth2WebClient.create(web, ...)`, are
   not supported.
+- `updateSSLOptions(...)` throws `UnsupportedOperationException`: the client's TLS settings are shared by
+  every call, so they are set once on the builder through `webClientOptions(...)`.
 - Relative requests are resolved against the base URL.
 
 **Base URL.** `baseUrl(...)` takes an `http` or `https` URL. Its scheme, host and port become the
