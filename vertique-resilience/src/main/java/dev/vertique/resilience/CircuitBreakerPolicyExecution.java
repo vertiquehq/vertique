@@ -11,6 +11,7 @@ import io.vertx.circuitbreaker.CircuitBreakerOptions;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
+import java.time.Duration;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.TimeoutException;
@@ -197,6 +198,13 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
             if (delay < 0L) {
                 return Future.succeededFuture(AttemptResult.failure(normalized));
             }
+            if (retryConfiguration.retryAfterMaxMs() > 0L) {
+                long hintMs = retryDelayHintMs(normalized);
+                if (hintMs > retryConfiguration.retryAfterMaxMs()) {
+                    return Future.succeededFuture(AttemptResult.failure(normalized));
+                }
+                delay = Math.max(delay, hintMs);
+            }
             retryDecision.set(new RetryDecision(delay));
             if (observation != null) {
                 observation.retryScheduled(ordinal, ordinal + 1, delay, normalized);
@@ -217,6 +225,33 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
             }
             return Future.succeededFuture(AttemptResult.failure(new ResiliencePolicyException(
                     operationKey, callbackKind, metadataFailure.getClass(), Optional.of(normalized.getClass()))));
+        }
+    }
+
+    /** Returns the first usable hint in the cause chain in milliseconds, or -1 when there is none. */
+    private static long retryDelayHintMs(Throwable failure) {
+        Throwable current = failure;
+        for (int depth = 0; current != null && depth < 32; depth++) {
+            if (current instanceof RetryDelayHint hint) {
+                return usableHintMs(hint);
+            }
+            Throwable cause = current.getCause();
+            current = cause == current ? null : cause;
+        }
+        return -1L;
+    }
+
+    private static long usableHintMs(RetryDelayHint hint) {
+        try {
+            Optional<Duration> value = hint.retryAfter();
+            if (value == null || value.isEmpty() || value.orElseThrow().isNegative()) {
+                return -1L;
+            }
+            Duration duration = value.orElseThrow();
+            long millis = duration.toMillis();
+            return duration.getNano() % 1_000_000 == 0 ? millis : Math.addExact(millis, 1L);
+        } catch (Exception unusable) {
+            return -1L;
         }
     }
 

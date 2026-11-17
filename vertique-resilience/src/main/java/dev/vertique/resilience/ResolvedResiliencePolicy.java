@@ -69,7 +69,8 @@ public record ResolvedResiliencePolicy(
             return new DurationBound.Unknown();
         }
 
-        long delayBudget = maximumDelayBudget(backoff, retry.orElseThrow().maxRetries());
+        long delayBudget = maximumDelayBudget(
+                backoff, retry.orElseThrow().maxRetries(), retry.orElseThrow().retryAfterMaxMs());
         return known(ExecutionBudget.saturatingAdd(attemptBudget, delayBudget));
     }
 
@@ -80,9 +81,9 @@ public record ResolvedResiliencePolicy(
         return new DurationBound.Known(0L, false);
     }
 
-    private static long maximumDelayBudget(RetryBackoff backoff, int maxRetries) {
+    private static long maximumDelayBudget(RetryBackoff backoff, int maxRetries, long retryAfterMaxMs) {
         if (backoff instanceof RetryBackoff.Fixed fixed) {
-            return ExecutionBudget.saturatingMultiply(fixed.delayMs(), maxRetries);
+            return ExecutionBudget.saturatingMultiply(Math.max(fixed.delayMs(), retryAfterMaxMs), maxRetries);
         }
 
         RetryBackoff.Exponential exponential = (RetryBackoff.Exponential) backoff;
@@ -90,7 +91,8 @@ public record ResolvedResiliencePolicy(
         for (int retryCount = 0; retryCount < maxRetries; retryCount++) {
             long cappedBase = Retry.cappedExponentialDelay(exponential, retryCount);
             long jitterUpperBound = Math.min(cappedBase, exponential.maxJitterMs());
-            total = ExecutionBudget.saturatingAdd(total, ExecutionBudget.saturatingAdd(cappedBase, jitterUpperBound));
+            long retryBound = ExecutionBudget.saturatingAdd(cappedBase, jitterUpperBound);
+            total = ExecutionBudget.saturatingAdd(total, Math.max(retryBound, retryAfterMaxMs));
         }
         return total;
     }

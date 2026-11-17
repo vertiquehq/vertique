@@ -187,6 +187,18 @@ a policy. Runtime integrations that own a validated random source may use
 is opt-in, starts at attempt zero, and performs at most `maxRetries + 1` attempts through the
 Vert.x CircuitBreaker retry engine. `abortOn` wins over `retryOn`; delays are scheduled between
 attempts and do not consume the per-attempt timeout.
+
+A failure can ask for a longer wait by implementing `RetryDelayHint` (`Optional<Duration> retryAfter()`),
+for example a server's `Retry-After` answer. The hint is opt-in: it is read only when the retry
+configuration's `retryAfterMaxMs` is above 0 (the default, 0, ignores every hint). After the normal
+eligibility decision, the retry waits `max(sampled backoff, hint)` when the hint is at most
+`retryAfterMaxMs`, and is refused when the hint is above it: the original failure is surfaced,
+`RetryExhausted` is emitted and no `RetryScheduled` is. `RetryScheduled` reports the delay actually
+chosen. The hint never makes a failure retryable and never overrides `abortOn`. The first
+`RetryDelayHint` in the failure's cause chain is used; an accessor that throws, or returns `null`, an
+empty value, or a negative or overflowing duration, counts as no hint. A negative backoff still stops the
+retry. Set the maximum with `RetryConfig.Builder.retryAfterMaxMs(long)` or the tier key
+`resilience.policies.<name>.retry.retryAfterMaxMs`.
 Callback failures become cause-free `ResiliencePolicyException` values with only safe callback-kind
 and exception-class metadata. Fatal `Error` values are rethrown.
 
@@ -195,7 +207,9 @@ default, then disabled precedence independently for each concern. Annotation inh
  `RetryConfig`, `RetryBackoff`,
 `CircuitBreakerConfig`, and `BulkheadConfig` validate eagerly. `ResolvedResiliencePolicy.executionBudget()`
 reports conservative active, queue, and total bounds using saturating arithmetic; unknown or
-unbounded inputs remain explicit.
+unbounded inputs remain explicit. With `retryAfterMaxMs` above 0, each retry's upper bound for fixed and
+exponential backoff becomes the larger of its backoff bound and `retryAfterMaxMs`; custom backoff
+stays unknown, and a maximum of 0 leaves the budget unchanged.
 
 Framework adapters use `ResilienceAdapterSupport.pipeline(AdapterOperationIdentity,
 ResolvedResiliencePolicy)` for the stable structured entry point. It derives the opaque key internally,
@@ -280,7 +294,7 @@ match `[A-Za-z0-9._~-]{1,128}`. For example:
     "policies": {
       "payments": {
         "timeout": {"valueMs": 2000},
-        "retry": {"maxRetries": 5, "delayMs": 100},
+        "retry": {"maxRetries": 5, "delayMs": 100, "retryAfterMaxMs": 5000},
         "circuitBreaker": {"maxFailures": 3, "resetTimeoutMs": 10000},
         "bulkhead": {"maxConcurrentCalls": 8, "mode": "QUEUE", "maxQueueSize": 16, "queueTimeoutMs": 250}
       }
@@ -288,6 +302,9 @@ match `[A-Za-z0-9._~-]{1,128}`. For example:
   }
 }
 ```
+
+`retry.retryAfterMaxMs` (long, default 0, must be `>= 0`) is the longest failure delay hint the retry
+honors; an invalid value fails with a path-qualified `ConfigurationException`.
 
 Install `ResiliencePoliciesModule` alongside `ResilienceModule` when named tiers are used. The
 provider requires the application's `@VertxConfig JsonObject` and canonical `ConfigParser`
