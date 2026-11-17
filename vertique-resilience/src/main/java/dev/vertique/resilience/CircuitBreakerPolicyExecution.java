@@ -44,7 +44,9 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
     private final AtomicInteger lastAttemptOrdinal = new AtomicInteger();
     private final AtomicReference<RetryDecision> retryDecision = new AtomicReference<>();
     private final AtomicReference<Attempt> currentAttempt = new AtomicReference<>();
+    private final ResilienceCancellation cancellation;
     private Runnable deregistration = () -> {};
+    private Runnable cancellationRegistration = () -> {};
 
     private CircuitBreakerPolicyExecution(
             Resilience resilience,
@@ -63,6 +65,7 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
         this.retryConfiguration = retryConfiguration;
         this.operation = Objects.requireNonNull(operation, "operation");
         this.observation = observation;
+        this.cancellation = observation == null ? null : observation.cancellation();
         this.contextOpen = Objects.requireNonNull(contextOpen, "contextOpen");
         this.executionRegistrar = executionRegistrar == null ? ignored -> () -> {} : executionRegistrar;
         this.retryEngine = io.vertx.circuitbreaker.CircuitBreaker.create(
@@ -129,6 +132,15 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
             settleClosed();
             return;
         }
+        if (cancellation != null) {
+            Throwable cancelled = cancellation.reason();
+            if (cancelled != null) {
+                settleFailure(cancelled);
+                return;
+            }
+            cancellationRegistration =
+                    cancellation.onCancel(reason -> context.runOnContext(ignored -> settleFailure(reason)));
+        }
         Future<AttemptResult<T>> outcome;
         try {
             outcome = resilience.startIfOpen(this, () -> retryEngine.execute(this::invokeAttempt));
@@ -144,6 +156,9 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
     }
 
     private Future<AttemptResult<T>> invokeAttempt() {
+        if (cancellation != null && cancellation.isCancelled()) {
+            return Future.succeededFuture(AttemptResult.failure(cancellation.reason()));
+        }
         int ordinal = observation == null ? lastAttemptOrdinal.incrementAndGet() : observation.attemptStarted();
         lastAttemptOrdinal.set(ordinal);
         Attempt attempt = new Attempt(ordinal);
@@ -175,6 +190,9 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
     }
 
     private Future<AttemptResult<T>> resolveFailure(Throwable failure, int ordinal) {
+        if (cancellation != null && cancellation.isCancelled()) {
+            return Future.succeededFuture(AttemptResult.failure(failure));
+        }
         Throwable normalized = normalizeTimeout(failure);
         if (isFatal(normalized)) {
             return Future.succeededFuture(AttemptResult.failure(normalized));
@@ -317,6 +335,7 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
 
     private void settleSuccess(T value) {
         if (settled.compareAndSet(false, true)) {
+            cancellationRegistration.run();
             closeEngines();
             result.tryComplete(value);
             resilience.remove(this);
@@ -326,6 +345,7 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
 
     private void settleFailure(Throwable failure) {
         if (settled.compareAndSet(false, true)) {
+            cancellationRegistration.run();
             closeEngines();
             result.tryFail(Objects.requireNonNull(failure, "failure"));
             resilience.remove(this);
@@ -395,7 +415,7 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
 
         private void complete(Throwable failure) {
             if (completed.compareAndSet(false, true) && observation != null) {
-                observation.attemptCompleted(ordinal, failure);
+                observation.attemptEnded(ordinal, failure);
             }
         }
 

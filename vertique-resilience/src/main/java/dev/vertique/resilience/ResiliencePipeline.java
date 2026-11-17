@@ -188,10 +188,38 @@ public final class ResiliencePipeline {
      */
     public <T> Future<T> execute(Supplier<Future<T>> operation) {
         Objects.requireNonNull(operation, "operation");
+        return run(operation, null);
+    }
+
+    /**
+     * Executes the configured pipeline so that it can be cancelled.
+     *
+     * <p>Cancelling stops a pending retry delay, removes a call queued in a bulkhead, prevents any
+     * further operation invocation and fails the returned future once with the cancellation reason. An
+     * operation future already in flight is not cancelled and its late result is ignored. A cancelled
+     * execution never closes the circuit breaker and is reported as an application failure.
+     *
+     * @param operation asynchronous operation supplier
+     * @param cancellation handle that cancels this execution
+     * @param <T> operation result type
+     * @return a future settled by the configured concerns or by the cancellation
+     * @throws NullPointerException if {@code operation} or {@code cancellation} is null
+     */
+    public <T> Future<T> execute(Supplier<Future<T>> operation, ResilienceCancellation cancellation) {
+        Objects.requireNonNull(operation, "operation");
+        Objects.requireNonNull(cancellation, "cancellation");
+        return run(operation, cancellation);
+    }
+
+    private <T> Future<T> run(Supplier<Future<T>> operation, ResilienceCancellation cancellation) {
         ResilienceExecutionObservation observation =
-                new ResilienceExecutionObservation(resilience, operationKey, enabledConcerns());
+                new ResilienceExecutionObservation(resilience, operationKey, enabledConcerns(), cancellation);
         if (!contextOpen.getAsBoolean()) {
             return finish(observation, resilience.failedOnContext(resilience.executionContext(), operationKey));
+        }
+        if (cancellation != null && cancellation.isCancelled()) {
+            return finish(
+                    observation, resilience.failedOnContext(resilience.executionContext(), cancellation.reason()));
         }
         if (circuitBreaker != null && circuitBreaker.isOpenForAdmission()) {
             observation.circuitRejected(circuitBreaker.stateKey(), circuitBreaker.currentState());

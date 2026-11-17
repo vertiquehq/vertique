@@ -171,6 +171,40 @@ are rejected after close: pipeline creation and component `build()` fail, while 
 `execute` returns a failed future. The closed state is also observed by the Dagger lifecycle shutdown
 step.
 
+### Cancelling an execution
+
+`pipeline.execute(operation, cancellation)` runs one execution that a caller can cancel. Create the
+handle with `ResilienceCancellation.create()` and call `cancel(Throwable reason)` from any thread; the
+first call wins and later calls do nothing. `cancel(null)`, `execute(null, cancellation)` and
+`execute(operation, null)` throw `NullPointerException` synchronously. `execute(operation)` behaves as
+the overload with a cancellation that is never cancelled.
+
+Cancelling ends the execution's own waiting states. A pending retry delay stops and no further
+attempt starts, a call queued in a bulkhead leaves the queue and frees its slot, and a bulkhead permit
+is released. The returned future fails once, on the execution context, with the given reason, and the
+execution is reported as `ExecutionCompleted` with outcome `APPLICATION_FAILURE`. An operation future
+already in flight is not cancelled: its late result is ignored, and the owner of the operation resets
+its own work. A cancelled execution never closes a circuit breaker. It counts as a failure when it was
+the half-open trial, so the breaker re-opens and waits `resetTimeout` again, and as a success when the
+breaker is closed, which like any success resets the consecutive-failure count.
+
+### Supplier-reported timeouts
+
+When an attempt's supplier throws, or its future fails with, a `ResilienceTimeoutException` whose
+`operationKey()` equals the pipeline's `operationKey()`, the runtime records that attempt as a timeout
+of this pipeline. It emits `TimeoutTriggered` carrying the exception's `timeoutMs()`, never the
+pipeline's configured timeout, then `AttemptCompleted` with outcome `TIMEOUT`. This applies on every
+attempt path, including pipelines without a timeout or retry concern and the half-open trial. The
+exception instance reaches retry eligibility, the breaker classifier and the caller unchanged. Exactly
+one `TimeoutTriggered` is emitted per attempt, whether the pipeline's own timer or the supplier ends
+it. A `ResilienceTimeoutException` with another key keeps today's behavior: `AttemptCompleted` with
+outcome `TIMEOUT` and no `TimeoutTriggered`.
+
+Operation keys identify operations, not pipeline instances, so nesting two pipelines that share an
+operation name, one executed inside the other's supplier, changes behavior: the inner timeout now also
+emits `TimeoutTriggered` on the outer pipeline, where the outer previously recorded only
+`AttemptCompleted` with outcome `TIMEOUT`. Give nested pipelines distinct names to count a timeout once.
+
 ### Retry contracts
 
 `RetryBackoff.delayMs(int)` computes the delay in milliseconds from a zero-based retry count. Fixed

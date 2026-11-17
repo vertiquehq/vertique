@@ -233,7 +233,9 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
         private final AtomicBoolean settled = new AtomicBoolean();
         private final AtomicBoolean invoked = new AtomicBoolean();
         private final ResilienceExecutionObservation observation;
+        private final ResilienceCancellation cancellation;
         private Runnable deregistration = () -> {};
+        private volatile Runnable cancellationRegistration = () -> {};
 
         private Execution(
                 Context context,
@@ -250,6 +252,7 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
             this.contextOpen = contextOpen;
             this.executionRegistrar = executionRegistrar == null ? ignored -> () -> {} : executionRegistrar;
             this.observation = observation;
+            this.cancellation = observation == null ? null : observation.cancellation();
             this.deregistration = Objects.requireNonNull(
                     this.executionRegistrar.apply(this::requestClose), "execution deregistration handle");
         }
@@ -263,29 +266,70 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
                 settleClosed();
                 return;
             }
+            if (cancellation != null && cancellation.isCancelled()) {
+                settleFailure(cancellation.reason());
+                return;
+            }
             Future<EngineOutcome<T>> outcome;
             try {
                 outcome = engine.execute(() -> {
                     invoked.set(true);
-                    Future<T> supplied;
-                    try {
-                        supplied = Objects.requireNonNull(operation.get(), "operation returned null future");
-                    } catch (Exception failure) {
-                        return classifiedFailure(failure);
-                    } catch (Error fatal) {
-                        if (isFatal(fatal)) {
-                            return Future.succeededFuture(new EngineOutcome<>(null, fatal));
-                        }
-                        throw fatal;
-                    }
-                    return supplied.map(value -> new EngineOutcome<>(value, null))
-                            .recover(this::recoverFailure);
+                    return cancellation == null ? invokeOperation() : invokeCancellable();
                 });
             } catch (Throwable failure) {
                 handle(Future.failedFuture(failure));
                 return;
             }
             outcome.onComplete(ignored -> context.runOnContext(done -> handle(outcome)));
+        }
+
+        private Future<EngineOutcome<T>> invokeOperation() {
+            Future<T> supplied;
+            try {
+                supplied = Objects.requireNonNull(operation.get(), "operation returned null future");
+            } catch (Exception failure) {
+                return classifiedFailure(failure);
+            } catch (Error fatal) {
+                if (isFatal(fatal)) {
+                    return Future.succeededFuture(new EngineOutcome<>(null, fatal));
+                }
+                throw fatal;
+            }
+            return supplied.map(value -> new EngineOutcome<>(value, null)).recover(this::recoverFailure);
+        }
+
+        /**
+         * Runs the operation behind a gate the cancellation can settle. A cancelled execution is recorded
+         * so that it never closes the breaker: as a failure when the breaker is half-open, otherwise as
+         * a success that, like any success, resets the consecutive-failure count.
+         */
+        private Future<EngineOutcome<T>> invokeCancellable() {
+            Future<EngineOutcome<T>> attempt = invokeOperation();
+            Promise<EngineOutcome<T>> gate = Promise.promise();
+            cancellationRegistration =
+                    cancellation.onCancel(reason -> context.runOnContext(ignored -> recordCancelled(gate, reason)));
+            attempt.onComplete(outcome -> {
+                cancellationRegistration.run();
+                // A cancel that already happened wins over the operation's own late result, even when the
+                // queued cancel task has not run yet on the context.
+                Throwable cancelled = cancellation.reason();
+                if (cancelled != null) {
+                    recordCancelled(gate, cancelled);
+                } else if (outcome.succeeded()) {
+                    gate.tryComplete(outcome.result());
+                } else {
+                    gate.tryFail(outcome.cause());
+                }
+            });
+            return gate.future();
+        }
+
+        private void recordCancelled(Promise<EngineOutcome<T>> gate, Throwable reason) {
+            if (engine.state() == io.vertx.circuitbreaker.CircuitBreakerState.HALF_OPEN) {
+                gate.tryFail(reason);
+            } else {
+                gate.tryComplete(new EngineOutcome<>(null, reason));
+            }
         }
 
         private Future<EngineOutcome<T>> classifiedFailure(Throwable failure) {
@@ -358,6 +402,7 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
                 } finally {
                     resilience.remove(this);
                     deregistration.run();
+                    cancellationRegistration.run();
                 }
             }
         }
@@ -369,6 +414,7 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
                 } finally {
                     resilience.remove(this);
                     deregistration.run();
+                    cancellationRegistration.run();
                 }
             }
         }
