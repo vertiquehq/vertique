@@ -18,6 +18,7 @@ import dev.vertique.core.eventbus.DispatchEnvelope;
 import dev.vertique.core.eventbus.EventBusClient;
 import dev.vertique.core.eventbus.Result;
 import dev.vertique.db.DbPoolConfig;
+import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
@@ -117,7 +118,7 @@ public class ScopedOutboxToDelayedJobIT {
         @Provides
         @Singleton
         static PgJobRepository pgJobRepository(Pool pool) {
-            return new PgJobRepository(pool, new PgDbExceptionMapper());
+            return new PgJobRepository(pool, new PgDbExceptionMapper(), DbSchemas.empty(), "test-node");
         }
 
         @Provides

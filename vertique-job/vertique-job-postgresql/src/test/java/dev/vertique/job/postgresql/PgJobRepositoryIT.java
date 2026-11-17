@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.db.DbPoolConfig;
+import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
@@ -82,7 +83,7 @@ public class PgJobRepositoryIT {
                         .setPassword(config.password()))
                 .using(vertx)
                 .build();
-        repository = new PgJobRepository(pool, new PgDbExceptionMapper());
+        repository = new PgJobRepository(pool, new PgDbExceptionMapper(), DbSchemas.empty(), "test-node");
         ctx.completeNow();
     }
 

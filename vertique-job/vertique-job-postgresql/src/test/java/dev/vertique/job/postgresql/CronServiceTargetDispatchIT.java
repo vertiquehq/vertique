@@ -13,6 +13,7 @@ import dev.vertique.core.eventbus.EventBusClient;
 import dev.vertique.core.eventbus.EventBusExceptionMapper;
 import dev.vertique.core.eventbus.LocalMessageCodec;
 import dev.vertique.db.DbPoolConfig;
+import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
@@ -114,7 +115,7 @@ public class CronServiceTargetDispatchIT {
                         .setPassword(config.password()))
                 .using(vertx)
                 .build();
-        repository = new PgJobRepository(pool, new PgDbExceptionMapper());
+        repository = new PgJobRepository(pool, new PgDbExceptionMapper(), DbSchemas.empty(), "test-node");
         ctx.completeNow();
     }
 
@@ -234,7 +235,11 @@ public class CronServiceTargetDispatchIT {
                             repository,
                             resolver,
                             new EventBusClient(vertx, new EventBusExceptionMapper()),
-                            DispatchEnvelopeBuilder.forTesting());
+                            CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
+                            0L,
+                            0L,
+                            DispatchEnvelopeBuilder.forTesting(),
+                            "test-node");
                     scheduler.register(job);
                     scheduler.start();
                 })

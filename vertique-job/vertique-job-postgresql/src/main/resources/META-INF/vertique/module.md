@@ -24,20 +24,17 @@ Extends `PgSqlRepository` and implements `JobRepository`. All SQL operations use
 
 A version before scalar payloads cannot read a row holding a non-object payload, and such a row fails every claim of the batch that selects it. Finish rolling out before enqueuing scalar or list payloads, and drain those rows before rolling back. Rows with object payloads are unaffected in both directions.
 
-Stamps its node identity as `locked_by` on the executions it claims. `JobPostgresqlModule` passes the `@JobNodeId` value from `JobModule`, the same identity the `JobCoordinator` heartbeats under, so a surviving node's coordinator finds a dead node's claims by its heartbeat row. The constructors without a `nodeId` generate their own `<hostname>-<8-char suffix>` value, which no coordinator shares; build the repository by hand only with the four-argument constructor and the node's `@JobNodeId` value when a coordinator should recover its claims.
+Stamps its node identity as `locked_by` on the executions it claims. `JobPostgresqlModule` passes the `@JobNodeId` value from `JobModule`, the same identity the `JobCoordinator` heartbeats under, so a surviving node's coordinator finds a dead node's claims by its heartbeat row. Build the repository by hand only with the node's `@JobNodeId` value as `nodeId`, so a coordinator can recover its claims.
+
+**Breaking change.** The two- and three-argument constructors, which generated their own `<hostname>-<8-char suffix>` value that no coordinator shared, are removed without a deprecation cycle, and with them the `@Inject` constructor: a component that did not include `JobPostgresqlModule` and relied on Dagger constructing `PgJobRepository` must include the module (which binds `@JobNodeId`) or provide the repository itself.
 
 **Constructors:**
 
 ```java
-@Inject
-public PgJobRepository(Pool pool, PgDbExceptionMapper exceptionMapper)
-
-public PgJobRepository(Pool pool, PgDbExceptionMapper exceptionMapper, DbSchemas schemas)
-
 public PgJobRepository(Pool pool, PgDbExceptionMapper exceptionMapper, DbSchemas schemas, String nodeId)
 ```
 
-The two-argument constructor leaves every table unqualified, so tables resolve through the connection's default schema. The three-argument constructor qualifies every job table (`job_executions`, `job_logs`, `job_schedules`, `job_server_heartbeats`) with the schema that `schemas` maps to `job`; with no `job` entry its SQL is the same as the two-argument constructor's. The four-argument constructor also takes the node identity to claim under and rejects a `null` or blank one with `IllegalArgumentException`. The mapping is validated when the repository is constructed: a schema that is not a single valid PostgreSQL identifier throws `IllegalArgumentException` before any query runs (see `PgTableNames` in `dev.vertique:vertique-db-postgresql`). SQL in this document is shown with unqualified table names.
+The constructor qualifies every job table (`job_executions`, `job_logs`, `job_schedules`, `job_server_heartbeats`) with the schema that `schemas` maps to `job`; with `DbSchemas.empty()` or no `job` entry the tables stay unqualified and resolve through the connection's default schema. It also takes the node identity to claim under and rejects a `null` or blank one with `IllegalArgumentException`. The mapping is validated when the repository is constructed: a schema that is not a single valid PostgreSQL identifier throws `IllegalArgumentException` before any query runs (see `PgTableNames` in `dev.vertique:vertique-db-postgresql`). SQL in this document is shown with unqualified table names.
 
 **Scope:** `save`, the transactional `save` and `tryInsert` write `JobExecution.scopeKey()` to `job_executions.scope_key`, and every read maps it back, so a custom `JobRepository` implementation must also persist `scopeKey` and return it unchanged, or its rows read `default`. Applications select the scope with `DelayedJobClientFactory.client(...).scope(...)` or `DelayedJob.scopeKey`; an unselected job is in `default`. The scope is a label, not authorization: it is not checked at enqueue, by id, or under a service principal, and the claim, retry, retention and cron de-duplication queries do not read it. Row scope and the ambient `ScopeContext` are independent, so a handler that partitions data chooses one source, compares the other when both are present, fails on a mismatch, and authorizes access itself.
 
@@ -63,6 +60,8 @@ This guarantees no two callers process the same execution and attributes the wor
 
 **`failAndScheduleRetry()`** and **`abandonAndScheduleRetry()`** share one private `markAndScheduleRetry(markState, …)` helper that runs both retry writes in one transaction (`transaction().execute(conn -> …)`): step 1 records `markState` (`FAILED` or `ABANDONED`) via the `RETURNING *` `SQL_COMPLETE` — subject to its state-pair guard, so it transitions only from a valid source (a `PROCESSING` row; an already-`ABANDONED` row passed to `abandonAndScheduleRetry` is rejected and yields empty) — and step 2 re-enqueues the same row via `SQL_SCHEDULE_RETRY` (`markState` → `ENQUEUED`). If step 1 transitioned no row the result is `Optional.empty()`; if step 2 unexpectedly updates no row the transaction rolls back so neither write persists. This guarantees a retryable execution is never left stranded in `FAILED` or `ABANDONED`.
 
+**`completeClaimedExecution()`** and **`abandonClaimedAndScheduleRetry()`** are the fenced variants dead-node recovery uses. They run the same writes with `AND state = 'PROCESSING' AND locked_by = <dead server>` added (`SQL_COMPLETE_CLAIMED`, and `SQL_SCHEDULE_RETRY_CLAIMED` for the re-enqueue; both statements of the retry transaction carry the fence). An execution that another node has claimed again since the coordinator read it matches no row and yields `Optional.empty()`.
+
 **`tryInsert()`** uses `ON CONFLICT (job_id, scheduled_at) WHERE job_type = 'CRON' AND state NOT IN ('DEAD_LETTER', 'CANCELLED') DO NOTHING RETURNING id` for SINGLE_INSTANCE leader election.
 
 **`serverHeartbeat()`** uses UPSERT to maintain one heartbeat row per server:
@@ -78,7 +77,7 @@ The `payload` column is returned as `JsonObject` (opaque JSONB). Callers that kn
 
 Package-private decorator that wraps the raw `PgJobRepository` and fires registered `JobExecutionStateTransitionListener`s after each confirmed persisted transition.
 
-All `JobRepository` methods except `completeExecution`, `failAndScheduleRetry`, and `abandonAndScheduleRetry` delegate verbatim to the inner repository. Those three delegate, then — when the returned `Optional` is present — build a curated `JobExecutionStateTransitionEvent` from the persisted `JobExecution` snapshot (the `FAILED`/`ABANDONED` mark snapshot for the retry ops) and call `onStateTransition` on each listener in sequence. Listener exceptions are isolated: a `RuntimeException` thrown by one listener is caught, logged as a warning, and does not prevent subsequent listeners from running or cause the future to fail.
+All `JobRepository` methods except `completeExecution`, `failAndScheduleRetry`, `abandonAndScheduleRetry`, `completeClaimedExecution`, and `abandonClaimedAndScheduleRetry` delegate verbatim to the inner repository. Those five delegate (the two claim-fenced ones to the inner repository's fenced implementation, carrying the claim owner), then — when the returned `Optional` is present — build a curated `JobExecutionStateTransitionEvent` from the persisted `JobExecution` snapshot (the `FAILED`/`ABANDONED` mark snapshot for the retry ops) and call `onStateTransition` on each listener in sequence. Listener exceptions are isolated: a `RuntimeException` thrown by one listener is caught, logged as a warning, and does not prevent subsequent listeners from running or cause the future to fail.
 
 Instances are constructed exclusively by `JobPostgresqlModule`; no application code constructs or injects this class directly.
 
@@ -98,7 +97,7 @@ The module provides three bindings:
 
 Automatically included by `DelayedJobModule`.
 
-**Compatibility note.** `PgJobRepository` is now provided by an explicit `@Provides` method. A component that includes this module and also provides `PgJobRepository` itself sees a duplicate binding; remove its own provider. The `@Inject` two-argument constructor remains for components that do not include this module.
+**Compatibility note.** `PgJobRepository` is now provided by an explicit `@Provides` method. A component that includes this module and also provides `PgJobRepository` itself sees a duplicate binding; remove its own provider.
 
 ```java
 @Component(modules = {DbPostgresqlModule.class, DbFlywayModule.class, JobPostgresqlModule.class, ...})

@@ -337,7 +337,7 @@ public interface AppComponent {
 
 ### `CronPersistenceModule` (DB-backed)
 
-Requires a `JobRepository` binding (include `JobPostgresqlModule` and `DbPostgresqlModule`). Enables `SINGLE_INSTANCE` mode, execution tracking, and misfire recovery. Also includes `JobCoordinatorModule`, whose `job-coordinator` deployment starts the `JobCoordinator` before the cron scheduler deploys and stops it after the scheduler undeploys. The scheduler stamps tracked executions' `locked_by` with the `@JobNodeId` value the coordinator heartbeats under, so a surviving node marks a dead node's in-flight cron executions `ABANDONED`. A `CronScheduler` built by hand takes that value through the constructor whose last parameter is `String nodeId`; the other constructors generate an identity no coordinator shares.
+Requires a `JobRepository` binding (include `JobPostgresqlModule` and `DbPostgresqlModule`). Enables `SINGLE_INSTANCE` mode, execution tracking, and misfire recovery. Also includes `JobCoordinatorModule`, whose `job-coordinator` deployment starts the `JobCoordinator` before the cron scheduler deploys and stops it after the scheduler undeploys. The scheduler stamps tracked executions' `locked_by` with the `@JobNodeId` value the coordinator heartbeats under, so a surviving node marks a dead node's in-flight cron executions `ABANDONED`. A `CronScheduler` built by hand takes that value through the public constructor whose last parameter is `String nodeId`. **Breaking change:** the six- and nine-argument constructors, which generated an identity no coordinator shared, are removed without a deprecation cycle; the in-memory `CronModule` scheduler now takes the `@JobNodeId` binding too.
 
 ```java
 @Component(modules = {
