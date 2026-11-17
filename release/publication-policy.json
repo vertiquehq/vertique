@@ -35,7 +35,7 @@
       "packaging": "pom"
     }
   ],
-  "expectedPublishableGavCount": 123,
+  "expectedPublishableGavCount": 124,
   "expectedPublishableGavs": [
     "dev.vertique:vertique-aop",
     "dev.vertique:vertique-app-parent",
@@ -83,6 +83,7 @@
     "dev.vertique:vertique-db-test",
     "dev.vertique:vertique-deploy",
     "dev.vertique:vertique-events",
+    "dev.vertique:vertique-http-client-core",
     "dev.vertique:vertique-inbox-outbox-core",
     "dev.vertique:vertique-inbox-outbox-delayed-job",
     "dev.vertique:vertique-inbox-outbox-kafka",
