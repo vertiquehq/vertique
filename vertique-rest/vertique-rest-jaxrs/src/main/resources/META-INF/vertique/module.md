@@ -114,11 +114,18 @@ nearest declaration (the override's own wins over a declaration it overrides); d
 `@RolesAllowed` or `@Authorized` values across declarations fail startup (a compile error with the
 processor). A method-level security annotation on an inherited declaration beats class-level
 security, as it does on the method itself: an interface `@PermitAll` makes an unannotated override
-public even under a class-level `@RolesAllowed`. What is not
-resolved is the *type* of a method no class overrides: a non-overridden generic default (or generic
-superclass method) binds a type-variable parameter as its erasure, so a path, query, header, cookie,
-or form parameter typed `ID` fails startup with `UNRESOLVABLE_PARAM_CONVERTER`, and a body or return
-type bound by a variable is `Object`. Override such a method with concrete parameter types. A
+public even under a class-level `@RolesAllowed`. The *types* of a method no class
+overrides are resolved against the concrete resource class: a non-overridden generic default (or
+generic superclass method) whose type variable the resource binds through its class or interface
+hierarchy (`class Things extends Base<String>`, including variables forwarded through intermediate
+supertypes) gets that concrete type for its parameter, body and return metadata — a path, query,
+header, cookie, or form parameter typed `ID` converts as `String`, a body `T` decodes as the bound
+type (nested arguments such as `List<Dto>` are kept for JSON decoding), and a `Future<? extends T>`
+return records the erased upper bound of the resolved `T`. A variable no class in the hierarchy
+binds (a raw supertype, or `Base` used without arguments) keeps its erasure, so a scalar parameter
+of that type still fails startup with `UNRESOLVABLE_PARAM_CONVERTER`, and a body or return type
+bound by it is `Object`; override such a method with concrete parameter types. Reflective
+invocation still uses the declaration's erased signature. A
 default route's `operationId` is the same in every class that inherits
 it, and operationIds are unique per mount, so only one resource per mount can inherit a given
 default route; give the others their own route by overriding it with a distinct
@@ -1977,13 +1984,13 @@ Any exception a resource method throws or fails its `Future` with enters the err
 mapped by `ExceptionMapperRegistry`. Unmapped exceptions become a 500 problem detail whose detail is
 the fixed string `"Internal Server Error"` — never the exception message.
 
-A failure that surfaces **after** the response head is on the wire cannot change the status. When a
-streamed or buffered body is truncated, the pipeline closes the response in the way that frames the
-truncation honestly: a chunked response is ended normally, while a non-chunked response whose declared
-`Content-Length` does not match the bytes written is **reset** (RST_STREAM on HTTP/2, connection close
-on HTTP/1.1) rather than ended, so a peer observes an incomplete transfer instead of a well-framed
-lie. Clients must therefore be prepared for a reset mid-response and must not treat a 200 status line
-as proof of a complete body.
+A failure after the response head is on the wire cannot change the status. The pipeline resets an
+open response when its body fails, instead of ending it normally: this closes an HTTP/1 connection or
+resets the affected HTTP/2 stream. Clients must handle incomplete responses and must not treat a 200
+status line as proof of a complete body. A close-delimited HTTP/1.0 response cannot reliably distinguish
+a failed stream from a normal end; an application-level completion marker or known length is needed
+when that distinction matters. A client may also have already consumed all declared bytes before a
+late failure is observed.
 
 ### Common mistakes
 

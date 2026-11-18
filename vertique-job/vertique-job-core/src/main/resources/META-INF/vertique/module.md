@@ -230,9 +230,13 @@ Cluster-level lifecycle owner, constructed as `new JobCoordinator(vertx, reposit
 `serverId` is this node's identity: the heartbeat row's `server_id`, which must equal the `locked_by`
 value the node's repository stamps on its claims, because recovery finds a dead node's executions by
 that value. `JobCoordinatorModule` passes the `@JobNodeId` binding, which `JobPostgresqlModule` and
-`CronPersistenceModule` also use. The older `new JobCoordinator(vertx, repository, config)` generates
-an identity of its own that no repository shares, so a coordinator built that way heartbeats but
-cannot recover a dead node's claims.
+`CronModule` and `CronPersistenceModule` also use.
+
+**Breaking change.** The `new JobCoordinator(vertx, repository, config)` constructor, which generated
+an identity of its own that no repository shared, is removed without a deprecation cycle; a
+coordinator built that way heartbeated but could not recover a dead node's claims. Pass the node's
+`@JobNodeId` value as `serverId`. `PgJobRepository` and `CronScheduler` lose their identity-generating
+constructors the same way (see `vertique-job-postgresql` and `vertique-job-cron`).
 
 | Method | Description |
 |---|---|
@@ -252,6 +256,15 @@ scan rediscovers the node, because deleting it early would strand a still-`PROCE
 permanently. For the same reason `stop()` keeps this node's own row while executions it claimed are
 still `PROCESSING` (handlers still running at shutdown): the row expires and a surviving node recovers
 whatever is left. `start()` completes once its initial heartbeat write has settled.
+
+Every recovery write is **fenced by the claim**: it adds `locked_by = <dead server id>` and
+`attempt = <attempt read>` (and requires the row to still be `PROCESSING`) to its predicate. When two
+surviving nodes read the same orphan, another node claims it again between the scan's read and its write,
+or a node that stalled past the heartbeat timeout wakes and claims its own orphan again (the same
+`locked_by`, a new attempt), the later write matches no row and recovery leaves the new claim alone, so the
+execution does not run twice. A fenced write that matches nothing is
+a normal outcome: the coordinator skips that execution, logs at `DEBUG`, writes nothing more for it, and
+still removes the dead node's heartbeat row once the other recoveries have committed.
 
 Applications do not call `start()` or `stop()`: `JobCoordinatorModule` deploys a verticle that does
 (see Module Dagger Bindings). The coordinator therefore writes a heartbeat to
@@ -332,6 +345,7 @@ without it (in-memory only); delayed jobs require it. Every method returns a `Fu
 |---|---|
 | Lifecycle | `save`, `updateState`, `claimNextJob`, `heartbeat`, `findStale`, `findById` |
 | Terminal + retry | `completeExecution`, `scheduleRetry`, `failAndScheduleRetry`, `abandonAndScheduleRetry` |
+| Dead-node recovery | `completeClaimedExecution`, `abandonClaimedAndScheduleRetry` |
 | Leader election | `tryInsert` |
 | Auxiliary records | `saveLogs` |
 | Cron schedules | `saveSchedule`, `updateScheduleFireTimes`, `findSchedule` |
@@ -350,6 +364,18 @@ Obligations an implementation must honour:
   return the **pre-re-enqueue** snapshot (`FAILED` and `ABANDONED` respectively) even though the
   committed row is `ENQUEUED`, so an audit consumer sees the attempt that failed. `Optional.empty()`
   signals a no-op.
+- `completeClaimedExecution` and `abandonClaimedAndScheduleRetry` are the claim-fenced variants of
+  `completeExecution` and `abandonAndScheduleRetry` that `JobCoordinator` uses for dead-node recovery.
+  They take the claim owner (`lockedBy`) and the attempt number read (`claimedAttempt`), and must match a
+  row only while it is still `PROCESSING` under that owner at that attempt, returning `Optional.empty()`
+  otherwise. Both writes of the retry apply all three predicates. They are abstract: there is no default
+  that falls back to the unfenced writes, so a repository that cannot test the claim cannot take part in
+  dead-node recovery. A decorator must forward both to its delegate unchanged, or it removes the fence.
+
+  **Breaking change.** These two methods were `default` methods without the `claimedAttempt` parameter,
+  delegating to the unfenced writes. They are now abstract and take `claimedAttempt` after `lockedBy`.
+  There is no deprecation cycle: every `JobRepository` implementation and decorator must declare both, and an
+  implementation that takes part in recovery must apply the three predicates atomically.
 - `tryInsert(execution)` is an insert-if-absent used for cron `SINGLE_INSTANCE` leader election: all
   nodes race on the same `(jobId, scheduledAt)` and only the winner receives the generated id.
 - `saveSchedule` is an upsert — code is the source of truth and overwrites the stored row on every

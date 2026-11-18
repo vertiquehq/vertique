@@ -132,7 +132,8 @@ class CronSchedulerTest {
                 0L,
                 0L,
                 DispatchEnvelopeBuilder.forTesting(),
-                FAST_TICKS);
+                FAST_TICKS,
+                "test-node");
     }
 
     /**
@@ -222,7 +223,11 @@ class CronSchedulerTest {
                 null,
                 stubTargetResolver(),
                 testEventBusClient(vertx),
-                DispatchEnvelopeBuilder.forTesting());
+                CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
+                0L,
+                0L,
+                DispatchEnvelopeBuilder.forTesting(),
+                "test-node");
     }
 
     @AfterEach
@@ -387,7 +392,11 @@ class CronSchedulerTest {
                 repository,
                 stubTargetResolver(),
                 testEventBusClient(vertx),
-                DispatchEnvelopeBuilder.forTesting());
+                CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
+                0L,
+                0L,
+                DispatchEnvelopeBuilder.forTesting(),
+                "test-node");
         try {
             CronJobDefinition siJob = new CronJobDefinition(
                     "single-instance-job",
@@ -448,7 +457,8 @@ class CronSchedulerTest {
                 0L,
                 0L,
                 DispatchEnvelopeBuilder.forTesting(),
-                throwingPlanner);
+                throwingPlanner,
+                "test-node");
         CronJobDefinition job = new CronJobDefinition(
                 "planner-failure-job",
                 new CronExpression("* * * * * *"),
@@ -1040,7 +1050,11 @@ class CronSchedulerTest {
                     repo,
                     stubTargetResolver(),
                     testEventBusClient(vertx),
-                    DispatchEnvelopeBuilder.forTesting());
+                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
+                    0L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting(),
+                    "test-node");
 
             AtomicInteger fireCount = new AtomicInteger();
             vertx.eventBus().consumer("test.misfire.address", msg -> {
@@ -1095,7 +1109,11 @@ class CronSchedulerTest {
                     repo,
                     stubTargetResolver(),
                     testEventBusClient(vertx),
-                    DispatchEnvelopeBuilder.forTesting());
+                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
+                    0L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting(),
+                    "test-node");
 
             AtomicInteger fireCount = new AtomicInteger();
             vertx.eventBus().consumer("test.skip-misfire.address", msg -> fireCount.incrementAndGet());
@@ -1166,7 +1184,11 @@ class CronSchedulerTest {
                     repo,
                     stubTargetResolver(),
                     testEventBusClient(vertx),
-                    DispatchEnvelopeBuilder.forTesting());
+                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
+                    0L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting(),
+                    "test-node");
 
             List<Instant> dispatchedScheduledAt = new CopyOnWriteArrayList<>();
             vertx.eventBus().consumer("test.fire-all.address", msg -> {
@@ -1253,7 +1275,11 @@ class CronSchedulerTest {
                     repo,
                     stubTargetResolver(),
                     testEventBusClient(vertx),
-                    DispatchEnvelopeBuilder.forTesting());
+                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
+                    0L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting(),
+                    "test-node");
 
             AtomicInteger fireCount = new AtomicInteger();
             vertx.eventBus().consumer("test.new-job.address", msg -> fireCount.incrementAndGet());
@@ -1295,7 +1321,11 @@ class CronSchedulerTest {
                     repo,
                     stubTargetResolver(),
                     testEventBusClient(vertx),
-                    DispatchEnvelopeBuilder.forTesting());
+                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
+                    0L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting(),
+                    "test-node");
 
             AtomicInteger fireCount = new AtomicInteger();
             vertx.eventBus().consumer("test.no-schedule.address", msg -> fireCount.incrementAndGet());
@@ -1338,7 +1368,11 @@ class CronSchedulerTest {
                     repo,
                     stubTargetResolver(),
                     testEventBusClient(vertx),
-                    DispatchEnvelopeBuilder.forTesting());
+                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
+                    0L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting(),
+                    "test-node");
 
             CronJobDefinition job = new CronJobDefinition(
                     "every-instance-misfire-job",
@@ -1380,7 +1414,11 @@ class CronSchedulerTest {
                     repo,
                     stubTargetResolver(),
                     testEventBusClient(vertx),
-                    DispatchEnvelopeBuilder.forTesting());
+                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
+                    0L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting(),
+                    "test-node");
 
             CronJobDefinition job = new CronJobDefinition(
                     "failing-check-job",
@@ -1532,7 +1570,11 @@ class CronSchedulerTest {
                     repo,
                     resolverMapping(STABLE_TARGET_ID, RESOLVED_ADDRESS),
                     testEventBusClient(vertx),
-                    DispatchEnvelopeBuilder.forTesting());
+                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
+                    0L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting(),
+                    "test-node");
 
             CronJobDefinition job =
                     serviceTargetJob("single-instance-service-job", ExecutionMode.SINGLE_INSTANCE, OverlapPolicy.SKIP);
@@ -1618,7 +1660,11 @@ class CronSchedulerTest {
                     repo,
                     resolverMapping(STABLE_TARGET_ID, RESOLVED_ADDRESS),
                     testEventBusClient(vertx),
-                    DispatchEnvelopeBuilder.forTesting());
+                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
+                    0L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting(),
+                    "test-node");
 
             CronJobDefinition job =
                     serviceTargetJob("every-instance-service-job", ExecutionMode.EVERY_INSTANCE, OverlapPolicy.SKIP);
@@ -1663,7 +1709,11 @@ class CronSchedulerTest {
                     repo,
                     resolverMapping(STABLE_TARGET_ID, RESOLVED_ADDRESS),
                     testEventBusClient(vertx),
-                    DispatchEnvelopeBuilder.forTesting());
+                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
+                    0L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting(),
+                    "test-node");
 
             CronJobDefinition job =
                     serviceTargetJob("queue-one-service-job", ExecutionMode.EVERY_INSTANCE, OverlapPolicy.QUEUE_ONE);
@@ -1929,7 +1979,16 @@ class CronSchedulerTest {
             });
 
             scheduler = new CronScheduler(
-                    vertx, Set.of(), repo, resolver, testEventBusClient(vertx), DispatchEnvelopeBuilder.forTesting());
+                    vertx,
+                    Set.of(),
+                    repo,
+                    resolver,
+                    testEventBusClient(vertx),
+                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
+                    0L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting(),
+                    "test-node");
 
             CronJobDefinition job = serviceTargetJob(
                     "queued-overlap-service-job", ExecutionMode.EVERY_INSTANCE, OverlapPolicy.QUEUE_ONE);
@@ -2378,7 +2437,8 @@ class CronSchedulerTest {
                     300L,
                     0L,
                     DispatchEnvelopeBuilder.forTesting(),
-                    FAST_TICKS);
+                    FAST_TICKS,
+                    "test-node");
 
             CronJobDefinition job = new CronJobDefinition(
                     "sync-timeout-throw-job",
@@ -2476,7 +2536,8 @@ class CronSchedulerTest {
                     executionTimeoutMs,
                     0L,
                     DispatchEnvelopeBuilder.forTesting(),
-                    FAST_TICKS);
+                    FAST_TICKS,
+                    "test-node");
 
             scheduler.register(cronJobFiringEverySecond("sync-fail-job", failAddress));
             scheduler.register(cronJobFiringEverySecond("hold-a-job", holdAddresses.get(0)));
@@ -2539,7 +2600,8 @@ class CronSchedulerTest {
                     300L,
                     0L,
                     DispatchEnvelopeBuilder.forTesting(),
-                    FAST_TICKS);
+                    FAST_TICKS,
+                    "test-node");
 
             // Register a handler that intentionally never replies
             vertx.eventBus().consumer("test.timeout.address", msg -> {
@@ -2596,7 +2658,8 @@ class CronSchedulerTest {
                     300L,
                     0L,
                     DispatchEnvelopeBuilder.forTesting(),
-                    FAST_TICKS);
+                    FAST_TICKS,
+                    "test-node");
 
             AtomicInteger completeCount = new AtomicInteger();
             AtomicBoolean quietWindowArmed = new AtomicBoolean(false);
@@ -2793,7 +2856,8 @@ class CronSchedulerTest {
                     0L,
                     100L,
                     DispatchEnvelopeBuilder.forTesting(),
-                    FAST_TICKS);
+                    FAST_TICKS,
+                    "test-node");
 
             AtomicBoolean logged = new AtomicBoolean(false);
             vertx.eventBus().consumer("test.logflush.tick.address", msg -> {
@@ -2855,7 +2919,8 @@ class CronSchedulerTest {
                     300L,
                     0L,
                     DispatchEnvelopeBuilder.forTesting(),
-                    FAST_TICKS);
+                    FAST_TICKS,
+                    "test-node");
 
             AtomicBoolean logged = new AtomicBoolean(false);
             vertx.eventBus().consumer("test.logflush.timeout.address", msg -> {
@@ -3004,7 +3069,8 @@ class CronSchedulerTest {
                     0L,
                     100L,
                     DispatchEnvelopeBuilder.forTesting(),
-                    FAST_TICKS);
+                    FAST_TICKS,
+                    "test-node");
 
             AtomicBoolean logged = new AtomicBoolean(false);
             vertx.eventBus().consumer("test.logflush.inflight.address", msg -> {
@@ -3068,7 +3134,8 @@ class CronSchedulerTest {
                     10,
                     0L,
                     0L,
-                    DispatchEnvelopeBuilder.forTesting());
+                    DispatchEnvelopeBuilder.forTesting(),
+                    "test-node");
 
             AtomicBoolean logged = new AtomicBoolean(false);
             vertx.eventBus().consumer("test.logflush.shutdown.address", msg -> {

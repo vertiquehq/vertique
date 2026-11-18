@@ -186,6 +186,71 @@ public interface JobRepository {
             int nextAttempt);
 
     /**
+     * Completes an execution on behalf of dead-node recovery, only while the claim recovery read is still
+     * the current one. It is {@link #completeExecution} with more predicates: the row must still be
+     * {@code PROCESSING}, claimed by {@code lockedBy}, at attempt {@code claimedAttempt}. An execution that
+     * another node has claimed again since recovery read it, or that the same node has re-enqueued and
+     * claimed again (a new attempt), matches no row, and recovery leaves it alone.
+     *
+     * <p>An implementation must apply all three predicates in one atomic write. There is no default: a
+     * repository that cannot test the claim cannot take part in dead-node recovery, and a decorator must
+     * forward this call to its delegate unchanged.
+     *
+     * @param executionId    the execution to complete
+     * @param lockedBy       the node identity recorded as the claim owner when recovery read the execution
+     * @param claimedAttempt the attempt number recorded when recovery read the execution
+     * @param newState       the target state
+     * @param errorMessage   the error message, or {@code null}
+     * @param errorType      the exception class name, or {@code null}
+     * @param progress       the final progress snapshot
+     * @return the persisted {@link JobExecution}, or {@link Optional#empty()} when no row transitioned
+     *         because the execution is no longer {@code PROCESSING} under {@code lockedBy} at
+     *         {@code claimedAttempt}
+     */
+    Future<Optional<JobExecution>> completeClaimedExecution(
+            UUID executionId,
+            String lockedBy,
+            int claimedAttempt,
+            JobState newState,
+            String errorMessage,
+            String errorType,
+            ProgressSnapshot progress);
+
+    /**
+     * Records an interrupted execution and re-enqueues it on behalf of dead-node recovery, only while the
+     * claim recovery read is still the current one. It is {@link #abandonAndScheduleRetry} with more
+     * predicates on both writes: the row must still be {@code PROCESSING}, claimed by {@code lockedBy}, at
+     * attempt {@code claimedAttempt}. An execution that another node has claimed again since recovery read
+     * it, or that the same node has re-enqueued and claimed again (a new attempt), matches no row, and
+     * recovery leaves it alone.
+     *
+     * <p>An implementation must apply all three predicates to both writes. There is no default: a
+     * repository that cannot test the claim cannot take part in dead-node recovery, and a decorator must
+     * forward this call to its delegate unchanged.
+     *
+     * @param executionId     the interrupted execution to retry
+     * @param lockedBy        the node identity recorded as the claim owner when recovery read the execution
+     * @param claimedAttempt  the attempt number recorded when recovery read the execution
+     * @param errorMessage    the interruption message, or {@code null}
+     * @param errorType       the interruption type, or {@code null}
+     * @param progress        the final progress snapshot for the interrupted attempt
+     * @param nextScheduledAt when the retry should become eligible for claiming
+     * @param nextAttempt     the new attempt number (incremented from previous)
+     * @return the persisted {@code ABANDONED} snapshot, or {@link Optional#empty()} when no row transitioned
+     *         because the execution is no longer {@code PROCESSING} under {@code lockedBy} at
+     *         {@code claimedAttempt}
+     */
+    Future<Optional<JobExecution>> abandonClaimedAndScheduleRetry(
+            UUID executionId,
+            String lockedBy,
+            int claimedAttempt,
+            String errorMessage,
+            String errorType,
+            ProgressSnapshot progress,
+            Instant nextScheduledAt,
+            int nextAttempt);
+
+    /**
      * Attempts to insert a {@link JobExecution} row, returning the generated ID on success or
      * {@link java.util.Optional#empty()} when a conflict prevents the insert (e.g., the
      * {@code ON CONFLICT DO NOTHING} clause matched an existing row).
