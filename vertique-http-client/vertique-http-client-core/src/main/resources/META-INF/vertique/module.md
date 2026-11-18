@@ -42,7 +42,7 @@ passed to an attempt behave like a normal Vert.x `WebClient` with four differenc
   every call, so they are set once on the builder through `webClientOptions(...)`.
 - Relative requests are resolved against the base URL.
 
-**Base URL.** `baseUrl(...)` takes an `http` or `https` URL. Its scheme, host and port become the
+**Base URL.** `baseUrl(...)` takes an `http` or `https` URL with a host and no user information, query or fragment. Its scheme, host and port become the
 defaults of the client and its path prefixes the URI of relative requests: with base URL
 `https://api.example.com/v1`, `web.get("/items")` requests `/v1/items`. Absolute requests
 (`getAbs`, `requestAbs`, ...) and requests that name their own host are sent unchanged. A client
@@ -78,17 +78,20 @@ request once with a constant message and dials nothing.
 resolved. `*.suffix` matches `a.suffix` and `b.a.suffix` but not `suffix` or `xsuffix`, and `*` matches any
 host name. A wildcard never matches an IP literal or `localhost`: list those exactly. A host whose last
 label is all decimal digits or a `0x` number counts as an IP literal. `https` always passes the scheme
-rule; `http` passes only to `localhost`, a loopback IP literal, or when `allowPlainHttp` is true.
+rule; under `allowHosts`, `http` passes only to `localhost`, a loopback IP literal, or when
+`allowPlainHttp` is true (`allowAll()` admits `http` to any host).
 `EgressPolicy.check(URI)` runs the same rules without connecting.
 
 **Redirects.** The default client does not follow redirects: a 3xx is the response. Following is turned
 on through `webClientOptions(...)` (`followRedirects`, `maxRedirects`), and Vert.x's method handling and
 limit stay: a 303 becomes a `GET` without a body, and 301, 302, 307 and 308 are followed only for `GET`,
 `HEAD` and `QUERY`. On top of that, a hop from `https` to `http` fails with `HttpEgressDeniedException`
-(`SCHEME`), a `Location` with user information fails with `USER_INFO`, a 307 or 308 that would resend a
+(`SCHEME`), a `Location` with user information fails with `USER_INFO` (also when the `@` is
+percent-encoded), a `Location` the client cannot read or whose host cannot be read fails with `HOST`
+(the redirect is never followed, and the message never repeats the `Location`), a 307 or 308 that would resend a
 request body to another origin is returned as the response, and a hop to another origin forwards only
 `Accept`, `Accept-Language`, `Accept-Encoding`, `User-Agent`, `Cache-Control`, `Pragma`, `If-None-Match`
-and `If-Modified-Since`. Every hop passes the egress policy.
+and `If-Modified-Since` (no credentials and no other header). Every hop passes the egress policy.
 
 **Credentials.** `credentials(CredentialSource)` supplies headers such as `Authorization` per exchange:
 `resolve(URI)` runs once for every hop to the original origin, after the request is prepared, and each
@@ -142,6 +145,30 @@ completed exchanges unreported until its pipeline starts the next attempt or the
 call can redirect the client to any host, including internal addresses, such as a cloud metadata
 endpoint or a service on a private network. Give a client that follows redirects, or that calls servers
 you do not control, an `allowHosts(...)` policy.
+
+**Warning: timeout identities.** The failure of a timed-out attempt depends on where the call runs:
+
+| Where the attempt timer fires | The caller sees | Runtime event |
+|---|---|---|
+| A client-built tier (`resiliencePolicy(...)`, `resilience.policies.<tier>`) | `ResilienceTimeoutException` carrying the pipeline's operation key and the effective timeout | `TimeoutTriggered`, then the attempt completes as a timeout |
+| No pipeline (`noResilience()` or none configured) | raw `java.util.concurrent.TimeoutException` | none |
+| A prebuilt pipeline (`CallOptions.resilience(...)`) | raw `TimeoutException`; the pipeline's own timeout concern, if any, applies its own timeout on top | only what that concern emits |
+| A `stream(...)` body idle for `streamIdleTimeout` | raw `TimeoutException` from `completion()` | none |
+
+Match on the type that fits your call: a `retryOn` or `abortOn` entry naming `ResilienceTimeoutException`
+does not match a raw `TimeoutException`. An attempt whose request is still waiting for a pooled connection
+at its deadline fails that request's own future with the raw `TimeoutException` at the deadline, before
+anything is written; the call as a whole still follows the table above.
+
+**Warning: native transport failures.** Connection refused, DNS, TLS handshake and connection reset
+failures are not wrapped: they reach the caller as the Vert.x or JDK throwable.
+
+**Vert.x hook.** Governance (egress, credentials, bounds, scoping, interceptors) is installed through the
+Vert.x Web Client interceptor hook: `WebClient.addInterceptor(Handler<io.vertx.ext.web.client.impl.HttpContext<?>>)`
+with the phases of `io.vertx.ext.web.client.impl.ClientPhase`. Those types are internal to Vert.x, not public
+Vert.x API, and the module is tested against Vert.x 5.2.2. The contract test `WebClientHookContractIT` (in this
+module's tests) pins the phase order, reset after the response head, redirect handling of a wrapped agent and
+the other behavior the client relies on; run it first when upgrading Vert.x.
 
 **Attempt scope.** `execute` calls the attempt function once per attempt (once without a resilience
 pipeline, once per retry with one) with a fresh `WebClient` scoped to that attempt. When the future the
@@ -404,7 +431,7 @@ attributes; `with...` copies), `HttpClientResponseHead` (status, message, header
 `HttpClientAttemptTarget` (scheme, host, port). Their `toString` prints no header value, path, query or body.
 
 Every public type in `dev.vertique.http.client.internal` (`CredentialInterceptor`, `WebClientOptionsHardening`, `WebClientOptionsNormalizer`, `BoundedBodyCodec`,
-`RetryAfter`, `EgressInterceptor`, `RedirectRules`, `FrameworkClientOptions`) is INTERNAL: it exists for this module and other framework modules,
+`RetryAfter`, `EgressInterceptor`, `RedirectRules`, `SseParser`, `FrameworkClientOptions`) is INTERNAL: it exists for this module and other framework modules,
 is outside the compatibility promise of this artifact, and application code must not use it.
 
 ---
@@ -422,7 +449,7 @@ startup with an `HttpClientConfigurationException` whose constant message names 
 |---|---|---|---|
 | `baseUrl` | string | none | As `baseUrl(...)`; checked when the client is built |
 | `readTimeoutMs` | long | 30000 | Attempt timeout in milliseconds, above 0 |
-| `pool.http1MaxSize`, `pool.http2MaxSize`, `pool.maxWaitQueueSize`, `pool.eventLoopSize`, `pool.cleanerPeriodMs`, `pool.maxLifetimeSeconds` | int | Vert.x defaults | The first two at least 1, the last two not negative |
+| `pool.http1MaxSize`, `pool.http2MaxSize`, `pool.maxWaitQueueSize`, `pool.eventLoopSize`, `pool.cleanerPeriodMs`, `pool.maxLifetimeSeconds` | int | Vert.x defaults | `http1MaxSize` and `http2MaxSize` at least 1; `eventLoopSize` and `maxLifetimeSeconds` not negative; the other two passed to Vert.x unchecked |
 | `webClient` | object | `{}` | Vert.x `WebClientOptions` pass-through, see below |
 | `resiliencePolicy` | string | none | A `resilience.policies.<tier>` name; an undefined tier fails startup |
 | `defaultHeaders` | object of string | `{}` | Rejects CR, LF, NUL, a `vertique-` prefix (case-insensitive) and the names `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Upgrade` and `TE`; rendered as `***` in logs |
