@@ -63,6 +63,36 @@ over the bound fails the request before the body is read, and a counting wrapper
 stream stops passing bytes on at the bound, fails with `HttpBodyLimitException`
 (`Direction.RESPONSE`) and resets the exchange. Nothing is buffered to enforce either bound.
 
+**Egress.** `egress(EgressPolicy)` decides which targets the client may contact, before any
+connection and again on every redirect hop. The default, `EgressPolicy.allowAll()`, admits every target
+with a host and without user information; a target with user information (in a redirect `Location` or a
+`UriTemplate` request) is refused with `HttpEgressDeniedException` (`USER_INFO`). Every policy refuses a
+domain-socket server address (`CONNECT_ADDRESS`). `EgressPolicy.allowHosts(hosts, allowPlainHttp)` admits
+only listed hosts, and then also refuses a server address, a virtual host (`virtualHost(...)` or a
+caller-set `Host` header) and a request-level proxy unless its host is listed. A refusal fails the
+request once with a constant message and dials nothing.
+
+**Egress matching.** Hosts compare in lower case with one trailing dot removed, and names are never
+resolved. `*.suffix` matches `a.suffix` and `b.a.suffix` but not `suffix` or `xsuffix`, and `*` matches any
+host name. A wildcard never matches an IP literal or `localhost`: list those exactly. A host whose last
+label is all decimal digits or a `0x` number counts as an IP literal. `https` always passes the scheme
+rule; `http` passes only to `localhost`, a loopback IP literal, or when `allowPlainHttp` is true.
+`EgressPolicy.check(URI)` runs the same rules without connecting.
+
+**Redirects.** The default client does not follow redirects: a 3xx is the response. Following is turned
+on through `webClientOptions(...)` (`followRedirects`, `maxRedirects`), and Vert.x's method handling and
+limit stay: a 303 becomes a `GET` without a body, and 301, 302, 307 and 308 are followed only for `GET`,
+`HEAD` and `QUERY`. On top of that, a hop from `https` to `http` fails with `HttpEgressDeniedException`
+(`SCHEME`), a `Location` with user information fails with `USER_INFO`, a 307 or 308 that would resend a
+request body to another origin is returned as the response, and a hop to another origin forwards only
+`Accept`, `Accept-Language`, `Accept-Encoding`, `User-Agent`, `Cache-Control`, `Pragma`, `If-None-Match`
+and `If-Modified-Since`. Every hop passes the egress policy.
+
+**Warning: `allowAll()` with redirects.** With the default policy and redirects followed, a server you
+call can redirect the client to any host, including internal addresses, such as a cloud metadata
+endpoint or a service on a private network. Give a client that follows redirects, or that calls servers
+you do not control, an `allowHosts(...)` policy.
+
 **Attempt scope.** `execute` calls the attempt function once with a fresh `WebClient` scoped to that
 call. When the future the function returns settles, every exchange the attempt started that is still
 open is reset, and the scoped `WebClient` fails every later request with `IllegalStateException`
@@ -88,6 +118,7 @@ runtime the caller owns.
 | `readTimeout(long, TimeUnit)` | Read timeout setting of the client, not negative; default 30 seconds, `0` for none |
 | `maxRequestBytes(long)` | Most request body bytes sent, not negative; default `0` for no bound |
 | `maxResponseBytes(long)` | Most response body bytes read, not negative; default 10485760, `0` for no bound |
+| `egress(EgressPolicy)` | Targets the client may contact, checked before connecting and on every redirect hop; default `EgressPolicy.allowAll()` |
 | `webClientOptions(WebClientOptions)` | Copied; replaces the base options, which do not follow redirects |
 | `poolOptions(PoolOptions)` | Copied; sizes the shared connection pool |
 | `defaultHeader(String, String)` | Header added to every request that does not set it |
@@ -139,6 +170,22 @@ nothing. Cancelling resets the open exchanges of every call bound to the signal 
 and fails each with `HttpExchangeCancelledException`. A call started with a signal that is already
 cancelled fails without sending. One signal may be shared by many calls; a settled call leaves it.
 
+### EgressPolicy
+
+Immutable and shareable between clients. `allowAll()` admits any target with a host and no user
+information. `allowHosts(List<String> hosts, boolean allowPlainHttp)` admits the listed exact hosts,
+IP literals, `*.suffix` wildcards and `*`; a null, blank or malformed entry throws
+`IllegalArgumentException`. `check(URI)` throws `HttpEgressDeniedException` with reason `NO_HOST`,
+`USER_INFO`, `HOST` or `SCHEME`, never connects and never resolves a name.
+
+```java
+VertiqueHttpClient client = VertiqueHttpClientBuilder.create(vertx)
+        .baseUrl("https://api.example.com")
+        .webClientOptions(new WebClientOptions().setFollowRedirects(true))
+        .egress(EgressPolicy.allowHosts(List.of("api.example.com", "*.cdn.example.com"), false))
+        .build();
+```
+
 ### HttpClientConfigurationException
 
 Extends `ConfigurationException`. Thrown by `build()` for an invalid name, base URL, read timeout,
@@ -187,7 +234,7 @@ at 24 hours. `bodyExcerpt()` is filled only when the checked response has a buff
 ## Extension Points
 
 Every public type in `dev.vertique.http.client.internal` (`FrameworkClientOptions`,
-`BoundedBodyCodec`, `RetryAfter`) is INTERNAL: it exists for this module and other framework modules,
+`BoundedBodyCodec`, `RetryAfter`, `EgressInterceptor`, `RedirectRules`) is INTERNAL: it exists for this module and other framework modules,
 is outside the compatibility promise of this artifact, and application code must not use it.
 
 ---

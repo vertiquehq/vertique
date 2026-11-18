@@ -3,6 +3,7 @@
 
 package dev.vertique.http.client;
 
+import dev.vertique.http.client.internal.EgressInterceptor;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -98,6 +99,9 @@ final class DefaultVertiqueHttpClient implements VertiqueHttpClient {
         // second pass, as ExchangeTracker does by keeping its exchange in the context.
         governed.addInterceptor(new ExchangeTracker(scope, vertx, exchangeTimeoutMs, settings.maxResponseBytes()));
         governed.addInterceptor(new PrepareInterceptor(settings));
+        EgressPolicy egress = settings.egress();
+        governed.addInterceptor(
+                new EgressInterceptor(egress::check, egress.restrictsHosts(), webClientOptions.isSsl()));
         return new GovernedWebClient(governed, settings);
     }
 }

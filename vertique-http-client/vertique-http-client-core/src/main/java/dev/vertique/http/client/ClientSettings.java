@@ -15,6 +15,7 @@ import java.util.Map;
  * @param readTimeoutMs the default attempt timeout in milliseconds, 0 for none
  * @param maxRequestBytes the most request body bytes sent, 0 for no bound
  * @param maxResponseBytes the most response body bytes read, 0 for no bound
+ * @param egress the policy every request target is checked against
  */
 record ClientSettings(
         String basePath,
@@ -23,4 +24,5 @@ record ClientSettings(
         Map<String, String> defaultHeaders,
         long readTimeoutMs,
         long maxRequestBytes,
-        long maxResponseBytes) {}
+        long maxResponseBytes,
+        EgressPolicy egress) {}

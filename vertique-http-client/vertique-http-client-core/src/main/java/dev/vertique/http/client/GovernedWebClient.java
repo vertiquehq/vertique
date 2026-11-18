@@ -3,6 +3,7 @@
 
 package dev.vertique.http.client;
 
+import dev.vertique.http.client.internal.EgressInterceptor;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.buffer.Buffer;
@@ -73,7 +74,7 @@ final class GovernedWebClient implements WebClient {
 
     @Override
     public HttpRequest<Buffer> requestAbs(HttpMethod method, SocketAddress serverAddress, UriTemplate absoluteURI) {
-        return delegate.requestAbs(method, serverAddress, absoluteURI);
+        return delegate.requestAbs(method, serverAddress, new UserInfoGuardTemplate(absoluteURI));
     }
 
     // --- relative requests to the default host: base path or refusal ---
@@ -147,6 +148,29 @@ final class GovernedWebClient implements WebClient {
             return basePath + (requestURI == null ? "" : requestURI);
         }
         return requestURI.charAt(0) == '/' ? basePath + requestURI : basePath + '/' + requestURI;
+    }
+
+    /**
+     * An absolute URI template whose expansion is marked when it carries user information: the HTTP
+     * client's URL parsing drops it silently, so the egress interceptor could not see it otherwise.
+     */
+    private static final class UserInfoGuardTemplate implements UriTemplate {
+
+        private final UriTemplate template;
+
+        private UserInfoGuardTemplate(UriTemplate template) {
+            this.template = template;
+        }
+
+        @Override
+        public String expandToString(Variables variables) {
+            return EgressInterceptor.guardUserInfo(template.expandToString(variables));
+        }
+
+        @Override
+        public String expandToString(Variables variables, ExpandOptions options) {
+            return EgressInterceptor.guardUserInfo(template.expandToString(variables, options));
+        }
     }
 
     /** A URI template whose expansion gets the base path prefixed. */

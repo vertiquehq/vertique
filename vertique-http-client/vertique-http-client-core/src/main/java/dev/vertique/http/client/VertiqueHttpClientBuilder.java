@@ -5,6 +5,7 @@ package dev.vertique.http.client;
 
 import dev.vertique.http.client.exception.HttpClientConfigurationException;
 import dev.vertique.http.client.internal.FrameworkClientOptions;
+import dev.vertique.http.client.internal.RedirectRules;
 import dev.vertique.resilience.Resilience;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -59,6 +60,7 @@ public final class VertiqueHttpClientBuilder {
     private PoolOptions poolOptions;
     private final Map<String, String> defaultHeaders = new LinkedHashMap<>();
     private boolean validateHeaders = true;
+    private EgressPolicy egress = EgressPolicy.allowAll();
 
     private VertiqueHttpClientBuilder(Vertx vertx, @Nullable Resilience resilience) {
         this.vertx = Objects.requireNonNull(vertx, "vertx");
@@ -189,6 +191,23 @@ public final class VertiqueHttpClientBuilder {
     }
 
     /**
+     * Sets the egress policy every request target is checked against, before any connection and on
+     * every redirect hop. The default is {@link EgressPolicy#allowAll()}, which still refuses a
+     * domain-socket server address and a target with user information.
+     *
+     * <p>With redirects followed, {@code allowAll()} lets a redirect from an allowed server lead to any
+     * host, including internal addresses. Use {@link EgressPolicy#allowHosts(List, boolean)} for a
+     * client that calls untrusted servers.
+     *
+     * @param policy the policy to apply
+     * @return this builder
+     */
+    public synchronized VertiqueHttpClientBuilder egress(EgressPolicy policy) {
+        this.egress = Objects.requireNonNull(policy, "policy");
+        return this;
+    }
+
+    /**
      * Builds a client from the current settings.
      *
      * @return a new client with its own HTTP agent
@@ -224,9 +243,11 @@ public final class VertiqueHttpClientBuilder {
                 headers,
                 readTimeoutMs,
                 maxRequestBytes,
-                maxResponseBytes);
+                maxResponseBytes,
+                egress);
 
-        HttpClientBuilder agentBuilder = vertx.httpClientBuilder().with(effective);
+        HttpClientBuilder agentBuilder =
+                vertx.httpClientBuilder().with(effective).withRedirectHandler(new RedirectRules());
         if (poolOptions != null) {
             agentBuilder.with(new PoolOptions(poolOptions));
         }
