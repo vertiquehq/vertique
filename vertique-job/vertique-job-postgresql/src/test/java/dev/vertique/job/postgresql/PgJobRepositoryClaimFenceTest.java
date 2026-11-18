@@ -28,7 +28,7 @@ class PgJobRepositoryClaimFenceTest {
         assertThrows(
                 NullPointerException.class,
                 () -> repository.completeClaimedExecution(
-                        UUID.randomUUID(), null, JobState.ABANDONED, "m", "t", ProgressSnapshot.EMPTY));
+                        UUID.randomUUID(), null, 0, JobState.ABANDONED, "m", "t", ProgressSnapshot.EMPTY));
     }
 
     @Test
@@ -37,6 +37,6 @@ class PgJobRepositoryClaimFenceTest {
         assertThrows(
                 NullPointerException.class,
                 () -> repository.abandonClaimedAndScheduleRetry(
-                        UUID.randomUUID(), null, "m", "t", ProgressSnapshot.EMPTY, Instant.now(), 1));
+                        UUID.randomUUID(), null, 0, "m", "t", ProgressSnapshot.EMPTY, Instant.now(), 1));
     }
 }

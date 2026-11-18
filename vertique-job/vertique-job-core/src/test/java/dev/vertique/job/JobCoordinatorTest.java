@@ -256,7 +256,13 @@ class JobCoordinatorTest {
             when(repository.findByLockedBy("dead-node-1"))
                     .thenReturn(Future.succeededFuture(List.of(orphan1, orphan2)));
             when(repository.completeClaimedExecution(
-                            any(), eq("dead-node-1"), eq(JobState.ABANDONED), anyString(), anyString(), any()))
+                            any(),
+                            eq("dead-node-1"),
+                            anyInt(),
+                            eq(JobState.ABANDONED),
+                            anyString(),
+                            anyString(),
+                            any()))
                     .thenAnswer(inv -> Future.succeededFuture(Optional.of(orphan1)));
             when(repository.removeServer(anyString())).thenReturn(Future.succeededFuture());
 
@@ -280,6 +286,7 @@ class JobCoordinatorTest {
                                             .completeClaimedExecution(
                                                     eq(orphan1.id()),
                                                     eq("dead-node-1"),
+                                                    eq(orphan1.attemptNumber()),
                                                     eq(JobState.ABANDONED),
                                                     anyString(),
                                                     anyString(),
@@ -288,6 +295,7 @@ class JobCoordinatorTest {
                                             .completeClaimedExecution(
                                                     eq(orphan2.id()),
                                                     eq("dead-node-1"),
+                                                    eq(orphan2.attemptNumber()),
                                                     eq(JobState.ABANDONED),
                                                     anyString(),
                                                     anyString(),
@@ -295,7 +303,14 @@ class JobCoordinatorTest {
                                     // abandonAndScheduleRetry must never be called for CRON jobs
                                     verify(repository, never())
                                             .abandonClaimedAndScheduleRetry(
-                                                    any(), eq("dead-node-1"), any(), any(), any(), any(), anyInt());
+                                                    any(),
+                                                    eq("dead-node-1"),
+                                                    anyInt(),
+                                                    any(),
+                                                    any(),
+                                                    any(),
+                                                    any(),
+                                                    anyInt());
                                     when(repository.findByLockedBy(coordinator.serverId()))
                                             .thenReturn(Future.succeededFuture(List.of()));
                                     coordinator.stop();
@@ -316,7 +331,7 @@ class JobCoordinatorTest {
                     .thenReturn(Future.succeededFuture(List.of("dead-node")));
             when(repository.findByLockedBy("dead-node")).thenReturn(Future.succeededFuture(List.of(delayedJob)));
             when(repository.abandonClaimedAndScheduleRetry(
-                            any(), eq("dead-node"), any(), any(), any(), any(Instant.class), anyInt()))
+                            any(), eq("dead-node"), anyInt(), any(), any(), any(), any(Instant.class), anyInt()))
                     .thenReturn(Future.succeededFuture(Optional.of(delayedJob)));
             when(repository.removeServer(anyString())).thenReturn(Future.succeededFuture());
 
@@ -337,6 +352,7 @@ class JobCoordinatorTest {
                                         .abandonClaimedAndScheduleRetry(
                                                 eq(delayedJob.id()),
                                                 eq("dead-node"),
+                                                eq(delayedJob.attemptNumber()),
                                                 anyString(),
                                                 anyString(),
                                                 any(),
@@ -366,7 +382,7 @@ class JobCoordinatorTest {
             // The recovery write fails — the dead server's heartbeat must be left in place so the next
             // scan re-discovers it and retries, rather than orphaning the still-PROCESSING execution.
             when(repository.abandonClaimedAndScheduleRetry(
-                            any(), eq("dead-node"), any(), any(), any(), any(Instant.class), anyInt()))
+                            any(), eq("dead-node"), anyInt(), any(), any(), any(), any(Instant.class), anyInt()))
                     .thenReturn(Future.failedFuture(new RuntimeException("db down")));
             when(repository.removeServer(anyString())).thenReturn(Future.succeededFuture());
 
@@ -385,6 +401,7 @@ class JobCoordinatorTest {
                                         .abandonClaimedAndScheduleRetry(
                                                 eq(delayedJob.id()),
                                                 eq("dead-node"),
+                                                eq(delayedJob.attemptNumber()),
                                                 anyString(),
                                                 anyString(),
                                                 any(),
@@ -411,7 +428,7 @@ class JobCoordinatorTest {
                     .thenReturn(Future.succeededFuture(List.of("dead-node")));
             when(repository.findByLockedBy("dead-node")).thenReturn(Future.succeededFuture(List.of(cronJob)));
             when(repository.completeClaimedExecution(
-                            any(), eq("dead-node"), eq(JobState.ABANDONED), anyString(), anyString(), any()))
+                            any(), eq("dead-node"), anyInt(), eq(JobState.ABANDONED), anyString(), anyString(), any()))
                     .thenReturn(Future.succeededFuture(Optional.of(cronJob)));
             when(repository.removeServer(anyString())).thenReturn(Future.succeededFuture());
 
@@ -431,6 +448,7 @@ class JobCoordinatorTest {
                                         .completeClaimedExecution(
                                                 eq(cronJob.id()),
                                                 eq("dead-node"),
+                                                eq(cronJob.attemptNumber()),
                                                 eq(JobState.ABANDONED),
                                                 anyString(),
                                                 anyString(),
@@ -438,11 +456,17 @@ class JobCoordinatorTest {
                                 // abandonAndScheduleRetry must NOT be called for CRON
                                 verify(repository, never())
                                         .abandonClaimedAndScheduleRetry(
-                                                any(), eq("dead-node"), any(), any(), any(), any(), anyInt());
+                                                any(), eq("dead-node"), anyInt(), any(), any(), any(), any(), anyInt());
                                 // DEAD_LETTER must not be written for CRON
                                 verify(repository, never())
                                         .completeClaimedExecution(
-                                                any(), eq("dead-node"), eq(JobState.DEAD_LETTER), any(), any(), any());
+                                                any(),
+                                                eq("dead-node"),
+                                                anyInt(),
+                                                eq(JobState.DEAD_LETTER),
+                                                any(),
+                                                any(),
+                                                any());
                                 when(repository.findByLockedBy(coordinator.serverId()))
                                         .thenReturn(Future.succeededFuture(List.of()));
                                 coordinator.stop();
@@ -462,7 +486,13 @@ class JobCoordinatorTest {
                     .thenReturn(Future.succeededFuture(List.of("dead-node")));
             when(repository.findByLockedBy("dead-node")).thenReturn(Future.succeededFuture(List.of(exhausted)));
             when(repository.completeClaimedExecution(
-                            any(), eq("dead-node"), eq(JobState.DEAD_LETTER), anyString(), anyString(), any()))
+                            any(),
+                            eq("dead-node"),
+                            anyInt(),
+                            eq(JobState.DEAD_LETTER),
+                            anyString(),
+                            anyString(),
+                            any()))
                     .thenReturn(Future.succeededFuture(Optional.of(exhausted)));
             when(repository.removeServer(anyString())).thenReturn(Future.succeededFuture());
 
@@ -482,6 +512,7 @@ class JobCoordinatorTest {
                                         .completeClaimedExecution(
                                                 eq(exhausted.id()),
                                                 eq("dead-node"),
+                                                eq(exhausted.attemptNumber()),
                                                 eq(JobState.DEAD_LETTER),
                                                 anyString(),
                                                 anyString(),
@@ -489,7 +520,7 @@ class JobCoordinatorTest {
                                 // abandonAndScheduleRetry must NOT be called — exhausted
                                 verify(repository, never())
                                         .abandonClaimedAndScheduleRetry(
-                                                any(), eq("dead-node"), any(), any(), any(), any(), anyInt());
+                                                any(), eq("dead-node"), anyInt(), any(), any(), any(), any(), anyInt());
                                 when(repository.findByLockedBy(coordinator.serverId()))
                                         .thenReturn(Future.succeededFuture(List.of()));
                                 coordinator.stop();
@@ -512,10 +543,10 @@ class JobCoordinatorTest {
             when(repository.findByLockedBy("dead-node"))
                     .thenReturn(Future.succeededFuture(List.of(cron, retryable, exhausted)));
             // The fence matches no row: another node claimed each execution again after the read.
-            when(repository.completeClaimedExecution(any(), eq("dead-node"), any(), any(), any(), any()))
+            when(repository.completeClaimedExecution(any(), eq("dead-node"), anyInt(), any(), any(), any(), any()))
                     .thenReturn(Future.succeededFuture(Optional.empty()));
             when(repository.abandonClaimedAndScheduleRetry(
-                            any(), eq("dead-node"), any(), any(), any(), any(Instant.class), anyInt()))
+                            any(), eq("dead-node"), anyInt(), any(), any(), any(), any(Instant.class), anyInt()))
                     .thenReturn(Future.succeededFuture(Optional.empty()));
             when(repository.removeServer(anyString())).thenReturn(Future.succeededFuture());
 
@@ -534,6 +565,7 @@ class JobCoordinatorTest {
                                         .completeClaimedExecution(
                                                 eq(cron.id()),
                                                 eq("dead-node"),
+                                                eq(cron.attemptNumber()),
                                                 eq(JobState.ABANDONED),
                                                 anyString(),
                                                 anyString(),
@@ -542,6 +574,7 @@ class JobCoordinatorTest {
                                         .abandonClaimedAndScheduleRetry(
                                                 eq(retryable.id()),
                                                 eq("dead-node"),
+                                                eq(retryable.attemptNumber()),
                                                 anyString(),
                                                 anyString(),
                                                 any(),
@@ -551,6 +584,7 @@ class JobCoordinatorTest {
                                         .completeClaimedExecution(
                                                 eq(exhausted.id()),
                                                 eq("dead-node"),
+                                                eq(exhausted.attemptNumber()),
                                                 eq(JobState.DEAD_LETTER),
                                                 anyString(),
                                                 anyString(),

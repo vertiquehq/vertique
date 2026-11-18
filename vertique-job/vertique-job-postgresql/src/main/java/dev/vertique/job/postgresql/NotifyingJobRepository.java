@@ -185,11 +185,13 @@ final class NotifyingJobRepository implements JobRepository {
     public Future<Optional<JobExecution>> completeClaimedExecution(
             UUID executionId,
             String lockedBy,
+            int claimedAttempt,
             JobState newState,
             String errorMessage,
             String errorType,
             ProgressSnapshot progress) {
-        return delegate.completeClaimedExecution(executionId, lockedBy, newState, errorMessage, errorType, progress)
+        return delegate.completeClaimedExecution(
+                        executionId, lockedBy, claimedAttempt, newState, errorMessage, errorType, progress)
                 .onSuccess(opt -> opt.ifPresent(this::notifyListeners));
     }
 
@@ -203,13 +205,21 @@ final class NotifyingJobRepository implements JobRepository {
     public Future<Optional<JobExecution>> abandonClaimedAndScheduleRetry(
             UUID executionId,
             String lockedBy,
+            int claimedAttempt,
             String errorMessage,
             String errorType,
             ProgressSnapshot progress,
             Instant nextScheduledAt,
             int nextAttempt) {
         return delegate.abandonClaimedAndScheduleRetry(
-                        executionId, lockedBy, errorMessage, errorType, progress, nextScheduledAt, nextAttempt)
+                        executionId,
+                        lockedBy,
+                        claimedAttempt,
+                        errorMessage,
+                        errorType,
+                        progress,
+                        nextScheduledAt,
+                        nextAttempt)
                 .onSuccess(opt -> opt.ifPresent(this::notifyListeners));
     }
 

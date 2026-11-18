@@ -58,8 +58,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * between that read and the writes: after the read returns, every orphan is re-enqueued and claimed
  * again by a live node. The coordinator runs through the production {@code NotifyingJobRepository}
  * decorator, and the recovery writes (retry, dead-letter and cron abandon) must leave every new claim
- * untouched. The second test is the control: with no re-claim, the same coordinator recovers all
- * three.
+ * untouched. The second test makes the re-claim by the dead node's own identity, at a new attempt,
+ * as a node that stalled past the heartbeat timeout and woke would: only the attempt predicate tells the
+ * stale write from the live claim. The third test is the control: with no re-claim, the same coordinator
+ * recovers all three.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
@@ -99,21 +101,35 @@ class JobCoordinatorRecoveryFenceIT {
     }
 
     @Test
-    @DisplayName("an orphan claimed again between the coordinator's read and its write is left untouched")
+    @DisplayName("an orphan claimed again by another node between the coordinator's read and its write is left"
+            + " untouched")
     void reclaimedOrphansAreLeftAlone(Vertx vertx) throws Exception {
+        assertReclaimedOrphansAreLeftAlone(vertx, LIVE_NODE);
+    }
+
+    @Test
+    @DisplayName("an orphan the same node re-claims at a new attempt between the coordinator's read and its write"
+            + " is left untouched")
+    void orphansReclaimedByTheSameNodeAreLeftAlone(Vertx vertx) throws Exception {
+        // A node that stalled past the heartbeat timeout wakes and claims its own orphan again: the row has
+        // the same locked_by and a new attempt, so only the attempt tells the stale write apart.
+        assertReclaimedOrphansAreLeftAlone(vertx, DEAD_NODE);
+    }
+
+    private void assertReclaimedOrphansAreLeftAlone(Vertx vertx, String reclaimingNode) throws Exception {
         Orphans orphans = claimOrphansAsDeadNode();
-        PgJobRepository liveRepository = new PgJobRepository(pool, mapper, DbSchemas.empty(), LIVE_NODE);
+        PgJobRepository reclaimingRepository = new PgJobRepository(pool, mapper, DbSchemas.empty(), reclaimingNode);
         AtomicInteger reads = new AtomicInteger();
 
         // The coordinator's repository is the production decorator over the real repository; after its
-        // read returns, a live node claims each orphan again.
+        // read returns, the reclaiming node claims each orphan again.
         JobRepository decorated = decoratedRepository();
         JobRepository interleaving = mock(JobRepository.class, withSettings().defaultAnswer(delegatesTo(decorated)));
         doAnswer(invocation -> decorated.findByLockedBy(DEAD_NODE).compose(read -> {
                     if (reads.getAndIncrement() > 0) {
                         return Future.succeededFuture(read);
                     }
-                    return reclaim(liveRepository, orphans).map(read);
+                    return reclaim(reclaimingRepository, orphans).map(read);
                 }))
                 .when(interleaving)
                 .findByLockedBy(DEAD_NODE);
@@ -124,7 +140,7 @@ class JobCoordinatorRecoveryFenceIT {
         for (UUID id : orphans.all()) {
             JobExecution row = await(decorated.findById(id)).orElseThrow();
             assertEquals(JobState.PROCESSING, row.state(), "the new claim must stay PROCESSING");
-            assertEquals(LIVE_NODE, row.lockedBy(), "the new claim must keep its owner");
+            assertEquals(reclaimingNode, row.lockedBy(), "the new claim must keep its owner");
             assertNull(row.errorType(), "recovery must not have recorded a crash on the new claim");
         }
         assertEquals(
@@ -173,18 +189,18 @@ class JobCoordinatorRecoveryFenceIT {
         return new Orphans(retryable, exhausted, cron);
     }
 
-    /** Puts each orphan back on the queue and claims it again as a live node. */
-    private Future<Void> reclaim(PgJobRepository liveRepository, Orphans orphans) {
+    /** Puts each orphan back on the queue, at the next attempt, and claims it again as the given node. */
+    private Future<Void> reclaim(PgJobRepository reclaimingRepository, Orphans orphans) {
         return pool.preparedQuery("UPDATE job_executions SET state = 'ENQUEUED', locked_by = NULL, started_at = NULL,"
                         + " attempt = attempt + 1, scheduled_at = NOW() - interval '1 second'"
                         + " WHERE id = ANY($1) RETURNING queue")
                 .execute(Tuple.of(orphans.all().toArray(UUID[]::new)))
                 .compose(rows -> {
                     String queue = rows.iterator().next().getString("queue");
-                    return liveRepository.claimNextJob(queue, 10);
+                    return reclaimingRepository.claimNextJob(queue, 10);
                 })
                 .map(claimed -> {
-                    assertEquals(3, claimed.size(), "the live node must claim all three again");
+                    assertEquals(3, claimed.size(), "the reclaiming node must claim all three again");
                     return null;
                 });
     }

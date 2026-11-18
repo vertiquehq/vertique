@@ -280,8 +280,9 @@ public class JobCoordinator {
      * job types (e.g. {@link JobType#CRON}) are marked {@code ABANDONED}; the scheduler re-fires them on
      * the next tick.
      *
-     * <p>Every write is fenced by the dead server's claim ({@code locked_by = deadServerId}): an execution
-     * that another node has claimed again since the scan read it matches no row. That result is skipped
+     * <p>Every write is fenced by the claim the scan read ({@code locked_by = deadServerId} at the attempt
+     * number read): an execution that another node has claimed again, or that the same node re-claimed after
+     * a re-enqueue, since the scan read it matches no row. That result is skipped
      * and logged at {@code DEBUG}; it neither fails the recovery nor triggers a later write.
      *
      * @param job          the orphaned execution to recover
@@ -298,6 +299,7 @@ public class JobCoordinator {
                     .abandonClaimedAndScheduleRetry(
                             job.id(),
                             deadServerId,
+                            job.attemptNumber(),
                             errorMessage,
                             errorType,
                             job.progress(),
@@ -310,7 +312,13 @@ public class JobCoordinator {
         } else if (job.jobType() == JobType.DELAYED) {
             return repository
                     .completeClaimedExecution(
-                            job.id(), deadServerId, JobState.DEAD_LETTER, errorMessage, errorType, job.progress())
+                            job.id(),
+                            deadServerId,
+                            job.attemptNumber(),
+                            JobState.DEAD_LETTER,
+                            errorMessage,
+                            errorType,
+                            job.progress())
                     .onSuccess(result -> logIfClaimMoved(result, job))
                     .onFailure(err ->
                             log.warn("Failed to dead-letter exhausted execution '{}': {}", job.id(), err.getMessage()))
@@ -318,7 +326,13 @@ public class JobCoordinator {
         } else {
             return repository
                     .completeClaimedExecution(
-                            job.id(), deadServerId, JobState.ABANDONED, errorMessage, errorType, job.progress())
+                            job.id(),
+                            deadServerId,
+                            job.attemptNumber(),
+                            JobState.ABANDONED,
+                            errorMessage,
+                            errorType,
+                            job.progress())
                     .onSuccess(result -> logIfClaimMoved(result, job))
                     .onFailure(
                             err -> log.warn("Failed to mark execution '{}' ABANDONED: {}", job.id(), err.getMessage()))
@@ -328,12 +342,12 @@ public class JobCoordinator {
 
     /**
      * Logs a skipped recovery. A recovery write is fenced by the dead server's claim, so an empty result
-     * means the execution is no longer {@code PROCESSING} under it — another node recovered or claimed it
+     * means the execution is no longer {@code PROCESSING} under that claim — it was recovered or claimed
      * again since this scan read it. That is a normal outcome, not an error: the execution is left alone.
      */
     private void logIfClaimMoved(Optional<JobExecution> result, JobExecution job) {
         if (result.isEmpty()) {
-            log.debug("Skipped recovery of execution '{}': it is no longer claimed by the dead server", job.id());
+            log.debug("Skipped recovery of execution '{}': it is no longer under the claim the scan read", job.id());
         }
     }
 
