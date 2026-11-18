@@ -3,6 +3,7 @@
 
 package dev.vertique.http.client;
 
+import dev.vertique.http.client.interceptor.HttpClientInterceptor;
 import dev.vertique.http.client.internal.CredentialInterceptor;
 import dev.vertique.http.client.internal.EgressInterceptor;
 import io.vertx.core.Context;
@@ -11,6 +12,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpClientAgent;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
@@ -23,7 +25,8 @@ final class DefaultVertiqueHttpClient implements VertiqueHttpClient {
     private final HttpClientAgent agent;
     private final WebClientOptions webClientOptions;
     private final ClientSettings settings;
-    private final AttemptScope clientScope = new AttemptScope();
+    private final HttpClientInterceptors interceptors;
+    private final AttemptScope clientScope;
     private final WebClient webClient;
     private final AtomicReference<Future<Void>> closeFuture = new AtomicReference<>();
 
@@ -32,12 +35,15 @@ final class DefaultVertiqueHttpClient implements VertiqueHttpClient {
             String name,
             HttpClientAgent agent,
             WebClientOptions webClientOptions,
-            ClientSettings settings) {
+            ClientSettings settings,
+            List<HttpClientInterceptor> registered) {
         this.vertx = vertx;
         this.name = name;
         this.agent = agent;
         this.webClientOptions = webClientOptions;
         this.settings = settings;
+        this.interceptors = HttpClientInterceptors.of(registered, name, webClientOptions.isSsl());
+        this.clientScope = new AttemptScope(interceptors, null);
         this.webClient = scopedWebClient(clientScope, settings.readTimeoutMs());
     }
 
@@ -72,7 +78,8 @@ final class DefaultVertiqueHttpClient implements VertiqueHttpClient {
         Context context = caller != null ? caller : vertx.getOrCreateContext();
         Long callTimeoutMs = options.readTimeoutMs();
         long timeoutMs = callTimeoutMs != null ? callTimeoutMs : settings.readTimeoutMs();
-        CallExecution<T> call = new CallExecution<>(vertx, context, options.cancellationSignal(), timeoutMs);
+        CallExecution<T> call =
+                new CallExecution<>(vertx, context, options.cancellationSignal(), timeoutMs, interceptors);
         return call.start(attempt, scopedWebClient(call.scope(), 0));
     }
 
@@ -87,7 +94,7 @@ final class DefaultVertiqueHttpClient implements VertiqueHttpClient {
             if (existing != null) {
                 return existing;
             }
-            clientScope.end();
+            clientScope.end(null);
             Future<Void> closing = agent.close();
             closeFuture.set(closing);
             return closing;
@@ -100,7 +107,7 @@ final class DefaultVertiqueHttpClient implements VertiqueHttpClient {
         // PREPARE_REQUEST again for every interceptor registered before it. Each of those must tolerate the
         // second pass, as ExchangeTracker does by keeping its exchange in the context.
         governed.addInterceptor(new ExchangeTracker(scope, vertx, exchangeTimeoutMs, settings.maxResponseBytes()));
-        governed.addInterceptor(new PrepareInterceptor(settings));
+        governed.addInterceptor(new PrepareInterceptor(settings, interceptors));
         EgressPolicy egress = settings.egress();
         governed.addInterceptor(
                 new EgressInterceptor(egress::check, egress.restrictsHosts(), webClientOptions.isSsl()));

@@ -53,6 +53,23 @@ final class HeaderRules {
         return null;
     }
 
+    /**
+     * Checks the headers of a request for CR, LF and NUL only, as for headers an extension prepared: the
+     * reserved-prefix rule covers the caller's headers, not the framework's or an extension's.
+     *
+     * @param headers the final headers
+     * @return the constant failure message of the first violation, or {@code null} when all are acceptable
+     */
+    static String forbiddenCharacters(MultiMap headers) {
+        for (Map.Entry<String, String> header : headers) {
+            if (hasForbiddenCharacter(header.getKey())
+                    || header.getValue() != null && hasForbiddenCharacter(header.getValue())) {
+                return INVALID_CHARACTER;
+            }
+        }
+        return null;
+    }
+
     private static boolean hasForbiddenCharacter(CharSequence text) {
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);

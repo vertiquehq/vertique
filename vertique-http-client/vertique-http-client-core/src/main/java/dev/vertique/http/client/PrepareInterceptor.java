@@ -5,10 +5,15 @@ package dev.vertique.http.client;
 
 import dev.vertique.http.client.exception.HttpBodyLimitException;
 import dev.vertique.http.client.exception.HttpBodyLimitException.Direction;
+import dev.vertique.http.client.interceptor.HttpClientRequestContext;
 import dev.vertique.http.client.internal.BoundedBodyCodec;
+import io.vertx.core.AsyncResult;
+import io.vertx.core.Context;
 import io.vertx.core.Handler;
 import io.vertx.core.MultiMap;
+import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.internal.FutureInternal;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.client.HttpRequest;
@@ -28,7 +33,9 @@ import java.util.Map;
  * Governance interceptor for the request-preparation phase: it refuses relative requests of a client
  * without a base URL, applies the request header rules to what the caller set, refuses a request body
  * over the request bound, adds the client's default headers and wraps the response body codec so the
- * response bound holds whatever codec the caller chose.
+ * response bound holds whatever codec the caller chose. When interceptors are registered it then folds
+ * their {@code beforeRequest} over the request, applies the result and takes the request snapshot,
+ * all before credentials.
  *
  * <p>Wrapping the codec prepares the request a second time, which runs the interceptors registered
  * before this one again; this interceptor marks the context and passes the second pass through.
@@ -47,9 +54,11 @@ final class PrepareInterceptor implements Handler<HttpContext<?>> {
     private static final String JSON = "application/json";
 
     private final ClientSettings settings;
+    private final HttpClientInterceptors interceptors;
 
-    PrepareInterceptor(ClientSettings settings) {
+    PrepareInterceptor(ClientSettings settings, HttpClientInterceptors interceptors) {
         this.settings = settings;
+        this.interceptors = interceptors;
     }
 
     @Override
@@ -85,6 +94,71 @@ final class PrepareInterceptor implements Handler<HttpContext<?>> {
                 headers.add(header.getKey(), header.getValue());
             }
         }
+        AttemptScope.Exchange exchange = ExchangeTracker.exchangeOf(ctx);
+        if (interceptors.isEmpty() || exchange == null) {
+            proceed(ctx);
+            return;
+        }
+        HttpClientRequestContext seed = interceptors.describe(request, exchange.callId());
+        exchange.snapshot(seed);
+        Context owner = ctx.future() instanceof FutureInternal<?> future ? future.context() : null;
+        interceptors.prepare(seed).onComplete(result -> {
+            if (owner != null && Vertx.currentContext() != owner) {
+                owner.runOnContext(ignored -> prepared(ctx, exchange, seed, result));
+            } else {
+                prepared(ctx, exchange, seed, result);
+            }
+        });
+    }
+
+    /**
+     * Applies what the interceptors returned: the final headers and URI go into the request, the
+     * snapshot the interceptors are shown on completion is taken, and the chain goes on to egress and
+     * credentials. A failed fold, an invalid header or an unusable URI fails the exchange instead.
+     */
+    private void prepared(
+            HttpContext<?> ctx,
+            AttemptScope.Exchange exchange,
+            HttpClientRequestContext seed,
+            AsyncResult<HttpClientRequestContext> result) {
+        if (ctx.future().isComplete()) {
+            return;
+        }
+        if (exchange.isAbandoned()) {
+            ctx.fail(new IllegalStateException(AttemptScope.ENDED));
+            return;
+        }
+        if (result.failed()) {
+            ctx.fail(result.cause());
+            return;
+        }
+        HttpClientRequestContext prepared = result.result();
+        if (settings.validateHeaders()) {
+            String violation = HeaderRules.forbiddenCharacters(prepared.headers());
+            if (violation != null) {
+                ctx.fail(new IllegalArgumentException(violation));
+                return;
+            }
+        }
+        HttpRequest<?> request = ctx.request();
+        if (!prepared.uri().equals(seed.uri())) {
+            try {
+                HttpClientInterceptors.applyUri(request, prepared.uri());
+            } catch (IllegalArgumentException unusable) {
+                ctx.fail(unusable);
+                return;
+            }
+        }
+        MultiMap headers = request.headers();
+        headers.clear();
+        headers.addAll(prepared.headers());
+        exchange.snapshot(prepared);
+        exchange.target(interceptors.targetOf(request));
+        proceed(ctx);
+    }
+
+    /** Marks the context prepared and continues, wrapping the response body codec when a bound applies. */
+    private void proceed(HttpContext<?> ctx) {
         ctx.set(PREPARED, Boolean.TRUE);
         long maxResponseBytes = settings.maxResponseBytes();
         if (maxResponseBytes > 0) {

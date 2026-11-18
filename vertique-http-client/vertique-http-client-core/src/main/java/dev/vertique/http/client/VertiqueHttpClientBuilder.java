@@ -4,6 +4,7 @@
 package dev.vertique.http.client;
 
 import dev.vertique.http.client.exception.HttpClientConfigurationException;
+import dev.vertique.http.client.interceptor.HttpClientInterceptor;
 import dev.vertique.http.client.internal.CredentialInterceptor;
 import dev.vertique.http.client.internal.FrameworkClientOptions;
 import dev.vertique.http.client.internal.RedirectRules;
@@ -67,6 +68,7 @@ public final class VertiqueHttpClientBuilder {
     private CredentialSource credentials;
     private boolean allowCredentialsOverPlainHttp;
     private List<String> credentialOrigins = List.of();
+    private final List<HttpClientInterceptor> interceptors = new ArrayList<>();
 
     private VertiqueHttpClientBuilder(Vertx vertx, @Nullable Resilience resilience) {
         this.vertx = Objects.requireNonNull(vertx, "vertx");
@@ -257,6 +259,21 @@ public final class VertiqueHttpClientBuilder {
     }
 
     /**
+     * Registers an interceptor for the clients this builder builds. Interceptors run in
+     * {@link dev.vertique.core.extension.OrderedExtension} order, whatever the registration order: their
+     * {@code beforeRequest} prepares each request before credentials are applied, and their
+     * {@code onAttemptCompleted} is told how each exchange ended. Registering the same instance twice
+     * calls it twice. The REST client does not use the interceptors of this builder.
+     *
+     * @param interceptor the interceptor to add
+     * @return this builder
+     */
+    public synchronized VertiqueHttpClientBuilder register(HttpClientInterceptor interceptor) {
+        interceptors.add(Objects.requireNonNull(interceptor, "interceptor"));
+        return this;
+    }
+
+    /**
      * Builds a client from the current settings.
      *
      * @return a new client with its own HTTP agent
@@ -305,7 +322,8 @@ public final class VertiqueHttpClientBuilder {
         }
         HttpClientAgent agent = agentBuilder.build();
         try {
-            VertiqueHttpClient client = new DefaultVertiqueHttpClient(vertx, name, agent, effective, settings);
+            VertiqueHttpClient client =
+                    new DefaultVertiqueHttpClient(vertx, name, agent, effective, settings, List.copyOf(interceptors));
             built.add(client);
             return client;
         } catch (RuntimeException failure) {

@@ -11,6 +11,7 @@ import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.ext.web.client.WebClient;
 import jakarta.annotation.Nullable;
+import java.util.UUID;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 
@@ -28,7 +29,7 @@ final class CallExecution<T> implements CancellationSignal.Registration {
     static final String TIMED_OUT = "The HTTP attempt timed out";
 
     private final Context context;
-    private final AttemptScope scope = new AttemptScope();
+    private final AttemptScope scope;
     private final Promise<T> promise = Promise.promise();
     private final @Nullable CancellationSignal signal;
     private final Vertx vertx;
@@ -36,7 +37,13 @@ final class CallExecution<T> implements CancellationSignal.Registration {
     private boolean settled;
     private long timerId = -1;
 
-    CallExecution(Vertx vertx, Context context, @Nullable CancellationSignal signal, long timeoutMs) {
+    CallExecution(
+            Vertx vertx,
+            Context context,
+            @Nullable CancellationSignal signal,
+            long timeoutMs,
+            HttpClientInterceptors interceptors) {
+        this.scope = new AttemptScope(interceptors, UUID.randomUUID().toString());
         this.vertx = vertx;
         this.context = context;
         this.signal = signal;
@@ -97,8 +104,8 @@ final class CallExecution<T> implements CancellationSignal.Registration {
     }
 
     /**
-     * Ends the call with {@code outcome}: stops the timer, leaves the signal, resets the open
-     * exchanges and only then completes the caller's future. Later endings do nothing.
+     * Ends the call with {@code outcome}: stops the timer, leaves the signal, tells the interceptors how
+     * the call's exchanges ended, resets the open exchanges and only then completes the caller's future. Later endings do nothing.
      */
     private void settle(AsyncResult<T> outcome) {
         if (settled) {
@@ -111,7 +118,7 @@ final class CallExecution<T> implements CancellationSignal.Registration {
         if (signal != null) {
             signal.deregister(this);
         }
-        scope.end();
+        scope.end(outcome.failed() ? outcome.cause() : null);
         promise.handle(outcome);
     }
 }

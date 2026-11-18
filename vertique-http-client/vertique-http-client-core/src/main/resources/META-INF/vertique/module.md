@@ -103,6 +103,37 @@ with a control character or leading or trailing whitespace fail the exchange wit
 and send nothing. Values never appear in a message, log or `toString`; `causeType()` names only the class
 of a source failure.
 
+**Interceptors.** `register(HttpClientInterceptor)` adds an interceptor to the clients a builder builds; they run in
+`OrderedExtension` order whatever the registration order. `beforeRequest` runs once per exchange, before
+credentials, as a fold: each interceptor receives the context the previous one returned, and a failed
+future, a `null` future, a `null` result or a throw fails the exchange without sending. The client copies the final
+headers and URI into the request, checks the headers again for CR, LF and NUL, and judges a changed URI by the egress
+policy. `clientName`, `callId` and `method` of a returned context are ignored. `onAttemptCompleted(request,
+response, completion)` runs exactly once per exchange on every terminal path once the exchange reached the client:
+a completed response, a refused status, a bound exceeded, a timeout, a reset, a connection failure, a refused
+redirect hop, a cancellation, and the refusals before sending (egress denial, credential failure, invalid header,
+refused request body, failed `beforeRequest`). `request` is an immutable snapshot of the method, URI and headers
+taken after `beforeRequest` and before credentials, so no credential is ever visible to an interceptor;
+`response` is a framework-built head without `Set-Cookie`, or `null` when none arrived; `completion` carries the
+status, the failure as the caller sees it, the call id, the attempt ordinal, the duration and the final target
+(scheme, host and port only). A throw of any interceptor, including `LinkageError`, `AssertionError` and
+`StackOverflowError`, is logged and swallowed and never changes the outcome or skips the next interceptor; a
+`LinkageError` is logged at error level at most once every five minutes per interceptor class. Callbacks may run on
+any thread and concurrently for different exchanges.
+
+Stated limits of `onAttemptCompleted`: a call refused by an open circuit or a full bulkhead, a call on a closed
+client and a call cancelled before its exchange began have no exchange and no notification; an exchange whose
+`beforeRequest` ran is always completed, even when cancelled before a request exists. For a refusal before
+`beforeRequest` (an invalid caller header, a refused request body) the snapshot is the request as prepared before
+`beforeRequest`, and the header re-check after it follows the client's header validation, off only for framework
+clients built through `FrameworkClientOptions`. A header
+Vert.x itself rejects when it is set (`putHeader` with CR or LF in a value) throws inside the attempt before any
+request exists, so it is not notified either. For a call run through `execute`, a response that completed is
+reported when the attempt ends, so that a status expectation the attempt applied is known (`error` is then the
+`HttpStatusRejectedException`); a request sent straight through `webClient()` reports its response when it completes
+and cannot see an expectation the caller applies afterwards. An attempt whose future never completes leaves its
+completed exchanges unreported until the call ends.
+
 **Warning: `allowAll()` with redirects.** With the default policy and redirects followed, a server you
 call can redirect the client to any host, including internal addresses, such as a cloud metadata
 endpoint or a service on a private network. Give a client that follows redirects, or that calls servers
@@ -136,6 +167,7 @@ runtime the caller owns.
 | `egress(EgressPolicy)` | Targets the client may contact, checked before connecting and on every redirect hop; default `EgressPolicy.allowAll()` |
 | `credentials(CredentialSource)` | Per-exchange credential headers, resolved for hops to the original origin only; see Credentials |
 | `credentialOrigins(List<String>)` | Extra `scheme://host[:port]` origins credentials may go to, besides the base URL's origin |
+| `register(HttpClientInterceptor)` | Adds an interceptor that prepares requests before credentials and is told how each exchange ended; see Interceptors |
 | `allowCredentialsOverPlainHttp(boolean)` | Lets a credential source be used over plain HTTP to a non-loopback host; default `false` |
 | `webClientOptions(WebClientOptions)` | Copied; replaces the base options, which do not follow redirects |
 | `poolOptions(PoolOptions)` | Copied; sizes the shared connection pool |
@@ -250,6 +282,20 @@ at 24 hours. `bodyExcerpt()` is filled only when the checked response has a buff
 ---
 
 ## Extension Points
+
+**`HttpClientInterceptor`** (package `dev.vertique.http.client.interceptor`) is the one extension point of the
+client, ordered by `OrderedExtension` (`priority()` keeps its default). It is registered per builder with
+`register(...)`; this client does not read a global set and the REST client does not use it.
+
+| Callback | When | Contract |
+|---|---|---|
+| `beforeRequest(HttpClientRequestContext)` | Once per exchange, before credentials, in order | Returns the context to send as a future; a failure fails the exchange without sending |
+| `onAttemptCompleted(request, response, completion)` | Exactly once per exchange on every terminal path that reached the client | Never changes the outcome; exceptions, `LinkageError`, `AssertionError` and `StackOverflowError` are logged and swallowed |
+
+The records are immutable framework facts: `HttpClientRequestContext` (method, URI, headers, client name, call id,
+attributes; `with...` copies), `HttpClientResponseHead` (status, message, headers without `Set-Cookie`),
+`HttpClientAttemptCompletion` (status, error, call id, attempt ordinal, duration, completion time, target) and
+`HttpClientAttemptTarget` (scheme, host, port). Their `toString` prints no header value, path, query or body.
 
 Every public type in `dev.vertique.http.client.internal` (`FrameworkClientOptions`,
 `BoundedBodyCodec`, `RetryAfter`, `EgressInterceptor`, `RedirectRules`) is INTERNAL: it exists for this module and other framework modules,

@@ -5,12 +5,14 @@ package dev.vertique.http.client;
 
 import dev.vertique.http.client.exception.HttpBodyLimitException;
 import dev.vertique.http.client.exception.HttpBodyLimitException.Direction;
+import dev.vertique.http.client.interceptor.HttpClientResponseHead;
 import io.vertx.core.Context;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpClientRequest;
 import io.vertx.core.http.HttpClientResponse;
 import io.vertx.core.http.HttpMethod;
+import io.vertx.core.http.RequestOptions;
 import io.vertx.core.internal.FutureInternal;
 import io.vertx.ext.web.client.impl.HttpContext;
 import java.util.concurrent.TimeoutException;
@@ -58,8 +60,14 @@ final class ExchangeTracker implements Handler<HttpContext<?>> {
         }
     }
 
+    /** Returns the exchange a context belongs to, or {@code null} when it is not tracked. */
+    static AttemptScope.Exchange exchangeOf(HttpContext<?> ctx) {
+        return ctx.get(EXCHANGE);
+    }
+
     @Override
     public void handle(HttpContext<?> ctx) {
+        HttpClientInterceptors interceptors = scope.interceptors();
         switch (ctx.phase()) {
             case PREPARE_REQUEST -> {
                 if (ctx.get(EXCHANGE) == null) {
@@ -69,9 +77,20 @@ final class ExchangeTracker implements Handler<HttpContext<?>> {
                         return;
                     }
                     ctx.set(EXCHANGE, exchange);
+                    if (!interceptors.isEmpty()) {
+                        exchange.snapshot(interceptors.describe(ctx.request(), exchange.callId()));
+                        exchange.target(interceptors.targetOf(ctx.request()));
+                    }
                     if (timeoutMs > 0) {
                         startTimer(ctx, exchange);
                     }
+                }
+            }
+            case CREATE_REQUEST -> {
+                AttemptScope.Exchange exchange = ctx.get(EXCHANGE);
+                RequestOptions options = ctx.requestOptions();
+                if (exchange != null && options != null && !interceptors.isEmpty()) {
+                    exchange.target(interceptors.target(options.isSsl(), options.getHost(), options.getPort()));
                 }
             }
             case SEND_REQUEST -> {
@@ -87,6 +106,9 @@ final class ExchangeTracker implements Handler<HttpContext<?>> {
                     refuse(ctx, exchange, ctx.clientResponse().request());
                     return;
                 }
+                if (exchange != null && !interceptors.isEmpty()) {
+                    exchange.head(headOf(ctx.clientResponse()));
+                }
                 if (exchange != null && declaresTooMuch(ctx.clientResponse())) {
                     Throwable cause = new HttpBodyLimitException(Direction.RESPONSE, maxResponseBytes);
                     ctx.clientResponse().request().reset(0, cause);
@@ -94,10 +116,16 @@ final class ExchangeTracker implements Handler<HttpContext<?>> {
                     return;
                 }
             }
-            case DISPATCH_RESPONSE, FAILURE -> {
+            case DISPATCH_RESPONSE -> {
                 AttemptScope.Exchange exchange = ctx.get(EXCHANGE);
                 if (exchange != null) {
-                    exchange.finish();
+                    exchange.respond();
+                }
+            }
+            case FAILURE -> {
+                AttemptScope.Exchange exchange = ctx.get(EXCHANGE);
+                if (exchange != null) {
+                    exchange.fail(ctx.failure());
                 }
             }
             default -> {
@@ -105,6 +133,15 @@ final class ExchangeTracker implements Handler<HttpContext<?>> {
             }
         }
         ctx.next();
+    }
+
+    /** The head of a response as the interceptors see it, or {@code null} for a status they cannot be shown. */
+    private static HttpClientResponseHead headOf(HttpClientResponse response) {
+        int status = response.statusCode();
+        if (status < 100 || status > 599) {
+            return null;
+        }
+        return new HttpClientResponseHead(status, response.statusMessage(), response.headers());
     }
 
     /** Whether the response head declares a body longer than the bound; a bodiless answer never does. */
