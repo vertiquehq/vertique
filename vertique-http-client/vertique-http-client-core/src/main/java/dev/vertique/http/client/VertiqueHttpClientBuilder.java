@@ -49,7 +49,7 @@ import org.slf4j.LoggerFactory;
 public final class VertiqueHttpClientBuilder {
 
     private static final Logger LOG = LoggerFactory.getLogger(VertiqueHttpClientBuilder.class);
-    private static final Pattern NAME = Pattern.compile("[A-Za-z0-9._~-]{1,128}");
+    private static final Pattern NAME_PATTERN = Pattern.compile("[A-Za-z0-9._~-]{1,128}");
     private static final String DEFAULT_NAME = "default";
     private static final long DEFAULT_READ_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(30);
 
@@ -372,7 +372,7 @@ public final class VertiqueHttpClientBuilder {
         if (closeFuture.get() != null) {
             throw new IllegalStateException("The HTTP client builder is closed");
         }
-        if (!NAME.matcher(name).matches()) {
+        if (!NAME_PATTERN.matcher(name).matches()) {
             throw new HttpClientConfigurationException("The client name must match [A-Za-z0-9._~-]{1,128}");
         }
         HttpClientConfig external = config;

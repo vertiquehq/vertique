@@ -261,8 +261,9 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
 
     private static long usableHintMs(RetryDelayHint hint) {
         try {
-            Optional<Duration> value = hint.retryAfter();
-            if (value == null || value.isEmpty() || value.orElseThrow().isNegative()) {
+            // A hint implementation that returns null is treated as having no hint
+            Optional<Duration> value = Optional.ofNullable(hint.retryAfter()).orElse(Optional.empty());
+            if (value.isEmpty() || value.orElseThrow().isNegative()) {
                 return -1L;
             }
             Duration duration = value.orElseThrow();

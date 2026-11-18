@@ -3,6 +3,7 @@
 
 package dev.vertique.resilience;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
@@ -53,7 +54,8 @@ public final class ResilienceCancellation {
         if (!this.reason.compareAndSet(null, reason)) {
             return;
         }
-        for (Consumer<Throwable> listener : listeners) {
+        // Each listener runs once: only the call that removes it runs it, never an unregistered one
+        for (Consumer<Throwable> listener : List.copyOf(listeners)) {
             if (listeners.remove(listener)) {
                 listener.accept(reason);
             }

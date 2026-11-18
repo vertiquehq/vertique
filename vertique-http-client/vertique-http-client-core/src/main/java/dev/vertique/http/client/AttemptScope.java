@@ -27,6 +27,7 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 /**
@@ -43,7 +44,7 @@ import java.util.function.Consumer;
 final class AttemptScope {
 
     /** Failure message of a request sent after the scope ended. */
-    static final String ENDED = "The web client is no longer valid because its attempt has ended";
+    static final String ENDED_MESSAGE = "The web client is no longer valid because its attempt has ended";
 
     private final Set<Exchange> open = new LinkedHashSet<>();
     private final List<Exchange> awaiting = new ArrayList<>();
@@ -142,7 +143,7 @@ final class AttemptScope {
 
     /** The failure a request made after the scope ended fails with. */
     synchronized Throwable endedFailure() {
-        return closedByClient ? new HttpClientClosedException() : new IllegalStateException(ENDED);
+        return closedByClient ? new HttpClientClosedException() : new IllegalStateException(ENDED_MESSAGE);
     }
 
     /**
@@ -259,7 +260,7 @@ final class AttemptScope {
         for (Exchange exchange : toNotify) {
             exchange.complete(exchange.refusedBy(callFailure));
         }
-        Throwable cause = new IllegalStateException(ENDED);
+        Throwable cause = new IllegalStateException(ENDED_MESSAGE);
         Throwable resetCause =
                 isTimeout(callFailure) || callFailure instanceof HttpClientClosedException ? callFailure : cause;
         Throwable timeout = timeoutCause();
@@ -290,8 +291,8 @@ final class AttemptScope {
         private volatile Instant endedAt;
         private volatile HttpClientRequest request;
         private volatile HttpClientResponse response;
-        private volatile int hops;
-        private volatile int created;
+        private final AtomicInteger hops = new AtomicInteger();
+        private final AtomicInteger created = new AtomicInteger();
         private volatile int status;
         private volatile boolean nonIdempotent;
         private volatile boolean unanswered;
@@ -326,10 +327,10 @@ final class AttemptScope {
         /** Records that Vert.x creates a request for a hop: the first hop, or a followed redirect. */
         void hopCreated() {
             // a followed redirect means the previous hop was answered with a redirect status
-            if (created > 0 && nonIdempotent) {
+            if (created.get() > 0 && nonIdempotent) {
                 scope.settledAfterWriting();
             }
-            created = created + 1;
+            created.incrementAndGet();
         }
 
         /** Counts the exchange as a written non-idempotent request still waiting for its answer, or not. */
@@ -359,7 +360,7 @@ final class AttemptScope {
         boolean attach(HttpClientRequest sent) {
             request = sent;
             writtenUnanswered(true);
-            hops = hops + 1;
+            hops.incrementAndGet();
             scope.requestCreated();
             head = null; // a followed redirect starts a new hop
             status = 0;
@@ -427,18 +428,18 @@ final class AttemptScope {
         void fail(@Nullable Throwable failure) {
             ActiveStream owner = stream;
             if (owner != null) {
-                owner.failed(failure != null ? failure : new IllegalStateException(ENDED));
+                owner.failed(failure != null ? failure : new IllegalStateException(ENDED_MESSAGE));
                 return;
             }
-            if (failure != null && created <= 1 && hops <= 1 && response == null) {
-                scope.refusedBeforeSend(failure, hops == 0);
+            if (failure != null && created.get() <= 1 && hops.get() <= 1 && response == null) {
+                scope.refusedBeforeSend(failure, hops.get() == 0);
             }
-            if (nonIdempotent && hops > 0 && status != 429 && status != 503) {
+            if (nonIdempotent && hops.get() > 0 && status != 429 && status != 503) {
                 scope.settledAfterWriting();
             }
             writtenUnanswered(false);
             finish();
-            complete(failure != null ? failure : new IllegalStateException(ENDED));
+            complete(failure != null ? failure : new IllegalStateException(ENDED_MESSAGE));
         }
 
         private void markEnded() {
@@ -476,7 +477,7 @@ final class AttemptScope {
             markEnded();
             HttpClientResponseHead received = head;
             Integer status = received == null ? null : received.statusCode();
-            Throwable reported = error == null && received == null ? new IllegalStateException(ENDED) : error;
+            Throwable reported = error == null && received == null ? new IllegalStateException(ENDED_MESSAGE) : error;
             long durationMs = Math.max(0, TimeUnit.NANOSECONDS.toMillis(endNanos - startNanos));
             interceptors.completed(
                     request,

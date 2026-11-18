@@ -82,7 +82,7 @@ public record HttpClientConfig(
         @Nullable Long streamIdleTimeoutMs) {
 
     private static final String SECTION = "httpClient";
-    private static final Pattern NAME = Pattern.compile("[A-Za-z0-9._~-]{1,128}");
+    private static final Pattern NAME_PATTERN = Pattern.compile("[A-Za-z0-9._~-]{1,128}");
     private static final Pattern TOKEN = Pattern.compile("[!#$%&'*+.^_`|~0-9A-Za-z-]+");
     private static final Pattern INTEGER = Pattern.compile("-?\\d{1,18}");
 
@@ -138,7 +138,7 @@ public record HttpClientConfig(
      *     bounds or not acceptable; the message names the key path and never shows a value
      */
     public HttpClientConfig {
-        if (name == null || !NAME.matcher(name).matches()) {
+        if (name == null || !NAME_PATTERN.matcher(name).matches()) {
             throw new HttpClientConfigurationException("httpClient.<name> must match [A-Za-z0-9._~-]{1,128}");
         }
         String path = SECTION + "." + name + ".";
@@ -197,7 +197,7 @@ public record HttpClientConfig(
         JsonObject section = JsonConfigPaths.navigateObject(rootConfig, SECTION);
         Map<String, HttpClientConfig> index = new LinkedHashMap<>();
         for (String name : section.fieldNames()) {
-            if (!NAME.matcher(name).matches()) {
+            if (!NAME_PATTERN.matcher(name).matches()) {
                 throw new HttpClientConfigurationException("httpClient.<name> must match [A-Za-z0-9._~-]{1,128}");
             }
             if (!(section.getValue(name) instanceof JsonObject entry)) {

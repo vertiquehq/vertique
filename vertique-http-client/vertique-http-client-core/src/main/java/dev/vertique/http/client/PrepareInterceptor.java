@@ -125,7 +125,7 @@ final class PrepareInterceptor implements Handler<HttpContext<?>> {
             return;
         }
         if (exchange.isAbandoned()) {
-            ctx.fail(new IllegalStateException(AttemptScope.ENDED));
+            ctx.fail(new IllegalStateException(AttemptScope.ENDED_MESSAGE));
             return;
         }
         if (result.failed()) {
