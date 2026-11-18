@@ -18,6 +18,8 @@ import io.vertx.core.http.HttpServerOptions;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.net.SelfSignedCertificate;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -70,9 +72,44 @@ final class HttpClientItSupport {
                         .setMaxEventLoopExecuteTime(200)
                         .setMaxEventLoopExecuteTimeUnit(TimeUnit.MILLISECONDS)),
                 logger);
+        support.warmUp();
         support.blockedThreadEvents.start();
         logger.addAppender(support.blockedThreadEvents);
         return support;
+    }
+
+    /**
+     * Runs one plain and one TLS exchange with a body before the guard is armed, so first-use class
+     * loading, TLS trust-store loading and the pooled buffer allocator's first chunk happen here and
+     * not on an event loop inside a test.
+     */
+    private void warmUp() {
+        try {
+            Class.forName("dev.vertique.http.client.exception.HttpBodyLimitException");
+        } catch (ClassNotFoundException e) {
+            throw new AssertionError(e);
+        }
+        WebClientOptions trustAll =
+                new WebClientOptions().setSsl(true).setTrustAll(true).setVerifyHost(false);
+        for (boolean tls : new boolean[] {false, true}) {
+            SelfSignedCertificate certificate = tls ? SelfSignedCertificate.create() : null;
+            HttpServerOptions serverOptions = tls
+                    ? new HttpServerOptions().setSsl(true).setKeyCertOptions(certificate.keyCertOptions())
+                    : new HttpServerOptions();
+            HttpServer warm = vertx.createHttpServer(serverOptions)
+                    .requestHandler(r -> r.body().onSuccess(b -> r.response().end("ok")));
+            await(warm.listen(0, "127.0.0.1"));
+            WebClient client = WebClient.create(vertx, tls ? trustAll : new WebClientOptions());
+            try {
+                await(client.post(warm.actualPort(), "127.0.0.1", "/warm").sendBuffer(Buffer.buffer("warm-up")));
+            } finally {
+                client.close();
+                await(warm.close());
+                if (certificate != null) {
+                    certificate.delete();
+                }
+            }
+        }
     }
 
     /** Registers a close action; closers run in reverse registration order. */

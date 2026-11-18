@@ -85,7 +85,7 @@ final class DefaultVertiqueHttpClient implements VertiqueHttpClient {
             return Future.failedFuture(new IllegalArgumentException("The call options and the attempt are required"));
         }
         if (closeFuture.get() != null) {
-            return Future.failedFuture(new IllegalStateException("The HTTP client is closed"));
+            return Future.failedFuture(new HttpClientClosedException());
         }
         Context caller = Vertx.currentContext();
         Context context = caller != null ? caller : vertx.getOrCreateContext();

@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.http.client`
 > **Artifact:** `vertique-http-client-core`
-> **Depends on:** `vertique-core`, `vertique-resilience`, Vert.x Web Client
+> **Depends on:** `vertique-core`, `vertique-resilience`, Vert.x Web Client, Dagger
 
 `vertique-http-client-core` is a governed Vert.x `WebClient`. Applications build and send requests
 with the Vert.x `WebClient`, `HttpRequest` and `HttpResponse` API; the module adds a builder, a base
@@ -174,6 +174,7 @@ runtime the caller owns.
 | `credentialOrigins(List<String>)` | Extra `scheme://host[:port]` origins credentials may go to, besides the base URL's origin |
 | `register(HttpClientInterceptor)` | Adds an interceptor that prepares requests before credentials and is told how each exchange ended; see Interceptors |
 | `allowCredentialsOverPlainHttp(boolean)` | Lets a credential source be used over plain HTTP to a non-loopback host; default `false` |
+| `config(HttpClientConfig)` | External `httpClient.{name}` configuration: every key it sets wins over the matching setter above, applied at `build()`; `null` removes it |
 | `webClientOptions(WebClientOptions)` | Copied; replaces the base options, which do not follow redirects |
 | `poolOptions(PoolOptions)` | Copied; sizes the shared connection pool |
 | `defaultHeader(String, String)` | Header added to every request that does not set it |
@@ -203,6 +204,8 @@ Future<String> scoped = client.execute(web ->
 `name()` returns the client name, `webClient()` the governed `WebClient` for direct use, `execute`
 runs an attempt function (with `CallOptions.defaults()` or the given options), and `close()` fails the calls
 still running with `HttpClientClosedException`, closes the policy pipelines and the agent, and resets requests still open. Closing again returns the same future.
+A call started after `close()` fails with `HttpClientClosedException` without opening a connection and without
+notifying interceptors.
 
 ### CallOptions
 
@@ -322,7 +325,8 @@ at 24 hours. `bodyExcerpt()` is filled only when the checked response has a buff
 
 **`HttpClientInterceptor`** (package `dev.vertique.http.client.interceptor`) is the one extension point of the
 client, ordered by `OrderedExtension` (`priority()` keeps its default). It is registered per builder with
-`register(...)`; this client does not read a global set and the REST client does not use it.
+`register(...)`, or for every client of an application by contributing it to the `Set<HttpClientInterceptor>`
+multibinding (see Wiring); the REST client does not use it.
 
 | Callback | When | Contract |
 |---|---|---|
@@ -340,9 +344,78 @@ is outside the compatibility promise of this artifact, and application code must
 
 ---
 
+## Configuration
+
+Named clients are configured under `httpClient.{name}.*`; `{name}` matches `[A-Za-z0-9._~-]{1,128}`. The
+section is read at startup through the framework configuration parser. A key that is not set keeps the builder's
+value, and below it the default: external configuration wins over builder setters over defaults. An unknown key,
+a value of the wrong type or outside its bounds, a raw Vert.x duration name and a rejected default header fail
+startup with an `HttpClientConfigurationException` whose constant message names the key path
+`httpClient.<name>.<key>` and never shows the value.
+
+| Key | Type | Default | Rule |
+|---|---|---|---|
+| `baseUrl` | string | none | As `baseUrl(...)`; checked when the client is built |
+| `readTimeoutMs` | long | 30000 | Attempt timeout in milliseconds, above 0 |
+| `pool.http1MaxSize`, `pool.http2MaxSize`, `pool.maxWaitQueueSize`, `pool.eventLoopSize`, `pool.cleanerPeriodMs`, `pool.maxLifetimeSeconds` | int | Vert.x defaults | The first two at least 1, the last two not negative |
+| `webClient` | object | `{}` | Vert.x `WebClientOptions` pass-through, see below |
+| `resiliencePolicy` | string | none | A `resilience.policies.<tier>` name; an undefined tier fails startup |
+| `defaultHeaders` | object of string | `{}` | Rejects CR, LF, NUL, a `vertique-` prefix (case-insensitive) and the names `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Upgrade` and `TE`; rendered as `***` in logs |
+| `egress.allowHosts` | string list | absent: every host | Exact host, `*.suffix` or `*`; an empty list is rejected |
+| `egress.allowPlainHttp` | boolean | `false` | Read only together with `egress.allowHosts` |
+| `allowCredentialsOverPlainHttp` | boolean | `false` | As `allowCredentialsOverPlainHttp(...)` |
+| `credentialOrigins` | string list | the base URL's origin | `scheme://host[:port]` entries; an empty list is rejected |
+| `maxRequestBytes` | long | 0 (no bound) | At least 0 |
+| `maxResponseBytes` | long | 10485760 | At least 0, 0 for no bound |
+| `maxEventBytes` | int | 1048576 | Above 0; applies to `stream(...)` calls (wired with the streaming support) |
+| `streamIdleTimeoutMs` | long | 60000 | At least 0, 0 disables; applies to `stream(...)` calls (wired with the streaming support) |
+
+**The `webClient` bag** is merged over the builder's base options (the options of `webClientOptions(...)`, or the
+default options that follow no redirects), so a bag without `followRedirects` keeps the base value. It takes the
+`WebClientOptions` keys with seven explicit-unit duration keys: `connectTimeoutMs`, `idleTimeoutSeconds`,
+`readIdleTimeoutSeconds`, `writeIdleTimeoutSeconds`, `keepAliveTimeoutSeconds`, `http2KeepAliveTimeoutSeconds` and
+`sslHandshakeTimeoutSeconds`; the raw Vert.x names (`connectTimeout`, ...) are rejected. The bag is checked for
+weakened TLS under any key or nesting: trusting all certificates, skipping host verification, a blank hostname
+verification algorithm and a TLS protocol below 1.2 fail startup naming `httpClient.<name>.webClient`. The bag can
+carry key material and proxy credentials, so it renders as `***` in logs.
+
+**A misspelt `webClient` key is ignored.** Vert.x skips keys it does not know, so a misspelt option (for example
+`connectTimeoutMz`) does not fail startup and does not take effect. Check spelling against the Vert.x
+`WebClientOptions` documentation. Misspelt keys outside the bag fail startup as unknown keys.
+
+A Java builder that is given insecure `WebClientOptions` still builds; it logs one constant `WARN` per `build()`.
+
+## Wiring
+
+Include `HttpClientModule` in the application component, next to the configuration parser module and a module
+that provides `Vertx` and the `@VertxConfig JsonObject`. It includes the resilience module and provides:
+
+- `HttpClientFactory`, a singleton: `client(name)` returns one governed client per name, configured from
+  `httpClient.{name}` (a name without a section has every default); `builder(name)` returns a builder seeded
+  from that section.
+- `Set<HttpClientInterceptor>`, empty by default: contribute global interceptors with
+  `@Provides @IntoSet HttpClientInterceptor`. They are seeded into every client and builder of the factory
+  and run in `OrderedExtension` order with the ones a builder registers.
+- the parsed `httpClient` index, and a startup validator that fails startup with
+  `httpClient.<name>.resiliencePolicy` when a client names a `resilience.policies` tier that is not defined.
+- the shutdown step that closes the factory's clients.
+
+When the graph provides the `resilience.policies` registry (`ResiliencePoliciesModule`), the factory hands it to
+every client; without it no tier is defined.
+
+## Lifecycle
+
+`close()` on a client fails running calls with `HttpClientClosedException`, closes the policy pipelines and the
+agent, and returns the same future when repeated. Clients built by the factory, and by builders it hands out,
+close when the application stops, in the `INFRA` shutdown phase; calling `client(name)` or `builder(name)`
+afterwards fails with `HttpClientClosedException`.
+
+---
+
 ## Dependencies
 
 - `vertique-core` supplies the exception roots.
 - `vertique-resilience` supplies the `Resilience` runtime accepted by the builder.
-- Vert.x Web Client supplies `WebClient`, `HttpRequest`, `HttpResponse` and the HTTP agent. The
+- Vert.x Web Client supplies `WebClient`, `HttpRequest`, `HttpResponse` and the HTTP agent.
+- Dagger and `jakarta.inject` wire `HttpClientModule`; both already come with `vertique-resilience`. The
   module adds no other third-party artifact.
