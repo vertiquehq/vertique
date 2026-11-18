@@ -31,6 +31,7 @@ final class StreamAttempt {
     private final AttemptScope scope;
     private final Expectation<HttpResponseHead> expectation;
     private final long idleTimeoutMs;
+    private final int maxEventBytes;
     private final StreamCodec codec;
     private final Consumer<ActiveStream> onOpened;
     private final Consumer<ActiveStream> onTerminal;
@@ -43,6 +44,7 @@ final class StreamAttempt {
      * @param scope the scope of the attempt
      * @param expectation decides whether a head is accepted
      * @param idleTimeoutMs the stream idle timeout, {@code 0} for none
+     * @param maxEventBytes the most raw bytes of one server-sent event, above 0
      * @param codec the body codec of the attempt's request
      * @param onOpened runs for each stream an accepted head creates, before it is delivered
      * @param onTerminal runs once for each such stream when it has ended
@@ -52,6 +54,7 @@ final class StreamAttempt {
             AttemptScope scope,
             Expectation<HttpResponseHead> expectation,
             long idleTimeoutMs,
+            int maxEventBytes,
             StreamCodec codec,
             Consumer<ActiveStream> onOpened,
             Consumer<ActiveStream> onTerminal) {
@@ -59,6 +62,7 @@ final class StreamAttempt {
         this.scope = scope;
         this.expectation = expectation;
         this.idleTimeoutMs = idleTimeoutMs;
+        this.maxEventBytes = maxEventBytes;
         this.codec = codec;
         this.onOpened = onOpened;
         this.onTerminal = onTerminal;
@@ -97,7 +101,8 @@ final class StreamAttempt {
             }
             return;
         }
-        ActiveStream stream = new ActiveStream(vertx, context, response, exchange, idleTimeoutMs, onTerminal);
+        ActiveStream stream =
+                new ActiveStream(vertx, context, response, exchange, idleTimeoutMs, maxEventBytes, onTerminal);
         codec.bind(stream.sink());
         exchange.adopt(stream);
         onOpened.accept(stream);

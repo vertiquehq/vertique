@@ -172,6 +172,7 @@ runtime the caller owns.
 | `streamIdleTimeout(long, TimeUnit)` | Longest time a stream may go without a received body byte, not negative; default 60 seconds, `0` disables |
 | `maxRequestBytes(long)` | Most request body bytes sent, not negative; default `0` for no bound |
 | `maxResponseBytes(long)` | Most response body bytes read, not negative; default 10485760, `0` for no bound |
+| `maxEventBytes(int)` | Most raw bytes of one server-sent event, above 0; default 1048576 |
 | `egress(EgressPolicy)` | Targets the client may contact, checked before connecting and on every redirect hop; default `EgressPolicy.allowAll()` |
 | `credentials(CredentialSource)` | Per-exchange credential headers, resolved for hops to the original origin only; see Credentials |
 | `credentialOrigins(List<String>)` | Extra `scheme://host[:port]` origins credentials may go to, besides the base URL's origin |
@@ -230,13 +231,30 @@ carrying at most 2048 bytes of the first body chunk and resets the exchange; a 4
 rejection, honoring `Retry-After` when the policy sets `retryAfterMaxMs`.
 
 `HttpStream` carries the immutable `head()` (status, message, version, headers), the `body()` `ReadStream`, the
-terminal `completion()` and `cancel()`. The body stays paused until a handler is set; pausing it stops reading
+server-sent `events()` and `lastEventId()` (see below), the terminal `completion()` and `cancel()`. The body stays paused until a handler is set; pausing it stops reading
 from the connection once a small queue is full, so back-pressure reaches the sender. `completion()` succeeds
 when the consumer has received the whole body and otherwise fails with the native throwable of the failed
 exchange, a `java.util.concurrent.TimeoutException` after `streamIdleTimeout` without a body byte (also while
 the consumer has paused; the exchange is reset), `HttpExchangeCancelledException` after `cancel()` and
 `HttpClientClosedException` when the client closes. `cancel()` is idempotent and callable from any thread.
 Every ending reports the exchange to the client's interceptors exactly once, with the head as the response.
+
+#### Server-sent events
+
+`stream.events()` parses the body as `text/event-stream` into Vert.x `SseEvent` values; read the body through
+`events()` or `body()`, not both. Calling `events()` again returns the same stream.
+
+| Member | Behavior |
+|---|---|
+| `events()` | A `ReadStream<SseEvent>` paused until a handler is set. The parser follows the WHATWG grammar incrementally in any chunking: LF, CRLF and CR line endings, one leading byte order mark, the fields `data`, `event`, `id` and `retry`, other fields ignored, multi-line `data` joined with `\n`, dispatch on a blank line, an `id` containing NUL ignored, a non-numeric or `int`-overflowing `retry` ignored (`retry()` is 0 when absent), no event without `data`, event name `message` by default. Each `SseEvent.id()` is the last event ID at its dispatch and persists to later events until an `id` field changes it |
+| `lastEventId()` | The last event ID as it stood at the last event delivered to the consumer; an id of an event still waiting or never dispatched does not show, and it is empty before any delivered event carries an id. Pass it as `Last-Event-ID` when resuming |
+| Back-pressure | Pausing `events()` pauses the response: at most the events of one received chunk are held, then the stream's small queue fills and the connection stops being read |
+| Comments | Consumed silently, never surfaced; like any body byte they restart the stream idle timer |
+| Not an event stream | `events()` on a head whose media type (without parameters, compared case-insensitively) is not `text/event-stream` fails `completion()` with `SseProtocolException`, whose `contentType()` is the media type only, and resets the exchange. `stream(...)` adds no `Accept` header: set `Accept: text/event-stream` on the request to ask for one |
+| `maxEventBytes(int)` | Default 1048576, above 0 (checked at `build()`). Counts every raw byte since the last dispatched event, comments, unknown fields, blocks that dispatch nothing and the current partial line included; exactly the bound is allowed. Above it `completion()` fails with `HttpBodyLimitException` (direction `EVENT`, `limitBytes()` the bound) and the exchange is reset. The bound is per event, not per stream |
+| End | `completion()` succeeds after every event has been delivered to the handler |
+
+Vert.x's `BodyCodec.sseStream` is unbounded and mis-parses some input; use `events()` instead.
 
 A call leaves the resilience pipeline at the accepted head: it is never retried afterwards, the circuit breaker
 has recorded the head's outcome (a failure after the head does not count), the attempt timeout stops and only
@@ -410,7 +428,7 @@ startup with an `HttpClientConfigurationException` whose constant message names 
 | `credentialOrigins` | string list | the base URL's origin | `scheme://host[:port]` entries; an empty list is rejected |
 | `maxRequestBytes` | long | 0 (no bound) | At least 0 |
 | `maxResponseBytes` | long | 10485760 | At least 0, 0 for no bound |
-| `maxEventBytes` | int | 1048576 | Above 0; applies to `stream(...)` calls (wired with the streaming support) |
+| `maxEventBytes` | int | 1048576 | Above 0; the most raw bytes of one server-sent event read through `events()`; wins over `maxEventBytes(...)` |
 | `streamIdleTimeoutMs` | long | 60000 | At least 0, 0 disables; the longest a `stream(...)` body may go without a received byte; wins over `streamIdleTimeout(...)` |
 
 **The `webClient` bag** is merged over the builder's base options (the options of `webClientOptions(...)`, or the

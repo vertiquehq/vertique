@@ -4,6 +4,7 @@
 package dev.vertique.http.client;
 
 import dev.vertique.http.client.exception.HttpExchangeCancelledException;
+import dev.vertique.http.client.exception.SseProtocolException;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.MultiMap;
@@ -14,9 +15,12 @@ import io.vertx.core.http.HttpClientResponse;
 import io.vertx.core.http.HttpResponseHead;
 import io.vertx.core.http.HttpVersion;
 import io.vertx.core.streams.ReadStream;
+import io.vertx.ext.web.codec.SseEvent;
 import io.vertx.ext.web.codec.spi.BodyStream;
 import jakarta.annotation.Nullable;
 import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
@@ -37,11 +41,14 @@ final class ActiveStream implements HttpStream {
     /** Message of the failure a stream idle timeout ends the stream with. */
     static final String IDLE = "The HTTP stream timed out waiting for data";
 
+    private static final String EVENT_STREAM = "text/event-stream";
+
     private final Vertx vertx;
     private final Context context;
     private final HttpResponseHead head;
     private final AttemptScope.Exchange exchange;
     private final long idleTimeoutMs;
+    private final int maxEventBytes;
     private final Consumer<ActiveStream> onTerminal;
     private final StreamBody body;
     private final Promise<Void> completion = Promise.promise();
@@ -50,6 +57,7 @@ final class ActiveStream implements HttpStream {
     private long lastActivityNanos;
     private boolean bodyEnded;
     private boolean terminal;
+    private @Nullable SseEventStream events;
 
     /**
      * Creates the stream of an accepted head.
@@ -59,6 +67,7 @@ final class ActiveStream implements HttpStream {
      * @param response the response whose head was accepted
      * @param exchange the exchange the stream takes over
      * @param idleTimeoutMs how long the body may go without a byte, {@code 0} for no bound
+     * @param maxEventBytes the most raw bytes of one server-sent event, above 0
      * @param onTerminal runs once when the stream has ended
      */
     ActiveStream(
@@ -67,6 +76,7 @@ final class ActiveStream implements HttpStream {
             HttpClientResponse response,
             AttemptScope.Exchange exchange,
             long idleTimeoutMs,
+            int maxEventBytes,
             Consumer<ActiveStream> onTerminal) {
         this.vertx = vertx;
         this.context = context;
@@ -78,6 +88,7 @@ final class ActiveStream implements HttpStream {
                 List.copyOf(response.cookies()));
         this.exchange = exchange;
         this.idleTimeoutMs = idleTimeoutMs;
+        this.maxEventBytes = maxEventBytes;
         this.onTerminal = onTerminal;
         this.body = new StreamBody(this, context);
         this.lastActivityNanos = System.nanoTime();
@@ -91,6 +102,28 @@ final class ActiveStream implements HttpStream {
     @Override
     public ReadStream<Buffer> body() {
         return body;
+    }
+
+    @Override
+    public synchronized ReadStream<SseEvent> events() {
+        if (events == null) {
+            String contentType = head.getHeader("Content-Type");
+            boolean accepted = EVENT_STREAM.equals(mediaType(contentType));
+            events = new SseEventStream(this, body, context, maxEventBytes, accepted);
+            if (!accepted) {
+                cancel(new SseProtocolException(contentType));
+            }
+        }
+        return events;
+    }
+
+    @Override
+    public Optional<String> lastEventId() {
+        SseEventStream current;
+        synchronized (this) {
+            current = events;
+        }
+        return current == null ? Optional.empty() : current.lastEventId();
     }
 
     @Override
@@ -151,7 +184,29 @@ final class ActiveStream implements HttpStream {
 
     /** The consumer received every byte of an ended body. */
     void bodyConsumed() {
-        terminate(null);
+        SseEventStream reading;
+        synchronized (this) {
+            reading = events;
+        }
+        if (reading == null) {
+            terminate(null);
+        } else {
+            reading.upstreamDone();
+        }
+    }
+
+    /** The number of parsed events waiting for the consumer, 0 when events are not read. Call on the context. */
+    int heldEvents() {
+        SseEventStream reading;
+        synchronized (this) {
+            reading = events;
+        }
+        return reading == null ? 0 : reading.heldEvents();
+    }
+
+    /** Whether the stream has ended. */
+    boolean ended() {
+        return terminal;
     }
 
     /** The exchange failed after the head with {@code failure}. */
@@ -186,6 +241,17 @@ final class ActiveStream implements HttpStream {
                 completion.fail(fixed);
             }
         }
+    }
+
+    @Nullable
+    private static String mediaType(@Nullable String contentType) {
+        if (contentType == null) {
+            return null;
+        }
+        int semicolon = contentType.indexOf(';');
+        return (semicolon < 0 ? contentType : contentType.substring(0, semicolon))
+                .trim()
+                .toLowerCase(Locale.ROOT);
     }
 
     private void armIdleTimer(long delayMs) {

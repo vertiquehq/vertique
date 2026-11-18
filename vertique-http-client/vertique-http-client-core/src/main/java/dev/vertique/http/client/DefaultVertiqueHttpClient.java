@@ -137,6 +137,7 @@ final class DefaultVertiqueHttpClient implements VertiqueHttpClient {
                 governed.scope(),
                 options.expectation(),
                 settings.streamIdleTimeoutMs(),
+                settings.maxEventBytes(),
                 codec,
                 this::streamOpened,
                 openStreams::remove);

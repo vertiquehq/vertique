@@ -54,6 +54,7 @@ public final class VertiqueHttpClientBuilder {
     private static final long DEFAULT_READ_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(30);
 
     private static final long DEFAULT_MAX_RESPONSE_BYTES = 10_485_760L;
+    private static final int DEFAULT_MAX_EVENT_BYTES = 1_048_576;
     private static final long DEFAULT_STREAM_IDLE_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(60);
 
     static {
@@ -71,6 +72,7 @@ public final class VertiqueHttpClientBuilder {
     private long maxRequestBytes;
     private long maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES;
     private long streamIdleTimeoutMs = DEFAULT_STREAM_IDLE_TIMEOUT_MS;
+    private int maxEventBytes = DEFAULT_MAX_EVENT_BYTES;
     private WebClientOptions webClientOptions;
     private PoolOptions poolOptions;
     private final Map<String, String> defaultHeaders = new LinkedHashMap<>();
@@ -187,6 +189,20 @@ public final class VertiqueHttpClientBuilder {
      */
     public synchronized VertiqueHttpClientBuilder maxResponseBytes(long bytes) {
         this.maxResponseBytes = bytes;
+        return this;
+    }
+
+    /**
+     * Sets the most raw bytes of one server-sent event that {@link HttpStream#events()} accepts. Every byte
+     * since the last dispatched event counts, comments, ignored fields and a partial line included; above
+     * the bound the stream fails with {@code HttpBodyLimitException} (direction {@code EVENT}) and its
+     * exchange is reset. The default is 1048576 bytes.
+     *
+     * @param bytes the bound in bytes, above 0; checked when the client is built
+     * @return this builder
+     */
+    public synchronized VertiqueHttpClientBuilder maxEventBytes(int bytes) {
+        this.maxEventBytes = bytes;
         return this;
     }
 
@@ -370,6 +386,8 @@ public final class VertiqueHttpClientBuilder {
         long effectiveMaxResponseBytes = external != null && external.maxResponseBytes() != null
                 ? external.maxResponseBytes()
                 : maxResponseBytes;
+        int effectiveMaxEventBytes =
+                external != null && external.maxEventBytes() != null ? external.maxEventBytes() : maxEventBytes;
         if (effectiveReadTimeoutMs < 0) {
             throw new HttpClientConfigurationException("The read timeout must not be negative");
         }
@@ -378,6 +396,9 @@ public final class VertiqueHttpClientBuilder {
         }
         if (effectiveMaxRequestBytes < 0 || effectiveMaxResponseBytes < 0) {
             throw new HttpClientConfigurationException("A body byte bound must not be negative");
+        }
+        if (effectiveMaxEventBytes <= 0) {
+            throw new HttpClientConfigurationException("The event byte bound must be above 0");
         }
         Map<String, String> headers = validatedDefaultHeaders(external);
         String effectiveBaseUrl = external != null && external.baseUrl() != null ? external.baseUrl() : baseUrl;
@@ -409,6 +430,7 @@ public final class VertiqueHttpClientBuilder {
                 effectiveMaxRequestBytes,
                 effectiveMaxResponseBytes,
                 effectiveStreamIdleTimeoutMs,
+                effectiveMaxEventBytes,
                 effectiveEgress(external),
                 credentials,
                 effectiveAllowPlain,

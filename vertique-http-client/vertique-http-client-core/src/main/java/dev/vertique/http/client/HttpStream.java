@@ -7,6 +7,8 @@ import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpResponseHead;
 import io.vertx.core.streams.ReadStream;
+import io.vertx.ext.web.codec.SseEvent;
+import java.util.Optional;
 
 /**
  * A response whose head has been accepted and whose body is still being received, returned by
@@ -36,6 +38,35 @@ public interface HttpStream {
      * @return the body stream
      */
     ReadStream<Buffer> body();
+
+    /**
+     * Returns the server-sent events of the response body, parsed incrementally under the WHATWG event
+     * stream grammar. Read the body through {@code events()} or through {@link #body()}, not both. The
+     * events are paused until a handler is set; pausing them pauses the response once the events of one
+     * chunk are held, so back-pressure reaches the connection. Every delivered event carries the last
+     * event ID at its dispatch, and a comment line is consumed silently while still keeping the stream from
+     * idling.
+     *
+     * <p>When the head's media type is not {@code text/event-stream}, the stream is cancelled at once:
+     * {@link #completion()} fails with {@link dev.vertique.http.client.exception.SseProtocolException} and
+     * the exchange is reset. More raw bytes than {@code maxEventBytes} since the last dispatched event fail
+     * {@link #completion()} with {@link dev.vertique.http.client.exception.HttpBodyLimitException} (direction
+     * {@code EVENT}) and reset the exchange. {@link #completion()} succeeds once every event has been
+     * delivered. Calling this method again returns the same stream.
+     *
+     * @return the event stream
+     */
+    ReadStream<SseEvent> events();
+
+    /**
+     * Returns the last event ID as it stood at the last event delivered to the consumer: the id of a
+     * parsed event that is still waiting, or of an {@code id} line of an event that was never dispatched,
+     * does not show. A consumer that resumes after a failure passes it to the server as
+     * {@code Last-Event-ID}.
+     *
+     * @return the last event ID, or empty when no event stream is read or no id has been set
+     */
+    Optional<String> lastEventId();
 
     /**
      * Returns the future that reports how the stream ended. It succeeds when the whole body has been
