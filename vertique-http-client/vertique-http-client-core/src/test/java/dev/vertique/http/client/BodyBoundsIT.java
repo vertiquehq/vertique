@@ -20,9 +20,12 @@ import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.streams.ReadStream;
 import io.vertx.core.streams.WriteStream;
+import io.vertx.ext.web.client.HttpRequest;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.codec.BodyCodec;
 import io.vertx.ext.web.multipart.MultipartForm;
+import io.vertx.uritemplate.UriTemplate;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -407,6 +410,66 @@ class BodyBoundsIT {
 
         // Then it succeeds with the 1024-character string
         assertThat(fits.body()).isEqualTo("y".repeat((int) LIMIT));
+
+        // When one HttpRequest with a caller-chosen codec is sent five times in sequence
+        ChunkWriter resendWriter = new ChunkWriter();
+        RecordingServer resendServer = support.server((request, body) -> {
+            if (request.path().equals("/big")) {
+                resendWriter.write(request, 512, -1);
+            } else {
+                request.response().end("y".repeat((int) LIMIT));
+            }
+        });
+        VertiqueHttpClient resendClient = client(resendServer, -1, LIMIT);
+        HttpRequest<String> req = resendClient.webClient().get("/fits").as(BodyCodec.string());
+        BodyCodec<String> callerCodec = req.bodyCodec();
+
+        // Then every send returns the 1024-character body and the request still holds the caller's
+        // codec instance: the counting delegate is not stacked on the reused request
+        for (int i = 0; i < 5; i++) {
+            HttpResponse<String> again = await(req.send());
+            assertThat(again.body()).as("send " + i).isEqualTo("y".repeat((int) LIMIT));
+            assertThat(req.bodyCodec()).as("codec after send " + i).isSameAs(callerCodec);
+        }
+
+        // When a reused request for the endless response is sent twice
+        HttpRequest<String> bigReq = resendClient.webClient().get("/big").as(BodyCodec.string());
+        BodyCodec<String> bigCodec = bigReq.bodyCodec();
+
+        // Then both sends fail with a RESPONSE body limit of 1024 and the codec is still the caller's
+        assertBodyLimit(awaitFailure(bigReq.send()), Direction.RESPONSE, LIMIT);
+        assertThat(bigReq.bodyCodec()).isSameAs(bigCodec);
+        assertBodyLimit(awaitFailure(bigReq.send()), Direction.RESPONSE, LIMIT);
+        assertThat(bigReq.bodyCodec()).isSameAs(bigCodec);
+
+        // Given a client with the default response bound and a server that answers with the URI it saw
+        RecordingServer templateServer =
+                support.server((request, body) -> request.response().end(request.uri()));
+        VertiqueHttpClient templateClient = client(templateServer, -1, -1);
+
+        // When the caller sends a URI-template request with a variable and a caller-chosen codec
+        HttpResponse<String> item = await(templateClient
+                .webClient()
+                .get(UriTemplate.of("/items/{id}"))
+                .setTemplateParam("id", "42")
+                .as(BodyCodec.string())
+                .send());
+
+        // Then the server receives /items/42 and the call returns that body
+        assertThat(templateServer.requests.get(0).uri()).isEqualTo("/items/42");
+        assertThat(item.body()).isEqualTo("/items/42");
+
+        // When the caller sends a template with a list variable
+        HttpResponse<String> query = await(templateClient
+                .webClient()
+                .get(UriTemplate.of("/q{?tags*}"))
+                .setTemplateParam("tags", List.of("a", "b"))
+                .as(BodyCodec.string())
+                .send());
+
+        // Then the server receives /q?tags=a&tags=b
+        assertThat(templateServer.requests.get(1).uri()).isEqualTo("/q?tags=a&tags=b");
+        assertThat(query.body()).isEqualTo("/q?tags=a&tags=b");
     }
 
     // --- FR-008 ---

@@ -17,9 +17,11 @@ import io.vertx.ext.web.client.impl.HttpContext;
 import io.vertx.ext.web.codec.BodyCodec;
 import io.vertx.ext.web.multipart.FormDataPart;
 import io.vertx.ext.web.multipart.MultipartForm;
+import io.vertx.uritemplate.Variables;
 import java.net.URLEncoder;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -93,15 +95,46 @@ final class PrepareInterceptor implements Handler<HttpContext<?>> {
     }
 
     /**
-     * Replaces the request's body codec with one that counts the bytes it passes on and prepares the
-     * request again; the second pass continues the chain.
+     * Prepares a copy of the request again with a body codec that counts the bytes it passes on; the
+     * second pass continues the chain. The copy keeps the caller's request unchanged, because
+     * {@code as(codec)} changes a request in place and a resent request must not be wrapped twice.
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static void bindResponseBound(HttpContext<?> context, long limit) {
         HttpContext ctx = context;
         HttpRequest request = ctx.request();
         BodyCodec bounded = new BoundedBodyCodec(request.bodyCodec(), limit, () -> ExchangeTracker.overrun(ctx, limit));
-        ctx.prepareRequest(request.as(bounded), ctx.contentType(), ctx.body());
+        ctx.prepareRequest(copyOf(request).as(bounded), ctx.contentType(), ctx.body());
+    }
+
+    /** Copies a request with the URI-template variables and trace operation that {@code copy()} drops. */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static HttpRequest copyOf(HttpRequest request) {
+        HttpRequest copy = request.copy();
+        Variables variables;
+        try {
+            variables = request.templateParams();
+        } catch (IllegalStateException notATemplate) {
+            // a request built from a plain string URI has no template variables
+            variables = null;
+        }
+        if (variables != null) {
+            for (Object key : variables.names()) {
+                String name = (String) key;
+                Object value = variables.get(name);
+                if (value instanceof String single) {
+                    copy.setTemplateParam(name, single);
+                } else if (value instanceof List list) {
+                    copy.setTemplateParam(name, (List<String>) list);
+                } else if (value instanceof Map map) {
+                    copy.setTemplateParam(name, (Map<String, String>) map);
+                }
+            }
+        }
+        if (request.traceOperation() != null) {
+            copy.traceOperation(request.traceOperation());
+        }
+        return copy;
     }
 
     /**

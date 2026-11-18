@@ -16,6 +16,7 @@ import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.HttpServerOptions;
 import io.vertx.core.http.HttpServerRequest;
+import io.vertx.core.json.JsonObject;
 import io.vertx.core.net.SelfSignedCertificate;
 import java.util.ArrayList;
 import java.util.List;
@@ -59,6 +60,9 @@ final class HttpClientItSupport {
     /** Starts Vert.x with the blocked-thread checker tuned for the integration suite. */
     static HttpClientItSupport start() {
         Logger logger = (Logger) LoggerFactory.getLogger(BLOCKED_THREAD_LOGGER);
+        // Loads the JSON mapper outside the event loop so first-use class loading under a coverage agent
+        // and CPU load does not trip the blocked-thread guard.
+        new JsonObject().put("warm", "up").encode();
         HttpClientItSupport support = new HttpClientItSupport(
                 Vertx.vertx(new VertxOptions()
                         .setBlockedThreadCheckInterval(100)
