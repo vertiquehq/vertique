@@ -671,14 +671,11 @@ class ResourceScanner {
      * {@link #extractParams} (which classify them as FILE_UPLOADS / ENTITY_PARTS) and never reach a
      * call site that consults this method for a non-annotated parameter, so they are unaffected.
      *
-     * @param param the method parameter to inspect
+     * @param rawType     the parameter's erased type
+     * @param genericType the parameter's generic type, resolved against the resource class
      * @return the element class for a recognized multi-value shape, or {@code null} otherwise
      */
     @Nullable
-    private Class<?> resolveComponentType(Parameter param) {
-        return resolveComponentType(param.getType(), param.getParameterizedType());
-    }
-
     private Class<?> resolveComponentType(Class<?> rawType, Type genericType) {
         // Array shape: T[] — restrict to sensible scalar element types (excludes byte[]/char[]
         // and other primitive arrays, which are binary/buffer body shapes, not multi-value params).
@@ -740,36 +737,12 @@ class ResourceScanner {
     }
 
     /**
-     * Returns {@code true} if the parameter is an unannotated {@code List<FileUpload>}.
+     * Returns {@code true} if the generic type is a {@code List} with the given element type.
      *
-     * @param param the method parameter to inspect
-     * @return {@code true} if the parameter is {@code List<FileUpload>}
-     */
-    private boolean isFileUploadList(Parameter param) {
-        return isListOf(param, FileUpload.class);
-    }
-
-    /**
-     * Returns {@code true} if the parameter is an unannotated {@code List<EntityPart>}.
-     *
-     * @param param the method parameter to inspect
-     * @return {@code true} if the parameter is {@code List<EntityPart>}
-     */
-    private boolean isEntityPartList(Parameter param) {
-        return isListOf(param, EntityPart.class);
-    }
-
-    /**
-     * Returns {@code true} if the parameter is a {@code List} with the given element type.
-     *
-     * @param param       the method parameter to inspect
+     * @param genericType the parameter's generic type, resolved against the resource class
      * @param elementType the expected generic element type
-     * @return {@code true} if the parameter generic type is {@code List<elementType>}
+     * @return {@code true} if the generic type is {@code List<elementType>}
      */
-    private boolean isListOf(Parameter param, Class<?> elementType) {
-        return isListOf(param.getParameterizedType(), elementType);
-    }
-
     private boolean isListOf(Type genericType, Class<?> elementType) {
         if (genericType instanceof ParameterizedType pt && pt.getRawType() == List.class) {
             Type typeArg = pt.getActualTypeArguments()[0];

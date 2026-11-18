@@ -244,12 +244,14 @@ public final class ExecutionPlanEmitter {
      *   <li>The method's declaring class must not be {@code java.lang.Object}.</li>
      *   <li>No parameter or return type may be a non-public type whose enclosing package differs
      *       from the resource class's package.</li>
-     *   <li>Each declared parameter type must erase to the same type as the parameter's type as a
-     *       member of the resource. An inherited generic method — a {@code default remove(I id)} of
-     *       {@code Crud<I>}, or a generic superclass method — declares {@code I}, which the
-     *       reflective path binds as its erasure; a typed call {@code ((Resource) r).remove(...)}
-     *       sees {@code remove(String)} instead and would not compile, so such a method keeps
-     *       reflective dispatch at parity with the runtime.</li>
+     *   <li>A parameterized parameter type, as a member of the resource, must erase to the same
+     *       type as the declared parameter. An inherited generic method whose type variable is
+     *       bound to a parameterized type — {@code accept(T body)} of {@code Base<T>} with
+     *       {@code T = List<String>} — erases to {@code Object} as declared but to {@code List} as a
+     *       member; a raw cast could make same-erasure overloads ambiguous, so such a method keeps
+     *       reflective dispatch. A type variable bound to a non-parameterized type
+     *       ({@code remove(I id)} with {@code I = String}) is called through the resource type with
+     *       its bound type.</li>
      *   <li>An inherited interface {@code default} method must not share its name and erased
      *       parameter types with a method declared along the resource's superclass chain. Such a
      *       method can only be a superclass's private one (anything else would override the

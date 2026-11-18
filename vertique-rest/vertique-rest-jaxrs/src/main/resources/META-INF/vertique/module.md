@@ -114,11 +114,18 @@ nearest declaration (the override's own wins over a declaration it overrides); d
 `@RolesAllowed` or `@Authorized` values across declarations fail startup (a compile error with the
 processor). A method-level security annotation on an inherited declaration beats class-level
 security, as it does on the method itself: an interface `@PermitAll` makes an unannotated override
-public even under a class-level `@RolesAllowed`. What is not
-resolved is the *type* of a method no class overrides: a non-overridden generic default (or generic
-superclass method) binds a type-variable parameter as its erasure, so a path, query, header, cookie,
-or form parameter typed `ID` fails startup with `UNRESOLVABLE_PARAM_CONVERTER`, and a body or return
-type bound by a variable is `Object`. Override such a method with concrete parameter types. A
+public even under a class-level `@RolesAllowed`. The *types* of a method no class
+overrides are resolved against the concrete resource class: a non-overridden generic default (or
+generic superclass method) whose type variable the resource binds through its class or interface
+hierarchy (`class Things extends Base<String>`, including variables forwarded through intermediate
+supertypes) gets that concrete type for its parameter, body and return metadata — a path, query,
+header, cookie, or form parameter typed `ID` converts as `String`, a body `T` decodes as the bound
+type (nested arguments such as `List<Dto>` are kept for JSON decoding), and a `Future<? extends T>`
+return records the erased upper bound of the resolved `T`. A variable no class in the hierarchy
+binds (a raw supertype, or `Base` used without arguments) keeps its erasure, so a scalar parameter
+of that type still fails startup with `UNRESOLVABLE_PARAM_CONVERTER`, and a body or return type
+bound by it is `Object`; override such a method with concrete parameter types. Reflective
+invocation still uses the declaration's erased signature. A
 default route's `operationId` is the same in every class that inherits
 it, and operationIds are unique per mount, so only one resource per mount can inherit a given
 default route; give the others their own route by overriding it with a distinct
@@ -2149,9 +2156,3 @@ bind them.
 | `org.projectlombok:lombok` | `provided` scope — logging and accessors; not a runtime dependency |
 
 Vert.x, Dagger, the JAX-RS API, and Jackson arrive transitively through `vertique-rest-core`.
-
-The reflective scanner resolves inherited resource method generic parameter and response types from the concrete resource
-class, including type variables forwarded through intermediate superclasses and interfaces. Nested
-parameterized request body types retain their arguments for JSON decoding. Raw or unresolved type
-variables retain their declared fallback types. For a `Future<? extends T>` response, response metadata uses
-the erased upper bound after resolving `T` against the resource class.

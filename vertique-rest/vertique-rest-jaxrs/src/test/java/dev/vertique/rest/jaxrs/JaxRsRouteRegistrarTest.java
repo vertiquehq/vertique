@@ -221,6 +221,11 @@ class JaxRsRouteRegistrarTest {
     @Path("/generic-default")
     static class GenericDefaultResource implements GenericDefaultApi<String> {}
 
+    /** The same contract used raw: no class in the hierarchy binds {@code I}. */
+    @Path("/generic-default-unbound")
+    @SuppressWarnings("rawtypes")
+    static class UnboundGenericDefaultResource implements GenericDefaultApi {}
+
     // --- Tests ---
 
     @Test
@@ -600,6 +605,34 @@ class JaxRsRouteRegistrarTest {
                 null,
                 null,
                 false));
+    }
+
+    @Test
+    @DisplayName("A generic default whose type variable no class binds still fails startup")
+    void genericDefaultRoute_unboundTypeVariableParameterFailsStartup() {
+        RouteRegistrationException ex = assertThrows(
+                RouteRegistrationException.class,
+                () -> RegistrarTestSupport.registerAll(
+                        registrar,
+                        Set.of(new UnboundGenericDefaultResource()),
+                        router,
+                        RegistrarTestSupport.TEST_MOUNT_META,
+                        List.of(),
+                        List.of(),
+                        null,
+                        false,
+                        List.of(),
+                        List.of(),
+                        "OFF",
+                        null,
+                        null,
+                        null,
+                        false));
+
+        assertEquals(1, ex.violations().size(), ex.violations().toString());
+        assertEquals(
+                RouteRegistrationViolation.ViolationType.UNRESOLVABLE_PARAM_CONVERTER,
+                ex.violations().get(0).type());
     }
 
     // --- File upload and content type tests ---

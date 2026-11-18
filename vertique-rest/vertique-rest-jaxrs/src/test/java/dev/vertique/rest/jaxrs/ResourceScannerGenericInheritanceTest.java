@@ -101,6 +101,25 @@ class ResourceScannerGenericInheritanceTest {
         assertEquals(Payload.class, meta.responseBodyType());
     }
 
+    static class OwnVariable<T> {
+        @POST
+        public <X> X pick(X body, @QueryParam("t") String t) {
+            return body;
+        }
+    }
+
+    @Path("/own")
+    static class OwnVariableResource extends OwnVariable<String> {}
+
+    @Test
+    void methodOwnTypeVariableStaysUnbound() {
+        var meta = new ResourceScanner(new SecurityPolicyBuilder())
+                .scanResource(new OwnVariableResource())
+                .getFirst();
+        assertEquals(Object.class, meta.params().getFirst().type());
+        assertEquals(Object.class, meta.responseBodyType());
+    }
+
     @Test
     void rawSuperclassRetainsErasure() {
         var meta = new ResourceScanner(new SecurityPolicyBuilder())

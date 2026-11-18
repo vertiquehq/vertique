@@ -86,7 +86,17 @@ public final class JaxRsParamClassifier {
         return classify(param, param.asType(), types, elements);
     }
 
-    public static JaxRsParamSource classify(VariableElement param, TypeMirror type, Types types, Elements elements) {
+    /**
+     * Classifies a parameter by an explicit type, used when the type is the parameter's type as a
+     * member of the resource class rather than its declared type.
+     *
+     * @param param    the method parameter to classify
+     * @param type     the type to classify by
+     * @param types    the APT {@link Types} utility
+     * @param elements the APT {@link Elements} utility
+     * @return the {@link JaxRsParamSource} slot for this parameter; never {@code null}
+     */
+    static JaxRsParamSource classify(VariableElement param, TypeMirror type, Types types, Elements elements) {
         TypeMirror erasedParamType = types.erasure(type);
 
         // CONTEXT check FIRST: @Context annotation OR assignable to a known injectable type.
