@@ -4,7 +4,10 @@
 package dev.vertique.http.client;
 
 import io.vertx.core.Future;
+import io.vertx.core.buffer.Buffer;
+import io.vertx.ext.web.client.HttpRequest;
 import io.vertx.ext.web.client.WebClient;
+import jakarta.annotation.Nullable;
 import java.util.function.Function;
 
 /**
@@ -62,7 +65,35 @@ public interface VertiqueHttpClient {
     <T> Future<T> execute(CallOptions options, Function<WebClient, Future<T>> attempt);
 
     /**
-     * Closes the client and its HTTP agent. Requests still open are reset. Closing again returns the
+     * Sends the request {@code request} builds and returns as soon as a response head the call's
+     * expectation accepts has arrived, with the body still unread.
+     *
+     * <p>The call runs in the options' resilience pipeline and attempt timeout up to that head: a head
+     * the expectation refuses fails the attempt with the expectation's failure (an
+     * {@link dev.vertique.http.client.exception.HttpStatusRejectedException} for
+     * {@link HttpExpectations#success()}) carrying at most 2048 body bytes, resets the exchange and is
+     * retried like any rejection. From the accepted head on the call has left the pipeline: it is never
+     * retried, the circuit breaker has recorded the head's outcome, a bulkhead permit is released, the
+     * attempt timeout no longer applies and only the stream idle timeout governs the body. A bulkhead
+     * therefore bounds how many heads are being obtained, not how many streams are open. A stream that
+     * is not consumed holds its connection until it is cancelled, fails or the client closes.
+     *
+     * <p>The request must be created by the {@code WebClient} passed to {@code request}; any other
+     * request fails the call with {@link IllegalArgumentException}. The body is read through the
+     * returned stream and is not subject to {@code maxResponseBytes}. A {@code null} {@code options} or
+     * {@code request} fails the returned future with {@link IllegalArgumentException}.
+     *
+     * @param options the options of this call
+     * @param request builds the request from the attempt's web client
+     * @param body the buffered request body, or {@code null} for none
+     * @return the stream, at its accepted head
+     */
+    Future<HttpStream> stream(
+            CallOptions options, Function<WebClient, HttpRequest<Buffer>> request, @Nullable Buffer body);
+
+    /**
+     * Closes the client and its HTTP agent. Requests still open are reset and open streams fail with
+     * {@link dev.vertique.http.client.exception.HttpClientClosedException}. Closing again returns the
      * same outcome.
      *
      * @return a future that completes when the agent is closed

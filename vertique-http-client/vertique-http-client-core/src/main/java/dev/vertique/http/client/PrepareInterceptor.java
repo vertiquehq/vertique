@@ -161,7 +161,7 @@ final class PrepareInterceptor implements Handler<HttpContext<?>> {
     private void proceed(HttpContext<?> ctx) {
         ctx.set(PREPARED, Boolean.TRUE);
         long maxResponseBytes = settings.maxResponseBytes();
-        if (maxResponseBytes > 0) {
+        if (maxResponseBytes > 0 && !(ctx.request().bodyCodec() instanceof StreamCodec)) {
             bindResponseBound(ctx, maxResponseBytes);
             return;
         }

@@ -56,6 +56,7 @@ final class AttemptScope {
     private boolean closedByClient;
     private boolean requestCreated;
     private boolean ended;
+    private volatile @Nullable StreamAttempt streamAttempt;
 
     /**
      * Creates a scope.
@@ -73,6 +74,17 @@ final class AttemptScope {
 
     HttpClientInterceptors interceptors() {
         return interceptors;
+    }
+
+    /** Marks the scope as the attempt of a stream call, which takes over the exchange at its accepted head. */
+    void streamAttempt(StreamAttempt attempt) {
+        this.streamAttempt = attempt;
+    }
+
+    /** The stream attempt this scope belongs to, or {@code null} for any other scope. */
+    @Nullable
+    StreamAttempt streamAttempt() {
+        return streamAttempt;
     }
 
     /**
@@ -261,6 +273,7 @@ final class AttemptScope {
         private volatile boolean expired;
         private volatile boolean done;
         private volatile Runnable onFinish;
+        private volatile @Nullable ActiveStream stream;
 
         private Exchange(AttemptScope scope) {
             this.scope = scope;
@@ -340,6 +353,20 @@ final class AttemptScope {
             return !expired && !scope.hasEnded();
         }
 
+        /**
+         * Hands the exchange to its stream at the accepted head: the exchange no longer expires and the
+         * attempt's end neither resets nor reports it. The stream decides how it ends.
+         */
+        void adopt(ActiveStream owner) {
+            stream = owner;
+            done = true;
+            Runnable cleanup = onFinish;
+            if (cleanup != null) {
+                cleanup.run();
+            }
+            scope.finished(this);
+        }
+
         void finish() {
             markEnded();
             done = true;
@@ -352,6 +379,11 @@ final class AttemptScope {
 
         /** The response was dispatched: the exchange is over and completed with a response. */
         void respond() {
+            ActiveStream owner = stream;
+            if (owner != null) {
+                owner.bodyEnded();
+                return;
+            }
             writtenUnanswered(false);
             if (nonIdempotent && status != 429 && status != 503) {
                 scope.settledAfterWriting();
@@ -367,6 +399,11 @@ final class AttemptScope {
 
         /** The exchange failed with {@code failure}: it is over and the interceptors are told. */
         void fail(@Nullable Throwable failure) {
+            ActiveStream owner = stream;
+            if (owner != null) {
+                owner.failed(failure != null ? failure : new IllegalStateException(ENDED));
+                return;
+            }
             if (failure != null && created <= 1 && hops <= 1 && response == null) {
                 scope.refusedBeforeSend(failure, hops == 0);
             }

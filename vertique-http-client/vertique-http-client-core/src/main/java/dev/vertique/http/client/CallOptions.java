@@ -4,19 +4,22 @@
 package dev.vertique.http.client;
 
 import dev.vertique.resilience.ResiliencePipeline;
+import io.vertx.core.Expectation;
+import io.vertx.core.http.HttpResponseHead;
 import jakarta.annotation.Nullable;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Per-call options for {@link VertiqueHttpClient#execute(CallOptions, java.util.function.Function)}.
+ * Per-call options for {@link VertiqueHttpClient#execute(CallOptions, java.util.function.Function)} and
+ * {@link VertiqueHttpClient#stream}.
  *
  * <p>Instances are immutable; every method returns a new instance. {@link #defaults()} selects the
  * client's own settings.
  */
 public final class CallOptions {
 
-    private static final CallOptions DEFAULTS = new CallOptions(null, null, null, null, false);
+    private static final CallOptions DEFAULTS = new CallOptions(null, null, null, null, false, null);
 
     /** Attempt timeout in milliseconds, {@code 0} for none, {@code null} to use the client's. */
     private final @Nullable Long readTimeoutMs;
@@ -27,17 +30,21 @@ public final class CallOptions {
     private final @Nullable String tier;
     private final boolean noResilience;
 
+    private final @Nullable Expectation<HttpResponseHead> expectation;
+
     private CallOptions(
             @Nullable Long readTimeoutMs,
             @Nullable CancellationSignal cancellation,
             @Nullable ResiliencePipeline pipeline,
             @Nullable String tier,
-            boolean noResilience) {
+            boolean noResilience,
+            @Nullable Expectation<HttpResponseHead> expectation) {
         this.readTimeoutMs = readTimeoutMs;
         this.cancellation = cancellation;
         this.pipeline = pipeline;
         this.tier = tier;
         this.noResilience = noResilience;
+        this.expectation = expectation;
     }
 
     /**
@@ -63,7 +70,8 @@ public final class CallOptions {
         if (timeout <= 0) {
             throw new IllegalArgumentException("The read timeout must be above zero");
         }
-        return new CallOptions(Math.max(1L, unit.toMillis(timeout)), cancellation, pipeline, tier, noResilience);
+        return new CallOptions(
+                Math.max(1L, unit.toMillis(timeout)), cancellation, pipeline, tier, noResilience, expectation);
     }
 
     /**
@@ -73,7 +81,7 @@ public final class CallOptions {
      * @return the new options
      */
     public CallOptions noReadTimeout() {
-        return new CallOptions(0L, cancellation, pipeline, tier, noResilience);
+        return new CallOptions(0L, cancellation, pipeline, tier, noResilience, expectation);
     }
 
     /**
@@ -85,7 +93,27 @@ public final class CallOptions {
      * @return the new options
      */
     public CallOptions cancellation(CancellationSignal signal) {
-        return new CallOptions(readTimeoutMs, signal, pipeline, tier, noResilience);
+        return new CallOptions(readTimeoutMs, signal, pipeline, tier, noResilience, expectation);
+    }
+
+    /**
+     * Returns options whose expectation decides whether the response head of a
+     * {@link VertiqueHttpClient#stream stream} is accepted. A refused head fails the attempt with the
+     * expectation's failure, which {@link HttpExpectations#status} makes an
+     * {@link dev.vertique.http.client.exception.HttpStatusRejectedException}. The default is
+     * {@link HttpExpectations#success()}. Calls that are not streams ignore it.
+     *
+     * @param expectation decides whether a response head is accepted
+     * @return the new options
+     */
+    public CallOptions expecting(Expectation<HttpResponseHead> expectation) {
+        return new CallOptions(
+                readTimeoutMs,
+                cancellation,
+                pipeline,
+                tier,
+                noResilience,
+                Objects.requireNonNull(expectation, "expectation"));
     }
 
     /**
@@ -98,7 +126,8 @@ public final class CallOptions {
      * @return the new options
      */
     public CallOptions resilience(ResiliencePipeline pipeline) {
-        return new CallOptions(readTimeoutMs, cancellation, Objects.requireNonNull(pipeline, "pipeline"), null, false);
+        return new CallOptions(
+                readTimeoutMs, cancellation, Objects.requireNonNull(pipeline, "pipeline"), null, false, expectation);
     }
 
     /**
@@ -111,7 +140,8 @@ public final class CallOptions {
      * @return the new options
      */
     public CallOptions resiliencePolicy(String tier) {
-        return new CallOptions(readTimeoutMs, cancellation, null, Objects.requireNonNull(tier, "tier"), false);
+        return new CallOptions(
+                readTimeoutMs, cancellation, null, Objects.requireNonNull(tier, "tier"), false, expectation);
     }
 
     /**
@@ -122,7 +152,7 @@ public final class CallOptions {
      * @return the new options
      */
     public CallOptions noResilience() {
-        return new CallOptions(readTimeoutMs, cancellation, null, null, true);
+        return new CallOptions(readTimeoutMs, cancellation, null, null, true, expectation);
     }
 
     /** The call's attempt timeout in milliseconds: {@code 0} for none, {@code null} for the client's. */
@@ -144,6 +174,11 @@ public final class CallOptions {
     @Nullable
     String tier() {
         return tier;
+    }
+
+    /** The expectation a stream head must meet. */
+    Expectation<HttpResponseHead> expectation() {
+        return expectation != null ? expectation : HttpExpectations.success();
     }
 
     boolean isNoResilience() {

@@ -61,7 +61,9 @@ sent; stream and multipart bodies cannot be measured and are refused too. A body
 passes. `maxResponseBytes` applies whatever body codec the request uses: a declared `Content-Length`
 over the bound fails the request before the body is read, and a counting wrapper around the codec's
 stream stops passing bytes on at the bound, fails with `HttpBodyLimitException`
-(`Direction.RESPONSE`) and resets the exchange. Nothing is buffered to enforce either bound.
+(`Direction.RESPONSE`) and resets the exchange. Nothing is buffered to enforce either bound. The body of a
+`stream(...)` call and its `Content-Length` are exempt from `maxResponseBytes`: a stream is the path for
+bodies of unbounded length.
 
 **Egress.** `egress(EgressPolicy)` decides which targets the client may contact, before any
 connection and again on every redirect hop. The default, `EgressPolicy.allowAll()`, admits every target
@@ -167,6 +169,7 @@ runtime the caller owns.
 | `baseUrl(String)` | Default origin and path prefix for relative requests |
 | `readTimeout(long, TimeUnit)` | Read timeout setting of the client, not negative; default 30 seconds, `0` for none |
 | `resiliencePolicy(String)` | Name of the resilience policy every call runs in unless its options say otherwise; an undefined name is rejected by `build()`; default none, one attempt per call |
+| `streamIdleTimeout(long, TimeUnit)` | Longest time a stream may go without a received body byte, not negative; default 60 seconds, `0` disables |
 | `maxRequestBytes(long)` | Most request body bytes sent, not negative; default `0` for no bound |
 | `maxResponseBytes(long)` | Most response body bytes read, not negative; default 10485760, `0` for no bound |
 | `egress(EgressPolicy)` | Targets the client may contact, checked before connecting and on every redirect hop; default `EgressPolicy.allowAll()` |
@@ -202,20 +205,58 @@ Future<String> scoped = client.execute(web ->
 ```
 
 `name()` returns the client name, `webClient()` the governed `WebClient` for direct use, `execute`
-runs an attempt function (with `CallOptions.defaults()` or the given options), and `close()` fails the calls
-still running with `HttpClientClosedException`, closes the policy pipelines and the agent, and resets requests still open. Closing again returns the same future.
+runs an attempt function (with `CallOptions.defaults()` or the given options), `stream` opens a response
+whose body is read incrementally (see Streams), and `close()` fails the calls
+still running and the open streams with `HttpClientClosedException`, closes the policy pipelines and the agent, and resets requests still open. Closing again returns the same future.
 A call started after `close()` fails with `HttpClientClosedException` without opening a connection and without
 notifying interceptors.
 
+### Streams
+
+```java
+Future<HttpStream> opened = client.stream(CallOptions.defaults(), web -> web.get("/events"), null);
+opened.onSuccess(stream -> {
+    stream.body().handler(chunk -> process(chunk));
+    stream.completion().onComplete(ended -> log(ended));
+});
+```
+
+`stream(options, request, body)` sends the request that `request` returns (created by the `WebClient` it is
+given, with an optional buffered `body`) and completes its future as soon as a response head the call's
+expectation accepts has arrived, before any body byte. The expectation is `CallOptions.expecting(...)`, by default
+`HttpExpectations.success()`. A request created by another `WebClient`, or a null argument, fails the future with
+`IllegalArgumentException`. A head the expectation refuses fails the attempt with an `HttpStatusRejectedException`
+carrying at most 2048 bytes of the first body chunk and resets the exchange; a 429 or 503 is retried like any
+rejection, honoring `Retry-After` when the policy sets `retryAfterMaxMs`.
+
+`HttpStream` carries the immutable `head()` (status, message, version, headers), the `body()` `ReadStream`, the
+terminal `completion()` and `cancel()`. The body stays paused until a handler is set; pausing it stops reading
+from the connection once a small queue is full, so back-pressure reaches the sender. `completion()` succeeds
+when the consumer has received the whole body and otherwise fails with the native throwable of the failed
+exchange, a `java.util.concurrent.TimeoutException` after `streamIdleTimeout` without a body byte (also while
+the consumer has paused; the exchange is reset), `HttpExchangeCancelledException` after `cancel()` and
+`HttpClientClosedException` when the client closes. `cancel()` is idempotent and callable from any thread.
+Every ending reports the exchange to the client's interceptors exactly once, with the head as the response.
+
+A call leaves the resilience pipeline at the accepted head: it is never retried afterwards, the circuit breaker
+has recorded the head's outcome (a failure after the head does not count), the attempt timeout stops and only
+`streamIdleTimeout` governs the body, so a stream may outlive the attempt timeout. A head that arrives after
+the call was cancelled, timed out or closed is reset and never delivered.
+
+**A bulkhead bounds how many heads are being obtained, not how many streams are open**: its permit is released
+at the head. **A stream that is not consumed holds its connection** until it ends, fails, is cancelled or the
+client closes, so cancel every `HttpStream` that is dropped. Open streams count against the connection pool.
+
 ### CallOptions
 
-Immutable options for a single `execute` call. `CallOptions.defaults()` selects the client's own
+Immutable options for a single `execute` or `stream` call. `CallOptions.defaults()` selects the client's own
 settings.
 
 | Method | Effect |
 |---|---|
 | `readTimeout(long, TimeUnit)` | Attempt timeout of this call, above zero; replaces the client's `readTimeout` |
 | `noReadTimeout()` | No attempt timer for this call; of the two timeout methods the last call wins |
+| `expecting(Expectation<HttpResponseHead>)` | Decides whether a `stream` head is accepted; default `HttpExpectations.success()`; other calls ignore it |
 | `cancellation(CancellationSignal)` | Binds the call to a signal a caller can cancel from any thread |
 | `resilience(ResiliencePipeline)` | Runs the call in a prebuilt pipeline, used as given |
 | `resiliencePolicy(String)` | Runs the call in a named resilience policy; the client builds its pipeline once |
@@ -292,7 +333,8 @@ use inside an attempt:
 client.execute(web -> web.post("/items").sendBuffer(body).expecting(HttpExpectations.success()));
 ```
 
-A refused response fails with `HttpStatusRejectedException`.
+A refused response fails with `HttpStatusRejectedException`. The same checks serve `CallOptions.expecting(...)`
+for the head of a stream.
 
 ### Failures
 
@@ -369,7 +411,7 @@ startup with an `HttpClientConfigurationException` whose constant message names 
 | `maxRequestBytes` | long | 0 (no bound) | At least 0 |
 | `maxResponseBytes` | long | 10485760 | At least 0, 0 for no bound |
 | `maxEventBytes` | int | 1048576 | Above 0; applies to `stream(...)` calls (wired with the streaming support) |
-| `streamIdleTimeoutMs` | long | 60000 | At least 0, 0 disables; applies to `stream(...)` calls (wired with the streaming support) |
+| `streamIdleTimeoutMs` | long | 60000 | At least 0, 0 disables; the longest a `stream(...)` body may go without a received byte; wins over `streamIdleTimeout(...)` |
 
 **The `webClient` bag** is merged over the builder's base options (the options of `webClientOptions(...)`, or the
 default options that follow no redirects), so a bag without `followRedirects` keeps the base value. It takes the
@@ -406,7 +448,7 @@ every client; without it no tier is defined.
 
 ## Lifecycle
 
-`close()` on a client fails running calls with `HttpClientClosedException`, closes the policy pipelines and the
+`close()` on a client fails running calls and open streams with `HttpClientClosedException`, closes the policy pipelines and the
 agent, and returns the same future when repeated. Clients built by the factory, and by builders it hands out,
 close when the application stops, in the `INFRA` shutdown phase; calling `client(name)` or `builder(name)`
 afterwards fails with `HttpClientClosedException`.

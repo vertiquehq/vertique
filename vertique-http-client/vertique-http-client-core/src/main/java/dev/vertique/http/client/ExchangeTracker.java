@@ -113,6 +113,12 @@ final class ExchangeTracker implements Handler<HttpContext<?>> {
                 if (exchange != null && !interceptors.isEmpty()) {
                     exchange.head(headOf(ctx.clientResponse()));
                 }
+                StreamAttempt streaming = scope.streamAttempt();
+                if (exchange != null && streaming != null) {
+                    // a stream's body and Content-Length are exempt from the response bound
+                    streaming.receive(ctx, exchange);
+                    return;
+                }
                 if (exchange != null && declaresTooMuch(ctx.clientResponse())) {
                     Throwable cause = new HttpBodyLimitException(Direction.RESPONSE, maxResponseBytes);
                     ctx.clientResponse().request().reset(0, cause);

@@ -54,6 +54,7 @@ public final class VertiqueHttpClientBuilder {
     private static final long DEFAULT_READ_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(30);
 
     private static final long DEFAULT_MAX_RESPONSE_BYTES = 10_485_760L;
+    private static final long DEFAULT_STREAM_IDLE_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(60);
 
     static {
         FrameworkClientOptions.register(VertiqueHttpClientBuilder::disableHeaderValidation);
@@ -69,6 +70,7 @@ public final class VertiqueHttpClientBuilder {
     private long readTimeoutMs = DEFAULT_READ_TIMEOUT_MS;
     private long maxRequestBytes;
     private long maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES;
+    private long streamIdleTimeoutMs = DEFAULT_STREAM_IDLE_TIMEOUT_MS;
     private WebClientOptions webClientOptions;
     private PoolOptions poolOptions;
     private final Map<String, String> defaultHeaders = new LinkedHashMap<>();
@@ -144,6 +146,21 @@ public final class VertiqueHttpClientBuilder {
     public synchronized VertiqueHttpClientBuilder readTimeout(long timeout, TimeUnit unit) {
         Objects.requireNonNull(unit, "unit");
         this.readTimeoutMs = timeout < 0 ? -1 : unit.toMillis(timeout);
+        return this;
+    }
+
+    /**
+     * Sets how long a stream may go without receiving a body byte before it fails with a
+     * {@link java.util.concurrent.TimeoutException} and its exchange is reset. The timer also runs while
+     * the consumer has paused the body. The default is 60 seconds; {@code 0} disables it.
+     *
+     * @param timeout the timeout, not negative; {@code 0} disables the idle timer
+     * @param unit the unit of {@code timeout}
+     * @return this builder
+     */
+    public synchronized VertiqueHttpClientBuilder streamIdleTimeout(long timeout, TimeUnit unit) {
+        Objects.requireNonNull(unit, "unit");
+        this.streamIdleTimeoutMs = timeout < 0 ? -1 : unit.toMillis(timeout);
         return this;
     }
 
@@ -345,6 +362,9 @@ public final class VertiqueHttpClientBuilder {
         HttpClientConfig external = config;
         long effectiveReadTimeoutMs =
                 external != null && external.readTimeoutMs() != null ? external.readTimeoutMs() : readTimeoutMs;
+        long effectiveStreamIdleTimeoutMs = external != null && external.streamIdleTimeoutMs() != null
+                ? external.streamIdleTimeoutMs()
+                : streamIdleTimeoutMs;
         long effectiveMaxRequestBytes =
                 external != null && external.maxRequestBytes() != null ? external.maxRequestBytes() : maxRequestBytes;
         long effectiveMaxResponseBytes = external != null && external.maxResponseBytes() != null
@@ -352,6 +372,9 @@ public final class VertiqueHttpClientBuilder {
                 : maxResponseBytes;
         if (effectiveReadTimeoutMs < 0) {
             throw new HttpClientConfigurationException("The read timeout must not be negative");
+        }
+        if (effectiveStreamIdleTimeoutMs < 0) {
+            throw new HttpClientConfigurationException("The stream idle timeout must not be negative");
         }
         if (effectiveMaxRequestBytes < 0 || effectiveMaxResponseBytes < 0) {
             throw new HttpClientConfigurationException("A body byte bound must not be negative");
@@ -385,6 +408,7 @@ public final class VertiqueHttpClientBuilder {
                 effectiveReadTimeoutMs,
                 effectiveMaxRequestBytes,
                 effectiveMaxResponseBytes,
+                effectiveStreamIdleTimeoutMs,
                 effectiveEgress(external),
                 credentials,
                 effectiveAllowPlain,

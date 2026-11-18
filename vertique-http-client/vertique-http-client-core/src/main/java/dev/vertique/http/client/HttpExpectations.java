@@ -42,9 +42,11 @@ public final class HttpExpectations {
 
             @Override
             public Throwable describe(HttpResponseHead head) {
-                Buffer body = head instanceof HttpResponse<?> response && response.body() instanceof Buffer buffer
-                        ? buffer
-                        : null;
+                Buffer body = head instanceof ExcerptHead excerpt
+                        ? excerpt.excerpt()
+                        : head instanceof HttpResponse<?> response && response.body() instanceof Buffer buffer
+                                ? buffer
+                                : null;
                 return new HttpStatusRejectedException(
                         head.statusCode(),
                         head.headers(),

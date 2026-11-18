@@ -18,6 +18,10 @@ import io.vertx.ext.web.client.impl.HttpContext;
 import io.vertx.uritemplate.ExpandOptions;
 import io.vertx.uritemplate.UriTemplate;
 import io.vertx.uritemplate.Variables;
+import jakarta.annotation.Nullable;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Set;
 import java.util.function.BooleanSupplier;
 
 /**
@@ -38,6 +42,8 @@ final class GovernedWebClient implements WebClient {
     private final String basePath;
     private final boolean hasBaseUrl;
     private final BooleanSupplier closed;
+    private final AttemptScope scope;
+    private final @Nullable Set<HttpRequest<?>> created;
 
     /**
      * Creates the web client.
@@ -45,10 +51,19 @@ final class GovernedWebClient implements WebClient {
      * @param delegate the governed Vert.x web client
      * @param settings the client's settings
      * @param closed tells whether the client was closed, after which no request is created
+     * @param scope the scope of the attempt this web client belongs to
+     * @param trackRequests whether to remember the requests created, so that {@link #created} can tell
      */
-    GovernedWebClient(WebClient delegate, ClientSettings settings, BooleanSupplier closed) {
+    GovernedWebClient(
+            WebClient delegate,
+            ClientSettings settings,
+            BooleanSupplier closed,
+            AttemptScope scope,
+            boolean trackRequests) {
         this.delegate = delegate;
         this.closed = closed;
+        this.scope = scope;
+        this.created = trackRequests ? Collections.newSetFromMap(new IdentityHashMap<>()) : null;
         this.basePath = settings.basePath();
         this.hasBaseUrl = settings.hasBaseUrl();
     }
@@ -59,39 +74,39 @@ final class GovernedWebClient implements WebClient {
     public HttpRequest<Buffer> request(
             HttpMethod method, SocketAddress serverAddress, int port, String host, String requestURI) {
         checkOpen();
-        return delegate.request(method, serverAddress, port, host, requestURI);
+        return track(delegate.request(method, serverAddress, port, host, requestURI));
     }
 
     @Override
     public HttpRequest<Buffer> request(
             HttpMethod method, SocketAddress serverAddress, int port, String host, UriTemplate requestURI) {
         checkOpen();
-        return delegate.request(method, serverAddress, port, host, requestURI);
+        return track(delegate.request(method, serverAddress, port, host, requestURI));
     }
 
     @Override
     public HttpRequest<Buffer> request(HttpMethod method, SocketAddress serverAddress, String host, String requestURI) {
         checkOpen();
-        return delegate.request(method, serverAddress, host, requestURI);
+        return track(delegate.request(method, serverAddress, host, requestURI));
     }
 
     @Override
     public HttpRequest<Buffer> request(
             HttpMethod method, SocketAddress serverAddress, String host, UriTemplate requestURI) {
         checkOpen();
-        return delegate.request(method, serverAddress, host, requestURI);
+        return track(delegate.request(method, serverAddress, host, requestURI));
     }
 
     @Override
     public HttpRequest<Buffer> requestAbs(HttpMethod method, SocketAddress serverAddress, String absoluteURI) {
         checkOpen();
-        return delegate.requestAbs(method, serverAddress, absoluteURI);
+        return track(delegate.requestAbs(method, serverAddress, absoluteURI));
     }
 
     @Override
     public HttpRequest<Buffer> requestAbs(HttpMethod method, SocketAddress serverAddress, UriTemplate absoluteURI) {
         checkOpen();
-        return delegate.requestAbs(method, serverAddress, new UserInfoGuardTemplate(absoluteURI));
+        return track(delegate.requestAbs(method, serverAddress, new UserInfoGuardTemplate(absoluteURI)));
     }
 
     // --- relative requests to the default host: base path or refusal ---
@@ -100,31 +115,31 @@ final class GovernedWebClient implements WebClient {
     public HttpRequest<Buffer> request(HttpMethod method, SocketAddress serverAddress, String requestURI) {
         checkOpen();
         if (!hasBaseUrl) {
-            return delegate.request(method, serverAddress, PrepareInterceptor.NO_BASE_HOST, requestURI);
+            return track(delegate.request(method, serverAddress, PrepareInterceptor.NO_BASE_HOST, requestURI));
         }
-        return delegate.request(method, serverAddress, prefixed(requestURI));
+        return track(delegate.request(method, serverAddress, prefixed(requestURI)));
     }
 
     @Override
     public HttpRequest<Buffer> request(HttpMethod method, SocketAddress serverAddress, UriTemplate requestURI) {
         checkOpen();
         if (!hasBaseUrl) {
-            return delegate.request(method, serverAddress, PrepareInterceptor.NO_BASE_HOST, requestURI);
+            return track(delegate.request(method, serverAddress, PrepareInterceptor.NO_BASE_HOST, requestURI));
         }
-        return delegate.request(method, serverAddress, new PrefixedTemplate(requestURI));
+        return track(delegate.request(method, serverAddress, new PrefixedTemplate(requestURI)));
     }
 
     @Override
     public HttpRequest<Buffer> request(RequestOptions options) {
         checkOpen();
-        return delegate.request(relative(options));
+        return track(delegate.request(relative(options)));
     }
 
     @Override
     @SuppressWarnings("deprecation")
     public HttpRequest<Buffer> request(HttpMethod method, SocketAddress serverAddress, RequestOptions options) {
         checkOpen();
-        return delegate.request(method, serverAddress, relative(options));
+        return track(delegate.request(method, serverAddress, relative(options)));
     }
 
     // --- lifecycle and extension: owned by the client ---
@@ -147,6 +162,30 @@ final class GovernedWebClient implements WebClient {
     }
 
     // --- helpers ---
+
+    /** The scope of the attempt this web client belongs to. */
+    AttemptScope scope() {
+        return scope;
+    }
+
+    /** Whether this web client created {@code request}; only requests of a tracking web client are known. */
+    boolean created(HttpRequest<?> request) {
+        if (created == null) {
+            return false;
+        }
+        synchronized (created) {
+            return created.contains(request);
+        }
+    }
+
+    private HttpRequest<Buffer> track(HttpRequest<Buffer> request) {
+        if (created != null) {
+            synchronized (created) {
+                created.add(request);
+            }
+        }
+        return request;
+    }
 
     private void checkOpen() {
         if (closed.getAsBoolean()) {

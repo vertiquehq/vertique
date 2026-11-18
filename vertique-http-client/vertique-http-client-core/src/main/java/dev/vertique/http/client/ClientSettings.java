@@ -17,6 +17,8 @@ import java.util.Map;
  * @param readTimeoutMs the default attempt timeout in milliseconds, 0 for none
  * @param maxRequestBytes the most request body bytes sent, 0 for no bound
  * @param maxResponseBytes the most response body bytes read, 0 for no bound
+ * @param streamIdleTimeoutMs the longest time a stream may go without a received body byte in milliseconds, 0 for
+ *     none
  * @param egress the policy every request target is checked against
  * @param credentials the source of per-exchange credential headers, or null for none
  * @param allowCredentialsOverPlainHttp whether credentials may travel over plain HTTP to a non-loopback host
@@ -30,6 +32,7 @@ record ClientSettings(
         long readTimeoutMs,
         long maxRequestBytes,
         long maxResponseBytes,
+        long streamIdleTimeoutMs,
         EgressPolicy egress,
         @Nullable CredentialSource credentials,
         boolean allowCredentialsOverPlainHttp,
