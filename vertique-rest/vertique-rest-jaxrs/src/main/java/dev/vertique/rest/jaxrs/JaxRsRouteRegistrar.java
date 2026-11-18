@@ -8,6 +8,7 @@ import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
+import dev.vertique.core.util.TypeResolver;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.input.processing.InputObjectProcessor;
@@ -1702,7 +1703,11 @@ public class JaxRsRouteRegistrar {
             boolean isSse = meta.mediaTypes().produces().stream().anyMatch(t -> t.contains("text/event-stream"));
             if (!isSse) continue;
 
-            Type returnType = meta.method().getGenericReturnType();
+            Class<?> context = meta.resourceInstance() != null
+                    ? meta.resourceInstance().getClass()
+                    : meta.method().getDeclaringClass();
+            Type returnType =
+                    TypeResolver.resolveMemberType(context, meta.method().getGenericReturnType());
 
             // Unwrap Future<T> if present
             Type innerType = returnType;
