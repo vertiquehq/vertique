@@ -67,8 +67,8 @@ public final class RedirectRules implements Function<HttpClientResponse, Future<
             origin = URI.create(request.absoluteURI());
             location = origin.resolve(response.getHeader("Location"));
         } catch (RuntimeException unparsable) {
-            // Vert.x parsed this redirect, so the follow-up checks have nothing further to read
-            return next;
+            // A redirect the checks cannot read is never followed: fail closed
+            return refuse(request, Reason.HOST);
         }
         if (location.getRawAuthority() != null && location.getRawAuthority().indexOf('@') >= 0) {
             return refuse(request, Reason.USER_INFO);

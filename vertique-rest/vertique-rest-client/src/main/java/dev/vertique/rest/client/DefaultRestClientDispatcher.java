@@ -5,6 +5,9 @@ package dev.vertique.rest.client;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.validation.BeanValidator;
+import dev.vertique.http.client.CallOptions;
+import dev.vertique.http.client.VertiqueHttpClient;
+import dev.vertique.http.client.exception.HttpClientClosedException;
 import dev.vertique.resilience.ResiliencePipeline;
 import dev.vertique.resilience.exception.BulkheadQueueTimeoutException;
 import dev.vertique.resilience.exception.BulkheadRejectedException;
@@ -82,7 +85,7 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
 
     // --- Pipeline state ---
 
-    private final WebClient webClient;
+    private final VertiqueHttpClient httpClient;
     private final String baseUrl;
     private final io.vertx.core.MultiMap cachedDefaultHeaders;
     private final RestClientExceptionMapper exceptionMapper;
@@ -112,7 +115,7 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
     /**
      * Creates a new dispatcher with all pipeline dependencies resolved.
      *
-     * @param webClient the Vert.x web client used to send requests
+     * @param httpClient the governed HTTP client every physical attempt is sent through
      * @param baseUrl the base URL prepended to all path templates
      * @param cachedDefaultHeaders pre-built case-insensitive MultiMap of default headers;
      *     copied into each request's header map at dispatch time
@@ -130,7 +133,7 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
      *     the JDK reflective proxy path
      */
     DefaultRestClientDispatcher(
-            WebClient webClient,
+            VertiqueHttpClient httpClient,
             String baseUrl,
             io.vertx.core.MultiMap cachedDefaultHeaders,
             RestClientInterceptorChain interceptorChain,
@@ -143,7 +146,7 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
             Class<?> clientType,
             List<RestClientContextCapturer<?>> contextCapturers,
             ParamConversionResolver resolver) {
-        this.webClient = webClient;
+        this.httpClient = httpClient;
         this.baseUrl = baseUrl;
         this.cachedDefaultHeaders = cachedDefaultHeaders;
         this.interceptorChain = interceptorChain;
@@ -782,13 +785,24 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
             AtomicInteger attemptOrdinal,
             List<CapturerCapture> captures) {
         ResiliencePipeline pipeline = resilienceFactory.pipeline(meta);
-        Future<HttpResponse<Buffer>> resultFuture = pipeline.execute(
-                        () -> sendPhysicalAttempt(reqCtx, meta, capturedResCtx, callId, attemptOrdinal, captures))
-                .compose(response -> {
-                    RestClientResponseContext resCtx = capturedResCtx.get();
-                    interceptorChain.fireOnResponse(reqCtx, resCtx);
-                    return interceptorChain.runAfterInterceptors(reqCtx, resCtx).map(v -> response);
-                });
+        // A call made after, or caught by, the builder's close keeps the identity the closed pipeline gives
+        // it, not the governed client's own closed failure: the builder marks itself closed before it closes
+        // the governed client.
+        Future<HttpResponse<Buffer>> sent = resilienceFactory.isClosed()
+                ? Future.failedFuture(new ResilienceClosedException(pipeline.operationKey()))
+                : httpClient
+                        .execute(
+                                CallOptions.defaults().resilience(pipeline),
+                                web -> sendPhysicalAttempt(
+                                        web, reqCtx, meta, capturedResCtx, callId, attemptOrdinal, captures))
+                        .recover(failure -> failure instanceof HttpClientClosedException && resilienceFactory.isClosed()
+                                ? Future.failedFuture(new ResilienceClosedException(pipeline.operationKey()))
+                                : Future.failedFuture(failure));
+        Future<HttpResponse<Buffer>> resultFuture = sent.compose(response -> {
+            RestClientResponseContext resCtx = capturedResCtx.get();
+            interceptorChain.fireOnResponse(reqCtx, resCtx);
+            return interceptorChain.runAfterInterceptors(reqCtx, resCtx).map(v -> response);
+        });
 
         // Recovery: try recoverRequest interceptors exactly once on failure
         if (!recoveryAttempted) {
@@ -832,13 +846,14 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
     }
 
     private Future<HttpResponse<Buffer>> sendPhysicalAttempt(
+            WebClient web,
             RestClientRequestContext reqCtx,
             ClientMethodMeta meta,
             AtomicReference<RestClientResponseContext> capturedResCtx,
             String callId,
             AtomicInteger attemptOrdinal,
             List<CapturerCapture> captures) {
-        HttpRequest<Buffer> httpRequest = buildHttpRequest(reqCtx.requestUri(), meta.httpMethod());
+        HttpRequest<Buffer> httpRequest = buildHttpRequest(web, reqCtx.requestUri(), meta.httpMethod());
         reqCtx.headers().forEach(e -> httpRequest.putHeader(e.getKey(), e.getValue()));
         Buffer bodyToSend = reqCtx.body();
         int ordinal = attemptOrdinal.incrementAndGet();
@@ -1046,19 +1061,20 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
     /**
      * Builds a Vert.x {@link HttpRequest} from the given absolute URI and HTTP method string.
      *
+     * @param web the governed web client of the current attempt
      * @param uri the absolute URI
      * @param httpMethod the HTTP verb string
      * @return the configured HttpRequest
      * @throws RestClientException if the HTTP method is not supported
      */
-    private HttpRequest<Buffer> buildHttpRequest(String uri, String httpMethod) {
+    private HttpRequest<Buffer> buildHttpRequest(WebClient web, String uri, String httpMethod) {
         return switch (httpMethod) {
-            case "GET" -> webClient.getAbs(uri);
-            case "POST" -> webClient.postAbs(uri);
-            case "PUT" -> webClient.putAbs(uri);
-            case "DELETE" -> webClient.deleteAbs(uri);
-            case "PATCH" -> webClient.patchAbs(uri);
-            case "HEAD" -> webClient.headAbs(uri);
+            case "GET" -> web.getAbs(uri);
+            case "POST" -> web.postAbs(uri);
+            case "PUT" -> web.putAbs(uri);
+            case "DELETE" -> web.deleteAbs(uri);
+            case "PATCH" -> web.patchAbs(uri);
+            case "HEAD" -> web.headAbs(uri);
             default -> throw new RestClientException("Unsupported HTTP method: " + httpMethod);
         };
     }

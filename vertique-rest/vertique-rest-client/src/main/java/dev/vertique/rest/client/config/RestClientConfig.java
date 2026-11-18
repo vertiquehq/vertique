@@ -10,6 +10,8 @@ import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.ConfigSecretRenderer;
 import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.core.exception.ConfigurationException;
+import dev.vertique.http.client.exception.HttpClientConfigurationException;
+import dev.vertique.http.client.internal.WebClientOptionsNormalizer;
 import dev.vertique.rest.client.exception.RestClientConfigurationException;
 import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
@@ -230,57 +232,10 @@ public record RestClientConfig(
         if (config == null) {
             return null;
         }
-        // --- Validate: reject raw Vert.x native duration keys in the INPUT ---
-        // Each pair: native key (forbidden in input) → required explicit-unit key (correct key).
-        rejectNativeKey(config, "connectTimeout", "connectTimeoutMs");
-        rejectNativeKey(config, "idleTimeout", "idleTimeoutSeconds");
-        rejectNativeKey(config, "readIdleTimeout", "readIdleTimeoutSeconds");
-        rejectNativeKey(config, "writeIdleTimeout", "writeIdleTimeoutSeconds");
-        rejectNativeKey(config, "keepAliveTimeout", "keepAliveTimeoutSeconds");
-        rejectNativeKey(config, "http2KeepAliveTimeout", "http2KeepAliveTimeoutSeconds");
-        rejectNativeKey(config, "sslHandshakeTimeout", "sslHandshakeTimeoutSeconds");
-
-        // --- Translate: rename the framework explicit-unit keys to Vert.x native names ---
-        JsonObject translated = config.copy();
-        renameKey(translated, "connectTimeoutMs", "connectTimeout");
-        renameKey(translated, "idleTimeoutSeconds", "idleTimeout");
-        renameKey(translated, "readIdleTimeoutSeconds", "readIdleTimeout");
-        renameKey(translated, "writeIdleTimeoutSeconds", "writeIdleTimeout");
-        renameKey(translated, "keepAliveTimeoutSeconds", "keepAliveTimeout");
-        renameKey(translated, "http2KeepAliveTimeoutSeconds", "http2KeepAliveTimeout");
-        renameKey(translated, "sslHandshakeTimeoutSeconds", "sslHandshakeTimeout");
-        return translated;
-    }
-
-    /**
-     * Renames a key in a {@link JsonObject} if the old key is present. Removes the old key and inserts
-     * its value under the new key.
-     *
-     * @param json the object to mutate
-     * @param oldKey the key to rename
-     * @param newKey the replacement key name
-     */
-    private static void renameKey(JsonObject json, String oldKey, String newKey) {
-        if (json.containsKey(oldKey)) {
-            json.put(newKey, json.getValue(oldKey));
-            json.remove(oldKey);
-        }
-    }
-
-    /**
-     * Throws {@link RestClientConfigurationException} if the given config contains the raw Vert.x
-     * native duration key. Operators must use the explicit-unit framework key instead (e.g.
-     * {@code connectTimeoutMs} rather than {@code connectTimeout}).
-     *
-     * @param config the {@code webClient} input config to inspect
-     * @param nativeKey the forbidden raw Vert.x native key (e.g. {@code connectTimeout})
-     * @param requiredKey the required framework explicit-unit key (e.g. {@code connectTimeoutMs})
-     * @throws RestClientConfigurationException if {@code nativeKey} is present in {@code config}
-     */
-    private static void rejectNativeKey(JsonObject config, String nativeKey, String requiredKey) {
-        if (config.containsKey(nativeKey)) {
-            throw new RestClientConfigurationException("webClient duration key '" + nativeKey
-                    + "' is a raw Vert.x key; use the explicit-unit key '" + requiredKey + "' instead");
+        try {
+            return WebClientOptionsNormalizer.normalize(config);
+        } catch (HttpClientConfigurationException e) {
+            throw new RestClientConfigurationException(e.getMessage(), e);
         }
     }
 

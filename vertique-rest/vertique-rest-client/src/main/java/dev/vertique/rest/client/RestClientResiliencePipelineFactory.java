@@ -26,6 +26,7 @@ final class RestClientResiliencePipelineFactory {
     private final RestClientResilienceConfigAdapter configAdapter;
     private final ResilienceAdapterContext context;
     private final CircuitBreaker interfaceBreaker;
+    private volatile boolean closed;
     private final Map<ClientMethodMeta, ResiliencePipeline> pipelines = new ConcurrentHashMap<>();
 
     RestClientResiliencePipelineFactory(
@@ -98,7 +99,13 @@ final class RestClientResiliencePipelineFactory {
 
     /** Closes this client instance's breaker context and fences its active executions. */
     Future<Void> close() {
+        closed = true;
         return context.close();
+    }
+
+    /** Whether {@link #close()} has been called; the pipelines then refuse every execution. */
+    boolean isClosed() {
+        return closed;
     }
 
     private ResiliencePipeline build(ClientMethodMeta meta) {

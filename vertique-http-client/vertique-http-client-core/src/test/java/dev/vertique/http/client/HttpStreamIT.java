@@ -1230,7 +1230,7 @@ class HttpStreamIT {
                 client.stream(
                         CallOptions.defaults(),
                         web -> {
-                            side.set(web.post("/subscribe").send());
+                            side.set(web.post("/subscribe").sendBuffer(Buffer.buffer()));
                             return web.get("/events");
                         },
                         null),

@@ -7,6 +7,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import dev.vertique.http.client.VertiqueHttpClient;
+import dev.vertique.http.client.VertiqueHttpClientBuilder;
+import dev.vertique.http.client.internal.FrameworkClientOptions;
 import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.client.exception.RestClientException;
 import dev.vertique.rest.client.meta.ClientInterfaceScanner;
@@ -16,8 +19,6 @@ import dev.vertique.rest.core.convert.ParamConverterRegistry;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
-import io.vertx.core.http.HttpClient;
-import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
@@ -117,34 +118,35 @@ class DefaultRestClientDispatcherTest {
     private static Vertx vertx;
 
     /**
-     * One {@link WebClient} for the whole class instead of one per {@code newDispatcher(...)} call.
+     * One governed client for the whole class instead of one per {@code newDispatcher(...)} call.
      * The dispatcher only reads from it (it never closes it), and each test used to leave its own
      * client unclosed, so {@link Vertx#close()} reclaimed every one of their netty pools out from
      * under them.
      */
-    private static WebClient webClient;
-
-    /** Awaitable close handle; {@link WebClient#close()} discards the underlying future. */
-    private static HttpClient transport;
+    private static VertiqueHttpClient httpClient;
 
     @BeforeAll
     static void startVertx() {
         vertx = Vertx.vertx();
         // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
-        transport = vertx.createHttpClient();
-        webClient = WebClient.wrap(transport, new WebClientOptions().setFollowRedirects(false));
+        VertiqueHttpClientBuilder governed = VertiqueHttpClientBuilder.create(vertx)
+                .webClientOptions(new WebClientOptions().setFollowRedirects(false))
+                .readTimeout(0, TimeUnit.MILLISECONDS)
+                .maxResponseBytes(0)
+                .maxRequestBytes(0);
+        FrameworkClientOptions.withoutHeaderValidation(governed);
+        httpClient = governed.build();
     }
 
     /**
-     * Awaits the raw {@link HttpClient} close before awaiting {@link Vertx#close()}, so the client
+     * Awaits the governed client close before awaiting {@link Vertx#close()}, so the client
      * finishes shutting down on a still-alive event loop.
      */
     @AfterAll
     static void stopVertx() throws Exception {
-        if (transport != null) {
-            transport.close().toCompletionStage().toCompletableFuture().get(AWAIT_SECONDS, TimeUnit.SECONDS);
-            transport = null;
-            webClient = null;
+        if (httpClient != null) {
+            httpClient.close().toCompletionStage().toCompletableFuture().get(AWAIT_SECONDS, TimeUnit.SECONDS);
+            httpClient = null;
         }
         if (vertx != null) {
             vertx.close().toCompletionStage().toCompletableFuture().get(AWAIT_SECONDS, TimeUnit.SECONDS);
@@ -161,7 +163,7 @@ class DefaultRestClientDispatcherTest {
 
     private static DefaultRestClientDispatcher newDispatcher(ParamConversionResolver resolver) {
         return new DefaultRestClientDispatcher(
-                webClient,
+                httpClient,
                 "http://localhost",
                 io.vertx.core.MultiMap.caseInsensitiveMultiMap(),
                 new RestClientInterceptorChain("test-client", List.of()),

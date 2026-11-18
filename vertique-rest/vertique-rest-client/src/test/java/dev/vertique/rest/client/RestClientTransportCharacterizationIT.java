@@ -6,6 +6,7 @@ package dev.vertique.rest.client;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.vertique.resilience.exception.ResilienceClosedException;
+import dev.vertique.rest.client.exception.RestClientException;
 import dev.vertique.rest.client.exception.RestClientResponseException;
 import dev.vertique.rest.client.exception.RestClientUnavailableException;
 import dev.vertique.rest.client.interceptor.RestClientInterceptor;
@@ -499,7 +500,8 @@ class RestClientTransportCharacterizationIT {
         assertThat(droppedOnHop(sameFirstHop, sameSecondHop, sent))
                 .containsExactlyInAnyOrder("cookie", "content-length");
         assertThat(droppedOnHop(crossFirstHop, crossSecondHop, sent))
-                .containsExactlyInAnyOrder("cookie", "content-length", "authorization", "proxy-authorization");
+                .containsExactlyInAnyOrder(
+                        "cookie", "content-length", "authorization", "proxy-authorization", "x-api-key", "x-custom");
     }
 
     private static TreeSet<String> droppedOnHop(Received firstHop, Received nextHop, Map<String, String> sent) {
@@ -514,62 +516,11 @@ class RestClientTransportCharacterizationIT {
     }
 
     @Test
-    @DisplayName("A custom header reaches the other origin on a cross-origin redirect (today)")
-    void crossOriginRedirectForwardsACustomHeaderToday() {
-        // Given a redirect from one origin to another with a different host name
-        Origin first = startOrigin(LOOPBACK);
-        Origin other = startOrigin(LOCALHOST);
-        first.handler =
-                request -> Origin.redirect(302, other.base() + "/landing").accept(request);
-        Verbs client = builder().baseUrl(first.base()).build(Verbs.class);
-
-        // When the call follows the redirect
-        HttpClientResponse response = await(client.get("secret-key"));
-
-        // Then the custom header is forwarded to the other origin.
-        // This records today's behavior; a later change replaces it on purpose (AC-047).
-        assertThat(response.statusCode()).isEqualTo(200);
-        assertThat(other.snapshot()).hasSize(1);
-        assertThat(other.snapshot().get(0).header("X-Api-Key")).isEqualTo("secret-key");
-    }
-
-    @Test
-    @DisplayName("A redirect from https to http is followed (today)")
-    void httpsToHttpHopIsFollowedToday() throws Exception {
-        SelfSignedCertificate certificate = SelfSignedCertificate.create();
-        try {
-            // Given an https origin that redirects to a plain http origin
-            Origin secure = startOrigin(
-                    LOOPBACK,
-                    new HttpServerOptions().setSsl(true).setKeyCertOptions(certificate.keyCertOptions()),
-                    "https");
-            Origin plain = startOrigin(LOOPBACK);
-            secure.handler = request ->
-                    Origin.redirect(302, plain.base() + "/downgraded").accept(request);
-            Verbs client = builder()
-                    .baseUrl(secure.base())
-                    .webClientOptions(insecureTls())
-                    .build(Verbs.class);
-
-            // When the call follows the redirect
-            HttpClientResponse response = await(client.get("tls-key"));
-
-            // Then the plain server receives the request.
-            // This records today's behavior; a later change replaces it on purpose (AC-047).
-            assertThat(response.statusCode()).isEqualTo(200);
-            assertThat(secure.snapshot()).hasSize(1);
-            assertThat(plain.snapshot()).hasSize(1);
-            assertThat(plain.snapshot().get(0).uri()).isEqualTo("/downgraded");
-            assertThat(plain.snapshot().get(0).header("X-Api-Key")).isEqualTo("tls-key");
-        } finally {
-            certificate.delete();
-        }
-    }
-
-    @Test
-    @DisplayName("A custom header reaches the other origin on a cross-origin redirect for every REST verb (today)")
-    void crossOriginRedirectForwardsACustomHeaderForEveryRestVerbToday() {
-        // Given a redirect from one origin to another: 302 for GET and HEAD, 303 for the rest
+    @DisplayName(
+            "Cross-origin redirects drop custom headers for every REST verb, refuse https to http and refuse userinfo")
+    void crossOriginRedirectFactsAreReplacedByTheSafelistAndTheDowngradeRefusal() throws Exception {
+        // AC-070, replacing the recorded forwarding, the followed downgrade and the followed userinfo
+        // redirect. Given a redirect from one origin to another: 302 for GET and HEAD, 303 for the rest
         Origin first = startOrigin(LOOPBACK);
         Origin other = startOrigin(LOCALHOST);
         first.handler = request -> {
@@ -580,62 +531,78 @@ class RestClientTransportCharacterizationIT {
         Verbs client = builder().baseUrl(first.base()).build(Verbs.class);
 
         // When each verb follows the redirect
-        Map<String, Future<HttpClientResponse>> calls = new LinkedHashMap<>();
-        for (String verb : List.of("GET", "POST", "PUT", "DELETE", "PATCH", "HEAD")) {
-            switch (verb) {
-                case "GET" -> calls.put(verb, client.get("key-GET"));
-                case "POST" -> calls.put(verb, client.post("key-POST", "body"));
-                case "PUT" -> calls.put(verb, client.put("key-PUT", "body"));
-                case "DELETE" -> calls.put(verb, client.delete("key-DELETE"));
-                case "PATCH" -> calls.put(verb, client.patch("key-PATCH", "body"));
-                default -> calls.put(verb, client.head("key-HEAD"));
-            }
-        }
-        calls.values().forEach(RestClientTransportCharacterizationIT::await);
+        List<Future<HttpClientResponse>> calls = new ArrayList<>();
+        calls.add(client.get("key-GET"));
+        calls.add(client.post("key-POST", "body"));
+        calls.add(client.put("key-PUT", "body"));
+        calls.add(client.delete("key-DELETE"));
+        calls.add(client.patch("key-PATCH", "body"));
+        calls.add(client.head("key-HEAD"));
+        calls.forEach(RestClientTransportCharacterizationIT::await);
 
-        // Then the other origin received the custom header from every verb.
-        // This records today's behavior; a later change replaces it on purpose (AC-047).
-        // The followed request is a GET after a 303 (HEAD stays HEAD after a 302).
+        // Then every verb sent the custom header on its first hop, and the other origin received
+        // six followed requests (the GET after a 303, HEAD staying HEAD) and none of them carries it
         Map<String, Received> firstHop = new LinkedHashMap<>();
         first.snapshot().forEach(r -> firstHop.put(r.header("X-Api-Key"), r));
         for (String verb : List.of("GET", "POST", "PUT", "DELETE", "PATCH", "HEAD")) {
             assertThat(firstHop.get("key-" + verb).method()).isEqualTo(verb);
         }
-        Map<String, Received> byKey = new LinkedHashMap<>();
-        other.snapshot().forEach(r -> byKey.put(r.header("X-Api-Key"), r));
-        assertThat(byKey.keySet())
-                .containsExactlyInAnyOrder("key-GET", "key-POST", "key-PUT", "key-DELETE", "key-PATCH", "key-HEAD");
-        assertThat(byKey.get("key-GET").method()).isEqualTo("GET");
-        assertThat(byKey.get("key-HEAD").method()).isEqualTo("HEAD");
-        for (String verb : List.of("POST", "PUT", "DELETE", "PATCH")) {
-            assertThat(byKey.get("key-" + verb).method()).isEqualTo("GET");
-        }
-    }
+        assertThat(other.snapshot()).hasSize(6);
+        assertThat(other.snapshot())
+                .allSatisfy(r -> assertThat(r.header("X-Api-Key")).isNull());
+        assertThat(other.snapshot())
+                .extracting(Received::method)
+                .containsExactlyInAnyOrder("GET", "GET", "GET", "GET", "GET", "HEAD");
 
-    @Test
-    @DisplayName("A redirect to a Location carrying userinfo has a recorded outcome (today)")
-    void redirectToALocationWithUserinfoIsRecordedToday() {
-        // Given a redirect from one origin to another origin whose Location carries userinfo
-        Origin first = startOrigin(LOOPBACK);
-        Origin other = startOrigin(LOCALHOST);
-        String location = "http://u:p@" + LOCALHOST + ":" + other.server.actualPort() + "/target";
-        first.handler = request -> Origin.redirect(302, location).accept(request);
-        Verbs client = builder().baseUrl(first.base()).build(Verbs.class);
+        // Given an https origin that redirects to a plain http origin
+        SelfSignedCertificate certificate = SelfSignedCertificate.create();
+        try {
+            Origin secure = startOrigin(
+                    LOOPBACK,
+                    new HttpServerOptions().setSsl(true).setKeyCertOptions(certificate.keyCertOptions()),
+                    "https");
+            Origin plain = startOrigin(LOOPBACK);
+            secure.handler = request ->
+                    Origin.redirect(302, plain.base() + "/downgraded").accept(request);
+            Verbs secureClient = builder()
+                    .baseUrl(secure.base())
+                    .webClientOptions(insecureTls())
+                    .build(Verbs.class);
+
+            // When the call follows the redirect
+            Throwable downgrade = failureOf(secureClient.get("tls-key"));
+
+            // Then the hop is refused as a RestClientException caused by the SCHEME refusal, and the
+            // plain server receives nothing
+            assertThat(downgrade).isInstanceOf(RestClientException.class);
+            assertThat(downgrade.getCause().getClass().getSimpleName()).isEqualTo("HttpEgressDeniedException");
+            assertThat(String.valueOf(
+                            downgrade.getCause().getClass().getMethod("reason").invoke(downgrade.getCause())))
+                    .isEqualTo("SCHEME");
+            assertThat(secure.snapshot()).hasSize(1);
+            assertThat(plain.snapshot()).isEmpty();
+        } finally {
+            certificate.delete();
+        }
+
+        // Given a redirect whose Location carries userinfo
+        Origin userinfoSource = startOrigin(LOOPBACK);
+        Origin userinfoTarget = startOrigin(LOCALHOST);
+        userinfoSource.handler =
+                Origin.redirect(302, "http://u:p@" + LOCALHOST + ":" + userinfoTarget.server.actualPort() + "/target");
+        Verbs userinfoClient = builder().baseUrl(userinfoSource.base()).build(Verbs.class);
 
         // When the call is made
-        Future<HttpClientResponse> call = client.get("userinfo-key");
-        Throwable failure = failureOrNull(call);
+        Throwable userinfo = failureOf(userinfoClient.get("userinfo-key"));
 
-        // Then the hop is followed and the call succeeds; the target receives the request without
-        // an Authorization header, and its Host header carries no userinfo.
-        // This records today's behavior; a later change may replace it on purpose (AC-047).
-        assertThat(failure).isNull();
-        assertThat(await(call).statusCode()).isEqualTo(200);
-        assertThat(other.snapshot()).hasSize(1);
-        Received target = other.snapshot().get(0);
-        assertThat(target.uri()).isEqualTo("/target");
-        assertThat(target.header("Authorization")).isNull();
-        assertThat(target.header("Host")).isEqualTo(LOCALHOST + ":" + other.server.actualPort());
+        // Then it is refused as a RestClientException caused by the USER_INFO refusal and the target
+        // receives nothing
+        assertThat(userinfo).isInstanceOf(RestClientException.class);
+        assertThat(userinfo.getCause().getClass().getSimpleName()).isEqualTo("HttpEgressDeniedException");
+        assertThat(String.valueOf(
+                        userinfo.getCause().getClass().getMethod("reason").invoke(userinfo.getCause())))
+                .isEqualTo("USER_INFO");
+        assertThat(userinfoTarget.snapshot()).isEmpty();
     }
 
     @Test

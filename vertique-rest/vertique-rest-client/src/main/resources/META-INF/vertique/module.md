@@ -8,14 +8,14 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.rest.client`
 > **Artifact:** `vertique-rest-client`
-> **Depends on:** core, rest-core, json
+> **Depends on:** core, rest-core, json, http-client-core
 
 Declarative HTTP client for Vert.x. Annotate a Java interface with standard JAX-RS annotations
 (`@GET`, `@Path`, `@QueryParam`, …) plus `@RestClient`, then ask `RestClientBuilder` or the
 Dagger-provided `RestClientFactory` for a proxy: every method invocation becomes an asynchronous
 HTTP call returning `Future<T>`. The role is the same one Spring's `@HttpExchange` and MicroProfile's
 `@RegisterRestClient` play — a typed, annotation-driven front end over a connection-pooled HTTP
-client, here Vert.x `WebClient`.
+client, here Vert.x `WebClient` sent through the governed transport of `vertique-http-client-core`.
 
 It is not a server-side routing runtime and shares no dispatch code with one; `dev.vertique:vertique-rest-jaxrs`
 handles inbound requests. The two do share the parameter-conversion stack from
@@ -80,7 +80,8 @@ by annotations, or by external configuration, in that precedence order.
 ### Everything resolves at `build()`, nothing at first call
 
 `RestClientBuilder.build(Class)` scans the interface, resolves the effective `ObjectMapper`, resolves
-the parameter converters, creates a fresh `WebClient`, and returns the proxy. Any misconfiguration —
+the parameter converters, creates a fresh governed client (`vertique-http-client-core`) over its own
+`WebClient`, and returns the proxy. Any misconfiguration —
 an unknown JSON profile id, a parameter type with no converter, a missing base URL — throws there
 rather than on the first request. Builder state is never mutated by `build()`, so one builder can
 produce several proxies.
@@ -171,7 +172,7 @@ and the optional `BeanValidator`.
 | `beanParamAccessorRegistry(BeanParamAccessorRegistry)` | Overrides the process-wide generated-accessor cache; intended for tests |
 | `config(RestClientConfig)` | Typed per-client overrides; an explicit call wins over the name lookup in the seeded index |
 | `build(Class<T>)` | Scans, validates, and returns the typed proxy |
-| `close()` | Closes builder-created client contexts and WebClients, then the builder-owned runtime; idempotent |
+| `close()` | Closes builder-created client contexts and governed clients, then the builder-owned runtime; idempotent |
 
 ```java
 // Standalone
@@ -192,7 +193,7 @@ UserClient client = factory.builder()
 Standalone builders own the resilience runtime they create and should be closed when the client
 lifetime ends. Builders created with `create(Vertx, Resilience)` and builders returned by
 `RestClientFactory` do not own the supplied/application runtime; closing them releases only their
-client contexts and WebClients. `close()` is deterministic and idempotent.
+client contexts and governed clients. `close()` is deterministic and idempotent.
 
 ### `RestClientFactory`
 
@@ -479,6 +480,7 @@ and pre-registers:
 | `java.net.SocketException` | `RestClientConnectionException` |
 | `io.vertx.core.http.HttpClosedException` | `RestClientConnectionException` |
 | `java.util.concurrent.TimeoutException` (covers Vert.x `NoStackTraceTimeoutException`) | `RestClientTimeoutException` |
+| `dev.vertique.http.client.exception.HttpEgressDeniedException` (a refused redirect hop, see Redirects) | `RestClientException` with a constant message that carries no target details; the refusal is the cause |
 | `io.vertx.core.VertxException` | `RestClientException` (safety net) |
 
 ---
@@ -841,7 +843,7 @@ can be overridden without discarding the baseline.
 | `writeIdleTimeoutSeconds` | int | 0 | Write idle timeout; 0 disables |
 | `http2KeepAliveTimeoutSeconds` | int | 60 | HTTP/2 keep-alive timeout |
 | `sslHandshakeTimeoutSeconds` | long | 10 | TLS handshake timeout |
-| `maxRedirects` | int | 16 | Maximum redirects followed |
+| `maxRedirects` | int | 16 | Maximum redirects followed (see Redirects below for the headers a hop forwards) |
 | `followRedirects` | boolean | true | Follow HTTP redirects |
 | `pemKeyCertOptions.keyPath` / `.certPath` | String | — | PEM client key and certificate for mTLS |
 | `keyStoreOptions.path` / `.password` | String | — | JKS client keystore for mTLS |
@@ -856,6 +858,20 @@ can be overridden without discarding the baseline.
 A raw Vert.x duration key is **rejected**, not silently accepted: writing `connectTimeout` instead of
 `connectTimeoutMs` (or any of the other six pairs) fails startup with
 `RestClientConfigurationException`.
+
+Because every proxy sends through the governed client, building a client whose options trust all
+certificates, skip host verification or enable TLS below 1.2 logs one warning; the option still applies.
+
+#### Redirects
+
+REST clients follow redirects by the governed client's rules; Vert.x's method handling and
+`maxRedirects` are unchanged, and a same-origin hop forwards the request headers as before. On a hop
+that changes origin (scheme, host or port) only `Accept`, `Accept-Language`, `Accept-Encoding`,
+`User-Agent`, `Cache-Control`, `Pragma`, `If-None-Match` and `If-Modified-Since` are forwarded, so a
+custom header such as an API key stays with the original origin. A hop from `https` to `http` and a
+redirect `Location` that carries user information are refused: the call fails with a
+`RestClientException` (see the mapper table), which the default retry policy does not retry and which
+counts as a failure for the circuit breaker.
 
 ```json
 {
@@ -1093,6 +1109,7 @@ interface AppComponent {
 | `dev.vertique:vertique-resilience` | Canonical timeout, retry, circuit-breaker, and bulkhead annotations plus backoff and retry contracts |
 | `dev.vertique:vertique-rest-core` | `ParamConversionResolver`, `ParamConverterRegistry`, `ConversionContext`, `ParamSource`, and `RestCoreModule` — the outbound half of the conversion stack `rest-jaxrs` uses inbound |
 | `dev.vertique:vertique-json` | `JsonMapperProfileRegistry`, `JsonConfig`, and `JsonRuntimeModule` for named mapper profiles |
+| `dev.vertique:vertique-http-client-core` | The governed transport: `VertiqueHttpClient` sends every physical attempt through the method's resilience pipeline, and its normalizer translates the `webClient` option keys |
 | `io.vertx:vertx-web-client` | `WebClient`, `WebClientOptions`, `PoolOptions` |
 | `jakarta.ws.rs:jakarta.ws.rs-api` | The JAX-RS annotations that describe each interface |
 | `jakarta.annotation:jakarta.annotation-api` | `@Nullable` on API signatures |

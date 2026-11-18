@@ -5,12 +5,16 @@ package dev.vertique.rest.client;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.RETURNS_SELF;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import dev.vertique.core.codegen.MethodMetadata;
 import dev.vertique.core.codegen.ReflectiveMethodMetadata;
 import dev.vertique.core.exception.ConfigurationException;
+import dev.vertique.http.client.VertiqueHttpClient;
+import dev.vertique.http.client.VertiqueHttpClientBuilder;
 import dev.vertique.resilience.Resilience;
 import dev.vertique.resilience.ResiliencePolicyOverrides;
 import dev.vertique.resilience.ResiliencePolicyRegistry;
@@ -28,7 +32,6 @@ import io.vertx.core.Future;
 import io.vertx.core.MultiMap;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
-import io.vertx.ext.web.client.WebClient;
 import jakarta.ws.rs.GET;
 import java.lang.reflect.Method;
 import java.util.List;
@@ -160,9 +163,10 @@ class RestClientNamedPolicyTest {
     @Test
     @DisplayName("failed eager named-policy resolution closes builder-owned resources")
     void builderClosesResourcesWhenEagerNamedPolicyResolutionFails() {
-        WebClient webClient = mock(WebClient.class);
-        RestClientBuilder builder =
-                new RestClientBuilder(vertx, registry(Map.of()), (ignored, options, pool) -> webClient);
+        VertiqueHttpClient httpClient = mock(VertiqueHttpClient.class);
+        VertiqueHttpClientBuilder governed = mock(VertiqueHttpClientBuilder.class, RETURNS_SELF);
+        when(governed.build()).thenReturn(httpClient);
+        RestClientBuilder builder = new RestClientBuilder(vertx, registry(Map.of()), ignored -> governed);
 
         try {
             assertThatThrownBy(() -> builder.build(NamedRetryClient.class))
@@ -176,7 +180,7 @@ class RestClientNamedPolicyTest {
                     .as("failed build must close the owned runtime before returning the failure")
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessage("Resilience runtime is closed");
-            verify(webClient).close();
+            verify(httpClient).close();
         } finally {
             builder.close().toCompletionStage().toCompletableFuture().join();
         }

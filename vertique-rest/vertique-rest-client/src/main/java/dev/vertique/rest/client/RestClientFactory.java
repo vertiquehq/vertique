@@ -23,7 +23,7 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * Creates declarative HTTP client proxies from JAX-RS-annotated interfaces.
  *
- * <p>Use this factory to obtain typed client instances backed by Vert.x WebClient. The factory
+ * <p>Use this factory to obtain typed client instances backed by a governed Vert.x WebClient. The factory
  * is provided as a Dagger singleton via {@link RestClientModule} and pre-seeds every builder it
  * creates with global interceptors, external configuration, and an optional
  * {@link dev.vertique.core.validation.BeanValidator} from the DI container.
@@ -102,7 +102,7 @@ public class RestClientFactory {
      * capturer set. Intended for direct construction in tests or when the DI graph does not
      * provide the registry. The {@link JsonMapperProfileRegistry} is left {@code null}.
      *
-     * @param vertx the Vert.x instance used to create WebClient instances
+     * @param vertx the Vert.x instance used to create the governed WebClient clients
      * @param globalInterceptors global interceptors applied to all proxies; may be empty
      * @param configIndex the typed {@code name -> RestClientConfig} index seeded into every builder
      * @param beanValidator optional response validator; {@code null} if the validation module is
@@ -131,7 +131,7 @@ public class RestClientFactory {
     /**
      * Creates a new factory. Intended to be called by Dagger via {@link RestClientModule}.
      *
-     * @param vertx the Vert.x instance used to create WebClient instances
+     * @param vertx the Vert.x instance used to create the governed WebClient clients
      * @param globalInterceptors global interceptors applied to all proxies; may be empty
      * @param globalContextCapturers system-owned context capturers applied to all proxies;
      *     may be empty
@@ -271,7 +271,7 @@ public class RestClientFactory {
      *
      * @param <T> the client interface type
      * @param clientInterface the JAX-RS-annotated interface to proxy
-     * @return a proxy instance backed by Vert.x WebClient
+     * @return a proxy instance backed by a governed Vert.x WebClient
      * @throws IllegalArgumentException if no base URL is resolved or the interface cannot be
      *     scanned
      * @deprecated Prefer {@link #builder()} which returns a fluent builder with full control over
