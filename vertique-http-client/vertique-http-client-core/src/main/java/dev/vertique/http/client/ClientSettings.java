@@ -3,6 +3,8 @@
 
 package dev.vertique.http.client;
 
+import jakarta.annotation.Nullable;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -16,6 +18,9 @@ import java.util.Map;
  * @param maxRequestBytes the most request body bytes sent, 0 for no bound
  * @param maxResponseBytes the most response body bytes read, 0 for no bound
  * @param egress the policy every request target is checked against
+ * @param credentials the source of per-exchange credential headers, or null for none
+ * @param allowCredentialsOverPlainHttp whether credentials may travel over plain HTTP to a non-loopback host
+ * @param credentialOrigins the extra origins ({@code scheme://host:port}, normalized) credentials may go to
  */
 record ClientSettings(
         String basePath,
@@ -25,4 +30,14 @@ record ClientSettings(
         long readTimeoutMs,
         long maxRequestBytes,
         long maxResponseBytes,
-        EgressPolicy egress) {}
+        EgressPolicy egress,
+        @Nullable CredentialSource credentials,
+        boolean allowCredentialsOverPlainHttp,
+        List<String> credentialOrigins) {
+
+    /** Renders no setting, so a credential source or a default header never reaches a log line. */
+    @Override
+    public String toString() {
+        return "ClientSettings";
+    }
+}

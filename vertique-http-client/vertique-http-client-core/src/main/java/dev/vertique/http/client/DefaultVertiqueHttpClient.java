@@ -3,6 +3,7 @@
 
 package dev.vertique.http.client;
 
+import dev.vertique.http.client.internal.CredentialInterceptor;
 import dev.vertique.http.client.internal.EgressInterceptor;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
@@ -10,6 +11,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpClientAgent;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
@@ -102,6 +104,17 @@ final class DefaultVertiqueHttpClient implements VertiqueHttpClient {
         EgressPolicy egress = settings.egress();
         governed.addInterceptor(
                 new EgressInterceptor(egress::check, egress.restrictsHosts(), webClientOptions.isSsl()));
+        if (settings.credentials() != null) {
+            governed.addInterceptor(new CredentialInterceptor(
+                    settings.credentials(),
+                    settings.allowCredentialsOverPlainHttp(),
+                    Set.copyOf(settings.credentialOrigins()),
+                    settings.hasBaseUrl(),
+                    webClientOptions.isSsl(),
+                    webClientOptions.getDefaultHost(),
+                    webClientOptions.getDefaultPort(),
+                    EgressPolicy::isLoopbackHost));
+        }
         return new GovernedWebClient(governed, settings);
     }
 }

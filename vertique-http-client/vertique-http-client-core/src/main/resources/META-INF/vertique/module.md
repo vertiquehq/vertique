@@ -88,6 +88,21 @@ request body to another origin is returned as the response, and a hop to another
 `Accept`, `Accept-Language`, `Accept-Encoding`, `User-Agent`, `Cache-Control`, `Pragma`, `If-None-Match`
 and `If-Modified-Since`. Every hop passes the egress policy.
 
+**Credentials.** `credentials(CredentialSource)` supplies headers such as `Authorization` per exchange:
+`resolve(URI)` runs once for every hop to the original origin, after the request is prepared, and each
+returned header replaces the request's header of that name. The original origin is the base URL's origin
+(without a base URL, the exchange's first hop), widened by `credentialOrigins(List)` entries of the form
+`scheme://host[:port]`. The source is never called for a hop to another origin or after the exchange left
+the original origin, and a request with a server address, a virtual host (including a caller-set `Host`
+header) or a request-level proxy gets no credentials; on a hop to another origin only the redirect
+safelist headers travel. With a source, plain HTTP to a non-loopback host fails with
+`HttpEgressDeniedException` (`PLAIN_HTTP_CREDENTIALS`) before connecting, unless
+`allowCredentialsOverPlainHttp(true)`. A failed, throwing or null source, a header name that is not a
+token or is `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Upgrade` or `TE`, and a value
+with a control character or leading or trailing whitespace fail the exchange with `HttpCredentialException`
+and send nothing. Values never appear in a message, log or `toString`; `causeType()` names only the class
+of a source failure.
+
 **Warning: `allowAll()` with redirects.** With the default policy and redirects followed, a server you
 call can redirect the client to any host, including internal addresses, such as a cloud metadata
 endpoint or a service on a private network. Give a client that follows redirects, or that calls servers
@@ -119,6 +134,9 @@ runtime the caller owns.
 | `maxRequestBytes(long)` | Most request body bytes sent, not negative; default `0` for no bound |
 | `maxResponseBytes(long)` | Most response body bytes read, not negative; default 10485760, `0` for no bound |
 | `egress(EgressPolicy)` | Targets the client may contact, checked before connecting and on every redirect hop; default `EgressPolicy.allowAll()` |
+| `credentials(CredentialSource)` | Per-exchange credential headers, resolved for hops to the original origin only; see Credentials |
+| `credentialOrigins(List<String>)` | Extra `scheme://host[:port]` origins credentials may go to, besides the base URL's origin |
+| `allowCredentialsOverPlainHttp(boolean)` | Lets a credential source be used over plain HTTP to a non-loopback host; default `false` |
 | `webClientOptions(WebClientOptions)` | Copied; replaces the base options, which do not follow redirects |
 | `poolOptions(PoolOptions)` | Copied; sizes the shared connection pool |
 | `defaultHeader(String, String)` | Header added to every request that does not set it |

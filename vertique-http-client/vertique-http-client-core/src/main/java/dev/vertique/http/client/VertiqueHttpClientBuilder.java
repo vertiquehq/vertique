@@ -4,6 +4,7 @@
 package dev.vertique.http.client;
 
 import dev.vertique.http.client.exception.HttpClientConfigurationException;
+import dev.vertique.http.client.internal.CredentialInterceptor;
 import dev.vertique.http.client.internal.FrameworkClientOptions;
 import dev.vertique.http.client.internal.RedirectRules;
 import dev.vertique.resilience.Resilience;
@@ -22,6 +23,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
@@ -61,6 +64,9 @@ public final class VertiqueHttpClientBuilder {
     private final Map<String, String> defaultHeaders = new LinkedHashMap<>();
     private boolean validateHeaders = true;
     private EgressPolicy egress = EgressPolicy.allowAll();
+    private CredentialSource credentials;
+    private boolean allowCredentialsOverPlainHttp;
+    private List<String> credentialOrigins = List.of();
 
     private VertiqueHttpClientBuilder(Vertx vertx, @Nullable Resilience resilience) {
         this.vertx = Objects.requireNonNull(vertx, "vertx");
@@ -208,6 +214,49 @@ public final class VertiqueHttpClientBuilder {
     }
 
     /**
+     * Sets the source of per-exchange credential headers. The client resolves it once for every hop of
+     * an exchange to the original origin, which is the origin of the base URL (or, without a base URL,
+     * of the exchange's first hop) widened by {@link #credentialOrigins(List)}, and never for a hop to
+     * another origin or after the exchange left the original origin. Each returned header replaces the
+     * request's header of that name. Requests with a server address, a virtual host or a request-level
+     * proxy get no credentials. Plain HTTP to a non-loopback host is refused unless
+     * {@link #allowCredentialsOverPlainHttp(boolean)} says otherwise.
+     *
+     * @param source the credential source
+     * @return this builder
+     */
+    public synchronized VertiqueHttpClientBuilder credentials(CredentialSource source) {
+        this.credentials = Objects.requireNonNull(source, "source");
+        return this;
+    }
+
+    /**
+     * Sets whether a client with a credential source may send requests over plain HTTP to a host that is
+     * not loopback. The default is {@code false}: such a request fails with {@code
+     * HttpEgressDeniedException} (reason {@code PLAIN_HTTP_CREDENTIALS}) before any connection.
+     *
+     * @param allow whether to allow credentials over plain HTTP
+     * @return this builder
+     */
+    public synchronized VertiqueHttpClientBuilder allowCredentialsOverPlainHttp(boolean allow) {
+        this.allowCredentialsOverPlainHttp = allow;
+        return this;
+    }
+
+    /**
+     * Sets the origins besides the base URL's origin that credentials may go to. Each entry is {@code
+     * scheme://host[:port]} with an {@code http} or {@code https} scheme; a missing port is the
+     * scheme's default. An invalid entry is rejected by {@link #build()} without echoing it.
+     *
+     * @param origins the origins to add
+     * @return this builder
+     */
+    public synchronized VertiqueHttpClientBuilder credentialOrigins(List<String> origins) {
+        this.credentialOrigins = List.copyOf(Objects.requireNonNull(origins, "origins"));
+        return this;
+    }
+
+    /**
      * Builds a client from the current settings.
      *
      * @return a new client with its own HTTP agent
@@ -244,7 +293,10 @@ public final class VertiqueHttpClientBuilder {
                 readTimeoutMs,
                 maxRequestBytes,
                 maxResponseBytes,
-                egress);
+                egress,
+                credentials,
+                allowCredentialsOverPlainHttp,
+                credentialOriginSet(base));
 
         HttpClientBuilder agentBuilder =
                 vertx.httpClientBuilder().with(effective).withRedirectHandler(new RedirectRules());
@@ -305,6 +357,42 @@ public final class VertiqueHttpClientBuilder {
             }
         }
         return Collections.unmodifiableMap(new LinkedHashMap<>(defaultHeaders));
+    }
+
+    private List<String> credentialOriginSet(BaseUrl base) {
+        Set<String> origins = new TreeSet<>();
+        if (base != null) {
+            origins.add(CredentialInterceptor.origin(base.secure(), base.host(), base.port()));
+        }
+        for (String entry : credentialOrigins) {
+            origins.add(parseCredentialOrigin(entry));
+        }
+        return List.copyOf(origins);
+    }
+
+    private static String parseCredentialOrigin(String text) {
+        URI uri;
+        try {
+            uri = new URI(Objects.requireNonNull(text, "origin"));
+        } catch (URISyntaxException invalid) {
+            throw invalidCredentialOrigin();
+        }
+        boolean secure = "https".equalsIgnoreCase(uri.getScheme());
+        String path = uri.getRawPath();
+        if (!secure && !"http".equalsIgnoreCase(uri.getScheme())
+                || uri.getHost() == null
+                || uri.getRawUserInfo() != null
+                || uri.getRawQuery() != null
+                || uri.getRawFragment() != null
+                || path != null && !path.isEmpty()) {
+            throw invalidCredentialOrigin();
+        }
+        return CredentialInterceptor.origin(
+                secure, uri.getHost(), uri.getPort() >= 0 ? uri.getPort() : secure ? 443 : 80);
+    }
+
+    private static HttpClientConfigurationException invalidCredentialOrigin() {
+        return new HttpClientConfigurationException("A credential origin must be scheme://host[:port]");
     }
 
     private static BaseUrl parseBaseUrl(String text) {

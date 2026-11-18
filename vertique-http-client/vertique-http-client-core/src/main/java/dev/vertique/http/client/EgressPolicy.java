@@ -208,6 +208,11 @@ public final class EgressPolicy {
                 || HEX_NUMBER.matcher(last).matches();
     }
 
+    /** Whether a host name or IP literal is {@code localhost} or a loopback address; names are never resolved. */
+    static boolean isLoopbackHost(String host) {
+        return host != null && isLoopback(normalize(host));
+    }
+
     private static boolean isLoopback(String host) {
         if (host.equals(LOCALHOST)) {
             return true;
