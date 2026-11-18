@@ -458,6 +458,31 @@ class HttpClientFactoryIT {
         assertThat(recorder.completed.get())
                 .as("a call refused by a closed client is not notified")
                 .isEqualTo(2);
+
+        // And a direct webClient() request in flight at close() and one sent after close() fail the same way
+        RecordingServer direct = support.server((request, body) -> {});
+        CountingInterceptor directRecorder = new CountingInterceptor("direct");
+        VertiqueHttpClientBuilder directBuilder = VertiqueHttpClientBuilder.create(support.vertx)
+                .baseUrl(direct.origin())
+                .register(directRecorder);
+        support.track(directBuilder::close);
+        VertiqueHttpClient directClient = directBuilder.build();
+        support.track(directClient::close);
+        Future<HttpResponse<Buffer>> inFlight =
+                directClient.webClient().get("/never").send();
+        assertThat(awaitCondition(() -> direct.requestsTo("/never").size() == 1, HttpClientItSupport.WAIT_MS))
+                .isTrue();
+        Future<Void> directClose = directClient.close();
+        assertThat(awaitFailure(inFlight)).isExactlyInstanceOf(HttpClientClosedException.class);
+        assertThat(awaitCondition(() -> directRecorder.completed.get() >= 1, HttpClientItSupport.WAIT_MS))
+                .isTrue();
+        assertThat(directRecorder.completions.get(0).error()).isExactlyInstanceOf(HttpClientClosedException.class);
+        await(directClose);
+        assertThatThrownBy(() -> directClient.webClient().get("/never"))
+                .isExactlyInstanceOf(HttpClientClosedException.class);
+        sleep(300);
+        assertThat(directRecorder.completed.get()).isEqualTo(1);
+        assertThat(direct.requestsTo("/never")).hasSize(1);
     }
 
     // --- TP-007 ---

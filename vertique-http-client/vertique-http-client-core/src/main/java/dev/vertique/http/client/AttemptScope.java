@@ -4,6 +4,7 @@
 package dev.vertique.http.client;
 
 import dev.vertique.http.client.exception.HttpBodyLimitException;
+import dev.vertique.http.client.exception.HttpClientClosedException;
 import dev.vertique.http.client.exception.HttpCredentialException;
 import dev.vertique.http.client.exception.HttpEgressDeniedException;
 import dev.vertique.http.client.exception.HttpStatusRejectedException;
@@ -50,6 +51,9 @@ final class AttemptScope {
     private final int attemptOrdinal;
     private final Set<Throwable> refusedBeforeSend = Collections.newSetFromMap(new IdentityHashMap<>());
     private boolean nonIdempotent;
+    private boolean wroteNonIdempotent;
+    private int unansweredWrites;
+    private boolean closedByClient;
     private boolean requestCreated;
     private boolean ended;
 
@@ -94,6 +98,31 @@ final class AttemptScope {
         if (!isIdempotent(method)) {
             nonIdempotent = true;
         }
+    }
+
+    /**
+     * Records that a non-idempotent exchange of this scope wrote its request and then received a response
+     * other than 429 or 503, or failed after writing it.
+     */
+    private synchronized void settledAfterWriting() {
+        wroteNonIdempotent = true;
+    }
+
+    /**
+     * Whether a non-idempotent exchange of this scope wrote its request and then received a response other
+     * than 429 or 503, or failed after writing it: repeating the attempt would repeat that request.
+     */
+    synchronized boolean hasSettledNonIdempotentWrite() {
+        return wroteNonIdempotent || unansweredWrites > 0;
+    }
+
+    private synchronized void unansweredWrites(int delta) {
+        unansweredWrites += delta;
+    }
+
+    /** The failure a request made after the scope ended fails with. */
+    synchronized Throwable endedFailure() {
+        return closedByClient ? new HttpClientClosedException() : new IllegalStateException(ENDED);
     }
 
     /** Whether some exchange of this scope used a method that is not idempotent. */
@@ -188,6 +217,7 @@ final class AttemptScope {
                 return;
             }
             ended = true;
+            closedByClient = callFailure instanceof HttpClientClosedException;
             toReset = new ArrayList<>(open);
             toNotify = new ArrayList<>(awaiting);
             open.clear();
@@ -197,7 +227,8 @@ final class AttemptScope {
             exchange.complete(exchange.refusedBy(callFailure));
         }
         Throwable cause = new IllegalStateException(ENDED);
-        Throwable resetCause = isTimeout(callFailure) ? callFailure : cause;
+        Throwable resetCause =
+                isTimeout(callFailure) || callFailure instanceof HttpClientClosedException ? callFailure : cause;
         for (Exchange exchange : toReset) {
             exchange.complete(callFailure != null ? callFailure : cause);
             exchange.reset(resetCause);
@@ -223,6 +254,10 @@ final class AttemptScope {
         private volatile HttpClientRequest request;
         private volatile HttpClientResponse response;
         private volatile int hops;
+        private volatile int created;
+        private volatile int status;
+        private volatile boolean nonIdempotent;
+        private volatile boolean unanswered;
         private volatile boolean expired;
         private volatile boolean done;
         private volatile Runnable onFinish;
@@ -245,7 +280,25 @@ final class AttemptScope {
 
         /** Records the method of the exchange's request. */
         void method(String method) {
+            nonIdempotent = !isIdempotent(method);
             scope.noteMethod(method);
+        }
+
+        /** Records that Vert.x creates a request for a hop: the first hop, or a followed redirect. */
+        void hopCreated() {
+            // a followed redirect means the previous hop was answered with a redirect status
+            if (created > 0 && nonIdempotent) {
+                scope.settledAfterWriting();
+            }
+            created = created + 1;
+        }
+
+        /** Counts the exchange as a written non-idempotent request still waiting for its answer, or not. */
+        private void writtenUnanswered(boolean pending) {
+            if (nonIdempotent && pending != unanswered) {
+                unanswered = pending;
+                scope.unansweredWrites(pending ? 1 : -1);
+            }
         }
 
         /** Records the hop the exchange currently goes to. */
@@ -266,9 +319,11 @@ final class AttemptScope {
          */
         boolean attach(HttpClientRequest sent) {
             request = sent;
+            writtenUnanswered(true);
             hops = hops + 1;
             scope.requestCreated();
             head = null; // a followed redirect starts a new hop
+            status = 0;
             response = null; // a followed redirect reuses the exchange: never reset an earlier hop's response
             return !expired && !scope.hasEnded();
         }
@@ -281,6 +336,7 @@ final class AttemptScope {
          */
         boolean attach(HttpClientResponse received) {
             response = received;
+            status = received.statusCode();
             return !expired && !scope.hasEnded();
         }
 
@@ -296,6 +352,10 @@ final class AttemptScope {
 
         /** The response was dispatched: the exchange is over and completed with a response. */
         void respond() {
+            writtenUnanswered(false);
+            if (nonIdempotent && status != 429 && status != 503) {
+                scope.settledAfterWriting();
+            }
             markEnded();
             done = true;
             Runnable cleanup = onFinish;
@@ -307,9 +367,13 @@ final class AttemptScope {
 
         /** The exchange failed with {@code failure}: it is over and the interceptors are told. */
         void fail(@Nullable Throwable failure) {
-            if (failure != null && hops <= 1 && response == null) {
+            if (failure != null && created <= 1 && hops <= 1 && response == null) {
                 scope.refusedBeforeSend(failure, hops == 0);
             }
+            if (nonIdempotent && hops > 0 && status != 429 && status != 503) {
+                scope.settledAfterWriting();
+            }
+            writtenUnanswered(false);
             finish();
             complete(failure != null ? failure : new IllegalStateException(ENDED));
         }

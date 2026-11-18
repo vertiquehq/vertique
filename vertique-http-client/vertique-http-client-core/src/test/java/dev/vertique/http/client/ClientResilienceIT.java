@@ -46,6 +46,8 @@ import io.vertx.core.http.HttpClosedException;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
+import java.net.ConnectException;
+import java.net.ServerSocket;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -266,6 +268,14 @@ class ClientResilienceIT {
                 .isTrue();
     }
 
+    private static int unusedPort() {
+        try (ServerSocket socket = new ServerSocket(0)) {
+            return socket.getLocalPort();
+        } catch (java.io.IOException e) {
+            throw new AssertionError(e);
+        }
+    }
+
     private static long millisSince(long startNanos) {
         return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
     }
@@ -469,6 +479,19 @@ class ClientResilienceIT {
         RecordingServer server = support.server((request, body) -> {
             switch (request.method().name() + " " + request.uri()) {
                 case "POST /slow", "GET /slow" -> {}
+                case "POST /orders" -> request.response().setStatusCode(200).end();
+                case "GET /status" -> request.response().setStatusCode(503).end();
+                case "POST /redirect" ->
+                    request.response()
+                            .setStatusCode(303)
+                            .putHeader("Location", "/next")
+                            .end();
+                case "GET /next" -> request.response().setStatusCode(503).end();
+                case "POST /slowpost" ->
+                    support.vertx.setTimer(1_000, id -> request.response().end());
+                case "GET /status2" ->
+                    support.vertx.setTimer(
+                            100, id -> request.response().setStatusCode(503).end());
                 case "POST /bad", "GET /bad" ->
                     request.response().setStatusCode(502).end();
                 case "POST /busy" ->
@@ -519,6 +542,42 @@ class ClientResilienceIT {
                 options, web -> web.post("/busy").sendBuffer(body).expecting(HttpExpectations.success())));
         assertThat(busyResponse.statusCode()).isEqualTo(200);
         assertThat(count(server, "POST /busy")).isEqualTo(2);
+
+        // And an attempt that already sent a POST is not replayed when a later exchange of the attempt fails
+        // with a status or a connection failure that is otherwise retried: exactly one POST arrives
+        Throwable statusAfterPost = awaitFailure(client.execute(options, web -> web.post("/orders")
+                .send()
+                .compose(r -> web.get("/status").send().expecting(HttpExpectations.success()))));
+        assertRejected(statusAfterPost, 503);
+        sleep(SETTLE_MS);
+        assertThat(count(server, "POST /orders")).isEqualTo(1);
+        assertThat(count(server, "GET /status")).isEqualTo(1);
+        int closedPort = unusedPort();
+        Throwable connectAfterPost = awaitFailure(
+                client.execute(options, web -> web.post("/orders").send().compose(r -> web.getAbs(
+                                "http://127.0.0.1:" + closedPort + "/status")
+                        .send())));
+        assertThat(connectAfterPost).isInstanceOf(ConnectException.class);
+        sleep(SETTLE_MS);
+        assertThat(count(server, "POST /orders")).isEqualTo(2);
+
+        // And a POST answered by a 303 is not resent when the followed GET fails with a retried 503
+        VertiqueHttpClient following = build(builder(runtime(events), server, tiers("t", retryTier(2, 10)))
+                .webClientOptions(
+                        new WebClientOptions().setFollowRedirects(true).setMaxRedirects(5)));
+        Throwable afterRedirect = awaitFailure(
+                following.execute(options, web -> web.post("/redirect").send().expecting(HttpExpectations.success())));
+        assertRejected(afterRedirect, 503);
+        sleep(SETTLE_MS);
+        assertThat(count(server, "POST /redirect")).isEqualTo(1);
+
+        // And a written POST still in flight blocks the retry when a parallel GET fails with a retried 503
+        Throwable parallel = awaitFailure(client.execute(options, web -> Future.all(
+                        web.post("/slowpost").send(), web.get("/status2").send().expecting(HttpExpectations.success()))
+                .<Void>mapEmpty()));
+        assertRejected(parallel, 503);
+        sleep(SETTLE_MS * 2);
+        assertThat(count(server, "POST /slowpost")).isEqualTo(1);
     }
 
     // --- AC-035 ---
@@ -1064,6 +1123,33 @@ class ClientResilienceIT {
         assertThat(of(events, CircuitStateChanged.class))
                 .extracting(CircuitStateChanged::newState)
                 .doesNotContain(CircuitState.OPEN);
+
+        // And as the half-open trial a redirect-hop refusal is recorded like a 4xx success and closes the breaker
+        RecordingServer trialRedirect = support.server((request, body) -> {
+            if (request.uri().equals("/fail")) {
+                request.response().setStatusCode(503).end();
+            } else {
+                request.response()
+                        .setStatusCode(302)
+                        .putHeader("Location", "http://localhost:" + target.port() + "/")
+                        .end();
+            }
+        });
+        List<ResilienceEvent> trialEvents = new CopyOnWriteArrayList<>();
+        VertiqueHttpClient trialClient =
+                build(builder(runtime(trialEvents), trialRedirect, tiers("h", breakerTier(1, 300)))
+                        .egress(EgressPolicy.allowHosts(List.of("127.0.0.1"), true))
+                        .webClientOptions(
+                                new WebClientOptions().setFollowRedirects(true).setMaxRedirects(5)));
+        assertRejected(awaitFailure(get(trialClient, tierOptions("h"), "/fail")), 503);
+        sleep(400);
+        Throwable trial = awaitFailure(get(trialClient, tierOptions("h"), "/out"));
+        assertThat(trial).isExactlyInstanceOf(HttpEgressDeniedException.class);
+        // the next call reaches the server instead of finding an open circuit, and its failure opens it again
+        assertRejected(awaitFailure(get(trialClient, tierOptions("h"), "/fail")), 503);
+        assertThat(of(trialEvents, CircuitStateChanged.class))
+                .extracting(CircuitStateChanged::newState)
+                .containsSubsequence(CircuitState.OPEN, CircuitState.HALF_OPEN, CircuitState.CLOSED, CircuitState.OPEN);
     }
 
     // --- timeout reset cause ---

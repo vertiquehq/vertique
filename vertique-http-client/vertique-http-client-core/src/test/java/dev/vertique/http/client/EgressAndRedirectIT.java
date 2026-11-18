@@ -480,6 +480,32 @@ class EgressAndRedirectIT {
         assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - openStarted))
                 .isLessThan(FAST_REFUSAL_MS);
         assertThat(untouched.openedConnections.get()).isZero();
+
+        // And with plain HTTP refused, a non-loopback server address behind a loopback URL host is refused as SCHEME
+        // within 500 ms: loopback is judged from the connect address, and nothing is dialed
+        RecordingServer plain = support.server((request, body) -> answer(request, 200, "ok"));
+        WebClient strict = client(EgressPolicy.allowHosts(List.of("127.0.0.1", "10.0.0.5"), false), options)
+                .webClient();
+        long strictStarted = System.nanoTime();
+        Throwable scheme = awaitFailure(
+                strict.requestAbs(HttpMethod.GET, SocketAddress.inetSocketAddress(80, "10.0.0.5"), plain.origin() + "/")
+                        .send());
+        assertDenied(scheme, Reason.SCHEME);
+        assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - strictStarted))
+                .isLessThan(FAST_REFUSAL_MS);
+        assertThat(plain.openedConnections.get()).isZero();
+
+        // And a loopback connect address behind a non-loopback URL host is allowed over plain HTTP and reaches the
+        // loopback server
+        WebClient named = client(EgressPolicy.allowHosts(List.of("127.0.0.1", "example.com"), false), options)
+                .webClient();
+        HttpResponse<Buffer> viaLoopback = await(named.requestAbs(
+                        HttpMethod.GET,
+                        SocketAddress.inetSocketAddress(plain.port(), "127.0.0.1"),
+                        "http://example.com/")
+                .send());
+        assertThat(viaLoopback.statusCode()).isEqualTo(200);
+        assertThat(plain.requests).hasSize(1);
     }
 
     /** Supporting proof of per-hop checks. */

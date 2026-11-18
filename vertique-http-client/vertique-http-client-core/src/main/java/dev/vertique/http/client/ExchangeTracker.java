@@ -73,7 +73,7 @@ final class ExchangeTracker implements Handler<HttpContext<?>> {
                 if (ctx.get(EXCHANGE) == null) {
                     AttemptScope.Exchange exchange = scope.begin();
                     if (exchange == null) {
-                        ctx.fail(new IllegalStateException(AttemptScope.ENDED));
+                        ctx.fail(scope.endedFailure());
                         return;
                     }
                     ctx.set(EXCHANGE, exchange);
@@ -90,6 +90,9 @@ final class ExchangeTracker implements Handler<HttpContext<?>> {
             case CREATE_REQUEST -> {
                 AttemptScope.Exchange exchange = ctx.get(EXCHANGE);
                 RequestOptions options = ctx.requestOptions();
+                if (exchange != null) {
+                    exchange.hopCreated();
+                }
                 if (exchange != null && options != null && !interceptors.isEmpty()) {
                     exchange.target(interceptors.target(options.isSsl(), options.getHost(), options.getPort()));
                 }
@@ -202,12 +205,12 @@ final class ExchangeTracker implements Handler<HttpContext<?>> {
      * Refuses a request or response of an exchange that must not go on. An expired exchange already
      * failed its context, or does so through the reset; an exchange of an ended scope is failed here.
      */
-    private static void refuse(HttpContext<?> ctx, AttemptScope.Exchange exchange, HttpClientRequest request) {
+    private void refuse(HttpContext<?> ctx, AttemptScope.Exchange exchange, HttpClientRequest request) {
         if (exchange.isExpired()) {
             request.reset(0, new TimeoutException(CallExecution.TIMED_OUT));
             return;
         }
-        Throwable cause = new IllegalStateException(AttemptScope.ENDED);
+        Throwable cause = scope.endedFailure();
         request.reset(0, cause);
         ctx.fail(cause);
     }

@@ -244,8 +244,8 @@ retries a connection failure before anything was written (`ConnectException`, `U
 attempt whose every exchange used GET, HEAD, OPTIONS, TRACE, PUT or DELETE retries a 502, a 504, the attempt timeout, an
 `HttpClosedException` and a stream reset. A policy's `retryOn` and `abortOn` replace this, except that a cancelled
 call, a closed client, a refusal before the first request was written (a failed credential source, an egress denial
-on the first hop, an invalid request header, a refused request body) and a refusal on a redirect hop are never
-retried. `Retry-After` is honored only when the policy sets `retry.retryAfterMaxMs` above 0.
+on the first hop, an invalid request header, a refused request body) are never retried; the default classification
+also declines a refusal on a redirect hop. `Retry-After` is honored only when the policy sets `retry.retryAfterMaxMs` above 0.
 
 Callers always see the original failure. A refusal before the first request was written ends the execution without
 retry and the breaker treats it like a cancelled one: it re-opens a half-open breaker and, like any success, resets the
@@ -279,7 +279,8 @@ VertiqueHttpClient client = VertiqueHttpClientBuilder.create(vertx)
 ### HttpClientConfigurationException
 
 Extends `ConfigurationException`. Thrown by `build()` for an invalid name, base URL, read timeout,
-negative body bound or default header.
+negative body bound, default header or credential origin, when a configured client names a resilience policy that is
+not defined, and when a policy is named but the client has no resilience runtime.
 
 ### HttpExpectations
 
@@ -338,8 +339,8 @@ attributes; `with...` copies), `HttpClientResponseHead` (status, message, header
 `HttpClientAttemptCompletion` (status, error, call id, attempt ordinal, duration, completion time, target) and
 `HttpClientAttemptTarget` (scheme, host, port). Their `toString` prints no header value, path, query or body.
 
-Every public type in `dev.vertique.http.client.internal` (`FrameworkClientOptions`,
-`BoundedBodyCodec`, `RetryAfter`, `EgressInterceptor`, `RedirectRules`) is INTERNAL: it exists for this module and other framework modules,
+Every public type in `dev.vertique.http.client.internal` (`CredentialInterceptor`, `WebClientOptionsHardening`, `WebClientOptionsNormalizer`, `BoundedBodyCodec`,
+`RetryAfter`, `EgressInterceptor`, `RedirectRules`, `FrameworkClientOptions`) is INTERNAL: it exists for this module and other framework modules,
 is outside the compatibility promise of this artifact, and application code must not use it.
 
 ---

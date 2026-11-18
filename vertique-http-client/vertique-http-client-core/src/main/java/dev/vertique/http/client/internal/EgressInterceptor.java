@@ -100,13 +100,14 @@ public final class EgressInterceptor implements Handler<HttpContext<?>> {
         }
         Address server = options.getServer();
         if (server != null) {
-            verifyServer(server);
+            verifyServer(server, secure);
         }
         ProxyOptions proxy = options.getProxyOptions();
         if (restrictsHosts && proxy != null) {
             verifyHost(proxy.getHost(), true, Reason.PROXY);
         }
-        verifyHost(options.getHost(), secure, null);
+        // with a connect address the scheme rule is judged there; the URL host only has to be listed
+        verifyHost(options.getHost(), server != null || secure, null);
     }
 
     private static boolean hasVirtualHost(HttpContext<?> ctx, RequestOptions options) {
@@ -115,12 +116,14 @@ public final class EgressInterceptor implements Handler<HttpContext<?>> {
                 || ctx.request().headers().contains(HOST_HEADER);
     }
 
-    private void verifyServer(Address server) {
+    private void verifyServer(Address server, boolean secure) {
         if (!(server instanceof SocketAddress address) || !address.isInetSocket()) {
             throw new HttpEgressDeniedException(Reason.CONNECT_ADDRESS);
         }
         if (restrictsHosts) {
             verifyHost(address.host(), true, Reason.CONNECT_ADDRESS);
+            // loopback is judged from the connect address: the scheme rule applies to its host
+            verifyHost(address.host(), secure, null);
         }
     }
 

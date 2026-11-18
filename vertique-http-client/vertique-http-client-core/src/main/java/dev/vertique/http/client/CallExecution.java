@@ -91,6 +91,9 @@ final class CallExecution<T> implements CancellationSignal.Registration {
     }
 
     private void run() {
+        if (settled) {
+            return;
+        }
         if (signal != null && !signal.register(this)) {
             settle(Future.failedFuture(new HttpExchangeCancelledException()));
             return;
@@ -267,8 +270,10 @@ final class CallExecution<T> implements CancellationSignal.Registration {
 
         /**
          * Applies the client's classification to a failure of a policy pipeline: a refusal before the first
-         * hop's request was written ends the execution through its cancellation; a failure only an idempotent
-         * attempt may repeat is made unrepeatable when the attempt had a non-idempotent exchange.
+         * hop's request was written ends the execution through its cancellation; any failure is made
+         * unrepeatable once a non-idempotent exchange wrote its request and was answered other than 429 or 503
+         * or failed after writing, and a failure only an idempotent attempt may repeat is made unrepeatable
+         * when the attempt had a non-idempotent exchange.
          */
         private Throwable classified(Throwable failure) {
             if (!selection.fromPolicy()) {
@@ -286,7 +291,9 @@ final class CallExecution<T> implements CancellationSignal.Registration {
                 refusedTimeouts.add(failure);
                 return failure;
             }
-            return ClientResilience.isIdempotentOnly(failure) ? new NonRetryableFailure(failure) : failure;
+            return scope.hasSettledNonIdempotentWrite() || ClientResilience.isIdempotentOnly(failure)
+                    ? new NonRetryableFailure(failure)
+                    : failure;
         }
 
         /** Ends an attempt that no longer matters: resets what is open and stops accepting requests. */

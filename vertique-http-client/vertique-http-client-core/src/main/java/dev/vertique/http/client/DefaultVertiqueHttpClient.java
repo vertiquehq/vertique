@@ -128,7 +128,7 @@ final class DefaultVertiqueHttpClient implements VertiqueHttpClient {
             if (existing != null) {
                 return existing;
             }
-            clientScope.end(null);
+            clientScope.end(new HttpClientClosedException());
             // Publish the closing marker before the snapshot of the running calls: a call that registers
             // after the snapshot re-checks the marker and cancels itself.
             Promise<Void> closed = Promise.promise();
@@ -175,6 +175,6 @@ final class DefaultVertiqueHttpClient implements VertiqueHttpClient {
                     webClientOptions.getDefaultPort(),
                     EgressPolicy::isLoopbackHost));
         }
-        return new GovernedWebClient(governed, settings);
+        return new GovernedWebClient(governed, settings, () -> scope == clientScope && closeFuture.get() != null);
     }
 }

@@ -3,6 +3,7 @@
 
 package dev.vertique.http.client;
 
+import dev.vertique.http.client.exception.HttpClientClosedException;
 import dev.vertique.http.client.internal.EgressInterceptor;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
@@ -17,6 +18,7 @@ import io.vertx.ext.web.client.impl.HttpContext;
 import io.vertx.uritemplate.ExpandOptions;
 import io.vertx.uritemplate.UriTemplate;
 import io.vertx.uritemplate.Variables;
+import java.util.function.BooleanSupplier;
 
 /**
  * The {@code WebClient} the client hands out: a delegate over a governed Vert.x {@code WebClient}.
@@ -35,9 +37,18 @@ final class GovernedWebClient implements WebClient {
     private final WebClient delegate;
     private final String basePath;
     private final boolean hasBaseUrl;
+    private final BooleanSupplier closed;
 
-    GovernedWebClient(WebClient delegate, ClientSettings settings) {
+    /**
+     * Creates the web client.
+     *
+     * @param delegate the governed Vert.x web client
+     * @param settings the client's settings
+     * @param closed tells whether the client was closed, after which no request is created
+     */
+    GovernedWebClient(WebClient delegate, ClientSettings settings, BooleanSupplier closed) {
         this.delegate = delegate;
+        this.closed = closed;
         this.basePath = settings.basePath();
         this.hasBaseUrl = settings.hasBaseUrl();
     }
@@ -47,33 +58,39 @@ final class GovernedWebClient implements WebClient {
     @Override
     public HttpRequest<Buffer> request(
             HttpMethod method, SocketAddress serverAddress, int port, String host, String requestURI) {
+        checkOpen();
         return delegate.request(method, serverAddress, port, host, requestURI);
     }
 
     @Override
     public HttpRequest<Buffer> request(
             HttpMethod method, SocketAddress serverAddress, int port, String host, UriTemplate requestURI) {
+        checkOpen();
         return delegate.request(method, serverAddress, port, host, requestURI);
     }
 
     @Override
     public HttpRequest<Buffer> request(HttpMethod method, SocketAddress serverAddress, String host, String requestURI) {
+        checkOpen();
         return delegate.request(method, serverAddress, host, requestURI);
     }
 
     @Override
     public HttpRequest<Buffer> request(
             HttpMethod method, SocketAddress serverAddress, String host, UriTemplate requestURI) {
+        checkOpen();
         return delegate.request(method, serverAddress, host, requestURI);
     }
 
     @Override
     public HttpRequest<Buffer> requestAbs(HttpMethod method, SocketAddress serverAddress, String absoluteURI) {
+        checkOpen();
         return delegate.requestAbs(method, serverAddress, absoluteURI);
     }
 
     @Override
     public HttpRequest<Buffer> requestAbs(HttpMethod method, SocketAddress serverAddress, UriTemplate absoluteURI) {
+        checkOpen();
         return delegate.requestAbs(method, serverAddress, new UserInfoGuardTemplate(absoluteURI));
     }
 
@@ -81,6 +98,7 @@ final class GovernedWebClient implements WebClient {
 
     @Override
     public HttpRequest<Buffer> request(HttpMethod method, SocketAddress serverAddress, String requestURI) {
+        checkOpen();
         if (!hasBaseUrl) {
             return delegate.request(method, serverAddress, PrepareInterceptor.NO_BASE_HOST, requestURI);
         }
@@ -89,6 +107,7 @@ final class GovernedWebClient implements WebClient {
 
     @Override
     public HttpRequest<Buffer> request(HttpMethod method, SocketAddress serverAddress, UriTemplate requestURI) {
+        checkOpen();
         if (!hasBaseUrl) {
             return delegate.request(method, serverAddress, PrepareInterceptor.NO_BASE_HOST, requestURI);
         }
@@ -97,12 +116,14 @@ final class GovernedWebClient implements WebClient {
 
     @Override
     public HttpRequest<Buffer> request(RequestOptions options) {
+        checkOpen();
         return delegate.request(relative(options));
     }
 
     @Override
     @SuppressWarnings("deprecation")
     public HttpRequest<Buffer> request(HttpMethod method, SocketAddress serverAddress, RequestOptions options) {
+        checkOpen();
         return delegate.request(method, serverAddress, relative(options));
     }
 
@@ -126,6 +147,12 @@ final class GovernedWebClient implements WebClient {
     }
 
     // --- helpers ---
+
+    private void checkOpen() {
+        if (closed.getAsBoolean()) {
+            throw new HttpClientClosedException();
+        }
+    }
 
     private RequestOptions relative(RequestOptions options) {
         if (options == null || options.getHost() != null) {
