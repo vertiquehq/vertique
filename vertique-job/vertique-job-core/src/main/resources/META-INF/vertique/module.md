@@ -12,10 +12,10 @@ SPDX-License-Identifier: EUPL-1.2
 
 `vertique-job-core` defines the vocabulary every Vertique scheduling module shares: the job execution
 record and its state machine, the `JobContext` handler-side API for progress, structured logging,
-step deduplication and cooperative cancellation, the `JobRepository` persistence SPI, and the two
+step deduplication and the cancellation flag, the `JobRepository` persistence SPI, and the two
 observation SPIs. It also ships `JobCompletionHandler`, which turns a handler reply into a persisted
 outcome, and `JobCoordinator`, which runs node heartbeats, dead-node detection, orphan recovery and
-cooperative cancellation across a cluster.
+cancellation across a cluster.
 
 This module schedules nothing by itself — it owns no trigger and no queue. Install
 `dev.vertique:vertique-job-cron` for recurring work or `dev.vertique:vertique-job-delayed` for
@@ -139,7 +139,7 @@ Per-execution runtime API; thread-safe.
 | `jobId()` / `executionId()` / `attemptNumber()` / `jobType()` | Execution identity |
 | `scopeKey()` | The row's scope label, never `null`; `default` when the execution has none. A `default` method, so existing implementations keep compiling |
 | `progress()` / `logger()` | The execution's `ProgressReporter` and buffered `JobLogger` (never `null`) |
-| `isCancelled()` / `setCancelled(boolean)` | Cooperative cancellation flag |
+| `isCancelled()` / `setCancelled(boolean)` | Cancellation flag; the handler's stop signal, set when a cancel arrives (see `cancelExecution`) |
 | `saveMetadata(String, Object)` / `getMetadata(String, Class<T>)` | Named values; a `null` value removes the key |
 | `hasCompletedStep(String)` / `runStepOnce(String, Supplier<Future<T>>)` | Step deduplication |
 
@@ -242,15 +242,20 @@ constructors the same way (see `vertique-job-postgresql` and `vertique-job-cron`
 |---|---|
 | `start()` | Writes an immediate heartbeat, then starts the heartbeat and scan timers; a no-op when `enabled()` is `false` or when already started |
 | `stop()` | Cancels both timers and, when this node holds no `PROCESSING` claims, removes its heartbeat row; a no-op when not started; succeeds even if a repository call fails |
-| `cancelExecution(UUID)` | Publishes on `job.cancel.<executionId>` and marks the execution `CANCELLED` |
+| `cancelExecution(UUID)` | Publishes on `job.cancel.<executionId>` and marks a `PROCESSING` execution `CANCELLED` at once; the future completes when the repository write has finished, not when the handler stops. There is no grace period and no `ABANDONED` step |
 | `serverId()` | This node's identity, `<hostname>-<8-char suffix>` |
 
 It heartbeats every `nodeHeartbeatIntervalMs`, scans every `scanIntervalMs` for nodes whose heartbeat
 is older than `nodeHeartbeatTimeoutMs`, and recovers each orphan it finds: a `DELAYED` execution with
 attempts remaining is atomically abandoned and re-enqueued, an exhausted one is dead-lettered, and
 any other type (`CRON`) is marked `ABANDONED` so its schedule re-fires normally. Cancellation is
-cooperative — the published signal sets the in-process flag, and the repository write makes the
-decision durable even if the handler ignores it. The dead node's heartbeat row is deleted **only
+immediate and the handler is not awaited: the repository write marks the execution `CANCELLED`
+whether or not the handler ever sees the signal, and the published signal only sets the in-process
+flag a handler can poll to stop early. A handler reply that arrives after the cancel is ignored —
+`completeExecution` accepts only a `PROCESSING` or `ABANDONED` execution, so it returns
+`Optional.empty()` for a `CANCELLED` one: the outcome of the reply is not persisted and no listener
+is notified. An execution in any state other than `PROCESSING`, including `ENQUEUED` and
+`ABANDONED`, is left as it is by a cancel. The dead node's heartbeat row is deleted **only
 after every per-execution recovery write has committed**; if any fails, the row stays so the next
 scan rediscovers the node, because deleting it early would strand a still-`PROCESSING` orphan
 permanently. For the same reason `stop()` keeps this node's own row while executions it claimed are

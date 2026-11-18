@@ -57,9 +57,13 @@ documents for its own meters.
 
 Only the policy name, outcome, mode, and failure code become labels — key, identity,
 IP, exception, and message are never labels. This module performs no label validation
-of its own: `policy`, `outcome`, `mode`, and `code` are taken from the event as-is, and
-the only bound on their cardinality is the shared cardinality guard installed by
-`vertique-micrometer-core` (see its `module.md`).
+of its own. `policy` is the event's policy name as it is. `outcome`, `mode`, and `code`
+use lowercase kebab-case, as in `vertique-micrometer-resilience`: `QUOTA_EXCEEDED`
+becomes `quota-exceeded` and `BACKEND_FAILURE_OPEN` becomes `backend-failure-open`, so a
+query matches `outcome="quota-exceeded"`, not the constant name. A failure event without a
+failure code records `code="unknown"`. The spans of `vertique-opentelemetry-rate-limit`
+keep the constant names. The only bound on label cardinality is the shared cardinality
+guard installed by `vertique-micrometer-core` (see its `module.md`).
 
 ## Configuration
 

@@ -195,6 +195,8 @@ default: manual-review
 - `state` - the workflow state converted to a map.
 - Registered named conditions - pre-evaluated booleans keyed by condition id.
 
+The expression environment declares `state` as an untyped map, so field paths such as `state.total` are not checked against the workflow's state type when the document loads. A path that names a property the state type does not have, or a comparison whose operand types do not fit the property, is not reported at load time: the expression compiles. When the route is evaluated, a missing key (use `has(state.field)` for an optional one) and an ordering comparison (`<`, `>`) of mismatched types fail the evaluation, while `==` and `!=` between mismatched types do not fail and evaluate to `false` and `true`. Parsing, unsupported syntax and the expression limits are still checked at load time.
+
 `condition` references a named condition callback directly. Named conditions are evaluated once per decision evaluation and may be reused by multiple routes.
 
 CEL is intentionally isolated behind `ExpressionProfile`; replacing CEL should require rebinding the profile, not changing the compiler or validator.
@@ -344,8 +346,9 @@ same id and version fails startup, so bump the version of a changed document; a 
 
 A listed `WorkflowDefinitionRecord` of a scope row that newly deployed code conflicts with carries `failure()`, a
 `DefinitionFailure` naming the rule (`STATE_TYPE_NOT_EXTENDED` or `NAME_BINDING_UNRESOLVED`); `list(new DefinitionFilter(scope,
-id, null))` shows it in every status, and it is `null` for a row that is not failing. New starts on such a version are
-refused with `WorkflowDefinitionFailingException` (see the engine reference).
+id, null))` shows it in every status, and it is `null` for a row that is not failing. A start that selects a version marked
+`STATE_TYPE_NOT_EXTENDED` is recorded, and the executor then fails its command and its instance with the reason
+`DEFINITION_FAILING`; a start of a `NAME_BINDING_UNRESOLVED` version stays deferred (see the engine reference).
 
 `sourceMetadata(DefinitionKey)` reads attribution without fetching source text. Lists contain immutable,
 key-bearing metadata. `list` and `sourceMetadata` read the durable table and have no
