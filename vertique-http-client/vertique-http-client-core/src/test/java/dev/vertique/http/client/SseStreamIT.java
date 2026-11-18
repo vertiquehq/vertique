@@ -22,6 +22,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -293,12 +295,14 @@ class SseStreamIT {
 
     // --- AC-030 ---
 
-    /** The flooding server: numbered events packed into 64 KiB chunks for 5 seconds. */
+    /** The flooding server: numbered events packed into 64 KiB chunks until the client goes away. */
     private static final class EventFlood {
         final AtomicLong written = new AtomicLong();
         final AtomicInteger drains = new AtomicInteger();
         volatile boolean full;
-        final long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        // A safety stop only: the test closes the client and server long before it, and a slow machine must not
+        // reach it between the stall and the resume.
+        final long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
         /** Every event is the same size: {@code data: } + 8 digits + a blank line. */
         static final int EVENT_BYTES = 16;
 
@@ -307,7 +311,12 @@ class SseStreamIT {
         Buffer nextChunk() {
             StringBuilder sb = new StringBuilder(64 * 1024);
             for (int i = 0; i < 64 * 1024 / EVENT_BYTES; i++) {
-                sb.append(String.format("data: %08d\n\n", nextSequence++));
+                // Padded by hand: String.format parses its pattern on every call and held the event loop.
+                String digits = Long.toString(nextSequence++);
+                sb.append("data: ")
+                        .append("0".repeat(8 - digits.length()))
+                        .append(digits)
+                        .append("\n\n");
             }
             return Buffer.buffer(sb.toString());
         }
@@ -340,13 +349,14 @@ class SseStreamIT {
     @Test
     @DisplayName("paused events pause the response")
     void pausedEventsPauseTheResponse() {
-        // Given a server writing numbered events in 64 KiB chunks for 5 seconds and noting a full write queue
+        // Given a server writing numbered events in 64 KiB chunks and noting a full write queue
         EventFlood flood = new EventFlood();
         RecordingServer server = support.server((request, body) -> flood.pump(eventStreamHead(request)));
         VertiqueHttpClient client = client(server);
 
         // When the caller sets a handler on events(), pauses after the first event and waits 1000 ms
-        List<Long> sequences = new CopyOnWriteArrayList<>();
+        // Not copy-on-write: the handler appends thousands of events in one event-loop turn.
+        Queue<Long> sequences = new ConcurrentLinkedQueue<>();
         AtomicInteger delivered = new AtomicInteger();
         AtomicReference<ReadStream<SseEvent>> eventStream = new AtomicReference<>();
         AtomicReference<Context> context = new AtomicReference<>();
