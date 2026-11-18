@@ -874,7 +874,11 @@ that changes origin (scheme, host or port) only `Accept`, `Accept-Language`, `Ac
 custom header such as an API key stays with the original origin. A hop from `https` to `http` and a
 redirect `Location` that carries user information are refused: the call fails with a
 `RestClientException` (see the mapper table), which the default retry policy does not retry and which
-counts as a failure for the circuit breaker.
+counts as a failure for the circuit breaker. A redirect whose `Location` host cannot be read, or whose
+authority carries userinfo even percent-encoded, is refused with the same constant `RestClientException`.
+This includes every redirect, same-origin ones too, of a client whose base URL host is not a valid DNS
+name, such as a container service name with an underscore (`http://my_service:8080`); use a
+hyphenated name or an IP address for such a target.
 
 ```json
 {
@@ -1055,8 +1059,9 @@ configured or every client overrides it.
 - **Expecting `onResponse` or `onError` to count attempts.** `onResponse` never fires on a transport
   failure and `onError` fires once after every retry; only `onAttemptCompleted` sees each wire attempt.
 - **Expecting `onAttemptCompleted` on an open circuit.** A short-circuited call performs no send, so
-  the hook never fires. When the breaker's own timeout is shorter than the HTTP timeout, the hook can
-  also fire *after* the caller already saw the breaker failure.
+  the hook never fires. When an attempt times out, the hook fires once with a
+  `java.util.concurrent.TimeoutException`, possibly after the caller already saw the failure or the
+  retry decision was made.
 - **Returning a failed future from `transformError`.** It must return a succeeded future carrying the
   throwable to propagate.
 - **Setting `objectMapper(...)` and expecting a `jsonProfile` to still apply.** An explicit mapper

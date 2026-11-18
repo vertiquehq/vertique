@@ -927,11 +927,6 @@ public final class RestClientBuilder {
         // explicit objectMapper > config jsonProfile > builder jsonProfile > @JsonProfile > vertique.
         ObjectMapper effectiveMapper = resolveEffectiveMapper(effectiveConfig, clientInterface, clientName);
 
-        // Build the governed client: one per built proxy, from the effective options. The client adds no
-        // timer, body bound, header validation, egress policy or credentials of its own; the per-method
-        // pipeline and the REST interceptors own those concerns.
-        VertiqueHttpClient httpClient = buildHttpClient(effectiveWebClientOptions, effectivePoolOptions);
-
         log.debug(
                 "Building REST client proxy for {} with baseUrl={}", clientInterface.getSimpleName(), resolvedBaseUrl);
 
@@ -939,12 +934,18 @@ public final class RestClientBuilder {
         io.vertx.core.MultiMap cachedDefaultHeaders = io.vertx.core.MultiMap.caseInsensitiveMultiMap();
         defaultHeaders.forEach(cachedDefaultHeaders::set);
 
-        RestClientInterceptorChain interceptorChain =
-                new RestClientInterceptorChain(clientName, sortedByPriority(List.copyOf(interceptors)));
+        VertiqueHttpClient httpClient = null;
         Resilience runtime = null;
         RestClientResiliencePipelineFactory resilienceFactory = null;
         T builtProxy;
         try {
+            // Build the governed client: one per built proxy, from the effective options. The client adds
+            // no timer, body bound, header validation, egress policy or credentials of its own; the
+            // per-method pipeline and the REST interceptors own those concerns. It is created inside the
+            // try so that a failure of anything built after it closes it.
+            httpClient = buildHttpClient(effectiveWebClientOptions, effectivePoolOptions);
+            RestClientInterceptorChain interceptorChain =
+                    new RestClientInterceptorChain(clientName, sortedByPriority(List.copyOf(interceptors)));
             runtime = resilienceRuntime();
             resilienceFactory = new RestClientResiliencePipelineFactory(
                     runtime,
@@ -1007,7 +1008,9 @@ public final class RestClientBuilder {
             if (resilienceFactory != null) {
                 resilienceFactory.close();
             }
-            httpClient.close();
+            if (httpClient != null) {
+                httpClient.close();
+            }
             if (runtime != null && suppliedResilience == null) {
                 runtime.close();
             }
@@ -1035,10 +1038,16 @@ public final class RestClientBuilder {
             io.vertx.core.Future<Void> contexts = contextClosures.isEmpty()
                     ? io.vertx.core.Future.succeededFuture()
                     : io.vertx.core.Future.all(contextClosures).mapEmpty();
-            io.vertx.core.Future<Void> result = contexts.compose(ignored -> {
+            // Release the clients and the owned runtime however the contexts close, then report the
+            // contexts' result.
+            io.vertx.core.Future<Void> result = contexts.<Void>transform(contextsResult -> {
                 builtClients.forEach(BuiltClientResources::closeHttpClient);
                 Resilience owned = ownedResilience();
-                return owned == null ? io.vertx.core.Future.succeededFuture() : owned.close();
+                io.vertx.core.Future<Void> runtimeClosed =
+                        owned == null ? io.vertx.core.Future.succeededFuture() : owned.close();
+                return runtimeClosed.transform(ignored -> contextsResult.succeeded()
+                        ? io.vertx.core.Future.<Void>succeededFuture()
+                        : io.vertx.core.Future.<Void>failedFuture(contextsResult.cause()));
             });
             closeFuture.set(result);
             return result;

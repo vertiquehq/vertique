@@ -760,8 +760,9 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
      * Sends the request applying the expectation, capturing response context, and running
      * after-response interceptors. The circuit breaker (if configured) wraps the send.
      *
-     * <p>Fires {@link RestClientInterceptor#onAttemptCompleted} once per physical HTTP attempt,
-     * before the retry/recovery decision. The {@code callId} and {@code attemptOrdinal} are shared
+     * <p>Fires {@link RestClientInterceptor#onAttemptCompleted} once per physical HTTP attempt when it
+     * completes; an attempt that times out is notified once with a {@link java.util.concurrent.TimeoutException},
+     * possibly after the retry or recovery decision. The {@code callId} and {@code attemptOrdinal} are shared
      * across retries and the one recovery re-dispatch so all attempts of a single logical call
      * carry the same {@code callId} with monotonically increasing ordinals.
      *
@@ -789,6 +790,8 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
         ResiliencePipeline pipeline = resilienceFactory.pipeline(meta);
         OptionalLong timeoutMs = resilienceFactory.timeoutMs(meta);
         CallOptions governed = CallOptions.defaults().resilience(pipeline);
+        // The client's attempt timer and the pipeline's timeout share this deadline; the runtime
+        // normalizes the client's raw TimeoutException.
         CallOptions options = timeoutMs.isPresent()
                 ? governed.readTimeout(timeoutMs.getAsLong(), TimeUnit.MILLISECONDS)
                 : governed.noReadTimeout();

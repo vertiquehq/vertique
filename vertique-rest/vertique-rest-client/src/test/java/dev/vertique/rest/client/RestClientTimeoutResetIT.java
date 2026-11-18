@@ -28,6 +28,7 @@ import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServer;
+import io.vertx.core.http.PoolOptions;
 import io.vertx.ext.web.client.HttpRequest;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
@@ -64,6 +65,7 @@ class RestClientTimeoutResetIT {
 
     private static final long DEADLINE_MS = 300;
     private static final long AWAIT_MS = 10_000;
+    private static final long MARGIN_MS = 1_000;
     private static final String NO_TIMEOUT_POLICY = "no-timeout";
 
     // --- Test client interfaces ---
@@ -332,7 +334,9 @@ class RestClientTimeoutResetIT {
         Throwable failure = failureOf(client.hang());
 
         // Then the call fails with RestClientTimeoutException
-        assertThat(failure).isInstanceOf(RestClientTimeoutException.class);
+        assertThat(failure)
+                .isInstanceOf(RestClientTimeoutException.class)
+                .hasCauseInstanceOf(ResilienceTimeoutException.class);
 
         // And the attempt is notified once with a raw TimeoutException
         awaitTrue("the attempt notification", () -> !recorder.errors.isEmpty());
@@ -346,6 +350,44 @@ class RestClientTimeoutResetIT {
         awaitTrue("the server to see the connection close", () -> origin.closedConnections.get() >= 1);
         awaitTrue("the server to see the request", () -> origin.requests.get() >= 1);
         assertThat(origin.requests.get()).isEqualTo(1);
+    }
+
+    /** Proves AC-048. */
+    @Test
+    @DisplayName("An attempt waiting for a pooled connection is notified with TimeoutException at the deadline")
+    void attemptWaitingForAPooledConnectionIsNotifiedWithTimeoutAtTheDeadline() {
+        // Given a client with one pooled connection, held by a call whose timeout is disabled
+        Origin origin = hungOrigin();
+        AttemptRecorder recorder = new AttemptRecorder();
+        RestClientBuilder builder = new RestClientBuilder(vertx, noTimeoutRegistry())
+                .baseUrl(origin.base())
+                .readTimeout(DEADLINE_MS, TimeUnit.MILLISECONDS)
+                .poolOptions(new PoolOptions().setHttp1MaxSize(1))
+                .register(recorder);
+        builders.add(builder);
+        Mixed client = builder.build(Mixed.class);
+        client.untimed();
+        awaitTrue("the held request to reach the server", () -> origin.requests.get() >= 1);
+
+        // When a second call with a 300 ms timeout waits for the connection
+        long start = System.nanoTime();
+        Future<HttpClientResponse> waiting = client.timed();
+
+        // Then its attempt is notified once with a raw TimeoutException within the deadline plus margin
+        awaitTrue("the waiting attempt notification", () -> !recorder.errors.isEmpty());
+        long notifiedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+        assertThat(notifiedMs).isLessThan(DEADLINE_MS + MARGIN_MS);
+        Throwable failure = failureOf(waiting);
+        assertThat(failure)
+                .isInstanceOf(RestClientTimeoutException.class)
+                .hasCauseInstanceOf(ResilienceTimeoutException.class);
+        assertThat(recorder.errors).hasSize(1);
+        assertThat(recorder.errors.get(0))
+                .isExactlyInstanceOf(TimeoutException.class)
+                .isNotInstanceOf(ResilienceTimeoutException.class);
+        // And no second notification arrives later, and the waiting request never reached the server
+        assertThat(origin.requests.get()).isEqualTo(1);
+        assertThat(recorder.errors).hasSize(1);
     }
 
     /** Supports FR-019. */
@@ -362,7 +404,9 @@ class RestClientTimeoutResetIT {
         Throwable failure = failureOf(client.hang());
 
         // Then every attempt reached the server and the call fails with RestClientTimeoutException
-        assertThat(failure).isInstanceOf(RestClientTimeoutException.class);
+        assertThat(failure)
+                .isInstanceOf(RestClientTimeoutException.class)
+                .hasCauseInstanceOf(ResilienceTimeoutException.class);
         awaitTrue("the server to see three requests", () -> origin.requests.get() >= 3);
         assertThat(origin.requests.get()).isEqualTo(3);
 
