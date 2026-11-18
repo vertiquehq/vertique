@@ -55,7 +55,16 @@ public final class RedirectRules implements Function<HttpClientResponse, Future<
 
     @Override
     public Future<RequestOptions> apply(HttpClientResponse response) {
-        Future<RequestOptions> next = vertxRules.apply(response);
+        Future<RequestOptions> next;
+        try {
+            next = vertxRules.apply(response);
+        } catch (RuntimeException unreadable) {
+            // The Vert.x rules failed on the Location: never carry its text
+            return refuse(response.request(), Reason.HOST);
+        }
+        if (next != null && next.failed()) {
+            return refuse(response.request(), Reason.HOST);
+        }
         if (next == null || !next.succeeded()) {
             return next;
         }
@@ -70,8 +79,15 @@ public final class RedirectRules implements Function<HttpClientResponse, Future<
             // A redirect the checks cannot read is never followed: fail closed
             return refuse(request, Reason.HOST);
         }
-        if (location.getRawAuthority() != null && location.getRawAuthority().indexOf('@') >= 0) {
+        String rawAuthority = location.getRawAuthority();
+        String authority = location.getAuthority();
+        if (rawAuthority != null && rawAuthority.indexOf('@') >= 0
+                || authority != null && authority.indexOf('@') >= 0) {
             return refuse(request, Reason.USER_INFO);
+        }
+        if (location.getHost() == null) {
+            // A registry-based authority: Vert.x may read its host differently from the checks
+            return refuse(request, Reason.HOST);
         }
         boolean secureOrigin = "https".equalsIgnoreCase(origin.getScheme());
         if (secureOrigin && !Boolean.TRUE.equals(hop.isSsl())) {

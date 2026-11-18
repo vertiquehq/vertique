@@ -341,6 +341,44 @@ class AttemptTimeoutAndCancellationIT {
                 .isFalse();
     }
 
+    /**
+     * AC-080: when an attempt's deadline passes while its exchange still waits for a pooled connection,
+     * the exchange's own future fails at once with the raw timeout, not later and not as an ended-scope
+     * failure.
+     */
+    @Test
+    @DisplayName("the exchange waiting for a pooled connection fails with TimeoutException at the deadline")
+    void theExchangeWaitingForAPooledConnectionFailsWithTimeoutAtTheDeadline() {
+        // Given a one-connection pool whose only connection a hung call holds
+        RecordingServer server = silentServer();
+        VertiqueHttpClient client = client(server, -1, new PoolOptions().setHttp1MaxSize(1));
+        CancellationSignal signal = CancellationSignal.create();
+        Future<HttpResponse<Buffer>> hold =
+                client.execute(CallOptions.defaults().noReadTimeout().cancellation(signal), web -> web.get("/hold")
+                        .send());
+        assertThat(serverReceived(server, "/hold", 1)).isTrue();
+
+        // When a second call waits for the connection and the inner send future is observed
+        AtomicReference<Future<HttpResponse<Buffer>>> inner = new AtomicReference<>();
+        long start = System.nanoTime();
+        Future<HttpResponse<Buffer>> second =
+                client.execute(CallOptions.defaults().readTimeout(300, TimeUnit.MILLISECONDS), web -> {
+                    Future<HttpResponse<Buffer>> send = web.get("/second").send();
+                    inner.set(send);
+                    return send;
+                });
+        awaitFailure(second);
+        Throwable innerFailure = awaitFailure(inner.get());
+        long elapsedMs = millisSince(start);
+        // Then the inner future failed with the raw TimeoutException within the deadline plus margin
+        assertThat(innerFailure).isExactlyInstanceOf(TimeoutException.class);
+        assertThat(elapsedMs).isLessThan(300 + MARGIN_MS);
+        // And a later release of the connection does not change that
+        signal.cancel();
+        awaitFailure(hold);
+        assertThat(server.requestsTo("/second")).isEmpty();
+    }
+
     // --- attempt timer, supporting ---
 
     /**

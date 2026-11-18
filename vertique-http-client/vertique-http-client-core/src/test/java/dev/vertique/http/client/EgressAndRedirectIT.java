@@ -248,6 +248,60 @@ class EgressAndRedirectIT {
         assertThat(b.requests).isEmpty();
     }
 
+    /** AC-056: a redirect Location the client cannot read is refused with a constant failure. */
+    @Test
+    @DisplayName("a redirect with an unreadable Location is refused with HOST and no Location text")
+    void redirectWithAnUnreadableLocationIsRefusedWithHostAndNoLocationText() {
+        // Given a server redirecting to a Location with a space and a secret query
+        RecordingServer origin = support.server((request, body) -> redirect(request, 302, "http://h/a b?sig=SECRET"));
+        WebClient web = client(EgressPolicy.allowAll(), followingUpTo(5)).webClient();
+
+        // When the caller sends GET /go
+        Throwable failure = awaitFailure(web.getAbs(origin.origin() + "/go").send());
+
+        // Then the failure is HOST and no message in the cause chain carries the Location text
+        assertDenied(failure, Reason.HOST);
+        for (Throwable link = failure; link != null; link = link.getCause()) {
+            assertThat(String.valueOf(link.getMessage())).doesNotContain("sig=");
+        }
+    }
+
+    /** AC-056: userinfo is refused even when its separator is percent-encoded. */
+    @Test
+    @DisplayName("a redirect whose authority carries an encoded @ is refused with USER_INFO")
+    void redirectWhoseAuthorityCarriesAnEncodedAtIsRefusedWithUserInfo() {
+        // Given a target and a server redirecting to http://a%40127.0.0.1:<port>/x
+        RecordingServer target = support.server((request, body) -> answer(request, 200, "target"));
+        RecordingServer origin = support.server(
+                (request, body) -> redirect(request, 302, "http://a%40127.0.0.1:" + target.port() + "/x"));
+        WebClient web = client(EgressPolicy.allowAll(), followingUpTo(5)).webClient();
+
+        // When the caller sends GET /go
+        Throwable failure = awaitFailure(web.getAbs(origin.origin() + "/go").send());
+
+        // Then the hop is refused with USER_INFO and the target is never contacted
+        assertDenied(failure, Reason.USER_INFO);
+        assertThat(target.openedConnections.get()).isZero();
+    }
+
+    /** AC-056: a Location whose host cannot be read is refused with HOST. */
+    @Test
+    @DisplayName("a redirect whose host cannot be read is refused with HOST")
+    void redirectWhoseHostCannotBeReadIsRefusedWithHost() {
+        // Given a target and a server redirecting to a host the JDK reads as a registry-based authority
+        RecordingServer target = support.server((request, body) -> answer(request, 200, "target"));
+        RecordingServer origin =
+                support.server((request, body) -> redirect(request, 302, "http://bad_host:" + target.port() + "/"));
+        WebClient web = client(EgressPolicy.allowAll(), followingUpTo(5)).webClient();
+
+        // When the caller sends GET /go
+        Throwable failure = awaitFailure(web.getAbs(origin.origin() + "/go").send());
+
+        // Then the hop is refused with HOST
+        assertDenied(failure, Reason.HOST);
+        assertThat(target.openedConnections.get()).isZero();
+    }
+
     /** AC-059. */
     @Test
     @DisplayName("a default client returns the 3xx when redirects are off, and a followed chain stops at the limit")

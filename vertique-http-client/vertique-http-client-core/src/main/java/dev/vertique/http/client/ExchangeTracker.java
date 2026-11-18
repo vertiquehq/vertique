@@ -77,6 +77,7 @@ final class ExchangeTracker implements Handler<HttpContext<?>> {
                         return;
                     }
                     ctx.set(EXCHANGE, exchange);
+                    exchange.beforeRequest(cause -> failOnOwner(ctx, exchange, cause));
                     exchange.method(ctx.request().method().name());
                     if (!interceptors.isEmpty()) {
                         exchange.snapshot(interceptors.describe(ctx.request(), exchange.callId()));
@@ -195,11 +196,27 @@ final class ExchangeTracker implements Handler<HttpContext<?>> {
      * fails the context; before that the context is failed here, so every path fails it exactly once.
      */
     private static void expire(HttpContext<?> ctx, AttemptScope.Exchange exchange) {
+        expire(ctx, exchange, new TimeoutException(CallExecution.TIMED_OUT));
+    }
+
+    /**
+     * The attempt's scope ended on a timeout while the exchange had no request: fails the context on
+     * the context that owns it, with the scope's timeout.
+     */
+    private static void failOnOwner(HttpContext<?> ctx, AttemptScope.Exchange exchange, Throwable cause) {
+        Context owner = ctx.future() instanceof FutureInternal<?> future ? future.context() : null;
+        if (owner != null) {
+            owner.runOnContext(ignored -> expire(ctx, exchange, cause));
+        } else {
+            expire(ctx, exchange, cause);
+        }
+    }
+
+    private static void expire(HttpContext<?> ctx, AttemptScope.Exchange exchange, Throwable cause) {
         boolean requestExists = exchange.hasRequest();
         if (!exchange.expire()) {
             return;
         }
-        Throwable cause = new TimeoutException(CallExecution.TIMED_OUT);
         if (!requestExists) {
             ctx.fail(cause);
             return;
@@ -216,7 +233,8 @@ final class ExchangeTracker implements Handler<HttpContext<?>> {
             request.reset(0, new TimeoutException(CallExecution.TIMED_OUT));
             return;
         }
-        Throwable cause = scope.endedFailure();
+        Throwable timeout = scope.timeoutCause();
+        Throwable cause = timeout != null ? timeout : scope.endedFailure();
         request.reset(0, cause);
         ctx.fail(cause);
     }

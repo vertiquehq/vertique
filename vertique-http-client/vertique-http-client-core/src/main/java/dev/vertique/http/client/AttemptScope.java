@@ -27,6 +27,7 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 /**
  * The lifetime of one scoped {@code WebClient}: it tracks the exchanges started through it and, when
@@ -144,6 +145,18 @@ final class AttemptScope {
         return closedByClient ? new HttpClientClosedException() : new IllegalStateException(ENDED);
     }
 
+    /**
+     * The raw timeout a request that is refused after the scope ended on a timeout fails with, or
+     * {@code null} when the scope ended any other way or is still open.
+     */
+    @Nullable
+    synchronized Throwable timeoutCause() {
+        if (!ended || !isTimeout(endReason)) {
+            return null;
+        }
+        return endReason instanceof TimeoutException ? endReason : new TimeoutException(CallExecution.TIMED_OUT);
+    }
+
     /** Whether some exchange of this scope used a method that is not idempotent. */
     synchronized boolean hasNonIdempotentExchange() {
         return nonIdempotent;
@@ -249,9 +262,13 @@ final class AttemptScope {
         Throwable cause = new IllegalStateException(ENDED);
         Throwable resetCause =
                 isTimeout(callFailure) || callFailure instanceof HttpClientClosedException ? callFailure : cause;
+        Throwable timeout = timeoutCause();
         for (Exchange exchange : toReset) {
             exchange.complete(callFailure != null ? callFailure : cause);
             exchange.reset(resetCause);
+            if (timeout != null) {
+                exchange.failBeforeRequest(timeout);
+            }
         }
     }
 
@@ -282,6 +299,7 @@ final class AttemptScope {
         private volatile boolean done;
         private volatile Runnable onFinish;
         private volatile @Nullable ActiveStream stream;
+        private volatile @Nullable Consumer<Throwable> beforeRequest;
 
         private Exchange(AttemptScope scope) {
             this.scope = scope;
@@ -497,6 +515,22 @@ final class AttemptScope {
             }
             expired = true;
             return true;
+        }
+
+        /** Registers how the exchange fails its context while Vert.x has not created a request for it. */
+        void beforeRequest(Consumer<Throwable> failure) {
+            beforeRequest = failure;
+        }
+
+        /**
+         * Fails an exchange that has no request yet, because it still waits for a pooled connection or
+         * for one to open, with {@code cause}. Does nothing once a request exists.
+         */
+        void failBeforeRequest(Throwable cause) {
+            Consumer<Throwable> failure = beforeRequest;
+            if (failure != null && request == null) {
+                failure.accept(cause);
+            }
         }
 
         /**
