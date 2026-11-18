@@ -115,8 +115,8 @@ On failure anywhere in 7–13:
 ```
 
 `onAttemptCompleted` is the exception to this outline: it fires once per *physical* HTTP attempt from
-inside the send, before the retry/recovery decision, so it sees attempts that steps 9/15 never
-report.
+inside the send, so it sees attempts that steps 9/15 never report. For an attempt that reaches its
+timeout it can fire after the retry or recovery decision.
 
 ### Proxy flavors are interchangeable
 
@@ -535,10 +535,13 @@ On failure:
       → RestClientExceptionMapper
 ```
 
-**`onAttemptCompleted`** fires from inside the circuit-breaker send, before the retry/recovery
-decision, for every physical attempt that completes — retried failures and recovery re-dispatches
-included. Exactly one of `completion.response()` / `completion.error()` is non-null. Implementations
-must not block.
+**`onAttemptCompleted`** fires from inside the circuit-breaker send for every physical attempt that
+completes — retried failures and recovery re-dispatches included. When an attempt reaches its resolved
+timeout, the exchange is reset and the connection released, and `onAttemptCompleted` is then notified
+once with a `java.util.concurrent.TimeoutException`, possibly after the retry or recovery decision. The
+caller still gets `RestClientTimeoutException` with the same retry eligibility. A method whose timeout
+is disabled is never reset. Exactly one of `completion.response()` / `completion.error()` is non-null.
+Implementations must not block.
 
 `RestClientAttemptCompletion` carries the attempt facts:
 

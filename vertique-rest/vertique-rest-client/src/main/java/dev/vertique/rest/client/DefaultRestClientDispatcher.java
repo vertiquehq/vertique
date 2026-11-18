@@ -45,7 +45,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import lombok.extern.slf4j.Slf4j;
@@ -67,7 +69,7 @@ import lombok.extern.slf4j.Slf4j;
  *   <li>Fire sync {@code onRequest} observers.</li>
  *   <li>Run async {@code beforeRequest} interceptors (may mutate headers/URI).</li>
  *   <li>Build Vert.x {@link HttpRequest} from final URI.</li>
- *   <li>Apply per-method timeout.</li>
+ *   <li>Apply per-method timeout; at the deadline the governed client resets the exchange and releases the connection.</li>
  *   <li>Send inside circuit breaker if configured.</li>
  *   <li>Apply {@link Expectation} on the response.</li>
  *   <li>Capture response context; fire sync {@code onResponse} observers.</li>
@@ -785,6 +787,11 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
             AtomicInteger attemptOrdinal,
             List<CapturerCapture> captures) {
         ResiliencePipeline pipeline = resilienceFactory.pipeline(meta);
+        OptionalLong timeoutMs = resilienceFactory.timeoutMs(meta);
+        CallOptions governed = CallOptions.defaults().resilience(pipeline);
+        CallOptions options = timeoutMs.isPresent()
+                ? governed.readTimeout(timeoutMs.getAsLong(), TimeUnit.MILLISECONDS)
+                : governed.noReadTimeout();
         // A call made after, or caught by, the builder's close keeps the identity the closed pipeline gives
         // it, not the governed client's own closed failure: the builder marks itself closed before it closes
         // the governed client.
@@ -792,7 +799,7 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
                 ? Future.failedFuture(new ResilienceClosedException(pipeline.operationKey()))
                 : httpClient
                         .execute(
-                                CallOptions.defaults().resilience(pipeline),
+                                options,
                                 web -> sendPhysicalAttempt(
                                         web, reqCtx, meta, capturedResCtx, callId, attemptOrdinal, captures))
                         .recover(failure -> failure instanceof HttpClientClosedException && resilienceFactory.isClosed()
