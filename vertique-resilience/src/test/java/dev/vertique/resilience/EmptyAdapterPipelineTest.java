@@ -27,6 +27,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -77,6 +78,7 @@ class EmptyAdapterPipelineTest {
         // Then it returns "ok" after one call and records exactly one attempt's lifecycle, nothing else
         assertEquals("ok", result);
         assertEquals(1, successCalls.get());
+        awaitCondition(() -> events.size() == 4);
         assertEquals(
                 List.of(ExecutionStarted.class, AttemptStarted.class, AttemptCompleted.class, ExecutionCompleted.class),
                 events.stream().map(ResilienceEvent::getClass).toList());
@@ -96,6 +98,7 @@ class EmptyAdapterPipelineTest {
         // AttemptCompleted(TIMEOUT), and no retry event
         assertSame(timeout, cause);
         assertEquals(1, failureCalls.get());
+        awaitCondition(() -> events.size() == 5);
         assertEquals(
                 List.of(
                         ExecutionStarted.class,
@@ -131,6 +134,16 @@ class EmptyAdapterPipelineTest {
 
         // Then it throws the existing IllegalStateException
         assertEquals("a pipeline must configure at least one concern", refused.getMessage());
+    }
+
+    private static void awaitCondition(BooleanSupplier condition) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (!condition.getAsBoolean()) {
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError("condition not reached within 10 s");
+            }
+            Thread.sleep(5L);
+        }
     }
 
     private static Throwable awaitFailure(Future<?> future) throws Exception {

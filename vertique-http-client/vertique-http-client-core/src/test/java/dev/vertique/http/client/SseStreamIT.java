@@ -126,6 +126,7 @@ class SseStreamIT {
 
     /** Writes {@code data} to the response in chunks whose sizes come from {@code sizes}, pausing at a full queue. */
     private static final class Pump {
+        private static final int WRITES_PER_TURN = 256;
         private final HttpServerResponse response;
         private final byte[] data;
         private final IntUnaryOperator sizes;
@@ -140,9 +141,15 @@ class SseStreamIT {
         }
 
         void run() {
+            int turnWrites = 0;
             while (offset < data.length && !response.closed()) {
                 if (response.writeQueueFull()) {
                     response.drainHandler(v -> run());
+                    return;
+                }
+                if (++turnWrites > WRITES_PER_TURN) {
+                    // The test server is on an event loop too: yield so its own write loop never blocks it.
+                    io.vertx.core.Vertx.currentContext().runOnContext(v -> run());
                     return;
                 }
                 int size = Math.max(1, Math.min(sizes.applyAsInt(offset), data.length - offset));

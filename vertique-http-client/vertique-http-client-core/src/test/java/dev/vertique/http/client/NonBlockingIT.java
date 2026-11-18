@@ -113,6 +113,7 @@ class NonBlockingIT {
 
     /** Writes the payload in the given chunk sizes, pausing while the write queue is full. */
     private static final class Writer {
+        private static final int WRITES_PER_TURN = 256;
         private final HttpServerResponse response;
         private final byte[] bytes;
         private final int[] sizes;
@@ -127,9 +128,15 @@ class NonBlockingIT {
         }
 
         void run() {
+            int turnWrites = 0;
             while (offset < bytes.length && !response.closed()) {
                 if (response.writeQueueFull()) {
                     response.drainHandler(v -> run());
+                    return;
+                }
+                if (++turnWrites > WRITES_PER_TURN) {
+                    // The test server is on an event loop too: yield so its own write loop never blocks it.
+                    io.vertx.core.Vertx.currentContext().runOnContext(v -> run());
                     return;
                 }
                 int size = Math.min(sizes[Math.min(index++, sizes.length - 1)], bytes.length - offset);
