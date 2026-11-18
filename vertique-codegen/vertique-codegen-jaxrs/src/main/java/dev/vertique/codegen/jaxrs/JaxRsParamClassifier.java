@@ -83,7 +83,21 @@ public final class JaxRsParamClassifier {
      * @return the {@link JaxRsParamSource} slot for this parameter; never {@code null}
      */
     public static JaxRsParamSource classify(VariableElement param, Types types, Elements elements) {
-        TypeMirror erasedParamType = types.erasure(param.asType());
+        return classify(param, param.asType(), types, elements);
+    }
+
+    /**
+     * Classifies a parameter by an explicit type, used when the type is the parameter's type as a
+     * member of the resource class rather than its declared type.
+     *
+     * @param param    the method parameter to classify
+     * @param type     the type to classify by
+     * @param types    the APT {@link Types} utility
+     * @param elements the APT {@link Elements} utility
+     * @return the {@link JaxRsParamSource} slot for this parameter; never {@code null}
+     */
+    static JaxRsParamSource classify(VariableElement param, TypeMirror type, Types types, Elements elements) {
+        TypeMirror erasedParamType = types.erasure(type);
 
         // CONTEXT check FIRST: @Context annotation OR assignable to a known injectable type.
         // The @Context annotation check precedes the type check so that a parameter annotated
@@ -104,7 +118,7 @@ public final class JaxRsParamClassifier {
         if (isAssignableTo(erasedParamType, erasedMirrorOf(REQUEST_PRECONDITIONS_FQN, types, elements), types))
             return JaxRsParamSource.PRECONDITIONS;
 
-        TypeMirror rawParamType = param.asType();
+        TypeMirror rawParamType = type;
         TypeElement paramTypeElement = asTypeElement(rawParamType, types);
         if (paramTypeElement != null
                 && AnnotationMirrors.isPresent(paramTypeElement, JaxRsAnnotations.REQUEST_PARAMS)) {

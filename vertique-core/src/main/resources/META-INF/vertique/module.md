@@ -529,7 +529,12 @@ public surface and application code may use them like any other core type.
 - **`dev.vertique.core.util.TypeResolver`** — resolves the concrete type argument bound to a target
   interface (`resolveTypeArgument`) and collects all transitively reachable interfaces
   (`getAllInterfaces`). Type variables forwarded through a parameterized intermediate interface are
-  not resolved.
+  not resolved by `resolveTypeArgument`. `resolveMemberType(context, type)` substitutes the type
+  variables of a reflective member type (a parameter or return type) with the arguments the
+  concrete `context` class binds through its class and interface hierarchy, including variables
+  forwarded through intermediate supertypes and nested in parameterized, array and wildcard types.
+  A variable that no class in the hierarchy binds, or a method's own type variable, stays
+  unresolved; the result's `equals`/`hashCode` follow the JDK reflective type contracts.
 - **`dev.vertique.core.util.AnnotationResolver`** — resolves method, class, and parameter
   annotations across the superclass chain and interface hierarchy (`resolveMethodAnnotations`,
   `resolveClassAnnotations`, `resolveParameterAnnotations`) and finds composed annotations through

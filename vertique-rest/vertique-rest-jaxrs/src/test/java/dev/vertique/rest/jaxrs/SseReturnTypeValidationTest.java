@@ -102,6 +102,64 @@ class SseReturnTypeValidationTest {
         throw new NoSuchMethodException(name);
     }
 
+    /** Generic base whose SSE return type is bound by the concrete resource. */
+    abstract static class SseBase<E> {
+        ReadStream<E> events() {
+            return null;
+        }
+
+        Future<ReadStream<E>> futureEvents() {
+            return null;
+        }
+    }
+
+    static class SseBoundResource extends SseBase<SseEvent> {}
+
+    static class StringBoundResource extends SseBase<String> {}
+
+    private ResourceMethodMeta inheritedMeta(Object resource, String name) throws NoSuchMethodException {
+        return new ResourceMethodMeta(
+                resource,
+                SseBase.class.getDeclaredMethod(name),
+                name + "Op",
+                "GET",
+                "/test",
+                List.of(),
+                Object.class,
+                false,
+                false,
+                null,
+                new ResourceMethodMeta.MediaTypes(List.of(), List.of("text/event-stream")),
+                null,
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of());
+    }
+
+    @Nested
+    @DisplayName("Inherited generic return types")
+    class InheritedGeneric {
+
+        @Test
+        @DisplayName("Should resolve ReadStream<E> and Future<ReadStream<E>> against the resource class")
+        void shouldResolveBoundEventType() throws NoSuchMethodException {
+            ResourceMethodMeta direct = inheritedMeta(new SseBoundResource(), "events");
+            ResourceMethodMeta future = inheritedMeta(new SseBoundResource(), "futureEvents");
+
+            assertDoesNotThrow(() -> JaxRsRouteRegistrar.validateSseReturnTypes(List.of(direct, future)));
+        }
+
+        @Test
+        @DisplayName("Should reject an event type bound to something other than SseEvent")
+        void shouldRejectWrongBoundEventType() throws NoSuchMethodException {
+            ResourceMethodMeta meta = inheritedMeta(new StringBoundResource(), "events");
+
+            assertThrows(
+                    RestConfigurationException.class, () -> JaxRsRouteRegistrar.validateSseReturnTypes(List.of(meta)));
+        }
+    }
+
     // --- Valid cases ---
 
     @Nested
