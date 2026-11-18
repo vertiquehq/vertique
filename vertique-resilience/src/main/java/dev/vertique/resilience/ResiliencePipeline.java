@@ -111,11 +111,24 @@ public final class ResiliencePipeline {
             Bulkhead bulkhead,
             CircuitFailureClassifier classifier,
             BooleanSupplier contextOpen) {
+        return fromAdapterPolicy(
+                resilience, identity, policy, circuitBreaker, bulkhead, classifier, contextOpen, false);
+    }
+
+    private static ResiliencePipeline fromAdapterPolicy(
+            Resilience resilience,
+            AdapterOperationIdentity identity,
+            ResolvedResiliencePolicy policy,
+            CircuitBreaker circuitBreaker,
+            Bulkhead bulkhead,
+            CircuitFailureClassifier classifier,
+            BooleanSupplier contextOpen,
+            boolean allowNoConcern) {
         Objects.requireNonNull(resilience, "resilience");
         Objects.requireNonNull(identity, "identity");
         Objects.requireNonNull(policy, "policy");
         Objects.requireNonNull(contextOpen, "contextOpen");
-        if (policy.isEmpty() && circuitBreaker == null && bulkhead == null) {
+        if (!allowNoConcern && policy.isEmpty() && circuitBreaker == null && bulkhead == null) {
             throw new IllegalStateException("a pipeline must configure at least one concern");
         }
         if (policy.circuitBreaker().isPresent() || policy.bulkhead().isPresent()) {
@@ -156,8 +169,9 @@ public final class ResiliencePipeline {
             BooleanSupplier contextOpen,
             Function<Runnable, Runnable> executionRegistrar) {
         Objects.requireNonNull(executionRegistrar, "executionRegistrar");
-        ResiliencePipeline base =
-                fromAdapterPolicy(resilience, identity, policy, circuitBreaker, bulkhead, classifier, contextOpen);
+        // Only a pipeline built through an adapter context may enable no concern at all.
+        ResiliencePipeline base = fromAdapterPolicy(
+                resilience, identity, policy, circuitBreaker, bulkhead, classifier, contextOpen, true);
         return new ResiliencePipeline(
                 base.resilience,
                 base.operationKey,

@@ -252,7 +252,7 @@ timers, or suppliers are started. For breaker or bulkhead policies, create a `Re
 with `newContext()`. Its classifier overload maps only adapter-final failures into breaker
 accounting; classifier failures preserve the original failure and count conservatively. Contexts
 own breakers and bulkheads and fence active public futures on `close()`. Equal structured identities
-in separate contexts do not share state. No raw-key overload or standalone public identity derivation
+in separate contexts do not share state. A context's `pipeline(identity, policy)` also accepts a resolved policy that enables no concern and runs the supplier as one recorded attempt, including a supplier-reported timeout of its own key; every other construction path still rejects it. No raw-key overload or standalone public identity derivation
 is provided.
 
 ### Circuit breaker and adapter context

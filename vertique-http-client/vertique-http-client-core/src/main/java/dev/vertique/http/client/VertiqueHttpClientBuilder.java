@@ -9,6 +9,7 @@ import dev.vertique.http.client.internal.CredentialInterceptor;
 import dev.vertique.http.client.internal.FrameworkClientOptions;
 import dev.vertique.http.client.internal.RedirectRules;
 import dev.vertique.resilience.Resilience;
+import dev.vertique.resilience.ResiliencePolicyRegistry;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpClientAgent;
@@ -69,6 +70,8 @@ public final class VertiqueHttpClientBuilder {
     private boolean allowCredentialsOverPlainHttp;
     private List<String> credentialOrigins = List.of();
     private final List<HttpClientInterceptor> interceptors = new ArrayList<>();
+    private ResiliencePolicyRegistry policyRegistry = ResiliencePolicyRegistry.empty();
+    private String resiliencePolicy;
 
     private VertiqueHttpClientBuilder(Vertx vertx, @Nullable Resilience resilience) {
         this.vertx = Objects.requireNonNull(vertx, "vertx");
@@ -274,6 +277,32 @@ public final class VertiqueHttpClientBuilder {
     }
 
     /**
+     * Sets the named resilience policy every call of the built clients runs in unless its options say
+     * otherwise. The policy is looked up in the client's policy registry when the client is built, so an
+     * undefined policy is rejected by {@link #build()}. A client without a resilience policy runs each
+     * call as one attempt.
+     *
+     * @param tier the policy name
+     * @return this builder
+     */
+    public synchronized VertiqueHttpClientBuilder resiliencePolicy(String tier) {
+        this.resiliencePolicy = Objects.requireNonNull(tier, "tier");
+        return this;
+    }
+
+    /**
+     * Sets the registry the named resilience policies are resolved from. The default is an empty
+     * registry, which defines no policy.
+     *
+     * @param registry the policy registry
+     * @return this builder
+     */
+    synchronized VertiqueHttpClientBuilder policyRegistry(ResiliencePolicyRegistry registry) {
+        this.policyRegistry = Objects.requireNonNull(registry, "registry");
+        return this;
+    }
+
+    /**
      * Builds a client from the current settings.
      *
      * @return a new client with its own HTTP agent
@@ -322,8 +351,16 @@ public final class VertiqueHttpClientBuilder {
         }
         HttpClientAgent agent = agentBuilder.build();
         try {
-            VertiqueHttpClient client =
-                    new DefaultVertiqueHttpClient(vertx, name, agent, effective, settings, List.copyOf(interceptors));
+            VertiqueHttpClient client = new DefaultVertiqueHttpClient(
+                    vertx,
+                    name,
+                    agent,
+                    effective,
+                    settings,
+                    List.copyOf(interceptors),
+                    resilience,
+                    policyRegistry,
+                    resiliencePolicy);
             built.add(client);
             return client;
         } catch (RuntimeException failure) {

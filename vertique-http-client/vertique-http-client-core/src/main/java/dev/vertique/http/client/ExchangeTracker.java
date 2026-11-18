@@ -77,6 +77,7 @@ final class ExchangeTracker implements Handler<HttpContext<?>> {
                         return;
                     }
                     ctx.set(EXCHANGE, exchange);
+                    exchange.method(ctx.request().method().name());
                     if (!interceptors.isEmpty()) {
                         exchange.snapshot(interceptors.describe(ctx.request(), exchange.callId()));
                         exchange.target(interceptors.targetOf(ctx.request()));

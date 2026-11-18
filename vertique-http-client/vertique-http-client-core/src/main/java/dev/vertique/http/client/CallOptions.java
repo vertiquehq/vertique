@@ -3,7 +3,9 @@
 
 package dev.vertique.http.client;
 
+import dev.vertique.resilience.ResiliencePipeline;
 import jakarta.annotation.Nullable;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -14,16 +16,28 @@ import java.util.concurrent.TimeUnit;
  */
 public final class CallOptions {
 
-    private static final CallOptions DEFAULTS = new CallOptions(null, null);
+    private static final CallOptions DEFAULTS = new CallOptions(null, null, null, null, false);
 
     /** Attempt timeout in milliseconds, {@code 0} for none, {@code null} to use the client's. */
     private final @Nullable Long readTimeoutMs;
 
     private final @Nullable CancellationSignal cancellation;
 
-    private CallOptions(@Nullable Long readTimeoutMs, @Nullable CancellationSignal cancellation) {
+    private final @Nullable ResiliencePipeline pipeline;
+    private final @Nullable String tier;
+    private final boolean noResilience;
+
+    private CallOptions(
+            @Nullable Long readTimeoutMs,
+            @Nullable CancellationSignal cancellation,
+            @Nullable ResiliencePipeline pipeline,
+            @Nullable String tier,
+            boolean noResilience) {
         this.readTimeoutMs = readTimeoutMs;
         this.cancellation = cancellation;
+        this.pipeline = pipeline;
+        this.tier = tier;
+        this.noResilience = noResilience;
     }
 
     /**
@@ -49,7 +63,7 @@ public final class CallOptions {
         if (timeout <= 0) {
             throw new IllegalArgumentException("The read timeout must be above zero");
         }
-        return new CallOptions(Math.max(1L, unit.toMillis(timeout)), cancellation);
+        return new CallOptions(Math.max(1L, unit.toMillis(timeout)), cancellation, pipeline, tier, noResilience);
     }
 
     /**
@@ -59,7 +73,7 @@ public final class CallOptions {
      * @return the new options
      */
     public CallOptions noReadTimeout() {
-        return new CallOptions(0L, cancellation);
+        return new CallOptions(0L, cancellation, pipeline, tier, noResilience);
     }
 
     /**
@@ -71,7 +85,44 @@ public final class CallOptions {
      * @return the new options
      */
     public CallOptions cancellation(CancellationSignal signal) {
-        return new CallOptions(readTimeoutMs, signal);
+        return new CallOptions(readTimeoutMs, signal, pipeline, tier, noResilience);
+    }
+
+    /**
+     * Returns options that run the call through a prebuilt pipeline, used as given: its own timeout,
+     * retry and breaker concerns decide, and an attempt timeout stays a
+     * {@link java.util.concurrent.TimeoutException} unless the pipeline has a timeout concern. Of this
+     * method, {@link #resiliencePolicy(String)} and {@link #noResilience()} the last call wins.
+     *
+     * @param pipeline the pipeline to execute the call in
+     * @return the new options
+     */
+    public CallOptions resilience(ResiliencePipeline pipeline) {
+        return new CallOptions(readTimeoutMs, cancellation, Objects.requireNonNull(pipeline, "pipeline"), null, false);
+    }
+
+    /**
+     * Returns options that run the call in a named resilience policy ({@code resilience.policies.<tier>}).
+     * The client builds the policy's pipeline once and uses the policy's timeout as the attempt timeout
+     * unless {@link #readTimeout(long, TimeUnit)} or {@link #noReadTimeout()} says otherwise. Of this
+     * method, {@link #resilience(ResiliencePipeline)} and {@link #noResilience()} the last call wins.
+     *
+     * @param tier the policy name
+     * @return the new options
+     */
+    public CallOptions resiliencePolicy(String tier) {
+        return new CallOptions(readTimeoutMs, cancellation, null, Objects.requireNonNull(tier, "tier"), false);
+    }
+
+    /**
+     * Returns options that run the call as one attempt without a pipeline, even when the client has a
+     * default policy. Of this method, {@link #resilience(ResiliencePipeline)} and
+     * {@link #resiliencePolicy(String)} the last call wins.
+     *
+     * @return the new options
+     */
+    public CallOptions noResilience() {
+        return new CallOptions(readTimeoutMs, cancellation, null, null, true);
     }
 
     /** The call's attempt timeout in milliseconds: {@code 0} for none, {@code null} for the client's. */
@@ -83,5 +134,19 @@ public final class CallOptions {
     @Nullable
     CancellationSignal cancellationSignal() {
         return cancellation;
+    }
+
+    @Nullable
+    ResiliencePipeline pipeline() {
+        return pipeline;
+    }
+
+    @Nullable
+    String tier() {
+        return tier;
+    }
+
+    boolean isNoResilience() {
+        return noResilience;
     }
 }

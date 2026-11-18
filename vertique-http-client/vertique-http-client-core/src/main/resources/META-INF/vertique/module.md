@@ -129,20 +129,24 @@ client and a call cancelled before its exchange began have no exchange and no no
 clients built through `FrameworkClientOptions`. A header
 Vert.x itself rejects when it is set (`putHeader` with CR or LF in a value) throws inside the attempt before any
 request exists, so it is not notified either. For a call run through `execute`, a response that completed is
-reported when the attempt ends, so that a status expectation the attempt applied is known (`error` is then the
+reported when its attempt ends, so that a status expectation the attempt applied is known (`error` is then the
 `HttpStatusRejectedException`); a request sent straight through `webClient()` reports its response when it completes
-and cannot see an expectation the caller applies afterwards. An attempt whose future never completes leaves its
-completed exchanges unreported until the call ends.
+and cannot see an expectation the caller applies afterwards. Every attempt of a retried call reports its own exchanges
+when that attempt ends, with the attempt's ordinal (1, 2, ...) and the call's id, so a retried 503 reports its
+`HttpStatusRejectedException` before the next attempt starts. An attempt whose future never completes leaves its
+completed exchanges unreported until its pipeline starts the next attempt or the call ends.
 
 **Warning: `allowAll()` with redirects.** With the default policy and redirects followed, a server you
 call can redirect the client to any host, including internal addresses, such as a cloud metadata
 endpoint or a service on a private network. Give a client that follows redirects, or that calls servers
 you do not control, an `allowHosts(...)` policy.
 
-**Attempt scope.** `execute` calls the attempt function once with a fresh `WebClient` scoped to that
-call. When the future the function returns settles, every exchange the attempt started that is still
-open is reset, and the scoped `WebClient` fails every later request with `IllegalStateException`
-without contacting the server. Do everything the attempt needs, including reading and decoding the
+**Attempt scope.** `execute` calls the attempt function once per attempt (once without a resilience
+pipeline, once per retry with one) with a fresh `WebClient` scoped to that attempt. When the future the
+function returns settles, the attempt's timer fires, the call is cancelled or closed, or the pipeline calls the
+function again because a prebuilt pipeline's own timer gave up on the attempt, every exchange the attempt
+started that is still open is reset, and the scoped `WebClient` fails every later request with
+`IllegalStateException` without contacting the server. Do everything the attempt needs, including reading and decoding the
 response, before the function's future completes, and do not keep the `WebClient` after the attempt.
 
 **Contexts.** Futures returned by the client complete on the caller's Vert.x context when it is
@@ -162,6 +166,7 @@ runtime the caller owns.
 | `name(String)` | Client name, `[A-Za-z0-9._~-]{1,128}`; default `default` |
 | `baseUrl(String)` | Default origin and path prefix for relative requests |
 | `readTimeout(long, TimeUnit)` | Read timeout setting of the client, not negative; default 30 seconds, `0` for none |
+| `resiliencePolicy(String)` | Name of the resilience policy every call runs in unless its options say otherwise; an undefined name is rejected by `build()`; default none, one attempt per call |
 | `maxRequestBytes(long)` | Most request body bytes sent, not negative; default `0` for no bound |
 | `maxResponseBytes(long)` | Most response body bytes read, not negative; default 10485760, `0` for no bound |
 | `egress(EgressPolicy)` | Targets the client may contact, checked before connecting and on every redirect hop; default `EgressPolicy.allowAll()` |
@@ -196,8 +201,8 @@ Future<String> scoped = client.execute(web ->
 ```
 
 `name()` returns the client name, `webClient()` the governed `WebClient` for direct use, `execute`
-runs an attempt function (with `CallOptions.defaults()` or the given options), and `close()` closes
-the agent and resets requests still open. Closing again returns the same future.
+runs an attempt function (with `CallOptions.defaults()` or the given options), and `close()` fails the calls
+still running with `HttpClientClosedException`, closes the policy pipelines and the agent, and resets requests still open. Closing again returns the same future.
 
 ### CallOptions
 
@@ -209,11 +214,43 @@ settings.
 | `readTimeout(long, TimeUnit)` | Attempt timeout of this call, above zero; replaces the client's `readTimeout` |
 | `noReadTimeout()` | No attempt timer for this call; of the two timeout methods the last call wins |
 | `cancellation(CancellationSignal)` | Binds the call to a signal a caller can cancel from any thread |
+| `resilience(ResiliencePipeline)` | Runs the call in a prebuilt pipeline, used as given |
+| `resiliencePolicy(String)` | Runs the call in a named resilience policy; the client builds its pipeline once |
+| `noResilience()` | Runs the call as one attempt without a pipeline; of the three resilience methods the last call wins |
 
-The attempt timeout covers the whole attempt including the response body. When it fires, every
-exchange the attempt has open is reset and the call fails with a `java.util.concurrent.TimeoutException`
-with a constant message. A request sent straight through `webClient()` is one attempt bounded by the client's `readTimeout` in the same way, resetting just that exchange. A request still waiting for a pooled connection when the attempt ends sends
+The attempt timeout is, in this order, the call's `readTimeout` or `noReadTimeout()`, the timeout of the
+call's resilience policy, then the client's `readTimeout`. It covers the whole attempt including the response
+body. When it fires, every exchange the attempt has open is reset. In a pipeline the client built from a policy the
+attempt fails with a `ResilienceTimeoutException` that carries the pipeline's operation key and the effective
+timeout, so the runtime reports `TimeoutTriggered` and a `retryOn` or `abortOn` entry naming that type matches;
+otherwise (no resilience, a prebuilt pipeline) it fails with a `java.util.concurrent.TimeoutException` with a
+constant message, and a prebuilt pipeline's own timeout concern, when it has one, turns that into its own
+`ResilienceTimeoutException`. A request sent straight through `webClient()` is one attempt bounded by the client's `readTimeout` in the same way, resetting just that exchange. A request still waiting for a pooled connection when the attempt ends sends
 nothing once the connection frees.
+
+### Resilience
+
+A call runs in one pipeline execution: the options' prebuilt pipeline, else the options' or the client's named
+policy (`resilience.policies.<name>`), else a single attempt. The client builds a policy's pipeline once per policy,
+without the policy's timeout concern, because its own attempt timer is the only timer. Each attempt calls the
+function again with a new scoped `WebClient`, so requests, bodies and decoding are rebuilt every time.
+
+The default retry classification of a policy's pipeline applies when the policy names no `retryOn`: every method
+retries a connection failure before anything was written (`ConnectException`, `UnknownHostException`,
+`NoRouteToHostException`, `SSLHandshakeException`) and a `HttpStatusRejectedException` with status 429 or 503; only an
+attempt whose every exchange used GET, HEAD, OPTIONS, TRACE, PUT or DELETE retries a 502, a 504, the attempt timeout, an
+`HttpClosedException` and a stream reset. A policy's `retryOn` and `abortOn` replace this, except that a cancelled
+call, a closed client, a refusal before the first request was written (a failed credential source, an egress denial
+on the first hop, an invalid request header, a refused request body) and a refusal on a redirect hop are never
+retried. `Retry-After` is honored only when the policy sets `retry.retryAfterMaxMs` above 0.
+
+Callers always see the original failure. A refusal before the first request was written ends the execution without
+retry and the breaker treats it like a cancelled one: it re-opens a half-open breaker and, like any success, resets the
+failure count of a closed one. The circuit breaker counts every failure that reaches it except a 4xx
+`HttpStatusRejectedException` other than 429, `HttpBodyLimitException` and a refusal on a redirect hop, which are
+recorded as successes. Cancelling a call or closing the client ends the execution at once with
+`HttpExchangeCancelledException` or `HttpClientClosedException`, whatever `retryOn` says, and starts no further
+attempt. The policy's pipelines are owned by the client and closed with it.
 
 `CancellationSignal.create()` makes a signal; `cancel()` works from any thread and repeating it does
 nothing. Cancelling resets the open exchanges of every call bound to the signal that has not settled

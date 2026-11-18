@@ -3,21 +3,28 @@
 
 package dev.vertique.http.client;
 
+import dev.vertique.http.client.exception.HttpBodyLimitException;
+import dev.vertique.http.client.exception.HttpCredentialException;
+import dev.vertique.http.client.exception.HttpEgressDeniedException;
 import dev.vertique.http.client.exception.HttpStatusRejectedException;
 import dev.vertique.http.client.interceptor.HttpClientAttemptCompletion;
 import dev.vertique.http.client.interceptor.HttpClientAttemptTarget;
 import dev.vertique.http.client.interceptor.HttpClientRequestContext;
 import dev.vertique.http.client.interceptor.HttpClientResponseHead;
+import dev.vertique.resilience.exception.ResilienceTimeoutException;
 import io.vertx.core.http.HttpClientRequest;
 import io.vertx.core.http.HttpClientResponse;
 import jakarta.annotation.Nullable;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -25,9 +32,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * it ends, resets every exchange that is still open and refuses new ones.
  *
  * <p>The scope also tells the client's interceptors how each of its exchanges ended, exactly once per
- * exchange. A scope that belongs to one call defers the notification of an exchange that completed
- * with a response until the call ends, because only then is a status expectation the attempt applied
- * known; every other ending is notified when it happens.
+ * exchange. A scope that belongs to one attempt of a call defers the notification of an exchange that
+ * completed with a response until the attempt ends, because only then is a status expectation the
+ * attempt applied known; every other ending is notified when it happens. The scope also remembers the
+ * methods of its exchanges and the failures that were refused before a request was written, which the
+ * client's resilience classification reads.
  */
 final class AttemptScope {
 
@@ -38,6 +47,10 @@ final class AttemptScope {
     private final List<Exchange> awaiting = new ArrayList<>();
     private final HttpClientInterceptors interceptors;
     private final @Nullable String callId;
+    private final int attemptOrdinal;
+    private final Set<Throwable> refusedBeforeSend = Collections.newSetFromMap(new IdentityHashMap<>());
+    private boolean nonIdempotent;
+    private boolean requestCreated;
     private boolean ended;
 
     /**
@@ -46,10 +59,12 @@ final class AttemptScope {
      * @param interceptors the interceptors told how the scope's exchanges ended
      * @param callId the id shared by the exchanges of one call, or {@code null} for a scope whose every
      *     exchange is a call of its own
+     * @param attemptOrdinal the 1-based ordinal of the attempt within its call, reported to interceptors
      */
-    AttemptScope(HttpClientInterceptors interceptors, @Nullable String callId) {
+    AttemptScope(HttpClientInterceptors interceptors, @Nullable String callId, int attemptOrdinal) {
         this.interceptors = interceptors;
         this.callId = callId;
+        this.attemptOrdinal = attemptOrdinal;
     }
 
     HttpClientInterceptors interceptors() {
@@ -72,6 +87,69 @@ final class AttemptScope {
 
     synchronized boolean hasEnded() {
         return ended;
+    }
+
+    /** Records the method of an exchange of this scope. */
+    synchronized void noteMethod(String method) {
+        if (!isIdempotent(method)) {
+            nonIdempotent = true;
+        }
+    }
+
+    /** Whether some exchange of this scope used a method that is not idempotent. */
+    synchronized boolean hasNonIdempotentExchange() {
+        return nonIdempotent;
+    }
+
+    static boolean isIdempotent(String method) {
+        return switch (method) {
+            case "GET", "HEAD", "OPTIONS", "TRACE", "PUT", "DELETE" -> true;
+            default -> false;
+        };
+    }
+
+    /**
+     * Whether {@code failure} (or a failure in its cause chain) refused an exchange before the first hop's
+     * request was written.
+     */
+    synchronized boolean wasRefusedBeforeSend(Throwable failure) {
+        Throwable current = failure;
+        for (int depth = 0; current != null && depth < 8; depth++) {
+            if (refusedBeforeSend.contains(current)) {
+                return true;
+            }
+            Throwable cause = current.getCause();
+            current = cause == current ? null : cause;
+        }
+        return false;
+    }
+
+    /**
+     * Records that the attempt's function threw {@code failure} itself, which refuses the request before
+     * any exchange sent a request when it is an illegal-argument failure such as an invalid header.
+     */
+    synchronized void refusedWithoutSending(Throwable failure) {
+        if (!requestCreated) {
+            refusedBeforeSend(failure, true);
+        }
+    }
+
+    private synchronized void requestCreated() {
+        requestCreated = true;
+    }
+
+    /**
+     * Records a refusal of the first hop. An illegal-argument failure counts only when no request was
+     * created yet; the other refusals count while the first hop has not been answered.
+     */
+    private synchronized void refusedBeforeSend(Throwable failure, boolean noRequestYet) {
+        if (failure instanceof HttpCredentialException
+                || failure instanceof HttpEgressDeniedException
+                || failure instanceof IllegalArgumentException && noRequestYet
+                || failure instanceof HttpBodyLimitException limit
+                        && limit.direction() == HttpBodyLimitException.Direction.REQUEST) {
+            refusedBeforeSend.add(failure);
+        }
     }
 
     private synchronized void finished(Exchange exchange) {
@@ -119,10 +197,15 @@ final class AttemptScope {
             exchange.complete(exchange.refusedBy(callFailure));
         }
         Throwable cause = new IllegalStateException(ENDED);
+        Throwable resetCause = isTimeout(callFailure) ? callFailure : cause;
         for (Exchange exchange : toReset) {
             exchange.complete(callFailure != null ? callFailure : cause);
-            exchange.reset(cause);
+            exchange.reset(resetCause);
         }
+    }
+
+    private static boolean isTimeout(@Nullable Throwable failure) {
+        return failure instanceof TimeoutException || failure instanceof ResilienceTimeoutException;
     }
 
     /** One exchange of the scope: the request before the head and the response after it. */
@@ -139,6 +222,7 @@ final class AttemptScope {
         private volatile Instant endedAt;
         private volatile HttpClientRequest request;
         private volatile HttpClientResponse response;
+        private volatile int hops;
         private volatile boolean expired;
         private volatile boolean done;
         private volatile Runnable onFinish;
@@ -159,6 +243,11 @@ final class AttemptScope {
             snapshot = request;
         }
 
+        /** Records the method of the exchange's request. */
+        void method(String method) {
+            scope.noteMethod(method);
+        }
+
         /** Records the hop the exchange currently goes to. */
         void target(HttpClientAttemptTarget hop) {
             target = hop;
@@ -177,6 +266,8 @@ final class AttemptScope {
          */
         boolean attach(HttpClientRequest sent) {
             request = sent;
+            hops = hops + 1;
+            scope.requestCreated();
             head = null; // a followed redirect starts a new hop
             response = null; // a followed redirect reuses the exchange: never reset an earlier hop's response
             return !expired && !scope.hasEnded();
@@ -216,6 +307,9 @@ final class AttemptScope {
 
         /** The exchange failed with {@code failure}: it is over and the interceptors are told. */
         void fail(@Nullable Throwable failure) {
+            if (failure != null && hops <= 1 && response == null) {
+                scope.refusedBeforeSend(failure, hops == 0);
+            }
             finish();
             complete(failure != null ? failure : new IllegalStateException(ENDED));
         }
@@ -260,7 +354,8 @@ final class AttemptScope {
             interceptors.completed(
                     request,
                     received,
-                    new HttpClientAttemptCompletion(status, reported, callId, 1, durationMs, endedAt, target));
+                    new HttpClientAttemptCompletion(
+                            status, reported, callId, scope.attemptOrdinal, durationMs, endedAt, target));
         }
 
         /** Registers what runs when the exchange completes or fails. */
