@@ -80,12 +80,7 @@ final class ActiveStream implements HttpStream {
             Consumer<ActiveStream> onTerminal) {
         this.vertx = vertx;
         this.context = context;
-        this.head = new StreamHead(
-                response.version(),
-                response.statusCode(),
-                response.statusMessage(),
-                response.headers().copy(false),
-                List.copyOf(response.cookies()));
+        this.head = StreamHead.of(response);
         this.exchange = exchange;
         this.idleTimeoutMs = idleTimeoutMs;
         this.maxEventBytes = maxEventBytes;
@@ -286,9 +281,18 @@ final class ActiveStream implements HttpStream {
     }
 
     /** The accepted head as a response-head snapshot that never changes. */
-    private record StreamHead(
-            HttpVersion version, int statusCode, String statusMessage, MultiMap headers, List<String> cookies)
+    record StreamHead(HttpVersion version, int statusCode, String statusMessage, MultiMap headers, List<String> cookies)
             implements HttpResponseHead {
+
+        /** Copies the head of a live response. */
+        static StreamHead of(HttpClientResponse response) {
+            return new StreamHead(
+                    response.version(),
+                    response.statusCode(),
+                    response.statusMessage(),
+                    response.headers().copy(false),
+                    List.copyOf(response.cookies()));
+        }
 
         @Override
         public String getHeader(String headerName) {

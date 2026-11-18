@@ -226,8 +226,9 @@ opened.onSuccess(stream -> {
 given, with an optional buffered `body`) and completes its future as soon as a response head the call's
 expectation accepts has arrived, before any body byte. The expectation is `CallOptions.expecting(...)`, by default
 `HttpExpectations.success()`. A request created by another `WebClient`, or a null argument, fails the future with
-`IllegalArgumentException`. A head the expectation refuses fails the attempt with an `HttpStatusRejectedException`
-carrying at most 2048 bytes of the first body chunk and resets the exchange; a 429 or 503 is retried like any
+`IllegalArgumentException`. A head the expectation refuses fails the attempt with the expectation's failure (an
+`HttpStatusRejectedException` for the built-in `HttpExpectations`, carrying at most 2048 bytes of the first body
+chunk) and resets the exchange; the expectation sees an immutable copy of the head; a 429 or 503 is retried like any
 rejection, honoring `Retry-After` when the policy sets `retryAfterMaxMs`.
 
 `HttpStream` carries the immutable `head()` (status, message, version, headers), the `body()` `ReadStream`, the
@@ -235,9 +236,12 @@ server-sent `events()` and `lastEventId()` (see below), the terminal `completion
 from the connection once a small queue is full, so back-pressure reaches the sender. `completion()` succeeds
 when the consumer has received the whole body and otherwise fails with the native throwable of the failed
 exchange, a `java.util.concurrent.TimeoutException` after `streamIdleTimeout` without a body byte (also while
-the consumer has paused; the exchange is reset), `HttpExchangeCancelledException` after `cancel()` and
+the consumer has paused; the exchange is reset unless the body has already ended), `HttpExchangeCancelledException` after `cancel()` and
 `HttpClientClosedException` when the client closes. `cancel()` is idempotent and callable from any thread.
 Every ending reports the exchange to the client's interceptors exactly once, with the head as the response.
+Once the head is accepted the call's `CancellationSignal` no longer covers the stream: use `HttpStream.cancel()`.
+Only the request the function returns is the stream; any other request sent from the same `WebClient` is an
+ordinary exchange with the normal response bounds.
 
 #### Server-sent events
 

@@ -177,17 +177,26 @@ final class StreamBody implements ReadStream<Buffer> {
         try {
             boolean released;
             do {
-                while (!closed && demand > 0 && handler != null && !queue.isEmpty()) {
+                while (!closed && owner.cancelReason() == null && demand > 0 && handler != null && !queue.isEmpty()) {
                     Buffer chunk = queue.poll();
                     queuedBytes -= chunk.length();
                     if (demand != Long.MAX_VALUE) {
                         demand--;
                     }
-                    handler.handle(chunk);
+                    try {
+                        handler.handle(chunk);
+                    } catch (VirtualMachineError fatal) {
+                        throw fatal;
+                    } catch (Throwable failure) {
+                        queue.clear();
+                        queuedBytes = 0;
+                        owner.failed(failure);
+                        return;
+                    }
                 }
                 released = releaseWriter();
             } while (released && !closed);
-            if (ended && !closed && queue.isEmpty()) {
+            if (ended && !closed && owner.cancelReason() == null && queue.isEmpty()) {
                 owner.bodyConsumed();
             }
         } finally {

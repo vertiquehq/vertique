@@ -12,6 +12,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClientResponse;
 import io.vertx.core.http.HttpResponseHead;
+import io.vertx.ext.web.client.HttpRequest;
 import io.vertx.ext.web.client.impl.HttpContext;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
@@ -73,6 +74,11 @@ final class StreamAttempt {
         return head.future();
     }
 
+    /** Whether {@code request} is the request of this stream, as opposed to another sent by the same web client. */
+    boolean owns(HttpRequest<?> request) {
+        return request.bodyCodec() == codec;
+    }
+
     /** The request failed before a head was accepted. */
     void failHead(Throwable failure) {
         head.tryFail(failure);
@@ -85,10 +91,11 @@ final class StreamAttempt {
     void receive(HttpContext<?> ctx, AttemptScope.Exchange exchange) {
         HttpClientResponse response = ctx.clientResponse();
         Context context = Vertx.currentContext();
+        ActiveStream.StreamHead snapshot = ActiveStream.StreamHead.of(response);
         boolean accepted;
         Throwable broken = null;
         try {
-            accepted = expectation.test(response);
+            accepted = expectation.test(snapshot);
         } catch (RuntimeException failure) {
             accepted = false;
             broken = failure;
@@ -97,7 +104,7 @@ final class StreamAttempt {
             if (broken != null) {
                 refuse(ctx, response, broken);
             } else {
-                new ExcerptReader(ctx, exchange, response, context).read();
+                new ExcerptReader(ctx, exchange, response, snapshot, context).read();
             }
             return;
         }
@@ -113,7 +120,8 @@ final class StreamAttempt {
 
     private void deliver(ActiveStream stream) {
         if (scope.hasEnded()) {
-            stream.terminate(scope.endedFailure());
+            Throwable reason = scope.endReason();
+            stream.terminate(reason != null ? reason : scope.endedFailure());
             return;
         }
         Throwable cancelled = stream.cancelReason();
@@ -139,14 +147,20 @@ final class StreamAttempt {
         private final HttpContext<?> ctx;
         private final AttemptScope.Exchange exchange;
         private final HttpClientResponse response;
+        private final HttpResponseHead snapshot;
         private final Context context;
         private final Buffer bytes = Buffer.buffer();
         private long timerId = -1;
         private boolean finished;
 
         private ExcerptReader(
-                HttpContext<?> ctx, AttemptScope.Exchange exchange, HttpClientResponse response, Context context) {
+                HttpContext<?> ctx,
+                AttemptScope.Exchange exchange,
+                HttpClientResponse response,
+                HttpResponseHead snapshot,
+                Context context) {
             this.ctx = ctx;
+            this.snapshot = snapshot;
             this.exchange = exchange;
             this.response = response;
             this.context = context;
@@ -189,7 +203,7 @@ final class StreamAttempt {
             }
             Throwable cause;
             try {
-                cause = expectation.describe(new ExcerptHead(response, bytes));
+                cause = expectation.describe(new ExcerptHead(snapshot, bytes));
             } catch (RuntimeException failure) {
                 cause = failure;
             }

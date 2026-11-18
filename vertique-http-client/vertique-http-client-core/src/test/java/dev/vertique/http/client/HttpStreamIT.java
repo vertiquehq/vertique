@@ -625,26 +625,30 @@ class HttpStreamIT {
     }
 
     /**
-     * AC-036: a head that arrives while the caller's context is busy, with the call cancelled in that gap,
-     * never leaves an open stream without an owner.
+     * Runs a stream call on a busy context: the head reaches the connection while the context is blocked
+     * and the call is then ended, by a cancel or by the attempt timeout, before the pipeline settles.
      */
-    @Test
-    @DisplayName("a head delivered in the gap before the pipeline settles and a cancel leave no open stream")
-    void headDeliveredInTheGapBeforeTheCallSettlesIsNotLeftOpenWhenCancelled() throws Exception {
-        // Given a tier pipeline, a server that holds its head until told and a stream call made on a context
+    private void gapRun(boolean viaTimeout) throws Exception {
+        // Given a tier pipeline, a recording interceptor, a server that holds its head until told and a
+        // stream call made on a context
+        Recorder recorder = new Recorder();
         AtomicReference<HttpServerRequest> held = new AtomicReference<>();
         RecordingServer server = support.server((request, body) -> held.set(request));
-        VertiqueHttpClient client = resilientClient(server, tiers("t", retryTier(2, 10, null)), b -> {});
+        VertiqueHttpClient client = viaTimeout
+                ? resilientClient(server, tiers("t", breakerTier(5, 60_000)), b -> b.register(recorder)
+                        .readTimeout(100, TimeUnit.MILLISECONDS))
+                : resilientClient(server, tiers("t", retryTier(2, 10, null)), b -> b.register(recorder));
         CancellationSignal signal = CancellationSignal.create();
         Context context = support.vertx.getOrCreateContext();
         AtomicReference<Opened> opened = new AtomicReference<>();
         context.runOnContext(v -> opened.set(
-                open(client, CallOptions.defaults().resiliencePolicy("t").cancellation(signal), "/gap", false)));
+                open(client, CallOptions.defaults().resiliencePolicy("t").cancellation(signal), "/gap", viaTimeout)));
         assertThat(serverReceived(server, "/gap", 1)).isTrue();
         assertThat(awaitCondition(() -> held.get() != null, HttpClientItSupport.WAIT_MS))
                 .isTrue();
 
         // When the context is blocked, the server writes the head, and the call is cancelled from this thread
+        // or left to outlast its attempt timeout
         java.util.concurrent.CountDownLatch blocked = new java.util.concurrent.CountDownLatch(1);
         java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
         context.runOnContext(v -> {
@@ -658,23 +662,66 @@ class HttpStreamIT {
         assertThat(blocked.await(HttpClientItSupport.WAIT_MS, TimeUnit.MILLISECONDS))
                 .isTrue();
         held.get().response().setChunked(true).write(TEN);
-        sleep(50);
-        signal.cancel();
+        if (viaTimeout) {
+            sleep(120);
+        } else {
+            sleep(50);
+            signal.cancel();
+        }
         long releasedAt = System.nanoTime();
         release.countDown();
 
-        // Then either the stream future fails with the cancel failure, or the delivered stream's completion does
+        // Then the call ends in one of the allowed ways and the caller never sees an internal failure
         Opened call = opened.get();
         assertThat(awaitCondition(() -> call.future.isComplete(), HttpClientItSupport.WAIT_MS))
                 .isTrue();
-        Throwable failure = call.future.failed()
-                ? call.future.cause()
-                : awaitFailure(call.stream.get().completion());
-        assertThat(failure).isExactlyInstanceOf(HttpExchangeCancelledException.class);
-        // And the server sees the connection closed no later than 500 ms after the release
-        assertThat(serverClosedConnections(server, 1, 500)).isTrue();
-        assertThat(millisSince(releasedAt)).isLessThan(500 + 500);
+        if (viaTimeout && !call.future.failed()) {
+            // A head received before the expired timer ran is accepted: the stream is delivered, its body
+            // flows and completion() succeeds once the server ends the response
+            held.get().response().end();
+            await(call.stream.get().completion());
+            assertThat(call.body.text()).isEqualTo("0123456789");
+            Recorder.Seen seen = recorder.settled(1).get(0);
+            assertThat(seen.completion().error()).isNull();
+            assertThat(seen.completion().statusCode()).isEqualTo(200);
+        } else {
+            // Otherwise the stream future (or, for a cancel, the delivered stream's completion) fails with the
+            // failure the caller expects: the cancel failure, or the attempt timeout
+            Throwable failure = call.future.failed()
+                    ? call.future.cause()
+                    : awaitFailure(call.stream.get().completion());
+            assertThat(failure).isNotInstanceOf(IllegalStateException.class);
+            if (viaTimeout) {
+                assertThat(failure).isInstanceOfAny(ResilienceTimeoutException.class, TimeoutException.class);
+            } else {
+                assertThat(failure).isExactlyInstanceOf(HttpExchangeCancelledException.class);
+            }
+            // And the interceptor was told the same failure, never an IllegalStateException
+            Throwable notified = recorder.settled(1).get(0).completion().error();
+            assertThat(notified).isNotNull().isNotInstanceOf(IllegalStateException.class);
+            assertThat(notified).isExactlyInstanceOf(failure.getClass());
+            // And the server sees the connection closed no later than 500 ms after the release
+            assertThat(serverClosedConnections(server, 1, 500)).isTrue();
+            assertThat(millisSince(releasedAt)).isLessThan(500 + 500);
+        }
         assertThat(server.requestsTo("/gap")).hasSize(1);
+    }
+
+    /**
+     * AC-036: a head that arrives while the caller's context is busy, with the call cancelled in that gap,
+     * never leaves an open stream without an owner, and the caller and the interceptor see the cancel failure.
+     */
+    @Test
+    @DisplayName("a head delivered in the gap before the pipeline settles and a cancel leave no open stream")
+    void headDeliveredInTheGapBeforeTheCallSettlesIsNotLeftOpenWhenCancelled() throws Exception {
+        gapRun(false);
+    }
+
+    /** AC-036: the same gap with an attempt timeout ends with the timeout or an accepted head, never an internal failure. */
+    @Test
+    @DisplayName("a head delivered in the gap before the pipeline settles and a timeout report the timeout")
+    void headDeliveredInTheGapBeforeTheCallSettlesReportsTheAttemptTimeout() throws Exception {
+        gapRun(true);
     }
 
     // --- AC-043 ---
@@ -1159,5 +1206,169 @@ class HttpStreamIT {
         assertThat(closedBeforeEnd)
                 .as("connection closed before the server ended the response")
                 .isFalse();
+    }
+
+    // --- review follow-ups ---
+
+    /** Only the request the function returns is the stream; a side request on the same client is an ordinary exchange. */
+    @Test
+    @DisplayName("only the returned request is the stream")
+    void onlyTheReturnedRequestIsTheStream() {
+        // Given a server answering POST /subscribe 200 with a body and GET /events with a streamed head
+        RecordingServer server = support.server((request, body) -> {
+            if (request.path().equals("/subscribe")) {
+                request.response().putHeader("X-Kind", "subscribe").end("subscribed");
+            } else {
+                request.response().putHeader("X-Kind", "events").end("events-body");
+            }
+        });
+        VertiqueHttpClient client = client(server);
+
+        // When the request function sends the side request and returns the /events request
+        AtomicReference<Future<io.vertx.ext.web.client.HttpResponse<Buffer>>> side = new AtomicReference<>();
+        Opened opened = new Opened(
+                client.stream(
+                        CallOptions.defaults(),
+                        web -> {
+                            side.set(web.post("/subscribe").send());
+                            return web.get("/events");
+                        },
+                        null),
+                true);
+        HttpStream stream = opened.head();
+
+        // Then the stream's head is the /events head and its body flows
+        assertThat(stream.head().headers().get("X-Kind")).isEqualTo("events");
+        await(stream.completion());
+        assertThat(opened.body.text()).isEqualTo("events-body");
+        // And the side request completed as an ordinary buffered exchange
+        io.vertx.ext.web.client.HttpResponse<Buffer> sideResponse = await(side.get());
+        assertThat(sideResponse.statusCode()).isEqualTo(200);
+        assertThat(sideResponse.bodyAsString()).isEqualTo("subscribed");
+        assertThat(server.requestsTo("/subscribe")).hasSize(1);
+        assertThat(server.requestsTo("/events")).hasSize(1);
+        // And a single delivery, with nothing left open after completion()
+        assertThat(opened.deliveries.get()).isEqualTo(1);
+    }
+
+    /** The expectation receives a snapshot of the head: not the live response, no request and no credential. */
+    @Test
+    @DisplayName("the stream expectation sees a snapshot, not the live response")
+    void theStreamExpectationSeesASnapshotNotTheLiveResponse() {
+        // Given a client with a credential source injecting Authorization and a server echoing a header
+        RecordingServer server = support.server(
+                (request, body) -> request.response().putHeader("X-Resp", "yes").end("ok"));
+        VertiqueHttpClient client = client(server, b -> b.credentials(
+                        target -> Future.succeededFuture(Map.of("Authorization", "Bearer secret-token")))
+                .allowCredentialsOverPlainHttp(true));
+        AtomicReference<io.vertx.core.http.HttpResponseHead> seen = new AtomicReference<>();
+        CallOptions options = CallOptions.defaults().expecting(head -> {
+            seen.set(head);
+            return true;
+        });
+
+        // When the caller opens a stream whose expectation records its argument
+        Opened opened = open(client, options, "/snap", true);
+        await(opened.head().completion());
+
+        // Then the server received the credential, so the check below is meaningful
+        assertThat(server.requestsTo("/snap").get(0).headers().get("Authorization"))
+                .isEqualTo("Bearer secret-token");
+        // And the argument is not the live response and carries the response headers
+        io.vertx.core.http.HttpResponseHead head = seen.get();
+        assertThat(head).isNotNull();
+        assertThat(head).isNotInstanceOf(io.vertx.core.http.HttpClientResponse.class);
+        assertThat(head.statusCode()).isEqualTo(200);
+        assertThat(head.headers().get("X-Resp")).isEqualTo("yes");
+        // And no request, connection or credential is reachable from it
+        for (java.lang.reflect.Method method : head.getClass().getMethods()) {
+            assertThat(method.getReturnType())
+                    .as("return type of %s", method.getName())
+                    .isNotIn(
+                            io.vertx.core.http.HttpClientRequest.class,
+                            io.vertx.core.http.HttpClientResponse.class,
+                            io.vertx.core.http.HttpConnection.class);
+        }
+        assertThat(head.headers().contains("Authorization")).isFalse();
+        assertThat(head.toString()).doesNotContain("secret-token");
+    }
+
+    /** Several chunks held back, then released to a handler that cancels on the first. */
+    @Test
+    @DisplayName("a body handler that cancels gets no further chunk")
+    void aBodyHandlerThatCancelsGetsNoFurtherChunk() {
+        // Given a server writing five chunks at once and keeping the response open
+        RecordingServer server = support.server((request, body) -> {
+            HttpServerResponse response = request.response().setChunked(true);
+            for (int i = 0; i < 5; i++) {
+                response.write(Buffer.buffer("chunk" + i));
+            }
+        });
+        VertiqueHttpClient client = client(server);
+
+        // When the handler is set 500 ms after the head, so the chunks are queued, and cancels on the first
+        AtomicInteger chunks = new AtomicInteger();
+        Future<HttpStream> future = client.stream(CallOptions.defaults(), web -> web.get("/many"), null);
+        future.onSuccess(
+                stream -> support.vertx.setTimer(500, id -> stream.body().handler(chunk -> {
+                    if (chunks.incrementAndGet() == 1) {
+                        stream.cancel();
+                    }
+                })));
+        HttpStream stream = await(future);
+
+        // Then completion() fails with the cancel failure and no second chunk is delivered
+        assertThat(awaitFailure(stream.completion())).isExactlyInstanceOf(HttpExchangeCancelledException.class);
+        sleep(SETTLE_MS);
+        assertThat(chunks.get()).isEqualTo(1);
+    }
+
+    /** A handler that throws fails the stream with that throwable, closes the connection and ends delivery. */
+    @Test
+    @DisplayName("a throwing body handler fails the stream")
+    void aThrowingBodyHandlerFailsTheStream() {
+        // Given a server writing five chunks at once and keeping the response open, a client without idle timeout
+        RecordingServer server = support.server((request, body) -> {
+            if (request.path().equals("/last")) {
+                request.response().end("last");
+                return;
+            }
+            HttpServerResponse response = request.response().setChunked(true);
+            for (int i = 0; i < 5; i++) {
+                response.write(Buffer.buffer("chunk" + i));
+            }
+        });
+        VertiqueHttpClient client = client(server, b -> b.streamIdleTimeout(0, TimeUnit.MILLISECONDS));
+
+        // When the handler throws on the first chunk
+        RuntimeException boom = new IllegalArgumentException("handler failure");
+        AtomicInteger chunks = new AtomicInteger();
+        Future<HttpStream> future = client.stream(CallOptions.defaults(), web -> web.get("/many"), null);
+        future.onSuccess(
+                stream -> support.vertx.setTimer(300, id -> stream.body().handler(chunk -> {
+                    chunks.incrementAndGet();
+                    throw boom;
+                })));
+        HttpStream stream = await(future);
+
+        // Then completion() fails with that same instance, no further chunk arrives and the connection closes
+        assertThat(awaitFailure(stream.completion())).isSameAs(boom);
+        sleep(SETTLE_MS);
+        assertThat(chunks.get()).isEqualTo(1);
+        assertThat(serverClosedConnections(server, 1, 1_500)).isTrue();
+
+        // And the same throw on the final chunk of an already-ended body fails completion() promptly
+        RuntimeException lastBoom = new IllegalStateException("last chunk failure");
+        AtomicLong attachedAt = new AtomicLong();
+        Future<HttpStream> ended = client.stream(CallOptions.defaults(), web -> web.get("/last"), null);
+        ended.onSuccess(delivered -> support.vertx.setTimer(500, id -> {
+            attachedAt.set(System.nanoTime());
+            delivered.body().handler(chunk -> {
+                throw lastBoom;
+            });
+        }));
+        HttpStream endedStream = await(ended);
+        assertThat(awaitFailure(endedStream.completion())).isSameAs(lastBoom);
+        assertThat(millisSince(attachedAt.get())).isLessThan(2_000);
     }
 }

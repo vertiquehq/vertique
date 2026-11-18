@@ -54,6 +54,7 @@ final class AttemptScope {
     private boolean wroteNonIdempotent;
     private int unansweredWrites;
     private boolean closedByClient;
+    private @Nullable Throwable endReason;
     private boolean requestCreated;
     private boolean ended;
     private volatile @Nullable StreamAttempt streamAttempt;
@@ -130,6 +131,12 @@ final class AttemptScope {
 
     private synchronized void unansweredWrites(int delta) {
         unansweredWrites += delta;
+    }
+
+    /** The failure the scope ended with: the call's failure (cancel, timeout, close), or {@code null}. */
+    @Nullable
+    synchronized Throwable endReason() {
+        return endReason;
     }
 
     /** The failure a request made after the scope ended fails with. */
@@ -230,6 +237,7 @@ final class AttemptScope {
             }
             ended = true;
             closedByClient = callFailure instanceof HttpClientClosedException;
+            endReason = callFailure;
             toReset = new ArrayList<>(open);
             toNotify = new ArrayList<>(awaiting);
             open.clear();

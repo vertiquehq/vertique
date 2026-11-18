@@ -114,7 +114,7 @@ final class ExchangeTracker implements Handler<HttpContext<?>> {
                     exchange.head(headOf(ctx.clientResponse()));
                 }
                 StreamAttempt streaming = scope.streamAttempt();
-                if (exchange != null && streaming != null) {
+                if (exchange != null && streaming != null && streaming.owns(ctx.request())) {
                     // a stream's body and Content-Length are exempt from the response bound
                     streaming.receive(ctx, exchange);
                     return;
