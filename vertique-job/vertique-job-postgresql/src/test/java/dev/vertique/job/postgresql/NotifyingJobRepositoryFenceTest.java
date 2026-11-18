@@ -43,17 +43,24 @@ class NotifyingJobRepositoryFenceTest {
     @Test
     @DisplayName("completeClaimedExecution forwards the claim owner to the delegate and notifies once")
     void completeClaimedForwardsAndNotifies() {
-        when(delegate.completeClaimedExecution(any(), any(), any(), any(), any(), any()))
+        when(delegate.completeClaimedExecution(any(), any(), anyInt(), any(), any(), any(), any()))
                 .thenReturn(Future.succeededFuture(Optional.of(execution(JobState.ABANDONED))));
 
         Future<Optional<JobExecution>> result = repository.completeClaimedExecution(
-                executionId, "dead-node", JobState.ABANDONED, "crashed", "NodeCrashException", ProgressSnapshot.EMPTY);
+                executionId,
+                "dead-node",
+                2,
+                JobState.ABANDONED,
+                "crashed",
+                "NodeCrashException",
+                ProgressSnapshot.EMPTY);
 
         assertTrue(result.succeeded());
         verify(delegate)
                 .completeClaimedExecution(
                         executionId,
                         "dead-node",
+                        2,
                         JobState.ABANDONED,
                         "crashed",
                         "NodeCrashException",
@@ -66,16 +73,16 @@ class NotifyingJobRepositoryFenceTest {
     @DisplayName("abandonClaimedAndScheduleRetry forwards the claim owner to the delegate and notifies once")
     void abandonClaimedForwardsAndNotifies() {
         Instant when = Instant.now();
-        when(delegate.abandonClaimedAndScheduleRetry(any(), any(), any(), any(), any(), any(), anyInt()))
+        when(delegate.abandonClaimedAndScheduleRetry(any(), any(), anyInt(), any(), any(), any(), any(), anyInt()))
                 .thenReturn(Future.succeededFuture(Optional.of(execution(JobState.ABANDONED))));
 
         Future<Optional<JobExecution>> result = repository.abandonClaimedAndScheduleRetry(
-                executionId, "dead-node", "crashed", "NodeCrashException", ProgressSnapshot.EMPTY, when, 1);
+                executionId, "dead-node", 2, "crashed", "NodeCrashException", ProgressSnapshot.EMPTY, when, 3);
 
         assertTrue(result.succeeded());
         verify(delegate)
                 .abandonClaimedAndScheduleRetry(
-                        executionId, "dead-node", "crashed", "NodeCrashException", ProgressSnapshot.EMPTY, when, 1);
+                        executionId, "dead-node", 2, "crashed", "NodeCrashException", ProgressSnapshot.EMPTY, when, 3);
         verify(delegate, never()).abandonAndScheduleRetry(any(), any(), any(), any(), any(), anyInt());
         assertEquals(1, events.size());
     }
@@ -83,20 +90,21 @@ class NotifyingJobRepositoryFenceTest {
     @Test
     @DisplayName("a fenced write that matches no row notifies nobody")
     void emptyResultNotifiesNobody() {
-        when(delegate.completeClaimedExecution(any(), any(), any(), any(), any(), any()))
+        when(delegate.completeClaimedExecution(any(), any(), anyInt(), any(), any(), any(), any()))
                 .thenReturn(Future.succeededFuture(Optional.empty()));
-        when(delegate.abandonClaimedAndScheduleRetry(any(), any(), any(), any(), any(), any(), anyInt()))
+        when(delegate.abandonClaimedAndScheduleRetry(any(), any(), anyInt(), any(), any(), any(), any(), anyInt()))
                 .thenReturn(Future.succeededFuture(Optional.empty()));
 
         repository.completeClaimedExecution(
                 executionId,
                 "dead-node",
+                2,
                 JobState.DEAD_LETTER,
                 "crashed",
                 "NodeCrashException",
                 ProgressSnapshot.EMPTY);
         repository.abandonClaimedAndScheduleRetry(
-                executionId, "dead-node", "crashed", "NodeCrashException", ProgressSnapshot.EMPTY, Instant.now(), 1);
+                executionId, "dead-node", 2, "crashed", "NodeCrashException", ProgressSnapshot.EMPTY, Instant.now(), 3);
 
         assertTrue(events.isEmpty());
     }

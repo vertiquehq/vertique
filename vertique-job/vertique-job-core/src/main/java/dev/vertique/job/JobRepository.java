@@ -186,67 +186,69 @@ public interface JobRepository {
             int nextAttempt);
 
     /**
-     * Completes an execution on behalf of dead-node recovery, only while the node that was found dead
-     * still holds the claim. It is {@link #completeExecution} with one more predicate: the row must still
-     * be {@code PROCESSING} and claimed by {@code lockedBy}. An execution that another node has claimed
-     * again since recovery read it matches no row, and recovery leaves it alone.
+     * Completes an execution on behalf of dead-node recovery, only while the claim recovery read is still
+     * the current one. It is {@link #completeExecution} with more predicates: the row must still be
+     * {@code PROCESSING}, claimed by {@code lockedBy}, at attempt {@code claimedAttempt}. An execution that
+     * another node has claimed again since recovery read it, or that the same node has re-enqueued and
+     * claimed again (a new attempt), matches no row, and recovery leaves it alone.
      *
-     * <p>The default implementation cannot test the claim and delegates to {@link #completeExecution},
-     * which keeps a custom repository working with at-least-once recovery. A repository that records claim
-     * ownership overrides this method, and so must every decorator of one: a wrapper that does not forward
-     * this call to its delegate's fenced implementation removes the fence.
+     * <p>An implementation must apply all three predicates in one atomic write. There is no default: a
+     * repository that cannot test the claim cannot take part in dead-node recovery, and a decorator must
+     * forward this call to its delegate unchanged.
      *
-     * @param executionId  the execution to complete
-     * @param lockedBy     the node identity recorded as the claim owner when recovery read the execution
-     * @param newState     the target state
-     * @param errorMessage the error message, or {@code null}
-     * @param errorType    the exception class name, or {@code null}
-     * @param progress     the final progress snapshot
+     * @param executionId    the execution to complete
+     * @param lockedBy       the node identity recorded as the claim owner when recovery read the execution
+     * @param claimedAttempt the attempt number recorded when recovery read the execution
+     * @param newState       the target state
+     * @param errorMessage   the error message, or {@code null}
+     * @param errorType      the exception class name, or {@code null}
+     * @param progress       the final progress snapshot
      * @return the persisted {@link JobExecution}, or {@link Optional#empty()} when no row transitioned
-     *         because the execution is no longer {@code PROCESSING} under {@code lockedBy}
+     *         because the execution is no longer {@code PROCESSING} under {@code lockedBy} at
+     *         {@code claimedAttempt}
      */
-    default Future<Optional<JobExecution>> completeClaimedExecution(
+    Future<Optional<JobExecution>> completeClaimedExecution(
             UUID executionId,
             String lockedBy,
+            int claimedAttempt,
             JobState newState,
             String errorMessage,
             String errorType,
-            ProgressSnapshot progress) {
-        return completeExecution(executionId, newState, errorMessage, errorType, progress);
-    }
+            ProgressSnapshot progress);
 
     /**
      * Records an interrupted execution and re-enqueues it on behalf of dead-node recovery, only while the
-     * node that was found dead still holds the claim. It is {@link #abandonAndScheduleRetry} with one more
-     * predicate on both writes: the row must still be {@code PROCESSING} and claimed by {@code lockedBy}.
-     * An execution that another node has claimed again since recovery read it matches no row, and recovery
-     * leaves it alone.
+     * claim recovery read is still the current one. It is {@link #abandonAndScheduleRetry} with more
+     * predicates on both writes: the row must still be {@code PROCESSING}, claimed by {@code lockedBy}, at
+     * attempt {@code claimedAttempt}. An execution that another node has claimed again since recovery read
+     * it, or that the same node has re-enqueued and claimed again (a new attempt), matches no row, and
+     * recovery leaves it alone.
      *
-     * <p>The default implementation cannot test the claim and delegates to {@link #abandonAndScheduleRetry},
-     * which keeps a custom repository working with at-least-once recovery. A repository that records claim
-     * ownership overrides this method, and so must every decorator of one: a wrapper that does not forward
-     * this call to its delegate's fenced implementation removes the fence.
+     * <p>An implementation must apply all three predicates to both writes. There is no default: a
+     * repository that cannot test the claim cannot take part in dead-node recovery, and a decorator must
+     * forward this call to its delegate unchanged.
      *
      * @param executionId     the interrupted execution to retry
      * @param lockedBy        the node identity recorded as the claim owner when recovery read the execution
+     * @param claimedAttempt  the attempt number recorded when recovery read the execution
      * @param errorMessage    the interruption message, or {@code null}
      * @param errorType       the interruption type, or {@code null}
      * @param progress        the final progress snapshot for the interrupted attempt
      * @param nextScheduledAt when the retry should become eligible for claiming
      * @param nextAttempt     the new attempt number (incremented from previous)
      * @return the persisted {@code ABANDONED} snapshot, or {@link Optional#empty()} when no row transitioned
-     *         because the execution is no longer {@code PROCESSING} under {@code lockedBy}
+     *         because the execution is no longer {@code PROCESSING} under {@code lockedBy} at
+     *         {@code claimedAttempt}
      */
-    default Future<Optional<JobExecution>> abandonClaimedAndScheduleRetry(
+    Future<Optional<JobExecution>> abandonClaimedAndScheduleRetry(
             UUID executionId,
             String lockedBy,
+            int claimedAttempt,
             String errorMessage,
             String errorType,
             ProgressSnapshot progress,
             Instant nextScheduledAt,
-            int nextAttempt) {
-        return abandonAndScheduleRetry(executionId, errorMessage, errorType, progress, nextScheduledAt, nextAttempt);
-    }
+            int nextAttempt);
 
     /**
      * Attempts to insert a {@link JobExecution} row, returning the generated ID on success or
