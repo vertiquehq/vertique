@@ -60,6 +60,15 @@ rm -rf "${M2:?}/$GROUP_PATH"
 # Tests just ran in this build: -DskipTests does not reach the Invoker
 # integration tests, whose output never enters the payload, so they are skipped
 # explicitly alongside the archetype ones.
-./mvnw -ntp -B -Dmaven.repo.local="$M2" -DskipTests -Darchetype.test.skip=true -Dinvoker.skip=true -Prelease install
+#
+# The compiler's incremental mode recompiles a module whenever a classpath file
+# is newer than its last compilation. Every dependency here comes from the
+# fresh private repository and every reactor JAR is repackaged, so that check
+# fires for every module and the whole reactor would recompile. With it off,
+# the compiler recompiles only sources newer than their classes: none, since
+# the sources are the ones the build just compiled and the release profile
+# changes no compiler setting.
+./mvnw -ntp -B -Dmaven.repo.local="$M2" -DskipTests -Darchetype.test.skip=true -Dinvoker.skip=true \
+  -Dmaven.compiler.useIncrementalCompilation=false -Prelease install
 
 node release/snapshot-payload.mjs stage --local-repository "$M2" --sha "$SHA" --out "$OUT"
