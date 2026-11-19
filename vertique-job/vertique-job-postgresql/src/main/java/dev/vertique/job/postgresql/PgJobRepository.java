@@ -55,6 +55,9 @@ import lombok.extern.slf4j.Slf4j;
 @Singleton
 public class PgJobRepository extends PgSqlRepository implements JobRepository {
 
+    /** How many times a keyed save repeats its insert when the key's holder cannot be read back. */
+    private static final int KEYED_SAVE_ATTEMPTS = 3;
+
     // --- SQL statements ---
     //
     // The statements are built once at construction because every table reference is qualified with
@@ -75,6 +78,8 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
     private final String sqlFindStale;
     private final String sqlInsertLog;
     private final String sqlTryInsert;
+    private final String sqlInsertKeyed;
+    private final String sqlFindUnfinishedByKey;
     private final String sqlSaveSchedule;
     private final String sqlUpdateScheduleFireTimes;
     private final String sqlFindSchedule;
@@ -129,16 +134,16 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
                 INSERT INTO %s (
                     id, job_id, job_type, handler, queue, state, payload, progress, parameters,
                     metadata, attempt, max_attempts, priority, scheduled_at, locked_by,
-                    last_error, error_type, scope_key, created_at, updated_at
+                    last_error, error_type, scope_key, idempotency_key, created_at, updated_at
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
-                          $11, $12, $13, $14, $15, $16, $17, $18, NOW(), NOW())
+                          $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW(), NOW())
                 RETURNING id
                 """.formatted(executions);
 
         this.sqlSelectAllCols = """
                 SELECT id, job_id, job_type, handler, queue, state, payload, progress, parameters,
                        metadata, attempt, max_attempts, priority, scheduled_at, started_at, completed_at,
-                       locked_by, last_error, error_type, scope_key, created_at, updated_at
+                       locked_by, last_error, error_type, scope_key, idempotency_key, created_at, updated_at
                 FROM %s
                 """.formatted(executions);
 
@@ -198,13 +203,32 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
                 INSERT INTO %s (
                     id, job_id, job_type, handler, queue, state, payload, progress, parameters,
                     metadata, attempt, max_attempts, priority, scheduled_at, locked_by,
-                    last_error, error_type, scope_key, created_at, updated_at
+                    last_error, error_type, scope_key, idempotency_key, created_at, updated_at
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
-                          $11, $12, $13, $14, $15, $16, $17, $18, NOW(), NOW())
+                          $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW(), NOW())
                 ON CONFLICT (job_id, scheduled_at) WHERE job_type = 'CRON' AND state NOT IN ('DEAD_LETTER', 'CANCELLED')
                 DO NOTHING
                 RETURNING id
                 """.formatted(executions);
+
+        // The conflict target repeats the predicate of idx_job_executions_idempotency_key. DO NOTHING (not DO UPDATE)
+        // leaves the existing row untouched, including updated_at, which stale-execution detection reads.
+        this.sqlInsertKeyed = """
+                INSERT INTO %s (
+                    id, job_id, job_type, handler, queue, state, payload, progress, parameters,
+                    metadata, attempt, max_attempts, priority, scheduled_at, locked_by,
+                    last_error, error_type, scope_key, idempotency_key, created_at, updated_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
+                          $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW(), NOW())
+                ON CONFLICT (handler, scope_key, idempotency_key)
+                    WHERE idempotency_key IS NOT NULL AND state NOT IN ('SUCCEEDED', 'CANCELLED', 'DEAD_LETTER')
+                DO NOTHING
+                RETURNING id
+                """.formatted(executions);
+
+        this.sqlFindUnfinishedByKey = "SELECT id FROM " + executions
+                + " WHERE handler = $1 AND scope_key = $2 AND idempotency_key = $3"
+                + " AND state NOT IN ('SUCCEEDED', 'CANCELLED', 'DEAD_LETTER')";
 
         this.sqlSaveSchedule = """
                 INSERT INTO %s (job_id, cron_expression, handler, target, execution_mode, timezone,
@@ -278,6 +302,9 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
      */
     @Override
     public Future<UUID> save(JobExecution execution) {
+        if (execution.idempotencyKey() != null) {
+            return saveKeyed(execution, null);
+        }
         return withInsertParams(execution, params -> this.<UUID>query(sqlInsert)
                 .params(params)
                 .mapping(row -> row.getUUID(COL_ID))
@@ -293,11 +320,63 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
      * @return a future of the saved execution ID
      */
     public Future<UUID> save(JobExecution execution, SqlClient client) {
+        if (execution.idempotencyKey() != null) {
+            return saveKeyed(execution, client);
+        }
         return withInsertParams(execution, params -> this.<UUID>query(sqlInsert)
                 .on(client)
                 .params(params)
                 .mapping(row -> row.getUUID(COL_ID))
                 .returning());
+    }
+
+    /**
+     * Stores an execution that holds an idempotency key, or finds the unfinished execution that already holds it.
+     *
+     * <p>The insert is {@code ON CONFLICT DO NOTHING}, so a held key never raises a unique violation and never
+     * aborts the caller's transaction. When the insert stores nothing, a second statement reads the holder. The
+     * holder can finish between the two statements, and under a snapshot older than a concurrent commit the
+     * holder can be invisible to the read, so a read that finds nothing repeats the insert, at most
+     * {@link #KEYED_SAVE_ATTEMPTS} times in all.
+     *
+     * @param execution the execution to store; its idempotency key is not {@code null}
+     * @param client    the client to run on, or {@code null} for the pool
+     * @return a future of the stored execution's ID, or of the unfinished holder's ID
+     */
+    private Future<UUID> saveKeyed(JobExecution execution, SqlClient client) {
+        return withInsertParams(execution, params -> insertKeyed(execution, params, client, 1));
+    }
+
+    private Future<UUID> insertKeyed(JobExecution execution, Tuple params, SqlClient client, int attempt) {
+        var insert = this.<UUID>query(sqlInsertKeyed);
+        if (client != null) {
+            insert = insert.on(client);
+        }
+        return insert.params(params)
+                .mapping(row -> row.getUUID(COL_ID))
+                .returningOptional()
+                .compose(stored -> {
+                    if (stored.isPresent()) {
+                        return Future.succeededFuture(stored.get());
+                    }
+                    var find = this.<UUID>query(sqlFindUnfinishedByKey);
+                    if (client != null) {
+                        find = find.on(client);
+                    }
+                    return find.params(Tuple.of(execution.handler(), execution.scopeKey(), execution.idempotencyKey()))
+                            .mapping(row -> row.getUUID(COL_ID))
+                            .one()
+                            .compose(holder -> {
+                                if (holder.isPresent()) {
+                                    return Future.succeededFuture(holder.get());
+                                }
+                                if (attempt >= KEYED_SAVE_ATTEMPTS) {
+                                    return Future.<UUID>failedFuture(new IllegalStateException(
+                                            "The execution holding the idempotency key could not be read back"));
+                                }
+                                return insertKeyed(execution, params, client, attempt + 1);
+                            });
+                });
     }
 
     /**
@@ -796,7 +875,8 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
                 execution.lockedBy(),
                 execution.errorMessage(),
                 execution.errorType(),
-                execution.scopeKey());
+                execution.scopeKey(),
+                execution.idempotencyKey());
     }
 
     /**

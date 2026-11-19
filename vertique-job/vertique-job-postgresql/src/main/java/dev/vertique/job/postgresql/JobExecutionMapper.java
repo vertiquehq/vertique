@@ -48,6 +48,7 @@ final class JobExecutionMapper {
     static final String COL_UPDATED_AT = "updated_at";
     static final String COL_METADATA = "metadata";
     static final String COL_SCOPE_KEY = "scope_key";
+    static final String COL_IDEMPOTENCY_KEY = "idempotency_key";
 
     // --- Row mappers ---
 
@@ -91,7 +92,8 @@ final class JobExecutionMapper {
                 parameters,
                 null,
                 metadata,
-                row.getString(COL_SCOPE_KEY));
+                row.getString(COL_SCOPE_KEY),
+                row.getString(COL_IDEMPOTENCY_KEY));
     }
 
     // --- Internal helpers ---
