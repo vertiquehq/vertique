@@ -5,7 +5,6 @@ package dev.vertique.workflow.postgresql.engine;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -313,6 +312,15 @@ public class PgWorkflowEngineBranchHumanTaskIT {
                 .join();
     }
 
+    private String commandId(WorkflowInstanceId workflowId, String kind) {
+        return pool.preparedQuery("SELECT id FROM workflow_commands WHERE workflow_id = $1 AND kind = $2")
+                .execute(Tuple.of(workflowId.value(), kind))
+                .map(rs -> String.valueOf(rs.iterator().next().getLong("id")))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
+    }
+
     private long historyCount(WorkflowInstanceId workflowId, WorkflowEntryType entryType) {
         return historyRepo
                 .listByInstance(workflowId, pool)
@@ -426,7 +434,10 @@ public class PgWorkflowEngineBranchHumanTaskIT {
         assertEquals("task-step", created.getFirst().stepId());
         assertEquals("Role", created.getFirst().attributes().get("assigneeType"));
         assertEquals("reviewers", created.getFirst().attributes().get("assigneeKey"));
-        assertNotNull(created.getFirst().causationId(), "the start command is the cause of the creation");
+        assertEquals(
+                commandId(workflowId, "START"),
+                created.getFirst().causationId(),
+                "the start command is the cause of the creation");
         long createdSequence = historyRepo
                 .listByInstance(workflowId, pool)
                 .map(entries -> entries.stream()
@@ -458,8 +469,10 @@ public class PgWorkflowEngineBranchHumanTaskIT {
         assertEquals(taskId, completed.getFirst().taskId());
         assertEquals("task-step", completed.getFirst().stepId());
         assertEquals("approve", completed.getFirst().attributes().get("decisionName"));
-        assertNotNull(completed.getFirst().causationId(), "the completion command is the cause");
-        assertNotEquals(created.getFirst().causationId(), completed.getFirst().causationId());
+        assertEquals(
+                commandId(workflowId, "COMPLETION"),
+                completed.getFirst().causationId(),
+                "the completion command is the cause");
     }
 
     @Test

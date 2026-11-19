@@ -503,7 +503,7 @@ final class TaskLifecycleService {
                     cancelledAt,
                     cancellationReason,
                     cancelledBy,
-                    WorkflowPayloads.commandCorrelationId()));
+                    WorkflowPayloads.commandCorrelationId(inst)));
             return history.append(
                             new WorkflowHistoryEntry(
                                     inst.id(), seq, WorkflowEntryType.TASK_CANCELLED, histPayload, cancelledAt),
