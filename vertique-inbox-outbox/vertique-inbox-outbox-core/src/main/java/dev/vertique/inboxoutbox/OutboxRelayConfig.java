@@ -62,8 +62,10 @@ public class OutboxRelayConfig {
     private final long leaseTimeoutMs = 30_000L;
 
     /**
-     * Maximum number of delivery attempts before an entry is moved to dead-letter state.
-     * Default: 20.
+     * Maximum number of delivery attempts before an entry is moved to dead-letter state, for
+     * entries that set no {@link OutboxEntry#maxAttempts() maxAttempts} of their own. The limit is
+     * stored with the row when the entry is published, so a change applies to entries published
+     * afterwards. An entry's own limit wins. Default: 20.
      */
     @Builder.Default
     private final int maxAttempts = 20;

@@ -186,7 +186,7 @@ Deserialized from `inboxOutbox.relay`.
 | `pollingIntervalMs` | `1000` | Milliseconds between poll cycles. An empty cycle backs this off — doubling up to 4×, capped at 60 s. A cycle that claims as many rows as the relay had free slots is followed by another almost at once, so this interval no longer caps how fast a backlog drains |
 | `batchSize` | `50` | Maximum rows to claim per cycle |
 | `leaseTimeoutMs` | `30000` | Stale lease recovery threshold in ms |
-| `maxAttempts` | `20` | Currently unread by any runtime path — the per-row attempt limit is fixed at `20` by `OutboxEntry`'s own default at insert time; setting this key has no effect today |
+| `maxAttempts` | `20` | Attempt limit stored with each outbox row whose `OutboxEntry` set none, applied when the entry is published; an entry's own `maxAttempts` wins. A change affects entries published afterwards, not rows already stored |
 | `backoffBaseDelayMs` | `1000` | Base delay for exponential backoff |
 | `backoffMaxDelayMs` | `300000` | Maximum backoff cap in ms |
 | `instances` | `1` | Number of `OutboxRelay` verticle instances to deploy |
@@ -383,6 +383,7 @@ look in a schema the migration never filled.
 | `InboxService` | Singleton | `DefaultInboxService` backed by `PgInboxOutboxRepository` |
 | `OutboxService` | Singleton | `DefaultOutboxService` backed by `PgInboxOutboxRepository` |
 | `PgInboxOutboxRepository` | Singleton | PostgreSQL repository, built from `Optional<DbSchemas>`: placed in the schema mapped to `inbox-outbox` when the component supplies `DbSchemas` (a component that installs `DbModule` gets it from `db.schemas.inbox-outbox`), unqualified when it does not. The `InboxRepository` and `OutboxRepository` bindings, both services, the maintenance cron and every relay instance resolve to this one instance, so they share one node identity (each relay instance appends a counter suffix to it for `claimed_by`) |
+| `OutboxQueueProbe` | Singleton | The same `PgInboxOutboxRepository`: one read-only statement counts the due entries (by their own state, without applying the relay's handler scope or aggregate order), ages the oldest of them and counts the dead-lettered ones; the partial indexes on `PENDING` and `DEAD_LETTER` keep its cost with the backlog, not the table |
 | `Set<MigrationDefinition>` | `@IntoSet` | The `inbox-outbox` declaration from `InboxOutboxMigrationsModule`: location `classpath:db/migration/inbox-outbox`, no dependencies |
 | `OutboxRelayConfig` | Singleton | Relay configuration deserialized from `inboxOutbox.relay` |
 | `InboxOutboxCleanupConfig` | Singleton | Cleanup configuration deserialized from `inboxOutbox.cleanup` |

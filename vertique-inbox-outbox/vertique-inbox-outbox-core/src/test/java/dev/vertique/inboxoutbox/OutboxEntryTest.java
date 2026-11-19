@@ -4,11 +4,14 @@
 package dev.vertique.inboxoutbox;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.vertx.core.json.JsonObject;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -223,6 +226,86 @@ class OutboxEntryTest {
             OutboxEntry entry = minimalEntry().headers(source).build();
 
             assertEquals(source, entry.headers());
+        }
+    }
+
+    @Nested
+    @DisplayName("attempt limit")
+    class AttemptLimit {
+
+        @Test
+        @DisplayName("an entry that sets none reports 20 and has no own limit")
+        void unsetReportsDefault() {
+            OutboxEntry entry = minimalEntry().build();
+
+            assertEquals(20, entry.maxAttempts());
+            assertFalse(entry.hasOwnMaxAttempts());
+        }
+
+        @Test
+        @DisplayName("an entry that sets a limit reports it and has an own limit")
+        void setReportsOwn() {
+            OutboxEntry entry = minimalEntry().maxAttempts(3).build();
+
+            assertEquals(3, entry.maxAttempts());
+            assertTrue(entry.hasOwnMaxAttempts());
+        }
+
+        @Test
+        @DisplayName("an own limit equal to the built-in default is still an own limit")
+        void ownLimitEqualToDefault() {
+            OutboxEntry entry = minimalEntry().maxAttempts(20).build();
+
+            assertTrue(entry.hasOwnMaxAttempts());
+            assertEquals(20, entry.withDefaultMaxAttempts(5).maxAttempts());
+        }
+
+        @Test
+        @DisplayName("withDefaultMaxAttempts gives an entry without a limit the default and carries every other field")
+        void withDefaultFillsUnset() {
+            OutboxEntry entry = fullEntry()
+                    .headers(Map.of("x-trace-id", "abc123"))
+                    .scheduledAt(Instant.parse("2030-01-01T00:00:00Z"))
+                    .scopeKey("tenant-a")
+                    .build();
+
+            OutboxEntry filled = entry.withDefaultMaxAttempts(7);
+
+            assertEquals(7, filled.maxAttempts());
+            assertTrue(filled.hasOwnMaxAttempts());
+            assertEquals(entry.aggregateType(), filled.aggregateType());
+            assertEquals(entry.aggregateId(), filled.aggregateId());
+            assertEquals(entry.eventType(), filled.eventType());
+            assertEquals(entry.destinationType(), filled.destinationType());
+            assertEquals(entry.destination(), filled.destination());
+            assertEquals(entry.payload(), filled.payload());
+            assertEquals(entry.headers(), filled.headers());
+            assertEquals(entry.scheduledAt(), filled.scheduledAt());
+            assertEquals(entry.delayedJob(), filled.delayedJob());
+            assertEquals(entry.availableAt(), filled.availableAt());
+            assertEquals(entry.scopeKey(), filled.scopeKey());
+        }
+
+        @Test
+        @DisplayName("withDefaultMaxAttempts returns the same entry when it has its own limit")
+        void withDefaultKeepsOwn() {
+            OutboxEntry entry = minimalEntry().maxAttempts(3).build();
+
+            assertSame(entry, entry.withDefaultMaxAttempts(7));
+        }
+
+        @Test
+        @DisplayName("a JSON round trip keeps an unset limit unset and a set limit set")
+        void jsonRoundTrip() throws Exception {
+            ObjectMapper mapper = new ObjectMapper();
+            OutboxEntry unset =
+                    mapper.readValue(mapper.writeValueAsString(minimalEntry().build()), OutboxEntry.class);
+            OutboxEntry own = mapper.readValue(
+                    mapper.writeValueAsString(minimalEntry().maxAttempts(3).build()), OutboxEntry.class);
+
+            assertFalse(unset.hasOwnMaxAttempts());
+            assertTrue(own.hasOwnMaxAttempts());
+            assertEquals(3, own.maxAttempts());
         }
     }
 
