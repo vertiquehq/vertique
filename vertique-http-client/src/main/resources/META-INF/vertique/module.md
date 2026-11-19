@@ -320,7 +320,35 @@ function again with a new scoped `WebClient`, so requests, bodies and decoding a
 A cancelled call, a closed client and the client's own refusal while no request of the attempt was written (a failed
 credential source, an egress denial, a refused request body) are never retried, whatever the pipeline says. An invalid
 request header, or anything else the attempt function throws, reaches the pipeline like any other failure. A refusal on a redirect hop comes after a request was sent and is an ordinary attempt failure that the
-pipeline classifies. `Retry-After` is honored when the pipeline sets `retry.retryAfterMaxMs` above 0.
+pipeline classifies. `Retry-After` is honored when the pipeline sets `Retry.Builder.retryAfterMaxMs(...)` above 0;
+breakers classify failures with `CircuitBreaker.Builder.countsAsFailure(...)`. Without them every failure is
+retried and counted, so a 404 is retried and counts against the breaker.
+
+```java
+ResiliencePipeline pipeline = resilience.pipeline("catalog-read")
+        .timeout(t -> t.duration(Duration.ofSeconds(10)))
+        .retry(r -> r.maxRetries(3)
+                .backoff(RetryBackoff.exponential(100, 2.0, 2_000))
+                .retryAfterMaxMs(30_000)
+                // consulted only while retryOn is empty: retry 5xx, 429 and non-status failures
+                .fallbackPolicy((failure, retryCount) -> !(failure instanceof HttpStatusRejectedException s)
+                        || s.statusCode() >= 500
+                        || s.statusCode() == 429))
+        .circuitBreaker(cb -> cb.maxFailures(5)
+                .resetTimeout(Duration.ofSeconds(30))
+                .countsAsFailure(f -> !(f instanceof HttpStatusRejectedException s)
+                        || s.statusCode() >= 500
+                        || s.statusCode() == 429))
+        .build();
+
+Future<String> body = client.execute(
+        CallOptions.defaults().resilience(pipeline),
+        web -> web.get("/items").send().expecting(HttpExpectations.success()).map(HttpResponse::bodyAsString));
+```
+
+The status checks only see a status the attempt rejects, so keep `expecting(HttpExpectations.success())` on the
+request. `fallbackPolicy` decides eligibility only while `retryOn` is empty; a non-empty `retryOn` selects by
+exception type alone, and `abortOn` always wins.
 
 Callers always see the original failure. A refusal before the first request was written ends the execution without
 retry and the breaker treats it like a cancelled one: it re-opens a half-open breaker and, like any success, resets the
@@ -390,6 +418,90 @@ header value, body text or cause message.
 `HttpStatusRejectedException` implements `RetryDelayHint`: `retryAfter()` is the `Retry-After` header
 as delta-seconds or an HTTP-date, zero for a past date, empty when absent or unparseable, and capped
 at 24 hours. `bodyExcerpt()` is filled only when the checked response has a buffered `Buffer` body.
+
+### OAuth client-credentials
+
+The module has no token logic of its own: a `CredentialSource` fetches and caches the token. Use two clients: a
+separate token client with **no** credential source, and the API client whose source calls it.
+
+```java
+final class ClientCredentialsSource implements CredentialSource {
+    private static final Duration SKEW = Duration.ofSeconds(30);
+
+    private final HttpClient tokenClient;
+    private final String clientId;
+    private final String clientSecret;
+    private String token;
+    private long expiresAtNanos;
+    private Future<String> inFlight;
+
+    ClientCredentialsSource(HttpClient tokenClient, String clientId, String clientSecret) {
+        this.tokenClient = tokenClient;
+        this.clientId = clientId;
+        this.clientSecret = clientSecret;
+    }
+
+    @Override
+    public synchronized Future<Map<String, String>> resolve(URI target) {
+        if (token != null && System.nanoTime() - expiresAtNanos < 0) {
+            return Future.succeededFuture(Map.of("Authorization", "Bearer " + token));
+        }
+        if (inFlight == null) {
+            Future<String> fetching = fetch();
+            inFlight = fetching;
+            fetching.onComplete(done -> clear(fetching));
+        }
+        return inFlight.map(t -> Map.of("Authorization", "Bearer " + t));
+    }
+
+    private synchronized void clear(Future<String> done) {
+        if (inFlight == done) {
+            inFlight = null;
+        }
+    }
+
+    private Future<String> fetch() {
+        MultiMap form = MultiMap.caseInsensitiveMultiMap()
+                .add("grant_type", "client_credentials")
+                .add("client_id", clientId)
+                .add("client_secret", clientSecret);
+        return tokenClient
+                .execute(web -> web.post("/oauth/token")
+                        .sendForm(form)
+                        .expecting(HttpExpectations.success())
+                        .map(HttpResponse::bodyAsJsonObject))
+                .map(json -> {
+                    synchronized (this) {
+                        token = json.getString("access_token");
+                        long lifetime = Duration.ofSeconds(json.getLong("expires_in"))
+                                .minus(SKEW)
+                                .toNanos();
+                        expiresAtNanos = System.nanoTime() + lifetime;
+                        return token;
+                    }
+                });
+    }
+}
+
+HttpClient authClient = HttpClientBuilder.create(vertx)
+        .name("auth")
+        .baseUrl("https://auth.example.com")
+        .build();
+HttpClient apiClient = HttpClientBuilder.create(vertx)
+        .name("api")
+        .baseUrl("https://api.example.com")
+        .credentials(new ClientCredentialsSource(authClient, "my-client", "my-secret"))
+        .build();
+```
+
+- **The source runs for every request** to the original origin, so caching is the source's job. The example caches
+  the token until 30 seconds before it expires and shares one in-flight fetch between concurrent requests.
+- **A 401 does not refresh the token.** The source is not told that a token was rejected; a token revoked before
+  its expiry stays in use until the cache expires. Add that rule to the source if the provider revokes early.
+- **The token client has no credential source**, so fetching a token never asks for a token.
+- **Vert.x's `OAuth2WebClient` cannot wrap** a client this module hands out, because `addInterceptor(...)` is
+  refused; use a `CredentialSource` instead.
+- Keep the client secret in the application's secret store, not in the source.
 
 ---
 
