@@ -428,6 +428,24 @@ public class ExternalOutboxDestinationHandler implements OutboxDestinationHandle
 }
 ```
 
+### `OutboxQueueProbe`
+
+Read-only SPI that returns the size of the outbox queue for monitoring. `sample()` returns a
+`Future<OutboxQueueSample>`; it claims, locks and changes nothing, and is meant to be called on a timer
+by one caller that does not start a new read while the last is running. The PostgreSQL module binds it to
+its repository; an application with its own `OutboxRepository` binds its own probe.
+
+`OutboxQueueSample` carries three components:
+
+| Component | Meaning |
+|-----------|---------|
+| `due` | `PENDING` entries the relay may claim now: neither the scheduled time nor the retry delay is in the future |
+| `oldestDueAge` | How long the oldest due entry has been due; `Duration.ZERO` when none is due |
+| `deadLetter` | Entries in the `DEAD_LETTER` state |
+
+Entries waiting for a scheduled time or a retry delay are not counted as due. Entries in the `PROCESSING`
+state are neither due nor dead-lettered. `vertique-micrometer-outbox` publishes these figures as gauges.
+
 ### `OutboxPublishObserver`
 
 Observer-only SPI for every outbox publish attempt, of every destination type. The relay calls it
