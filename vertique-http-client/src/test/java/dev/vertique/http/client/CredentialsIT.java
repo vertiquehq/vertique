@@ -623,6 +623,30 @@ class CredentialsIT {
 
     /** Supporting proof of origin tracking. */
     @Test
+    @DisplayName("with a base URL a first hop to another origin gets no credentials")
+    void withABaseUrlAFirstHopToAnotherOriginGetsNoCredentials() {
+        // Given a client whose base URL is server A's origin and a credential source
+        RecordingSource source = RecordingSource.bearer();
+        RecordingServer a = support.server((request, body) -> answer(request, 200, "a"));
+        RecordingServer other = support.server((request, body) -> answer(request, 200, "other"));
+        WebClient web = build(builder(source).egress(EgressPolicy.allowAll()).baseUrl(a.origin()))
+                .webClient();
+
+        // When the caller sends an absolute request whose first hop goes to another origin
+        int otherStatus = status(web.getAbs(other.origin() + "/x").send());
+
+        // Then it succeeds without credentials: the source was not called and the server saw no Authorization
+        assertThat(otherStatus).isEqualTo(200);
+        assertThat(source.targets).isEmpty();
+        assertThat(other.requests.get(0).headers().contains("Authorization")).isFalse();
+
+        // And a request to the base URL's own origin still gets them
+        assertThat(status(web.get("/y").send())).isEqualTo(200);
+        assertThat(a.requests.get(0).headers().getAll("Authorization")).containsExactly(BEARER);
+    }
+
+    /** Supporting proof of origin tracking. */
+    @Test
     @DisplayName("no credentials for a server address, a virtual host or a request proxy under allowAll")
     void noCredentialsForAServerAddressVirtualHostOrRequestProxyUnderAllowAll() {
         // Given allowAll, a counting source, a loopback server and a loopback listener acting as the proxy,

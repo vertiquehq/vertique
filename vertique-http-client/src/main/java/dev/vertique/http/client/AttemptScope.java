@@ -53,7 +53,7 @@ final class AttemptScope {
     private final Set<Throwable> refusedBeforeSend = Collections.newSetFromMap(new IdentityHashMap<>());
     private boolean closedByClient;
     private @Nullable Throwable endReason;
-    private boolean requestCreated;
+    private int attachedExchanges;
     private boolean ended;
     private volatile @Nullable StreamAttempt streamAttempt;
 
@@ -143,28 +143,24 @@ final class AttemptScope {
         return false;
     }
 
+    /** Counts an exchange that created its first request. */
+    private synchronized void exchangeAttached() {
+        attachedExchanges++;
+    }
+
     /**
-     * Records that the attempt's function threw {@code failure} itself, which refuses the request before
-     * any exchange sent a request when it is an illegal-argument failure such as an invalid header.
+     * Records a typed governance refusal: a credential failure, an egress denial or a refused request body
+     * counts only while no other exchange of this attempt has created a request, so an attempt that already
+     * sent something fails like any other attempt.
+     *
+     * @param sentItself whether the failing exchange created a request itself
      */
-    synchronized void refusedWithoutSending(Throwable failure) {
-        if (!requestCreated) {
-            refusedBeforeSend(failure, true);
+    private synchronized void refusedBeforeSend(Throwable failure, boolean sentItself) {
+        if (attachedExchanges - (sentItself ? 1 : 0) > 0) {
+            return;
         }
-    }
-
-    private synchronized void requestCreated() {
-        requestCreated = true;
-    }
-
-    /**
-     * Records a refusal of the first hop. An illegal-argument failure counts only when no request was
-     * created yet; the other refusals count while the first hop has not been answered.
-     */
-    private synchronized void refusedBeforeSend(Throwable failure, boolean noRequestYet) {
         if (failure instanceof HttpCredentialException
                 || failure instanceof HttpEgressDeniedException
-                || failure instanceof IllegalArgumentException && noRequestYet
                 || failure instanceof HttpBodyLimitException limit
                         && limit.direction() == HttpBodyLimitException.Direction.REQUEST) {
             refusedBeforeSend.add(failure);
@@ -295,8 +291,9 @@ final class AttemptScope {
          */
         boolean attach(HttpClientRequest sent) {
             request = sent;
-            hops.incrementAndGet();
-            scope.requestCreated();
+            if (hops.incrementAndGet() == 1) {
+                scope.exchangeAttached();
+            }
             head = null; // a followed redirect starts a new hop
             response = null; // a followed redirect reuses the exchange: never reset an earlier hop's response
             return !expired && !scope.hasEnded();
@@ -367,7 +364,7 @@ final class AttemptScope {
                 return;
             }
             if (failure != null && created.get() <= 1 && hops.get() <= 1 && response == null && !answered) {
-                scope.refusedBeforeSend(failure, hops.get() == 0);
+                scope.refusedBeforeSend(failure, hops.get() > 0);
             }
             finish();
             complete(failure != null ? failure : new IllegalStateException(ENDED_MESSAGE));

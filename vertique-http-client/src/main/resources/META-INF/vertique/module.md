@@ -50,8 +50,9 @@ without a base URL fails a relative request through the returned future without 
 
 **Header validation.** Vert.x rejects a header name or value with CR, LF or NUL when it is set. A
 header that reaches the client without that check fails the request's future with
-`IllegalArgumentException` and a constant message that does not repeat the header. Values given to
-`defaultHeader(...)` follow the same rule and are checked when the client is built.
+`IllegalArgumentException` and a constant message that does not repeat the header. `defaultHeader(...)` is stricter: the setter throws `HttpClientConfigurationException` at call time for a name that
+is not a token, a transport-owned name or a value with a control character, and configured default headers are
+checked at startup.
 
 **Body bounds.** With `maxRequestBytes` above zero, Buffer, JSON and form bodies are measured as they
 will be encoded and refused with `HttpBodyLimitException` (`Direction.REQUEST`) before anything is
@@ -201,7 +202,7 @@ runtime the caller owns.
 | `config(HttpClientConfig)` | External `httpClient.{name}` configuration: every key it sets wins over the matching setter above, applied at `build()`; `null` removes it |
 | `webClientOptions(WebClientOptions)` | Copied; replaces the base options, which do not follow redirects |
 | `poolOptions(PoolOptions)` | Copied; sizes the shared connection pool |
-| `defaultHeader(String, String)` | Header added to every request that does not set it |
+| `defaultHeader(String, String)` | Header added to every request that does not set it; the setter throws `HttpClientConfigurationException` at call time for a name that is not a token, a transport-owned name (`Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Upgrade`, `TE`) or a value with a control character; configured default headers are checked at startup |
 | `build()` | Builds a client with its own agent |
 
 Setters take effect at `build()`: a client keeps the values the builder held when it was built. An

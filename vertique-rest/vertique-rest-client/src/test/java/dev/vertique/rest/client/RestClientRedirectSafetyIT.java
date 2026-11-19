@@ -84,6 +84,16 @@ class RestClientRedirectSafetyIT {
         Future<HttpClientResponse> get(@PathParam("p") String p);
     }
 
+    /** A client whose header comes from an argument, with a breaker that opens on one failure. */
+    @RestClient(name = "redirect-header-guarded")
+    @Produces("text/plain")
+    @CircuitBreaker(maxFailures = 1, timeoutMs = 5_000, resetTimeoutMs = 30_000)
+    interface HeaderGuarded {
+        @GET
+        @Path("/h")
+        Future<HttpClientResponse> get(@jakarta.ws.rs.HeaderParam("X-Value") String value);
+    }
+
     /** No delay between retries, so the test stays fast. */
     public static class NoDelayBackoff implements BackoffStrategy {
         /** Creates the strategy. */
@@ -398,6 +408,24 @@ class RestClientRedirectSafetyIT {
         assertThat(((RestClientResponseException) temporary).statusCode()).isEqualTo(307);
         assertThat(a.requestsFor("/temporary")).hasSize(1);
         assertThat(a.requestsFor("/final")).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("A refused request header still counts as a breaker failure")
+    void aRefusedRequestHeaderStillCountsAsARestBreakerFailure() {
+        // Given a client with a breaker that opens on one failure and a server that records requests
+        Origin origin = startOrigin(LOOPBACK);
+        HeaderGuarded client = builder().baseUrl(origin.base()).build(HeaderGuarded.class);
+
+        // When a call carries a header value the transport accepts but the client's header rules refuse
+        Throwable first = failureOf(client.get("a\r\n b"));
+
+        // Then the refusal is an ordinary failure that reached the breaker: it counted, so the next call finds
+        // the circuit open, and nothing reached the server
+        assertThat(first).isExactlyInstanceOf(IllegalArgumentException.class);
+        Throwable second = failureOf(client.get("fine"));
+        assertThat(second).isInstanceOf(RestClientUnavailableException.class);
+        assertThat(origin.snapshot()).isEmpty();
     }
 
     @Test

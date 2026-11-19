@@ -497,14 +497,16 @@ public final class HttpClientBuilder {
             agentBuilder.with(new PoolOptions(poolOptions));
         }
         HttpClientAgent agent = agentBuilder.build();
+        HttpClient client;
         try {
-            HttpClient client = new HttpClient(vertx, name, agent, effective, settings, List.copyOf(interceptors));
-            onBuilt.accept(client);
-            return client;
+            client = new HttpClient(vertx, name, agent, effective, settings, List.copyOf(interceptors));
         } catch (RuntimeException failure) {
             agent.close();
             throw failure;
         }
+        // the owner closes the client itself when it refuses it, so the agent is not closed again here
+        onBuilt.accept(client);
+        return client;
     }
 
     private static BaseUrl parseBaseUrl(String text) {

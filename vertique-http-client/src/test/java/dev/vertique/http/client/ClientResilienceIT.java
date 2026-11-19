@@ -742,7 +742,7 @@ class ClientResilienceIT {
     @DisplayName("never-sent failures end without retry and the breaker treats them like cancelled executions")
     void neverSentFailuresEndWithoutRetryAndTheBreakerTreatsThemLikeCancelledExecutions() {
         // Given retry tiers (maxRetries 3) on clients whose first hop is refused: a failing credential source,
-        // a denied host, an invalid header and an oversized request body
+        // a denied host and an oversized request body
         List<ResilienceEvent> events = new CopyOnWriteArrayList<>();
         RecordingServer server = statusServer(200);
         Resilience runtime = runtime(events);
@@ -751,7 +751,6 @@ class ClientResilienceIT {
                 .credentials(target -> Future.failedFuture(new IllegalStateException("vault down"))));
         HttpClient egress =
                 build(builder(runtime, server, retryTiers).egress(EgressPolicy.allowHosts(List.of("127.0.0.1"), true)));
-        HttpClient header = build(builder(runtime, server, retryTiers));
         HttpClient body = build(builder(runtime, server, retryTiers).maxRequestBytes(8));
         List<NeverSent> cases = List.of(
                 new NeverSent("credential", credential, web -> web.get("/").send(), HttpCredentialException.class),
@@ -761,11 +760,6 @@ class ClientResilienceIT {
                         web -> web.getAbs("http://localhost:" + server.port() + "/")
                                 .send(),
                         HttpEgressDeniedException.class),
-                new NeverSent(
-                        "header",
-                        header,
-                        web -> web.get("/").putHeader("X-A\nB", "a").send(),
-                        IllegalArgumentException.class),
                 new NeverSent(
                         "body",
                         body,
@@ -791,24 +785,26 @@ class ClientResilienceIT {
         // And on a closed breaker a never-sent call resets the failure count: 503, refusal, 503 stays closed
         RecordingServer failing = statusServer(503);
         HttpClient closedBreaker =
-                client(runtime(new CopyOnWriteArrayList<>()), failing, tiers("b", breakerTier(2, 60_000)));
+                build(builder(runtime(new CopyOnWriteArrayList<>()), failing, tiers("b", breakerTier(2, 60_000)))
+                        .egress(EgressPolicy.allowHosts(List.of("127.0.0.1"), true)));
         assertRejected(awaitFailure(get(closedBreaker, tierOptions("b"), "/fail")), 503);
         assertThat(awaitFailure(closedBreaker.execute(
-                        tierOptions("b"),
-                        web -> web.get("/").putHeader("X-A\nB", "a").send())))
-                .isExactlyInstanceOf(IllegalArgumentException.class);
+                        tierOptions("b"), web -> web.getAbs("http://localhost:" + failing.port() + "/")
+                                .send())))
+                .isExactlyInstanceOf(HttpEgressDeniedException.class);
         assertRejected(awaitFailure(get(closedBreaker, tierOptions("b"), "/fail")), 503);
         assertThat(failing.requests).hasSize(2);
 
         // And as the half-open trial a never-sent call re-opens the breaker
         List<ResilienceEvent> trialEvents = new CopyOnWriteArrayList<>();
-        HttpClient trialBreaker = client(runtime(trialEvents), failing, tiers("h", breakerTier(1, 300)));
+        HttpClient trialBreaker = build(builder(runtime(trialEvents), failing, tiers("h", breakerTier(1, 300)))
+                .egress(EgressPolicy.allowHosts(List.of("127.0.0.1"), true)));
         assertRejected(awaitFailure(get(trialBreaker, tierOptions("h"), "/fail")), 503);
         sleep(400);
         assertThat(awaitFailure(trialBreaker.execute(
-                        tierOptions("h"),
-                        web -> web.get("/").putHeader("X-A\nB", "a").send())))
-                .isExactlyInstanceOf(IllegalArgumentException.class);
+                        tierOptions("h"), web -> web.getAbs("http://localhost:" + failing.port() + "/")
+                                .send())))
+                .isExactlyInstanceOf(HttpEgressDeniedException.class);
         assertThat(awaitFailure(get(trialBreaker, tierOptions("h"), "/fail")))
                 .isExactlyInstanceOf(CircuitOpenException.class);
     }
@@ -845,6 +841,28 @@ class ClientResilienceIT {
 
         // And the denied hop was never dialed
         assertThat(target.openedConnections.get()).isZero();
+    }
+
+    /** An unreadable redirect {@code Location} is refused by the redirect rules after the first hop was answered. */
+    @Test
+    @DisplayName("a redirect rule refusal is an ordinary attempt failure that the caller's pipeline retries")
+    void redirectRuleRefusalIsAnOrdinaryAttemptFailureThePipelineRetries() {
+        // Given a retrying pipeline, redirects followed, and a server redirecting to a Location nobody can read
+        RecordingServer redirecting = support.server((request, body) -> request.response()
+                .setStatusCode(302)
+                .putHeader("Location", "http://[bad host/")
+                .end());
+        HttpClient client =
+                build(builder(runtime(new CopyOnWriteArrayList<>()), redirecting, tiers("t", retryTier(2, 10)))
+                        .webClientOptions(
+                                new WebClientOptions().setFollowRedirects(true).setMaxRedirects(5)));
+
+        // When the call runs
+        Throwable failure = awaitFailure(get(client, tierOptions("t"), "/out"));
+
+        // Then it fails with the redirect refusal after the pipeline retried it: 3 requests were sent
+        assertThat(failure).isExactlyInstanceOf(HttpEgressDeniedException.class);
+        assertThat(redirecting.requests).hasSize(3);
     }
 
     // --- timeout reset cause ---

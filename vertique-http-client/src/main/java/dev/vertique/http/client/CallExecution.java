@@ -221,7 +221,6 @@ final class CallExecution<T> implements CancellationSignal.Registration {
                     result = Future.failedFuture(new IllegalStateException("The attempt returned no future"));
                 }
             } catch (RuntimeException failure) {
-                scope.refusedWithoutSending(failure);
                 result = Future.failedFuture(failure);
             }
             result.onComplete(outcome -> onContext(() -> finish(outcome)));

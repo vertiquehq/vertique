@@ -512,6 +512,30 @@ class HttpClientFactoryIT {
                 .isTrue();
     }
 
+    /** AC-050: a valid configuration passes the startup validators. */
+    @Test
+    @DisplayName("the startup validators accept a valid configuration with every checked key set")
+    void startupValidatorsAcceptAValidConfiguration() {
+        // Given a client with a base URL, default headers, egress and a webClient bag
+        JsonObject config = section(new JsonObject()
+                .put(
+                        "ok",
+                        new JsonObject()
+                                .put("baseUrl", "http://127.0.0.1:8080/api")
+                                .put("defaultHeaders", new JsonObject().put("X-App", "search"))
+                                .put(
+                                        "egress",
+                                        new JsonObject()
+                                                .put("allowHosts", new JsonArray().add("127.0.0.1"))
+                                                .put("allowPlainHttp", true))
+                                .put("webClient", new JsonObject().put("maxRedirects", 2))));
+        AppComponent app = tracked(component(config, new CountingInterceptor("g")));
+
+        // When the startup validators are materialized
+        // Then they do so without failure
+        assertThat(app.composeValidators()).isNotEmpty();
+    }
+
     /** AC-050: the startup validator rejects a configured value the builder rejects, without the value. */
     @Test
     @DisplayName("AC-050: startup fails for a bad baseUrl, naming the key path and not the value")
