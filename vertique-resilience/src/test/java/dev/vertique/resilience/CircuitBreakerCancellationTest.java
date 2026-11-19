@@ -4,8 +4,10 @@
 package dev.vertique.resilience;
 
 import static dev.vertique.resilience.ResilienceTestSupport.await;
+import static dev.vertique.resilience.ResilienceTestSupport.awaitCondition;
 import static dev.vertique.resilience.ResilienceTestSupport.awaitFailure;
 import static dev.vertique.resilience.ResilienceTestSupport.block;
+import static dev.vertique.resilience.ResilienceTestSupport.flush;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -17,6 +19,7 @@ import dev.vertique.resilience.spi.event.AttemptStarted;
 import dev.vertique.resilience.spi.event.ResilienceEvent;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
 import java.time.Duration;
@@ -119,7 +122,43 @@ class CircuitBreakerCancellationTest {
     }
 
     /**
-     * Supporting FR-030: a breaker used without a pipeline runs an operation that returns a value and
+     * Supporting FR-030: when the operation completes after the cancel took effect but before the
+     * breaker's own cancel listener ran, the execution still fails with the reason, and the late value is
+     * not delivered.
+     */
+    @Test
+    @DisplayName("an operation completed during the cancel still fails the execution with the reason")
+    void operationCompletedDuringTheCancelStillFailsTheExecutionWithTheReason(Vertx vertx) throws Exception {
+        // Given a breaker-only pipeline and a cancellation whose first listener completes the operation
+        resilience = Resilience.create(vertx);
+        ResiliencePipeline pipeline = resilience
+                .pipeline("completed-during-cancel")
+                .circuitBreaker(breaker -> breaker.maxFailures(5).resetTimeout(Duration.ofSeconds(30)))
+                .build();
+        ResilienceCancellation cancellation = ResilienceCancellation.create();
+        Promise<String> gate = Promise.promise();
+        cancellation.onCancel(reason -> gate.complete("late value"));
+        AtomicInteger started = new AtomicInteger();
+        Future<String> result = pipeline.execute(
+                () -> {
+                    started.incrementAndGet();
+                    return gate.future();
+                },
+                cancellation);
+        awaitCondition(() -> started.get() == 1);
+        // And the breaker's listener is registered behind the first one
+        flush(resilience.executionContext());
+
+        // When the execution is cancelled
+        IllegalStateException reason = new IllegalStateException("stop");
+        cancellation.cancel(reason);
+
+        // Then it fails with the reason, not with the late value
+        assertSame(reason, awaitFailure(result));
+    }
+
+    /**
+     * A breaker used without a pipeline runs an operation that returns a value and
      * counts one that fails.
      */
     @Test
@@ -143,7 +182,7 @@ class CircuitBreakerCancellationTest {
     }
 
     /**
-     * Supporting FR-030: an operation that throws instead of returning a future fails the execution with
+     * An operation that throws instead of returning a future fails the execution with
      * that exception and counts as a failure.
      */
     @Test
@@ -204,7 +243,7 @@ class CircuitBreakerCancellationTest {
     }
 
     /**
-     * Supporting FR-030: a fatal error from the operation fails the execution with that error and is
+     * A fatal error from the operation fails the execution with that error and is
      * also rethrown on the execution context, so the context's exception handler sees it.
      */
     @Test

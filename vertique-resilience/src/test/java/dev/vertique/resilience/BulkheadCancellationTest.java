@@ -24,6 +24,7 @@ import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
 import java.lang.ref.Reference;
 import java.lang.ref.WeakReference;
+import java.lang.reflect.Field;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
@@ -32,6 +33,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -66,7 +68,7 @@ class BulkheadCancellationTest {
     @DisplayName("cancelling a running call releases its permit")
     void cancellingARunningCallReleasesItsPermit(Vertx vertx) throws Exception {
         // Given a reject-mode bulkhead of 1 whose only permit is held by a call that stays pending
-        resilience = Resilience.create(vertx);
+        resilience = Resilience.create(vertx, Set.of(recorder));
         ResiliencePipeline rejecting = resilience
                 .pipeline("cancel-active-reject")
                 .bulkhead(bulkhead -> bulkhead.maxConcurrentCalls(1).reject())
@@ -108,6 +110,7 @@ class BulkheadCancellationTest {
                 runningCancellation);
         awaitCondition(() -> runningStarted.get() == 1);
         Future<String> waiting = queueing.execute(() -> Future.succeededFuture("from-the-queue"));
+        awaitCondition(() -> events.stream().anyMatch(BulkheadQueued.class::isInstance));
 
         // When the running call is cancelled
         runningCancellation.cancel(reason);
@@ -140,7 +143,7 @@ class BulkheadCancellationTest {
         ResilienceCancellation cancellation = ResilienceCancellation.create();
         Future<String> queued = pipeline.execute(() -> Future.succeededFuture("never"), cancellation);
         awaitCondition(() -> events.stream().anyMatch(BulkheadQueued.class::isInstance));
-        assertEquals(1, timers.started().size(), "the queued call armed one queue timer");
+        awaitCondition(() -> timers.started().size() == 1);
         long queueTimerId = timers.started().get(0);
         assertFalse(timers.cancelled().contains(queueTimerId));
 
@@ -187,6 +190,55 @@ class BulkheadCancellationTest {
                 awaitFailure(pipeline.execute(() -> Future.succeededFuture("over-admitted"))));
         gate.complete("first");
         assertEquals("first", await(first));
+    }
+
+    /**
+     * Supporting FR-030: a cancel that has already taken the execution's listener off the cancellation
+     * and reaches the execution only after it completed normally does nothing: it does not fail and it
+     * does not give a second permit back.
+     */
+    @Test
+    @DisplayName("a cancel delivered after normal completion leaves the permits unchanged")
+    void cancelDeliveredAfterNormalCompletionLeavesThePermitsUnchanged(Vertx vertx) throws Exception {
+        // Given a reject-mode bulkhead of 1 and a running call, with the call's cancel listener captured
+        // the way a racing cancel would hold it (cancel removes a listener before it runs it)
+        resilience = Resilience.create(vertx);
+        ResiliencePipeline pipeline = resilience
+                .pipeline("stale-cancel-listener")
+                .bulkhead(bulkhead -> bulkhead.maxConcurrentCalls(1).reject())
+                .build();
+        ResilienceCancellation cancellation = ResilienceCancellation.create();
+        Promise<String> gate = Promise.promise();
+        AtomicInteger started = new AtomicInteger();
+        Future<String> call = pipeline.execute(
+                () -> {
+                    started.incrementAndGet();
+                    return gate.future();
+                },
+                cancellation);
+        awaitCondition(() -> started.get() == 1);
+        Consumer<Throwable> staleListener = onlyListener(cancellation);
+
+        // When the call completes normally and the captured listener then runs
+        gate.complete("done");
+        assertEquals("done", await(call));
+        IllegalStateException reason = new IllegalStateException("late");
+        assertDoesNotThrow(() -> staleListener.accept(reason));
+
+        // Then the call keeps its result and the bulkhead still holds exactly one permit
+        assertEquals("done", call.result());
+        Promise<String> secondGate = Promise.promise();
+        AtomicInteger secondStarted = new AtomicInteger();
+        Future<String> second = pipeline.execute(() -> {
+            secondStarted.incrementAndGet();
+            return secondGate.future();
+        });
+        awaitCondition(() -> secondStarted.get() == 1);
+        assertInstanceOf(
+                BulkheadRejectedException.class,
+                awaitFailure(pipeline.execute(() -> Future.succeededFuture("over-admitted"))));
+        secondGate.complete("second");
+        assertEquals("second", await(second));
     }
 
     /**
@@ -252,6 +304,16 @@ class BulkheadCancellationTest {
         assertSame(reason, awaitFailure(result));
         assertEquals(0, invoked.get());
         assertEquals("next", await(bulkhead.execute(() -> Future.succeededFuture("next"))));
+    }
+
+    /** Returns the one listener registered on the cancellation, the way a racing cancel would hold it. */
+    @SuppressWarnings("unchecked")
+    private static Consumer<Throwable> onlyListener(ResilienceCancellation cancellation) throws Exception {
+        Field field = ResilienceCancellation.class.getDeclaredField("listeners");
+        field.setAccessible(true);
+        List<Consumer<Throwable>> listeners = (List<Consumer<Throwable>>) field.get(cancellation);
+        awaitCondition(() -> listeners.size() == 1);
+        return listeners.get(0);
     }
 
     /** Starts a pending execution in its own frame so that no local keeps the operation reachable. */

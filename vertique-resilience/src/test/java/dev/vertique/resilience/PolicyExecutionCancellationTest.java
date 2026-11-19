@@ -128,7 +128,7 @@ class PolicyExecutionCancellationTest {
     }
 
     /**
-     * Supporting FR-032: a retry delay hint is found in the first 32 links of the cause chain, counting
+     * Supporting FR-021: a retry delay hint is found in the first 32 links of the cause chain, counting
      * the failure itself, and not beyond.
      */
     @Test

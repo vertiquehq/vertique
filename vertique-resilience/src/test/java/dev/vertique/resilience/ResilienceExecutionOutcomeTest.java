@@ -137,7 +137,7 @@ class ResilienceExecutionOutcomeTest {
     }
 
     /**
-     * Supporting FR-030: an operation that throws instead of returning a future is reported as a failed
+     * Supporting FR-032: an operation that throws instead of returning a future is reported as a failed
      * attempt, whether it throws an exception or an error, and the execution fails with what it threw.
      */
     @Test
@@ -230,7 +230,7 @@ class ResilienceExecutionOutcomeTest {
     }
 
     /**
-     * Supporting FR-030: a pipeline built through the adapter path from a policy, a breaker and a
+     * Supporting FR-032 and AC-092: a pipeline built through the adapter path from a policy, a breaker and a
      * bulkhead runs with them, and refuses a configuration that enables nothing.
      */
     @Test

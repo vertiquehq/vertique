@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Test;
  */
 class RetryAfterMaxMsBoundariesTest {
 
-    /** Supporting FR-032: the override refuses a negative maximum, and accepts zero, a value and none. */
+    /** Supporting FR-033: the override refuses a negative maximum, and accepts zero, a value and none. */
     @Test
     @DisplayName("a retry override refuses a negative hint maximum and accepts zero")
     void retryOverrideRefusesANegativeHintMaximumAndAcceptsZero() {
@@ -44,7 +44,7 @@ class RetryAfterMaxMsBoundariesTest {
         assertNull(retryOverride(Optional.empty(), null).retryAfterMaxMs());
     }
 
-    /** Supporting FR-032: the retry configuration refuses a negative maximum and accepts zero. */
+    /** Supporting FR-033: the retry configuration refuses a negative maximum and accepts zero. */
     @Test
     @DisplayName("a retry configuration refuses a negative hint maximum and accepts zero")
     void retryConfigurationRefusesANegativeHintMaximumAndAcceptsZero() {
@@ -62,7 +62,7 @@ class RetryAfterMaxMsBoundariesTest {
                         .retryAfterMaxMs());
     }
 
-    /** Supporting FR-032: the bound policy tier accepts a maximum of zero and refuses a negative one. */
+    /** Supporting FR-033: the bound policy tier accepts a maximum of zero and refuses a negative one. */
     @Test
     @DisplayName("a policy tier accepts a hint maximum of zero and refuses a negative one")
     void policyTierAcceptsAHintMaximumOfZeroAndRefusesANegativeOne() {
@@ -80,7 +80,7 @@ class RetryAfterMaxMsBoundariesTest {
     }
 
     /**
-     * Supporting FR-032: a higher override that sets nothing does not take over a lower override's
+     * Supporting FR-033: a higher override that sets nothing does not take over a lower override's
      * explicit disable, while one that sets only the maximum does.
      */
     @Test
@@ -103,7 +103,7 @@ class RetryAfterMaxMsBoundariesTest {
     }
 
     /**
-     * Supporting FR-032: resolution treats an override that sets nothing as no retry concern, and an
+     * Supporting FR-033: resolution treats an override that sets nothing as no retry concern, and an
      * override that sets only the maximum as a retry concern that is still incomplete.
      */
     @Test

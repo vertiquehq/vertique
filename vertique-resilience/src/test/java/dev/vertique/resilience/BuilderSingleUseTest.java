@@ -34,7 +34,7 @@ class BuilderSingleUseTest {
         }
     }
 
-    /** Supporting FR-032: the circuit breaker builder refuses a failure predicate after it was built. */
+    /** Supporting FR-033: the circuit breaker builder refuses a failure predicate after it was built. */
     @Test
     @DisplayName("a built circuit breaker builder refuses a failure predicate")
     void builtCircuitBreakerBuilderRefusesAFailurePredicate(Vertx vertx) {
@@ -50,7 +50,7 @@ class BuilderSingleUseTest {
         assertEquals("circuit-breaker builder has already been used", refused.getMessage());
     }
 
-    /** Supporting FR-032: the retry builder chains its hint maximum and refuses it after it was built. */
+    /** Supporting FR-033: the retry builder chains its hint maximum and refuses it after it was built. */
     @Test
     @DisplayName("the retry builder chains its hint maximum and refuses it once built")
     void retryBuilderChainsItsHintMaximumAndRefusesItOnceBuilt(Vertx vertx) {
@@ -68,7 +68,7 @@ class BuilderSingleUseTest {
         assertEquals("retry builder has already been used", refused.getMessage());
     }
 
-    /** Supporting FR-032: the retry configuration builder refuses the hint maximum after it was built. */
+    /** Supporting FR-033: the retry configuration builder refuses the hint maximum after it was built. */
     @Test
     @DisplayName("a built retry configuration builder refuses a hint maximum")
     void builtRetryConfigurationBuilderRefusesAHintMaximum() {
