@@ -43,11 +43,8 @@ import lombok.extern.jackson.Jacksonized;
 @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.ANY, getterVisibility = JsonAutoDetect.Visibility.NONE)
 public class OutboxEntry {
 
-    /**
-     * The attempt limit {@link #maxAttempts()} reports for an entry that sets none and is not
-     * published through an outbox service that applies the relay's configured limit.
-     */
-    public static final int DEFAULT_MAX_ATTEMPTS = 20;
+    /** The attempt limit {@link #maxAttempts()} reports for an entry that sets none. */
+    private static final int DEFAULT_MAX_ATTEMPTS = 20;
 
     /**
      * Optional domain aggregate type that produced this event (e.g., {@code "Order"}).
@@ -109,7 +106,7 @@ public class OutboxEntry {
     /**
      * Maximum number of delivery attempts before the entry is moved to dead-letter state, or
      * {@code null} when the builder did not set one. Read it through {@link #maxAttempts()}, which
-     * reports {@value #DEFAULT_MAX_ATTEMPTS} for an entry without its own limit; the outbox service
+     * reports {@code 20} for an entry without its own limit; the outbox service
      * gives such an entry the relay's configured limit when it publishes it.
      */
     @Getter(AccessLevel.NONE)
@@ -196,11 +193,11 @@ public class OutboxEntry {
      * Returns the maximum number of delivery attempts before the entry is moved to dead-letter
      * state.
      *
-     * <p>An entry that set no limit reports {@value #DEFAULT_MAX_ATTEMPTS}. Publishing such an entry
+     * <p>An entry that set no limit reports {@code 20}. Publishing such an entry
      * through the PostgreSQL outbox service stores the relay's configured
      * {@code inboxOutbox.relay.maxAttempts} instead; an entry's own limit always wins.
      *
-     * @return the entry's own limit, or {@value #DEFAULT_MAX_ATTEMPTS} when it sets none
+     * @return the entry's own limit, or {@code 20} when it sets none
      */
     public int maxAttempts() {
         return maxAttempts == null ? DEFAULT_MAX_ATTEMPTS : maxAttempts;
@@ -212,7 +209,7 @@ public class OutboxEntry {
      * @return {@code true} when the builder set {@code maxAttempts}; {@code false} when the entry
      *     takes the default limit
      */
-    public boolean hasOwnMaxAttempts() {
+    boolean hasOwnMaxAttempts() {
         return maxAttempts != null;
     }
 

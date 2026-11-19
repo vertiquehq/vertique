@@ -234,15 +234,15 @@ public class PgInboxOutboxRepository extends PgSqlRepository
                 + " AND updated_at < NOW() - ($1 * interval '1 day') LIMIT $2)"
                 + " DELETE FROM " + outbox + " WHERE id IN (SELECT id FROM batch)";
 
-        // One statement, one NOW(). An entry is due under the claim's own predicate; the pending and
-        // dead-letter partial indexes serve both counts, so the cost follows the backlog, not the table.
-        this.sqlQueueSample = "WITH due AS (SELECT available_at FROM " + outbox
+        // One statement, one NOW(). An entry is due under the claim's own time predicate, one aggregate scan over
+        // the pending partial index; the dead-letter partial index serves the second count. The cost follows the
+        // backlog, not the table.
+        this.sqlQueueSample = "SELECT COUNT(*) AS due_count,"
+                + " COALESCE(FLOOR(EXTRACT(EPOCH FROM (NOW() - MIN(available_at))) * 1000), 0)::bigint AS oldest_due_ms,"
+                + " (SELECT COUNT(*) FROM " + outbox + " WHERE state = 'DEAD_LETTER') AS dead_letter_count"
+                + " FROM " + outbox
                 + " WHERE state = 'PENDING' AND available_at <= NOW()"
-                + " AND (scheduled_at IS NULL OR scheduled_at <= NOW()))"
-                + " SELECT (SELECT COUNT(*) FROM due) AS due_count,"
-                + " (SELECT COALESCE(FLOOR(EXTRACT(EPOCH FROM (NOW() - MIN(available_at))) * 1000), 0)::bigint"
-                + " FROM due) AS oldest_due_ms,"
-                + " (SELECT COUNT(*) FROM " + outbox + " WHERE state = 'DEAD_LETTER') AS dead_letter_count";
+                + " AND (scheduled_at IS NULL OR scheduled_at <= NOW())";
     }
 
     /**
@@ -636,8 +636,9 @@ public class PgInboxOutboxRepository extends PgSqlRepository
     /**
      * {@inheritDoc}
      *
-     * <p>Counts the entries the relay may claim now, finds how long the oldest of them has been due,
-     * and counts the dead-lettered entries, in one read-only statement.
+     * <p>Counts the due entries, finds how long the oldest of them has been due, and counts the
+     * dead-lettered entries, in one read-only statement. Handler capabilities and aggregate order are
+     * not applied.
      */
     @Override
     public Future<OutboxQueueSample> sample() {

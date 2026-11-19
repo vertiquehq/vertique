@@ -22,7 +22,8 @@ import org.slf4j.LoggerFactory;
  * skipped: the gauges keep their last values until a read succeeds. When metrics
  * are disabled the timer never starts.
  *
- * <p>The timer, and so every read, runs on the Vert.x context that started it.
+ * <p>The timer runs on a Vert.x context of the instance given at construction; the sampler's state is
+ * guarded, so a read's result may complete on any thread.
  */
 final class OutboxQueueSampler implements ApplicationStartupStep, ApplicationShutdownStep {
 

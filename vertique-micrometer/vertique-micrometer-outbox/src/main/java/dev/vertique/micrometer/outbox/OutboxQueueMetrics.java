@@ -47,10 +47,10 @@ final class OutboxQueueMetrics {
         }
         // Registering an existing id returns the existing gauge, so a retry after a failure is safe.
         Gauge.builder(DEPTH, due, AtomicLong::doubleValue)
-                .description("Outbox entries the relay may claim now")
+                .description("Outbox entries that are due")
                 .register(registry);
         Gauge.builder(OLDEST_AGE, oldestAgeMs, value -> value.doubleValue() / 1000.0)
-                .description("How long the oldest claimable outbox entry has been waiting")
+                .description("How long the oldest due outbox entry has been due")
                 .baseUnit("seconds")
                 .register(registry);
         Gauge.builder(DEAD_LETTERS, deadLetters, AtomicLong::doubleValue)

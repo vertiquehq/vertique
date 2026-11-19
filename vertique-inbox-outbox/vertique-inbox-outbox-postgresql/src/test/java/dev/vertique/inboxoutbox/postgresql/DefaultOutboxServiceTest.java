@@ -354,10 +354,10 @@ class DefaultOutboxServiceTest {
                     .destinationType(DestinationType.SERVICE)
                     .destination("orders/handle")
                     .payload("p")
-                    .maxAttempts(OutboxEntry.DEFAULT_MAX_ATTEMPTS)
+                    .maxAttempts(20)
                     .build();
 
-            assertEquals(OutboxEntry.DEFAULT_MAX_ATTEMPTS, storedLimit(own, serviceWithRelayLimit(7)));
+            assertEquals(20, storedLimit(own, serviceWithRelayLimit(7)));
         }
 
         @Test

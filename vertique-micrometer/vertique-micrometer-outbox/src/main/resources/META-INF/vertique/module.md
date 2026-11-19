@@ -54,12 +54,14 @@ error type and error message are never tags.
 
 | Meter | Type | Tags | Reads |
 |---|---|---|---|
-| `vertique.outbox.queue.depth` | gauge | none | entries the relay may claim now |
-| `vertique.outbox.queue.oldest.age` | gauge (seconds) | none | how long the oldest claimable entry has been waiting; `0` when none is |
+| `vertique.outbox.queue.depth` | gauge | none | entries that are due |
+| `vertique.outbox.queue.oldest.age` | gauge (seconds) | none | how long the oldest due entry has been due; `0` when none is |
 | `vertique.outbox.dead.letters` | gauge | none | entries in the `DEAD_LETTER` state |
 
-An entry is claimable when it is `PENDING` and neither its scheduled time nor its retry delay is in the future;
-entries waiting for either are not counted, so a backlog that is only scheduled work does not look like lag. The
+An entry is due when it is `PENDING` and neither its scheduled time nor its retry delay is in the future;
+entries waiting for either are not counted, so a backlog that is only scheduled work does not look like lag. Due is
+a property of the entry alone: an entry the relay cannot claim, because no handler serves its destination type or
+an earlier entry of the same aggregate is still ahead of it, is counted too. The
 dead-letter count is the number of rows in the table, which `inboxOutbox.cleanup` trims by retention.
 
 A timer reads these three figures with one `OutboxQueueProbe.sample()` call every `queueSampleIntervalMs`. The

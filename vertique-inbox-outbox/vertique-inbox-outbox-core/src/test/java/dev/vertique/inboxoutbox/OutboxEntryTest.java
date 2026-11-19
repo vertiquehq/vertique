@@ -238,7 +238,7 @@ class OutboxEntryTest {
         void unsetReportsDefault() {
             OutboxEntry entry = minimalEntry().build();
 
-            assertEquals(OutboxEntry.DEFAULT_MAX_ATTEMPTS, entry.maxAttempts());
+            assertEquals(20, entry.maxAttempts());
             assertFalse(entry.hasOwnMaxAttempts());
         }
 

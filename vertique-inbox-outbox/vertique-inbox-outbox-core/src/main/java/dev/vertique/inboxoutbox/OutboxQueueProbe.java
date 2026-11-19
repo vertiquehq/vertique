@@ -9,7 +9,7 @@ import io.vertx.core.Future;
  * Reads the size of the outbox queue, for monitoring.
  *
  * <p>An implementation answers with one {@link OutboxQueueSample} per call, read from the store
- * the relay claims from. The call is a read: it claims nothing, locks nothing and changes no entry.
+ * the relay claims from, and counts entries by their own state without applying a relay's handler or aggregate-order limits. The call is a read: it claims nothing, locks nothing and changes no entry.
  * It is meant to be called on a timer, not once per request, and a caller must not start a new
  * read while the previous one is still running.
  *

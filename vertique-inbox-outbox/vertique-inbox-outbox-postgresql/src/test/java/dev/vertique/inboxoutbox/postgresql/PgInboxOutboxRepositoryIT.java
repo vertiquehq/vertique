@@ -1483,6 +1483,10 @@ public class PgInboxOutboxRepositoryIT {
                 .compose(all -> pool.preparedQuery(
                                 "UPDATE outbox SET available_at = NOW() - INTERVAL '2 minutes'" + " WHERE id = $1")
                         .execute(Tuple.of(dueOld.result())))
+                // A row stored before available_at followed scheduled_at: only its scheduled_at keeps it out.
+                .compose(v -> pool.preparedQuery(
+                                "UPDATE outbox SET available_at = NOW() - INTERVAL '1 minute' WHERE id = $1")
+                        .execute(Tuple.of(scheduled.result())))
                 .compose(v -> pool.preparedQuery(
                                 "UPDATE outbox SET available_at = NOW() + INTERVAL '1 hour'" + " WHERE id = $1")
                         .execute(Tuple.of(retrying.result())))

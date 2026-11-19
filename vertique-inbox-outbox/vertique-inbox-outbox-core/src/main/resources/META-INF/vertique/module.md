@@ -101,7 +101,7 @@ Lombok `@Builder` value object describing a single outbound side-effect.
 | `destination` | Yes | Stable service target id, durable delayed-job target id, or Kafka topic |
 | `payload` | Yes | Jackson-serializable payload; stored as JSONB |
 | `headers` | No | Additional outbound metadata; may carry adapter-specific snapshot data. A `null` map given to the builder reads back as an empty map. Keys and values must not be `null`, and keys must not start with the reserved `vertique-` prefix — `OutboxService.publish` fails for such an entry. See [Header model](#header-model) |
-| `maxAttempts` | No | Attempts before the row dead-letters. An entry that sets none is stored with `inboxOutbox.relay.maxAttempts` (default `20`) when it is published through the PostgreSQL outbox service; an entry's own limit always wins, including `20`. `maxAttempts()` reads `20` for an entry without its own limit, and `hasOwnMaxAttempts()` tells the two cases apart |
+| `maxAttempts` | No | Attempts before the row dead-letters. An entry that sets none is stored with `inboxOutbox.relay.maxAttempts` (default `20`) when it is published through the PostgreSQL outbox service; an entry's own limit always wins, including `20`. `maxAttempts()` reads `20` for an entry without its own limit |
 | `scheduledAt` | No | Time after which the relay may publish |
 | `availableAt` | No | Internal retry scheduling override; applications normally omit |
 | `scopeKey` | No | Scope label stored with the row; defaults to `"default"` (`ScopeKey.DEFAULT.value()`). `OutboxService.publish` validates it as a core `ScopeKey`. See [Scope](#scope) |
@@ -439,7 +439,7 @@ its repository; an application with its own `OutboxRepository` binds its own pro
 
 | Component | Meaning |
 |-----------|---------|
-| `due` | `PENDING` entries the relay may claim now: neither the scheduled time nor the retry delay is in the future |
+| `due` | `PENDING` entries whose scheduled time and retry delay have passed, whatever their destination type and whatever entries ahead of them in their aggregate |
 | `oldestDueAge` | How long the oldest due entry has been due; `Duration.ZERO` when none is due |
 | `deadLetter` | Entries in the `DEAD_LETTER` state |
 
