@@ -51,6 +51,27 @@ inherits the annotations of a generic super-interface declaration whose type var
 binds (`delete(String)` of a `Crud<String>` client inherits those of `Crud<ID>.delete(ID)`), under the
 Java override rules.
 
+An operation the interface inherits from a super-interface, with or without a redeclaration, is an
+operation of the client:
+
+- **Types** are the ones the interface binds: for `UserClient extends Crud<User, String>`, the
+  inherited `Future<T> get(ID id)` returns `User` and binds `id` as a `String`. A type variable of the
+  hierarchy that the interface leaves unbound resolves to its erasure.
+- **Nearest declaration wins.** A redeclaration's own verb, `@Path`, `@Consumes`, `@Produces`,
+  `@ExpectedStatus` and parameter bindings take precedence over the overridden declaration's; what it
+  leaves out it inherits.
+- **Type-level annotations** (`@Path`, `@Consumes`, `@Produces` and the resilience annotations) are read
+  from the client interface, so an inherited operation is sent under the client's `@Path`.
+- **One operation per override chain.** The redeclaration, the declaration it overrides and the bridge
+  the compiler adds are the same operation, so a call through the super-interface type reaches the
+  client. Override-equivalent declarations of unrelated interfaces are separate operations that share a
+  signature. A `default` method is not an operation.
+- **Method metadata reads the same annotations.** `MethodMetadata#findAnnotation` and `hasAnnotation` on an
+  operation (as seen by a capturer or the resilience pipeline) include the annotations of the declarations it
+  overrides. The generated static proxy and the reflective proxy treat inherited operations alike; a client
+  whose inherited operation is declared by an interface the generated proxy cannot name gets the reflective
+  proxy.
+
 ```java
 @RestClient(name = "user-service", value = "http://user-service:8080")
 @Path("/users")

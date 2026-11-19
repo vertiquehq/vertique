@@ -59,7 +59,22 @@ Each validator emits compile-time diagnostics via a shared `Diagnostics` helper 
 |-----------|---------------|------------|
 | `ReturnTypeValidator` | Method must return `Future<T>` | `ERROR` |
 | `PathPlaceholderValidator` | `{name}` in `@Path` must have a matching `@PathParam("name")` and vice versa | `ERROR` |
-| `HttpVerbValidator` | Non-`default` methods must have one of `@GET`/`@POST`/`@PUT`/`@DELETE`/`@PATCH`/`@HEAD`; `@OPTIONS` intentionally rejected to match the runtime scanner's supported set | `ERROR` |
+| `HttpVerbValidator` | Non-`default` methods, including the abstract ones inherited from super-interfaces, must have one of `@GET`/`@POST`/`@PUT`/`@DELETE`/`@PATCH`/`@HEAD`, on the method or on a declaration it overrides; `@OPTIONS` intentionally rejected to match the runtime scanner's supported set | `ERROR` |
+
+### Inherited operations
+
+The processor sees the operations the runtime scanner sees: the abstract methods the interface declares and
+the ones it inherits from its super-interfaces. A declaration that another method overrides is folded into the
+overrider, so `delete(String)` of a `Crud<String>` client and `Crud<ID>.delete(ID)` are one operation that reads
+the annotations of both, nearest first. Parameter and return types are the ones the interface binds
+(`delete(String)`, not `delete(ID)`). A `default` method is not an operation but overrides, and is overridden,
+like any other: a default `close()` replaces an inherited abstract `close()`, and an abstract redeclaration of a
+default method with a verb keeps that verb. The proxy keys each operation by the interface that declares the
+method it implements, which is the key of the runtime scan.
+
+When an operation is declared by an interface the generated proxy cannot name (package-private to another
+package, or nested in a private type), no proxy is generated for that client and the runtime reflective proxy
+applies.
 
 ### Generated `{Client}_RestClientProxy`
 

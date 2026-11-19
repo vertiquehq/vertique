@@ -853,12 +853,17 @@ public final class RestClientBuilder {
         Map<Method, ClientMethodMeta> methodMetas =
                 META_CACHE.computeIfAbsent(clientInterface, ClientInterfaceScanner::scan);
 
+        // A declaration overridden by another method of the client shares that method's descriptor, so
+        // each operation is visited once.
+        List<ClientMethodMeta> operations =
+                methodMetas.values().stream().distinct().toList();
+
         // --- Capturer operation validation ---
         // Each system capturer vets every operation before anything is built, so a configuration
         // error it detects (e.g. an unknown audit policy id) fails startup instead of surfacing on a
         // later attempt. An exception propagates out of build().
         List<RestClientContextCapturer<?>> sortedContextCapturers = sortedCapturers(List.copyOf(contextCapturers));
-        for (ClientMethodMeta method : methodMetas.values()) {
+        for (ClientMethodMeta method : operations) {
             RestClientOperation operation =
                     new RestClientOperation(clientInterface, clientName, method.methodMetadata());
             for (RestClientContextCapturer<?> capturer : sortedContextCapturers) {
@@ -880,7 +885,7 @@ public final class RestClientBuilder {
         // For each method, probe each conversion-applicable param (PATH, QUERY, HEADER, COOKIE)
         // to ensure the effective resolver can serialize it. Fail fast at build time rather than at
         // first invocation.
-        for (ClientMethodMeta method : methodMetas.values()) {
+        for (ClientMethodMeta method : operations) {
             for (ClientParamMeta param : method.params()) {
                 ClientParamMeta.ParamSource src = param.source();
                 if (src == ClientParamMeta.ParamSource.PATH
