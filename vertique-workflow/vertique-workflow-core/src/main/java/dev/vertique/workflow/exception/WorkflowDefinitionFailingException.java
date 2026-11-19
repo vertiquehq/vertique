@@ -10,12 +10,17 @@ import dev.vertique.workflow.types.EchoedNames;
 import java.util.Objects;
 
 /**
- * Thrown when a new start resolves to a definition version of a scope that is marked failing: newly deployed code
- * conflicts with the stored version, and the version stays refused until an operator repairs it.
+ * The refusal of a start that resolves to a definition version of a scope that is evaluated as failing: newly
+ * deployed code conflicts with the stored version, and the version stays refused until an operator repairs it.
+ *
+ * <p>The start call itself never throws this exception. A start of such a version is recorded, and the executor that
+ * runs the recorded start refuses it with this exception: the command and the instance end {@code FAILED} with the
+ * reason {@code DEFINITION_FAILING}, which names the rule only, and a warning log line names this exception class and
+ * the rule. The caller finds the instance {@code FAILED}.
  *
  * <p>Instances already running on the version are not affected, and a replay of an earlier start returns its
- * instance. A retry cannot succeed while the mark stands, so this is a configuration failure and not a retryable
- * unavailability.
+ * instance. A retry cannot succeed while the version is failing, so this is a configuration failure and not a
+ * retryable unavailability.
  *
  * <p>The message names the scope key, the definition id, the version and the rule only; it never includes document
  * content, state values or class names. The scope key and the id are repeated in bounded form.

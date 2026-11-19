@@ -102,6 +102,24 @@ class InterfaceTriggerMethodWeaveTest {
                 .assertGeneratedSourceDoesNotContain("com.example.BoundedMethodTypeParamBean$AopProxy", "extends T");
     }
 
+    @Test
+    @DisplayName("a final implementor of an interface trigger fails compilation with the non-proxyable diagnostic")
+    void rejectsAFinalImplementorOfAnInterfaceTrigger() {
+        ProcessorTestHarness.run(new AopProcessor(), interfaceTrigger(), crudAbstract(), finalImplementor())
+                .assertFailed()
+                .assertErrorMessage("is final");
+    }
+
+    @Test
+    @DisplayName("an implementor that overrides an interface trigger method as final fails compilation")
+    void rejectsAFinalOverrideOfAnInterfaceTriggerMethod() {
+        // The processor checks the annotated interface method, not the implementor's override, so the failure is
+        // the compiler's error on the generated proxy rather than the processor's own non-overrideable diagnostic.
+        ProcessorTestHarness.run(new AopProcessor(), interfaceTrigger(), crudAbstract(), finalOverrideImplementor())
+                .assertFailed()
+                .assertErrorMessage("cannot override");
+    }
+
     private static javax.tools.JavaFileObject interfaceTrigger() {
         return SourceFiles.inline("com.example.InterfaceTrigger", """
                 package com.example;
@@ -159,6 +177,38 @@ class InterfaceTriggerMethodWeaveTest {
                 public class UserResource implements Crud {
                     @Inject
                     public UserResource() {}
+                }
+                """);
+    }
+
+    private static javax.tools.JavaFileObject finalImplementor() {
+        return SourceFiles.inline("com.example.FinalResource", """
+                package com.example;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+                public final class FinalResource implements Crud {
+                    @Inject
+                    public FinalResource() {}
+                    @Override
+                    public Future<String> delete(String id) {
+                        return Future.succeededFuture(id);
+                    }
+                }
+                """);
+    }
+
+    private static javax.tools.JavaFileObject finalOverrideImplementor() {
+        return SourceFiles.inline("com.example.FinalOverrideResource", """
+                package com.example;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+                public class FinalOverrideResource implements Crud {
+                    @Inject
+                    public FinalOverrideResource() {}
+                    @Override
+                    public final Future<String> delete(String id) {
+                        return Future.succeededFuture(id);
+                    }
                 }
                 """);
     }
