@@ -17,6 +17,8 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.job.CronJobSchedule;
+import dev.vertique.job.JobCoordinator;
+import dev.vertique.job.JobCoordinatorConfig;
 import dev.vertique.job.JobExecution;
 import dev.vertique.job.JobState;
 import dev.vertique.job.JobType;
@@ -513,6 +515,74 @@ public class PgJobRepositoryIT {
                 .onSuccess(found -> ctx.verify(() -> {
                     assertTrue(found.isPresent());
                     assertEquals(JobState.ABANDONED, found.get().state(), "row stays ABANDONED");
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("cancelExecution marks a PROCESSING execution CANCELLED")
+    void cancelMarksAProcessingExecutionCancelled(Vertx vertx, VertxTestContext ctx) {
+        String queue = "cancel-processing-" + UUID.randomUUID();
+        JobCoordinator coordinator = new JobCoordinator(
+                vertx, repository, JobCoordinatorConfig.builder().build(), "test-node");
+
+        repository
+                .save(newExecution(queue, 0))
+                .compose(id -> repository.claimNextJob(queue, 1))
+                .compose(claimed -> {
+                    UUID id = claimed.get(0).id();
+                    return coordinator.cancelExecution(id).compose(v -> repository.findById(id));
+                })
+                .onSuccess(found -> ctx.verify(() -> {
+                    assertTrue(found.isPresent());
+                    assertEquals(JobState.CANCELLED, found.get().state());
+                    assertNotNull(found.get().completedAt());
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("cancelExecution leaves an ENQUEUED execution unchanged")
+    void cancelLeavesAnEnqueuedExecutionUnchanged(Vertx vertx, VertxTestContext ctx) {
+        String queue = "cancel-enqueued-" + UUID.randomUUID();
+        JobCoordinator coordinator = new JobCoordinator(
+                vertx, repository, JobCoordinatorConfig.builder().build(), "test-node");
+
+        repository
+                .save(newExecution(queue, 0))
+                .compose(id -> coordinator.cancelExecution(id).compose(v -> repository.findById(id)))
+                .onSuccess(found -> ctx.verify(() -> {
+                    assertTrue(found.isPresent());
+                    assertEquals(JobState.ENQUEUED, found.get().state(), "a cancel does not touch an ENQUEUED row");
+                    assertNull(found.get().completedAt());
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("cancelExecution leaves an ABANDONED execution unchanged")
+    void cancelLeavesAnAbandonedExecutionUnchanged(Vertx vertx, VertxTestContext ctx) {
+        String queue = "cancel-abandoned-" + UUID.randomUUID();
+        JobCoordinator coordinator = new JobCoordinator(
+                vertx, repository, JobCoordinatorConfig.builder().build(), "test-node");
+
+        repository
+                .save(newExecution(queue, 0))
+                .compose(id -> repository.claimNextJob(queue, 1))
+                .compose(claimed -> {
+                    UUID id = claimed.get(0).id();
+                    return repository
+                            .completeExecution(id, JobState.ABANDONED, "node died", "Abandoned", ProgressSnapshot.EMPTY)
+                            .compose(abandoned -> coordinator.cancelExecution(id))
+                            .compose(v -> repository.findById(id));
+                })
+                .onSuccess(found -> ctx.verify(() -> {
+                    assertTrue(found.isPresent());
+                    assertEquals(JobState.ABANDONED, found.get().state(), "a cancel does not touch an ABANDONED row");
+                    assertEquals("node died", found.get().errorMessage());
                     ctx.completeNow();
                 }))
                 .onFailure(ctx::failNow);
