@@ -276,9 +276,16 @@ public class CrossScopeMigrationIT {
     /** An engine over its own pool, the registry it resolves from and the handlers it migrates with. */
     private record Harness(Vertx vertx, Pool pool, WorkflowRegistry registry, WorkflowEngineHandle engine) {
 
-        void close() {
-            pool.close();
-            vertx.close();
+        /**
+         * Closes the pool, then the Vert.x instance, and waits for both: an instance still shutting down when the next
+         * test starts can terminate its event loop under a truncation that is probing the pools of earlier tests.
+         */
+        void close() throws Exception {
+            try {
+                await(pool.close());
+            } finally {
+                await(vertx.close());
+            }
         }
 
         String planHash(String scope, long version) {

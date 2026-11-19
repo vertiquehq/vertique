@@ -36,6 +36,10 @@ import org.slf4j.LoggerFactory;
  * outstanding counts as one more failed sample. The result of a read that settles after its deadline, or after the
  * sampler stopped, is discarded.
  *
+ * <p>Stopping the sampler waits for its outstanding read to settle, for at most one sample interval: a read that
+ * settles in that time has ended before the node's shutdown completes, and so does not race the close of a pool the
+ * application closes after its deployments; only a read that hangs longer is left behind.
+ *
  * <p>The state of the sampler, and the timers that move it, belong to the verticle's own context; a read that settles on
  * another context hops back before it is applied. It runs on the event loop and makes no blocking call.
  */
@@ -63,6 +67,7 @@ public final class IntakePressureSampler extends AbstractVerticle {
     private long readNumber;
     private long tickTimerId = -1;
     private long deadlineTimerId = -1;
+    private Future<Long> outstandingRead;
 
     /**
      * Creates the sampler of one node.
@@ -118,7 +123,19 @@ public final class IntakePressureSampler extends AbstractVerticle {
         stopped = true;
         cancel(tickTimerId);
         cancel(deadlineTimerId);
-        stopPromise.complete();
+        Future<Long> read = outstandingRead;
+        if (!reading || read == null || read.isComplete()) {
+            stopPromise.complete();
+            return;
+        }
+        // The undeployment waits for the outstanding read: the application closes the pool once its deployments are
+        // gone, and a read still waiting for a connection would then race the close. A hung read is waited for at
+        // most one sample interval from this call.
+        long waitTimerId = vertx.setTimer(config.sampleIntervalMs(), id -> stopPromise.tryComplete());
+        read.onComplete(ignored -> {
+            vertx.cancelTimer(waitTimerId);
+            stopPromise.tryComplete();
+        });
     }
 
     /**
@@ -156,6 +173,7 @@ public final class IntakePressureSampler extends AbstractVerticle {
         } catch (Exception | LinkageError | AssertionError e) {
             read = Future.failedFuture(e);
         }
+        outstandingRead = read;
         read.onComplete(
                 result -> onContext(() -> settle(number, result.succeeded() ? result.result() : null, result.cause())));
     }

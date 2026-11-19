@@ -236,4 +236,14 @@ describe('PublicSnapshotWorkflowContractTest', () => {
     assert.equal([...ci.matchAll(/name: snapshot-payload\n/g)].length, 1);
     assert.doesNotMatch(ci, /overwrite:\s*true/, 'no step may overwrite an uploaded artifact');
   });
+
+  it('stagesWithoutRecompilingTheTestedClasses', () => {
+    // The private repository makes every classpath file look changed, so incremental mode
+    // would recompile the whole reactor instead of packaging the classes the tests ran on.
+    const script = readFileSync(path.join(REPO_ROOT, 'release', 'stage-snapshot-payload.sh'), 'utf8');
+    const install = script.match(/^\.\/mvnw [^\n]*(?:\\\n[^\n]*)* install$/m)?.[0];
+    assert.ok(install, 'the staging script must run one Maven install');
+    assert.match(install, /-Dmaven\.compiler\.useIncrementalCompilation=false/);
+    assert.match(install, /-DskipTests/);
+  });
 });
