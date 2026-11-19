@@ -9,6 +9,7 @@ import dev.vertique.core.validation.ViolationCarrier;
 import dev.vertique.core.validation.ViolationDetail;
 import dev.vertique.core.validation.ViolationPathForm;
 import dev.vertique.rest.core.ProblemDetail;
+import dev.vertique.rest.core.RestExceptionMapper;
 import dev.vertique.rest.core.interceptor.ErrorInterceptor;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import io.vertx.core.Future;

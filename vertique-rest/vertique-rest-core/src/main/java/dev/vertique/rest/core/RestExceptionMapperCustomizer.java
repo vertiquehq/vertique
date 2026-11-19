@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.jaxrs;
+package dev.vertique.rest.core;
 
 import dev.vertique.core.extension.OrderedExtension;
 
@@ -12,7 +12,7 @@ import dev.vertique.core.extension.OrderedExtension;
  * entries on the provided {@link RestExceptionMapper} using its fluent {@code on()} API.
  *
  * <p>Customizers are applied in {@link OrderedExtension} order — phase ascending, then priority
- * ascending, then {@link OrderedExtension#orderKey()} ascending — during {@link RestModule} assembly.
+ * ascending, then {@link OrderedExtension#orderKey()} ascending — during {@code RestModule} assembly.
  * Because each customizer's registrations are applied on top of all preceding ones (a last-wins fold),
  * a customizer that sorts <em>later</em> wins: a higher numeric priority (still in
  * {@link dev.vertique.core.extension.ExtensionPhase#APPLICATION APPLICATION}) is applied after a lower
@@ -28,7 +28,6 @@ import dev.vertique.core.extension.OrderedExtension;
  * }</pre>
  *
  * @see RestExceptionMapper
- * @see RestModule
  * @see OrderedExtension
  */
 @FunctionalInterface
