@@ -94,7 +94,7 @@ steps:
   - id: route-review
     type: decision
     routes:
-      - when: "review.riskLevel in ['high', 'critical']"
+      - when: "state.riskLevel in ['high', 'critical']"
         to: manual-review
       - condition: policy.lowRiskAutoApprove
         to: ship-order
@@ -183,7 +183,7 @@ Decision routes support two mutually exclusive condition forms:
 
 ```yaml
 routes:
-  - when: "state.total > 1000 && review.country == 'FI'"
+  - when: "state.total > 1000 && state.country == 'FI'"
     to: manual-review
   - condition: policy.lowRiskAutoApprove
     to: auto-approve
