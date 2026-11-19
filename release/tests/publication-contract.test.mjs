@@ -689,6 +689,16 @@ describe('PublicCiContractTest', () => {
     }
   });
 
+  it('cancelsSupersededPullRequestRunsButNeverAMainPush', () => {
+    // A cancelled main push would leave its commit without a SNAPSHOT payload, so only
+    // pull request runs share a cancellable group; a push's group is its own commit.
+    const yaml = ci();
+    assert.match(
+      yaml,
+      /^concurrency:\n {2}group: ci-\$\{\{ github\.event_name \}\}-\$\{\{ github\.event\.pull_request\.number \|\| github\.sha \}\}\n {2}cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}$/m
+    );
+  });
+
   it('retainsSurefireAndFailsafeReportsAfterFailureOrCancellation', () => {
     // Maven redirects test output to these directories, so the artifact is the
     // durable diagnostic record for CI-only flakes and cancelled runs.

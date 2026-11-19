@@ -24,6 +24,14 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request supersedes its running checks, so they are
+# cancelled instead of holding a runner until they finish. Pushes to main get a
+# group per commit and are never cancelled: each one stages the SNAPSHOT
+# payload for its own commit.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # Markdown-only pull requests run Docs checks; a red job signals a failure.
   # When configuring required checks, require Docs checks alongside Build and Test.
