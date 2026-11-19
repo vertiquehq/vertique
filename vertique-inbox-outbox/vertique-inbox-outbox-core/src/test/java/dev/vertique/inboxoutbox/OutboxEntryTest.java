@@ -252,6 +252,26 @@ class OutboxEntryTest {
         }
 
         @Test
+        @DisplayName("an own limit below 1 is rejected; 1 is accepted")
+        void ownLimitBelowOneIsRejected() {
+            assertThrows(IllegalArgumentException.class, () -> minimalEntry().maxAttempts(0));
+            assertThrows(IllegalArgumentException.class, () -> minimalEntry().maxAttempts(-1));
+            assertEquals(1, minimalEntry().maxAttempts(1).build().maxAttempts());
+        }
+
+        @Test
+        @DisplayName("an own limit below 1 in JSON is rejected")
+        void ownLimitBelowOneInJsonIsRejected() throws Exception {
+            ObjectMapper mapper = new ObjectMapper();
+            String json = mapper.writeValueAsString(
+                            minimalEntry().maxAttempts(3).build())
+                    .replace("\"maxAttempts\":3", "\"maxAttempts\":0");
+            assertThrows(
+                    com.fasterxml.jackson.core.JsonProcessingException.class,
+                    () -> mapper.readValue(json, OutboxEntry.class));
+        }
+
+        @Test
         @DisplayName("an own limit equal to the built-in default is still an own limit")
         void ownLimitEqualToDefault() {
             OutboxEntry entry = minimalEntry().maxAttempts(20).build();

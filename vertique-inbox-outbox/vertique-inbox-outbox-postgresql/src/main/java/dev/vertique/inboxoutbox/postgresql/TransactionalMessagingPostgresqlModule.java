@@ -178,13 +178,16 @@ public abstract class TransactionalMessagingPostgresqlModule {
      * @param config the application configuration root
      * @param parser the injected config parser
      * @return the outbox relay configuration
+     * @throws dev.vertique.inboxoutbox.exception.InboxOutboxConfigurationException when
+     *     {@code inboxOutbox.relay.maxAttempts} is below 1
      */
     @Provides
     @Singleton
     static OutboxRelayConfig outboxRelayConfig(@VertxConfig JsonObject config, ConfigParser parser) {
         return parser.parse(
-                JsonConfigPaths.navigateObject(JsonConfigPaths.navigateObject(config, "inboxOutbox"), "relay"),
-                OutboxRelayConfig.class);
+                        JsonConfigPaths.navigateObject(JsonConfigPaths.navigateObject(config, "inboxOutbox"), "relay"),
+                        OutboxRelayConfig.class)
+                .validated();
     }
 
     /**
