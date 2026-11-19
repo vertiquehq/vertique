@@ -31,6 +31,7 @@ final class ExchangeTracker implements Handler<HttpContext<?>> {
     private final Vertx vertx;
     private final long timeoutMs;
     private final long maxResponseBytes;
+    private final boolean captureBodies;
 
     /**
      * Creates a tracker.
@@ -41,12 +42,14 @@ final class ExchangeTracker implements Handler<HttpContext<?>> {
      *     bounds the attempt itself
      * @param maxResponseBytes the most response body bytes a declared {@code Content-Length} may
      *     announce, {@code 0} for no bound
+     * @param captureBodies whether the interceptors receive the exchange's bodies
      */
-    ExchangeTracker(AttemptScope scope, Vertx vertx, long timeoutMs, long maxResponseBytes) {
+    ExchangeTracker(AttemptScope scope, Vertx vertx, long timeoutMs, long maxResponseBytes, boolean captureBodies) {
         this.scope = scope;
         this.vertx = vertx;
         this.timeoutMs = timeoutMs;
         this.maxResponseBytes = maxResponseBytes;
+        this.captureBodies = captureBodies;
     }
 
     /**
@@ -78,6 +81,9 @@ final class ExchangeTracker implements Handler<HttpContext<?>> {
                     }
                     ctx.set(EXCHANGE, exchange);
                     exchange.beforeRequest(cause -> failOnOwner(ctx, exchange, cause));
+                    if (captureBodies && !interceptors.isEmpty()) {
+                        exchange.capturing();
+                    }
                     if (!interceptors.isEmpty()) {
                         exchange.snapshot(interceptors.describe(ctx.request(), exchange.callId()));
                         exchange.target(interceptors.targetOf(ctx.request()));
@@ -129,6 +135,9 @@ final class ExchangeTracker implements Handler<HttpContext<?>> {
             case DISPATCH_RESPONSE -> {
                 AttemptScope.Exchange exchange = ctx.get(EXCHANGE);
                 if (exchange != null) {
+                    if (captureBodies && ctx.response() != null) {
+                        exchange.responseDecoded(ctx.response().body());
+                    }
                     exchange.respond();
                 }
             }

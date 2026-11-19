@@ -21,6 +21,7 @@ import java.util.Map;
  * @param egress the policy every request target is checked against
  * @param credentials the source of per-exchange credential headers, or null for none
  * @param allowCredentialsOverPlainHttp whether credentials may travel over plain HTTP to a non-loopback host
+ * @param captureBodies whether the interceptors receive the request and response bodies
  */
 record ClientSettings(
         String basePath,
@@ -33,7 +34,8 @@ record ClientSettings(
         int maxEventBytes,
         EgressPolicy egress,
         @Nullable CredentialSource credentials,
-        boolean allowCredentialsOverPlainHttp) {
+        boolean allowCredentialsOverPlainHttp,
+        boolean captureBodies) {
 
     /** Renders no setting, so a credential source or a default header never reaches a log line. */
     @Override

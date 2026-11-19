@@ -13,6 +13,7 @@ import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -50,11 +51,13 @@ public final class HttpClientFactory {
      *
      * @param name the client name, {@code [A-Za-z0-9._~-]{1,128}}
      * @return the client
+     * @throws NullPointerException when {@code name} is null
      * @throws dev.vertique.http.client.exception.HttpClientConfigurationException when the name or the
      *     configured values are invalid
      * @throws HttpClientClosedException when the application has stopped
      */
     public HttpClient client(String name) {
+        Objects.requireNonNull(name, "name");
         return clients.computeIfAbsent(name, key -> newBuilder(key).build());
     }
 

@@ -3,6 +3,8 @@
 
 package dev.vertique.http.client;
 
+import dev.vertique.core.payload.PayloadSource;
+import dev.vertique.core.payload.PayloadSources;
 import dev.vertique.http.client.exception.HttpBodyLimitException;
 import dev.vertique.http.client.exception.HttpClientClosedException;
 import dev.vertique.http.client.exception.HttpCredentialException;
@@ -13,6 +15,7 @@ import dev.vertique.http.client.interceptor.HttpClientAttemptTarget;
 import dev.vertique.http.client.interceptor.HttpClientRequestContext;
 import dev.vertique.http.client.interceptor.HttpClientResponseHead;
 import dev.vertique.resilience.exception.ResilienceTimeoutException;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClientRequest;
 import io.vertx.core.http.HttpClientResponse;
 import jakarta.annotation.Nullable;
@@ -255,6 +258,12 @@ final class AttemptScope {
         private volatile Runnable onFinish;
         private volatile @Nullable ActiveStream stream;
         private volatile @Nullable Consumer<Throwable> beforeRequest;
+        private volatile boolean capturing;
+        private volatile PayloadSource requestBody = PayloadSources.absent();
+        private volatile boolean responseDone;
+        private volatile boolean responseValue;
+        private volatile @Nullable Buffer responseBytes;
+        private volatile @Nullable Buffer copiedBytes;
 
         private Exchange(AttemptScope scope) {
             this.scope = scope;
@@ -270,6 +279,65 @@ final class AttemptScope {
         /** Records the request snapshot the interceptors are shown when the exchange ends. */
         void snapshot(HttpClientRequestContext request) {
             snapshot = request;
+        }
+
+        /** Marks the exchange as one whose bodies the interceptors receive. */
+        void capturing() {
+            capturing = true;
+        }
+
+        /** Records the request body the interceptors are shown, as the request preparation measured it. */
+        void requestBody(PayloadSource body) {
+            requestBody = body;
+        }
+
+        /** Records the bytes a bounded codec passed on for the hop being received; they are a copy. */
+        void copiedBytes(Buffer bytes) {
+            copiedBytes = bytes;
+        }
+
+        /**
+         * Records the final response, whose body the codec decoded: a {@code Buffer} is kept as it is, any other
+         * value has a body only when a bounded codec copied its bytes.
+         *
+         * @param decoded the value the body codec produced, or {@code null}
+         */
+        void responseDecoded(@Nullable Object decoded) {
+            responseBytes = decoded instanceof Buffer buffer ? buffer : copiedBytes;
+            responseValue = decoded != null;
+            responseDone = true;
+        }
+
+        /** The response body the interceptors are shown, from the head and the body the exchange completed with. */
+        private PayloadSource responseBodyOf(@Nullable HttpClientResponseHead received) {
+            if (received == null) {
+                return PayloadSources.absent();
+            }
+            String contentType = received.headers().get("Content-Type");
+            long declared = declaredLength(received);
+            Buffer bytes = responseBytes;
+            if (stream == null && responseDone) {
+                if (bytes != null) {
+                    return PayloadSources.buffered(bytes, contentType);
+                }
+                if (!responseValue && declared <= 0) {
+                    return PayloadSources.absent();
+                }
+            }
+            return PayloadSources.streaming(contentType, declared);
+        }
+
+        private static long declaredLength(HttpClientResponseHead received) {
+            String declared = received.headers().get("Content-Length");
+            if (declared == null) {
+                return -1;
+            }
+            try {
+                long length = Long.parseLong(declared.trim());
+                return length < 0 ? -1 : length;
+            } catch (NumberFormatException invalid) {
+                return -1;
+            }
         }
 
         /** Records that Vert.x creates a request for a hop: the first hop, or a followed redirect. */
@@ -299,6 +367,10 @@ final class AttemptScope {
                 scope.exchangeAttached();
             }
             head = null; // a followed redirect starts a new hop
+            copiedBytes = null;
+            responseBytes = null;
+            responseValue = false;
+            responseDone = false;
             response = null; // a followed redirect reuses the exchange: never reset an earlier hop's response
             return !expired && !scope.hasEnded();
         }
@@ -415,7 +487,15 @@ final class AttemptScope {
                     request,
                     received,
                     new HttpClientAttemptCompletion(
-                            status, reported, callId, scope.attemptOrdinal, durationMs, endedAt, target));
+                            status,
+                            reported,
+                            callId,
+                            scope.attemptOrdinal,
+                            durationMs,
+                            endedAt,
+                            target,
+                            capturing ? requestBody : PayloadSources.absent(),
+                            capturing ? responseBodyOf(received) : PayloadSources.absent()));
         }
 
         /** Registers what runs when the exchange completes or fails. */

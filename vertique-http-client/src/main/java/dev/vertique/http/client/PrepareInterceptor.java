@@ -3,6 +3,8 @@
 
 package dev.vertique.http.client;
 
+import dev.vertique.core.payload.PayloadSource;
+import dev.vertique.core.payload.PayloadSources;
 import dev.vertique.http.client.exception.HttpBodyLimitException;
 import dev.vertique.http.client.exception.HttpBodyLimitException.Direction;
 import dev.vertique.http.client.interceptor.HttpClientRequestContext;
@@ -22,11 +24,13 @@ import io.vertx.ext.web.codec.BodyCodec;
 import io.vertx.ext.web.multipart.FormDataPart;
 import io.vertx.ext.web.multipart.MultipartForm;
 import io.vertx.uritemplate.Variables;
+import jakarta.annotation.Nullable;
 import java.net.URLEncoder;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /**
  * Governance interceptor for the request-preparation phase: it refuses relative requests of a client
@@ -82,7 +86,13 @@ final class PrepareInterceptor implements Handler<HttpContext<?>> {
             return;
         }
         long maxRequestBytes = settings.maxRequestBytes();
-        if (maxRequestBytes > 0 && !fitsRequestBound(ctx, maxRequestBytes)) {
+        AttemptScope.Exchange exchange = ExchangeTracker.exchangeOf(ctx);
+        boolean capture = settings.captureBodies() && exchange != null && !interceptors.isEmpty();
+        Measured measured = measure(ctx, maxRequestBytes, capture);
+        if (measured.payload() != null) {
+            exchange.requestBody(measured.payload());
+        }
+        if (maxRequestBytes > 0 && !measured.fits()) {
             ctx.fail(new HttpBodyLimitException(Direction.REQUEST, maxRequestBytes));
             return;
         }
@@ -91,7 +101,6 @@ final class PrepareInterceptor implements Handler<HttpContext<?>> {
                 headers.add(header.getKey(), header.getValue());
             }
         }
-        AttemptScope.Exchange exchange = ExchangeTracker.exchangeOf(ctx);
         if (interceptors.isEmpty() || exchange == null) {
             proceed(ctx);
             return;
@@ -157,7 +166,7 @@ final class PrepareInterceptor implements Handler<HttpContext<?>> {
         ctx.set(PREPARED, Boolean.TRUE);
         long maxResponseBytes = settings.maxResponseBytes();
         if (maxResponseBytes > 0 && !(ctx.request().bodyCodec() instanceof StreamCodec)) {
-            bindResponseBound(ctx, maxResponseBytes);
+            bindResponseBound(ctx, maxResponseBytes, settings.captureBodies());
             return;
         }
         ctx.next();
@@ -169,10 +178,15 @@ final class PrepareInterceptor implements Handler<HttpContext<?>> {
      * {@code as(codec)} changes a request in place and a resent request must not be wrapped twice.
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
-    private static void bindResponseBound(HttpContext<?> context, long limit) {
+    private static void bindResponseBound(HttpContext<?> context, long limit, boolean capture) {
         HttpContext ctx = context;
         HttpRequest request = ctx.request();
-        BodyCodec bounded = new BoundedBodyCodec(request.bodyCodec(), limit, () -> ExchangeTracker.overrun(ctx, limit));
+        AttemptScope.Exchange exchange = ExchangeTracker.exchangeOf(ctx);
+        // a Buffer codec hands its Buffer on as it is, so only another codec needs the bytes copied
+        Consumer<Buffer> copied =
+                capture && exchange != null && request.bodyCodec() != BodyCodec.buffer() ? exchange::copiedBytes : null;
+        BodyCodec bounded =
+                new BoundedBodyCodec(request.bodyCodec(), limit, () -> ExchangeTracker.overrun(ctx, limit), copied);
         ctx.prepareRequest(copyOf(request).as(bounded), ctx.contentType(), ctx.body());
     }
 
@@ -206,27 +220,84 @@ final class PrepareInterceptor implements Handler<HttpContext<?>> {
         return copy;
     }
 
+    /** What the request preparation learned about the request body: whether it fits the bound and its payload. */
+    private record Measured(boolean fits, @Nullable PayloadSource payload) {}
+
     /**
-     * Measures the request body as it will be encoded. A body that cannot be measured before sending (a
-     * stream or a multipart form) does not fit.
+     * Measures the request body as it will be encoded, and describes it for the interceptors when
+     * {@code capture} is set. A body that cannot be measured before sending (a stream or a multipart form)
+     * does not fit the bound. Nothing is encoded for a client without a bound and without capture, and a JSON
+     * body is encoded once for both purposes.
+     *
+     * @param limit the request bound, {@code 0} for none
+     * @param capture whether to describe the body
      */
-    private static boolean fitsRequestBound(HttpContext<?> ctx, long limit) {
+    private static Measured measure(HttpContext<?> ctx, long limit, boolean capture) {
+        boolean bounded = limit > 0;
         Object body = ctx.body();
         if (body == null) {
-            return true;
+            return new Measured(true, null);
+        }
+        if (!bounded && !capture) {
+            return new Measured(true, null);
         }
         String contentType = ctx.contentType();
+        Buffer encoded = null;
         if (body instanceof Buffer buffer) {
-            return buffer.length() <= limit;
+            encoded = buffer;
+        } else if (body instanceof MultipartForm form && FORM_URLENCODED.equals(contentType)) {
+            if (!capture) {
+                return new Measured(encodedFormLength(form, limit) <= limit, null);
+            }
+            encoded = encodedForm(form);
+        } else if (JSON.equals(contentType) && !(body instanceof MultipartForm)) {
+            encoded = body instanceof JsonObject json ? json.toBuffer() : Json.encodeToBuffer(body);
         }
-        if (body instanceof MultipartForm form && FORM_URLENCODED.equals(contentType)) {
-            return encodedFormLength(form, limit) <= limit;
+        boolean fits = encoded != null && (!bounded || encoded.length() <= limit);
+        if (!capture) {
+            return new Measured(fits, null);
         }
-        if (JSON.equals(contentType) && !(body instanceof MultipartForm)) {
-            Buffer encoded = body instanceof JsonObject json ? json.toBuffer() : Json.encodeToBuffer(body);
-            return encoded.length() <= limit;
+        if (contentType == null) {
+            contentType = ctx.request().headers().get("Content-Type");
         }
-        return false;
+        PayloadSource payload = encoded != null && fits
+                ? PayloadSources.buffered(encoded, contentType)
+                : PayloadSources.streaming(
+                        contentType,
+                        encoded != null
+                                ? encoded.length()
+                                : declaredLength(ctx.request().headers()));
+        return new Measured(fits, payload);
+    }
+
+    /** The {@code Content-Length} the caller declared, or {@code -1} when there is none. */
+    private static long declaredLength(MultiMap headers) {
+        String declared = headers.get("Content-Length");
+        if (declared == null) {
+            return -1;
+        }
+        try {
+            long length = Long.parseLong(declared.trim());
+            return length < 0 ? -1 : length;
+        } catch (NumberFormatException invalid) {
+            return -1;
+        }
+    }
+
+    /** The url-encoded form as written to the wire. */
+    private static Buffer encodedForm(MultipartForm form) {
+        Charset charset = form.getCharset() == null ? StandardCharsets.UTF_8 : form.getCharset();
+        StringBuilder text = new StringBuilder();
+        for (FormDataPart part : form) {
+            if (text.length() > 0) {
+                text.append('&');
+            }
+            text.append(URLEncoder.encode(part.name(), charset)).append('=');
+            if (part.value() != null) {
+                text.append(URLEncoder.encode(part.value(), charset));
+            }
+        }
+        return Buffer.buffer(text.toString());
     }
 
     /** The length of the url-encoded form, counted up to one byte over the limit. */

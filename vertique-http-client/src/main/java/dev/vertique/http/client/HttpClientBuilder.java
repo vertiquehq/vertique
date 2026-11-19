@@ -65,6 +65,7 @@ public final class HttpClientBuilder {
     private EgressPolicy egress = EgressPolicy.allowAll();
     private CredentialSource credentials;
     private boolean allowCredentialsOverPlainHttp;
+    private boolean captureBodies;
     private final List<HttpClientInterceptor> interceptors = new ArrayList<>();
     private HttpClientConfig config;
 
@@ -284,6 +285,24 @@ public final class HttpClientBuilder {
     }
 
     /**
+     * Sets whether the interceptors of the clients this builder builds receive the request and response
+     * bodies of each exchange in {@code onAttemptCompleted}. The default is {@code false}: both bodies are
+     * absent and the client retains, encodes and copies nothing for them. With {@code true} the bodies
+     * are delivered unredacted, as written and received, so an interceptor that stores or logs them redacts
+     * what it keeps. A body is valid only during the callback; copy the bytes you keep. A streamed or
+     * multipart request body, a request body over the request bound, a response body that did not
+     * complete and every {@code stream(...)} body are reported as metadata only. Credentials a
+     * {@link CredentialSource} adds are headers and stay out of the request snapshot.
+     *
+     * @param capture whether to capture the request and response bodies
+     * @return this builder
+     */
+    public HttpClientBuilder captureBodies(boolean capture) {
+        this.captureBodies = capture;
+        return this;
+    }
+
+    /**
      * Registers an interceptor for the clients this builder builds. Interceptors run in
      * {@link dev.vertique.core.extension.OrderedExtension} order, whatever the registration order: their
      * {@code beforeRequest} prepares each request before credentials are applied, and their
@@ -353,6 +372,7 @@ public final class HttpClientBuilder {
         copy.egress = egress;
         copy.credentials = credentials;
         copy.allowCredentialsOverPlainHttp = allowCredentialsOverPlainHttp;
+        copy.captureBodies = captureBodies;
         copy.interceptors.addAll(interceptors);
         copy.onBuilt = onBuilt;
         copy.apply(external);
@@ -385,6 +405,9 @@ public final class HttpClientBuilder {
         }
         if (external.allowCredentialsOverPlainHttp() != null) {
             allowCredentialsOverPlainHttp(external.allowCredentialsOverPlainHttp());
+        }
+        if (external.captureBodies() != null) {
+            captureBodies(external.captureBodies());
         }
         external.defaultHeaders()
                 .forEach((headerName, value) -> applied(
@@ -491,7 +514,8 @@ public final class HttpClientBuilder {
                 maxEventBytes,
                 egress,
                 credentials,
-                allowCredentialsOverPlainHttp);
+                allowCredentialsOverPlainHttp,
+                captureBodies);
 
         io.vertx.core.http.HttpClientBuilder agentBuilder =
                 vertx.httpClientBuilder().with(effective).withRedirectHandler(new RedirectRules());

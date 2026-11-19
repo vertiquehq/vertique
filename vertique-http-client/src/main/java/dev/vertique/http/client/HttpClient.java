@@ -277,7 +277,8 @@ public final class HttpClient {
         // Order matters: PrepareInterceptor swaps the body codec by re-preparing the request, which runs
         // PREPARE_REQUEST again for every interceptor registered before it. Each of those must tolerate the
         // second pass, as ExchangeTracker does by keeping its exchange in the context.
-        governed.addInterceptor(new ExchangeTracker(scope, vertx, exchangeTimeoutMs, settings.maxResponseBytes()));
+        governed.addInterceptor(new ExchangeTracker(
+                scope, vertx, exchangeTimeoutMs, settings.maxResponseBytes(), settings.captureBodies()));
         governed.addInterceptor(new PrepareInterceptor(settings, interceptors));
         EgressPolicy egress = settings.egress();
         governed.addInterceptor(

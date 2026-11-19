@@ -9,7 +9,9 @@ import io.vertx.core.buffer.Buffer;
 import io.vertx.core.streams.WriteStream;
 import io.vertx.ext.web.codec.BodyCodec;
 import io.vertx.ext.web.codec.spi.BodyStream;
+import jakarta.annotation.Nullable;
 import java.util.Objects;
+import java.util.function.Consumer;
 
 /**
  * INTERNAL: a {@link BodyCodec} that bounds the bytes of the response body whatever codec the caller
@@ -24,6 +26,7 @@ final class BoundedBodyCodec<T> implements BodyCodec<T> {
     private final BodyCodec<T> delegate;
     private final long limitBytes;
     private final Runnable onOverrun;
+    private final @Nullable Consumer<Buffer> onCopied;
 
     /**
      * Creates a bounded codec.
@@ -31,16 +34,19 @@ final class BoundedBodyCodec<T> implements BodyCodec<T> {
      * @param delegate the codec whose stream is wrapped
      * @param limitBytes the most body bytes passed on, above zero
      * @param onOverrun runs once, when a chunk would exceed the limit; it resets the exchange
+     * @param onCopied receives a copy of every byte passed on once the body completed, or {@code null} to
+     *     copy nothing
      */
-    BoundedBodyCodec(BodyCodec<T> delegate, long limitBytes, Runnable onOverrun) {
+    BoundedBodyCodec(BodyCodec<T> delegate, long limitBytes, Runnable onOverrun, @Nullable Consumer<Buffer> onCopied) {
         this.delegate = Objects.requireNonNull(delegate, "delegate");
         this.limitBytes = limitBytes;
         this.onOverrun = Objects.requireNonNull(onOverrun, "onOverrun");
+        this.onCopied = onCopied;
     }
 
     @Override
     public BodyStream<T> stream() throws Exception {
-        return new CountingStream<>(delegate.stream(), limitBytes, onOverrun);
+        return new CountingStream<>(delegate.stream(), limitBytes, onOverrun, onCopied);
     }
 
     /** The counting delegate: passes bytes on up to the limit and never buffers. */
@@ -51,13 +57,18 @@ final class BoundedBodyCodec<T> implements BodyCodec<T> {
         private final BodyStream<T> delegate;
         private final long limitBytes;
         private final Runnable onOverrun;
+        private final @Nullable Consumer<Buffer> onCopied;
+        private final @Nullable Buffer copy;
         private long received;
         private boolean overrun;
 
-        private CountingStream(BodyStream<T> delegate, long limitBytes, Runnable onOverrun) {
+        private CountingStream(
+                BodyStream<T> delegate, long limitBytes, Runnable onOverrun, @Nullable Consumer<Buffer> onCopied) {
             this.delegate = delegate;
             this.limitBytes = limitBytes;
             this.onOverrun = onOverrun;
+            this.onCopied = onCopied;
+            this.copy = onCopied == null ? null : Buffer.buffer();
         }
 
         @Override
@@ -87,12 +98,21 @@ final class BoundedBodyCodec<T> implements BodyCodec<T> {
                 onOverrun.run();
                 return Future.failedFuture(REFUSED);
             }
+            if (copy != null) {
+                copy.appendBuffer(data);
+            }
             return delegate.write(data);
         }
 
         @Override
         public Future<Void> end() {
-            return overrun ? Future.failedFuture(REFUSED) : delegate.end();
+            if (overrun) {
+                return Future.failedFuture(REFUSED);
+            }
+            if (onCopied != null && copy != null) {
+                onCopied.accept(copy);
+            }
+            return delegate.end();
         }
 
         @Override

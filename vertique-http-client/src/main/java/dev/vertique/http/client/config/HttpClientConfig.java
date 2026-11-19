@@ -56,6 +56,7 @@ import java.util.regex.Pattern;
  * @param maxEventBytes the most bytes of one server-sent event, above 0, or {@code null}
  * @param streamIdleTimeoutMs the longest time without received stream bytes in milliseconds, not
  *     negative, 0 to disable, or {@code null}
+ * @param captureBodies whether interceptors receive the request and response bodies, or {@code null}
  */
 public record HttpClientConfig(
         String name,
@@ -69,7 +70,8 @@ public record HttpClientConfig(
         @Nullable Long maxRequestBytes,
         @Nullable Long maxResponseBytes,
         @Nullable Integer maxEventBytes,
-        @Nullable Long streamIdleTimeoutMs) {
+        @Nullable Long streamIdleTimeoutMs,
+        @Nullable Boolean captureBodies) {
 
     private static final String SECTION = "httpClient";
     private static final Pattern NAME_PATTERN = Pattern.compile("[A-Za-z0-9._~-]{1,128}");
@@ -109,6 +111,7 @@ public record HttpClientConfig(
         keys.put("maxResponseBytes", Kind.LONG);
         keys.put("maxEventBytes", Kind.INTEGER);
         keys.put("streamIdleTimeoutMs", Kind.LONG);
+        keys.put("captureBodies", Kind.BOOLEAN);
         return Collections.unmodifiableMap(keys);
     }
 
@@ -318,7 +321,7 @@ public record HttpClientConfig(
                 + ", egress=" + egress + ", allowCredentialsOverPlainHttp=" + allowCredentialsOverPlainHttp
                 + ", maxRequestBytes=" + maxRequestBytes
                 + ", maxResponseBytes=" + maxResponseBytes + ", maxEventBytes=" + maxEventBytes
-                + ", streamIdleTimeoutMs=" + streamIdleTimeoutMs + "]";
+                + ", streamIdleTimeoutMs=" + streamIdleTimeoutMs + ", captureBodies=" + captureBodies + "]";
     }
 
     private static String masked(boolean set) {

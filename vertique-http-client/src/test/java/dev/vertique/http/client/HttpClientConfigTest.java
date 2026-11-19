@@ -348,6 +348,7 @@ class HttpClientConfigTest {
                 null,
                 null,
                 null,
+                null,
                 null);
 
         // When it is rendered
