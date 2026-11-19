@@ -114,8 +114,10 @@ including tasks inside fork branches. For each distinct type name it does this o
    the message "cannot be loaded", the same wording the engine's class lookup gives.
 2. **Reuse the cache.** A type already resolved under the same profile is not generated again.
 3. **Find the class.** The payload type name is looked up in the `WorkflowTypeNames` index, where a class
-   named with `@WorkflowType` is found by its logical name. A name the index does not know is loaded as a
-   binary class name without initializing the class.
+   named with `@WorkflowType` is found by its logical name, and any indexed class by its binary name. A name
+   the index does not know is never loaded: the registration fails with the "cannot be loaded" message (see
+   Failures). The registry indexes a candidate's start and decision payload classes before the validator runs, so
+   a registered definition needs nothing more, and a packaged document's classes are indexed at bootstrap.
 4. **Generate the schema.** The canonical Draft 2020-12 document is produced with the input-profile
    schema generator under the process system profile (`JsonConfig.effectiveSystemProfile`).
 5. **Require an object.** The document must be object-shaped (see below).
@@ -177,9 +179,13 @@ linear-safe, or review them before they enter a payload type.
 ### Threading and class loading
 
 - Validators run synchronously on the registering thread. Call `publish` off the event loop.
-- Payload classes the type-name index does not know are loaded with this module's own class loader. Other workflow modules resolve
-  classes differently, so in an application with split class loaders the payload classes must be
-  visible from the loader that loads `vertique-workflow-schema`.
+- This module loads no class. It describes the classes the type-name index holds, so a split class-loader
+  layout needs nothing from it.
+- **Behaviour change.** An earlier version loaded a payload type name the index did not know as a binary class
+  name, without initializing it. A definition whose payload type is not in the index now fails registration with
+  `WorkflowDefinitionException`, message `definition '<id>' v<version> step '<step>' decision '<name>' payload type
+  '<name>' cannot be loaded`, naming no cause. Register the definition through the registry, which indexes its
+  payload classes, or list the class in a `WorkflowTypeCatalog`.
 
 ---
 

@@ -13,6 +13,7 @@ import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.schema.fixtures.Payloads;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import io.vertx.core.json.JsonObject;
 import java.util.Map;
 import java.util.Optional;
@@ -154,8 +155,13 @@ class SchemaRegistrationTest {
     }
 
     private DefaultWorkflowRegistry registry() {
+        DefaultWorkflowTypeNames names = new DefaultWorkflowTypeNames();
         PayloadSchemaRegistrationValidator validator = new PayloadSchemaRegistrationValidator(
-                PayloadSchemaTestProfiles.builtIn(), PayloadSchemaTestProfiles.VERTIQUE, Optional.empty(), cache);
-        return new DefaultWorkflowRegistry(null, Set.of(validator));
+                PayloadSchemaTestProfiles.builtIn(),
+                PayloadSchemaTestProfiles.VERTIQUE,
+                Optional.empty(),
+                cache,
+                names);
+        return new DefaultWorkflowRegistry(null, Set.of(validator), names);
     }
 }
