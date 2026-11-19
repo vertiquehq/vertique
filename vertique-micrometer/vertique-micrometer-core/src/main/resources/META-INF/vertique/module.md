@@ -431,8 +431,8 @@ only this type adaptation; configuration, registry, and optional bindings remain
 - `dev.vertique:vertique-aop` — `AspectProvider` and `Invocation`, the substrate `TimedAspect`
   implements
 - `dev.vertique:vertique-codegen-core` — the wiring annotations this module's own components carry;
-  `dev.vertique:vertique-codegen-dagger` is `provided`, a build-time processor that is not resolved
-  by any consumer
+  `provided`, and with `dev.vertique:vertique-codegen-dagger` (also `provided`) a build-time
+  dependency that no consumer resolves
 - `io.micrometer:micrometer-core` — `MeterRegistry`, `CompositeMeterRegistry`, `MeterFilter`,
   `JvmGcMetrics` and other binders; kept aligned with the version `vertx-micrometer-metrics` builds against
 - `io.vertx:vertx-micrometer-metrics` — `MicrometerMetricsFactory`, `MicrometerMetricsOptions`,

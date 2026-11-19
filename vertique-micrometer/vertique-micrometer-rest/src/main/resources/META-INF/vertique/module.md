@@ -202,5 +202,5 @@ only those type adaptations; the optional `MetricsConfig` binding remains hand-w
 | `vertique-micrometer-core` | `MetricsConfig` / `metrics.enabled` gate |
 | `vertique-rest-core` | Completion listener and request interceptor SPIs |
 | `vertique-core` | `OrderedExtension` |
-| `vertique-codegen-core` | Codegen support for generated registrations |
+| `vertique-codegen-core` | Wiring annotations for this module's components; `provided`, so it is not on a consumer's runtime classpath |
 | `io.micrometer:micrometer-core` | `MeterRegistry`, `Timer`, `Gauge`, `Tags` |
