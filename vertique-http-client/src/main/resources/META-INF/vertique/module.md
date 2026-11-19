@@ -119,7 +119,8 @@ refused request body, failed `beforeRequest`). `request` is an immutable snapsho
 taken after `beforeRequest` and before credentials, so no credential is ever visible to an interceptor;
 `response` is a framework-built head without `Set-Cookie`, or `null` when none arrived; `completion` carries the
 status, the failure as the caller sees it, the call id, the attempt ordinal, the duration and the final target
-(scheme, host and port only). A throw of any interceptor, including `LinkageError`, `AssertionError` and
+(scheme, host and port only), and, when the client captures bodies, the request and response bodies (see Request and
+response bodies). A throw of any interceptor, including `LinkageError`, `AssertionError` and
 `StackOverflowError`, is logged and swallowed and never changes the outcome or skips the next interceptor; a
 `LinkageError` is logged at error level at most once every five minutes per interceptor class. Callbacks may run on
 any thread and concurrently for different exchanges.
@@ -137,6 +138,57 @@ and cannot see an expectation the caller applies afterwards. Every attempt of a 
 when that attempt ends, with the attempt's ordinal (1, 2, ...) and the call's id, so a retried 503 reports its
 `HttpStatusRejectedException` before the next attempt starts. An attempt whose future never completes leaves its
 completed exchanges unreported until its pipeline starts the next attempt or the call ends.
+
+### Request and response bodies
+
+`captureBodies(true)` (or `httpClient.{name}.captureBodies`) is opt-in per client and defaults to `false`: both
+bodies are then absent and the client retains and copies nothing for them. Capture needs an interceptor; a client
+with capture on and no interceptor still retains and copies nothing. `HttpClientAttemptCompletion.requestBody()` and
+`responseBody()` are never `null` and are `dev.vertique.core.payload.PayloadSource` views:
+
+| `PayloadKind` | Request body | Response body |
+|---|---|---|
+| `BUFFERED` (bytes) | A `Buffer`, a JSON value (as encoded for sending) or a url-encoded form, including when the request is refused before sending | A completed body the caller's codec produced as a `Buffer`, or one a decoding codec read under a response bound (at most `maxResponseBytes` bytes are copied) |
+| `STREAMING` (content type and declared length, no bytes) | A streamed or multipart body, a body over `maxRequestBytes`, or one that cannot be encoded | A body that did not complete (bound exceeded, reset, timeout, cancel) or decode, one the caller pipes or discards (`BodyCodec.pipe`, `BodyCodec.none()`, `BodyCodec.jsonStream`), a decoding codec with no response bound, and every `stream(...)` body |
+| `ABSENT` | No body | No body (empty, 204, 304, answer to `HEAD`), or no response head |
+
+The content type is the request's `Content-Type` header when the caller set one, else the type the send method implies.
+A followed redirect reports the request body the caller wrote and the final hop's response body.
+
+**Lifetime.** A body is valid only during `onAttemptCompleted`. It may view the caller's own buffer and is shared by
+every interceptor, so read it, never write to it, and copy what you keep or change. Within `execute`, a capturing
+client holds the bodies of every exchange of an attempt until the attempt ends.
+
+**Unredacted.** Bodies are delivered as written and received; the interceptor redacts what it stores or logs.
+Credential headers a `CredentialSource` adds never appear in the request snapshot, and `toString` of the completion
+prints no body.
+
+```java
+import dev.vertique.core.payload.PayloadKind;
+import dev.vertique.http.client.interceptor.HttpClientAttemptCompletion;
+import dev.vertique.http.client.interceptor.HttpClientInterceptor;
+import dev.vertique.http.client.interceptor.HttpClientRequestContext;
+import dev.vertique.http.client.interceptor.HttpClientResponseHead;
+import io.vertx.core.buffer.Buffer;
+
+public final class AuditInterceptor implements HttpClientInterceptor {
+
+    @Override
+    public void onAttemptCompleted(
+            HttpClientRequestContext request, HttpClientResponseHead response, HttpClientAttemptCompletion completion) {
+        if (completion.responseBody().kind() == PayloadKind.BUFFERED) {
+            byte[] kept = completion.responseBody().bufferedView().map(Buffer::getBytes).orElseThrow(); // a copy
+            store(completion.callId(), redact(kept));
+        }
+    }
+
+    private static byte[] redact(byte[] body) { return body; /* remove secrets before storing */ }
+
+    private void store(String callId, byte[] body) { /* persist */ }
+}
+```
+
+Build the client with `HttpClientBuilder.create(vertx).captureBodies(true).register(new AuditInterceptor()).build()`.
 
 **Warning: `allowAll()` with redirects.** With the default policy and redirects followed, a server you
 call can redirect the client to any host, including internal addresses, such as a cloud metadata
@@ -198,12 +250,16 @@ Creates clients: `HttpClientBuilder.create(vertx)`. Resilience reaches a call on
 | `egress(EgressPolicy)` | Targets the client may contact, checked before connecting and on every redirect hop; default `EgressPolicy.allowAll()` |
 | `credentials(CredentialSource)` | Per-exchange credential headers, resolved for hops to the original origin only; see Credentials |
 | `register(HttpClientInterceptor)` | Adds an interceptor that prepares requests before credentials and is told how each exchange ended; see Interceptors |
+| `captureBodies(boolean)` | Hands interceptors the request and response bodies in `onAttemptCompleted`; default `false`; see Request and response bodies |
 | `allowCredentialsOverPlainHttp(boolean)` | Lets a credential source be used over plain HTTP to a non-loopback host; default `false` |
 | `config(HttpClientConfig)` | External `httpClient.{name}` configuration: every key it sets wins over the matching setter above, applied at `build()`; `null` removes it |
 | `webClientOptions(WebClientOptions)` | Copied; replaces the base options, which do not follow redirects |
 | `poolOptions(PoolOptions)` | Copied; sizes the shared connection pool |
 | `defaultHeader(String, String)` | Header added to every request that does not set it; the setter throws `HttpClientConfigurationException` at call time for a name that is not a token, a transport-owned name (`Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Upgrade`, `TE`) or a value with a control character; configured default headers are checked at startup |
 | `build()` | Builds a client with its own agent |
+
+A builder is not thread-safe: configure and build it on one thread. `HttpClientFactory` is safe to share across
+threads.
 
 Setters take effect at `build()`: a client keeps the values the builder held when it was built. `baseUrl(...)`
 and `defaultHeader(...)` throw `HttpClientConfigurationException` at the setter; any other invalid setting makes
@@ -528,8 +584,10 @@ multibinding (see Wiring); the REST client does not use it.
 
 The records are immutable framework facts: `HttpClientRequestContext` (method, URI, headers, client name, call id,
 attributes; `with...` copies), `HttpClientResponseHead` (status, message, headers without `Set-Cookie`),
-`HttpClientAttemptCompletion` (status, error, call id, attempt ordinal, duration, completion time, target) and
+`HttpClientAttemptCompletion` (status, error, call id, attempt ordinal, duration, completion time, target,
+`requestBody`, `responseBody`) and
 `HttpClientAttemptTarget` (scheme, host, port). Their `toString` prints no header value, path, query or body.
+A seven-component constructor of the completion keeps both bodies absent.
 
 `WebClientOptionsHardening` and `WebClientOptionsNormalizer` are public only because other framework
 modules use them. They are INTERNAL, outside the compatibility promise of this artifact, and
@@ -561,6 +619,7 @@ client is built.
 | `maxRequestBytes` | long | 0 (no bound) | At least 0 |
 | `maxResponseBytes` | long | 10485760 | At least 0, 0 for no bound |
 | `maxEventBytes` | int | 1048576 | Above 0; the most raw bytes of one server-sent event read through `events()`; wins over `maxEventBytes(...)` |
+| `captureBodies` | boolean | `false` | As `captureBodies(...)`; hands interceptors the request and response bodies |
 | `streamIdleTimeoutMs` | long | 60000 | At least 0, 0 disables; the longest a `stream(...)` body may go without a received byte; wins over `streamIdleTimeout(...)` |
 
 **The `webClient` bag** is merged over the builder's base options (the options of `webClientOptions(...)`, or the
