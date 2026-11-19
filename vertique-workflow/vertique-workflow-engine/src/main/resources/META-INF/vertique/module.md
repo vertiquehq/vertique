@@ -410,7 +410,11 @@ the operation, as described under `WorkflowContextBinder`.
   `WAITING` signal wait of that name, a branch-addressed one at a waiting branch) and no timeout of that wait was fired before
   the signal was recorded;
 - the command is `PARKED` when the instance does not await it, is `FAILED`, or the signal is deadline-blocked there; a parked
-  command keeps its place and its slot of the open-signal count, blocks nothing, and spends no attempt;
+  command keeps its place and its slot of the open-signal count, blocks nothing, and spends no attempt. A parked signal is
+  applied only at the wait it addresses: an instance-addressed one at the instance's own signal wait, a branch-addressed one at
+  that branch's wait. The engine refuses an instance-addressed signal for a name that only a branch waits for when it is
+  recorded, so an instance-addressed signal never reaches a branch wait. A signal parked on a `FAILED` instance, whichever way it
+  is addressed, applies after a `retry` has resumed the instance, not before;
 - the command is `REJECTED` when the pinned plan never waits for the name, when the instance had ended, when the application fails
   deterministically (an invalid payload, or a callback or definition failure), or when it runs more nodes than
   `workflow.executor.maxStepsPerSegment` (reason `STEP_LIMIT`). The savepoint is rolled back, so the instance, its version and its
