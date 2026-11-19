@@ -591,7 +591,8 @@ class ResourceScanner {
     /**
      * Returns the class a type erases to when read from {@code context}. A type variable erases to its
      * first declared bound, with a bound that is itself a hierarchy variable resolved against {@code
-     * context} first, so {@code <M extends T>} reports the type {@code context} binds {@code T} to.
+     * context} first, so {@code <M extends T>} reports the type {@code context} binds {@code T} to. A
+     * generic array erases to the array of its component's erasure.
      */
     private static Class<?> rawType(Type type, Class<?> fallback, Class<?> context) {
         return rawType(type, fallback, context, java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()));
@@ -606,6 +607,10 @@ class ResourceScanner {
         if (type instanceof java.lang.reflect.TypeVariable<?> variable && variable.getBounds().length > 0)
             return rawType(
                     TypeResolver.resolveMemberType(context, variable.getBounds()[0]), fallback, context, visiting);
+        if (type instanceof java.lang.reflect.GenericArrayType array) {
+            Class<?> component = rawType(array.getGenericComponentType(), Object.class, context, visiting);
+            return java.lang.reflect.Array.newInstance(component, 0).getClass();
+        }
         return fallback;
     }
 

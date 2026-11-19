@@ -118,8 +118,42 @@ class GeneratedMetadataTypeParityTest {
                                 List.of(
                                         "body ret=java.lang.String future=false params=[BODY:java.lang.Object/-]",
                                         "direct ret=java.lang.Object future=false params=[]",
-                                        "fut ret=java.lang.Object future=true params=[]")))
+                                        "fut ret=java.lang.Object future=true params=[]")),
+                        new Row(
+                                "inherited array bound to a parameterized type",
+                                arrayApi("List<String>"),
+                                arrayExpected("java.util.List")),
+                        new Row(
+                                "inherited array bound to a parameterized map",
+                                arrayApi("Map<String, Integer>"),
+                                arrayExpected("java.util.Map")),
+                        new Row(
+                                "inherited array bound to a plain class",
+                                arrayApi("String"),
+                                arrayExpected("java.lang.String")))
                 .map(Arguments::of);
+    }
+
+    private static List<JavaFileObject> arrayApi(String binding) {
+        return List.of(
+                src("Api", """
+                        public interface Api<T> {
+                            @POST @Path("/body")
+                            default String body(T[] value) { return ""; }
+                            @GET @Path("/direct")
+                            default T[] direct() { return null; }
+                            @GET @Path("/fut")
+                            default Future<T[]> fut() { return null; }
+                        }
+                        """), src("Leaf", "@Path(\"/x\") public class Leaf implements Api<" + binding + "> {}\n"));
+    }
+
+    private static List<String> arrayExpected(String component) {
+        String array = "[L" + component + ";";
+        return List.of(
+                "body ret=java.lang.String future=false params=[BODY:" + array + "/-]",
+                "direct ret=" + array + " future=false params=[]",
+                "fut ret=" + array + " future=true params=[]");
     }
 
     @ParameterizedTest(name = "{0}")
