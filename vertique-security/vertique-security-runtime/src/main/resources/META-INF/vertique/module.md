@@ -457,9 +457,9 @@ Must always be installed alongside `IdentitySnapshotCarriageModule` — it wires
 
 ---
 
-### IdentitySnapshotReconstructionModule, ServiceIdentityResolver
+### IdentitySnapshotReconstructionModule
 
-`IdentitySnapshotReconstructionModule` is the receive-side wiring that reconstructs a `SecurityContext` from a durably-carried snapshot at every service-dispatch receive (delayed-job execution, inbox handler dispatch, and any other event-bus service dispatch). It includes `IdentitySnapshotCarriageModule`, `PrivilegedIdentityModule`, and the context runtime module, contributes an `InboundContextInitializer` into the framework's multibinding set, and declares `ServiceIdentityResolver` as an overridable `@BindsOptionalOf` seam.
+`IdentitySnapshotReconstructionModule` is the receive-side wiring that reconstructs a `SecurityContext` from a durably-carried snapshot at every service-dispatch receive (delayed-job execution, inbox handler dispatch, and any other event-bus service dispatch). It includes `IdentitySnapshotCarriageModule`, `PrivilegedIdentityModule`, and the context runtime module, contributes an `InboundContextInitializer` into the framework's multibinding set, and declares `ServiceIdentityResolver` (`dev.vertique:vertique-security-core`) as an overridable `@BindsOptionalOf` seam.
 
 Applications wiring identity-snapshot durable carriage into deferred execution must include this module (and supply the required `identity.snapshot.hmacKeys` config) alongside their delayed-job/inbox-outbox module and dispatch module.
 
@@ -477,16 +477,9 @@ Applications wiring identity-snapshot durable carriage into deferred execution m
 
 The deferred-execution-origin provenance gate is the security boundary that keeps the bounded mint from privileging an ordinary context-empty (or unproven-deferred) dispatch: an attacker who writes a garbage, unverifiable durable row with no origin marker must not end up better off under `CONTINUE_WITHOUT_IDENTITY` than by writing nothing at all. When nothing is bound, `@RequiresAction`-gated service operations are treated as `AUTHENTICATION_REQUIRED`; **ungated operations run without a bound context, exactly as if the reconstruction module were not installed.**
 
-`ServiceIdentityResolver` is the functional seam that resolves the executing identity used as the actor when a service-only or reconstructed context is minted:
+`ServiceIdentityResolver` is the SPI, owned by `dev.vertique:vertique-security-core`, that names the executing identity used as the actor when a service-only or reconstructed context is minted.
 
-```java
-@FunctionalInterface
-public interface ServiceIdentityResolver {
-    SecurityIdentity resolve(DeferredExecutionOrigin origin);
-}
-```
-
-The `DeferredExecutionOrigin` carries the provenance `kind` (`delayed-job` / `cron` / `outbox-relay`) and a `reference` — the specific job-type / cron-name / event-type — that becomes the resolved identity's audit reason. The seam is bound via `@BindsOptionalOf` with **no** concrete framework binding: absent an application resolver the built-in default maps `origin.reference()` to `SystemIdentities.scheduledJob(...)`; an application overrides by binding its own `@Provides ServiceIdentityResolver` (present ⇒ used, no duplicate-binding collision). The mint honors the resolved actor's `PrincipalType` — a `SYSTEM` actor via `SecurityContexts.system(...)`, a `SERVICE` actor via `SecurityContexts.unauthenticated(...)` (stamping `custom("system")` on a `SERVICE` actor would misattribute it as system-acting), any other actor type rejected.
+The resolver receives the `DeferredExecutionOrigin`, whose `reference` (the job type, cron name or event type) the built-in default turns into the identity's audit reason. The seam is bound via `@BindsOptionalOf` with **no** concrete framework binding: absent an application resolver the built-in default maps `origin.reference()` to `SystemIdentities.scheduledJob(...)`; an application overrides by binding its own `@Provides ServiceIdentityResolver` (present ⇒ used, no duplicate-binding collision). The mint honors the resolved actor's `PrincipalType` — a `SYSTEM` actor via `SecurityContexts.system(...)`, a `SERVICE` actor via `SecurityContexts.unauthenticated(...)` (stamping `custom("system")` on a `SERVICE` actor would misattribute it as system-acting), any other actor type rejected.
 
 ---
 

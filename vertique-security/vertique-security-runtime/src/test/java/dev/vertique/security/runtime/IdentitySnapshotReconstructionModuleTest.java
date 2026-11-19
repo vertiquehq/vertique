@@ -16,6 +16,7 @@ import dev.vertique.core.context.DeferredExecutionOrigin;
 import dev.vertique.core.context.InboundContextInitializer;
 import dev.vertique.security.IdentityReconstruction;
 import dev.vertique.security.IdentitySnapshotFactory;
+import dev.vertique.security.ServiceIdentityResolver;
 import dev.vertique.security.SystemIdentities;
 import dev.vertique.security.runtime.events.SecurityEventsModule;
 import io.vertx.core.json.JsonObject;
