@@ -28,6 +28,13 @@ SPDX-License-Identifier: EUPL-1.2
                 <configuration>
                     <!-- The largest IT suite in the reactor; it runs past the parent's 15-minute fork cap. -->
                     <forkedProcessTimeoutInSeconds>1500</forkedProcessTimeoutInSeconds>
+                    <!-- Two forks split the suite's test classes between them. Each fork is its own JVM
+                         with its own shared PostgreSQL server (SharedPostgresServer is per JVM), so
+                         classes never share a database across forks. Run serially, this suite sits
+                         alone on the build's critical path for most of its runtime while the other
+                         reactor thread idles. -->
+                    <forkCount>2</forkCount>
+                    <reuseForks>true</reuseForks>
                 </configuration>
             </plugin>
         </plugins>
