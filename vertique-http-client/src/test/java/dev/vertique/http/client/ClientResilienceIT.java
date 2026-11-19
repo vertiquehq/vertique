@@ -809,6 +809,30 @@ class ClientResilienceIT {
                 .isExactlyInstanceOf(CircuitOpenException.class);
     }
 
+    /** A typed refusal after another exchange of the attempt sent a request is an ordinary attempt failure. */
+    @Test
+    @DisplayName("an egress refusal after the attempt already sent a request reaches the pipeline and is retried")
+    void egressRefusalAfterTheAttemptSentARequestIsRetried() {
+        // Given a pipeline with maxRetries 3 and an egress policy for 127.0.0.1 only
+        RecordingServer server = statusServer(200);
+        HttpClient client = build(builder(runtime(new CopyOnWriteArrayList<>()), server, tiers("t", retryTier(3, 10)))
+                .egress(EgressPolicy.allowHosts(List.of("127.0.0.1"), true)));
+
+        // When each attempt first sends an allowed request and then one to a denied host
+        AtomicInteger attempts = new AtomicInteger();
+        Throwable failure = awaitFailure(client.execute(tierOptions("t"), web -> {
+            attempts.incrementAndGet();
+            return web.get("/").send().compose(sent -> web.getAbs("http://localhost:" + server.port() + "/")
+                    .send());
+        }));
+        sleep(SETTLE_MS);
+
+        // Then the refusal reached the pipeline, which retried every attempt: 4 attempts, 4 allowed requests
+        assertThat(failure).isExactlyInstanceOf(HttpEgressDeniedException.class);
+        assertThat(attempts.get()).isEqualTo(4);
+        assertThat(server.requests).hasSize(4);
+    }
+
     // --- redirect-hop refusal ---
 
     /** A refusal on a redirect hop comes after a request was sent: an ordinary failure the pipeline retries. */

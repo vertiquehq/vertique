@@ -317,9 +317,9 @@ no pipeline and ships no retry or breaker classification: build the pipeline wit
 `retryOn`, `abortOn` and breaker classifier yourself. Each attempt calls the
 function again with a new scoped `WebClient`, so requests, bodies and decoding are rebuilt every time.
 
-A cancelled call, a closed client and a refusal before the first request was written (a failed credential source,
-an egress denial on the first hop, an invalid request header, a refused request body) are never retried, whatever the
-pipeline says. A refusal on a redirect hop comes after a request was sent and is an ordinary attempt failure that the
+A cancelled call, a closed client and the client's own refusal while no request of the attempt was written (a failed
+credential source, an egress denial, a refused request body) are never retried, whatever the pipeline says. An invalid
+request header, or anything else the attempt function throws, reaches the pipeline like any other failure. A refusal on a redirect hop comes after a request was sent and is an ordinary attempt failure that the
 pipeline classifies. `Retry-After` is honored when the pipeline sets `retry.retryAfterMaxMs` above 0.
 
 Callers always see the original failure. A refusal before the first request was written ends the execution without

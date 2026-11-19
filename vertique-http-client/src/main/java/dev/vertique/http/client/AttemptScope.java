@@ -18,10 +18,10 @@ import io.vertx.core.http.HttpClientResponse;
 import jakarta.annotation.Nullable;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -50,7 +50,9 @@ final class AttemptScope {
     private final HttpClientInterceptors interceptors;
     private final @Nullable String callId;
     private final int attemptOrdinal;
-    private final Set<Throwable> refusedBeforeSend = Collections.newSetFromMap(new IdentityHashMap<>());
+    /** Typed refusals recorded while nothing was sent, with whether the refusing exchange created a request. */
+    private final Map<Throwable, Boolean> refusedBeforeSend = new IdentityHashMap<>();
+
     private boolean closedByClient;
     private @Nullable Throwable endReason;
     private int attachedExchanges;
@@ -128,14 +130,16 @@ final class AttemptScope {
     }
 
     /**
-     * Whether {@code failure} (or a failure in its cause chain) refused an exchange before the first hop's
-     * request was written.
+     * Whether {@code failure} (or a failure in its cause chain) is a typed refusal recorded while nothing was
+     * sent, and still no other exchange of this attempt has created a request: an exchange started on another
+     * context after the refusal was recorded may have sent one since.
      */
     synchronized boolean wasRefusedBeforeSend(Throwable failure) {
         Throwable current = failure;
         for (int depth = 0; current != null && depth < 8; depth++) {
-            if (refusedBeforeSend.contains(current)) {
-                return true;
+            Boolean sentItself = refusedBeforeSend.get(current);
+            if (sentItself != null) {
+                return attachedExchanges - (sentItself ? 1 : 0) == 0;
             }
             Throwable cause = current.getCause();
             current = cause == current ? null : cause;
@@ -163,7 +167,7 @@ final class AttemptScope {
                 || failure instanceof HttpEgressDeniedException
                 || failure instanceof HttpBodyLimitException limit
                         && limit.direction() == HttpBodyLimitException.Direction.REQUEST) {
-            refusedBeforeSend.add(failure);
+            refusedBeforeSend.put(failure, sentItself);
         }
     }
 
