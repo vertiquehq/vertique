@@ -578,6 +578,7 @@ ambiguity with `jakarta.ws.rs.NotAuthorizedException` and `jakarta.ws.rs.Forbidd
 
 ### `RestExceptionMapper`
 
+Declared in `dev.vertique:vertique-rest-core` (`dev.vertique.rest.core`); this module wires it.
 The REST-layer `Throwable → Throwable` pre-translator that runs before the registry. It extends
 `dev.vertique.core.failure.FailureMapper` with covariant overrides so registrations chain:
 
@@ -759,9 +760,9 @@ Most REST extension points — `RouterMount`, `MountCustomizer`, `Middleware`, `
 `OperationHandlerContributor`, the three interceptor SPIs, `RequestBodyDecoder`,
 `ResponseBodyEncoder`, `ResponseProducer`, `ResponseSerializer`, `RestContextResolver`, and the
 parameter converters — are declared in `dev.vertique:vertique-rest-core` and documented there. The
-ones this module owns are below. `RequestValidationStrategy`, `OperationSchemaSource`, and
-`FileContentVerifier` are declared here but documented with their reference implementations in
-`dev.vertique:vertique-rest-validation`.
+ones this module owns are below. `RequestValidationStrategy` and `OperationSchemaSource` are declared
+here; `FileContentVerifier` is declared in `dev.vertique:vertique-rest-core`. Their reference
+implementations are documented in `dev.vertique:vertique-rest-validation`.
 
 `RequestValidationStrategy` gains a mount-aware `gateFor(op, schemas, MountMeta mount)` default
 overload alongside the original 2-arg form. `JaxRsRouteRegistrar` calls only the 3-arg form —
@@ -790,6 +791,7 @@ provenance: it stores the object as given and returns it by reference.
 
 ### `RestExceptionMapperCustomizer`
 
+Declared in `dev.vertique:vertique-rest-core` (`dev.vertique.rest.core`).
 Contributes `Throwable → Throwable` translations to the REST error pipeline.
 
 ```java
@@ -1133,12 +1135,11 @@ parameter, a `Content-Disposition` name or filename) escape `\` and `"`, and wri
 character other than a horizontal tab as `_` rather than deleting it, so a value can never carry a
 line break into a header and `evil.php` with U+0001 before the final `p` is not written as `evil.php`.
 
-Two adapters are visible to resource code:
-
-| Class | Purpose |
-|-------|---------|
-| `VertxFileUploadEntityPart` | `EntityPart` over a Vert.x `FileUpload`, reading the spooled temp file. `getContent()` is single-use. |
-| `FormFieldEntityPart` | `EntityPart` over a text form field value. `getContent()` is single-use. |
+Resource code receives `jakarta.ws.rs.core.EntityPart`. Every instance also implements `VertxEntityPart`
+(`dev.vertique:vertique-rest-core`), whose `getContentAsync()` reads the content without blocking the event
+loop. The two implementations behind it, `VertxFileUploadEntityPart` (over a spooled `FileUpload`) and
+`FormFieldEntityPart` (over a text field value), are INTERNAL: do not name them. `getContent()` and
+`getContentAsync()` are single-use.
 
 ### Example resources
 
@@ -2074,7 +2075,8 @@ Beyond what `RestCoreModule` and `JsonRuntimeModule` contribute:
 | `SyntheticOperationInstaller` | `@Binds` to a package-private implementation; INTERNAL; framework documentation module only; enforces a `SyntheticOperation` typed policy in the supported `AuthModule` and `SecurityModule` composition and refuses a restrictive one without it |
 | `Set<MountPublicationHook>` | `@Multibinds`; INTERNAL; empty by default; sibling framework modules contribute: the documentation module through `@ElementsIntoSet`, the `openapi-contract` validation module's contract-load check through `@IntoSet` |
 
-`dev.vertique.rest.jaxrs.runtime.MagicBytesVerifierModule` is a separate opt-in `@Module` that
+`dev.vertique.rest.validation.MagicBytesVerifierModule` (`dev.vertique:vertique-rest-validation`)
+is a separate opt-in `@Module` that
 contributes the built-in magic-byte `FileContentVerifier`. It fails closed on a declared content
 type that is present but unparsable, such as a wildcard type with a concrete subtype like `*/png`
 (rejection type `fileContentTypeMalformed`), reads a `q` or
@@ -2146,6 +2148,22 @@ composition view and the docs-module marker described under [`@RestApplication`]
 above, public only so the JAX-RS application composer, the mount composition validator, the OpenAPI
 documentation module, and the `openapi-contract` validation module's contract-load check can read or
 bind them.
+
+---
+
+## Moved types
+
+These types left this module and have no forwarding type here. Change the import:
+
+| Type | Now in |
+|---|---|
+| `FileContentVerifier`, `FileVerificationResult` | `dev.vertique.rest.core.request` (`vertique-rest-core`) |
+| `VertxEntityPart` | `dev.vertique.rest.core.request` (`vertique-rest-core`) |
+| `RestExceptionMapper`, `RestExceptionMapperCustomizer` | `dev.vertique.rest.core` (`vertique-rest-core`) |
+| `MagicBytesVerifierModule` | `dev.vertique.rest.validation` (`vertique-rest-validation`) |
+
+`RestModule` and `JaxRsRouterMount` stay here. `RestModule` still declares the empty multibindings
+`Set<FileContentVerifier>` and `Set<RestExceptionMapperCustomizer>` and assembles the `RestExceptionMapper`.
 
 ---
 

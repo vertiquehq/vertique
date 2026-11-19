@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.jaxrs.validation;
+package dev.vertique.rest.core.request;
 
 import jakarta.annotation.Nullable;
 import java.util.Map;

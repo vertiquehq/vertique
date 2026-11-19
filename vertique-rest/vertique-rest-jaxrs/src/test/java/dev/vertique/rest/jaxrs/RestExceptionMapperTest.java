@@ -5,6 +5,8 @@ package dev.vertique.rest.jaxrs;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import dev.vertique.rest.core.RestExceptionMapper;
+import dev.vertique.rest.core.RestExceptionMapperCustomizer;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
