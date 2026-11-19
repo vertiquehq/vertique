@@ -681,8 +681,8 @@ database failure reaching the REST layer renders as HTTP 500.
 TechnicalException (core.exception)
 └── DataAccessException
     ├── TransientDataAccessException            — may succeed on retry
-    │   ├── ConnectionException                 — pool exhaustion, network, SQL state class 08
-    │   ├── QueryTimeoutException               — statement exceeded its time limit
+    │   ├── ConnectionException                 — database unreachable or connection lost: network failure, SQL state class 08 and 57P01–57P04
+    │   ├── QueryTimeoutException               — statement exceeded its time limit, or the wait for a pooled connection timed out
     │   └── DeadlockException                   — deadlock detected
     ├── TransactionDeadlineExceededException    — transaction deadline passed; non-transient
     ├── DataIntegrityViolationException         — constraint violation
@@ -787,7 +787,8 @@ produced.
 | `maxPoolSize` | int | `5` | Maximum pooled connections |
 | `maxWaitQueueSize` | int | `-1` | Requests allowed to wait for a connection; `-1` is unbounded |
 | `eventLoopSize` | int | `0` | Event-loop threads for the pool; `0` uses the Vert.x default |
-| `connectionTimeoutMs` | int | `30000` | Maximum wait for a pooled connection |
+| `connectionTimeoutMs` | int | `30000` | Maximum wait for a pooled connection; the wait that times out surfaces as `QueryTimeoutException` |
+| `connectTimeoutMs` | int | `60000` | Maximum time to establish the TCP connection to the database; the timeout surfaces as `ConnectionException` |
 | `idleTimeoutMs` | int | `0` | Idle time before eviction; `0` disables |
 | `maxLifetimeMs` | int | `0` | Maximum connection lifetime; `0` is unlimited |
 | `poolCleanerPeriodMs` | int | `1000` | Pool cleaner interval |
@@ -968,6 +969,8 @@ compile-time constant or a developer-controlled string, never anything derived f
 | `InvalidDataAccessUsageException` from `prepare()`, `begin()`, `close()` or `.stream(...)` | Called on the connection of a deadline-bounded transaction, which refuses them |
 | `IllegalArgumentException: deadline must be positive` | `.deadline(...)` given a zero or negative duration |
 | Statement runs outside its transaction | A builder inside `transaction().execute(...)` missing `.on(conn)` |
+| `ConnectionException` whose cause is `ConnectException`, `SocketException`, `ClosedChannelException` or `ClosedConnectionException` | The database refused, reset or dropped the connection, or `connectTimeoutMs` elapsed; check host, port and the server |
+| `QueryTimeoutException` caused by `Timeout waiting for connection` | Every pooled connection is busy for longer than `connectionTimeoutMs`; raise `maxPoolSize` or shorten the statements |
 | Pool never grows past the first connection | A `PoolConnectHandler` that does not call `conn.close()` |
 | `ConfigurationException` naming `db.schemas` or `db.schemas.<key>` | `db.schemas` has a blank key, or a value that is null, not a string, or blank |
 | Generic parse failure for the `db` section | `db` or `db.schemas` is not an object |

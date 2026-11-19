@@ -18,6 +18,10 @@ import dev.vertique.db.exception.TransientDataAccessException;
 import dev.vertique.db.exception.UniqueConstraintViolationException;
 import io.vertx.core.VertxException;
 import io.vertx.pgclient.PgException;
+import io.vertx.sqlclient.ClosedConnectionException;
+import java.net.ConnectException;
+import java.net.SocketException;
+import java.nio.channels.ClosedChannelException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -329,6 +333,57 @@ class PgDbExceptionMapperTest {
         void shouldMapVertxTimeoutMixedCase() {
             VertxException ex = new VertxException("Pool TIMEOUT reached", true);
             assertInstanceOf(QueryTimeoutException.class, mapper.translate(ex, "pool timeout"));
+        }
+    }
+
+    // --- Network failures that are not database errors ---
+
+    @Nested
+    @DisplayName("Network failures")
+    class NetworkFailures {
+
+        @Test
+        @DisplayName("ConnectException (connection refused) → ConnectionException with cause")
+        void shouldMapConnectionRefused() {
+            ConnectException ex = new ConnectException("Connection refused");
+            ConnectionException result = assertInstanceOf(ConnectionException.class, mapper.translate(ex, "refused"));
+            assertSame(ex, result.getCause());
+            assertEquals("refused", result.getMessage());
+        }
+
+        @Test
+        @DisplayName("Netty ConnectTimeoutException (connect timeout) → ConnectionException, not QueryTimeoutException")
+        void shouldMapConnectTimeout() {
+            io.netty.channel.ConnectTimeoutException ex =
+                    new io.netty.channel.ConnectTimeoutException("connection timed out after 500 ms: /10.0.0.1:5432");
+            assertInstanceOf(ConnectionException.class, mapper.translate(ex, "connect timeout"));
+        }
+
+        @Test
+        @DisplayName("SocketException (connection reset) → ConnectionException")
+        void shouldMapConnectionReset() {
+            assertInstanceOf(
+                    ConnectionException.class, mapper.translate(new SocketException("Connection reset"), "reset"));
+        }
+
+        @Test
+        @DisplayName("ClosedChannelException → ConnectionException")
+        void shouldMapClosedChannel() {
+            assertInstanceOf(ConnectionException.class, mapper.translate(new ClosedChannelException(), "closed"));
+        }
+
+        @Test
+        @DisplayName(
+                "ClosedConnectionException (connection closed) → ConnectionException, not a generic VertxException")
+        void shouldMapClosedConnection() {
+            assertInstanceOf(ConnectionException.class, mapper.translate(ClosedConnectionException.INSTANCE, "closed"));
+        }
+
+        @Test
+        @DisplayName("pool exhaustion ('Timeout waiting for connection') stays QueryTimeoutException")
+        void shouldKeepPoolExhaustionAsQueryTimeout() {
+            VertxException ex = new VertxException("Timeout waiting for connection", true);
+            assertInstanceOf(QueryTimeoutException.class, mapper.translate(ex, "pool exhausted"));
         }
     }
 

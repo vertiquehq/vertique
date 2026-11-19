@@ -31,7 +31,8 @@ Extends `DbExceptionMapper` with PostgreSQL-specific SQL state translations pre-
 | SQL state `40P01` | `DeadlockException` |
 | SQL state `55P03` (lock not available) | `PessimisticLockingFailureException` |
 | SQL state `57014` (statement timeout) | `QueryTimeoutException` |
-| `VertxException` with message `"Timeout"` | `QueryTimeoutException` |
+| `VertxException` with a message containing `"timeout"` in any case, such as `"Timeout waiting for connection"` when the pool is exhausted | `QueryTimeoutException` |
+| Network failures that are not database errors: `java.net.ConnectException` (connection refused, connect timeout), `java.net.SocketException` (connection reset), `java.nio.channels.ClosedChannelException` and `io.vertx.sqlclient.ClosedConnectionException` (connection closed) | `ConnectionException` (cause kept, no SQL state) |
 | `DataAccessException` | pass-through (identity) — inherited from `DbExceptionMapper` constructor |
 | Any other `Throwable` | `DataAccessException` (catch-all) — inherited from `DbExceptionMapper.fallback` |
 
