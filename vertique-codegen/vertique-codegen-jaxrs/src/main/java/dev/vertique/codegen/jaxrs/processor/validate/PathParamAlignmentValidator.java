@@ -213,7 +213,9 @@ public final class PathParamAlignmentValidator {
         Set<String> pathParams = new LinkedHashSet<>();
         for (EffectiveParamContract param : methodContract.params()) {
             if (param.source() == JaxRsParamSource.BEAN_PARAM) {
-                TypeElement beanTypeElement = ctx.asTypeElement(param.type()).orElse(null);
+                TypeElement beanTypeElement = ctx.asTypeElement(
+                                param.beanParamType() != null ? param.beanParamType() : param.type())
+                        .orElse(null);
                 if (beanTypeElement != null) {
                     pathParams.addAll(beanScanner.pathParamNames(beanTypeElement));
                 }

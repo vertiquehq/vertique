@@ -641,9 +641,8 @@ public final class JaxRsDescriptorEmitter {
             cb.add("null, ");
         }
 
-        // genericType — emit TypeReference token for parameterized BODY types; null otherwise.
-        // Using Jackson's TypeReference because it is already on the runtime classpath for body
-        // deserialization and captures the full parameterized Type without reflection.
+        // genericType — the declared type, as GenericTypeExpressions builds it (a Class, a Jackson
+        // TypeReference literal, or a startup lookup); null for a source whose contract carries none.
         CodeBlock genericTypeExpr = genericTypes.of(
                 pc,
                 descriptorClass.packageName(),

@@ -136,6 +136,25 @@ class GeneratedMetadataTypeParityTest {
                                 rawLeaf(""),
                                 rawLeafExpected("java.lang.Object")),
                         new Row(
+                                "raw leaf with a composite parameter type variable",
+                                List.of(src("Dto", """
+                                                @dev.vertique.rest.core.request.RequestParams
+                                                public class Dto { @QueryParam("q") public String q; }
+                                                """), src("Api", """
+                                                public interface Api<T extends Dto> {
+                                                    @POST @Path("/req")
+                                                    default String req(T dto) { return ""; }
+                                                    @POST @Path("/bean")
+                                                    default String bean(@jakarta.ws.rs.BeanParam T dto) { return ""; }
+                                                }
+                                                """), src("Leaf", """
+                                                @SuppressWarnings("rawtypes")
+                                                @Path("/x") public class Leaf implements Api {}
+                                                """)),
+                                List.of(
+                                        "bean ret=java.lang.String future=false params=[BEAN_PARAM:" + PKG + ".Dto/-]",
+                                        "req ret=java.lang.String future=false params=[BEAN_PARAM:" + PKG + ".Dto/-]")),
+                        new Row(
                                 "raw leaf of a bounded generic interface",
                                 rawLeaf(" extends Number"),
                                 rawLeafExpected("java.lang.Number")))

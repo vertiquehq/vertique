@@ -669,7 +669,8 @@ public final class EffectiveJaxRsContractResolver {
         TypeMirror componentType = resolvesComponentType(source) ? resolveComponentType(type) : null;
 
         // Bean param type
-        TypeMirror beanParamType = (source == JaxRsParamSource.BEAN_PARAM) ? type : null;
+        TypeMirror beanParamType =
+                (source == JaxRsParamSource.BEAN_PARAM) ? ctx.types().erasure(type) : null;
 
         // Generic type — the declared type as the resource class sees it, for the sources whose reflective
         // counterpart records it (BODY, QUERY, HEADER and COOKIE); the emitters write it into ParamMeta
