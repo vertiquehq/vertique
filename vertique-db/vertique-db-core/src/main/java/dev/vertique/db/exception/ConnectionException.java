@@ -4,8 +4,11 @@
 package dev.vertique.db.exception;
 
 /**
- * Connection failure: unable to acquire a connection from the pool, pool exhaustion, or
- * network-level connection errors.
+ * Connection failure: the database could not be reached or the connection was lost. Covers
+ * network-level failures that are not database errors (connection refused, connection reset or
+ * closed, connect timeout) and database errors in SQL state class {@code 08} and {@code 57P01} to
+ * {@code 57P04}. Exhausting the pool is not a connection failure: the wait for a pooled connection
+ * that times out surfaces as {@link QueryTimeoutException}.
  */
 public class ConnectionException extends TransientDataAccessException {
 
