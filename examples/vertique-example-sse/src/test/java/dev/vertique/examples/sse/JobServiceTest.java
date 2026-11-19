@@ -342,19 +342,24 @@ class JobServiceTest {
         @Test
         @DisplayName("Delivers FAILED event to all subscribers and cancels timer")
         void deliversFailedEventAndCancelsTimer(Vertx vertx, VertxTestContext ctx) throws Exception {
-            String jobId = service.createJob();
+            // A step interval far longer than the test keeps the job RUNNING, so the progress
+            // timer can never reach DONE before failJob runs, however slow the machine is.
+            JobService slowService = new JobService(vertx, new JobConfig(60_000L, STEP_COUNT));
+            String jobId = slowService.createJob();
+            AtomicBoolean timerRunningBeforeFail = new AtomicBoolean();
             List<JobProgressEvent> received = new ArrayList<>();
             CountDownLatch failedLatch = new CountDownLatch(1);
 
             vertx.runOnContext(v -> {
-                service.subscribe(jobId, null, evt -> {
+                slowService.subscribe(jobId, null, evt -> {
                     received.add(evt);
                     if (evt.status() == JobStatus.FAILED) {
                         failedLatch.countDown();
                     }
                 });
-                // Fail the job after subscribing
-                vertx.setTimer(50, t -> service.failJob(jobId, "Simulated failure"));
+                timerRunningBeforeFail.set(slowService.isTimerRunning(jobId));
+                // Fail the job after subscribing, while the job is still running
+                slowService.failJob(jobId, "Simulated failure");
             });
 
             assertTrue(failedLatch.await(5, TimeUnit.SECONDS), "Expected FAILED event within 5 seconds");
@@ -368,7 +373,8 @@ class JobServiceTest {
                         JobStatus.FAILED, received.get(received.size() - 1).status(), "Last event should be FAILED");
                 assertEquals(
                         "Simulated failure", received.get(received.size() - 1).message());
-                assertFalse(service.isTimerRunning(jobId), "Timer should be cancelled after failJob");
+                assertTrue(timerRunningBeforeFail.get(), "Timer should be running before failJob");
+                assertFalse(slowService.isTimerRunning(jobId), "Timer should be cancelled after failJob");
             });
             ctx.completeNow();
         }

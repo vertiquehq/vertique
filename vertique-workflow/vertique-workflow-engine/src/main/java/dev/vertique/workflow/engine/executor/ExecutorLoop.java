@@ -22,6 +22,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -42,6 +43,13 @@ import org.slf4j.LoggerFactory;
  * <p>Hint-driven passes are spaced: a wake-up that arrives within {@link #DEFAULT_HINT_SPACING_MS} of the previous
  * one that was acted on neither refreshes the earliest delay nor asks for a pass at once. The burst is answered by one
  * pass at the end of the window, so a flood of notifications costs a bounded number of passes and reads.
+ *
+ * <p>Stopping ends claiming and completes once every segment in flight has ended, as each segment does by its own
+ * deadline. Until one poll interval after the stop, it also waits for the loop's other database work (the peek of a
+ * pass, the earliest-delay read, the queue snapshot and the mark writes that follow a segment), so that such work does
+ * not race the close of the pool; none of it starts once the loop has stopped claiming, except the mark writes of
+ * segments still in flight. Work still running when that interval ends, including a mark write of a segment that ends
+ * later, is not waited for.
  *
  * <p>All state is touched on the instance's event loop. Instances share nothing but the database: the execution lock,
  * the claim token and the lease coordinate them.
@@ -70,12 +78,16 @@ final class ExecutorLoop {
     private final StuckReporter reporter;
     private final long hintSpacingMs;
     private final AtomicInteger inFlight = new AtomicInteger();
+    /** The loop's database work outside segments that has not ended: peeks, reads, snapshots and mark writes. */
+    private final AtomicInteger outstanding = new AtomicInteger();
 
     private volatile boolean running;
     private volatile boolean passing;
     private volatile boolean kicked;
     private volatile long timerId = -1;
     private volatile Promise<Void> stopped;
+    private volatile boolean outstandingWaitOver;
+    private volatile long outstandingWaitTimerId = -1;
 
     // touched on the instance's event loop only
     private long earliestTimerId = -1;
@@ -145,7 +157,8 @@ final class ExecutorLoop {
 
     /**
      * Ends claiming and completes once every segment that was in flight has committed or been rolled back by its own
-     * deadline. No claim starts after this call.
+     * deadline and, until one poll interval after this call, once the loop's other database work has ended. No claim
+     * starts after this call.
      *
      * @return a future that completes when the instance is idle
      */
@@ -158,9 +171,45 @@ final class ExecutorLoop {
         if (promise == null) {
             promise = Promise.promise();
             stopped = promise;
+            boundOutstandingWait();
         }
         completeStopIfIdle();
         return promise.future();
+    }
+
+    /** Lets the stop stop waiting for the loop's database work outside segments one poll interval from now. */
+    private void boundOutstandingWait() {
+        try {
+            // raw timer: one-shot bound on how long a stop waits for the loop's peeks, reads and mark writes
+            outstandingWaitTimerId = vertx.setTimer(config.pollIntervalMs(), id -> {
+                outstandingWaitOver = true;
+                completeStopIfIdle();
+            });
+        } catch (RuntimeException e) {
+            // Vert.x is closing: no timer can be set, so the stop does not wait for that work
+            outstandingWaitOver = true;
+        }
+    }
+
+    /**
+     * Counts database work the loop starts outside a segment until it ends, so that a stop waits for it.
+     *
+     * @param work starts the work; a throw or a {@code null} future counts as work that has ended
+     * @return the work's future, or a failed future for a throw or a {@code null}
+     */
+    private <T> Future<T> tracked(Supplier<Future<T>> work) {
+        Future<T> future;
+        try {
+            future = Objects.requireNonNull(work.get(), "the work returned null instead of a future");
+        } catch (Exception | LinkageError | AssertionError e) {
+            return Future.failedFuture(e);
+        }
+        outstanding.incrementAndGet();
+        future.onComplete(ignored -> {
+            outstanding.decrementAndGet();
+            completeStopIfIdle();
+        });
+        return future;
     }
 
     /**
@@ -272,8 +321,8 @@ final class ExecutorLoop {
                 } else if (result.result() > 0 || kicked) {
                     next = IMMEDIATE_MS;
                 }
-                reporter.sampleIfDue();
                 if (running) {
+                    tracked(reporter::sampleIfDue);
                     refreshEarliest();
                 }
             } finally {
@@ -292,14 +341,7 @@ final class ExecutorLoop {
         }
         refreshing = true;
         long hintsBefore = hints;
-        Future<Optional<Long>> read;
-        try {
-            read = Objects.requireNonNull(
-                    commands.findEarliestAvailabilityDelayMs(),
-                    "findEarliestAvailabilityDelayMs returned null instead of a future");
-        } catch (Exception | LinkageError | AssertionError e) {
-            read = Future.failedFuture(e);
-        }
+        Future<Optional<Long>> read = tracked(commands::findEarliestAvailabilityDelayMs);
         read.onComplete(result -> {
             refreshing = false;
             if (result.failed()) {
@@ -371,7 +413,7 @@ final class ExecutorLoop {
         if (free <= 0) {
             return Future.succeededFuture(0);
         }
-        return peek.resident(free).compose(peeked -> {
+        return tracked(() -> peek.resident(free)).compose(peeked -> {
             List<Future<Boolean>> claims = new ArrayList<>();
             for (CommandPeek.WarmedHead warmed : peeked.heads()) {
                 if (!running || inFlight.get() >= config.concurrency()) {
@@ -466,14 +508,15 @@ final class ExecutorLoop {
                             instanceId,
                             result.cause().getClass().getName());
                 }
+                // the marks are written after the segment has ended, detached, and never change its outcome; a
+                // write that fails is dropped by Marks.run, which never fails. The write is counted before the slot
+                // is freed, so that a stop still waiting for the loop's work cannot complete between the two.
+                tracked(marks::run);
                 // the slot is free once the segment has ended: a mark write that is slow or hung must not hold it
                 release();
                 if (running) {
                     kick();
                 }
-                // the marks are written after the segment has ended, detached, and never change its outcome; a
-                // write that fails is dropped by Marks.run, which never fails
-                marks.run();
             });
         });
     }
@@ -505,8 +548,12 @@ final class ExecutorLoop {
 
     private void completeStopIfIdle() {
         Promise<Void> promise = stopped;
-        if (promise != null && !running && inFlight.get() == 0) {
-            promise.tryComplete();
+        if (promise != null
+                && !running
+                && inFlight.get() == 0
+                && (outstanding.get() == 0 || outstandingWaitOver)
+                && promise.tryComplete()) {
+            vertx.cancelTimer(outstandingWaitTimerId);
         }
     }
 }

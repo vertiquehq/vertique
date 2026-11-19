@@ -6,13 +6,14 @@ package dev.vertique.job.cron;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.time.Duration;
 import java.time.Instant;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Characterization tests for {@link SystemCronTickPlanner} — the production tick math extracted
- * verbatim from {@code CronScheduler.scheduleNext}.
+ * Tests for {@link SystemCronTickPlanner} — the production tick math, extracted from
+ * {@code CronScheduler.scheduleNext} and since corrected to fire a tick whose timer ran early once.
  *
  * <p>These are pure unit tests: no Vert.x, no timers, no sleeping. Every {@code now} is a fixed
  * instant, so the assertions pin exact arithmetic rather than a tolerance window.
@@ -68,8 +69,8 @@ class SystemCronTickPlannerTest {
     }
 
     @Test
-    @DisplayName("previousScheduledAt is ignored — production progression derives from wall clock")
-    void previousScheduledAtIsIgnored() {
+    @DisplayName("a previousScheduledAt before now is ignored — production progression derives from wall clock")
+    void passedPreviousScheduledAtIsIgnored() {
         CronJobDefinition job = CompressedCronTickPlannerTest.jobFiring("* * * * * *");
         Instant now = Instant.parse("2026-08-07T10:15:30.400Z");
 
@@ -79,6 +80,32 @@ class SystemCronTickPlannerTest {
         assertEquals(
                 withoutPrevious,
                 withPrevious,
-                "the production planner must derive the tick from now alone, never from the previous nominal");
+                "a previous nominal that has passed must not change the tick derived from now");
+    }
+
+    @Test
+    @DisplayName("a timer that runs just before its nominal instant plans the following instant, not the same one")
+    void earlyTimerDoesNotPlanItsOwnInstantAgain() {
+        CronJobDefinition job = CompressedCronTickPlannerTest.jobFiring("* * * * * *");
+        // the tick for BOUNDARY fires 1ms early on the wall clock and re-arms from inside its callback
+        Instant now = BOUNDARY.minusMillis(1);
+
+        CronTickPlanner.Tick tick = planner.plan(job, BOUNDARY, now);
+
+        assertEquals(BOUNDARY.plusSeconds(1), tick.scheduledAt(), "the tick for BOUNDARY must not fire twice");
+        assertEquals(1001L, tick.delayMs());
+    }
+
+    @Test
+    @DisplayName("a previousScheduledAt left ahead of now by a backward clock step does not delay the next tick")
+    void previousScheduledAtAheadAfterABackwardClockStepIsIgnored() {
+        CronJobDefinition job = CompressedCronTickPlannerTest.jobFiring("* * * * * *");
+        // the wall clock was stepped back an hour while the tick for BOUNDARY was firing
+        Instant now = BOUNDARY.minus(Duration.ofHours(1)).plusMillis(250);
+
+        CronTickPlanner.Tick tick = planner.plan(job, BOUNDARY, now);
+
+        assertEquals(planner.plan(job, null, now), tick, "the tick must follow the wall clock, not wait out the step");
+        assertEquals(750L, tick.delayMs());
     }
 }
