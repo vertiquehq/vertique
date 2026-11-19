@@ -4,6 +4,7 @@
 package dev.vertique.kafka.avro;
 
 import com.microsoft.kiota.ApiException;
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.kafka.DeserializationException;
 import dev.vertique.kafka.KafkaRecordHeaders;
 import dev.vertique.kafka.config.KafkaConfig;
@@ -52,12 +53,15 @@ public final class ApicurioAvroSerdeProvider implements KafkaSerdeProvider {
     private static final String CFG_AUTO_REGISTER = "apicurio.registry.auto-register";
     // Bounded registry-call defaults. Apicurio 3.2.4 exposes no config-map socket
     // read-timeout key; the JDK client adapter applies a 30s connect timeout, and these bound the
-    // retry storm. All are overridable via serdeProperties / kafka.schemaRegistry. The worker-threading
+    // retry storm. All are overridable via serdeProperties. The worker-threading
     // contract remains the primary event-loop protection.
     private static final String CFG_RETRY_COUNT = "apicurio.registry.retry-count";
     private static final String CFG_RETRY_BACKOFF_MS = "apicurio.registry.retry-backoff-ms";
     private static final long DEFAULT_RETRY_COUNT = 3L;
     private static final long DEFAULT_RETRY_BACKOFF_MS = 300L;
+
+    private static final String SCHEMA_REGISTRY = "schemaRegistry";
+    private static final String REGISTRY_URL_KEY = "url";
 
     private final JsonObject globalSchemaRegistry;
 
@@ -68,10 +72,13 @@ public final class ApicurioAvroSerdeProvider implements KafkaSerdeProvider {
      *
      * @param kafkaConfig the typed Kafka config (its {@code schemaRegistry} block is read; a
      *     {@code null} block falls back to an empty object)
+     * @throws ConfigurationException if the {@code schemaRegistry} block carries any key other than
+     *     {@code url}; the message names the key and never its value
      */
     public ApicurioAvroSerdeProvider(KafkaConfig kafkaConfig) {
         this.globalSchemaRegistry =
                 kafkaConfig.schemaRegistry() != null ? kafkaConfig.schemaRegistry() : new JsonObject();
+        requireUrlOnly(globalSchemaRegistry);
     }
 
     @Override
@@ -233,11 +240,12 @@ public final class ApicurioAvroSerdeProvider implements KafkaSerdeProvider {
      * (the whole design depends on the schema id living in the payload, not headers).
      */
     private Map<String, Object> baseConfig(JsonObject endpointConfig) {
-        JsonObject schemaRegistry = endpointConfig.getJsonObject("schemaRegistry", globalSchemaRegistry);
+        JsonObject schemaRegistry = endpointConfig.getJsonObject(SCHEMA_REGISTRY, globalSchemaRegistry);
+        requireUrlOnly(schemaRegistry);
         JsonObject serdeProperties = endpointConfig.getJsonObject("serdeProperties", new JsonObject());
 
         Map<String, Object> config = new HashMap<>();
-        String url = schemaRegistry.getString("url");
+        String url = schemaRegistry.getString(REGISTRY_URL_KEY);
         if (url != null) {
             config.put(CFG_REGISTRY_URL, url);
         }
@@ -252,6 +260,27 @@ public final class ApicurioAvroSerdeProvider implements KafkaSerdeProvider {
         // Kafka headers. Re-applied after the overlay so it cannot be silently broken.
         config.put(CFG_HEADERS_ENABLED, false);
         return config;
+    }
+
+    /**
+     * Rejects a {@code schemaRegistry} block that carries anything but {@code url}: a credential or
+     * client setting placed there would otherwise be silently ignored. Registry credentials and other
+     * Apicurio settings belong in {@code serdeProperties} as {@code apicurio.registry.*} keys.
+     *
+     * <p>The message names only the offending top-level key, never a value, so a mistyped secret is
+     * not echoed.
+     *
+     * @param schemaRegistry the {@code schemaRegistry} block to check
+     * @throws ConfigurationException if the block carries a key other than {@code url}
+     */
+    private static void requireUrlOnly(JsonObject schemaRegistry) {
+        for (String key : schemaRegistry.fieldNames()) {
+            if (!REGISTRY_URL_KEY.equals(key)) {
+                throw new ConfigurationException("kafka." + SCHEMA_REGISTRY + " supports only '" + REGISTRY_URL_KEY
+                        + "', but it carries the key '" + key + "'; set registry credentials and other client"
+                        + " settings under serdeProperties as apicurio.registry.* keys");
+            }
+        }
     }
 
     /**

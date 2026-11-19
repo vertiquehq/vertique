@@ -236,6 +236,9 @@ final class JsonSystemProfileInstallStep implements ApplicationStartupStep {
         if (mapper.isEnabled(MapperFeature.ACCEPT_CASE_INSENSITIVE_ENUMS)) {
             deltas.add("ACCEPT_CASE_INSENSITIVE_ENUMS is on");
         }
+        if (mapper.isEnabled(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)) {
+            deltas.add("ACCEPT_CASE_INSENSITIVE_PROPERTIES is on (a property name binds regardless of letter case)");
+        }
         LENIENT_PARSER_FEATURES.stream()
                 .filter(mapper::isEnabled)
                 .map(feature -> feature.name() + " is on")

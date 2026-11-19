@@ -136,6 +136,9 @@ public class KafkaProducerFactory {
      * @param serdeRegistry the value-format serde registry used to select a per-method serializer
      * @param captureHooks  the set of producer capture hooks; sorted by {@link OrderedExtension#comparator()}
      *                      at construction time
+     * @throws IllegalStateException if {@code bootstrap.servers} is missing or blank after the producer
+     *                      property layers are merged; nothing connects, and the shared producer is
+     *                      still created lazily on the first send
      */
     public KafkaProducerFactory(
             Vertx vertx,
@@ -151,6 +154,9 @@ public class KafkaProducerFactory {
         List<KafkaProducerCaptureHook> sorted = new ArrayList<>(captureHooks);
         sorted.sort(OrderedExtension.comparator());
         this.captureHooks = Collections.unmodifiableList(sorted);
+        // Validate the merged producer settings now so a missing address fails startup, not the first send.
+        // Only merges property bags; the producer itself is still created lazily.
+        buildProducerProperties();
     }
 
     // --- Proxy creation ---
