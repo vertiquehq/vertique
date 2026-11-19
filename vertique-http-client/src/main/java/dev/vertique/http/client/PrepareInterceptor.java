@@ -10,6 +10,7 @@ import dev.vertique.http.client.exception.HttpBodyLimitException.Direction;
 import dev.vertique.http.client.interceptor.HttpClientRequestContext;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Context;
+import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.MultiMap;
 import io.vertx.core.Vertx;
@@ -17,6 +18,8 @@ import io.vertx.core.buffer.Buffer;
 import io.vertx.core.internal.FutureInternal;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonObject;
+import io.vertx.core.parsetools.JsonParser;
+import io.vertx.core.streams.WriteStream;
 import io.vertx.ext.web.client.HttpRequest;
 import io.vertx.ext.web.client.impl.ClientPhase;
 import io.vertx.ext.web.client.impl.HttpContext;
@@ -30,6 +33,7 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 
 /**
@@ -52,6 +56,8 @@ final class PrepareInterceptor implements Handler<HttpContext<?>> {
     static final String NO_BASE_URL = "The request is relative but the client has no base URL";
 
     private static final String PREPARED = "vertique.prepared";
+    private static final String ENCODED_JSON = "vertique.encodedJson";
+    private static final Set<Class<?>> DISCARDING_CODECS = discardingCodecs();
 
     private static final String FORM_URLENCODED = "application/x-www-form-urlencoded";
     private static final String JSON = "application/json";
@@ -75,6 +81,17 @@ final class PrepareInterceptor implements Handler<HttpContext<?>> {
             return;
         }
         HttpRequest<?> request = ctx.request();
+        long maxRequestBytes = settings.maxRequestBytes();
+        AttemptScope.Exchange exchange = ExchangeTracker.exchangeOf(ctx);
+        boolean capture = exchange != null && exchange.isCapturing();
+        // described first, so that every refusal below reports the body the caller wrote
+        Measured measured = measure(ctx, maxRequestBytes, capture);
+        if (measured.payload() != null) {
+            exchange.requestBody(measured.payload());
+        }
+        if (measured.encodedJson() != null) {
+            ctx.set(ENCODED_JSON, measured.encodedJson());
+        }
         if (NO_BASE_HOST.equals(request.host())) {
             ctx.fail(new IllegalStateException(NO_BASE_URL));
             return;
@@ -85,12 +102,9 @@ final class PrepareInterceptor implements Handler<HttpContext<?>> {
             ctx.fail(new IllegalArgumentException(violation));
             return;
         }
-        long maxRequestBytes = settings.maxRequestBytes();
-        AttemptScope.Exchange exchange = ExchangeTracker.exchangeOf(ctx);
-        boolean capture = settings.captureBodies() && exchange != null && !interceptors.isEmpty();
-        Measured measured = measure(ctx, maxRequestBytes, capture);
-        if (measured.payload() != null) {
-            exchange.requestBody(measured.payload());
+        if (maxRequestBytes > 0 && measured.failure() != null) {
+            ctx.fail(measured.failure());
+            return;
         }
         if (maxRequestBytes > 0 && !measured.fits()) {
             ctx.fail(new HttpBodyLimitException(Direction.REQUEST, maxRequestBytes));
@@ -161,15 +175,85 @@ final class PrepareInterceptor implements Handler<HttpContext<?>> {
         proceed(ctx);
     }
 
-    /** Marks the context prepared and continues, wrapping the response body codec when a bound applies. */
+    /**
+     * Marks the context prepared and continues. A JSON body measured on the way in goes on as its encoded
+     * bytes, so that what the interceptors see is what is sent, and the response body codec is wrapped when
+     * a bound applies; either re-prepares the request, which this interceptor passes through.
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
     private void proceed(HttpContext<?> ctx) {
         ctx.set(PREPARED, Boolean.TRUE);
+        AttemptScope.Exchange exchange = ExchangeTracker.exchangeOf(ctx);
+        BodyCodec codec = ctx.request().bodyCodec();
+        if (exchange != null) {
+            exchange.codecKind(kindOf(codec));
+        }
+        Buffer encoded = ctx.get(ENCODED_JSON);
+        Object body = encoded != null ? encoded : ctx.body();
         long maxResponseBytes = settings.maxResponseBytes();
-        if (maxResponseBytes > 0 && !(ctx.request().bodyCodec() instanceof StreamCodec)) {
-            bindResponseBound(ctx, maxResponseBytes, settings.captureBodies());
+        if (maxResponseBytes > 0 && !(codec instanceof StreamCodec)) {
+            bindResponseBound(ctx, maxResponseBytes, body);
+            return;
+        }
+        if (encoded != null) {
+            HttpContext raw = ctx;
+            raw.prepareRequest(ctx.request(), ctx.contentType(), encoded);
             return;
         }
         ctx.next();
+    }
+
+    private static AttemptScope.Exchange.CodecKind kindOf(BodyCodec<?> codec) {
+        if (codec == BodyCodec.buffer()) {
+            return AttemptScope.Exchange.CodecKind.BUFFER;
+        }
+        if (codec == BodyCodec.none() || codec instanceof StreamCodec || DISCARDING_CODECS.contains(codec.getClass())) {
+            return AttemptScope.Exchange.CodecKind.DISCARDING;
+        }
+        return AttemptScope.Exchange.CodecKind.DECODING;
+    }
+
+    /**
+     * The classes of the codecs that hand the body bytes to a stream instead of decoding them. They are read
+     * from the codecs Vert.x builds, so no implementation class is named here.
+     */
+    private static Set<Class<?>> discardingCodecs() {
+        return Set.of(
+                BodyCodec.pipe(new NullSink<Buffer>()).getClass(),
+                BodyCodec.jsonStream(JsonParser.newParser()).getClass());
+    }
+
+    /** A write stream that only exists so a streaming codec can be built; it is never written to. */
+    private static final class NullSink<T> implements WriteStream<T> {
+        @Override
+        public WriteStream<T> exceptionHandler(Handler<Throwable> handler) {
+            return this;
+        }
+
+        @Override
+        public Future<Void> write(T data) {
+            return Future.succeededFuture();
+        }
+
+        @Override
+        public Future<Void> end() {
+            return Future.succeededFuture();
+        }
+
+        @Override
+        public WriteStream<T> setWriteQueueMaxSize(int maxSize) {
+            return this;
+        }
+
+        @Override
+        public boolean writeQueueFull() {
+            return false;
+        }
+
+        @Override
+        public WriteStream<T> drainHandler(Handler<Void> handler) {
+            return this;
+        }
     }
 
     /**
@@ -178,16 +262,20 @@ final class PrepareInterceptor implements Handler<HttpContext<?>> {
      * {@code as(codec)} changes a request in place and a resent request must not be wrapped twice.
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
-    private static void bindResponseBound(HttpContext<?> context, long limit, boolean capture) {
+    private static void bindResponseBound(HttpContext<?> context, long limit, Object body) {
         HttpContext ctx = context;
         HttpRequest request = ctx.request();
         AttemptScope.Exchange exchange = ExchangeTracker.exchangeOf(ctx);
-        // a Buffer codec hands its Buffer on as it is, so only another codec needs the bytes copied
-        Consumer<Buffer> copied =
-                capture && exchange != null && request.bodyCodec() != BodyCodec.buffer() ? exchange::copiedBytes : null;
+        // a Buffer codec hands its Buffer on as it is and a piping or discarding codec has no decoded body, so
+        // only a decoding codec needs the bytes copied, and only for an exchange whose bodies are captured
+        Consumer<Buffer> copied = exchange != null
+                        && exchange.isCapturing()
+                        && kindOf(request.bodyCodec()) == AttemptScope.Exchange.CodecKind.DECODING
+                ? exchange::copiedBytes
+                : null;
         BodyCodec bounded =
                 new BoundedBodyCodec(request.bodyCodec(), limit, () -> ExchangeTracker.overrun(ctx, limit), copied);
-        ctx.prepareRequest(copyOf(request).as(bounded), ctx.contentType(), ctx.body());
+        ctx.prepareRequest(copyOf(request).as(bounded), ctx.contentType(), body);
     }
 
     /** Copies a request with the URI-template variables and trace operation that {@code copy()} drops. */
@@ -220,14 +308,31 @@ final class PrepareInterceptor implements Handler<HttpContext<?>> {
         return copy;
     }
 
-    /** What the request preparation learned about the request body: whether it fits the bound and its payload. */
-    private record Measured(boolean fits, @Nullable PayloadSource payload) {}
+    /**
+     * What the request preparation learned about the request body.
+     *
+     * @param fits whether the body fits the request bound
+     * @param payload the body as described for the interceptors, or {@code null} when none is captured
+     * @param encodedJson the JSON body encoded the way the client sends it, or {@code null}
+     * @param failure why the body could not be encoded, or {@code null}
+     */
+    private record Measured(
+            boolean fits,
+            @Nullable PayloadSource payload,
+            @Nullable Buffer encodedJson,
+            @Nullable RuntimeException failure) {
+
+        static final Measured NOTHING = new Measured(true, null, null, null);
+    }
 
     /**
      * Measures the request body as it will be encoded, and describes it for the interceptors when
      * {@code capture} is set. A body that cannot be measured before sending (a stream or a multipart form)
      * does not fit the bound. Nothing is encoded for a client without a bound and without capture, and a JSON
-     * body is encoded once for both purposes.
+     * body is encoded here once; the bytes go on as the body, so the measure, the capture and the wire agree.
+     * A body that cannot be encoded does not change the outcome: a bounded client fails with the encoding
+     * failure, and a client that only captures reports the body as streaming and lets the send fail as it
+     * would without capture.
      *
      * @param limit the request bound, {@code 0} for none
      * @param capture whether to describe the body
@@ -235,53 +340,62 @@ final class PrepareInterceptor implements Handler<HttpContext<?>> {
     private static Measured measure(HttpContext<?> ctx, long limit, boolean capture) {
         boolean bounded = limit > 0;
         Object body = ctx.body();
-        if (body == null) {
-            return new Measured(true, null);
+        if (body == null || !bounded && !capture) {
+            return Measured.NOTHING;
         }
-        if (!bounded && !capture) {
-            return new Measured(true, null);
-        }
-        String contentType = ctx.contentType();
+        String contentType = typeOf(ctx);
         Buffer encoded = null;
-        if (body instanceof Buffer buffer) {
-            encoded = buffer;
-        } else if (body instanceof MultipartForm form && FORM_URLENCODED.equals(contentType)) {
-            if (!capture) {
-                return new Measured(encodedFormLength(form, limit) <= limit, null);
+        Buffer json = null;
+        boolean oversizedForm = false;
+        try {
+            if (body instanceof Buffer buffer) {
+                encoded = buffer;
+            } else if (body instanceof MultipartForm form && FORM_URLENCODED.equals(ctx.contentType())) {
+                oversizedForm = bounded && encodedFormLength(form, limit) > limit;
+                if (!capture) {
+                    return new Measured(!oversizedForm, null, null, null);
+                }
+                encoded = oversizedForm ? null : encodedForm(form);
+            } else if (JSON.equals(ctx.contentType()) && !(body instanceof MultipartForm)) {
+                json = body instanceof JsonObject object ? object.toBuffer() : Json.encodeToBuffer(body);
+                encoded = json;
             }
-            encoded = encodedForm(form);
-        } else if (JSON.equals(contentType) && !(body instanceof MultipartForm)) {
-            encoded = body instanceof JsonObject json ? json.toBuffer() : Json.encodeToBuffer(body);
+        } catch (RuntimeException unencodable) {
+            return new Measured(
+                    false,
+                    capture
+                            ? PayloadSources.streaming(
+                                    contentType, declaredLength(ctx.request().headers()))
+                            : null,
+                    null,
+                    unencodable);
         }
-        boolean fits = encoded != null && (!bounded || encoded.length() <= limit);
+        boolean fits = !oversizedForm && encoded != null && (!bounded || encoded.length() <= limit);
         if (!capture) {
-            return new Measured(fits, null);
+            return new Measured(fits, null, json, null);
         }
-        if (contentType == null) {
-            contentType = ctx.request().headers().get("Content-Type");
+        PayloadSource payload;
+        if (encoded != null && fits) {
+            payload = encoded.length() == 0 ? PayloadSources.absent() : PayloadSources.buffered(encoded, contentType);
+        } else {
+            long declared = encoded != null
+                    ? encoded.length()
+                    : declaredLength(ctx.request().headers());
+            payload = PayloadSources.streaming(contentType, declared);
         }
-        PayloadSource payload = encoded != null && fits
-                ? PayloadSources.buffered(encoded, contentType)
-                : PayloadSources.streaming(
-                        contentType,
-                        encoded != null
-                                ? encoded.length()
-                                : declaredLength(ctx.request().headers()));
-        return new Measured(fits, payload);
+        return new Measured(fits, payload, json, null);
+    }
+
+    /** The request's {@code Content-Type} when the caller set one, else the type the send method implies. */
+    @Nullable
+    private static String typeOf(HttpContext<?> ctx) {
+        String set = ctx.request().headers().get("Content-Type");
+        return set != null ? set : ctx.contentType();
     }
 
     /** The {@code Content-Length} the caller declared, or {@code -1} when there is none. */
     private static long declaredLength(MultiMap headers) {
-        String declared = headers.get("Content-Length");
-        if (declared == null) {
-            return -1;
-        }
-        try {
-            long length = Long.parseLong(declared.trim());
-            return length < 0 ? -1 : length;
-        } catch (NumberFormatException invalid) {
-            return -1;
-        }
+        return HeaderRules.declaredLength(headers.get("Content-Length"));
     }
 
     /** The url-encoded form as written to the wire. */

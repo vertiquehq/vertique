@@ -289,10 +289,14 @@ public final class HttpClientBuilder {
      * bodies of each exchange in {@code onAttemptCompleted}. The default is {@code false}: both bodies are
      * absent and the client retains, encodes and copies nothing for them. With {@code true} the bodies
      * are delivered unredacted, as written and received, so an interceptor that stores or logs them redacts
-     * what it keeps. A body is valid only during the callback; copy the bytes you keep. A streamed or
-     * multipart request body, a request body over the request bound, a response body that did not
-     * complete and every {@code stream(...)} body are reported as metadata only. Credentials a
-     * {@link CredentialSource} adds are headers and stay out of the request snapshot.
+     * what it keeps. A body is valid only during the callback. A body may be the caller's own buffer and is
+     * shared by every interceptor: read it, never write to it; copy what you keep or change. Within
+     * {@code execute}, the bodies of an attempt's exchanges are held until the attempt ends. A streamed or
+     * multipart request body, a request body over the request bound or one that cannot be encoded, a
+     * response body that did not complete, did not decode or is piped or discarded by the caller's codec,
+     * and every {@code stream(...)} body are reported as metadata only. A client without an interceptor
+     * retains nothing. Credentials a {@link CredentialSource} adds are headers and stay out of the request
+     * snapshot.
      *
      * @param capture whether to capture the request and response bodies
      * @return this builder

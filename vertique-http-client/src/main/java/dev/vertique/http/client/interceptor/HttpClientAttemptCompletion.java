@@ -17,8 +17,9 @@ import java.util.Objects;
  * class name of the error, never its message, and never a body.
  *
  * <p>The bodies are {@link PayloadSource} views that are valid only during the call of
- * {@code onAttemptCompleted} that receives this record: a body may view the caller's own buffer, so an
- * interceptor copies the bytes it keeps. They are delivered as written and received, unredacted;
+ * {@code onAttemptCompleted} that receives this record. A body may be the caller's own buffer and is shared by
+ * every interceptor: read it, never write to it, and copy what you keep or change. Within {@code execute},
+ * the bodies of an attempt's exchanges are held until the attempt ends. They are delivered as written and received, unredacted;
  * redacting what an interceptor stores or logs is its own job.
  *
  * @param statusCode the status of the response head when one arrived, otherwise {@code null}; between

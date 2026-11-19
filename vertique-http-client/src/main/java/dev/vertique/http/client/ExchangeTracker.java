@@ -135,7 +135,7 @@ final class ExchangeTracker implements Handler<HttpContext<?>> {
             case DISPATCH_RESPONSE -> {
                 AttemptScope.Exchange exchange = ctx.get(EXCHANGE);
                 if (exchange != null) {
-                    if (captureBodies && ctx.response() != null) {
+                    if (exchange.isCapturing() && ctx.response() != null) {
                         exchange.responseDecoded(ctx.response().body());
                     }
                     exchange.respond();

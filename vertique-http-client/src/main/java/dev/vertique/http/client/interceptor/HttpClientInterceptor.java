@@ -63,6 +63,11 @@ public interface HttpClientInterceptor extends OrderedExtension {
      *
      * <p>May run on any thread, and concurrently for different exchanges.
      *
+     * <p>When the client captures bodies, the completion carries the request and response bodies. They are
+     * valid only during this call. A body may be the caller's own buffer and is shared by every interceptor:
+     * read it, never write to it; copy what you keep or change. Within {@code execute}, the bodies of an
+     * attempt's exchanges are held until the attempt ends.
+     *
      * <p>Stated limits: a call refused by an open circuit or a full bulkhead, a call on a closed client
      * and a call cancelled before its exchange began have no exchange and no notification. An exchange whose
      * {@link #beforeRequest} ran is always completed, even when it is cancelled before a request exists.

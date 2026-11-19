@@ -6,11 +6,14 @@ package dev.vertique.http.client;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import dev.vertique.core.payload.PayloadKind;
+import dev.vertique.core.payload.PayloadSources;
 import dev.vertique.http.client.interceptor.HttpClientAttemptCompletion;
 import dev.vertique.http.client.interceptor.HttpClientAttemptTarget;
 import dev.vertique.http.client.interceptor.HttpClientRequestContext;
 import dev.vertique.http.client.interceptor.HttpClientResponseHead;
 import io.vertx.core.MultiMap;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
@@ -155,5 +158,42 @@ class InterceptorRecordsTest {
                     .doesNotContain("token=");
         }
         assertThat(original.toString()).doesNotContain("one");
+    }
+
+    @Test
+    @DisplayName("a null body becomes absent and the seven-argument constructor keeps both bodies absent")
+    void aNullBodyBecomesAbsentAndTheSevenArgumentConstructorKeepsBothBodiesAbsent() {
+        // Given a completion built with null bodies and one built through the seven-argument constructor
+        HttpClientAttemptTarget target = new HttpClientAttemptTarget("http", "h", 80);
+        HttpClientAttemptCompletion withNulls =
+                new HttpClientAttemptCompletion(200, null, "call-1", 1, 5, Instant.now(), target, null, null);
+        HttpClientAttemptCompletion withoutBodies =
+                new HttpClientAttemptCompletion(200, null, "call-1", 1, 5, Instant.now(), target);
+
+        // Then every body is an absent payload, never null
+        assertThat(withNulls.requestBody().kind()).isEqualTo(PayloadKind.ABSENT);
+        assertThat(withNulls.responseBody().kind()).isEqualTo(PayloadKind.ABSENT);
+        assertThat(withoutBodies.requestBody().kind()).isEqualTo(PayloadKind.ABSENT);
+        assertThat(withoutBodies.responseBody().kind()).isEqualTo(PayloadKind.ABSENT);
+    }
+
+    @Test
+    @DisplayName("toString of a completion carrying bodies prints neither")
+    void toStringOfACompletionCarryingBodiesPrintsNeither() {
+        // Given a completion carrying two buffered bodies
+        HttpClientAttemptCompletion completion = new HttpClientAttemptCompletion(
+                200,
+                null,
+                "call-1",
+                1,
+                5,
+                Instant.now(),
+                new HttpClientAttemptTarget("http", "h", 80),
+                PayloadSources.buffered("zz-request-body".getBytes(StandardCharsets.UTF_8), "text/plain"),
+                PayloadSources.buffered("zz-response-body".getBytes(StandardCharsets.UTF_8), "text/plain"));
+
+        // Then the printed form holds neither body
+        assertThat(completion.toString()).doesNotContain("zz-request-body").doesNotContain("zz-response-body");
+        assertThat(completion.requestBody().kind()).isEqualTo(PayloadKind.BUFFERED);
     }
 }

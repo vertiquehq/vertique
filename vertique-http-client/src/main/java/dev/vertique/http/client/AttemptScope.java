@@ -262,6 +262,7 @@ final class AttemptScope {
         private volatile PayloadSource requestBody = PayloadSources.absent();
         private volatile boolean responseDone;
         private volatile boolean responseValue;
+        private volatile CodecKind codecKind = CodecKind.DECODING;
         private volatile @Nullable Buffer responseBytes;
         private volatile @Nullable Buffer copiedBytes;
 
@@ -288,11 +289,17 @@ final class AttemptScope {
 
         /** Records the request body the interceptors are shown, as the request preparation measured it. */
         void requestBody(PayloadSource body) {
+            if (!capturing) {
+                return;
+            }
             requestBody = body;
         }
 
         /** Records the bytes a bounded codec passed on for the hop being received; they are a copy. */
         void copiedBytes(Buffer bytes) {
+            if (!capturing) {
+                return;
+            }
             copiedBytes = bytes;
         }
 
@@ -303,9 +310,32 @@ final class AttemptScope {
          * @param decoded the value the body codec produced, or {@code null}
          */
         void responseDecoded(@Nullable Object decoded) {
+            if (!capturing) {
+                return;
+            }
             responseBytes = decoded instanceof Buffer buffer ? buffer : copiedBytes;
             responseValue = decoded != null;
             responseDone = true;
+        }
+
+        /** How the caller's body codec treats the bytes of the response body. */
+        enum CodecKind {
+            /** The default {@code Buffer} codec: the decoded value is the body. */
+            BUFFER,
+            /** A codec that pipes or discards the bytes, so no decoded value stands for the body. */
+            DISCARDING,
+            /** Any other codec: it decodes the bytes into a value. */
+            DECODING
+        }
+
+        /** Records how the caller's body codec treats the response body. */
+        void codecKind(CodecKind kind) {
+            codecKind = kind;
+        }
+
+        /** Whether the interceptors receive this exchange's bodies. */
+        boolean isCapturing() {
+            return capturing;
         }
 
         /** The response body the interceptors are shown, from the head and the body the exchange completed with. */
@@ -314,30 +344,29 @@ final class AttemptScope {
                 return PayloadSources.absent();
             }
             String contentType = received.headers().get("Content-Type");
-            long declared = declaredLength(received);
+            long declared = HeaderRules.declaredLength(received.headers().get("Content-Length"));
+            if (stream != null || !responseDone) {
+                return PayloadSources.streaming(contentType, declared);
+            }
             Buffer bytes = responseBytes;
-            if (stream == null && responseDone) {
-                if (bytes != null) {
+            if (bytes != null) {
+                if (bytes.length() > 0) {
                     return PayloadSources.buffered(bytes, contentType);
                 }
-                if (!responseValue && declared <= 0) {
-                    return PayloadSources.absent();
-                }
+                return declared > 0 ? PayloadSources.streaming(contentType, declared) : PayloadSources.absent();
+            }
+            if (codecKind == CodecKind.BUFFER && !responseValue || declared == 0 || bodilessAnswer(received)) {
+                return PayloadSources.absent();
             }
             return PayloadSources.streaming(contentType, declared);
         }
 
-        private static long declaredLength(HttpClientResponseHead received) {
-            String declared = received.headers().get("Content-Length");
-            if (declared == null) {
-                return -1;
-            }
-            try {
-                long length = Long.parseLong(declared.trim());
-                return length < 0 ? -1 : length;
-            } catch (NumberFormatException invalid) {
-                return -1;
-            }
+        /** Whether the answer cannot carry a body: a {@code HEAD} request, a 204 or a 304. */
+        private boolean bodilessAnswer(HttpClientResponseHead received) {
+            HttpClientRequestContext sent = snapshot;
+            return received.statusCode() == 204
+                    || received.statusCode() == 304
+                    || sent != null && "HEAD".equalsIgnoreCase(sent.method());
         }
 
         /** Records that Vert.x creates a request for a hop: the first hop, or a followed redirect. */

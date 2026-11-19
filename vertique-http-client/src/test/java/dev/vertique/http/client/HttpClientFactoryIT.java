@@ -593,6 +593,20 @@ class HttpClientFactoryIT {
         assertThat(server.requestsTo("/after")).isEmpty();
     }
 
+    /** A null client name fails with a constant message before the map lookup. */
+    @Test
+    @DisplayName("client(null) fails with a NullPointerException naming the argument")
+    void clientWithANullNameFailsWithANullPointerException() {
+        // Given a factory with no configured client
+        AppComponent app = tracked(component(section(new JsonObject()), new CountingInterceptor("global")));
+
+        // When the application asks for the client named null
+        // Then it fails with a NullPointerException whose message is name
+        assertThatThrownBy(() -> app.factory().client(null))
+                .isExactlyInstanceOf(NullPointerException.class)
+                .hasMessage("name");
+    }
+
     private static void sleep(long ms) {
         try {
             Thread.sleep(ms);

@@ -4,6 +4,7 @@
 package dev.vertique.http.client;
 
 import io.vertx.core.MultiMap;
+import jakarta.annotation.Nullable;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -19,6 +20,24 @@ final class HeaderRules {
             Set.of("host", "content-length", "transfer-encoding", "connection", "upgrade", "te");
 
     private HeaderRules() {}
+
+    /**
+     * Parses a declared {@code Content-Length}.
+     *
+     * @param value the header value, or {@code null}
+     * @return the length, or {@code -1} when the header is absent, not a number or negative
+     */
+    static long declaredLength(@Nullable String value) {
+        if (value == null) {
+            return -1;
+        }
+        try {
+            long length = Long.parseLong(value.trim());
+            return length < 0 ? -1 : length;
+        } catch (NumberFormatException invalid) {
+            return -1;
+        }
+    }
 
     /**
      * Whether {@code name} is one of the header names the transport owns ({@code Host},

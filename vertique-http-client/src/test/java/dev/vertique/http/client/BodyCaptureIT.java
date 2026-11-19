@@ -295,16 +295,21 @@ class BodyCaptureIT {
         assertThat(body.kind()).isEqualTo(PayloadKind.BUFFERED);
         assertThat(body.text()).isEqualTo(text);
         assertThat(body.declaredLength()).isEqualTo(OptionalLong.of(text.getBytes(StandardCharsets.UTF_8).length));
-        if (contentType != null) {
-            assertThat(body.contentType()).hasValue(contentType);
-        }
+        assertContentType(body, contentType);
     }
 
     private static void assertMetadataOnly(Body body, @Nullable String contentType, long declaredLength) {
         assertThat(body.kind()).isEqualTo(PayloadKind.STREAMING);
         assertThat(body.bytes()).isEmpty();
-        assertThat(body.declaredLength()).isEqualTo(OptionalLong.of(declaredLength));
-        if (contentType != null) {
+        assertThat(body.declaredLength())
+                .isEqualTo(declaredLength < 0 ? OptionalLong.empty() : OptionalLong.of(declaredLength));
+        assertContentType(body, contentType);
+    }
+
+    private static void assertContentType(Body body, @Nullable String contentType) {
+        if (contentType == null) {
+            assertThat(body.contentType()).isEmpty();
+        } else {
             assertThat(body.contentType()).hasValue(contentType);
         }
     }
@@ -447,7 +452,11 @@ class BodyCaptureIT {
         HttpClient client = build(builder(server.origin(), recorder).captureBodies(true));
 
         // When the caller sends a buffer, a JSON object, a form, a string-codec request and a refused 503
-        await(client.execute(web -> web.post("/buffer").sendBuffer(Buffer.buffer("hello"))));
+        Buffer callerBuffer = Buffer.buffer("hello");
+        await(client.execute(web -> web.post("/buffer").sendBuffer(callerBuffer)));
+        await(client.execute(web -> web.patch("/patch")
+                .putHeader("Content-Type", "application/merge-patch+json")
+                .sendJsonObject(new JsonObject().put("b", 2))));
         await(client.execute(web -> web.post("/json").sendJsonObject(new JsonObject().put("a", 1))));
         MultiMap form = MultiMap.caseInsensitiveMultiMap().add("a", "1").add("b", "2");
         await(client.execute(web -> web.post("/form").sendForm(form)));
@@ -459,8 +468,15 @@ class BodyCaptureIT {
         assertThat(refused).isInstanceOf(HttpStatusRejectedException.class);
 
         // Then each completion carries the bytes written to the wire and received, with content types
-        List<Seen> all = settled(recorder, 5);
-        assertThat(all).hasSize(5);
+        List<Seen> all = settled(recorder, 6);
+        assertThat(all).hasSize(6);
+        // And the caller's own buffer was only read
+        assertThat(callerBuffer.toString()).isEqualTo("hello");
+
+        // And a Content-Type the caller set wins over the type the send method implies
+        Seen patch = byPath(all, "/patch");
+        assertBuffered(patch.requestBody(), "{\"b\":2}", "application/merge-patch+json");
+        assertBuffered(patch.responseBody(), "{\"b\":2}", "application/merge-patch+json");
         Seen buffer = byPath(all, "/buffer");
         assertBuffered(buffer.requestBody(), "hello", null);
         assertBuffered(buffer.responseBody(), "hello", null);
@@ -612,12 +628,30 @@ class BodyCaptureIT {
         assertMetadataOnly(streamSeen.responseBody(), "text/plain", 6);
     }
 
+    /** AC-097: a refusal before sending describes the body the caller wrote. */
+    @Test
+    @DisplayName("AC-097: a relative request without a base URL reports the buffered body")
+    void anEarlyRefusalReportsTheBufferedBody() {
+        // Given a capturing client without a base URL
+        Recorder recorder = new Recorder();
+
+        // When the caller sends a relative request with a body
+        Throwable relative = awaitFailure(build(builder(null, recorder).captureBodies(true))
+                .execute(web -> web.post("/x").sendBuffer(Buffer.buffer("hello"))));
+
+        // Then it is refused without sending and reports the request body BUFFERED and the response ABSENT
+        assertThat(relative).isInstanceOf(IllegalStateException.class);
+        Seen seen = only(recorder);
+        assertBuffered(seen.requestBody(), "hello", null);
+        assertAbsent(seen.responseBody());
+    }
+
     /** AC-098: a followed redirect reports the final hop's response body. */
     @Test
     @DisplayName("AC-098: a followed redirect reports the final hop's response body")
     void aFollowedRedirectReportsTheFinalHopsResponseBody() {
         // Given a capturing client that follows redirects and a server redirecting POST /a to /b, which
-        // answers 201 with body done. A 303 is used because a 307 on a POST is returned, not followed.
+        // answers 200 with body done. A 303 is used because a 307 on a POST is returned, not followed.
         RecordingServer server = support.server((request, body) -> {
             if (request.path().equals("/a")) {
                 request.response()
@@ -625,7 +659,7 @@ class BodyCaptureIT {
                         .putHeader("Location", "/b")
                         .end("moved");
             } else {
-                request.response().setStatusCode(201).end("done");
+                request.response().setStatusCode(200).end("done");
             }
         });
         Recorder recorder = new Recorder();
@@ -637,13 +671,165 @@ class BodyCaptureIT {
         // When the caller sends sendBuffer("payload") to /a
         HttpResponse<Buffer> response =
                 await(client.execute(web -> web.post("/a").sendBuffer(Buffer.buffer("payload"))));
-        assertThat(response.statusCode()).isEqualTo(201);
+        assertThat(response.statusCode()).isEqualTo(200);
 
         // Then the completion reports the request body and the final hop's response body, not the redirect's
         Seen seen = only(recorder);
         assertThat(server.requestsTo("/b")).hasSize(1);
         assertBuffered(seen.requestBody(), "payload", null);
         assertBuffered(seen.responseBody(), "done", null);
+
+        // And the same through a decoding codec, whose copy sink crosses the hops, reports the final hop too
+        HttpResponse<String> decoded = await(
+                client.execute(web -> web.post("/a").as(BodyCodec.string()).sendBuffer(Buffer.buffer("payload"))));
+        assertThat(decoded.body()).isEqualTo("done");
+        List<Seen> both = settled(recorder, 2);
+        assertThat(both).hasSize(2);
+        assertBuffered(both.get(1).requestBody(), "payload", null);
+        assertBuffered(both.get(1).responseBody(), "done", null);
+    }
+
+    /** AC-097: a chunked response over the bound, read by a decoding codec, is metadata only. */
+    @Test
+    @DisplayName("AC-097: a chunked response over the bound read by a decoding codec is metadata only")
+    void aChunkedResponseOverTheBoundReadByADecodingCodecIsMetadataOnly() {
+        // Given a capturing client with maxResponseBytes(1024) and a server streaming 1800 bytes with no length
+        RecordingServer server = support.server((request, body) -> {
+            request.response().setChunked(true).putHeader("Content-Type", "text/plain");
+            request.response().write("x".repeat(600));
+            request.response().write("x".repeat(600));
+            request.response().write("x".repeat(600));
+            request.response().end();
+        });
+        Recorder recorder = new Recorder();
+        HttpClient client =
+                build(builder(server.origin(), recorder).captureBodies(true).maxResponseBytes(LIMIT));
+
+        // When the caller reads it with as(BodyCodec.string())
+        Throwable bound = awaitFailure(
+                client.execute(web -> web.get("/").as(BodyCodec.string()).send()));
+
+        // Then the call fails on the bound and the response is STREAMING with the head's type and no length
+        assertThat(bound).isInstanceOf(HttpBodyLimitException.class);
+        Seen seen = only(recorder);
+        assertAbsent(seen.requestBody());
+        assertMetadataOnly(seen.responseBody(), "text/plain", -1);
+    }
+
+    /** AC-097: a body the caller pipes or discards is metadata only, with nothing copied. */
+    @Test
+    @DisplayName("AC-097: a piped or discarded response body is metadata only")
+    void aPipedOrDiscardedResponseBodyIsMetadataOnly() {
+        // Given a capturing client and a server answering 200 with a two-byte text body
+        RecordingServer server = support.server((request, body) ->
+                request.response().putHeader("Content-Type", "text/plain").end("ok"));
+        Recorder recorder = new Recorder();
+        HttpClient client = build(builder(server.origin(), recorder).captureBodies(true));
+
+        // When the caller pipes the body to a sink and, in another exchange, discards it
+        FirstChunkSink sink = new FirstChunkSink();
+        await(client.execute(web -> web.get("/pipe").as(BodyCodec.pipe(sink)).send()));
+        await(client.execute(web -> web.get("/none").as(BodyCodec.none()).send()));
+
+        // Then both responses are STREAMING with the head's type and declared length, and no bytes
+        assertThat(sink.received).isTrue();
+        List<Seen> all = settled(recorder, 2);
+        assertThat(all).hasSize(2);
+        assertMetadataOnly(byPath(all, "/pipe").responseBody(), "text/plain", 2);
+        assertMetadataOnly(byPath(all, "/none").responseBody(), "text/plain", 2);
+    }
+
+    /** AC-096: an empty body is absent, on the request and on the response, a 204 included. */
+    @Test
+    @DisplayName("AC-096: an empty body is absent")
+    void anEmptyBodyIsAbsent() {
+        // Given a capturing client and a server answering 204, and 200 with an empty body
+        RecordingServer server = support.server((request, body) -> {
+            if (request.path().equals("/empty")) {
+                request.response().end();
+            } else {
+                request.response().setStatusCode(204).end();
+            }
+        });
+        Recorder recorder = new Recorder();
+        HttpClient client = build(builder(server.origin(), recorder).captureBodies(true));
+
+        // When the caller posts an empty buffer to each
+        await(client.execute(web -> web.post("/none").sendBuffer(Buffer.buffer())));
+        await(client.execute(web -> web.post("/empty").sendBuffer(Buffer.buffer())));
+        await(client.execute(web -> web.get("/get").send()));
+
+        // Then every request and response body is ABSENT
+        List<Seen> all = settled(recorder, 3);
+        assertThat(all).hasSize(3);
+        for (Seen seen : all) {
+            assertAbsent(seen.requestBody());
+            assertAbsent(seen.responseBody());
+        }
+        assertThat(byPath(all, "/none").completion().statusCode()).isEqualTo(204);
+    }
+
+    /** AC-095: capture with no interceptor registered changes nothing for the caller. */
+    @Test
+    @DisplayName("AC-095: capture without an interceptor leaves the exchange unchanged")
+    void captureWithoutAnInterceptorLeavesTheExchangeUnchanged() {
+        // Given a capturing client with no interceptor and a server answering ok
+        RecordingServer server = okServer();
+        HttpClient client = build(builder(server.origin()).captureBodies(true));
+
+        // When the caller sends a JSON body, read by a decoding codec
+        HttpResponse<String> response = await(client.execute(
+                web -> web.post("/x").as(BodyCodec.string()).sendJsonObject(new JsonObject().put("a", 1))));
+
+        // Then the exchange succeeds as it does without capture
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.body()).isEqualTo("ok");
+        assertThat(server.requestsTo("/x").get(0).body().toString()).isEqualTo("{\"a\":1}");
+    }
+
+    /** A value whose getter throws, so that encoding it as JSON fails. */
+    public static final class Exploding {
+        public String getValue() {
+            throw new IllegalStateException("cannot encode");
+        }
+    }
+
+    /** AC-096: a JSON body the capture cannot encode does not change the outcome of the exchange. */
+    @Test
+    @DisplayName("AC-096: a JSON body that cannot be encoded fails as it does without capture")
+    void aJsonBodyThatCannotBeEncodedFailsAsItDoesWithoutCapture() {
+        // Given a capturing and a plain client, each with a recorder, and a server answering ok
+        RecordingServer server = okServer();
+        Recorder capturingRec = new Recorder();
+        Recorder plainRec = new Recorder();
+        HttpClient capturing = build(builder(server.origin(), capturingRec).captureBodies(true));
+        HttpClient plain = build(builder(server.origin(), plainRec));
+
+        // When each sends a POJO that cannot be encoded
+        Throwable withCapture =
+                awaitFailure(capturing.execute(web -> web.post("/x").sendJson(new Exploding())));
+        Throwable withoutCapture =
+                awaitFailure(plain.execute(web -> web.post("/x").sendJson(new Exploding())));
+
+        // Then both fail the same way, nothing is sent, and each is notified once
+        assertThat(withCapture).isInstanceOf(withoutCapture.getClass());
+        assertThat(server.requests).isEmpty();
+        Seen capturingSeen = only(capturingRec);
+        Seen plainSeen = only(plainRec);
+        assertThat(capturingSeen.completion().error()).isSameAs(withCapture);
+        assertThat(plainSeen.completion().error()).isSameAs(withoutCapture);
+        // And the capturing client reports the body as streaming metadata
+        assertMetadataOnly(capturingSeen.requestBody(), "application/json", -1);
+        assertAbsent(plainSeen.requestBody());
+
+        // And a client with a request bound fails with the encoding failure before sending
+        Recorder boundedRec = new Recorder();
+        Throwable bounded = awaitFailure(
+                build(builder(server.origin(), boundedRec).captureBodies(true).maxRequestBytes(LIMIT))
+                        .execute(web -> web.post("/x").sendJson(new Exploding())));
+        assertThat(bounded).isNotInstanceOf(HttpBodyLimitException.class);
+        assertThat(server.requests).isEmpty();
+        assertThat(only(boundedRec).completion().error()).isSameAs(bounded);
     }
 
     /** AC-099: bodies are unredacted while credentials and printing stay excluded. */
@@ -664,8 +850,8 @@ class BodyCaptureIT {
 
         // Then both bodies are held unchanged
         Seen seen = only(recorder);
-        assertThat(seen.requestBody().text()).isEqualTo("{\"password\":\"p\"}");
-        assertThat(seen.responseBody().text()).isEqualTo("{\"access_token\":\"s3cr3t\"}");
+        assertBuffered(seen.requestBody(), "{\"password\":\"p\"}", "application/json");
+        assertBuffered(seen.responseBody(), "{\"access_token\":\"s3cr3t\"}", "application/json");
 
         // And the credential reached the server but is not in the request snapshot
         assertThat(server.requests.get(0).headers().get("Authorization")).isEqualTo("Bearer t");
