@@ -420,8 +420,16 @@ class HttpStreamIT {
         final long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         final Buffer chunk = Buffer.buffer(new byte[64 * 1024]);
 
+        /** Writes at most this many chunks per event-loop turn, so a fast reader never holds the loop long. */
+        private static final int CHUNKS_PER_TURN = 16;
+
         void pump(HttpServerResponse response) {
+            int chunks = 0;
             while (!response.closed() && System.nanoTime() < deadlineNanos) {
+                if (chunks++ == CHUNKS_PER_TURN) {
+                    Vertx.currentContext().runOnContext(v -> pump(response));
+                    return;
+                }
                 if (response.writeQueueFull()) {
                     full = true;
                     response.drainHandler(v -> {

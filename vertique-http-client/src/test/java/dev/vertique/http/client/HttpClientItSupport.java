@@ -147,10 +147,18 @@ final class HttpClientItSupport {
         }
     }
 
-    /** Fails when the blocked-thread checker logged a warning or error since start. */
+    /**
+     * Fails when the blocked-thread checker logged a warning or error since the previous check, then forgets
+     * them, so one test's warning does not fail the tests after it.
+     */
     void assertNoBlockedThreadWarning() {
         List<String> warnings = new ArrayList<>();
-        for (ILoggingEvent event : new ArrayList<>(blockedThreadEvents.list)) {
+        List<ILoggingEvent> events;
+        synchronized (blockedThreadEvents) { // AppenderBase.doAppend holds this lock while appending
+            events = new ArrayList<>(blockedThreadEvents.list);
+            blockedThreadEvents.list.clear();
+        }
+        for (ILoggingEvent event : events) {
             if (event.getLevel().isGreaterOrEqual(Level.WARN)) {
                 warnings.add(event.getLevel() + " " + event.getFormattedMessage());
             }
