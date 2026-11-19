@@ -9,9 +9,12 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.vertique.resilience.adapter.AdapterOperationIdentity;
+import dev.vertique.resilience.adapter.ResilienceAdapterContext;
 import dev.vertique.resilience.exception.CircuitOpenException;
 import dev.vertique.resilience.spi.ResilienceObserver;
 import dev.vertique.resilience.spi.event.ResilienceEvent;
+import dev.vertique.resilience.spi.event.RetryExhausted;
 import dev.vertique.resilience.spi.event.RetryScheduled;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -103,6 +106,9 @@ class PublicBuilderOptionsTest {
         assertSame(tooLong, refused.getCause());
         assertEquals(1, refusedAttempts.get());
         assertTrue(millisBetween(startedAt, System.nanoTime()) < 5_000L, "the 10 s hint must not be waited out");
+        // And the refusal emits RetryExhausted once and no RetryScheduled
+        assertEquals(List.of(), delays());
+        assertEquals(1, events.stream().filter(RetryExhausted.class::isInstance).count());
 
         // And a pipeline built without retryAfterMaxMs retries after the 10 ms backoff
         events.clear();
@@ -177,6 +183,63 @@ class PublicBuilderOptionsTest {
                 })));
         assertInstanceOf(CircuitOpenException.class, plainOpen.getCause());
         assertEquals(0, plainCalls.get());
+    }
+
+    /** A predicate that throws counts the failure, so two failures open a breaker with 2 max failures. */
+    @Test
+    @DisplayName("AC-094: a throwing breaker predicate counts the failure")
+    void throwingPredicateCountsTheFailure(Vertx vertx) throws Exception {
+        // Given a breaker with 2 max failures whose predicate throws
+        resilience = Resilience.create(vertx);
+        ResiliencePipeline pipeline = resilience
+                .pipeline("b-throwing")
+                .circuitBreaker(cb -> cb.maxFailures(2)
+                        .resetTimeout(Duration.ofSeconds(60))
+                        .countsAsFailure(f -> {
+                            throw new IllegalStateException("predicate failed");
+                        }))
+                .build();
+
+        // When two failures run, each surfaces unchanged
+        for (int i = 0; i < 2; i++) {
+            IllegalArgumentException failure = new IllegalArgumentException("counted " + i);
+            assertSame(failure, failureOf(pipeline, failure), "failure " + i);
+        }
+
+        // Then the circuit is open
+        ExecutionException open = assertThrows(
+                ExecutionException.class, () -> await(pipeline.execute(() -> Future.succeededFuture("never"))));
+        assertInstanceOf(CircuitOpenException.class, open.getCause());
+    }
+
+    /** An adapter classifier on a shared breaker decides over the predicate the breaker carries. */
+    @Test
+    @DisplayName("AC-094: an adapter classifier takes precedence over the breaker's predicate")
+    void adapterClassifierTakesPrecedenceOverBreakerPredicate(Vertx vertx) throws Exception {
+        // Given a shared breaker whose predicate counts nothing, and an adapter pipeline whose classifier counts
+        // everything
+        resilience = Resilience.create(vertx);
+        CircuitBreaker shared = CircuitBreaker.builder(resilience, "shared")
+                .maxFailures(1)
+                .resetTimeout(Duration.ofSeconds(60))
+                .countsAsFailure(f -> false)
+                .build();
+        ResilienceAdapterContext context = resilience.adapterSupport().newContext();
+        ResiliencePipeline pipeline = context.pipeline(
+                new AdapterOperationIdentity("test.adapter", List.of("precedence")),
+                new ResolvedResiliencePolicy(Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty()),
+                shared,
+                failure -> true);
+
+        // When one failure runs
+        IllegalStateException failure = new IllegalStateException("counted by the classifier");
+        assertSame(failure, failureOf(pipeline, failure));
+
+        // Then the classifier decided: the circuit is open although the predicate rejects the failure
+        ExecutionException open = assertThrows(
+                ExecutionException.class, () -> await(pipeline.execute(() -> Future.succeededFuture("never"))));
+        assertInstanceOf(CircuitOpenException.class, open.getCause());
+        await(context.close());
     }
 
     private static Throwable failureOf(ResiliencePipeline pipeline, Throwable failure) {

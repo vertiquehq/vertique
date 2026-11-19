@@ -218,6 +218,11 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
          * counts the failure. Without a predicate every failure counts. A pipeline built through a
          * framework adapter with its own classifier uses that classifier instead.
          *
+         * <p>A failure the predicate rejects on the half-open trial counts as a success and closes the
+         * circuit, because the dependency answered. Fatal throwables pass through before the predicate
+         * runs. A breaker may be shared by several pipelines and threads, so the predicate must be
+         * non-blocking and thread-safe.
+         *
          * @param counts returns {@code true} for a failure that counts
          * @return this builder
          */

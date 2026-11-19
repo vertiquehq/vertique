@@ -268,8 +268,10 @@ breaker contributes only its state key; direct breaker execution uses the state 
 By default every final failure counts against the breaker. `CircuitBreaker.Builder.countsAsFailure(Predicate<?
 super Throwable>)` narrows that: a failure the predicate rejects still surfaces to the caller unchanged, but
 it is recorded as a success, so it neither opens the breaker nor extends a failure streak. A predicate that
-throws counts the failure, and fatal errors are never reclassified. A classifier supplied by a framework
-adapter takes precedence over the builder's predicate.
+throws counts the failure, and fatal errors pass through before the predicate runs. A rejected failure on the
+half-open trial counts as a success and closes the circuit, because the dependency answered. The predicate must be
+non-blocking and thread-safe, since a breaker may be shared. A classifier supplied by a framework adapter takes
+precedence over the builder's predicate.
 
 ```java
 ResiliencePipeline pipeline = resilience.pipeline("inventory")
@@ -282,8 +284,8 @@ status code signals a caller mistake.
 
 Framework adapters should obtain `ResilienceAdapterContext` from
 `ResilienceAdapterSupport.newContext()`. The context creates structured-identity breakers and
-explicitly tracks same-owner prebuilt reuse. Its classifier overload is the adapter-only failure
-classification seam; application builders do not expose it. `close()` is idempotent, closes owned
+explicitly tracks same-owner prebuilt reuse. Its classifier overload sets the failure classification for
+adapter-final failures and takes precedence over a breaker's `countsAsFailure` predicate. `close()` is idempotent, closes owned
 breakers, and fences active timeout/retry/breaker pipeline futures with `ResilienceClosedException`.
 
 ### Bulkhead execution

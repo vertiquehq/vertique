@@ -19,6 +19,7 @@ import dev.vertique.http.client.interceptor.HttpClientAttemptCompletion;
 import dev.vertique.http.client.interceptor.HttpClientInterceptor;
 import dev.vertique.http.client.interceptor.HttpClientRequestContext;
 import dev.vertique.http.client.interceptor.HttpClientResponseHead;
+import dev.vertique.resilience.BulkheadConfig;
 import dev.vertique.resilience.Resilience;
 import dev.vertique.resilience.ResilienceDefaults;
 import dev.vertique.resilience.ResiliencePipeline;
@@ -205,6 +206,16 @@ class ClientResilienceIT {
                     cb.maxFailures(config.maxFailures()).resetTimeout(Duration.ofMillis(config.resetTimeoutMs()));
                     if (classifier != null) {
                         cb.countsAsFailure(classifier);
+                    }
+                }));
+        resolved.bulkhead()
+                .ifPresent(config -> pipeline.bulkhead(b -> {
+                    switch (config) {
+                        case BulkheadConfig.Reject reject ->
+                            b.maxConcurrentCalls(reject.maxConcurrentCalls()).reject();
+                        case BulkheadConfig.Queue queue ->
+                            b.maxConcurrentCalls(queue.maxConcurrentCalls())
+                                    .queue(queue.maxQueueSize(), Duration.ofMillis(queue.queueTimeoutMs()));
                     }
                 }));
         return pipeline.build();

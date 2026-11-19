@@ -148,7 +148,7 @@ you do not control, an `allowHosts(...)` policy.
 | Where the attempt timer fires | The caller sees | Runtime event |
 |---|---|---|
 | No pipeline (`noResilience()` or none passed) | raw `java.util.concurrent.TimeoutException` | none |
-| A prebuilt pipeline (`CallOptions.resilience(...)`) | raw `TimeoutException`; the pipeline's own timeout concern, if any, applies its own timeout on top | only what that concern emits |
+| A prebuilt pipeline (`CallOptions.resilience(...)`) | a raw `TimeoutException` when the pipeline has no timeout concern; otherwise the pipeline turns it into `ResilienceTimeoutException` before retry and breaker classification | only what that concern emits |
 | A `stream(...)` body idle for `streamIdleTimeout` | raw `TimeoutException` from `completion()` | none |
 
 Match on the type that fits your call: a `retryOn` or `abortOn` entry naming `ResilienceTimeoutException`
@@ -183,8 +183,8 @@ called on one. A `null` argument fails the returned future with `IllegalArgument
 
 ### HttpClientBuilder
 
-Creates clients: `HttpClientBuilder.create(vertx)` or `create(vertx, resilience)` with a
-runtime the caller owns.
+Creates clients: `HttpClientBuilder.create(vertx)`. Resilience reaches a call only through
+`CallOptions.resilience(ResiliencePipeline)`.
 
 | Method | Effect |
 |---|---|
@@ -205,8 +205,9 @@ runtime the caller owns.
 | `defaultHeader(String, String)` | Header added to every request that does not set it; the setter throws `HttpClientConfigurationException` at call time for a name that is not a token, a transport-owned name (`Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Upgrade`, `TE`) or a value with a control character; configured default headers are checked at startup |
 | `build()` | Builds a client with its own agent |
 
-Setters take effect at `build()`: a client keeps the values the builder held when it was built. An
-invalid setting makes `build()` throw `HttpClientConfigurationException` with a message that does
+Setters take effect at `build()`: a client keeps the values the builder held when it was built. `baseUrl(...)`
+and `defaultHeader(...)` throw `HttpClientConfigurationException` at the setter; any other invalid setting makes
+`build()` throw `HttpClientConfigurationException` with a message that does
 not contain the rejected value; the builder stays usable once the setting is corrected. The builder has no
 `close()`: close a client built by `HttpClientBuilder.create(vertx)` with `HttpClient.close()`; the factory closes
 the clients it builds, including those of its builders.
@@ -229,9 +230,15 @@ Future<String> scoped = client.execute(web ->
 `name()` returns the client name, `webClient()` the governed `WebClient` for direct use, `execute`
 runs an attempt function (with `CallOptions.defaults()` or the given options), `stream` opens a response
 whose body is read incrementally (see Streams), and `close()` fails the calls
-still running and the open streams with `HttpClientClosedException`, closes the policy pipelines and the agent, and resets requests still open. Closing again returns the same future.
+still running and the open streams with `HttpClientClosedException`, closes the agent (it closes no pipelines), and resets requests still open. Closing again returns the same future.
 A call started after `close()` fails with `HttpClientClosedException` without opening a connection and without
 notifying interceptors.
+
+### Configuration records
+
+- `HttpClientConfig`: the parsed `httpClient.{name}` section, passed to `HttpClientBuilder.config(...)`.
+- `HttpClientEgressConfig`: its `egress` part (`egress.allowHosts`).
+- `HttpClientPoolConfig`: its `pool` part (connection pool sizing).
 
 ### Streams
 
@@ -446,12 +453,14 @@ final class ClientCredentialsSource implements CredentialSource {
         if (token != null && System.nanoTime() - expiresAtNanos < 0) {
             return Future.succeededFuture(Map.of("Authorization", "Bearer " + token));
         }
-        if (inFlight == null) {
+        Future<String> current = inFlight;
+        if (current == null) {
             Future<String> fetching = fetch();
             inFlight = fetching;
             fetching.onComplete(done -> clear(fetching));
+            current = fetching;
         }
-        return inFlight.map(t -> Map.of("Authorization", "Bearer " + t));
+        return current.map(t -> Map.of("Authorization", "Bearer " + t));
     }
 
     private synchronized void clear(Future<String> done) {
@@ -581,6 +590,8 @@ that provides `Vertx` and the `@VertxConfig JsonObject`. It includes the resilie
   `@Provides @IntoSet HttpClientInterceptor`. They are seeded into every client and builder of the factory
   and run in `OrderedExtension` order with the ones a builder registers.
 - the parsed `httpClient` index.
+- a startup validator: every configured client is checked at startup, and a rejected setting fails startup with
+  the key path in the message and never the value.
 - the shutdown step that closes the factory's clients.
 
 ## Lifecycle
@@ -595,7 +606,7 @@ afterwards fails with `HttpClientClosedException`.
 ## Dependencies
 
 - `vertique-core` supplies the exception roots.
-- `vertique-resilience` supplies the `Resilience` runtime accepted by the builder.
+- `vertique-resilience` supplies the pipeline types (`ResiliencePipeline`) that `CallOptions.resilience(...)` takes; `HttpClientModule` includes its `ResilienceModule`.
 - Vert.x Web Client supplies `WebClient`, `HttpRequest`, `HttpResponse` and the HTTP agent.
 - Dagger and `jakarta.inject` wire `HttpClientModule`; both already come with `vertique-resilience`. The
   module adds no other third-party artifact.

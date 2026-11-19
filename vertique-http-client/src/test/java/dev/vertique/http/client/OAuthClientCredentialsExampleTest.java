@@ -4,10 +4,12 @@
 package dev.vertique.http.client;
 
 import static dev.vertique.http.client.HttpClientItSupport.await;
+import static dev.vertique.http.client.HttpClientItSupport.awaitFailure;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.vertique.http.client.HttpClientItSupport.RecordedRequest;
 import dev.vertique.http.client.HttpClientItSupport.RecordingServer;
+import dev.vertique.http.client.exception.HttpCredentialException;
 import io.vertx.core.Future;
 import io.vertx.core.MultiMap;
 import io.vertx.ext.web.client.HttpResponse;
@@ -16,6 +18,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -70,12 +73,14 @@ class OAuthClientCredentialsExampleTest {
             if (token != null && System.nanoTime() - expiresAtNanos < 0) {
                 return Future.succeededFuture(Map.of("Authorization", "Bearer " + token));
             }
-            if (inFlight == null) {
+            Future<String> current = inFlight;
+            if (current == null) {
                 Future<String> fetching = fetch();
                 inFlight = fetching;
                 fetching.onComplete(done -> clear(fetching));
+                current = fetching;
             }
-            return inFlight.map(t -> Map.of("Authorization", "Bearer " + t));
+            return current.map(t -> Map.of("Authorization", "Bearer " + t));
         }
 
         private synchronized void clear(Future<String> done) {
@@ -143,6 +148,46 @@ class OAuthClientCredentialsExampleTest {
         assertThat(tokenRequest.headers().get("Authorization")).isNull();
         assertThat(tokenRequest.body().toString())
                 .contains("grant_type=client_credentials", "client_id=my-client", "client_secret=my-secret");
+    }
+
+    @Test
+    void aFailedTokenFetchIsNotCachedAndTheNextCallFetchesAgain() {
+        // Given a token server that answers 500 first and then a token
+        AtomicInteger tokenCalls = new AtomicInteger();
+        RecordingServer tokenServer = support.server((rq, body) -> {
+            if (tokenCalls.incrementAndGet() == 1) {
+                rq.response().setStatusCode(500).end("down");
+            } else {
+                rq.response()
+                        .putHeader("Content-Type", "application/json")
+                        .end("{\"access_token\":\"tok-2\",\"token_type\":\"Bearer\",\"expires_in\":3600}");
+            }
+        });
+        RecordingServer apiServer = support.server((rq, body) -> rq.response().end("ok"));
+        HttpClient authClient = HttpClientBuilder.create(support.vertx)
+                .name("auth")
+                .baseUrl(tokenServer.origin())
+                .build();
+        support.track(authClient::close);
+        HttpClient apiClient = HttpClientBuilder.create(support.vertx)
+                .name("api")
+                .baseUrl(apiServer.origin())
+                .credentials(new ClientCredentialsSource(authClient, "my-client", "my-secret"))
+                .build();
+        support.track(apiClient::close);
+
+        // When the first API call runs while the token endpoint fails
+        Throwable failure = awaitFailure(call(apiClient, "/a"));
+
+        // Then it fails with a credential failure (the token fetch's status rejection) and sends nothing to the API
+        assertThat(failure).isInstanceOf(HttpCredentialException.class);
+        assertThat(apiServer.requests).isEmpty();
+
+        // And the next call fetches the token again and succeeds with it
+        assertThat(await(call(apiClient, "/b"))).isEqualTo(200);
+        assertThat(apiServer.requests).hasSize(1);
+        assertThat(apiServer.requests.get(0).headers().get("Authorization")).isEqualTo("Bearer tok-2");
+        assertThat(tokenServer.requests).hasSize(2);
     }
 
     private static Future<Integer> call(HttpClient client, String path) {
