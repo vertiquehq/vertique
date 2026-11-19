@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentCaptor.forClass;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -37,6 +38,7 @@ import dev.vertique.inboxoutbox.DestinationType;
 import dev.vertique.inboxoutbox.OutboxDeliveryMetadata;
 import dev.vertique.inboxoutbox.OutboxEntry;
 import dev.vertique.inboxoutbox.OutboxMetadata;
+import dev.vertique.inboxoutbox.OutboxRelayConfig;
 import dev.vertique.inboxoutbox.OutboxRepository;
 import dev.vertique.inboxoutbox.exception.InboxOutboxPersistenceException;
 import io.vertx.core.Future;
@@ -92,8 +94,13 @@ class DefaultOutboxServiceTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = new DurableContextPropagator(
                 new DurableContextMetadataRegistry(Set.of(), Set.of()), holder, new ContextScopeBinder(holder));
-        service = new DefaultOutboxService(repository, propagator, new PgInboxOutboxExceptionMapper());
+        service = new DefaultOutboxService(
+                repository,
+                propagator,
+                new PgInboxOutboxExceptionMapper(),
+                OutboxRelayConfig.builder().build());
         when(entry.scopeKey()).thenReturn(ScopeKey.DEFAULT.value());
+        when(entry.withDefaultMaxAttempts(anyInt())).thenReturn(entry);
     }
 
     @Test
@@ -132,6 +139,7 @@ class DefaultOutboxServiceTest {
         OutboxEntry entryWithHeaders = mock(OutboxEntry.class);
         when(entryWithHeaders.headers()).thenReturn(java.util.Map.of("x-app", "val"));
         when(entryWithHeaders.scopeKey()).thenReturn(ScopeKey.DEFAULT.value());
+        when(entryWithHeaders.withDefaultMaxAttempts(anyInt())).thenReturn(entryWithHeaders);
         when(repository.insert(any(), any(), any(), any())).thenReturn(Future.succeededFuture(1L));
 
         service.publish(tx, entryWithHeaders);
@@ -233,8 +241,11 @@ class DefaultOutboxServiceTest {
     void ambientScopeDoesNotSelectRowScope(Vertx vertx, VertxTestContext ctx) {
         // Given: the runtime context codecs, and a context bound to acme
         ScopeGraph graph = DaggerDefaultOutboxServiceTest_ScopeGraph.create();
-        DefaultOutboxService scoped =
-                new DefaultOutboxService(repository, graph.propagator(), new PgInboxOutboxExceptionMapper());
+        DefaultOutboxService scoped = new DefaultOutboxService(
+                repository,
+                graph.propagator(),
+                new PgInboxOutboxExceptionMapper(),
+                OutboxRelayConfig.builder().build());
         when(repository.insert(any(), any(), any(), any())).thenReturn(Future.succeededFuture(1L));
         ContextInternal producer = ((ContextInternal) vertx.getOrCreateContext()).duplicate();
 
@@ -294,6 +305,74 @@ class DefaultOutboxServiceTest {
     }
 
     @Nested
+    @DisplayName("attempt limit")
+    class AttemptLimit {
+
+        private DefaultOutboxService serviceWithRelayLimit(int relayMaxAttempts) {
+            DefaultContextHolder holder = new DefaultContextHolder();
+            DurableContextPropagator propagator = new DurableContextPropagator(
+                    new DurableContextMetadataRegistry(Set.of(), Set.of()), holder, new ContextScopeBinder(holder));
+            return new DefaultOutboxService(
+                    repository,
+                    propagator,
+                    new PgInboxOutboxExceptionMapper(),
+                    OutboxRelayConfig.builder().maxAttempts(relayMaxAttempts).build());
+        }
+
+        private int storedLimit(OutboxEntry published, DefaultOutboxService publisher) {
+            ArgumentCaptor<OutboxEntry> stored = forClass(OutboxEntry.class);
+            when(repository.insert(stored.capture(), any(), any(), any())).thenReturn(Future.succeededFuture(1L));
+            publisher.publish(tx, published);
+            return stored.getValue().maxAttempts();
+        }
+
+        @Test
+        @DisplayName("an entry without its own limit is stored with the relay's configured limit")
+        void entryWithoutLimitTakesRelayLimit() {
+            assertEquals(7, storedLimit(plainEntry(), serviceWithRelayLimit(7)));
+        }
+
+        @Test
+        @DisplayName("an entry's own limit wins over the relay's configured limit")
+        void entryOwnLimitWins() {
+            OutboxEntry own = OutboxEntry.builder()
+                    .eventType("order.placed")
+                    .destinationType(DestinationType.SERVICE)
+                    .destination("orders/handle")
+                    .payload("p")
+                    .maxAttempts(3)
+                    .build();
+
+            assertEquals(3, storedLimit(own, serviceWithRelayLimit(7)));
+        }
+
+        @Test
+        @DisplayName("an own limit equal to the built-in default still wins over the relay's configured limit")
+        void entryOwnLimitEqualToDefaultWins() {
+            OutboxEntry own = OutboxEntry.builder()
+                    .eventType("order.placed")
+                    .destinationType(DestinationType.SERVICE)
+                    .destination("orders/handle")
+                    .payload("p")
+                    .maxAttempts(OutboxEntry.DEFAULT_MAX_ATTEMPTS)
+                    .build();
+
+            assertEquals(OutboxEntry.DEFAULT_MAX_ATTEMPTS, storedLimit(own, serviceWithRelayLimit(7)));
+        }
+
+        @Test
+        @DisplayName("with the relay's default configuration an entry without a limit is stored with 20")
+        void defaultRelayConfigKeepsTwenty() {
+            assertEquals(
+                    20,
+                    storedLimit(
+                            plainEntry(),
+                            serviceWithRelayLimit(
+                                    OutboxRelayConfig.builder().build().maxAttempts())));
+        }
+    }
+
+    @Nested
     @DisplayName("undeliverable headers are rejected before insert")
     class HeaderValidation {
 
@@ -301,6 +380,7 @@ class DefaultOutboxServiceTest {
             OutboxEntry candidate = mock(OutboxEntry.class);
             when(candidate.headers()).thenReturn(headers);
             when(candidate.scopeKey()).thenReturn(ScopeKey.DEFAULT.value());
+            when(candidate.withDefaultMaxAttempts(anyInt())).thenReturn(candidate);
             return candidate;
         }
 
@@ -478,8 +558,11 @@ class DefaultOutboxServiceTest {
                     new DurableContextMetadataRegistry(Set.of(recordingEncoder), Set.of()),
                     holder,
                     new ContextScopeBinder(holder));
-            DefaultOutboxService carrierService =
-                    new DefaultOutboxService(repository, propagator, new PgInboxOutboxExceptionMapper());
+            DefaultOutboxService carrierService = new DefaultOutboxService(
+                    repository,
+                    propagator,
+                    new PgInboxOutboxExceptionMapper(),
+                    OutboxRelayConfig.builder().build());
 
             ArgumentCaptor<UUID> carrierIdCaptor = forClass(UUID.class);
             when(repository.insert(eq(entry), any(OutboxMetadata.class), carrierIdCaptor.capture(), eq(tx)))
