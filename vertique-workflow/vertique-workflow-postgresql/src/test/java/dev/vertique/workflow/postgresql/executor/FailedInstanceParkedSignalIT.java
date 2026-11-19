@@ -105,6 +105,36 @@ class FailedInstanceParkedSignalIT {
         }
     }
 
+    @Test
+    @DisplayName("a retry that fails the instance again at its failure node applies no parked signal to the branch"
+            + " that still waits")
+    void aRetryThatFailsTheInstanceAgainAppliesNoParkedSignalToTheBranchThatStillWaits() {
+        try (KeyedWaitFixture f = KeyedWaitFixture.openWithExits(db.toPoolConfig())) {
+            // Given a fork that has failed at its failure node, with branch b still waiting for label-printed
+            Node node = f.node("engine").build();
+            WorkflowInstanceId id = f.startFork(node, KeyedWaitFixture.FORK_FAILING_TO_FAIL_UNKEYED, "A-1", "B-1");
+            f.idle(node, id);
+            assertThat(f.fixture.instanceOf(id).status()).isEqualTo("FAILED");
+            assertThat(f.branchTokens(id)).contains(new BranchRow("b", "WAITING", "wait-b"));
+
+            // And a signal for branch b, parked because the instance is failed
+            f.signalBranch(node, id, PRINTED, new Payment("txn-1"), "s-1", "fork", "b");
+            f.idle(node, id);
+            assertThat(only(f.signalRows(id)).state()).isEqualTo("PARKED");
+
+            // When a retry runs, and the instance fails at the same node again
+            f.retry(node, id);
+            f.idle(node, id);
+
+            // Then the signal is still parked and branch b has not moved: nothing applies while the instance is failed
+            assertThat(f.fixture.instanceOf(id).status()).isEqualTo("FAILED");
+            assertThat(only(f.signalRows(id)).state()).isEqualTo("PARKED");
+            assertThat(f.branchTokens(id)).contains(new BranchRow("b", "WAITING", "wait-b"));
+            assertThat(f.commandsWithHistory(id, "SIGNAL_APPLIED")).isEmpty();
+            HeldCommandInvariant.holds(f);
+        }
+    }
+
     private static WorkflowInstanceId failedFork(KeyedWaitFixture f, Node node) {
         WorkflowInstanceId id = f.startFork(node, KeyedWaitFixture.FORK_BREAKABLE_TIMER, "A-1", "B-1");
         f.idle(node, id);

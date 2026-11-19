@@ -413,8 +413,9 @@ the operation, as described under `WorkflowContextBinder`.
   command keeps its place and its slot of the open-signal count, blocks nothing, and spends no attempt. A parked signal is
   applied only at the wait it addresses: an instance-addressed one at the instance's own signal wait, a branch-addressed one at
   that branch's wait. The engine refuses an instance-addressed signal for a name that only a branch waits for when it is
-  recorded, so an instance-addressed signal never reaches a branch wait. A signal parked on a `FAILED` instance, whichever way it
-  is addressed, applies after a `retry` has resumed the instance, not before;
+  recorded, so an instance-addressed signal never reaches a branch wait. No parked signal applies while the instance is
+  `FAILED`, whichever way it is addressed: it applies after a `retry` has resumed the instance, and a retry that fails the
+  instance again (at its failure node, say) applies none;
 - the command is `REJECTED` when the pinned plan never waits for the name, when the instance had ended, when the application fails
   deterministically (an invalid payload, or a callback or definition failure), or when it runs more nodes than
   `workflow.executor.maxStepsPerSegment` (reason `STEP_LIMIT`). The savepoint is rolled back, so the instance, its version and its
