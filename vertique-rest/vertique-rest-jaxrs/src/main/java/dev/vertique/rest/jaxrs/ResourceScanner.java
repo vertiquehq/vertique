@@ -224,7 +224,9 @@ class ResourceScanner {
             List<ResourceMethodMeta.ParamMeta> params = resolveParams(method, annotationView, clazz);
             Class<?> responseBodyType = resolveResponseBodyType(method, clazz);
             boolean returnsFuture = io.vertx.core.Future.class.isAssignableFrom(rawType(
-                    TypeResolver.resolveMemberType(clazz, method.getGenericReturnType()), method.getReturnType()));
+                    TypeResolver.resolveMemberType(clazz, method.getGenericReturnType()),
+                    method.getReturnType(),
+                    clazz));
             boolean returnsVoid = responseBodyType == Void.class || method.getReturnType() == void.class;
             List<String> consumes = resolveConsumes(classAnnotations, methodAnnotations);
             List<String> produces = resolveProduces(classAnnotations, methodAnnotations);
@@ -400,7 +402,7 @@ class ResourceScanner {
         for (int i = 0; i < parameters.length; i++) {
             Parameter param = parameters[i];
             Type resolvedType = TypeResolver.resolveMemberType(context, param.getParameterizedType());
-            Class<?> parameterType = rawType(resolvedType, param.getType());
+            Class<?> parameterType = rawType(resolvedType, param.getType(), context);
             // Merge parameter annotations from the concrete method, superclasses, and the view's
             // interfaces.
             Annotation[] mergedParamAnnotations =
@@ -577,25 +579,33 @@ class ResourceScanner {
                 if (typeArg instanceof ParameterizedType nestedPt) {
                     return (Class<?>) nestedPt.getRawType();
                 }
-                return rawType(typeArg, Object.class);
+                return rawType(typeArg, Object.class, context);
             }
         }
         if (method.getReturnType() == void.class) {
             return Void.class;
         }
-        return rawType(returnType, method.getReturnType());
+        return rawType(returnType, method.getReturnType(), context);
     }
 
-    private static Class<?> rawType(Type type, Class<?> fallback) {
-        return rawType(type, fallback, java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()));
+    /**
+     * Returns the class a type erases to when read from {@code context}. A type variable erases to its
+     * first declared bound, with a bound that is itself a hierarchy variable resolved against {@code
+     * context} first, so {@code <M extends T>} reports the type {@code context} binds {@code T} to.
+     */
+    private static Class<?> rawType(Type type, Class<?> fallback, Class<?> context) {
+        return rawType(type, fallback, context, java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()));
     }
 
-    private static Class<?> rawType(Type type, Class<?> fallback, java.util.Set<Type> visiting) {
+    private static Class<?> rawType(Type type, Class<?> fallback, Class<?> context, java.util.Set<Type> visiting) {
         if (!visiting.add(type)) return fallback;
         if (type instanceof Class<?> cls) return cls;
         if (type instanceof ParameterizedType pt && pt.getRawType() instanceof Class<?> cls) return cls;
         if (type instanceof java.lang.reflect.WildcardType wildcard && wildcard.getUpperBounds().length > 0)
-            return rawType(wildcard.getUpperBounds()[0], fallback, visiting);
+            return rawType(wildcard.getUpperBounds()[0], fallback, context, visiting);
+        if (type instanceof java.lang.reflect.TypeVariable<?> variable && variable.getBounds().length > 0)
+            return rawType(
+                    TypeResolver.resolveMemberType(context, variable.getBounds()[0]), fallback, context, visiting);
         return fallback;
     }
 
