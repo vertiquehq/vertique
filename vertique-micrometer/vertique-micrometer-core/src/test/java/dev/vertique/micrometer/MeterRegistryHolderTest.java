@@ -6,8 +6,12 @@ package dev.vertique.micrometer;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Meter;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.composite.CompositeMeterRegistry;
+import io.micrometer.core.instrument.distribution.DistributionStatisticConfig;
+import io.micrometer.core.instrument.distribution.pause.PauseDetector;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.vertx.core.json.JsonObject;
 import java.util.List;
@@ -265,6 +269,32 @@ class MeterRegistryHolderTest {
                     backend.find("tagged.counter").tag("service", "my-svc").counter();
             assertNotNull(
                     tagged, "Counter recorded through OUTER must carry service=my-svc tag in backend after Fix 1");
+        }
+
+        /**
+         * With {@code histograms.enabled=true}, a timer created through the stable OUTER registry
+         * reaches the backend with percentile histograms on.
+         */
+        @Test
+        @DisplayName("histograms.enabled=true: timer created through OUTER reaches the backend with a histogram")
+        void histogramConfigurationAppliedThroughOuter() {
+            boolean[] histogram = new boolean[1];
+            SimpleMeterRegistry backend = new SimpleMeterRegistry() {
+                @Override
+                protected Timer newTimer(Meter.Id id, DistributionStatisticConfig config, PauseDetector pauseDetector) {
+                    histogram[0] = Boolean.TRUE.equals(config.isPercentileHistogram());
+                    return super.newTimer(id, config, pauseDetector);
+                }
+            };
+            MetricsConfig config = new JsonObject()
+                    .put("histograms", new JsonObject().put("enabled", true))
+                    .mapTo(MetricsConfig.class);
+            MicrometerAssembly assembly = assembleWithSimple("histtest", backend, config);
+
+            MeterRegistryHolder.bootstrap(assembly);
+            MeterRegistryHolder.registry().timer("hist.timer").record(() -> {});
+
+            assertTrue(histogram[0], "a timer recorded through OUTER must publish a percentile histogram");
         }
 
         /**

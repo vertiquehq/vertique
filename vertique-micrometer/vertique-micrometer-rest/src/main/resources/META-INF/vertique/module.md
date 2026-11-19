@@ -162,7 +162,7 @@ Outcome mapping:
 | other / 0 | `UNKNOWN` |
 
 Prometheus rendering: `vertique_rest_server_requests_seconds_count` /
-`vertique_rest_server_requests_seconds_sum` / `vertique_rest_server_requests_seconds_bucket`.
+`vertique_rest_server_requests_seconds_sum` / `vertique_rest_server_requests_seconds_bucket`. Buckets appear only when `metrics.histograms.enabled=true`; with the default `false`, the timer publishes only `_count`, `_sum` and `_max`.
 
 ### `vertique.rest.server.active` — Gauge
 
@@ -202,5 +202,5 @@ only those type adaptations; the optional `MetricsConfig` binding remains hand-w
 | `vertique-micrometer-core` | `MetricsConfig` / `metrics.enabled` gate |
 | `vertique-rest-core` | Completion listener and request interceptor SPIs |
 | `vertique-core` | `OrderedExtension` |
-| `vertique-codegen-core` | Codegen support for generated registrations |
+| `vertique-codegen-core` | Wiring annotations for this module's components; `provided`, so it is not on a consumer's runtime classpath |
 | `io.micrometer:micrometer-core` | `MeterRegistry`, `Timer`, `Gauge`, `Tags` |

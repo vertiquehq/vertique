@@ -8,11 +8,18 @@ import static org.junit.jupiter.api.Assertions.*;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import io.micrometer.core.instrument.DistributionSummary;
+import io.micrometer.core.instrument.Meter;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.instrument.distribution.DistributionStatisticConfig;
+import io.micrometer.core.instrument.distribution.pause.PauseDetector;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.vertx.core.json.JsonObject;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
@@ -108,6 +115,108 @@ class MicrometerAssemblyTest {
 
             assertNotNull(r1.find("my.timer").timer(), "timer must be visible in r1");
             assertNotNull(r2.find("my.timer").timer(), "timer must be visible in r2");
+        }
+    }
+
+    // --- Percentile histograms ---
+
+    @Nested
+    class Histograms {
+
+        private static MetricsConfig histogramsEnabled(boolean enabled) {
+            return configWith(new JsonObject().put("histograms", new JsonObject().put("enabled", enabled)));
+        }
+
+        /**
+         * Records the percentile-histogram flag each new timer and summary receives; the stock
+         * simple registry drops histogram buckets, so the resolved configuration is what is asserted.
+         */
+        private static final class CapturingRegistry extends SimpleMeterRegistry {
+
+            private final Map<String, Boolean> histogramByMeter = new HashMap<>();
+
+            @Override
+            protected Timer newTimer(Meter.Id id, DistributionStatisticConfig config, PauseDetector pauseDetector) {
+                histogramByMeter.put(id.getName(), Boolean.TRUE.equals(config.isPercentileHistogram()));
+                return super.newTimer(id, config, pauseDetector);
+            }
+
+            @Override
+            protected DistributionSummary newDistributionSummary(
+                    Meter.Id id, DistributionStatisticConfig config, double scale) {
+                histogramByMeter.put(id.getName(), Boolean.TRUE.equals(config.isPercentileHistogram()));
+                return super.newDistributionSummary(id, config, scale);
+            }
+
+            boolean publishesHistogram(String name) {
+                Boolean flag = histogramByMeter.get(name);
+                assertNotNull(flag, "meter '" + name + "' must have been created in the child registry");
+                return flag;
+            }
+        }
+
+        @Test
+        @DisplayName("timers publish no histogram by default")
+        void offByDefault() {
+            CapturingRegistry child = new CapturingRegistry();
+
+            MicrometerAssembly assembly = assemble(List.of(FakeProvider.wrapping("reg", 1, child)), defaultConfig());
+            assembly.composite().timer("my.timer").record(() -> {});
+
+            assertFalse(child.publishesHistogram("my.timer"));
+        }
+
+        @Test
+        @DisplayName("histograms.enabled=true makes every timer publish a histogram")
+        void enabledPublishesHistogramOnTimers() {
+            CapturingRegistry child = new CapturingRegistry();
+
+            MicrometerAssembly assembly =
+                    assemble(List.of(FakeProvider.wrapping("reg", 1, child)), histogramsEnabled(true));
+            assembly.composite().timer("my.timer").record(() -> {});
+            assembly.composite().timer("other.timer").record(() -> {});
+
+            assertTrue(child.publishesHistogram("my.timer"));
+            assertTrue(child.publishesHistogram("other.timer"));
+        }
+
+        @Test
+        @DisplayName("histograms.enabled=false leaves timers without a histogram")
+        void explicitlyDisabledPublishesNoHistogram() {
+            CapturingRegistry child = new CapturingRegistry();
+
+            MicrometerAssembly assembly =
+                    assemble(List.of(FakeProvider.wrapping("reg", 1, child)), histogramsEnabled(false));
+            assembly.composite().timer("my.timer").record(() -> {});
+
+            assertFalse(child.publishesHistogram("my.timer"));
+        }
+
+        @Test
+        @DisplayName("a timer that sets its own distribution statistics keeps them")
+        void timerOwnConfigurationWins() {
+            CapturingRegistry child = new CapturingRegistry();
+
+            MicrometerAssembly assembly =
+                    assemble(List.of(FakeProvider.wrapping("reg", 1, child)), histogramsEnabled(true));
+            Timer.builder("own.timer")
+                    .publishPercentileHistogram(false)
+                    .register(assembly.composite())
+                    .record(() -> {});
+
+            assertFalse(child.publishesHistogram("own.timer"));
+        }
+
+        @Test
+        @DisplayName("only timers are affected; other meter types keep their configuration")
+        void nonTimerMetersAreUnaffected() {
+            CapturingRegistry child = new CapturingRegistry();
+
+            MicrometerAssembly assembly =
+                    assemble(List.of(FakeProvider.wrapping("reg", 1, child)), histogramsEnabled(true));
+            assembly.composite().summary("my.summary").record(1.0);
+
+            assertFalse(child.publishesHistogram("my.summary"));
         }
     }
 

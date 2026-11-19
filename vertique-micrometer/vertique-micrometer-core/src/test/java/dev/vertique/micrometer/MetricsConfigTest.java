@@ -47,6 +47,8 @@ class MetricsConfigTest {
             assertEquals(0, config.cardinality().maxMeters());
             assertNotNull(config.security());
             assertTrue(config.security().enabled());
+            assertNotNull(config.histograms());
+            assertFalse(config.histograms().enabled());
         }
     }
 
@@ -121,6 +123,16 @@ class MetricsConfigTest {
             MetricsConfig config = json.mapTo(MetricsConfig.class);
 
             assertFalse(config.security().enabled());
+        }
+
+        @Test
+        @DisplayName("histograms.enabled=true turns percentile histograms on")
+        void histogramsEnabledOverride() {
+            JsonObject json = new JsonObject().put("histograms", new JsonObject().put("enabled", true));
+
+            MetricsConfig config = json.mapTo(MetricsConfig.class);
+
+            assertTrue(config.histograms().enabled());
         }
 
         @Test
@@ -217,6 +229,17 @@ class MetricsConfigTest {
 
             assertNotNull(config.security(), "security must not be null when JSON null is supplied");
             assertTrue(config.security().enabled(), "security.enabled must default to true");
+        }
+
+        @Test
+        @DisplayName("{\"histograms\":null} → histograms falls back to default (enabled=false)")
+        void histogramsNullFallsBackToDefault() {
+            JsonObject json = new JsonObject().putNull("histograms");
+
+            MetricsConfig config = json.mapTo(MetricsConfig.class);
+
+            assertNotNull(config.histograms(), "histograms must not be null when JSON null is supplied");
+            assertFalse(config.histograms().enabled(), "histograms.enabled must default to false");
         }
 
         @Test
