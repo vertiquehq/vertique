@@ -24,6 +24,14 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request supersedes its running checks, so they are
+# cancelled instead of holding a runner until they finish. Pushes to main get a
+# group per commit and are never cancelled: each one stages the SNAPSHOT
+# payload for its own commit.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # Markdown-only pull requests run Docs checks; a red job signals a failure.
   # When configuring required checks, require Docs checks alongside Build and Test.
@@ -190,8 +198,13 @@ jobs:
 
       # Formatting is a required pre-build gate: fail fast before compiling or
       # running tests when Java sources do not match the repository formatter.
+      # A pull request checks the Java files it changes (every file when it
+      # changes the root POM, which owns the formatter configuration); a push
+      # checks every file. fetch-depth 0 above makes the base branch available.
       - name: Check formatting
-        run: ./mvnw -ntp spotless:check
+        env:
+          FORMAT_BASE_REF: ${{ github.base_ref }}
+        run: bash scripts/check-formatting.sh
 
       # Per-module HTML reports are skipped: the vertique-coverage-report
       # aggregate XML produced by this same invocation is the only coverage

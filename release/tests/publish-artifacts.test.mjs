@@ -18,7 +18,7 @@
  * target, so it needs Java and Central, like every other Maven step here.
  */
 
-import { describe, it } from 'node:test';
+import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   chmodSync,
@@ -32,7 +32,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,6 +41,42 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 
 // A stalled Central connection must fail this test, not the whole job.
 const MAVEN_TIMEOUT_MS = 300_000;
+
+// Every Maven JVM here lives a few seconds. Skipping the optimizing JIT and using
+// the serial collector roughly halves their CPU time, which is what bounds this
+// file on a small CI runner. Anything the caller set in MAVEN_OPTS still applies.
+const SHORT_LIVED_JVM_OPTS = `${process.env.MAVEN_OPTS ?? ''} -XX:TieredStopAtLevel=1 -XX:+UseSerialGC`.trim();
+
+/**
+ * Runs a command without blocking the event loop, so this file's tests (each one
+ * mostly waiting on Maven JVMs) run concurrently. A command still running at the
+ * timeout is killed and reported with a null status.
+ */
+function runProcess(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { ...options, env: { ...process.env, MAVEN_OPTS: SHORT_LIVED_JVM_OPTS } });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; });
+    child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
+    const timer = setTimeout(() => child.kill('SIGKILL'), MAVEN_TIMEOUT_MS);
+    child.on('error', (error) => { clearTimeout(timer); reject(error); });
+    child.on('close', (status) => { clearTimeout(timer); resolve({ status, stdout, stderr }); });
+  });
+}
+
+// Shared by every test that passes it: the before hook downloads the deploy
+// plugin into it once, so each later run starts Maven against a warm repository.
+let sharedPluginRepository;
+
+/** Runs release/publish-artifacts.sh from the fixture repository with the given arguments. */
+function publish(repo, args, { sharedPlugins = true } = {}) {
+  return runProcess('bash', [
+    path.join(repo, 'release', 'publish-artifacts.sh'),
+    ...args,
+    ...(sharedPlugins ? ['--plugin-repository', sharedPluginRepository] : []),
+  ]);
+}
 
 const GROUP_ID = 'dev.vertique.fixture';
 const ARTIFACT_ID = 'fixture-parent';
@@ -162,8 +198,63 @@ function fixtureRepository(root, extraArtifactIds = [], archetypeArtifactIds = [
   return { repo, localRepository: path.join(root, 'm2') };
 }
 
-describe('PublishArtifactsTest', () => {
-  it('stagesAllowlistFromReactorWhoseBomImportCannotResolve', (t) => {
+// Concurrent: each test owns its fixture directories, and the shared plugin
+// repository is only read once the before hook has populated it.
+describe('PublishArtifactsTest', { concurrency: true }, () => {
+  before(async () => {
+    sharedPluginRepository = mkdtempSync(path.join(tmpdir(), 'vertique-publish-plugins-'));
+    const root = mkdtempSync(path.join(tmpdir(), 'vertique-publish-artifacts-'));
+    try {
+      const { repo, localRepository } = fixtureRepository(root);
+      const stage = path.join(root, 'staged');
+      mkdirSync(stage);
+      const warm = await publish(repo, [
+        '--local-repository', localRepository,
+        '--repository-id', 'fixture-stage',
+        '--target-url', `file://${stage}`,
+        '--mode', 'snapshot',
+        '--version', VERSION,
+        '--settings', 'settings.xml',
+      ]);
+      assert.equal(warm.status, 0, `warming the plugin repository failed:\n${warm.stdout}\n${warm.stderr}`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  after(() => rmSync(sharedPluginRepository, { recursive: true, force: true }));
+
+  it('keepsANamedPluginRepositoryPopulatedForTheNextRun', () => {
+    // The before hook ran with --plugin-repository: the directory outlived the run,
+    // still holding the pinned deploy plugin.
+    const plugin = path.join(
+      sharedPluginRepository, 'org', 'apache', 'maven', 'plugins', 'maven-deploy-plugin', '3.1.4'
+    );
+    assert.ok(existsSync(path.join(plugin, 'maven-deploy-plugin-3.1.4.jar')), `deploy plugin not kept in ${plugin}`);
+  });
+
+  it('refusesThePayloadRepositoryAsThePluginRepository', async (t) => {
+    const root = mkdtempSync(path.join(tmpdir(), 'vertique-publish-artifacts-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const { repo, localRepository } = fixtureRepository(root);
+
+    const run = await runProcess('bash', [
+      path.join(repo, 'release', 'publish-artifacts.sh'),
+      '--local-repository', localRepository,
+      '--repository-id', 'fixture-stage',
+      '--target-url', `file://${path.join(root, 'staged')}`,
+      '--mode', 'snapshot',
+      '--version', VERSION,
+      '--plugin-repository', localRepository,
+    ]);
+    assert.notEqual(run.status, 0, `the payload repository was accepted as the plugin repository:\n${run.stdout}`);
+    assert.match(run.stderr, /--plugin-repository must not be the --local-repository/);
+    assert.doesNotMatch(run.stdout, /deploying/);
+  });
+
+  // Without --plugin-repository, the default publication path: a fresh plugin
+  // repository that downloads the deploy plugin and is deleted afterwards.
+  it('stagesAllowlistFromReactorWhoseBomImportCannotResolve', async (t) => {
     const root = mkdtempSync(path.join(tmpdir(), 'vertique-publish-artifacts-'));
     t.after(() => rmSync(root, { recursive: true, force: true }));
     const { repo, localRepository } = fixtureRepository(root);
@@ -172,27 +263,22 @@ describe('PublishArtifactsTest', () => {
 
     // Precondition: the fixture reactor really cannot be built, so a pass below
     // proves staging never needed it rather than that the import resolved.
-    const model = spawnSync(
+    const model = await runProcess(
       path.join(repo, 'mvnw'),
       ['-B', '-ntp', '-o', `-Dmaven.repo.local=${path.join(root, 'empty-m2')}`, 'validate'],
-      { cwd: repo, encoding: 'utf8', timeout: MAVEN_TIMEOUT_MS }
+      { cwd: repo }
     );
     assert.notEqual(model.status, 0, 'fixture reactor model unexpectedly resolved');
     assert.match(model.stdout, /Non-resolvable import POM/);
 
-    const run = spawnSync(
-      'bash',
-      [
-        path.join(repo, 'release', 'publish-artifacts.sh'),
-        '--local-repository', localRepository,
-        '--repository-id', 'fixture-stage',
-        '--target-url', `file://${stage}`,
-        '--mode', 'snapshot',
-        '--version', VERSION,
-        '--settings', 'settings.xml',
-      ],
-      { encoding: 'utf8', timeout: MAVEN_TIMEOUT_MS }
-    );
+    const run = await publish(repo, [
+      '--local-repository', localRepository,
+      '--repository-id', 'fixture-stage',
+      '--target-url', `file://${stage}`,
+      '--mode', 'snapshot',
+      '--version', VERSION,
+      '--settings', 'settings.xml',
+    ], { sharedPlugins: false });
     assert.equal(run.status, 0, `publish-artifacts failed:\n${run.stdout}\n${run.stderr}`);
     assert.match(run.stdout, /deployed 1\/1 GAVs/);
 
@@ -202,25 +288,20 @@ describe('PublishArtifactsTest', () => {
     assert.equal(poms.length, 1, `expected one timestamped POM, found ${JSON.stringify(poms)}`);
   });
 
-  it('refusesRelativeFileTargetUrl', (t) => {
+  it('refusesRelativeFileTargetUrl', async (t) => {
     const root = mkdtempSync(path.join(tmpdir(), 'vertique-publish-artifacts-'));
     t.after(() => rmSync(root, { recursive: true, force: true }));
     const { repo, localRepository } = fixtureRepository(root);
 
     // Maven runs from a scratch directory, so a relative file: target would
     // stage there and be deleted with it while the script reported success.
-    const run = spawnSync(
-      'bash',
-      [
-        path.join(repo, 'release', 'publish-artifacts.sh'),
-        '--local-repository', localRepository,
-        '--repository-id', 'fixture-stage',
-        '--target-url', 'file:staged',
-        '--mode', 'snapshot',
-        '--version', VERSION,
-      ],
-      { encoding: 'utf8', timeout: MAVEN_TIMEOUT_MS }
-    );
+    const run = await publish(repo, [
+      '--local-repository', localRepository,
+      '--repository-id', 'fixture-stage',
+      '--target-url', 'file:staged',
+      '--mode', 'snapshot',
+      '--version', VERSION,
+    ]);
     assert.notEqual(run.status, 0, `relative file: target was accepted:\n${run.stdout}`);
     assert.match(run.stderr, /must be an absolute file:\/\/\/ URL/);
     assert.doesNotMatch(run.stdout, /deploying/);
@@ -229,7 +310,7 @@ describe('PublishArtifactsTest', () => {
   // More units than the parallelism proves the worker pool drains the whole plan.
   // It cannot prove the units overlap: that is a wall-clock property, measured in
   // the publication run itself.
-  it('stagesEveryUnitWhenDeployingInParallel', (t) => {
+  it('stagesEveryUnitWhenDeployingInParallel', async (t) => {
     const root = mkdtempSync(path.join(tmpdir(), 'vertique-publish-artifacts-'));
     t.after(() => rmSync(root, { recursive: true, force: true }));
     const extras = ['fixture-unit-a', 'fixture-unit-b', 'fixture-unit-c', 'fixture-unit-d'];
@@ -237,20 +318,15 @@ describe('PublishArtifactsTest', () => {
     const stage = path.join(root, 'staged');
     mkdirSync(stage);
 
-    const run = spawnSync(
-      'bash',
-      [
-        path.join(repo, 'release', 'publish-artifacts.sh'),
-        '--local-repository', localRepository,
-        '--repository-id', 'fixture-stage',
-        '--target-url', `file://${stage}`,
-        '--mode', 'snapshot',
-        '--version', VERSION,
-        '--settings', 'settings.xml',
-        '--parallelism', '2',
-      ],
-      { encoding: 'utf8', timeout: MAVEN_TIMEOUT_MS }
-    );
+    const run = await publish(repo, [
+      '--local-repository', localRepository,
+      '--repository-id', 'fixture-stage',
+      '--target-url', `file://${stage}`,
+      '--mode', 'snapshot',
+      '--version', VERSION,
+      '--settings', 'settings.xml',
+      '--parallelism', '2',
+    ]);
     assert.equal(run.status, 0, `publish-artifacts failed:\n${run.stdout}\n${run.stderr}`);
     assert.match(run.stdout, /deployed 5\/5 GAVs/);
 
@@ -262,7 +338,7 @@ describe('PublishArtifactsTest', () => {
 
   // A unit the deploy plugin cannot read must fail the run: a parallel worker's
   // failure may not be swallowed by the pool or counted as a deployed GAV.
-  it('failsTheRunWhenAnyUnitCannotBeDeployed', (t) => {
+  it('failsTheRunWhenAnyUnitCannotBeDeployed', async (t) => {
     if (process.platform === 'win32' || process.getuid?.() === 0) {
       t.skip('an unreadable file only blocks a non-root POSIX user');
       return;
@@ -281,27 +357,22 @@ describe('PublishArtifactsTest', () => {
     const stage = path.join(root, 'staged');
     mkdirSync(stage);
 
-    const run = spawnSync(
-      'bash',
-      [
-        path.join(repo, 'release', 'publish-artifacts.sh'),
-        '--local-repository', localRepository,
-        '--repository-id', 'fixture-stage',
-        '--target-url', `file://${stage}`,
-        '--mode', 'snapshot',
-        '--version', VERSION,
-        '--settings', 'settings.xml',
-        '--parallelism', '3',
-      ],
-      { encoding: 'utf8', timeout: MAVEN_TIMEOUT_MS }
-    );
+    const run = await publish(repo, [
+      '--local-repository', localRepository,
+      '--repository-id', 'fixture-stage',
+      '--target-url', `file://${stage}`,
+      '--mode', 'snapshot',
+      '--version', VERSION,
+      '--settings', 'settings.xml',
+      '--parallelism', '3',
+    ]);
     assert.notEqual(run.status, 0, `a failed unit was reported as success:\n${run.stdout}`);
     assert.match(run.stderr, /deploy-file failed for dev\.vertique\.fixture:fixture-unit-b:/);
     assert.doesNotMatch(run.stdout, /deployed 4\/4 GAVs/);
   });
 
   /** Runs the script against a fixture whose named unit's POM is unreadable. */
-  function publishWithUnreadableUnit(t, { unreadableArtifactId, parallelism }) {
+  async function publishWithUnreadableUnit(t, { unreadableArtifactId, parallelism }) {
     const root = mkdtempSync(path.join(tmpdir(), 'vertique-publish-artifacts-'));
     const extras = ['fixture-unit-a', 'fixture-unit-b', 'fixture-unit-c', 'fixture-unit-d'];
     const { repo, localRepository } = fixtureRepository(root, extras);
@@ -316,20 +387,15 @@ describe('PublishArtifactsTest', () => {
     const stage = path.join(root, 'staged');
     mkdirSync(stage);
 
-    const run = spawnSync(
-      'bash',
-      [
-        path.join(repo, 'release', 'publish-artifacts.sh'),
-        '--local-repository', localRepository,
-        '--repository-id', 'fixture-stage',
-        '--target-url', `file://${stage}`,
-        '--mode', 'snapshot',
-        '--version', VERSION,
-        '--settings', 'settings.xml',
-        '--parallelism', String(parallelism),
-      ],
-      { encoding: 'utf8', timeout: MAVEN_TIMEOUT_MS }
-    );
+    const run = await publish(repo, [
+      '--local-repository', localRepository,
+      '--repository-id', 'fixture-stage',
+      '--target-url', `file://${stage}`,
+      '--mode', 'snapshot',
+      '--version', VERSION,
+      '--settings', 'settings.xml',
+      '--parallelism', String(parallelism),
+    ]);
     const staged = (artifactId) => existsSync(path.join(stage, ...GROUP_ID.split('.'), artifactId, VERSION));
     return { run, staged };
   }
@@ -339,9 +405,9 @@ describe('PublishArtifactsTest', () => {
   // Plan order is the sorted GAV key: parent, a, b, c, d. With one worker the
   // units after the failed one are not yet started when it fails, so they must
   // never be deployed.
-  it('startsNoFurtherUnitAfterOneFails', (t) => {
+  it('startsNoFurtherUnitAfterOneFails', async (t) => {
     if (!canBlockWithUnreadableFile()) return t.skip('an unreadable file only blocks a non-root POSIX user');
-    const { run, staged } = publishWithUnreadableUnit(t, { unreadableArtifactId: 'fixture-unit-b', parallelism: 1 });
+    const { run, staged } = await publishWithUnreadableUnit(t, { unreadableArtifactId: 'fixture-unit-b', parallelism: 1 });
 
     assert.notEqual(run.status, 0, `a failed unit was reported as success:\n${run.stdout}`);
     assert.match(run.stderr, /deploy-file failed for dev\.vertique\.fixture:fixture-unit-b:/);
@@ -350,9 +416,9 @@ describe('PublishArtifactsTest', () => {
     assert.ok(!staged('fixture-unit-d'), 'a unit after the failure was still deployed');
   });
 
-  it('stopsAtTheFirstUnitWhenItFails', (t) => {
+  it('stopsAtTheFirstUnitWhenItFails', async (t) => {
     if (!canBlockWithUnreadableFile()) return t.skip('an unreadable file only blocks a non-root POSIX user');
-    const { run, staged } = publishWithUnreadableUnit(t, { unreadableArtifactId: ARTIFACT_ID, parallelism: 4 });
+    const { run, staged } = await publishWithUnreadableUnit(t, { unreadableArtifactId: ARTIFACT_ID, parallelism: 4 });
 
     assert.notEqual(run.status, 0, `a failed first unit was reported as success:\n${run.stdout}`);
     assert.match(run.stderr, /deployment stopped at the first unit/);
@@ -364,26 +430,21 @@ describe('PublishArtifactsTest', () => {
   // deploy-file stores the primary file under an extension derived from the
   // deploy type. An archetype unit's type must be jar: left as maven-archetype it
   // would be stored as *.maven-archetype, which no consumer resolves.
-  it('storesAnArchetypeUnitsPrimaryFileAsAJar', (t) => {
+  it('storesAnArchetypeUnitsPrimaryFileAsAJar', async (t) => {
     const root = mkdtempSync(path.join(tmpdir(), 'vertique-publish-artifacts-'));
     t.after(() => rmSync(root, { recursive: true, force: true }));
     const { repo, localRepository } = fixtureRepository(root, [], ['fixture-archetype']);
     const stage = path.join(root, 'staged');
     mkdirSync(stage);
 
-    const run = spawnSync(
-      'bash',
-      [
-        path.join(repo, 'release', 'publish-artifacts.sh'),
-        '--local-repository', localRepository,
-        '--repository-id', 'fixture-stage',
-        '--target-url', `file://${stage}`,
-        '--mode', 'snapshot',
-        '--version', VERSION,
-        '--settings', 'settings.xml',
-      ],
-      { encoding: 'utf8', timeout: MAVEN_TIMEOUT_MS }
-    );
+    const run = await publish(repo, [
+      '--local-repository', localRepository,
+      '--repository-id', 'fixture-stage',
+      '--target-url', `file://${stage}`,
+      '--mode', 'snapshot',
+      '--version', VERSION,
+      '--settings', 'settings.xml',
+    ]);
     assert.equal(run.status, 0, `publish-artifacts failed:\n${run.stdout}\n${run.stderr}`);
     assert.match(run.stdout, /deployed 2\/2 GAVs/);
 
@@ -399,7 +460,7 @@ describe('PublishArtifactsTest', () => {
   // Attached test JARs are installed next to the main JAR but are not a published
   // surface: staging must not deploy them, and verifying a staged repository that
   // does contain one must fail.
-  it('neverStagesAttachedTestJarsAndRefusesAStagedRepositoryThatHoldsOne', (t) => {
+  it('neverStagesAttachedTestJarsAndRefusesAStagedRepositoryThatHoldsOne', async (t) => {
     // Resolved up front so the paths handed to node are the real ones even
     // where the temp directory is a symlink (macOS /var -> /private/var).
     const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'vertique-publish-artifacts-')));
@@ -413,19 +474,14 @@ describe('PublishArtifactsTest', () => {
     const stage = path.join(root, 'staged');
     mkdirSync(stage);
 
-    const run = spawnSync(
-      'bash',
-      [
-        path.join(repo, 'release', 'publish-artifacts.sh'),
-        '--local-repository', localRepository,
-        '--repository-id', 'fixture-stage',
-        '--target-url', `file://${stage}`,
-        '--mode', 'snapshot',
-        '--version', VERSION,
-        '--settings', 'settings.xml',
-      ],
-      { encoding: 'utf8', timeout: MAVEN_TIMEOUT_MS }
-    );
+    const run = await publish(repo, [
+      '--local-repository', localRepository,
+      '--repository-id', 'fixture-stage',
+      '--target-url', `file://${stage}`,
+      '--mode', 'snapshot',
+      '--version', VERSION,
+      '--settings', 'settings.xml',
+    ]);
     assert.equal(run.status, 0, `publish-artifacts failed:\n${run.stdout}\n${run.stderr}`);
 
     const stagedDir = path.join(stage, ...GROUP_ID.split('.'), 'fixture-archetype', VERSION);
@@ -438,48 +494,39 @@ describe('PublishArtifactsTest', () => {
     );
 
     const verifyStaged = () =>
-      spawnSync(
-        process.execPath,
-        [
-          path.join(repo, 'release', 'verify-publication.mjs'),
-          '--root', repo,
-          '--verify-staged', stage,
-          '--version', VERSION,
-          '--mode', 'snapshot',
-        ],
-        { encoding: 'utf8', timeout: MAVEN_TIMEOUT_MS }
-      );
-    const clean = verifyStaged();
+      runProcess(process.execPath, [
+        path.join(repo, 'release', 'verify-publication.mjs'),
+        '--root', repo,
+        '--verify-staged', stage,
+        '--version', VERSION,
+        '--mode', 'snapshot',
+      ]);
+    const clean = await verifyStaged();
     assert.equal(clean.status, 0, `a clean staged repository failed verification:\n${clean.stdout}\n${clean.stderr}`);
     // A silent exit 0 must never satisfy this half: the check has to have run.
     assert.match(clean.stdout, /staged repository OK/);
 
     // Now one reaches the staged repository: verification must name it and fail.
     writeFileSync(path.join(stagedDir, `fixture-archetype-${VERSION}-tests.jar`), 'PK-fixture-test-jar');
-    const dirty = verifyStaged();
+    const dirty = await verifyStaged();
     assert.notEqual(dirty.status, 0, `a staged test JAR passed verification:\n${dirty.stdout}`);
     assert.match(dirty.stderr, /attached test artifact staged: fixture-archetype-.*-tests\.jar/);
   });
 
-  it('refusesNonPositiveParallelism', (t) => {
+  it('refusesNonPositiveParallelism', async (t) => {
     const root = mkdtempSync(path.join(tmpdir(), 'vertique-publish-artifacts-'));
     t.after(() => rmSync(root, { recursive: true, force: true }));
     const { repo, localRepository } = fixtureRepository(root);
 
     for (const parallelism of ['0', '-1', 'many', '']) {
-      const run = spawnSync(
-        'bash',
-        [
-          path.join(repo, 'release', 'publish-artifacts.sh'),
-          '--local-repository', localRepository,
-          '--repository-id', 'fixture-stage',
-          '--target-url', `file://${path.join(root, 'staged')}`,
-          '--mode', 'snapshot',
-          '--version', VERSION,
-          '--parallelism', parallelism,
-        ],
-        { encoding: 'utf8', timeout: MAVEN_TIMEOUT_MS }
-      );
+      const run = await publish(repo, [
+        '--local-repository', localRepository,
+        '--repository-id', 'fixture-stage',
+        '--target-url', `file://${path.join(root, 'staged')}`,
+        '--mode', 'snapshot',
+        '--version', VERSION,
+        '--parallelism', parallelism,
+      ]);
       assert.notEqual(run.status, 0, `--parallelism "${parallelism}" was accepted:\n${run.stdout}`);
       assert.match(run.stderr, /--parallelism must be a positive integer/);
       assert.doesNotMatch(run.stdout, /deploying/);
