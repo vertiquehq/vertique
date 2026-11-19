@@ -144,10 +144,8 @@ when:
 
 Anything about the selected profile that accepts **more** than the baseline `system` recipe is logged
 at `WARN` before the install — `FAIL_ON_UNKNOWN_PROPERTIES` off, unknown-enum and case-insensitive-enum
-leniency, case-insensitive property names, parser-leniency features `system` leaves off, and any
-stream-read limit weaker than Vert.x's. The `system` recipe leaves `FAIL_ON_TRAILING_TOKENS` off like
-Vert.x's own mapper, so that setting is not part of the check.
-Those settings then apply to every payload the process decodes, including payloads that no
+leniency, case-insensitive property names, `FAIL_ON_TRAILING_TOKENS` off, parser-leniency features `system`
+leaves off, and any stream-read limit weaker than Vert.x's. Those settings then apply to every payload the process decodes, including payloads that no
 request-validation gate has seen.
 
 Installation is keyed by profile id, so two applications booted in one JVM under the **same** effective
@@ -173,10 +171,31 @@ applies its recipe; the `system` profile is exactly its output on `DatabindCodec
 | 1 | `java.time` → ISO-8601, original offset/zone preserved | Register `JavaTimeModule`; disable `WRITE_DATES_AS_TIMESTAMPS`; disable `ADJUST_DATES_TO_CONTEXT_TIME_ZONE`; re-register Vert.x's Jackson module **last** so Vert.x's `Instant` serializer stays authoritative |
 | 2 | JDK8 `Optional` / `OptionalInt` / `OptionalLong` / `OptionalDouble` → contained value, both directions | Register `Jdk8Module` **before** the Vert.x re-registration. `java.util.stream` types are **serialize-only** |
 | 3 | Operator-tuned read limits survive | Copy the raw Vert.x factory's `StreamReadConstraints` (`vertx.jackson.defaultRead*`) onto the mapper's factory |
+| 4 | Text after the JSON value is rejected | Enable `FAIL_ON_TRAILING_TOKENS`, so `{"a":1} junk` fails instead of parsing as `{"a":1}` |
 
 That is the whole recipe: no inclusion, number, or enum opinion is applied. Everything the raw Vert.x
 mapper already handled — `JsonObject`, `JsonArray`, `Buffer`, `byte[]`, `Instant`, plain POJOs
 including their `null`-valued properties — serializes byte-identically under `system`.
+
+**Behaviour change: trailing tokens are rejected.** Row 4 is read-side only. Vert.x's own
+`Json.decodeValue` and `JsonObject` parsing already rejected text after the value, so they are
+unchanged; the change reaches code that parses through the mapper itself. Because `vertique` and the
+sanctioned application seed (`applySystem(new ObjectMapper())`) build on the same recipe, every mapper
+below stops accepting a value followed by junk (`{"a":1} junk`, or two values in one body):
+
+| Surface | Mapper it reads with |
+|---|---|
+| REST request bodies on the profiled path (a route on the fast path is parsed by the process codec, which already rejected trailing tokens) | the route's resolved profile (`vertique` unless selected otherwise) |
+| REST client response bodies | the client's resolved profile |
+| Kafka JSON serde (`JacksonKafkaDeserializer`) | the Kafka profile |
+| Cache values (Caffeine and Redis stores) | the cache store's profile |
+| WebSocket messages, the correlation context decoded from durable message metadata, delayed-job payloads, workflow state read for history | `VertiqueJson.mapper()`, the process codec's installed profile |
+
+MCP is unaffected: its envelope codec already enabled the feature, and tool arguments bind from a parsed
+tree. A payload that was accepted only because its tail was ignored is now rejected with the surface's
+usual malformed-body failure (HTTP 400 on REST). An application that must keep accepting such input turns the
+feature off on its own profile; the install step then logs `FAIL_ON_TRAILING_TOKENS is off` at `WARN`
+for the process codec's profile.
 
 **The one delta from the raw Vert.x mapper.** `java.util.Date` and `java.util.Calendar` move from
 epoch millis to ISO-8601:

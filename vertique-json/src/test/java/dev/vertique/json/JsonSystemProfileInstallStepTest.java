@@ -229,6 +229,38 @@ class JsonSystemProfileInstallStepTest {
         }
     }
 
+    @Test
+    @DisplayName("a profile that turns FAIL_ON_TRAILING_TOKENS off is warned about; the baseline is not")
+    void warnsWhenTrailingTokensAreAccepted() {
+        Logger root = (Logger) LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        root.addAppender(appender);
+        try {
+            ObjectMapper tolerant = JacksonDefaults.applySystem(new ObjectMapper())
+                    .disable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+            FakeRegistry registry = new FakeRegistry().with("tolerant", tolerant);
+
+            succeed(stepFor("tolerant", registry));
+
+            assertNotNull(
+                    logContaining(appender, Level.WARN, "FAIL_ON_TRAILING_TOKENS"),
+                    "a profile that ignores text after the JSON value must be warned about; captured: "
+                            + appender.list);
+
+            VertiqueJson.resetForTests();
+            appender.list.clear();
+            succeed(new JsonSystemProfileInstallStep(
+                    JsonConfig.defaults(), new DefaultJsonMapperProfileRegistry(Set.of()), () -> true));
+            assertNull(
+                    logContaining(appender, Level.WARN, "FAIL_ON_TRAILING_TOKENS"),
+                    "the baseline system profile rejects trailing tokens and must not be warned about; captured: "
+                            + appender.list);
+        } finally {
+            root.detachAppender(appender);
+        }
+    }
+
     // --- Helpers ---
 
     /**

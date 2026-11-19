@@ -22,10 +22,11 @@ import java.util.OptionalLong;
  * <ul>
  *   <li>{@link #applySystem(ObjectMapper)} — the <strong>baseline</strong> recipe backing the
  *       reserved {@code system} profile: type support only ({@code Jdk8Module},
- *       {@code JavaTimeModule}, ISO-8601 dates, Vert.x's Jackson module re-registered last) plus the
- *       raw Vert.x factory's {@code StreamReadConstraints}. It carries <strong>no</strong>
+ *       {@code JavaTimeModule}, ISO-8601 dates, Vert.x's Jackson module re-registered last), the
+ *       raw Vert.x factory's {@code StreamReadConstraints}, and rejection of text after the JSON value
+ *       ({@code FAIL_ON_TRAILING_TOKENS}). It carries <strong>no</strong>
  *       inclusion, number, or enum opinion, so a mapper seeded from Vert.x's own mapper stays
- *       byte-identical to it for every type it could already handle — except
+ *       byte-identical to it when writing every type it could already handle — except
  *       {@code java.util.Date}/{@code Calendar}, which move from epoch millis to ISO-8601 (a
  *       recorded, pinned delta: date support is the point of the recipe).</li>
  *   <li>{@link #applyOpinionated(ObjectMapper)} — the framework's <strong>opinions</strong> on top:
@@ -85,7 +86,7 @@ import java.util.OptionalLong;
  * {@link StrictStringDeserializer}) are deliberately <strong>not</strong> registered here.
  *
  * <p>The only <strong>persistent</strong> changes this helper makes are the six defaults listed
- * above plus the {@code StreamReadConstraints} copy. {@code MapperFeature.IGNORE_DUPLICATE_MODULE_REGISTRATIONS}
+ * above plus the {@code StreamReadConstraints} copy and {@code FAIL_ON_TRAILING_TOKENS}. {@code MapperFeature.IGNORE_DUPLICATE_MODULE_REGISTRATIONS}
  * is toggled off transiently to force the final {@code VertxModule} re-registration to win, then
  * restored to the value it had on entry — a caller who deliberately disabled that feature keeps it
  * disabled.
@@ -123,6 +124,10 @@ public final class JacksonDefaults {
      *       an operator's {@code vertx.jackson.defaultRead*} limits hold for every mapper built from
      *       this recipe — including one seeded from a fresh {@link ObjectMapper}, which would
      *       otherwise carry Jackson's stock limits.</li>
+     *   <li>Enable {@code FAIL_ON_TRAILING_TOKENS}, so a body such as {@code {"a":1} junk} is rejected
+     *       instead of its tail being ignored. Vert.x's own {@code Json.decodeValue} and
+     *       {@code JsonObject} parsing already reject trailing tokens; this makes every mapper built
+     *       from the recipe, including those that parse a body directly, agree with it.</li>
      *   <li>Re-register {@link VertxJsonSupport#module()} <strong>last</strong> so that Vert.x's
      *       {@code Instant} serializer overrides the one from {@code JavaTimeModule} — keeping
      * {@code Instant} output byte-identical to the raw Vert.x mapper.
@@ -150,6 +155,8 @@ public final class JacksonDefaults {
         // vertx.jackson.defaultRead* limits must hold for every mapper built from this recipe.
         // SystemJsonMapperProfile is the single file in this package that reads Vert.x's raw mapper.
         mapper.getFactory().setStreamReadConstraints(SystemJsonMapperProfile.rawStreamReadConstraints());
+        // Text after the JSON value is a malformed document, not a document with a tail to ignore.
+        mapper.enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
         // Re-register VertxModule LAST so Vert.x's Instant/JsonObject/Buffer serializers remain
         // authoritative — they override JavaTimeModule's Instant serializer.
         //
