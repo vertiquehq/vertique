@@ -144,7 +144,9 @@ when:
 
 Anything about the selected profile that accepts **more** than the baseline `system` recipe is logged
 at `WARN` before the install — `FAIL_ON_UNKNOWN_PROPERTIES` off, unknown-enum and case-insensitive-enum
-leniency, parser-leniency features `system` leaves off, and any stream-read limit weaker than Vert.x's.
+leniency, case-insensitive property names, parser-leniency features `system` leaves off, and any
+stream-read limit weaker than Vert.x's. The `system` recipe leaves `FAIL_ON_TRAILING_TOKENS` off like
+Vert.x's own mapper, so that setting is not part of the check.
 Those settings then apply to every payload the process decodes, including payloads that no
 request-validation gate has seen.
 

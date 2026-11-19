@@ -6,6 +6,7 @@ package dev.vertique.json;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -15,6 +16,7 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.jsontype.impl.LaissezFaireSubTypeValidator;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
@@ -190,6 +192,38 @@ class JsonSystemProfileInstallStepTest {
                     VertiqueJson.profile().orElse(null),
                     "a rejected direct install must not change the installed id");
             assertSame(installed, VertiqueJson.mapper(), "a rejected direct install must not change the delegate");
+        } finally {
+            root.detachAppender(appender);
+        }
+    }
+
+    @Test
+    @DisplayName(
+            "the baseline system profile installs without a leniency warning; case-insensitive properties are named")
+    void warnsAboutCaseInsensitivePropertiesOnly() {
+        Logger root = (Logger) LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        root.addAppender(appender);
+        try {
+            ObjectMapper caseInsensitive = JacksonDefaults.applySystem(new ObjectMapper())
+                    .enable(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES);
+            FakeRegistry registry = new FakeRegistry().with("caseinsensitive", caseInsensitive);
+
+            succeed(new JsonSystemProfileInstallStep(
+                    JsonConfig.defaults(), new DefaultJsonMapperProfileRegistry(Set.of()), () -> true));
+            assertNull(
+                    logContaining(appender, Level.WARN, "accepts more than the baseline"),
+                    "the baseline system profile must not log a leniency warning; captured: " + appender.list);
+
+            VertiqueJson.resetForTests();
+            appender.list.clear();
+            succeed(stepFor("caseinsensitive", registry));
+
+            assertNotNull(
+                    logContaining(appender, Level.WARN, "ACCEPT_CASE_INSENSITIVE_PROPERTIES"),
+                    "a profile that binds property names case-insensitively must be warned about; captured: "
+                            + appender.list);
         } finally {
             root.detachAppender(appender);
         }
