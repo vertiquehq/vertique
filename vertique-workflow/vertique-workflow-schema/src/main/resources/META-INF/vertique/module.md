@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Workflow Schema Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.workflow.schema`
 > **Artifact:** `vertique-workflow-schema`
 > **Depends on:** workflow-core, json, json-schema, json-schema-validation, core
@@ -15,8 +15,10 @@ declares for its decisions and start payload, checks them when the definition is
 validates a submitted decision or start payload against the registered schema before the engine sees
 it.
 
-Beta means the registration behavior described here is implemented and tested, but the module is new
-and its surface may still change in a minor release. Pin the version you test against.
+Stable means the documented surface changes additively only: `WorkflowSchemaModule` and its bindings,
+`WorkflowPayloadSchemas` and its records, the registration checks, the validation answers and the state
+comparison described below. A break takes a replacement surface under the deprecation cycle. The engine
+needs this module on every node that runs the executor, so it is part of the workflow family's promise.
 
 ---
 
