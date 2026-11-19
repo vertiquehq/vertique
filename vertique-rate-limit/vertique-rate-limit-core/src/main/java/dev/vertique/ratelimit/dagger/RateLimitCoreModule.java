@@ -73,11 +73,14 @@ public abstract class RateLimitCoreModule {
      * Default applied when {@code rateLimit.local.maxTrackedKeys} is omitted — the documented
      * default. An omitted value
      * degrades to this default, never to a silently-accepted {@code 0}; the resolved value (default
-     * or explicit) is still eagerly bounds-validated (below 1 fails startup) by {@link
+     * or explicit) is still eagerly bounds-validated (below 1 or above 10,000,000 fails startup) by {@link
      * #localRateLimitBackend}, at this provider's own construction, the same eager-construction
      * discipline {@link RateLimiters}'s own startup validation uses.
      */
     private static final long DEFAULT_MAX_TRACKED_KEYS = 100_000L;
+
+    /** Largest accepted {@code maxTrackedKeys}, global or per-policy; a larger value fails startup. */
+    private static final long MAX_TRACKED_KEYS_LIMIT = 10_000_000L;
 
     /** Same default/validation contract as {@link #DEFAULT_MAX_TRACKED_KEYS}, for {@code cleanupIntervalMs}. */
     private static final long DEFAULT_CLEANUP_INTERVAL_MS = 60_000L;
@@ -324,7 +327,8 @@ public abstract class RateLimitCoreModule {
      * @param parser the framework's config-parsing seam
      * @return the LOCAL {@link RateLimitBackend}
      * @throws ConfigurationException if the resolved global {@code maxTrackedKeys}/{@code
-     *     cleanupIntervalMs}, or any per-policy {@code maxTrackedKeys} override, is below 1
+     *     cleanupIntervalMs}, or any per-policy {@code maxTrackedKeys} override, is below 1, or if
+     *     any {@code maxTrackedKeys} is above 10,000,000
      */
     @Provides
     @IntoMap
@@ -334,7 +338,7 @@ public abstract class RateLimitCoreModule {
         JsonObject rateLimit = JsonConfigPaths.navigateObject(config, "rateLimit");
         JsonObject local = JsonConfigPaths.navigateObject(rateLimit, LOCAL);
         RateLimitLocalConfig localConfig = parser.parse(local, RateLimitLocalConfig.class);
-        requireAtLeastOne(localConfig.maxTrackedKeys(), "rateLimit.local.maxTrackedKeys");
+        requireValidMaxTrackedKeys(localConfig.maxTrackedKeys(), "rateLimit.local.maxTrackedKeys");
         requireAtLeastOne(localConfig.cleanupIntervalMs(), "rateLimit.local.cleanupIntervalMs");
         JsonObject policiesJson = JsonConfigPaths.navigateObject(rateLimit, POLICIES);
         validatePerPolicyMaxTrackedKeysOverrides(policiesJson, parser);
@@ -360,12 +364,19 @@ public abstract class RateLimitCoreModule {
                 RateLimitPolicyLocalOverrideConfig override =
                         parser.parse(policyLocal, RateLimitPolicyLocalOverrideConfig.class);
                 if (override.maxTrackedKeys() != null) {
-                    requireAtLeastOne(
+                    requireValidMaxTrackedKeys(
                             override.maxTrackedKeys(),
                             "rateLimit.policies." + entry.getKey() + ".local.maxTrackedKeys");
                 }
             }
         });
+    }
+
+    private static void requireValidMaxTrackedKeys(long value, String path) {
+        requireAtLeastOne(value, path);
+        if (value > MAX_TRACKED_KEYS_LIMIT) {
+            throw new ConfigurationException(path + " must be at most " + MAX_TRACKED_KEYS_LIMIT + ", got " + value);
+        }
     }
 
     private static void requireAtLeastOne(long value, String path) {
