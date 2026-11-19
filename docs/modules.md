@@ -74,6 +74,7 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-micrometer-cache` | [module.md](../vertique-micrometer/vertique-micrometer-cache/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-core` | [module.md](../vertique-micrometer/vertique-micrometer-core/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-mcp` | [module.md](../vertique-micrometer/vertique-micrometer-mcp/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-micrometer-outbox` | [module.md](../vertique-micrometer/vertique-micrometer-outbox/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-rate-limit` | [module.md](../vertique-micrometer/vertique-micrometer-rate-limit/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-registry-prometheus` | [module.md](../vertique-micrometer/vertique-micrometer-registry-prometheus/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-rest` | [module.md](../vertique-micrometer/vertique-micrometer-rest/src/main/resources/META-INF/vertique/module.md) |
