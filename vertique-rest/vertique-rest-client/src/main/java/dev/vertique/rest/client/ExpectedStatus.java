@@ -16,6 +16,12 @@ import java.lang.annotation.Target;
  * response status code and fails with a {@link dev.vertique.rest.client.exception.RestClientResponseException} if the status does not
  * match. This annotation takes precedence over any default expectation set via the builder.
  *
+ * <p>The listed statuses are the ones that succeed, whatever their class: {@code @ExpectedStatus({200, 404})}
+ * makes a 404 a normal answer. An accepted response is decoded as the method's declared type (declare
+ * {@code Optional<T>}, {@code Void} or {@code HttpClientResponse} when an accepted status has another body
+ * shape); a rejected one, a 2xx included, fails with the exception above. An accepted status is a success
+ * for retries and the circuit breaker.
+ *
  * <p>Two mutually exclusive forms are supported:
  * <ul>
  *   <li><b>Exact codes</b> — specify one or more status codes in {@link #value()}:

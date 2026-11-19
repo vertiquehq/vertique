@@ -437,8 +437,13 @@ public final class RestClientBuilder {
 
     /**
      * Sets the default response {@link Expectation} applied to all methods that do not have a
-     * method-level {@link ExpectedStatus} annotation. Commonly used to require 2xx status codes
-     * or a specific {@code Content-Type}.
+     * method-level {@link ExpectedStatus} annotation.
+     *
+     * <p>A response the expectation accepts is a success whatever its status, and one it rejects fails
+     * with a {@link dev.vertique.rest.client.exception.RestClientResponseException}. An expectation
+     * that does not inspect the status, such as a {@code Content-Type} check, therefore accepts every
+     * status it passes, a 500 included; combine it with
+     * {@code HttpResponseExpectation.SC_SUCCESS.and(...)} to keep the 2xx rule.
      *
      * @param expectation the default expectation
      * @return this builder
@@ -853,12 +858,17 @@ public final class RestClientBuilder {
         Map<Method, ClientMethodMeta> methodMetas =
                 META_CACHE.computeIfAbsent(clientInterface, ClientInterfaceScanner::scan);
 
+        // A declaration overridden by another method of the client shares that method's descriptor, so
+        // each operation is visited once.
+        List<ClientMethodMeta> operations =
+                methodMetas.values().stream().distinct().toList();
+
         // --- Capturer operation validation ---
         // Each system capturer vets every operation before anything is built, so a configuration
         // error it detects (e.g. an unknown audit policy id) fails startup instead of surfacing on a
         // later attempt. An exception propagates out of build().
         List<RestClientContextCapturer<?>> sortedContextCapturers = sortedCapturers(List.copyOf(contextCapturers));
-        for (ClientMethodMeta method : methodMetas.values()) {
+        for (ClientMethodMeta method : operations) {
             RestClientOperation operation =
                     new RestClientOperation(clientInterface, clientName, method.methodMetadata());
             for (RestClientContextCapturer<?> capturer : sortedContextCapturers) {
@@ -880,7 +890,7 @@ public final class RestClientBuilder {
         // For each method, probe each conversion-applicable param (PATH, QUERY, HEADER, COOKIE)
         // to ensure the effective resolver can serialize it. Fail fast at build time rather than at
         // first invocation.
-        for (ClientMethodMeta method : methodMetas.values()) {
+        for (ClientMethodMeta method : operations) {
             for (ClientParamMeta param : method.params()) {
                 ClientParamMeta.ParamSource src = param.source();
                 if (src == ClientParamMeta.ParamSource.PATH

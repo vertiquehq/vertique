@@ -6,11 +6,9 @@ package dev.vertique.codegen.rest.client.processor.validate;
 import dev.vertique.codegen.AnnotationMirrors;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.rest.client.processor.ClientInterfaceModel;
+import dev.vertique.codegen.rest.client.processor.scan.ClientMethods;
 import java.util.List;
-import javax.lang.model.element.Element;
-import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
-import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 
 /**
@@ -63,16 +61,9 @@ public final class HttpVerbValidator {
         TypeElement clientType = model.clientType();
         boolean valid = true;
 
-        for (Element enclosed : clientType.getEnclosedElements()) {
-            if (enclosed.getKind() != ElementKind.METHOD) {
-                continue;
-            }
-            ExecutableElement method = (ExecutableElement) enclosed;
-            // Skip default methods — they do not need an HTTP verb
-            if (method.getModifiers().contains(Modifier.DEFAULT)) {
-                continue;
-            }
-            if (!hasSupportedVerb(method)) {
+        for (ClientMethods.ClientMethod operation : ClientMethods.collect(ctx, clientType)) {
+            if (!hasSupportedVerb(operation)) {
+                ExecutableElement method = operation.method();
                 ctx.diagnostics()
                         .error(
                                 method,
@@ -88,13 +79,15 @@ public final class HttpVerbValidator {
     /**
      * Returns {@code true} when the method carries at least one supported HTTP verb annotation.
      *
-     * @param method the method to inspect
+     * @param operation the operation to inspect: the method and the declarations it overrides
      * @return {@code true} if a supported verb annotation is present
      */
-    private boolean hasSupportedVerb(ExecutableElement method) {
-        for (String fqn : SUPPORTED_VERB_FQNS) {
-            if (AnnotationMirrors.isPresent(method, fqn)) {
-                return true;
+    private boolean hasSupportedVerb(ClientMethods.ClientMethod operation) {
+        for (ExecutableElement declaration : operation.declarations()) {
+            for (String fqn : SUPPORTED_VERB_FQNS) {
+                if (AnnotationMirrors.isPresent(declaration, fqn)) {
+                    return true;
+                }
             }
         }
         return false;

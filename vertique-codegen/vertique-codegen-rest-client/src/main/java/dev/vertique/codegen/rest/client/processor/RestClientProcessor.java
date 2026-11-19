@@ -183,7 +183,8 @@ public final class RestClientProcessor extends AbstractProcessor {
                 allBeanModels.add(beanModel);
             }
 
-            if (!hasExternalBean) {
+            // A declaring interface the generated class cannot name leaves the reflective proxy in charge.
+            if (!hasExternalBean && declaringTypesAccessible(model)) {
                 proxyEmitter.emit(model, beanModelsByFqn);
             }
         }
@@ -196,6 +197,42 @@ public final class RestClientProcessor extends AbstractProcessor {
     }
 
     // --- Internal helpers ---
+
+    /**
+     * Returns {@code true} when the generated proxy, which lives in the client's package, can name the
+     * interface that declares each operation: an inherited operation is looked up on its declaring
+     * interface, which may be package-private to another package.
+     *
+     * @param model the scanned client interface
+     * @return {@code false} when some declaring interface is not accessible from the client's package
+     */
+    private boolean declaringTypesAccessible(ClientInterfaceModel model) {
+        String clientPackage = ctx.packageNameOf(model.clientType());
+        for (var method : model.methods()) {
+            if (method.method().getEnclosingElement() instanceof TypeElement declaring
+                    && !declaring.equals(model.clientType())
+                    && !accessibleFrom(declaring, clientPackage)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean accessibleFrom(TypeElement type, String fromPackage) {
+        for (Element current = type; current instanceof TypeElement t; current = t.getEnclosingElement()) {
+            var modifiers = t.getModifiers();
+            if (modifiers.contains(javax.lang.model.element.Modifier.PRIVATE)) {
+                return false;
+            }
+            boolean implicitlyPublic =
+                    t.getEnclosingElement() instanceof TypeElement outer && outer.getKind() == ElementKind.INTERFACE;
+            boolean samePackage = ctx.packageNameOf(t).equals(fromPackage);
+            if (!modifiers.contains(javax.lang.model.element.Modifier.PUBLIC) && !implicitlyPublic && !samePackage) {
+                return false;
+            }
+        }
+        return true;
+    }
 
     /**
      * Returns {@code true} when the given type is not in the current compilation unit (i.e., it
