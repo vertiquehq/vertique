@@ -14,9 +14,11 @@ import dev.vertique.config.parser.DefaultConfigParser;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.exception.UnavailableException;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.security.authz.AuthorizationClaims;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
+import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.User;
 import io.vertx.ext.auth.authorization.AuthorizationProvider;
@@ -155,16 +157,18 @@ class AuthorizationImportConfigTest {
             };
         }
 
-        private Future<AuthorizationClaims> importThrough(Optional<AuthorizationImportConfig> config) {
+        private Future<AuthorizationClaims> importThrough(
+                Optional<AuthorizationImportConfig> config, Resilience resilience) {
             VertxAuthorizationImporter importer = VertxAuthorizationImportModule.vertxAuthorizationImporter(
-                    Set.of(hungProvider()), config, TestResilience.shared());
+                    Set.of(hungProvider()), config, resilience);
             return importer.importInto(User.create(new JsonObject().put("sub", "alice")), AuthorizationClaims.empty());
         }
 
         @Test
         @DisplayName("hands the configured deadline to the importer: a hung provider fails within it")
         void configuredDeadlineReachesTheImporter() {
-            Future<AuthorizationClaims> future = importThrough(Optional.of(new AuthorizationImportConfig(100L)));
+            Future<AuthorizationClaims> future =
+                    importThrough(Optional.of(new AuthorizationImportConfig(100L)), TestResilience.shared());
 
             ExecutionException failure = assertThrows(
                     ExecutionException.class,
@@ -176,11 +180,20 @@ class AuthorizationImportConfigTest {
         @DisplayName("without a configuration the framework default applies: the import is still pending well "
                 + "after a short configured deadline would have fired")
         void defaultDeadlineAppliesWithoutConfiguration() throws Exception {
-            Future<AuthorizationClaims> future = importThrough(Optional.empty());
+            // A private runtime, closed below: the pending import's 5000 ms deadline must not outlive the test
+            // and log its ERROR into whichever importer test runs next on the shared runtime.
+            Vertx vertx = Vertx.vertx();
+            Resilience resilience = Resilience.create(vertx);
+            try {
+                Future<AuthorizationClaims> future = importThrough(Optional.empty(), resilience);
 
-            Thread.sleep(600L);
+                Thread.sleep(600L);
 
-            assertFalse(future.isComplete(), "the 5000 ms default must not have elapsed after 600 ms");
+                assertFalse(future.isComplete(), "the 5000 ms default must not have elapsed after 600 ms");
+            } finally {
+                resilience.close().toCompletionStage().toCompletableFuture().get(AWAIT_MS, TimeUnit.MILLISECONDS);
+                vertx.close().toCompletionStage().toCompletableFuture().get(AWAIT_MS, TimeUnit.MILLISECONDS);
+            }
         }
     }
 }
