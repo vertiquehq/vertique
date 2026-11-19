@@ -239,7 +239,7 @@ class IdentitySnapshotRoundTripTest {
 
                 // --- receive-side reconstruction ---
                 dev.vertique.security.IdentityReconstruction reconstruction = new DefaultIdentityReconstruction(codec);
-                dev.vertique.security.runtime.ServiceIdentityResolver resolver =
+                dev.vertique.security.ServiceIdentityResolver resolver =
                         origin -> dev.vertique.security.SystemIdentities.scheduledJob(origin.reference());
                 IdentitySnapshotReconstructionInitializer initializer = new IdentitySnapshotReconstructionInitializer(
                         holder, reconstruction, Optional.of(resolver), identitySnapshotConfig());
@@ -364,7 +364,7 @@ class IdentitySnapshotRoundTripTest {
 
             // Real receive-side initializer: must fall to the degradation (case 3) path and bind a marker.
             dev.vertique.security.IdentityReconstruction reconstruction = new DefaultIdentityReconstruction(codec);
-            dev.vertique.security.runtime.ServiceIdentityResolver resolver =
+            dev.vertique.security.ServiceIdentityResolver resolver =
                     origin -> dev.vertique.security.SystemIdentities.scheduledJob(origin.reference());
             new IdentitySnapshotReconstructionInitializer(
                             holder, reconstruction, Optional.of(resolver), identitySnapshotConfig())
@@ -521,7 +521,7 @@ class IdentitySnapshotRoundTripTest {
     private static IdentitySnapshotReconstructionInitializer reconstructionInitializer(ContextHolder holder) {
         IdentitySnapshotCodec codec = new IdentitySnapshotCodec(hmac());
         dev.vertique.security.IdentityReconstruction reconstruction = new DefaultIdentityReconstruction(codec);
-        dev.vertique.security.runtime.ServiceIdentityResolver resolver =
+        dev.vertique.security.ServiceIdentityResolver resolver =
                 origin -> dev.vertique.security.SystemIdentities.scheduledJob(origin.reference());
         return new IdentitySnapshotReconstructionInitializer(
                 holder, reconstruction, Optional.of(resolver), identitySnapshotConfig());
@@ -661,7 +661,7 @@ class IdentitySnapshotRoundTripTest {
                         valid.integrity().tag() + "x"));
 
         dev.vertique.security.IdentityReconstruction reconstruction = new DefaultIdentityReconstruction(codec);
-        dev.vertique.security.runtime.ServiceIdentityResolver resolver =
+        dev.vertique.security.ServiceIdentityResolver resolver =
                 origin -> dev.vertique.security.SystemIdentities.scheduledJob(origin.reference());
         IdentitySnapshotReconstructionInitializer initializer = new IdentitySnapshotReconstructionInitializer(
                 holder, reconstruction, Optional.of(resolver), identitySnapshotConfig());
