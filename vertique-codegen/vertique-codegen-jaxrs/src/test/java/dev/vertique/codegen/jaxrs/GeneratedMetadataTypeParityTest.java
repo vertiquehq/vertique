@@ -159,6 +159,25 @@ class GeneratedMetadataTypeParityTest {
                                 rawLeaf(" extends Number"),
                                 rawLeafExpected("java.lang.Number")),
                         new Row(
+                                "private nested class as a parameter type, an element type and a type argument",
+                                List.of(src("Leaf", """
+                                                @Path("/x") public class Leaf {
+                                                    private static class Hidden {}
+                                                    @POST @Path("/body")
+                                                    public String body(Hidden v) { return ""; }
+                                                    @POST @Path("/array")
+                                                    public String array(Hidden[] v) { return ""; }
+                                                    @POST @Path("/list")
+                                                    public String list(List<Hidden> v) { return ""; }
+                                                }
+                                                """)),
+                                List.of(
+                                        "array ret=java.lang.String future=false params=[BODY:[L" + PKG
+                                                + ".Leaf$Hidden;/-]",
+                                        "body ret=java.lang.String future=false params=[BODY:" + PKG
+                                                + ".Leaf$Hidden/-]",
+                                        "list ret=java.lang.String future=false params=[BODY:java.util.List/-]")),
+                        new Row(
                                 "leaf reaching the interface through a raw intermediate class",
                                 intermediate("", "Mid<T> implements Api<String>", "Mid"),
                                 rawLeafExpected("java.lang.Object")),
@@ -357,7 +376,34 @@ class GeneratedMetadataTypeParityTest {
                                                     String body(List<Hidden> v) { return ""; }
                                                 }
                                                 """)),
-                                List.of("body=[java.util.List<" + PKG + ".Leaf$Hidden>]")))
+                                List.of("body=[java.util.List<" + PKG + ".Leaf$Hidden>]")),
+                        new Row(
+                                "a public method whose parameter type argument is a private nested class",
+                                List.of(src("Leaf", """
+                                                @Path("/x") public class Leaf {
+                                                    private static class Hidden {}
+                                                    @POST @Path("/body")
+                                                    public String body(List<Hidden> v) { return ""; }
+                                                }
+                                                """)),
+                                List.of("body=[java.util.List<" + PKG + ".Leaf$Hidden>]")),
+                        new Row(
+                                "a public method whose parameter type is a private nested class",
+                                List.of(src("Leaf", """
+                                                @Path("/x") public class Leaf {
+                                                    private static class Hidden {}
+                                                    @POST @Path("/body")
+                                                    public String body(Hidden v) { return ""; }
+                                                    @GET @Path("/query")
+                                                    public String query(@QueryParam("q") Hidden q) { return ""; }
+                                                    @POST @Path("/array")
+                                                    public String array(Hidden[] v) { return ""; }
+                                                }
+                                                """)),
+                                List.of(
+                                        "array=[" + PKG + ".Leaf$Hidden[]]",
+                                        "body=[" + PKG + ".Leaf$Hidden]",
+                                        "query=[" + PKG + ".Leaf$Hidden]")))
                 .map(Arguments::of);
     }
 
@@ -395,7 +441,10 @@ class GeneratedMetadataTypeParityTest {
             }
         }
         org.junit.jupiter.api.Assertions.assertTrue(
-                compared > 0 || row.label().contains("cannot name"), "the plan carried no parameter metadata");
+                compared > 0
+                        || row.label().contains("cannot name")
+                        || row.label().contains("type is a private"),
+                "the plan carried no parameter metadata");
     }
 
     static List<String> genericTypes(List<ResourceMethodMeta> metas) {

@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import javax.annotation.processing.Generated;
+import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
@@ -335,7 +336,9 @@ public final class ExecutionPlanEmitter {
      *
      * <p>Primitive types and {@code void} are always accessible. For declared types: {@code PUBLIC}
      * types are accessible everywhere. For package-private or protected types, accessibility
-     * requires the type to be in the same package as the generated companion.
+     * requires the type to be in the same package as the generated companion. A private type, or
+     * one nested in a private class, is never accessible, and an array is as accessible as its
+     * element type.
      *
      * @param type        the type to check
      * @param fromPackage the package where the generated code lives
@@ -351,20 +354,32 @@ public final class ExecutionPlanEmitter {
         if (kind.isPrimitive() || kind == TypeKind.VOID || kind == TypeKind.NULL) {
             return true;
         }
-        // Erase to get the declared element
+        // Erase to get the declared element; an array is as accessible as its element type
         TypeMirror erased = ctx.types().erasure(type);
+        while (erased instanceof javax.lang.model.type.ArrayType array) {
+            erased = array.getComponentType();
+            if (erased.getKind().isPrimitive()) {
+                return true;
+            }
+        }
         var element = ctx.types().asElement(erased);
         if (!(element instanceof TypeElement te)) {
-            // Array or other non-declared type — treat as accessible
             return true;
         }
-        // PUBLIC types are accessible from any package
-        if (te.getModifiers().contains(Modifier.PUBLIC)) {
-            return true;
+        // A type is accessible when it, and every class that encloses it, is not private and is
+        // either public or declared in the generated companion's package.
+        for (Element current = te; current instanceof TypeElement; current = current.getEnclosingElement()) {
+            Set<Modifier> modifiers = current.getModifiers();
+            if (modifiers.contains(Modifier.PRIVATE)) {
+                return false;
+            }
+            if (!modifiers.contains(Modifier.PUBLIC)
+                    && !fromPackage.equals(
+                            elements.getPackageOf(current).getQualifiedName().toString())) {
+                return false;
+            }
         }
-        // Non-public: only accessible from the same package
-        String typePkg = elements.getPackageOf(te).getQualifiedName().toString();
-        return fromPackage.equals(typePkg);
+        return true;
     }
 
     // --- Private: static constant builders ---

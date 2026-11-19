@@ -84,7 +84,15 @@ final class GenericTypeExpressions {
         };
     }
 
-    private boolean isNameable(TypeMirror type, String fromPackage) {
+    /**
+     * Whether code in {@code fromPackage} can write {@code type} out: every class it names is
+     * accessible from that package and none is private or nested in a private class.
+     *
+     * @param type        the type to check
+     * @param fromPackage the package the generated class lives in
+     * @return {@code true} when the type can be written in generated source
+     */
+    boolean isNameable(TypeMirror type, String fromPackage) {
         return switch (type.getKind()) {
             case ARRAY -> isNameable(((javax.lang.model.type.ArrayType) type).getComponentType(), fromPackage);
             case WILDCARD -> {

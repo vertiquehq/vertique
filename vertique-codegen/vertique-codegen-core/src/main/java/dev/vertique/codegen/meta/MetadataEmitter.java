@@ -329,8 +329,81 @@ public final class MetadataEmitter {
                 erasedTypeName(type, types),
                 annotations,
                 "ANNOTATION_",
-                reflectiveFallbackSupplier);
+                reflectiveFallbackSupplier,
+                null);
         return JavaFile.builder(generatedName.packageName(), typeSpec).build();
+    }
+
+    /**
+     * Emits a standalone {@code ParameterMetadata} implementation whose {@code type()} the generated
+     * class loads by name at class initialization, for a parameter type the generated class cannot
+     * write as a class literal (a private class, or one nested in a private class).
+     *
+     * @param generatedName the fully-qualified name for the generated implementation class; must not
+     *                       be {@code null}
+     * @param index          the compile-time-captured parameter index constant
+     * @param name           the compile-time-captured parameter name constant (nullable, preserved as-is)
+     * @param typeBinaryName the binary name of the parameter's erased type, or of its element type for
+     *                       an array; must not be {@code null}
+     * @param arrayDimensions the number of array dimensions of the parameter's type, {@code 0} for a
+     *                       type that is not an array
+     * @param annotations    the materialized annotation literals; must not be {@code null}
+     * @param reflectiveFallbackSupplier see
+     *                       {@link #emitParameterMetadata(ClassName, int, String, TypeMirror, Types, List, CodeBlock)}
+     * @return a {@link JavaFile} containing the generated top-level {@code ParameterMetadata}
+     *         implementation
+     */
+    public static JavaFile emitParameterMetadataLoadingType(
+            ClassName generatedName,
+            int index,
+            String name,
+            String typeBinaryName,
+            int arrayDimensions,
+            List<AnnotationLiteralRef> annotations,
+            CodeBlock reflectiveFallbackSupplier) {
+        TypeSpec typeSpec = parameterMetadataType(
+                generatedName,
+                List.of(Modifier.PUBLIC, Modifier.FINAL),
+                CodeBlock.of("$L", index),
+                name == null ? CodeBlock.of("null") : CodeBlock.of("$S", name),
+                null,
+                annotations,
+                "ANNOTATION_",
+                reflectiveFallbackSupplier,
+                loadTypeByName(typeBinaryName, arrayDimensions));
+        return JavaFile.builder(generatedName.packageName(), typeSpec).build();
+    }
+
+    /**
+     * The {@code Class} expression that loads a type by binary name with the generated class's own
+     * class loader and applies {@code arrayDimensions} array levels, as a call of a private static
+     * helper the generated class carries.
+     */
+    private static CodeBlock loadTypeByName(String typeBinaryName, int arrayDimensions) {
+        return CodeBlock.of("loadType($S, $L)", typeBinaryName, arrayDimensions);
+    }
+
+    /** Emits {@code private static Class<?> loadType(String, int)}, which the by-name type expression calls. */
+    private static MethodSpec loadTypeHelper(ClassName generatedName) {
+        return MethodSpec.methodBuilder("loadType")
+                .addModifiers(Modifier.PRIVATE, Modifier.STATIC)
+                .returns(classOfWildcard())
+                .addParameter(String.class, "binaryName")
+                .addParameter(int.class, "dimensions")
+                .beginControlFlow("try")
+                .addStatement(
+                        "$T type = $T.forName(binaryName, false, $T.class.getClassLoader())",
+                        classOfWildcard(),
+                        Class.class,
+                        generatedName)
+                .beginControlFlow("for (int i = 0; i < dimensions; i++)")
+                .addStatement("type = type.arrayType()")
+                .endControlFlow()
+                .addStatement("return type")
+                .nextControlFlow("catch ($T e)", ClassNotFoundException.class)
+                .addStatement("throw new $T(e)", IllegalStateException.class)
+                .endControlFlow()
+                .build();
     }
 
     // --- MethodMetadata constant-core accessors ---
@@ -665,6 +738,9 @@ public final class MetadataEmitter {
      *                         {@code null} (may be empty)
      * @param literalFieldPrefix the prefix used for the per-annotation literal constant field names
      *                         (e.g. {@code "ANNOTATION_"} for the standalone case)
+     * @param reflectiveFallbackSupplier the full-merged-annotations supplier, or {@code null}
+     * @param loadedType       an expression that loads the type by name, for a type with no class
+     *                         literal ({@code typeLiteral} is then ignored), or {@code null}
      * @return the {@code ParameterMetadata}-implementing {@link TypeSpec}
      */
     private static TypeSpec parameterMetadataType(
@@ -675,7 +751,8 @@ public final class MetadataEmitter {
             TypeName typeLiteral,
             List<AnnotationLiteralRef> annotations,
             String literalFieldPrefix,
-            CodeBlock reflectiveFallbackSupplier) {
+            CodeBlock reflectiveFallbackSupplier,
+            CodeBlock loadedType) {
         ArrayTypeName annotationArray = ArrayTypeName.of(ClassName.get(Annotation.class));
 
         List<String> literalFieldNames = new ArrayList<>();
@@ -716,6 +793,15 @@ public final class MetadataEmitter {
                     .build());
         }
 
+        if (loadedType != null) {
+            // The type cannot be written as a class literal here: load it once, by name.
+            builder.addField(
+                    FieldSpec.builder(classOfWildcard(), "TYPE", Modifier.PRIVATE, Modifier.STATIC, Modifier.FINAL)
+                            .initializer(loadedType)
+                            .build());
+            builder.addMethod(loadTypeHelper(generatedName));
+        }
+
         return builder.addMethod(MethodSpec.methodBuilder("index")
                         .addAnnotation(Override.class)
                         .addModifiers(Modifier.PUBLIC)
@@ -732,7 +818,10 @@ public final class MetadataEmitter {
                         .addAnnotation(Override.class)
                         .addModifiers(Modifier.PUBLIC)
                         .returns(classOfWildcard())
-                        .addStatement("return $T.class", typeLiteral)
+                        .addCode(
+                                loadedType != null
+                                        ? CodeBlock.of("return TYPE;\n")
+                                        : CodeBlock.of("return $T.class;\n", typeLiteral))
                         .build())
                 .addMethod(standaloneFindAnnotation(annotations, literalFieldNames, hasReflectiveFallback))
                 .addMethod(hasAnnotation())
