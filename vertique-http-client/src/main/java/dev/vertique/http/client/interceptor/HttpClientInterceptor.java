@@ -55,10 +55,11 @@ public interface HttpClientInterceptor extends OrderedExtension {
      * {@code response} is a framework-built head, or {@code null} when no response head arrived.
      * {@code completion} carries the status when a head arrived, the failure as the caller sees it (or
      * {@code null} when the exchange completed with a response), the call id, the attempt ordinal, the
-     * duration, the completion time and the final target (scheme, host and port only). For a call run
-     * through {@code execute}, a status expectation the attempt applies to the response is reported
-     * once the attempt ends; a request sent straight through {@code webClient()} reports its response
-     * when it completes and cannot see an expectation the caller applies afterwards.
+     * duration, the completion time and the final target (scheme, host and port only). A cancelled exchange
+     * reports an {@link dev.vertique.http.client.exception.HttpExchangeCancelledException} as its failure.
+     * For a call run through {@code execute}, a status expectation the attempt applies to the response
+     * is reported once the attempt ends; a request sent straight through {@code webClient()} reports its
+     * response when it completes and cannot see an expectation the caller applies afterwards.
      *
      * <p>May run on any thread, and concurrently for different exchanges.
      *
