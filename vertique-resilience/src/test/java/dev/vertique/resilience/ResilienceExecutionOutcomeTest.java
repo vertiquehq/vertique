@@ -137,8 +137,8 @@ class ResilienceExecutionOutcomeTest {
     }
 
     /**
-     * Supporting FR-032: an operation that throws instead of returning a future is reported as a failed
-     * attempt, whether it throws an exception or an error, and the execution fails with what it threw.
+     * An operation that throws instead of returning a future is reported as a failed attempt, whether it
+     * throws an exception or an error, and the execution fails with what it threw.
      */
     @Test
     @DisplayName("an operation that throws is reported as a failed attempt")
