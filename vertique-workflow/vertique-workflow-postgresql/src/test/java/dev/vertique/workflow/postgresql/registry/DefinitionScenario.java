@@ -28,6 +28,7 @@ import io.vertx.sqlclient.Tuple;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayDeque;
@@ -601,8 +602,13 @@ final class DefinitionScenario implements AutoCloseable {
     }
 
     static <T> T await(Future<T> future) {
+        return await(future, Duration.ofSeconds(10));
+    }
+
+    /** Waits for the future for at most the given time, failing the test when it does not complete by then. */
+    static <T> T await(Future<T> future, Duration timeout) {
         try {
-            return future.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+            return future.toCompletionStage().toCompletableFuture().get(timeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new AssertionError("Interrupted while awaiting a future", e);
@@ -612,7 +618,7 @@ final class DefinitionScenario implements AutoCloseable {
             if (cause instanceof Error error) throw error;
             throw new IllegalStateException(cause);
         } catch (TimeoutException e) {
-            throw new AssertionError("A future did not complete within ten seconds", e);
+            throw new AssertionError("A future did not complete within " + timeout, e);
         }
     }
 
