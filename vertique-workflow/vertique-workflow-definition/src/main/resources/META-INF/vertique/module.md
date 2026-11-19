@@ -163,13 +163,15 @@ Each step has an `id` and `type`. Common step fields:
 | `service` | Record a service-dispatch side effect | `target`, `payloadMapper`, `next`, optional `compensation` |
 | `wait-signal` | Suspend until a named signal arrives | `signal`, `payloadType`, `stateReducer`, `next`, optional `timeout`, optional `correlationKey` |
 | `timer` | Suspend until a resolved time | `fireAt`, `next` |
-| `human-task` | Create a task and wait for a decision | `taskType`, `assignment`, `decisions`, optional `due`, `reminders`, `requireVersionStability` |
+| `human-task` | Create a task and wait for a decision | `assignment`, `decisions`, optional `taskType`, `due`, `reminders`, `requireVersionStability` |
 | `decision` | Route based on CEL expressions or named conditions | `routes`, `default` |
 | `fork` | Start parallel branches | `branches`, `join`, optional `retryPolicy` |
 | `join` | Fan branches back into one path | `policy`, `reducer`, `next`, optional `onFailure` |
 | `compensation` | Record compensating service dispatch | `forwardStep`, `target`, `payloadMapper` |
 | `complete` | End successfully | none beyond `id` |
 | `fail` | End with failure and optional compensation | `errorType`, `messageFactory` |
+
+A `human-task` step's `taskType` is the logical type of the tasks it creates (for example `approval`). The compiler passes it to the plan's task node, every task the step creates carries it (`TaskRecord.taskType()`), and task lists filter on it with `TaskFilter.withTaskType(...)`. Omit it, or leave it blank, for a task with no type. It is not part of the plan hash, so a document that changes only its task type keeps the hash of its plan.
 
 Callback-like fields are string identifiers resolved against registries contributed by the application. The document never embeds Java lambdas or scripts.
 

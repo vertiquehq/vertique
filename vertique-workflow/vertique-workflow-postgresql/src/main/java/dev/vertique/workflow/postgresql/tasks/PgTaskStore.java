@@ -157,9 +157,9 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
                 + " (task_id, workflow_id, step_id, status, assignee_type, assignee_key,"
                 + " decisions_snapshot_json, due_at, due_date_timer_id, subject_version_at_creation,"
                 + " created_at, updated_at, branch_token_id, fork_step_id, branch_id, scope_key,"
-                + " require_version_stability)"
+                + " require_version_stability, task_type)"
                 + " VALUES ($1, $2, $3, 'OPEN', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,"
-                + " COALESCE((SELECT scope_key FROM " + instances + " WHERE id = $2), 'default'), $15)";
+                + " COALESCE((SELECT scope_key FROM " + instances + " WHERE id = $2), 'default'), $15, $16)";
 
         this.sqlSelectAllColumns = "SELECT task_id, workflow_id, step_id, status, assignee_type, assignee_key,"
                 + " decisions_snapshot_json, decision_name, decision_payload_json,"
@@ -168,7 +168,8 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
                 + " completed_at, cancelled_at, expired_at, cancellation_reason,"
                 + " subject_version_at_creation,"
                 + " branch_token_id, fork_step_id, branch_id,"
-                + " created_at, updated_at, scope_key, require_version_stability, reservation_command_id"
+                + " created_at, updated_at, scope_key, require_version_stability, reservation_command_id,"
+                + " task_type"
                 + " FROM " + tasks;
 
         this.sqlSelectJoinedColumns = "SELECT wt.task_id, wt.workflow_id, wt.step_id, wt.status,"
@@ -180,7 +181,7 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
                 + " wt.subject_version_at_creation,"
                 + " wt.branch_token_id, wt.fork_step_id, wt.branch_id,"
                 + " wt.created_at, wt.updated_at, wt.scope_key, wt.require_version_stability,"
-                + " wt.reservation_command_id"
+                + " wt.reservation_command_id, wt.task_type"
                 + " FROM " + tasks + " wt"
                 // The joined side exposes only the columns the filters read, so the unqualified
                 // keyset columns (updated_at, task_id) stay unambiguous on every page.
@@ -270,7 +271,8 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
                 record.branchTokenId(),
                 record.forkStepId(),
                 record.branchId(),
-                record.requireVersionStability());
+                record.requireVersionStability(),
+                record.taskType());
 
         return tx.preparedQuery(sqlInsert)
                 .execute(params)
@@ -496,6 +498,12 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
             sql.append(" ").append(colPrefix).append("scope_key = $").append(paramValues.size());
             hasWhere = true;
         }
+        if (filter.taskType() != null) {
+            sql.append(hasWhere ? " AND" : " WHERE");
+            paramValues.add(filter.taskType());
+            sql.append(" ").append(colPrefix).append("task_type = $").append(paramValues.size());
+            hasWhere = true;
+        }
         if (!filter.includeArchived()) {
             // Exclude tasks whose owning workflow instance has been soft-deleted (archived).
             // When a subject-filter JOIN is present, reuse the already-joined wi alias.
@@ -683,7 +691,8 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
                 branchId,
                 row.getString("scope_key"),
                 row.getBoolean("require_version_stability"),
-                row.getLong("reservation_command_id"));
+                row.getLong("reservation_command_id"),
+                row.getString("task_type"));
     }
 
     /**

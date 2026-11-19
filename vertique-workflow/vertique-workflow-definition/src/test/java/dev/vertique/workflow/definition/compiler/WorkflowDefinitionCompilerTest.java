@@ -355,6 +355,31 @@ class WorkflowDefinitionCompilerTest {
             assertThat(node.decisions().get(0).name()).isEqualTo("approve");
             assertThat(node.dueDate()).isNull();
             assertThat(node.requireVersionStability()).isFalse();
+            assertThat(node.taskType())
+                    .as("the document's taskType reaches the node")
+                    .isEqualTo("approval");
+        }
+
+        @Test
+        @DisplayName("a blank or missing taskType leaves the node without a task type")
+        void blankTaskTypeIsNoTaskType() {
+            HumanTaskStep.AssignmentBlock assignment = new HumanTaskStep.AssignmentBlock("role", "reviewer", null);
+            HumanTaskStep.TaskDecisionBlock decision = new HumanTaskStep.TaskDecisionBlock(
+                    "approve", ApprovePayload.class.getName(), "review.applyApprove", "done");
+            for (String taskType : new String[] {null, "", "  "}) {
+                WorkflowPlan plan = compile(
+                        List.of(
+                                new HumanTaskStep("review", taskType, assignment, List.of(decision), null, null, null),
+                                new CompleteStep("done")),
+                        "review");
+
+                dev.vertique.workflow.plan.HumanTaskNode node = plan.nodes().stream()
+                        .filter(dev.vertique.workflow.plan.HumanTaskNode.class::isInstance)
+                        .map(dev.vertique.workflow.plan.HumanTaskNode.class::cast)
+                        .findFirst()
+                        .orElseThrow();
+                assertThat(node.taskType()).isNull();
+            }
         }
 
         @Test

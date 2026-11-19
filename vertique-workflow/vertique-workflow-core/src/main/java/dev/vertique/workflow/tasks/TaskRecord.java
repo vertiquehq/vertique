@@ -67,6 +67,8 @@ import java.util.UUID;
  * @param reservationCommandId the id of the recorded completion that reserves the task; null unless
  *     {@code status == COMPLETING}. The store sets it through the engine's reservation, never from this record on
  *     insert.
+ * @param taskType the logical task type the plan declared for the step (for example {@code "approval"}); {@code null}
+ *     when the step declared none, and for a task created before the type was stored
  */
 public record TaskRecord(
         UUID taskId,
@@ -94,7 +96,8 @@ public record TaskRecord(
         @Nullable String branchId,
         String scopeKey,
         @Nullable Boolean requireVersionStability,
-        @Nullable Long reservationCommandId) {
+        @Nullable Long reservationCommandId,
+        @Nullable String taskType) {
 
     /**
      * Validates that the scope key is present.
@@ -103,6 +106,67 @@ public record TaskRecord(
      */
     public TaskRecord {
         Objects.requireNonNull(scopeKey, "scopeKey");
+    }
+
+    /**
+     * Creates a task record that carries no task type. Retained so existing callers keep compiling; equivalent to the
+     * canonical constructor with a {@code null} {@code taskType}.
+     */
+    public TaskRecord(
+            UUID taskId,
+            WorkflowInstanceId workflowId,
+            String stepId,
+            TaskAssignment assignment,
+            TaskStatus status,
+            List<TaskDecisionDescriptor> decisions,
+            @Nullable Instant dueAt,
+            @Nullable UUID dueDateTimerId,
+            @Nullable Instant completedAt,
+            @Nullable Instant cancelledAt,
+            @Nullable Instant expiredAt,
+            Instant updatedAt,
+            @Nullable String decisionName,
+            @Nullable String decisionPayloadJson,
+            @Nullable WorkflowActor completedBy,
+            @Nullable WorkflowActor cancelledBy,
+            @Nullable WorkflowActor reassignedBy,
+            @Nullable String cancellationReason,
+            @Nullable String reassignmentReason,
+            @Nullable String subjectVersionAtCreation,
+            @Nullable UUID branchTokenId,
+            @Nullable String forkStepId,
+            @Nullable String branchId,
+            String scopeKey,
+            @Nullable Boolean requireVersionStability,
+            @Nullable Long reservationCommandId) {
+        this(
+                taskId,
+                workflowId,
+                stepId,
+                assignment,
+                status,
+                decisions,
+                dueAt,
+                dueDateTimerId,
+                completedAt,
+                cancelledAt,
+                expiredAt,
+                updatedAt,
+                decisionName,
+                decisionPayloadJson,
+                completedBy,
+                cancelledBy,
+                reassignedBy,
+                cancellationReason,
+                reassignmentReason,
+                subjectVersionAtCreation,
+                branchTokenId,
+                forkStepId,
+                branchId,
+                scopeKey,
+                requireVersionStability,
+                reservationCommandId,
+                null);
     }
 
     /**
