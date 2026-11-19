@@ -8,6 +8,7 @@ import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import io.vertx.core.json.JsonObject;
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;
@@ -43,22 +44,11 @@ final class Registries {
      */
     static DefaultWorkflowRegistry withSchemaValidator(
             PayloadSchemaCache cache, JsonMapperProfileRegistry profiles, JsonConfig config) {
+        DefaultWorkflowTypeNames names = new DefaultWorkflowTypeNames();
         return new DefaultWorkflowRegistry(
-                null, Set.of(new PayloadSchemaRegistrationValidator(profiles, config, Optional.of(VALIDATOR), cache)));
-    }
-
-    /**
-     * A registry carrying a schema validator whose payload classes load through {@code classLoader}.
-     *
-     * @param cache the cache the validator fills
-     * @param classLoader the class loader used for registration-time resolution
-     * @return the registry
-     */
-    static DefaultWorkflowRegistry withSchemaValidator(PayloadSchemaCache cache, ClassLoader classLoader) {
-        PayloadSchemaGenerator generator = new PayloadSchemaGenerator(
-                PayloadSchemaTestProfiles.builtIn(), PayloadSchemaTestProfiles.VERTIQUE, Optional.of(VALIDATOR));
-        return new DefaultWorkflowRegistry(
-                null, Set.of(new PayloadSchemaRegistrationValidator(cache, generator, classLoader)));
+                null,
+                Set.of(new PayloadSchemaRegistrationValidator(profiles, config, Optional.of(VALIDATOR), cache, names)),
+                names);
     }
 
     /**

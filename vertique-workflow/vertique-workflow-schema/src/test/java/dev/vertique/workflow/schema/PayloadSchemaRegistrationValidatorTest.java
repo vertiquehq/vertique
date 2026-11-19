@@ -222,7 +222,8 @@ class PayloadSchemaRegistrationValidatorTest {
                 PayloadSchemaTestProfiles.with(PayloadSchemaTestProfiles.snakeCase("p1")),
                 PayloadSchemaTestProfiles.systemProfile("p1"),
                 Optional.empty(),
-                cache);
+                cache,
+                TestTypeNames.lenient());
 
         // When: a definition is validated
         validator.validate(Definitions.candidate(Definitions.withDecision(Payloads.Comment.class)));
@@ -361,43 +362,44 @@ class PayloadSchemaRegistrationValidatorTest {
     // --- Class resolution ---
 
     @Test
-    @DisplayName("payload classes are resolved only through the class loader the validator was given")
-    void payloadClassesAreResolvedThroughTheSuppliedClassLoader() {
-        // Given: a loader that records the names it is asked for
-        RecordingLoader loader = new RecordingLoader(getClass().getClassLoader());
+    @DisplayName("a payload type name the type-name index does not know is refused and never loaded")
+    void aNameTheIndexDoesNotKnowIsRefusedAndNeverLoaded() {
+        // Given: a validator over an index that holds no class, though the named class exists on the class path
+        DefaultWorkflowTypeNames emptyIndex = new DefaultWorkflowTypeNames();
         PayloadSchemaRegistrationValidator validator = new PayloadSchemaRegistrationValidator(
                 cache,
                 new PayloadSchemaGenerator(
                         PayloadSchemaTestProfiles.builtIn(), PayloadSchemaTestProfiles.VERTIQUE, Optional.empty()),
-                loader);
+                emptyIndex);
 
-        // When: a plan with a decision type is validated
-        validator.validate(Definitions.candidate(Definitions.withDecision(Payloads.PlainRecord.class)));
-
-        // Then: the type was requested from that loader, and nothing was loaded elsewhere to find it
-        assertThat(loader.requested).contains(PLAIN);
-        assertThat(cache.find(new SchemaKey(PLAIN, JsonProfileId.of("vertique"))))
-                .isPresent();
-    }
-
-    @Test
-    @DisplayName("a linkage error while loading a payload class counts as not loadable")
-    void aLinkageErrorWhileLoadingCountsAsNotLoadable() {
-        // Given: a loader that fails with a linkage error
-        RecordingLoader loader = new RecordingLoader(getClass().getClassLoader());
-        loader.failure = new NoClassDefFoundError("broken");
-        PayloadSchemaRegistrationValidator validator = new PayloadSchemaRegistrationValidator(
-                cache,
-                new PayloadSchemaGenerator(
-                        PayloadSchemaTestProfiles.builtIn(), PayloadSchemaTestProfiles.VERTIQUE, Optional.empty()),
-                loader);
-
-        // When / Then: the registration fails as an unresolvable name
+        // When / Then: the registration fails as an unloadable name, and nothing is cached for it
         assertThatThrownBy(() -> validator.validate(
                         Definitions.candidate(Definitions.withDecision("d", 1L, Payloads.PlainRecord.class))))
                 .isInstanceOf(WorkflowDefinitionException.class)
                 .hasMessage("definition 'd' v1 step 'review' decision 'note' payload type '" + PLAIN
                         + "' cannot be loaded");
+        assertThat(cache.find(new SchemaKey(PLAIN, JsonProfileId.of("vertique"))))
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("a payload type name the type-name index holds is resolved through it")
+    void aNameTheIndexHoldsIsResolvedThroughIt() {
+        // Given: an index that holds the decision payload class under its binary name
+        DefaultWorkflowTypeNames index = new DefaultWorkflowTypeNames();
+        index.add(null, List.of(Payloads.PlainRecord.class));
+        PayloadSchemaRegistrationValidator validator = new PayloadSchemaRegistrationValidator(
+                cache,
+                new PayloadSchemaGenerator(
+                        PayloadSchemaTestProfiles.builtIn(), PayloadSchemaTestProfiles.VERTIQUE, Optional.empty()),
+                index);
+
+        // When: a plan with that decision type is validated
+        validator.validate(Definitions.candidate(Definitions.withDecision(Payloads.PlainRecord.class)));
+
+        // Then: the type is described and cached
+        assertThat(cache.find(new SchemaKey(PLAIN, JsonProfileId.of("vertique"))))
+                .isPresent();
     }
 
     // --- Description failures ---
@@ -410,7 +412,8 @@ class PayloadSchemaRegistrationValidatorTest {
                 PayloadSchemaTestProfiles.with(PayloadSchemaTestProfiles.withNullOverride("bad")),
                 PayloadSchemaTestProfiles.systemProfile("bad"),
                 Optional.empty(),
-                cache);
+                cache,
+                TestTypeNames.lenient());
 
         // When / Then: the first use fails as cannot be described and keeps the generator's own message
         assertThatThrownBy(() -> validator.validate(
@@ -448,7 +451,8 @@ class PayloadSchemaRegistrationValidatorTest {
                 PayloadSchemaTestProfiles.with(PayloadSchemaTestProfiles.withUncompilableUuidSchema("ov")),
                 PayloadSchemaTestProfiles.systemProfile("ov"),
                 Optional.empty(),
-                cache);
+                cache,
+                TestTypeNames.lenient());
         String holder = Payloads.UuidHolder.class.getName();
 
         // When / Then: registration fails as cannot be described without the engine's own message
@@ -492,13 +496,15 @@ class PayloadSchemaRegistrationValidatorTest {
                         PayloadSchemaTestProfiles.builtIn(),
                         PayloadSchemaTestProfiles.systemProfile("nope"),
                         Optional.empty(),
-                        cache))
+                        cache,
+                        TestTypeNames.lenient()))
                 .doesNotThrowAnyException();
         PayloadSchemaRegistrationValidator validator = new PayloadSchemaRegistrationValidator(
                 PayloadSchemaTestProfiles.builtIn(),
                 PayloadSchemaTestProfiles.systemProfile("nope"),
                 Optional.empty(),
-                cache);
+                cache,
+                TestTypeNames.lenient());
 
         // When / Then: a definition without payload types never needs the profile
         assertThatCode(() -> validator.validate(Definitions.candidate(Definitions.withStart("d", 1L, Void.class))))
@@ -533,7 +539,8 @@ class PayloadSchemaRegistrationValidatorTest {
                     PayloadSchemaTestProfiles.builtIn(),
                     PayloadSchemaTestProfiles.VERTIQUE,
                     Optional.of(factory.getValidator()),
-                    new PayloadSchemaCache());
+                    new PayloadSchemaCache(),
+                    TestTypeNames.lenient());
             with.validate(Definitions.candidate(Definitions.withDecision("a", 1L, Payloads.PlainRecord.class)));
             with.validate(Definitions.candidate(Definitions.withDecision("b", 1L, Payloads.Comment.class)));
 
@@ -546,12 +553,15 @@ class PayloadSchemaRegistrationValidatorTest {
 
     private PayloadSchemaRegistrationValidator validator() {
         return new PayloadSchemaRegistrationValidator(
-                PayloadSchemaTestProfiles.builtIn(), PayloadSchemaTestProfiles.VERTIQUE, Optional.empty(), cache);
+                PayloadSchemaTestProfiles.builtIn(),
+                PayloadSchemaTestProfiles.VERTIQUE,
+                Optional.empty(),
+                cache,
+                TestTypeNames.lenient());
     }
 
     private PayloadSchemaRegistrationValidator validatorOver(PayloadSchemaGenerator generator) {
-        return new PayloadSchemaRegistrationValidator(
-                cache, generator, getClass().getClassLoader());
+        return new PayloadSchemaRegistrationValidator(cache, generator, TestTypeNames.lenient());
     }
 
     private CachedPayloadSchema entryOf(String typeName, String profile) {
@@ -565,25 +575,5 @@ class PayloadSchemaRegistrationValidatorTest {
             chain.add(current);
         }
         return chain;
-    }
-
-    /** A loader that delegates to its parent, records the requested names and can be told to fail. */
-    private static final class RecordingLoader extends ClassLoader {
-
-        final List<String> requested = new ArrayList<>();
-        Error failure;
-
-        RecordingLoader(ClassLoader parent) {
-            super(parent);
-        }
-
-        @Override
-        public Class<?> loadClass(String name) throws ClassNotFoundException {
-            requested.add(name);
-            if (failure != null) {
-                throw failure;
-            }
-            return super.loadClass(name);
-        }
     }
 }
