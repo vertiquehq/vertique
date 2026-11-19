@@ -480,6 +480,7 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
                     return false;
                 }
                 activeCalls--;
+                state = ExecutionState.TERMINAL;
                 cancelQueueTimer();
                 clearReferences();
                 return true;
