@@ -739,14 +739,19 @@ class BodyCaptureIT {
         assertMetadataOnly(byPath(all, "/none").responseBody(), "text/plain", 2);
     }
 
-    /** AC-096: an empty body is absent, on the request and on the response, a 204 included. */
+    /** AC-096: an empty body is absent, on the request and on the response, a 204 and a HEAD answer included. */
     @Test
     @DisplayName("AC-096: an empty body is absent")
     void anEmptyBodyIsAbsent() {
-        // Given a capturing client and a server answering 204, and 200 with an empty body
+        // Given a capturing client and a server answering 204, 200 with an empty body, and HEAD with a length
         RecordingServer server = support.server((request, body) -> {
             if (request.path().equals("/empty")) {
                 request.response().end();
+            } else if (request.path().equals("/head")) {
+                request.response()
+                        .putHeader("Content-Type", "text/plain")
+                        .putHeader("Content-Length", "5")
+                        .end();
             } else {
                 request.response().setStatusCode(204).end();
             }
@@ -758,10 +763,12 @@ class BodyCaptureIT {
         await(client.execute(web -> web.post("/none").sendBuffer(Buffer.buffer())));
         await(client.execute(web -> web.post("/empty").sendBuffer(Buffer.buffer())));
         await(client.execute(web -> web.get("/get").send()));
+        // And sends HEAD with a decoding codec under the default response bound
+        await(client.execute(web -> web.head("/head").as(BodyCodec.string()).send()));
 
         // Then every request and response body is ABSENT
-        List<Seen> all = settled(recorder, 3);
-        assertThat(all).hasSize(3);
+        List<Seen> all = settled(recorder, 4);
+        assertThat(all).hasSize(4);
         for (Seen seen : all) {
             assertAbsent(seen.requestBody());
             assertAbsent(seen.responseBody());

@@ -348,6 +348,9 @@ final class AttemptScope {
             if (stream != null || !responseDone) {
                 return PayloadSources.streaming(contentType, declared);
             }
+            if (bodilessAnswer(received)) {
+                return PayloadSources.absent();
+            }
             Buffer bytes = responseBytes;
             if (bytes != null) {
                 if (bytes.length() > 0) {
@@ -355,7 +358,7 @@ final class AttemptScope {
                 }
                 return declared > 0 ? PayloadSources.streaming(contentType, declared) : PayloadSources.absent();
             }
-            if (codecKind == CodecKind.BUFFER && !responseValue || declared == 0 || bodilessAnswer(received)) {
+            if (codecKind == CodecKind.BUFFER && !responseValue || declared == 0) {
                 return PayloadSources.absent();
             }
             return PayloadSources.streaming(contentType, declared);
