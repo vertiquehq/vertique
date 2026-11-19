@@ -20,11 +20,12 @@ import io.vertx.core.json.jackson.DatabindCodec;
  * module re-registered last so {@code Instant} stays byte-identical to Vert.x's own output. The
  * shared mapper itself is <strong>never</strong> exposed or mutated.
  *
- * <p>Result: byte-identical to the raw Vert.x mapper for every type that mapper could already
- * handle, except {@code java.util.Date}/{@code Calendar}, which move from epoch millis to ISO-8601
+ * <p>Result: when writing, byte-identical to the raw Vert.x mapper for every type that mapper could
+ * already handle, except {@code java.util.Date}/{@code Calendar}, which move from epoch millis to ISO-8601
  * (a recorded delta pinned by the compatibility-matrix test); {@code Optional} and {@code java.time}
  * go from throwing to working. No inclusion, number, or enum opinion is applied — those belong to
- * {@code vertique}.
+ * {@code vertique}. On the read side the recipe also rejects text after the JSON value
+ * ({@code FAIL_ON_TRAILING_TOKENS}), which Vert.x's own parsing already did.
  *
  * <p>This type is package-private and registered separately from application-contributed profiles;
  * applications must not contribute a profile with the reserved {@link JsonProfileId#SYSTEM} id, nor

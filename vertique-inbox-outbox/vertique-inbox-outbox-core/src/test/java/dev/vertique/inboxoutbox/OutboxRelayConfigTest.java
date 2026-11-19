@@ -4,8 +4,12 @@
 package dev.vertique.inboxoutbox;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.vertique.inboxoutbox.exception.InboxOutboxConfigurationException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -130,6 +134,33 @@ class OutboxRelayConfigTest {
             assertEquals(30_000L, config.leaseTimeoutMs());
             assertEquals(20, config.maxAttempts());
             assertEquals(RelayStrategy.LISTEN_NOTIFY, config.strategy());
+        }
+    }
+
+    @Nested
+    @DisplayName("validated()")
+    class Validation {
+
+        @Test
+        @DisplayName("maxAttempts below 1 fails naming the key and no other value")
+        void rejectsMaxAttemptsBelowOne() throws Exception {
+            for (String value : new String[] {"0", "-3"}) {
+                OutboxRelayConfig config = mapper.readValue(
+                        "{\"maxAttempts\": " + value + ", \"strategy\": \"POLLING\"}", OutboxRelayConfig.class);
+                InboxOutboxConfigurationException failure =
+                        assertThrows(InboxOutboxConfigurationException.class, config::validated);
+                assertEquals("inboxOutbox.relay.maxAttempts must be at least 1", failure.getMessage());
+                assertTrue(!failure.getMessage().contains("POLLING"));
+            }
+        }
+
+        @Test
+        @DisplayName("1 and the default pass and the same instance is returned")
+        void acceptsOneAndDefault() throws Exception {
+            OutboxRelayConfig one = mapper.readValue("{\"maxAttempts\": 1}", OutboxRelayConfig.class);
+            assertSame(one, one.validated());
+            OutboxRelayConfig defaults = mapper.readValue("{}", OutboxRelayConfig.class);
+            assertSame(defaults, defaults.validated());
         }
     }
 }

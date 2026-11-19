@@ -186,7 +186,7 @@ Deserialized from `inboxOutbox.relay`.
 | `pollingIntervalMs` | `1000` | Milliseconds between poll cycles. An empty cycle backs this off — doubling up to 4×, capped at 60 s. A cycle that claims as many rows as the relay had free slots is followed by another almost at once, so this interval no longer caps how fast a backlog drains |
 | `batchSize` | `50` | Maximum rows to claim per cycle |
 | `leaseTimeoutMs` | `30000` | Stale lease recovery threshold in ms |
-| `maxAttempts` | `20` | Attempt limit stored with each outbox row whose `OutboxEntry` set none, applied when the entry is published; an entry's own `maxAttempts` wins. A change affects entries published afterwards, not rows already stored |
+| `maxAttempts` | `20` | Attempt limit stored with each outbox row whose `OutboxEntry` set none, applied when the entry is published; an entry's own `maxAttempts` wins. A change affects entries published afterwards, not rows already stored. A value below `1` fails startup with `InboxOutboxConfigurationException` naming `inboxOutbox.relay.maxAttempts` |
 | `backoffBaseDelayMs` | `1000` | Base delay for exponential backoff |
 | `backoffMaxDelayMs` | `300000` | Maximum backoff cap in ms |
 | `instances` | `1` | Number of `OutboxRelay` verticle instances to deploy |
