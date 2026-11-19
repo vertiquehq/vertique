@@ -6,8 +6,8 @@ package dev.vertique.rest.client.config;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import dev.vertique.http.client.WebClientOptionsNormalizer;
 import dev.vertique.http.client.exception.HttpClientConfigurationException;
-import dev.vertique.http.client.internal.WebClientOptionsNormalizer;
 import dev.vertique.rest.client.exception.RestClientConfigurationException;
 import io.vertx.core.json.JsonObject;
 import java.util.List;

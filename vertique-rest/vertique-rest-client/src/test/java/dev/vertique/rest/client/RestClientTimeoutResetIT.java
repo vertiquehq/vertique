@@ -7,12 +7,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 
 import dev.vertique.http.client.CallOptions;
-import dev.vertique.http.client.HttpStream;
-import dev.vertique.http.client.VertiqueHttpClient;
-import dev.vertique.http.client.VertiqueHttpClientBuilder;
+import dev.vertique.http.client.HttpClient;
+import dev.vertique.http.client.HttpClientBuilder;
 import dev.vertique.resilience.BackoffStrategy;
 import dev.vertique.resilience.ResiliencePolicyOverrides;
 import dev.vertique.resilience.ResiliencePolicyRegistry;
@@ -26,11 +26,8 @@ import dev.vertique.rest.client.interceptor.RestClientInterceptor;
 import dev.vertique.rest.client.interceptor.RestClientRequestContext;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.PoolOptions;
-import io.vertx.ext.web.client.HttpRequest;
-import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
@@ -45,13 +42,13 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
-import java.util.function.Function;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.AdditionalAnswers;
 
 /**
  * An attempt that reaches its resolved timeout resets the exchange and releases the connection,
@@ -142,46 +139,15 @@ class RestClientTimeoutResetIT {
     }
 
     /** Wraps a governed client and records the read timeout each call's options carry. */
-    private static final class OptionsRecordingClient implements VertiqueHttpClient {
-        final VertiqueHttpClient delegate;
-        final List<Long> readTimeouts;
-
-        OptionsRecordingClient(VertiqueHttpClient delegate, List<Long> readTimeouts) {
-            this.delegate = delegate;
-            this.readTimeouts = readTimeouts;
-        }
-
-        @Override
-        public String name() {
-            return delegate.name();
-        }
-
-        @Override
-        public WebClient webClient() {
-            return delegate.webClient();
-        }
-
-        @Override
-        public <T> Future<T> execute(Function<WebClient, Future<T>> attempt) {
-            return delegate.execute(attempt);
-        }
-
-        @Override
-        public <T> Future<T> execute(CallOptions options, Function<WebClient, Future<T>> attempt) {
-            readTimeouts.add(readTimeoutOf(options));
-            return delegate.execute(options, attempt);
-        }
-
-        @Override
-        public Future<HttpStream> stream(
-                CallOptions options, Function<WebClient, HttpRequest<Buffer>> request, Buffer body) {
-            return delegate.stream(options, request, body);
-        }
-
-        @Override
-        public Future<Void> close() {
-            return delegate.close();
-        }
+    private static HttpClient optionsRecordingClient(HttpClient delegate, List<Long> readTimeouts) {
+        HttpClient client = mock(HttpClient.class, AdditionalAnswers.delegatesTo(delegate));
+        doAnswer(invocation -> {
+                    readTimeouts.add(readTimeoutOf(invocation.getArgument(0)));
+                    return delegate.execute(invocation.getArgument(0), invocation.getArgument(1));
+                })
+                .when(client)
+                .execute(any(CallOptions.class), any());
+        return client;
     }
 
     /**
@@ -296,8 +262,8 @@ class RestClientTimeoutResetIT {
      * A governed client builder whose default read timeout is 200 ms and stays so: the REST builder's
      * own call that turns the client default off is ignored, so only the call's options can lift it.
      */
-    private static VertiqueHttpClientBuilder clientWithFixedDefaultTimeout(Vertx vx) {
-        VertiqueHttpClientBuilder governed = spy(VertiqueHttpClientBuilder.create(vx));
+    private static HttpClientBuilder clientWithFixedDefaultTimeout(Vertx vx) {
+        HttpClientBuilder governed = spy(HttpClientBuilder.create(vx));
         governed.readTimeout(200, TimeUnit.MILLISECONDS);
         doAnswer(invocation -> invocation.getMock()).when(governed).readTimeout(anyLong(), any(TimeUnit.class));
         return governed;
@@ -454,9 +420,9 @@ class RestClientTimeoutResetIT {
                 origin((o, request) -> request.response().setStatusCode(200).end("ok"));
         List<Long> readTimeouts = Collections.synchronizedList(new ArrayList<>());
         RestClientBuilder builder = new RestClientBuilder(vertx, noTimeoutRegistry(), vx -> {
-                    VertiqueHttpClientBuilder governed = spy(VertiqueHttpClientBuilder.create(vx));
-                    doAnswer(invocation -> new OptionsRecordingClient(
-                                    (VertiqueHttpClient) invocation.callRealMethod(), readTimeouts))
+                    HttpClientBuilder governed = spy(HttpClientBuilder.create(vx));
+                    doAnswer(invocation ->
+                                    optionsRecordingClient((HttpClient) invocation.callRealMethod(), readTimeouts))
                             .when(governed)
                             .build();
                     return governed;

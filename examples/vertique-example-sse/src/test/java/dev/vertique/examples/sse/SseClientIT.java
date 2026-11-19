@@ -9,8 +9,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.application.test.VertiqueAppExtension;
 import dev.vertique.http.client.CallOptions;
+import dev.vertique.http.client.HttpClient;
 import dev.vertique.http.client.HttpClientFactory;
-import dev.vertique.http.client.VertiqueHttpClient;
 import io.restassured.RestAssured;
 import io.restassured.filter.log.RequestLoggingFilter;
 import io.restassured.filter.log.ResponseLoggingFilter;
@@ -84,7 +84,7 @@ public class SseClientIT {
                 .getString("id");
         AppComponent component = app.component();
         HttpClientFactory factory = component.httpClientFactory();
-        VertiqueHttpClient client = factory.client(CLIENT_NAME);
+        HttpClient client = factory.client(CLIENT_NAME);
         String url = "http://127.0.0.1:" + app.httpPort() + "/jobs/" + jobId + "/events";
         List<SseEvent> received = Collections.synchronizedList(new ArrayList<>());
 

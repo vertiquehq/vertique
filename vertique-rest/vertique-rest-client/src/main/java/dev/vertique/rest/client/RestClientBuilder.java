@@ -10,9 +10,8 @@ import dev.vertique.core.json.JsonProfile;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.util.GeneratedCompanions;
 import dev.vertique.core.validation.BeanValidator;
-import dev.vertique.http.client.VertiqueHttpClient;
-import dev.vertique.http.client.VertiqueHttpClientBuilder;
-import dev.vertique.http.client.internal.FrameworkClientOptions;
+import dev.vertique.http.client.HttpClient;
+import dev.vertique.http.client.HttpClientBuilder;
 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.resilience.BackoffStrategy;
@@ -117,7 +116,7 @@ public final class RestClientBuilder {
      */
     @FunctionalInterface
     interface HttpTransportFactory {
-        VertiqueHttpClientBuilder create(Vertx vertx);
+        HttpClientBuilder create(Vertx vertx);
     }
 
     // --- Static meta cache shared across all builder instances ---
@@ -249,11 +248,11 @@ public final class RestClientBuilder {
      * @param vertx the Vert.x instance used to create the underlying governed WebClient
      */
     public RestClientBuilder(Vertx vertx) {
-        this(vertx, ResiliencePolicyRegistry.empty(), VertiqueHttpClientBuilder::create);
+        this(vertx, ResiliencePolicyRegistry.empty(), HttpClientBuilder::create);
     }
 
     RestClientBuilder(Vertx vertx, ResiliencePolicyRegistry resiliencePolicyRegistry) {
-        this(vertx, resiliencePolicyRegistry, VertiqueHttpClientBuilder::create);
+        this(vertx, resiliencePolicyRegistry, HttpClientBuilder::create);
     }
 
     RestClientBuilder(
@@ -934,7 +933,7 @@ public final class RestClientBuilder {
         io.vertx.core.MultiMap cachedDefaultHeaders = io.vertx.core.MultiMap.caseInsensitiveMultiMap();
         defaultHeaders.forEach(cachedDefaultHeaders::set);
 
-        VertiqueHttpClient httpClient = null;
+        HttpClient httpClient = null;
         Resilience runtime = null;
         RestClientResiliencePipelineFactory resilienceFactory = null;
         T builtProxy;
@@ -1073,8 +1072,7 @@ public final class RestClientBuilder {
         return suppliedResilience == null ? ownedResilience : null;
     }
 
-    private record BuiltClientResources(
-            RestClientResiliencePipelineFactory resilienceFactory, VertiqueHttpClient httpClient) {
+    private record BuiltClientResources(RestClientResiliencePipelineFactory resilienceFactory, HttpClient httpClient) {
         io.vertx.core.Future<Void> closeContext() {
             return resilienceFactory.close();
         }
@@ -1425,16 +1423,15 @@ public final class RestClientBuilder {
      * @param effectivePoolOptions the pool options to apply; {@code null} for defaults
      * @return a new governed client
      */
-    private VertiqueHttpClient buildHttpClient(
+    private HttpClient buildHttpClient(
             @Nullable WebClientOptions effectiveWebClientOptions, @Nullable PoolOptions effectivePoolOptions) {
-        VertiqueHttpClientBuilder governed = transportFactory.create(vertx);
+        HttpClientBuilder governed = transportFactory.create(vertx);
         governed.webClientOptions(
                 effectiveWebClientOptions != null ? effectiveWebClientOptions : new WebClientOptions());
         if (effectivePoolOptions != null) {
             governed.poolOptions(effectivePoolOptions);
         }
         governed.readTimeout(0, TimeUnit.MILLISECONDS).maxResponseBytes(0).maxRequestBytes(0);
-        FrameworkClientOptions.withoutHeaderValidation(governed);
         return governed.build();
     }
 

@@ -2,14 +2,14 @@
 # SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 # SPDX-License-Identifier: EUPL-1.2
 
-# Proves that vertique-http-client-core adds no third-party artifact beyond what
+# Proves that vertique-http-client adds no third-party artifact beyond what
 # vertique-core and vertique-resilience already resolve, plus io.vertx:vertx-web-client
 # and the artifacts it brings itself.
 #
 # Method: one Maven run executes `dependency:tree -am` (verbose, runtime scope, which
 # is compile plus runtime and excludes test and provided) for both modules. The
 # script reads the two trees and checks that every third-party artifact (anything not
-# in the dev.vertique group) of the http-client-core tree is either in the
+# in the dev.vertique group) of the http-client tree is either in the
 # vertique-resilience tree or is io.vertx:vertx-web-client or one of its own
 # transitive dependencies. Artifacts compare by groupId:artifactId.
 #
@@ -24,7 +24,7 @@
 
 set -euo pipefail
 
-core_module="vertique-http-client/vertique-http-client-core"
+core_module="vertique-http-client"
 reference_module="vertique-resilience"
 allowed_root="io.vertx:vertx-web-client"
 tree_name="http-client-dependency-tree.txt"

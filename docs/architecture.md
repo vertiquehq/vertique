@@ -140,7 +140,7 @@ the Caffeine and Redis provider modules depend on that neutral core. Shared Redi
 connection profiles and client lifecycle belong to `vertique-redis-core`, which is
 independent of cache-specific behavior so other Redis-backed capabilities can reuse it.
 
-`vertique-http-client-core` owns the governed outbound HTTP client: a Vert.x `WebClient` with a base
+`vertique-http-client` owns the governed outbound HTTP client: a Vert.x `WebClient` with a base
 URL, request header validation, and attempt-scoped calls. It consumes `vertique-core`,
 `vertique-resilience` and `vertx-web-client`, and adds no other third-party artifact. Outbound-HTTP
 consumers sit above it: `vertique-rest-client` builds its transport on it, while neither `vertique-core`

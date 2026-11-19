@@ -11,8 +11,8 @@ import static org.mockito.Mockito.when;
 
 import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
-import dev.vertique.http.client.VertiqueHttpClient;
-import dev.vertique.http.client.VertiqueHttpClientBuilder;
+import dev.vertique.http.client.HttpClient;
+import dev.vertique.http.client.HttpClientBuilder;
 import dev.vertique.resilience.ResiliencePolicyRegistry;
 import dev.vertique.resilience.annotation.CircuitBreaker;
 import dev.vertique.rest.client.config.RestClientConfig;
@@ -100,14 +100,14 @@ class RestClientBuilderOptionsIsolationTest {
         List<Integer> http1MaxSizeSeenByFactory = new ArrayList<>();
         List<Integer> waitQueueSeenByFactory = new ArrayList<>();
         RestClientBuilder.HttpTransportFactory factory = v -> {
-            VertiqueHttpClientBuilder governed = mock(VertiqueHttpClientBuilder.class, RETURNS_SELF);
+            HttpClientBuilder governed = mock(HttpClientBuilder.class, RETURNS_SELF);
             when(governed.poolOptions(any())).thenAnswer(invocation -> {
                 PoolOptions pool = invocation.getArgument(0);
                 http1MaxSizeSeenByFactory.add(pool.getHttp1MaxSize());
                 waitQueueSeenByFactory.add(pool.getMaxWaitQueueSize());
                 return governed;
             });
-            when(governed.build()).thenReturn(mock(VertiqueHttpClient.class));
+            when(governed.build()).thenReturn(mock(HttpClient.class));
             return governed;
         };
 

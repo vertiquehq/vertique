@@ -83,7 +83,7 @@
     "dev.vertique:vertique-db-test",
     "dev.vertique:vertique-deploy",
     "dev.vertique:vertique-events",
-    "dev.vertique:vertique-http-client-core",
+    "dev.vertique:vertique-http-client",
     "dev.vertique:vertique-inbox-outbox-core",
     "dev.vertique:vertique-inbox-outbox-delayed-job",
     "dev.vertique:vertique-inbox-outbox-kafka",

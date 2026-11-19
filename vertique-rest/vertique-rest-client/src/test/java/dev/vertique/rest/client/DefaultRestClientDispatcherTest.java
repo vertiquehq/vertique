@@ -7,9 +7,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import dev.vertique.http.client.VertiqueHttpClient;
-import dev.vertique.http.client.VertiqueHttpClientBuilder;
-import dev.vertique.http.client.internal.FrameworkClientOptions;
+import dev.vertique.http.client.HttpClient;
+import dev.vertique.http.client.HttpClientBuilder;
 import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.client.exception.RestClientException;
 import dev.vertique.rest.client.meta.ClientInterfaceScanner;
@@ -123,18 +122,17 @@ class DefaultRestClientDispatcherTest {
      * client unclosed, so {@link Vertx#close()} reclaimed every one of their netty pools out from
      * under them.
      */
-    private static VertiqueHttpClient httpClient;
+    private static HttpClient httpClient;
 
     @BeforeAll
     static void startVertx() {
         vertx = Vertx.vertx();
         // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
-        VertiqueHttpClientBuilder governed = VertiqueHttpClientBuilder.create(vertx)
+        HttpClientBuilder governed = HttpClientBuilder.create(vertx)
                 .webClientOptions(new WebClientOptions().setFollowRedirects(false))
                 .readTimeout(0, TimeUnit.MILLISECONDS)
                 .maxResponseBytes(0)
                 .maxRequestBytes(0);
-        FrameworkClientOptions.withoutHeaderValidation(governed);
         httpClient = governed.build();
     }
 

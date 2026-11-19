@@ -22,9 +22,8 @@ import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.http.client.CallOptions;
-import dev.vertique.http.client.HttpStream;
-import dev.vertique.http.client.VertiqueHttpClient;
-import dev.vertique.http.client.VertiqueHttpClientBuilder;
+import dev.vertique.http.client.HttpClient;
+import dev.vertique.http.client.HttpClientBuilder;
 import dev.vertique.http.client.exception.HttpClientClosedException;
 import dev.vertique.resilience.BackoffStrategy;
 import dev.vertique.resilience.Resilience;
@@ -38,12 +37,9 @@ import dev.vertique.rest.client.config.RestClientConfig;
 import dev.vertique.rest.client.exception.RestClientUnavailableException;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.PoolOptions;
 import io.vertx.core.json.JsonObject;
-import io.vertx.ext.web.client.HttpRequest;
-import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.HeaderParam;
@@ -65,13 +61,14 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.mockito.AdditionalAnswers;
 import org.mockito.ArgumentCaptor;
 
 /**
  * The REST builder gives every built proxy its own governed HTTP client, built from the effective
  * options, and releases it with the builder. The test substitutes the package-private transport
  * seam {@code RestClientBuilder.HttpTransportFactory}, which hands the REST builder a
- * {@link VertiqueHttpClientBuilder} per built proxy; the REST builder applies its settings to that
+ * {@link HttpClientBuilder} per built proxy; the REST builder applies its settings to that
  * builder and calls {@code build()} once on it.
  *
  * <p>Proves AC-063, AC-064, AC-065, AC-066, AC-067 and the FR-017 settings: the REST client
@@ -160,51 +157,31 @@ class RestClientTransportPerBuildTest {
      * first reports to a hook and forwards the close only once the future the hook returns has settled,
      * so a call the hook starts is not cancelled by a close it precedes.
      */
-    private static final class RecordingClient implements VertiqueHttpClient {
-        final VertiqueHttpClient delegate;
-        final Supplier<Future<?>> beforeClose;
+    private static final class RecordingClient {
+        final HttpClient client;
         final AtomicInteger executeWithOptions = new AtomicInteger();
         final AtomicInteger executeWithoutOptions = new AtomicInteger();
 
-        RecordingClient(VertiqueHttpClient delegate, Supplier<Future<?>> beforeClose) {
-            this.delegate = delegate;
-            this.beforeClose = beforeClose;
-        }
-
-        @Override
-        public String name() {
-            return delegate.name();
-        }
-
-        @Override
-        public WebClient webClient() {
-            return delegate.webClient();
-        }
-
-        @Override
-        public <T> Future<T> execute(Function<WebClient, Future<T>> attempt) {
-            executeWithoutOptions.incrementAndGet();
-            return delegate.execute(attempt);
-        }
-
-        @Override
-        public <T> Future<T> execute(CallOptions options, Function<WebClient, Future<T>> attempt) {
-            executeWithOptions.incrementAndGet();
-            return delegate.execute(options, attempt);
-        }
-
-        @Override
-        public Future<HttpStream> stream(
-                CallOptions options, Function<WebClient, HttpRequest<Buffer>> request, Buffer body) {
-            return delegate.stream(options, request, body);
-        }
-
-        @Override
-        public Future<Void> close() {
-            return beforeClose
-                    .get()
-                    .<Void>transform(ignored -> Future.succeededFuture())
-                    .compose(ignored -> delegate.close());
+        RecordingClient(HttpClient delegate, Supplier<Future<?>> beforeClose) {
+            this.client = mock(HttpClient.class, AdditionalAnswers.delegatesTo(delegate));
+            doAnswer(invocation -> {
+                        executeWithoutOptions.incrementAndGet();
+                        return delegate.execute(invocation.getArgument(0));
+                    })
+                    .when(client)
+                    .execute(any(Function.class));
+            doAnswer(invocation -> {
+                        executeWithOptions.incrementAndGet();
+                        return delegate.execute(invocation.getArgument(0), invocation.getArgument(1));
+                    })
+                    .when(client)
+                    .execute(any(CallOptions.class), any());
+            doAnswer(invocation -> beforeClose
+                            .get()
+                            .<Void>transform(ignored -> Future.succeededFuture())
+                            .compose(ignored -> delegate.close()))
+                    .when(client)
+                    .close();
         }
     }
 
@@ -216,8 +193,9 @@ class RestClientTransportPerBuildTest {
      * through a built proxy runs its pipeline for real.
      */
     private static final class FakeTransport {
-        final List<VertiqueHttpClientBuilder> builders = new CopyOnWriteArrayList<>();
-        final List<VertiqueHttpClient> clients = new CopyOnWriteArrayList<>();
+        final List<HttpClientBuilder> builders = new CopyOnWriteArrayList<>();
+        final List<HttpClient> clients = new CopyOnWriteArrayList<>();
+        final List<RecordingClient> recordings = new CopyOnWriteArrayList<>();
         final List<String> events = Collections.synchronizedList(new ArrayList<>());
         volatile Supplier<Future<?>> onClientClose = Future::succeededFuture;
         private final boolean delegating;
@@ -235,16 +213,16 @@ class RestClientTransportPerBuildTest {
         }
 
         RecordingClient recorded(int index) {
-            return (RecordingClient) clients.get(index);
+            return recordings.get(index);
         }
 
         RestClientBuilder.HttpTransportFactory factory() {
             return delegating ? this::realBuilder : this::mockBuilder;
         }
 
-        private VertiqueHttpClientBuilder mockBuilder(Vertx ignored) {
-            VertiqueHttpClientBuilder builder = mock(VertiqueHttpClientBuilder.class, RETURNS_SELF);
-            VertiqueHttpClient client = mock(VertiqueHttpClient.class);
+        private HttpClientBuilder mockBuilder(Vertx ignored) {
+            HttpClientBuilder builder = mock(HttpClientBuilder.class, RETURNS_SELF);
+            HttpClient client = mock(HttpClient.class);
             String id = "client-" + clients.size();
             when(client.close()).thenAnswer(invocation -> {
                 events.add(id);
@@ -257,17 +235,18 @@ class RestClientTransportPerBuildTest {
             return builder;
         }
 
-        private VertiqueHttpClientBuilder realBuilder(Vertx vertx) {
-            VertiqueHttpClientBuilder builder = spy(VertiqueHttpClientBuilder.create(vertx));
+        private HttpClientBuilder realBuilder(Vertx vertx) {
+            HttpClientBuilder builder = spy(HttpClientBuilder.create(vertx));
             doAnswer(invocation -> {
-                        VertiqueHttpClient real = (VertiqueHttpClient) invocation.callRealMethod();
+                        HttpClient real = (HttpClient) invocation.callRealMethod();
                         String id = "client-" + clients.size();
-                        VertiqueHttpClient recording = new RecordingClient(real, () -> {
+                        RecordingClient recording = new RecordingClient(real, () -> {
                             events.add(id);
                             return onClientClose.get();
                         });
-                        clients.add(recording);
-                        return recording;
+                        recordings.add(recording);
+                        clients.add(recording.client);
+                        return recording.client;
                     })
                     .when(builder)
                     .build();
@@ -344,7 +323,7 @@ class RestClientTransportPerBuildTest {
             transport.builders.forEach(governed -> verify(governed, times(1)).build());
 
             // And each governed builder received the effective options
-            for (VertiqueHttpClientBuilder governed : transport.builders) {
+            for (HttpClientBuilder governed : transport.builders) {
                 ArgumentCaptor<WebClientOptions> webClient = ArgumentCaptor.forClass(WebClientOptions.class);
                 ArgumentCaptor<PoolOptions> pool = ArgumentCaptor.forClass(PoolOptions.class);
                 verify(governed).webClientOptions(webClient.capture());
@@ -556,7 +535,7 @@ class RestClientTransportPerBuildTest {
             recording.build(Probe.class);
 
             // Then the client timer and both body bounds are switched off
-            VertiqueHttpClientBuilder governed = transport.builders.get(0);
+            HttpClientBuilder governed = transport.builders.get(0);
             verify(governed).readTimeout(eq(0L), any(TimeUnit.class));
             verify(governed).maxResponseBytes(0L);
             verify(governed).maxRequestBytes(0L);
@@ -582,7 +561,7 @@ class RestClientTransportPerBuildTest {
                 request.response().setStatusCode(200).end(String.valueOf(request.getHeader("Vertique-Probe"))));
         join(server.listen(0, "127.0.0.1"));
         RestClientBuilder real = new RestClientBuilder(
-                        vertx, ResiliencePolicyRegistry.empty(), VertiqueHttpClientBuilder::create)
+                        vertx, ResiliencePolicyRegistry.empty(), HttpClientBuilder::create)
                 .baseUrl("http://127.0.0.1:" + server.actualPort());
         try {
             HeaderClient client = real.build(HeaderClient.class);
@@ -688,7 +667,7 @@ class RestClientTransportPerBuildTest {
         FakeTransport transport = new FakeTransport();
         RestClientBuilder builder = builderOver(transport);
         Probe proxy = builder.build(Probe.class);
-        VertiqueHttpClient client = transport.clients.get(0);
+        HttpClient client = transport.clients.get(0);
         List<Future<Void>> closes = Collections.synchronizedList(new ArrayList<>());
         when(client.execute(any(CallOptions.class), any())).thenAnswer(invocation -> {
             closes.add(builder.close());

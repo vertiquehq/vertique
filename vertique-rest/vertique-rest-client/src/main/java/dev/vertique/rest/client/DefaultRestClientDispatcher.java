@@ -6,7 +6,7 @@ package dev.vertique.rest.client;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.http.client.CallOptions;
-import dev.vertique.http.client.VertiqueHttpClient;
+import dev.vertique.http.client.HttpClient;
 import dev.vertique.http.client.exception.HttpClientClosedException;
 import dev.vertique.resilience.ResiliencePipeline;
 import dev.vertique.resilience.exception.BulkheadQueueTimeoutException;
@@ -87,7 +87,7 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
 
     // --- Pipeline state ---
 
-    private final VertiqueHttpClient httpClient;
+    private final HttpClient httpClient;
     private final String baseUrl;
     private final io.vertx.core.MultiMap cachedDefaultHeaders;
     private final RestClientExceptionMapper exceptionMapper;
@@ -135,7 +135,7 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
      *     the JDK reflective proxy path
      */
     DefaultRestClientDispatcher(
-            VertiqueHttpClient httpClient,
+            HttpClient httpClient,
             String baseUrl,
             io.vertx.core.MultiMap cachedDefaultHeaders,
             RestClientInterceptorChain interceptorChain,

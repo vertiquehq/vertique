@@ -13,8 +13,8 @@ import static org.mockito.Mockito.when;
 import dev.vertique.core.codegen.MethodMetadata;
 import dev.vertique.core.codegen.ReflectiveMethodMetadata;
 import dev.vertique.core.exception.ConfigurationException;
-import dev.vertique.http.client.VertiqueHttpClient;
-import dev.vertique.http.client.VertiqueHttpClientBuilder;
+import dev.vertique.http.client.HttpClient;
+import dev.vertique.http.client.HttpClientBuilder;
 import dev.vertique.resilience.Resilience;
 import dev.vertique.resilience.ResiliencePolicyOverrides;
 import dev.vertique.resilience.ResiliencePolicyRegistry;
@@ -163,8 +163,8 @@ class RestClientNamedPolicyTest {
     @Test
     @DisplayName("failed eager named-policy resolution closes builder-owned resources")
     void builderClosesResourcesWhenEagerNamedPolicyResolutionFails() {
-        VertiqueHttpClient httpClient = mock(VertiqueHttpClient.class);
-        VertiqueHttpClientBuilder governed = mock(VertiqueHttpClientBuilder.class, RETURNS_SELF);
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpClientBuilder governed = mock(HttpClientBuilder.class, RETURNS_SELF);
         when(governed.build()).thenReturn(httpClient);
         RestClientBuilder builder = new RestClientBuilder(vertx, registry(Map.of()), ignored -> governed);
 

@@ -48,7 +48,7 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-db-test` | [module.md](../vertique-db/vertique-db-test/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-deploy` | [module.md](../vertique-deploy/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-events` | [module.md](../vertique-events/src/main/resources/META-INF/vertique/module.md) |
-| `vertique-http-client-core` | [module.md](../vertique-http-client/vertique-http-client-core/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-http-client` | [module.md](../vertique-http-client/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-inbox-outbox-core` | [module.md](../vertique-inbox-outbox/vertique-inbox-outbox-core/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-inbox-outbox-delayed-job` | [module.md](../vertique-inbox-outbox/vertique-inbox-outbox-delayed-job/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-inbox-outbox-kafka` | [module.md](../vertique-inbox-outbox/vertique-inbox-outbox-kafka/src/main/resources/META-INF/vertique/module.md) |

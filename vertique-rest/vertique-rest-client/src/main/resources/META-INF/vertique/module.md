@@ -8,14 +8,14 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.rest.client`
 > **Artifact:** `vertique-rest-client`
-> **Depends on:** core, rest-core, json, http-client-core
+> **Depends on:** core, rest-core, json, http-client
 
 Declarative HTTP client for Vert.x. Annotate a Java interface with standard JAX-RS annotations
 (`@GET`, `@Path`, `@QueryParam`, …) plus `@RestClient`, then ask `RestClientBuilder` or the
 Dagger-provided `RestClientFactory` for a proxy: every method invocation becomes an asynchronous
 HTTP call returning `Future<T>`. The role is the same one Spring's `@HttpExchange` and MicroProfile's
 `@RegisterRestClient` play — a typed, annotation-driven front end over a connection-pooled HTTP
-client, here Vert.x `WebClient` sent through the governed transport of `vertique-http-client-core`.
+client, here Vert.x `WebClient` sent through the governed transport of `vertique-http-client`.
 
 It is not a server-side routing runtime and shares no dispatch code with one; `dev.vertique:vertique-rest-jaxrs`
 handles inbound requests. The two do share the parameter-conversion stack from
@@ -80,7 +80,7 @@ by annotations, or by external configuration, in that precedence order.
 ### Everything resolves at `build()`, nothing at first call
 
 `RestClientBuilder.build(Class)` scans the interface, resolves the effective `ObjectMapper`, resolves
-the parameter converters, creates a fresh governed client (`vertique-http-client-core`) over its own
+the parameter converters, creates a fresh governed client (`vertique-http-client`) over its own
 `WebClient`, and returns the proxy. Any misconfiguration —
 an unknown JSON profile id, a parameter type with no converter, a missing base URL — throws there
 rather than on the first request. Builder state is never mutated by `build()`, so one builder can
@@ -1117,7 +1117,7 @@ interface AppComponent {
 | `dev.vertique:vertique-resilience` | Canonical timeout, retry, circuit-breaker, and bulkhead annotations plus backoff and retry contracts |
 | `dev.vertique:vertique-rest-core` | `ParamConversionResolver`, `ParamConverterRegistry`, `ConversionContext`, `ParamSource`, and `RestCoreModule` — the outbound half of the conversion stack `rest-jaxrs` uses inbound |
 | `dev.vertique:vertique-json` | `JsonMapperProfileRegistry`, `JsonConfig`, and `JsonRuntimeModule` for named mapper profiles |
-| `dev.vertique:vertique-http-client-core` | The governed transport: `VertiqueHttpClient` sends every physical attempt through the method's resilience pipeline, and its normalizer translates the `webClient` option keys |
+| `dev.vertique:vertique-http-client` | The governed transport: `HttpClient` sends every physical attempt through the method's resilience pipeline, and its normalizer translates the `webClient` option keys |
 | `io.vertx:vertx-web-client` | `WebClient`, `WebClientOptions`, `PoolOptions` |
 | `jakarta.ws.rs:jakarta.ws.rs-api` | The JAX-RS annotations that describe each interface |
 | `jakarta.annotation:jakarta.annotation-api` | `@Nullable` on API signatures |
