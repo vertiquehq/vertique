@@ -49,13 +49,22 @@ public class McpGoClientInteropIT {
     private static final String SUM_RESOURCE = "mcp/clients/go/go.sum";
     private static final String CLIENT_RESOURCE = "mcp/clients/go/client.go";
 
+    /**
+     * How long the one-time build of the client may take. It downloads the pinned modules into an empty cache and
+     * compiles them, so it is kept out of the per-row process bound, which covers only the client's exchange with the
+     * server; on a busy runner the download and compile alone have outlasted that bound.
+     */
+    private static final Duration BUILD_BOUND = Duration.ofSeconds(90);
+
     private static McpGoClientInteropITFixture fixture;
     private static Path goCacheRoot;
+    private static Path clientBinary;
 
     @BeforeAll
     static void setUp(Vertx vertx, VertxTestContext context) throws IOException {
         assertLockMatchesPin();
         goCacheRoot = createRestrictedGoCache();
+        clientBinary = buildClient();
         McpGoClientInteropITFixture.start(vertx).onComplete(context.succeeding(started -> {
             fixture = started;
             context.completeNow();
@@ -81,23 +90,8 @@ public class McpGoClientInteropIT {
     void shouldEnforceT029ContractMatrix(String row) throws Exception {
         fixture.resetObservations();
 
-        Path fixtureDirectory = resourcePath(CLIENT_RESOURCE).getParent();
-        McpSubprocessHarness.Invocation invocation = McpSubprocessHarness.Invocation.of(List.of(
-                        goExecutable(),
-                        "-C",
-                        fixtureDirectory.toString(),
-                        "run",
-                        "-mod=readonly",
-                        ".",
-                        "--url",
-                        fixture.serverUrl(),
-                        "--scenario",
-                        row))
-                .withEnvironment(Map.of(
-                        "GOPATH", goCacheRoot.resolve("gopath").toString(),
-                        "GOMODCACHE", goCacheRoot.resolve("modules").toString(),
-                        "GOCACHE", goCacheRoot.resolve("build").toString(),
-                        "GOENV", "off"))
+        McpSubprocessHarness.Invocation invocation = McpSubprocessHarness.Invocation.of(
+                        List.of(clientBinary.toString(), "--url", fixture.serverUrl(), "--scenario", row))
                 .withSensitiveValues(Set.of(McpGoClientInteropITFixture.BEARER_ALICE, "Bearer invalid"));
         McpSubprocessHarness.Result process =
                 new McpSubprocessHarness(Duration.ofSeconds(60)).run(invocation).result();
@@ -203,6 +197,44 @@ public class McpGoClientInteropIT {
                 .as("the Go fixture must emit exactly one result report")
                 .singleElement();
         return new JsonObject(reports.getFirst());
+    }
+
+    /**
+     * Builds the pinned client once, with {@code -mod=readonly} against the checked-in module and checksum files, into
+     * the owner-only Go cache that the class deletes when it ends.
+     */
+    private static Path buildClient() throws IOException {
+        Path fixtureDirectory = resourcePath(CLIENT_RESOURCE).getParent();
+        Path binary = goCacheRoot.resolve("bin").resolve("t029-client");
+        McpSubprocessHarness.Invocation build = McpSubprocessHarness.Invocation.of(List.of(
+                        goExecutable(),
+                        "-C",
+                        fixtureDirectory.toString(),
+                        "build",
+                        "-mod=readonly",
+                        "-o",
+                        binary.toString(),
+                        "."))
+                .withEnvironment(Map.of(
+                        "GOPATH", goCacheRoot.resolve("gopath").toString(),
+                        "GOMODCACHE", goCacheRoot.resolve("modules").toString(),
+                        "GOCACHE", goCacheRoot.resolve("build").toString(),
+                        "GOENV", "off"));
+        McpSubprocessHarness.Result result;
+        try {
+            result = new McpSubprocessHarness(BUILD_BOUND).run(build).result();
+        } catch (IOException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IOException("could not run the Go client build", e);
+        }
+        assertThat(result.timedOut())
+                .as("the Go client must build within " + BUILD_BOUND)
+                .isFalse();
+        assertThat(result.exitCode())
+                .as(() -> "go build stderr:\n" + result.stderr())
+                .isZero();
+        return binary;
     }
 
     private static String goExecutable() {
