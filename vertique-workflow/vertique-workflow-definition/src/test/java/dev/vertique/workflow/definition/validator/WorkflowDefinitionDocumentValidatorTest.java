@@ -1616,6 +1616,102 @@ class WorkflowDefinitionDocumentValidatorTest {
         }
     }
 
+    // --- Reachability ---
+
+    @Nested
+    @DisplayName("Reachability")
+    class Reachability {
+
+        private WorkflowDefinitionViolations validate(String initialStep, List<StepNode> steps) {
+            WorkflowDefinitionDocument doc = new WorkflowDefinitionDocument(
+                    DEF_ID, DEF_VER, STATE_FQN, CONTRACT_FQN, PAYLOAD_FQN, INIT_MAPPER_ID, null, initialStep, steps);
+            return new WorkflowDefinitionDocumentValidator(fullLookup).validate(doc);
+        }
+
+        private List<String> unreachable(WorkflowDefinitionViolations violations) {
+            return violations.toList().stream()
+                    .filter(v -> "UNREACHABLE_STEP".equals(v.code()))
+                    .map(Violation::stepId)
+                    .toList();
+        }
+
+        @Test
+        @DisplayName("a step no reference reaches is reported once, naming the step")
+        void orphanStepIsReported() {
+            List<StepNode> steps = List.of(
+                    new ServiceStep("svc", "inventory.reserve", PAYLOAD_MAPPER_ID, null, "done"),
+                    new CompleteStep("done"),
+                    new CompleteStep("orphan"));
+
+            WorkflowDefinitionViolations result = validate("svc", steps);
+
+            assertThat(unreachable(result)).containsExactly("orphan");
+            assertThat(findFirstByCode(result, "UNREACHABLE_STEP").message())
+                    .contains("orphan")
+                    .contains("svc");
+        }
+
+        @Test
+        @DisplayName("every step of an unreachable chain is reported, including a reference cycle")
+        void unreachableChainAndCycleAreReported() {
+            List<StepNode> steps = List.of(
+                    new ServiceStep("svc", "inventory.reserve", PAYLOAD_MAPPER_ID, null, "done"),
+                    new CompleteStep("done"),
+                    new TimerStep("island-a", "ref:" + TIMER_RESOLVER_ID, "island-b"),
+                    new TimerStep("island-b", "ref:" + TIMER_RESOLVER_ID, "island-a"));
+
+            assertThat(unreachable(validate("svc", steps))).containsExactly("island-a", "island-b");
+        }
+
+        @Test
+        @DisplayName("a document whose steps are all reached through every kind of reference is not reported")
+        void everyReferenceKindReaches() {
+            List<StepNode> steps = List.of(
+                    new DecisionStep(
+                            "route", List.of(new DecisionStep.RouteEntry(null, CONDITION_ID, "svc")), "waiting"),
+                    new ServiceStep("svc", "inventory.reserve", PAYLOAD_MAPPER_ID, "comp", "pause"),
+                    new CompensationStep("comp", "svc", "inventory.release", PAYLOAD_MAPPER_ID),
+                    new TimerStep("pause", "ref:" + TIMER_RESOLVER_ID, "fork"),
+                    new WaitSignalStep(
+                            "waiting",
+                            "go",
+                            PAYLOAD_FQN,
+                            STATE_REDUCER_ID,
+                            "human",
+                            new WaitSignalStep.TimeoutBlock("PT1H", STATE_MUTATOR_ID, "timed-out")),
+                    new CompleteStep("timed-out"),
+                    new HumanTaskStep(
+                            "human",
+                            "approval",
+                            new HumanTaskStep.AssignmentBlock("user", "u1", null),
+                            List.of(new HumanTaskStep.TaskDecisionBlock(
+                                    "ok", PAYLOAD_FQN, STATE_REDUCER_ID, "decided")),
+                            new HumanTaskStep.DueBlock("PT2H", STATE_MUTATOR_ID, "overdue"),
+                            null,
+                            null),
+                    new CompleteStep("decided"),
+                    new CompleteStep("overdue"),
+                    new ForkStep("fork", List.of(new ForkStep.BranchEntry("a", "branch-a", null)), "join", null),
+                    new CompleteStep("branch-a"),
+                    new JoinStep("join", "all-required", BRANCH_REDUCER_ID, "done", "join-failed"),
+                    new CompleteStep("done"),
+                    new CompleteStep("join-failed"));
+
+            assertThat(unreachable(validate("route", steps))).isEmpty();
+        }
+
+        @Test
+        @DisplayName("an unknown initialStep reports INITIAL_STEP_UNKNOWN only, not every step")
+        void unknownInitialStepDoesNotCascade() {
+            List<StepNode> steps = List.of(new CompleteStep("done"));
+
+            WorkflowDefinitionViolations result = validate("ghost", steps);
+
+            assertViolationCode(result, "INITIAL_STEP_UNKNOWN");
+            assertThat(unreachable(result)).isEmpty();
+        }
+    }
+
     // --- Assertion helpers ---
 
     /** Asserts that the violations aggregate contains at least one entry with the expected code. */
