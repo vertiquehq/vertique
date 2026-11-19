@@ -157,7 +157,23 @@ class GeneratedMetadataTypeParityTest {
                         new Row(
                                 "raw leaf of a bounded generic interface",
                                 rawLeaf(" extends Number"),
-                                rawLeafExpected("java.lang.Number")))
+                                rawLeafExpected("java.lang.Number")),
+                        new Row(
+                                "leaf reaching the interface through a raw intermediate class",
+                                intermediate("", "Mid<T> implements Api<String>", "Mid"),
+                                rawLeafExpected("java.lang.Object")),
+                        new Row(
+                                "raw intermediate class forwarding its own variable",
+                                intermediate(" extends Number", "Mid<T extends Number> implements Api<T>", "Mid"),
+                                rawLeafExpected("java.lang.Number")),
+                        new Row(
+                                "leaf reaching the interface through a parameterized intermediate class",
+                                intermediate("", "Mid<T> implements Api<String>", "Mid<Integer>"),
+                                rawLeafExpected("java.lang.String")),
+                        new Row(
+                                "leaf reaching the interface through a non-generic intermediate class",
+                                intermediate("", "Mid implements Api<String>", "Mid"),
+                                rawLeafExpected("java.lang.String")))
                 .map(Arguments::of);
     }
 
@@ -176,7 +192,29 @@ class GeneratedMetadataTypeParityTest {
     }
 
     private static List<JavaFileObject> rawLeaf(String bound) {
-        return List.of(src("Api", """
+        return rawLeafSources(bound, "@Path(\"/x\") public class Leaf implements Api {}", "");
+    }
+
+    /** A leaf that extends {@code leafSuper}, a class declared as {@code midDeclaration} implementing the API. */
+    private static List<JavaFileObject> intermediate(String bound, String midDeclaration, String leafSuper) {
+        return rawLeafSources(
+                bound,
+                "@Path(\"/x\") public class Leaf extends " + leafSuper + " {}",
+                "public class " + midDeclaration + " {}");
+    }
+
+    private static List<JavaFileObject> rawLeafSources(String bound, String leaf, String mid) {
+        List<JavaFileObject> sources = new ArrayList<>();
+        if (!mid.isEmpty()) {
+            sources.add(src("Mid", mid + "\n"));
+        }
+        sources.addAll(apiAndLeaf(bound, leaf));
+        return sources;
+    }
+
+    private static List<JavaFileObject> apiAndLeaf(String bound, String leaf) {
+        return List.of(
+                src("Api", """
                         public interface Api<T%s> {
                             @POST @Path("/body")
                             default String body(T value) { return ""; }
@@ -194,12 +232,10 @@ class GeneratedMetadataTypeParityTest {
                             @GET @Path("/rawfut")
                             default Future rawFut() { return null; }
                         }
-                        """.formatted(bound)), src("Leaf", """
-                        @SuppressWarnings("rawtypes")
-                        @Path("/x") public class Leaf implements Api {}
-                        """));
+                        """.formatted(bound)), src("Leaf", "@SuppressWarnings(\"rawtypes\")\n" + leaf + "\n"));
     }
 
+    /** The metadata of the {@code Api} methods when its variable resolves to (or erases to) {@code erasure}. */
     private static List<String> rawLeafExpected(String erasure) {
         String array = "[L" + erasure + ";";
         return List.of(

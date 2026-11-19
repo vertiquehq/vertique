@@ -93,9 +93,73 @@ class TypeResolverMemberTypeTest {
         Type declared = Contract.class.getMethod("contract", List.class).getGenericReturnType();
 
         assertSame(declared, TypeResolver.resolveMemberType(Contract.class, declared));
-        // The raw hierarchy forwards C to Middle's own variable M, which nothing binds.
-        Type viaRaw = TypeResolver.resolveMemberType(RawHierarchy.class, declared);
-        assertEquals("M", ((TypeVariable<?>) viaRaw).getName());
+        // The raw hierarchy erases Middle's supertypes (JLS 4.8), so nothing binds C.
+        assertSame(declared, TypeResolver.resolveMemberType(RawHierarchy.class, declared));
+    }
+
+    interface Api<A> {
+        A get();
+    }
+
+    static class Fixed<F> implements Api<String> {
+        public String get() {
+            return null;
+        }
+    }
+
+    static class NonGeneric implements Api<String> {
+        public String get() {
+            return null;
+        }
+    }
+
+    @SuppressWarnings("rawtypes")
+    static class RawLeaf extends Fixed {}
+
+    static class ParameterizedLeaf extends Fixed<Integer> {}
+
+    static class NonGenericLeaf extends NonGeneric {}
+
+    static class Outer<O> {
+        class Inner implements Api<String> {
+            public String get() {
+                return null;
+            }
+        }
+
+        static class Nested implements Api<String> {
+            public String get() {
+                return null;
+            }
+        }
+    }
+
+    @SuppressWarnings("rawtypes")
+    static class RawInnerLeaf extends Outer.Inner {
+        RawInnerLeaf(Outer<?> outer) {
+            outer.super();
+        }
+    }
+
+    static class NestedLeaf extends Outer.Nested {}
+
+    @Test
+    @DisplayName("A raw inner class of a generic class erases its supertypes, a static nested class does not")
+    void rawInnerClassBindsNothingUpward() throws Exception {
+        Type declared = Api.class.getMethod("get").getGenericReturnType();
+
+        assertSame(declared, TypeResolver.resolveMemberType(RawInnerLeaf.class, declared));
+        assertEquals(String.class, TypeResolver.resolveMemberType(NestedLeaf.class, declared));
+    }
+
+    @Test
+    @DisplayName("A raw reference to a generic class erases its supertypes, as the compiler does")
+    void rawReferenceBindsNothingUpward() throws Exception {
+        Type declared = Api.class.getMethod("get").getGenericReturnType();
+
+        assertSame(declared, TypeResolver.resolveMemberType(RawLeaf.class, declared));
+        assertEquals(String.class, TypeResolver.resolveMemberType(ParameterizedLeaf.class, declared));
+        assertEquals(String.class, TypeResolver.resolveMemberType(NonGenericLeaf.class, declared));
     }
 
     @Test

@@ -126,7 +126,7 @@ the erasure of its bound after the hierarchy's bindings are applied (`<M extends
 bound to `Integer` reports `Integer`, `<M extends Number>` reports `Number`), an unbounded one
 reports `Object`, and an array of a bound variable reports the array of its raw type (`T[]` with
 `T` bound to `List<String>` is `List[]`). A variable no class in the hierarchy
-binds (a raw supertype, or `Base` used without arguments) keeps its erasure, so a scalar parameter
+binds (a raw supertype, `Base` used without arguments, or a generic intermediate class named without arguments, whose own supertypes a raw type erases) keeps its erasure, so a scalar parameter
 of that type still fails startup with `UNRESOLVABLE_PARAM_CONVERTER`, and a body or return type
 bound by it is the erasure of the variable's bound (`Object` when it is unbounded); override such a
 method with concrete parameter types. Reflective
