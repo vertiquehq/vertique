@@ -121,10 +121,15 @@ hierarchy (`class Things extends Base<String>`, including variables forwarded th
 supertypes) gets that concrete type for its parameter, body and return metadata — a path, query,
 header, cookie, or form parameter typed `ID` converts as `String`, a body `T` decodes as the bound
 type (nested arguments such as `List<Dto>` are kept for JSON decoding), and a `Future<? extends T>`
-return records the erased upper bound of the resolved `T`. A variable no class in the hierarchy
+return records the erased upper bound of the resolved `T`. A method's own type variable reports
+the erasure of its bound after the hierarchy's bindings are applied (`<M extends T>` with `T`
+bound to `Integer` reports `Integer`, `<M extends Number>` reports `Number`), an unbounded one
+reports `Object`, and an array of a bound variable reports the array of its raw type (`T[]` with
+`T` bound to `List<String>` is `List[]`). A variable no class in the hierarchy
 binds (a raw supertype, or `Base` used without arguments) keeps its erasure, so a scalar parameter
 of that type still fails startup with `UNRESOLVABLE_PARAM_CONVERTER`, and a body or return type
-bound by it is `Object`; override such a method with concrete parameter types. Reflective
+bound by it is the erasure of the variable's bound (`Object` when it is unbounded); override such a
+method with concrete parameter types. Reflective
 invocation still uses the declaration's erased signature. A
 default route's `operationId` is the same in every class that inherits
 it, and operationIds are unique per mount, so only one resource per mount can inherit a given
@@ -450,7 +455,7 @@ public record ParamMeta(
         ParamSource source,                     // ResourceMethodMeta.ParamSource — see the note below
         Class<?> type,
         @Nullable Class<?> componentType,       // element type for collection/array parameters
-        @Nullable Type genericType,             // full generic type for body parameters
+        @Nullable Type genericType,             // declared type for body, query, header and cookie parameters
         @Nullable String defaultValue,          // from @DefaultValue
         ParameterMetadata parameterMetadata) { … }
 ```

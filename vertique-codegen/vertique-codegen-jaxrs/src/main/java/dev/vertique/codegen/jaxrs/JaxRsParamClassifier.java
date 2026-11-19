@@ -119,7 +119,9 @@ public final class JaxRsParamClassifier {
             return JaxRsParamSource.PRECONDITIONS;
 
         TypeMirror rawParamType = type;
-        TypeElement paramTypeElement = asTypeElement(rawParamType, types);
+        // The erasure names the class a type variable stands for, so a variable bounded by a
+        // @RequestParams class is a composite parameter like the class itself.
+        TypeElement paramTypeElement = asTypeElement(erasedParamType, types);
         if (paramTypeElement != null
                 && AnnotationMirrors.isPresent(paramTypeElement, JaxRsAnnotations.REQUEST_PARAMS)) {
             return JaxRsParamSource.BEAN_PARAM;

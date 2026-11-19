@@ -115,10 +115,13 @@ public final class ExecutionPlanEmitter {
     private static final ClassName ROUTING_CONTEXT = ClassName.get("io.vertx.ext.web", "RoutingContext");
     private static final ClassName BOUND_REQUEST = ClassName.get("dev.vertique.rest.jaxrs.request", "BoundRequest");
     private static final ClassName LIST = ClassName.get("java.util", "List");
+    private static final ClassName GENERATED_DESCRIPTOR_SUPPORT =
+            ClassName.get("dev.vertique.rest.jaxrs.runtime", "GeneratedJaxRsDescriptorSupport");
 
     // --- State ---
 
     private final CodegenContext ctx;
+    private final GenericTypeExpressions genericTypes;
     private final ParameterAnnotationMaterializer parameterAnnotationMaterializer;
 
     // --- Constructor ---
@@ -130,6 +133,7 @@ public final class ExecutionPlanEmitter {
      */
     public ExecutionPlanEmitter(CodegenContext ctx) {
         this.ctx = ctx;
+        this.genericTypes = new GenericTypeExpressions(ctx);
         this.parameterAnnotationMaterializer = new ParameterAnnotationMaterializer(ctx);
     }
 
@@ -186,7 +190,7 @@ public final class ExecutionPlanEmitter {
 
         // --- Static ParamMeta constants per extractable parameter ---
         List<FieldSpec> staticFields =
-                buildParamMetaConstants(params, method.concreteMethod(), planClass, emittedLiteralFqns);
+                buildParamMetaConstants(params, method.concreteMethod(), resourceClass, planClass, emittedLiteralFqns);
 
         // --- Static EffectiveInputPolicies constants (including BEAN_PARAM baselines) ---
         staticFields.addAll(buildPoliciesConstants(params));
@@ -381,6 +385,8 @@ public final class ExecutionPlanEmitter {
      * @param params              the parameter contracts in declaration order
      * @param concreteMethod      the enclosing concrete method (seeds each parameter's reflective
      *                            annotation fallback lookup — declaring class, name, param types)
+     * @param resourceClass       the {@link ClassName} of the resource the plan serves, against which a
+     *                            parameter type that cannot be written out is resolved at class-load time
      * @param planClass           the {@link ClassName} of the enclosing execution plan, used to name
      *                            the per-parameter standalone {@code ParameterMetadata} impls
      * @param emittedLiteralFqns  the per-round shared dedup set for {@code <Ann>$JaxRsLiteral} classes
@@ -389,6 +395,7 @@ public final class ExecutionPlanEmitter {
     private List<FieldSpec> buildParamMetaConstants(
             List<EffectiveParamContract> params,
             javax.lang.model.element.ExecutableElement concreteMethod,
+            ClassName resourceClass,
             ClassName planClass,
             Set<String> emittedLiteralFqns) {
         List<FieldSpec> result = new ArrayList<>();
@@ -426,9 +433,22 @@ public final class ExecutionPlanEmitter {
                 init.add("null, ");
             }
 
-            // genericType — emit TypeReference token for parameterized BODY types; null otherwise.
-            // Jackson TypeReference is already on the runtime classpath for body deserialization.
-            init.add("$L, ", buildGenericTypeExpr(pc));
+            // genericType — the declared type, as GenericTypeExpressions builds it; null for a source
+            // whose contract carries none.
+            int paramIndex = i;
+            init.add(
+                    "$L, ",
+                    genericTypes.of(
+                            pc,
+                            planClass.packageName(),
+                            typeClassExpr(pc.type()),
+                            () -> CodeBlock.of(
+                                    "new $T().resolvedParameterType($T.class, $S, new String[] {$L}, $L)",
+                                    GENERATED_DESCRIPTOR_SUPPORT,
+                                    resourceClass,
+                                    concreteMethod.getSimpleName().toString(),
+                                    declaredParameterFqns(concreteMethod),
+                                    paramIndex)));
 
             // defaultValue
             if (pc.defaultValue() != null) {
@@ -562,60 +582,13 @@ public final class ExecutionPlanEmitter {
     }
 
     /**
-     * Builds the {@code genericType} expression for a parameter's {@code ParamMeta} constructor
-     * argument in the execution plan.
-     *
-     * <p>For {@link JaxRsParamSource#BODY} parameters with a parameterized {@link DeclaredType},
-     * emits an anonymous Jackson {@code TypeReference} subclass literal that captures the full
-     * generic type. For non-body or non-parameterized types, emits {@code null}.
-     *
-     * @param pc the parameter contract
-     * @return the code block expression ({@code null} literal or TypeReference expression)
+     * Renders the declared parameter types of {@code method} as a comma-separated list of string literals
+     * in the form {@code GeneratedJaxRsDescriptorSupport#resolveMethod} accepts.
      */
-    private CodeBlock buildGenericTypeExpr(EffectiveParamContract pc) {
-        if (pc.genericType() == null || pc.source() != JaxRsParamSource.BODY) {
-            return CodeBlock.of("null");
-        }
-        if (!(pc.genericType() instanceof DeclaredType dt)
-                || dt.getTypeArguments().isEmpty()) {
-            return CodeBlock.of("null");
-        }
-        String sourceType = sourceTypeName(pc.genericType());
-        return CodeBlock.of("new com.fasterxml.jackson.core.type.TypeReference<$L>() {}.getType()", sourceType);
-    }
-
-    /**
-     * Returns the source-form type name (qualified name with type arguments, not binary) for
-     * embedding in a TypeReference literal.
-     *
-     * <p>Non-declared types (notably array type arguments such as the {@code Outer.Inner[]} in
-     * {@code List<Outer.Inner[]>}) go through
-     * {@link TypeMirrorFqn#erasedSourceFqn(TypeMirror, dev.vertique.codegen.CodegenContext)}, not
-     * {@link TypeMirrorFqn#erasedFqn(TypeMirror, dev.vertique.codegen.CodegenContext)}: this string
-     * is interpolated into the generated source, where a binary {@code Outer$Inner} base name would
-     * not compile.
-     *
-     * @param type the type mirror to render
-     * @return the source-form type name string
-     */
-    private String sourceTypeName(TypeMirror type) {
-        if (!(type instanceof DeclaredType dt)) {
-            return erasedSourceFqn(type);
-        }
-        var element = ctx.types().asElement(ctx.types().erasure(type));
-        String rawName =
-                element instanceof TypeElement te ? te.getQualifiedName().toString() : erasedSourceFqn(type);
-        var args = dt.getTypeArguments();
-        if (args.isEmpty()) {
-            return rawName;
-        }
-        StringBuilder sb = new StringBuilder(rawName).append('<');
-        for (int i = 0; i < args.size(); i++) {
-            if (i > 0) sb.append(", ");
-            sb.append(sourceTypeName(args.get(i)));
-        }
-        sb.append('>');
-        return sb.toString();
+    private CodeBlock declaredParameterFqns(javax.lang.model.element.ExecutableElement method) {
+        return method.getParameters().stream()
+                .map(parameter -> CodeBlock.of("$S", erasedFqn(parameter.asType())))
+                .collect(CodeBlock.joining(", "));
     }
 
     // --- Private: interface method builders ---
@@ -990,14 +963,6 @@ public final class ExecutionPlanEmitter {
      */
     private String erasedFqn(TypeMirror type) {
         return TypeMirrorFqn.erasedFqn(type, ctx);
-    }
-
-    /**
-     * Returns the erased source-form FQN of {@code type} — for strings interpolated into the
-     * generated source rather than resolved at runtime. Delegates to {@link TypeMirrorFqn}.
-     */
-    private String erasedSourceFqn(TypeMirror type) {
-        return TypeMirrorFqn.erasedSourceFqn(type, ctx);
     }
 
     /**
