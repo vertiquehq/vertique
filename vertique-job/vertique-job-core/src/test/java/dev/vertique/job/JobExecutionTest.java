@@ -107,6 +107,61 @@ class JobExecutionTest {
         });
     }
 
+    @Test
+    @DisplayName("every copy keeps the idempotency key, and the previous-arity constructors read none")
+    void idempotencyKeySurvivesCopiesAndDefaultsFromPreviousArity() {
+        Map<String, UnaryOperator<JobExecution>> copies = new LinkedHashMap<>();
+        copies.put("withState", e -> e.withState(JobState.PROCESSING));
+        copies.put("withProgress", e -> e.withProgress(new ProgressSnapshot(10, 5, 0, "half done")));
+        copies.put("withPayload", e -> e.withPayload("other"));
+        copies.put("withLockedBy", e -> e.withLockedBy("node-1"));
+        copies.put("withError", e -> e.withError("boom", "java.lang.RuntimeException"));
+        copies.put("withStarted", e -> e.withStarted(Instant.now(), "node-1"));
+        copies.put("withCompleted", e -> e.withCompleted(Instant.now()));
+
+        // Given: an execution with a key, one from the previous-arity constructor with a scope, and one without
+        JobExecution keyed = buildKeyedExecution("order-42");
+        JobExecution scopedOnly = buildExecution("acme");
+        JobExecution oldest = buildExecution();
+
+        // Then: every copy of the keyed execution reports the key, the others report none
+        assertEquals("order-42", keyed.idempotencyKey());
+        assertNull(scopedOnly.idempotencyKey());
+        assertNull(oldest.idempotencyKey());
+        copies.forEach((method, copy) -> {
+            assertEquals("order-42", copy.apply(keyed).idempotencyKey(), method + " must carry the key");
+            assertNull(copy.apply(scopedOnly).idempotencyKey(), method + " must keep no key");
+        });
+    }
+
+    private JobExecution buildKeyedExecution(String key) {
+        JobExecution base = buildExecution("acme");
+        return new JobExecution(
+                base.id(),
+                base.jobId(),
+                base.jobType(),
+                base.handler(),
+                base.queue(),
+                base.state(),
+                base.attemptNumber(),
+                base.maxAttempts(),
+                base.payload(),
+                base.priority(),
+                base.lockedBy(),
+                base.scheduledAt(),
+                base.enqueuedAt(),
+                base.startedAt(),
+                base.completedAt(),
+                base.errorMessage(),
+                base.errorType(),
+                base.progress(),
+                base.parameters(),
+                base.attributes(),
+                base.metadata(),
+                base.scopeKey(),
+                key);
+    }
+
     // --- New fields ---
 
     @Nested

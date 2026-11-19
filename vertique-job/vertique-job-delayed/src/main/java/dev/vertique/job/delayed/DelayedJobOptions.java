@@ -26,7 +26,7 @@ import lombok.experimental.FieldDefaults;
  * job.enqueue(payload, DelayedJobOptions.builder()
  *     .runAt(Instant.now().plusHours(1))
  *     .queue("priority")
- *     .jobId("webhook-pay_123")
+ *     .idempotencyKey("welcome-email-user-42")
  *     .build());
  * }</pre>
  *
@@ -59,9 +59,17 @@ public class DelayedJobOptions {
     Integer maxAttempts;
 
     /**
-     * Stable job ID for idempotency. {@code null} means auto-generated.
+     * Label for the job, stable across retries. {@code null} means auto-generated. It is not unique and does
+     * not de-duplicate; use {@link #idempotencyKey} to make an enqueue repeatable.
      */
     String jobId;
+
+    /**
+     * Key that makes the enqueue repeatable. {@code null} means no key. While an execution that holds the key is
+     * unfinished, enqueueing again with the same key for the same handler and scope creates nothing and returns
+     * the ID of that execution, discarding the new payload and schedule. See {@link DelayedJob#idempotencyKey()}.
+     */
+    String idempotencyKey;
 
     /**
      * Pre-merged durable context metadata as a {@link DurableMetadata} namespaced document.
