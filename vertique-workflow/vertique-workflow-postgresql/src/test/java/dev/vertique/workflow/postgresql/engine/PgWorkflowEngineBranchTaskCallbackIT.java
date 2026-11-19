@@ -21,6 +21,7 @@ import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
 import dev.vertique.workflow.engine.spi.RecordedTimer;
 import dev.vertique.workflow.engine.spi.TimerCommandSpec;
+import dev.vertique.workflow.events.WorkflowEventType;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskMutationResult;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
@@ -58,6 +59,7 @@ import io.vertx.sqlclient.Tuple;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
@@ -94,6 +96,8 @@ public class PgWorkflowEngineBranchTaskCallbackIT {
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_branch_task_callback_test")
             .withMigration("classpath:db/migration/workflow");
+
+    static final RecordedWorkflowEvents events = new RecordedWorkflowEvents();
 
     static Pool pool;
     static WorkflowEngineHandle engine;
@@ -214,6 +218,7 @@ public class PgWorkflowEngineBranchTaskCallbackIT {
 
         // The executor runs every command of the database: the instances here are seeded, not started by the engine
         engine = PgWorkflowEngineTestSupport.executorEngine(pool, vertx, registry)
+                .recorders(Set.of(events))
                 .executorConfig(new WorkflowExecutorConfig(1, 8, 100, 60))
                 .build();
         try {
@@ -512,6 +517,11 @@ public class PgWorkflowEngineBranchTaskCallbackIT {
                             o.branchA().currentStepId(),
                             "branch A must reach the decision's nextStepId 'complete-step'");
                     assertEquals("WAITING", o.siblingStatus(), "sibling branch-b must stay WAITING");
+                    // The completion is reported, as the completion of a single-path task is
+                    var completed = events.of(workflowId, WorkflowEventType.TASK_COMPLETED);
+                    assertEquals(1, completed.size(), "the branch task's completion must be reported once");
+                    assertEquals(task.taskId(), completed.getFirst().taskId());
+                    assertEquals("approve", completed.getFirst().attributes().get("decisionName"));
                     ctx.completeNow();
                 })));
     }
@@ -742,6 +752,11 @@ public class PgWorkflowEngineBranchTaskCallbackIT {
                             o.branchA().currentStepId(),
                             "branch A must reach the due-date CompleteNode 'due-step'");
                     assertEquals("WAITING", o.siblingStatus(), "sibling branch-b must stay WAITING");
+                    // The expiry is reported, as the expiry of a single-path task is
+                    var expired = events.of(workflowId, WorkflowEventType.TASK_EXPIRED);
+                    assertEquals(1, expired.size(), "the branch task's expiry must be reported once");
+                    assertEquals(task.taskId(), expired.getFirst().taskId());
+                    assertEquals("task-step", expired.getFirst().stepId());
                     ctx.completeNow();
                 })));
     }

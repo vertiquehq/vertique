@@ -470,9 +470,33 @@ final class TaskLifecycleService {
             WorkflowActor cancelledBy,
             Instant cancelledAt,
             SqlClient tx) {
+        // The instance's own task is the one at the instance's current step.
+        return appendTaskCancelledHistory(
+                inst, inst.currentStepId(), taskId, cancellationReason, cancelledBy, cancelledAt, tx);
+    }
+
+    /**
+     * Appends a {@code TASK_CANCELLED} history entry for a task at the given step: a branch-owned task is at its
+     * branch's step, not at the step the instance holds.
+     *
+     * @param inst               the workflow instance that owns the task
+     * @param stepId             the step of the task's node
+     * @param taskId             the UUID of the cancelled task
+     * @param cancellationReason human-readable reason for the cancellation
+     * @param cancelledBy        the actor who triggered the cancellation
+     * @param cancelledAt        the UTC instant of cancellation
+     * @param tx                 the active transaction
+     * @return a {@link Future} that completes with the sequence number assigned to the appended entry
+     */
+    Future<Long> appendTaskCancelledHistory(
+            WorkflowInstance inst,
+            String stepId,
+            UUID taskId,
+            String cancellationReason,
+            WorkflowActor cancelledBy,
+            Instant cancelledAt,
+            SqlClient tx) {
         return history.nextSequence(inst.id(), tx).compose(seq -> {
-            // Locate the stepId from the plan node at the current step.
-            String stepId = inst.currentStepId();
             String histPayload = Json.encode(new TaskCancelledHistoryPayload(
                     stepId,
                     taskId,
@@ -1583,6 +1607,14 @@ final class TaskLifecycleService {
                                                         hp,
                                                         now),
                                                 tx)
+                                        .compose(v2 -> eventEmitter.emitEvent(
+                                                inst,
+                                                WorkflowEventType.TASK_EXPIRED,
+                                                seq,
+                                                taskId,
+                                                task.stepId(),
+                                                Map.of("expiredBy", WorkflowActorMaps.toMap(expiredBy)),
+                                                tx))
                                         .compose(v2 -> {
                                             // Advance to dueNextStepId.
                                             BranchToken cleared =
@@ -1818,7 +1850,20 @@ final class TaskLifecycleService {
                     cmd.reviewedSubjectVersion(),
                     WorkflowPayloads.commandCorrelationId(inst)));
             return history.append(
-                    new WorkflowHistoryEntry(workflowId, seq, WorkflowEntryType.BRANCH_TASK_COMPLETED, hp, now), tx);
+                            new WorkflowHistoryEntry(workflowId, seq, WorkflowEntryType.BRANCH_TASK_COMPLETED, hp, now),
+                            tx)
+                    .compose(v -> eventEmitter.emitEvent(
+                            inst,
+                            WorkflowEventType.TASK_COMPLETED,
+                            seq,
+                            taskId,
+                            stepId,
+                            WorkflowEventEmitter.attrs(
+                                    "decisionName",
+                                    cmd.decisionName(),
+                                    "completedBy",
+                                    WorkflowActorMaps.toMap(cmd.completedBy())),
+                            tx));
         });
     }
 
@@ -1837,7 +1882,7 @@ final class TaskLifecycleService {
     Future<TaskMutationResult> dueFired(
             WorkflowInstanceId workflowId, UUID taskId, DriveBinding binding, SqlClient tx) {
         // Lock order: workflow_timers BEFORE workflow_tasks (matches taskCompleted/cancel and the
-        // reminder-fire executor — preserves the workflow-wide lock-order invariant).
+        // reminder-fire executor).
         // Step sequence: (1) non-locking task read for the slot validation, (2) branch-fork on
         // branchTokenId, (3) cancel pending reminder timers — locks REMINDER timer rows, (4) lock
         // the task row, (5) markExpired re-verifies status='OPEN' under lock, (6) advance.

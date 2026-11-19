@@ -5,6 +5,7 @@ package dev.vertique.workflow.postgresql.engine;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -20,6 +21,7 @@ import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
+import dev.vertique.workflow.events.WorkflowEventType;
 import dev.vertique.workflow.exception.WorkflowStaleAssignmentException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
@@ -87,6 +89,8 @@ public class PgWorkflowEngineBranchHumanTaskIT {
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_branch_human_task_test")
             .withMigration("classpath:db/migration/workflow");
+
+    static final RecordedWorkflowEvents events = new RecordedWorkflowEvents();
 
     static Pool pool;
     static WorkflowEngineHandle engine;
@@ -204,7 +208,7 @@ public class PgWorkflowEngineBranchHumanTaskIT {
                 instances,
                 historyRepo,
                 dedup,
-                Set.of(),
+                Set.of(events),
                 Set.of(IntentKind.WORKFLOW_EVENT),
                 timerStore,
                 taskStore,
@@ -216,6 +220,7 @@ public class PgWorkflowEngineBranchHumanTaskIT {
 
     @BeforeEach
     void truncateTables(VertxTestContext ctx) {
+        events.clear();
         WorkflowTestTables.truncating(
                         pool,
                         "TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
@@ -405,6 +410,56 @@ public class PgWorkflowEngineBranchHumanTaskIT {
         assertNotNull(row.getString("forkStepId"), "fork_step_id must be non-null on task row");
         assertEquals("branch-a", row.getString("branchId"), "branch_id must be 'branch-a'");
         ctx.completeNow();
+    }
+
+    @Test
+    @DisplayName("a branch-owned task is reported as created and completed, with the correlation and cause ids")
+    void branchOwnedTaskIsReportedAsCreatedAndCompleted() {
+        WorkflowInstanceId workflowId = startWorkflow("wf-events");
+        UUID taskId = findOpenTaskForWorkflow(workflowId);
+        assertNotNull(taskId, "branch A task must exist");
+
+        // The creation is reported with the task, its step, its assignee and the history entry it belongs to
+        var created = events.of(workflowId, WorkflowEventType.TASK_CREATED);
+        assertEquals(1, created.size(), "the branch task's creation must be reported once");
+        assertEquals(taskId, created.getFirst().taskId());
+        assertEquals("task-step", created.getFirst().stepId());
+        assertEquals("Role", created.getFirst().attributes().get("assigneeType"));
+        assertEquals("reviewers", created.getFirst().attributes().get("assigneeKey"));
+        assertNotNull(created.getFirst().causationId(), "the start command is the cause of the creation");
+        long createdSequence = historyRepo
+                .listByInstance(workflowId, pool)
+                .map(entries -> entries.stream()
+                        .filter(e -> e.entryType() == WorkflowEntryType.BRANCH_TASK_CREATED)
+                        .findFirst()
+                        .orElseThrow()
+                        .sequence())
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
+        assertEquals(createdSequence, created.getFirst().sequence());
+
+        // When the task is completed
+        TaskCompletionCommand cmd = new TaskCompletionCommand(
+                taskId, "approve", null, "idem-events-1", new WorkflowActor.User("user-1"), null);
+        pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
+        engine.executionProbe()
+                .awaitIdle(workflowId, IDLE_TIMEOUT)
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
+
+        // Then the completion is reported with the decision and the actor, caused by the completion command
+        var completed = events.of(workflowId, WorkflowEventType.TASK_COMPLETED);
+        assertEquals(1, completed.size(), "the branch task's completion must be reported once");
+        assertEquals(taskId, completed.getFirst().taskId());
+        assertEquals("task-step", completed.getFirst().stepId());
+        assertEquals("approve", completed.getFirst().attributes().get("decisionName"));
+        assertNotNull(completed.getFirst().causationId(), "the completion command is the cause");
+        assertNotEquals(created.getFirst().causationId(), completed.getFirst().causationId());
     }
 
     @Test

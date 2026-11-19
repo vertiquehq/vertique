@@ -143,6 +143,11 @@ Applications normally only provide the binding and destination handler.
   when it captured none), and `causationId`, the row id of the command whose segment emitted the event, as text. An event written
   outside a command's segment, such as the events of `cancel`, has no `causationId`. A signal applied from the parked state is the
   cause of its own events.
+- **Branch-owned tasks are reported like the tasks of a single path.** A task created by a fork branch emits `TASK_CREATED`,
+  completing it emits `TASK_COMPLETED`, its due date passing emits `TASK_EXPIRED`, and cancelling it (with its branch, or when
+  the branch loses a race) emits `TASK_CANCELLED` with cause `BRANCH_CANCELLED`. Each event carries the sequence of the history
+  entry written with it; the cancellation of a branch's task writes a `TASK_CANCELLED` history entry, which it did not before.
+  **Behaviour change:** consumers that counted the task events of an instance with a fork now see these four for branch tasks.
 - **Attribution headers.** The outbox entry of an event a workflow segment emits carries only the attribution headers `x-workflow-actor-kind` and `x-workflow-attribution` (`VERIFIED`, `ABSENT` or `DEGRADED`), taken from the command the segment executes; the actor id, reason and party acted for are not sent to event consumers. They are for audit and logs. They are unauthenticated: anyone who can write an outbox record or publish to the broker can forge them, so a consumer must never treat them as the identity of the caller. The envelope is unchanged.
 - **Envelope contract is versioned.** External consumers depend on the v1 event envelope contract; breaking changes require a new envelope version, not field-shape changes in place.
 
