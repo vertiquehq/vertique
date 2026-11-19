@@ -111,6 +111,12 @@ public class ScopedOutboxToDelayedJobIT {
 
         @Provides
         @Singleton
+        static OutboxRelayConfig relayConfig() {
+            return OutboxRelayConfig.builder().build();
+        }
+
+        @Provides
+        @Singleton
         static OutboxService outboxService(DefaultOutboxService service) {
             return service;
         }

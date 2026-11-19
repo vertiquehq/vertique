@@ -706,8 +706,19 @@ then `kafka.producer.properties`. The framework sets no `acks` or `enable.idempo
 inherit the Kafka client defaults (`acks=all` and `enable.idempotence=true` with the `kafka-clients`
 4.x line brought in by Vert.x) unless one of those property bags sets them.
 
-When `bootstrap.servers` is not configured through any source, producer startup fails with an
-`IllegalStateException` rather than silently falling back to `localhost:9092`.
+When `bootstrap.servers` is missing or blank after those layers are merged, constructing the
+`KafkaProducerFactory` fails with an `IllegalStateException` rather than silently falling back to
+`localhost:9092`. The check only merges the property bags and never connects; the shared producer
+client is still created on the first send. The factory is a lazily built singleton, so the failure
+happens when the application graph first requests it (for example the consumer deployment or an
+injected producer proxy), which is application startup in the usual wiring, instead of the first
+publish.
+
+**Behaviour change.** The check used to run on the first send. An application that wires the Kafka
+module but has no producer-level `bootstrap.servers` now fails at startup, even when it declares no
+producer: this includes an application with no `kafka` configuration at all, and one that sets the
+address only under `kafka.consumers.{name}.properties`. Set `bootstrap.servers` at the `kafka` root
+or in `kafka.properties`; the address is never contacted at construction.
 
 **Properties files.** With Vert.x hierarchical expansion (`hierarchical=true`), dotted keys such as
 `kafka.bootstrap.servers` expand into nested JSON. Both the flat and nested forms resolve.
@@ -719,18 +730,22 @@ Serde and schema-registry configuration lives in its own namespace:
 
 | Path | Purpose |
 |---|---|
-| `kafka.schemaRegistry.*` | Global schema-registry config (URL, auth) |
+| `kafka.schemaRegistry.url` | Global schema-registry URL; the block carries `url` only |
 | `kafka.consumers.{name}.serdeProperties.*` | Per-consumer serde overrides |
 | `kafka.producers.{name}.serdeProperties.*` | Per-producer serde overrides |
 | `kafka.producers.{name}.methods.{method}.serdeProperties.*` | Per-method serde overrides |
 
-Merge order, most specific last: `kafka.schemaRegistry.*` → per-producer or per-consumer
+Registry credentials and other client settings (for example the `apicurio.registry.*` keys) go in
+`serdeProperties`, not in `schemaRegistry`. The Avro provider fails startup on any other key under
+`kafka.schemaRegistry`, naming the key and never its value; see the `vertique-kafka-avro` reference.
+
+Merge order, most specific last: `kafka.schemaRegistry.url` → per-producer or per-consumer
 `serdeProperties` → per-method `serdeProperties`.
 
 ### Secrets
 
-Secret keys inside `properties`, `serdeProperties`, `schemaRegistry`, and the root connection
-properties are masked when a config object is rendered, so a startup log or a `ConfigurationException`
+Secret keys inside `properties`, `serdeProperties`, `schemaRegistry` (which accepts `url` only; masked as
+defense in depth), and the root connection properties are masked when a config object is rendered, so a startup log or a `ConfigurationException`
 never reveals a credential. `kafka.messageKeyHash.hmacSecret` deserializes in and stays readable; the
 config mapper behind `ConfigParser` serializes it as `"***"` when set and omits it when absent (the
 shared secret rule, `ConfigSecretRenderer` in `dev.vertique:vertique-core`), and `ConfigParser`
@@ -1315,7 +1330,7 @@ default accepts every producer interface.
 | `KafkaRegistrationException` | An invalid consumer declaration, or a generated binding companion that is present but malformed. A `ConfigurationException` subtype — broken generated code is never silently skipped |
 | `IllegalArgumentException` | The resolved format has no registered `KafkaSerdeProvider`; the message names the missing module |
 | `IllegalStateException` | `worker = false` on a consumer whose effective deserializer reports `mayBlock()` |
-| `IllegalStateException` | `bootstrap.servers` missing for a producer |
+| `IllegalStateException` | `bootstrap.servers` missing or blank when the producer factory is constructed |
 
 ### Runtime failures
 
@@ -1343,7 +1358,7 @@ default accepts every producer interface.
 - **Contributing a model-3 router instance.** A routing interface contributes its `Class<?>` literal;
   models 1 and 4 contribute instances.
 - **Putting serde settings in `properties`.** That bag goes verbatim to the Kafka client. Serde and
-  registry settings belong in `serdeProperties` and `kafka.schemaRegistry`.
+  registry settings belong in `serdeProperties`, with only the registry URL in `kafka.schemaRegistry`.
 - **Expecting consumers to start themselves.** Nothing calls `deployAll()` for you.
 - **Installing `KafkaModule` alone.** With no format provider, any consumer needing a serde fails at
   startup.

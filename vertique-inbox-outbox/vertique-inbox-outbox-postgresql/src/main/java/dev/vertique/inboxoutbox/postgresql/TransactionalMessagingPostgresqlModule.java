@@ -23,6 +23,7 @@ import dev.vertique.inboxoutbox.InboxRepository;
 import dev.vertique.inboxoutbox.InboxService;
 import dev.vertique.inboxoutbox.OutboxDestinationHandler;
 import dev.vertique.inboxoutbox.OutboxPublishObserver;
+import dev.vertique.inboxoutbox.OutboxQueueProbe;
 import dev.vertique.inboxoutbox.OutboxRelayConfig;
 import dev.vertique.inboxoutbox.OutboxRepository;
 import dev.vertique.inboxoutbox.OutboxService;
@@ -128,6 +129,19 @@ public abstract class TransactionalMessagingPostgresqlModule {
     @Provides
     @Singleton
     static OutboxRepository outboxRepository(PgInboxOutboxRepository impl) {
+        return impl;
+    }
+
+    /**
+     * Provides the {@link OutboxQueueProbe} binding, delegating to the shared PostgreSQL
+     * repository implementation.
+     *
+     * @param impl the PostgreSQL inbox/outbox repository
+     * @return the {@link OutboxQueueProbe} that reads the outbox queue size
+     */
+    @Provides
+    @Singleton
+    static OutboxQueueProbe outboxQueueProbe(PgInboxOutboxRepository impl) {
         return impl;
     }
 

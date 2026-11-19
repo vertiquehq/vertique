@@ -73,7 +73,7 @@ default, so the provider extends the list itself when a serde is built:
 
 ### Configuration is separated from native Kafka properties
 
-The native `properties` bag is passed verbatim to the Vert.x Kafka client and must contain only Kafka-client keys. Serde and registry configuration lives in the dedicated `serdeProperties` namespace and the `kafka.schemaRegistry.*` block; `ApicurioAvroSerdeProvider` never reads the native `properties` bag.
+The native `properties` bag is passed verbatim to the Vert.x Kafka client and must contain only Kafka-client keys. Serde and registry configuration lives in the dedicated `serdeProperties` namespace and the `kafka.schemaRegistry.url` key; `ApicurioAvroSerdeProvider` never reads the native `properties` bag.
 
 ---
 
@@ -145,6 +145,8 @@ Fixed defaults applied by the provider (not overridable via `serdeProperties` wi
 | `apicurio.registry.retry-backoff-ms` | yes | yes | `300` (override via `serdeProperties`) |
 
 Registry-call bounding: the JDK client adapter applies a 30s connect timeout and the retry knobs above bound retry storms; the worker-threading contract keeps blocking calls off the event loop. Apicurio 3.3.3 has no config-map key for a per-request socket read timeout (a custom registry client would be needed; this is a known, deferred gap).
+
+**`schemaRegistry` carries `url` only.** Registry credentials and every other Apicurio client setting go in `serdeProperties` as `apicurio.registry.*` keys. Any other key under `kafka.schemaRegistry` fails startup with a `ConfigurationException` that names the key and never its value, so a credential placed there is never silently ignored.
 
 #### Invariants and Gotchas
 
@@ -259,11 +261,11 @@ This module is itself an extension of the `KafkaSerdeProvider` SPI. There are no
 | Key | Scope | Description |
 |-----|-------|-------------|
 | `kafka.format` | Global | Default format for all producers and consumers (`"avro"`, `"json"`) |
-| `kafka.schemaRegistry.url` | Global | Schema Registry base URL |
+| `kafka.schemaRegistry.url` | Global | Schema Registry base URL. The only key `schemaRegistry` accepts |
 | `kafka.consumers.{name}.format` | Per-consumer | Overrides global format for this consumer |
-| `kafka.consumers.{name}.serdeProperties.*` | Per-consumer | Apicurio config overlaid on top of `kafka.schemaRegistry.*` |
+| `kafka.consumers.{name}.serdeProperties.*` | Per-consumer | Apicurio config overlaid on top of `kafka.schemaRegistry.url` |
 | `kafka.producers.{name}.format` | Per-producer | Overrides global format for all methods of this producer |
-| `kafka.producers.{name}.serdeProperties.*` | Per-producer | Apicurio config overlaid on top of `kafka.schemaRegistry.*` |
+| `kafka.producers.{name}.serdeProperties.*` | Per-producer | Apicurio config overlaid on top of `kafka.schemaRegistry.url` |
 | `kafka.producers.{name}.methods.{method}.format` | Per-method | Overrides per-producer format for this producer method |
 | `kafka.producers.{name}.methods.{method}.serdeProperties.*` | Per-method | Apicurio config for this method; merged last (highest priority) |
 | `serdeProperties."vertique.avro.trusted-packages"` | Per-consumer / per-producer / per-method | Array of package names, or one comma-separated string. Each entry must have at least two segments (`com.acme.events`) and matches that package and its subpackages. Wildcards (`*`, `com.acme.*`), single-segment roots and JDK/library roots (`java`, `javax`, `jakarta`, `jdk`, `sun`, `com.sun`, `org.apache`, `org.springframework`) are rejected at startup. List only the dedicated package of your generated records: a prefix trusts every class under it |

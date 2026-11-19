@@ -105,6 +105,14 @@ public class DbPoolConfig {
     private final int connectionTimeoutMs = 30_000;
 
     /**
+     * Maximum time in milliseconds to establish the TCP connection to the database. Defaults to
+     * {@code 60000}, the Vert.x client default. Bounds only the socket connect, not the wait for a
+     * pooled connection ({@link #connectionTimeoutMs}).
+     */
+    @Builder.Default
+    private final int connectTimeoutMs = 60_000;
+
+    /**
      * Maximum time in milliseconds a connection may remain idle before being evicted. {@code 0}
      * means no idle timeout. Defaults to {@code 0}.
      */
@@ -237,6 +245,7 @@ public class DbPoolConfig {
                 + ", maxWaitQueueSize=" + maxWaitQueueSize
                 + ", eventLoopSize=" + eventLoopSize
                 + ", connectionTimeoutMs=" + connectionTimeoutMs
+                + ", connectTimeoutMs=" + connectTimeoutMs
                 + ", idleTimeoutMs=" + idleTimeoutMs
                 + ", maxLifetimeMs=" + maxLifetimeMs
                 + ", poolCleanerPeriodMs=" + poolCleanerPeriodMs

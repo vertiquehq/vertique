@@ -46,6 +46,10 @@ telemetry-library dependencies.
 The optional `vertique-micrometer-workflow` adapter consumes only the workflow executor observer SPI
 from `vertique-workflow-core` and the shared Micrometer registry, and no workflow module depends on it.
 
+The optional `vertique-micrometer-outbox` adapter consumes only the outbox publish observer SPI and the
+queue probe from `vertique-inbox-outbox-core` and the shared Micrometer registry, and no outbox module
+depends on it.
+
 `vertique-json-schema` owns transport-neutral Java `Type` -> JSON Schema 2020-12
 generation, built on Victools. It depends only on `vertique-core` plus Jackson,
 Victools, Jakarta Validation, and Swagger annotations — it has no dependency on

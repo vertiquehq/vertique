@@ -12,6 +12,8 @@ import dev.vertique.inboxoutbox.DestinationType;
 import dev.vertique.inboxoutbox.InboxRepository;
 import dev.vertique.inboxoutbox.OutboxEntry;
 import dev.vertique.inboxoutbox.OutboxMetadata;
+import dev.vertique.inboxoutbox.OutboxQueueProbe;
+import dev.vertique.inboxoutbox.OutboxQueueSample;
 import dev.vertique.inboxoutbox.OutboxRecord;
 import dev.vertique.inboxoutbox.OutboxRepository;
 import dev.vertique.inboxoutbox.PayloadCodec;
@@ -55,7 +57,8 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Singleton
-public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRepository, OutboxRepository {
+public class PgInboxOutboxRepository extends PgSqlRepository
+        implements InboxRepository, OutboxRepository, OutboxQueueProbe {
 
     // --- SQL statements ---
     //
@@ -116,6 +119,7 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
     private final String sqlReclaimStale;
     private final String sqlCleanupPublished;
     private final String sqlCleanupDeadLetter;
+    private final String sqlQueueSample;
 
     // --- Node identity ---
 
@@ -229,6 +233,16 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
         this.sqlCleanupDeadLetter = "WITH batch AS (SELECT id FROM " + outbox + " WHERE state = 'DEAD_LETTER'"
                 + " AND updated_at < NOW() - ($1 * interval '1 day') LIMIT $2)"
                 + " DELETE FROM " + outbox + " WHERE id IN (SELECT id FROM batch)";
+
+        // One statement, one NOW(). An entry is due under the claim's own time predicate, one aggregate scan over
+        // the pending partial index; the dead-letter partial index serves the second count. The cost follows the
+        // backlog, not the table.
+        this.sqlQueueSample = "SELECT COUNT(*) AS due_count,"
+                + " COALESCE(FLOOR(EXTRACT(EPOCH FROM (NOW() - MIN(available_at))) * 1000), 0)::bigint AS oldest_due_ms,"
+                + " (SELECT COUNT(*) FROM " + outbox + " WHERE state = 'DEAD_LETTER') AS dead_letter_count"
+                + " FROM " + outbox
+                + " WHERE state = 'PENDING' AND available_at <= NOW()"
+                + " AND (scheduled_at IS NULL OR scheduled_at <= NOW())";
     }
 
     /**
@@ -615,6 +629,29 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
                 .execute(Tuple.of(retentionDays, batchSize))
                 .map(rs -> rs.rowCount())
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "outbox cleanupDeadLetter")));
+    }
+
+    // --- OutboxQueueProbe ---
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Counts the due entries, finds how long the oldest of them has been due, and counts the
+     * dead-lettered entries, in one read-only statement. Handler capabilities and aggregate order are
+     * not applied.
+     */
+    @Override
+    public Future<OutboxQueueSample> sample() {
+        return pool.preparedQuery(sqlQueueSample)
+                .execute()
+                .map(rs -> {
+                    Row row = rs.iterator().next();
+                    return new OutboxQueueSample(
+                            row.getLong("due_count"),
+                            Duration.ofMillis(row.getLong("oldest_due_ms")),
+                            row.getLong("dead_letter_count"));
+                })
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "outbox sample")));
     }
 
     // --- Internal helpers ---

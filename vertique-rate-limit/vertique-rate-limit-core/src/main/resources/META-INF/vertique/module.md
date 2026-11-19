@@ -241,7 +241,7 @@ explicit `Ms` suffix.
 |---|---|---|---|
 | `rateLimit.enabled` | boolean | `true` | Root kill switch. When `false`, every `acquire(...)` on every handle yields a `DISABLED` decision without engaging any backend; `execute(...)` runs the action. Startup validation still runs. |
 | `rateLimit.defaultMode` | `LOCAL` \| `CLUSTERED` | `LOCAL` | Mode applied to any policy that omits `mode`. An unrecognized value fails startup with `ConfigurationException` naming `rateLimit.defaultMode`. |
-| `rateLimit.local.maxTrackedKeys` | long | `100000` | Per-policy bound on distinct keys a LOCAL registry tracks. Must be at least 1. Applies to each LOCAL policy separately, never as one pool shared across policies. |
+| `rateLimit.local.maxTrackedKeys` | long | `100000` | Per-policy bound on distinct keys a LOCAL registry tracks. Must be between 1 and 10,000,000; a value outside that range fails startup with `ConfigurationException` naming the key. Applies to each LOCAL policy separately, never as one pool shared across policies. |
 | `rateLimit.local.cleanupIntervalMs` | long (ms) | `60000` | Interval at which inactive LOCAL state is reclaimed. Must be at least 1. |
 | `rateLimit.keyDerivation.secret` | string | none | HMAC secret used to derive CLUSTERED physical keys. Required when any **enabled** policy is `CLUSTERED`, and must be at least 32 bytes in UTF-8; a missing, shorter, or unresolved `${...}` placeholder value fails startup. Not validated for LOCAL-only applications. Supply it through a secret-bearing property source or environment placeholder, never as a literal in a committed file. |
 | `rateLimit.policies.<name>` | object | none | One policy per key; the key is the policy `name` (`[A-Za-z0-9._~-]{1,128}`). A configuration policy replaces a same-named Dagger-contributed `RateLimitPolicy` wholesale. |
@@ -259,7 +259,7 @@ explicit `Ms` suffix.
 | `revision` | string | Bumped on any semantic algorithm or key change; `[A-Za-z0-9._-]{1,32}`. |
 | `defaultCost` | long | Tokens consumed when a caller passes no explicit cost; `1..1000000000000`. |
 | `algorithm` | object | `type` must be `TOKEN_BUCKET`; `capacity` is `1..1000000000000`; `refill` is `{ "type": "GREEDY" \| "INTERVAL", "tokens": 1..1000000000000, "periodMs": 1..31536000000 }`. |
-| `local.maxTrackedKeys` | long | Optional per-policy override of `rateLimit.local.maxTrackedKeys`; at least 1. Absent means the global value applies. Only meaningful for `LOCAL` policies. |
+| `local.maxTrackedKeys` | long | Optional per-policy override of `rateLimit.local.maxTrackedKeys`; `1..10000000`, same startup failure as the global key. Absent means the global value applies. Only meaningful for `LOCAL` policies. |
 
 At most 10,000 policies may be declared. Invalid or out-of-range values fail startup with a
 `ConfigurationException` (or `IllegalStateException` for runtime-level validation such as a

@@ -13,6 +13,7 @@ import dev.vertique.inboxoutbox.DelayedJobControl;
 import dev.vertique.inboxoutbox.OutboxDeliveryMetadata;
 import dev.vertique.inboxoutbox.OutboxEntry;
 import dev.vertique.inboxoutbox.OutboxMetadata;
+import dev.vertique.inboxoutbox.OutboxRelayConfig;
 import dev.vertique.inboxoutbox.OutboxRepository;
 import dev.vertique.inboxoutbox.OutboxService;
 import io.vertx.core.Future;
@@ -73,6 +74,7 @@ class DefaultOutboxService implements OutboxService {
     private final OutboxRepository repository;
     private final DurableContextPropagator propagator;
     private final PgInboxOutboxExceptionMapper exceptionMapper;
+    private final OutboxRelayConfig relayConfig;
 
     /**
      * Creates a new outbox service.
@@ -82,15 +84,19 @@ class DefaultOutboxService implements OutboxService {
      *                        {@code metadata} document at publish time
      * @param exceptionMapper the exception mapper that translates data-access failures into
      *                        inbox/outbox-domain exceptions at the service boundary
+     * @param relayConfig     the relay configuration; its {@code maxAttempts} is the attempt limit
+     *                        stored for an entry that sets none
      */
     @Inject
     DefaultOutboxService(
             OutboxRepository repository,
             DurableContextPropagator propagator,
-            PgInboxOutboxExceptionMapper exceptionMapper) {
+            PgInboxOutboxExceptionMapper exceptionMapper,
+            OutboxRelayConfig relayConfig) {
         this.repository = repository;
         this.propagator = propagator;
         this.exceptionMapper = exceptionMapper;
+        this.relayConfig = relayConfig;
     }
 
     /**
@@ -109,6 +115,9 @@ class DefaultOutboxService implements OutboxService {
      * scope is stored as given and the ambient {@code ScopeContext} does not select it. When the entry carries a {@link DelayedJobControl}
      * snapshot, it is persisted in {@code metadata.delivery.delayedJob}; all other entries receive
      * an empty delivery section.
+     *
+     * <p><b>Attempt limit:</b> an entry that set its own {@code maxAttempts} keeps it; an entry that
+     * set none is stored with {@code inboxOutbox.relay.maxAttempts}.
      *
      * <p><b>Durable-context contract:</b> the propagated context is ALWAYS the ambient context bound
      * in the holder at publish time — there is intentionally no caller-supplied context field on
@@ -151,8 +160,9 @@ class DefaultOutboxService implements OutboxService {
         OutboxDeliveryMetadata delivery =
                 new OutboxDeliveryMetadata(Optional.empty(), Optional.ofNullable(entry.delayedJob()));
         OutboxMetadata metadata = new OutboxMetadata(context, delivery);
+        OutboxEntry stored = entry.withDefaultMaxAttempts(relayConfig.maxAttempts());
         return repository
-                .insert(entry, metadata, carrierId, tx)
+                .insert(stored, metadata, carrierId, tx)
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "outbox publish")));
     }
 
