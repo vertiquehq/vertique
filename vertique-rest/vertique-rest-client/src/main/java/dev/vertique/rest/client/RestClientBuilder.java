@@ -437,8 +437,13 @@ public final class RestClientBuilder {
 
     /**
      * Sets the default response {@link Expectation} applied to all methods that do not have a
-     * method-level {@link ExpectedStatus} annotation. Commonly used to require 2xx status codes
-     * or a specific {@code Content-Type}.
+     * method-level {@link ExpectedStatus} annotation.
+     *
+     * <p>A response the expectation accepts is a success whatever its status, and one it rejects fails
+     * with a {@link dev.vertique.rest.client.exception.RestClientResponseException}. An expectation
+     * that does not inspect the status, such as a {@code Content-Type} check, therefore accepts every
+     * status it passes, a 500 included; combine it with
+     * {@code HttpResponseExpectation.SC_SUCCESS.and(...)} to keep the 2xx rule.
      *
      * @param expectation the default expectation
      * @return this builder

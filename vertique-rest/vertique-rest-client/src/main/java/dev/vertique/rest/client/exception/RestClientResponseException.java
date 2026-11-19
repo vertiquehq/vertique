@@ -8,12 +8,14 @@ import dev.vertique.rest.client.interceptor.RestClientRequestContext;
 import dev.vertique.rest.client.interceptor.RestClientResponseContext;
 import io.vertx.core.MultiMap;
 import io.vertx.core.buffer.Buffer;
+import jakarta.annotation.Nullable;
 import java.io.IOException;
 import java.util.Optional;
 
 /**
- * Exception thrown when a REST client receives an HTTP error response (4xx or 5xx) or when a
- * configured {@link dev.vertique.rest.client.ExpectedStatus} expectation is not met.
+ * Exception thrown when a REST client receives a response its expectation rejects: an HTTP error
+ * response (4xx or 5xx) when no expectation is set, or any status, a 2xx included, that a configured
+ * {@link dev.vertique.rest.client.ExpectedStatus} or builder expectation does not accept.
  *
  * <p>Carries the full request and response contexts so that interceptors, failure translators, and
  * callers can inspect or deserialize the error body. The request context provides method name and
@@ -37,6 +39,29 @@ public class RestClientResponseException extends RestClientException {
     public RestClientResponseException(
             RestClientRequestContext requestContext, RestClientResponseContext responseContext) {
         super(String.format("HTTP %d %s", responseContext.statusCode(), responseContext.statusMessage()));
+        this.requestContext = requestContext;
+        this.responseContext = responseContext;
+    }
+
+    /**
+     * Creates a response exception for a response that the method's expectation rejected, keeping the
+     * expectation's failure as the cause. Used for any rejected status, including a 2xx one.
+     *
+     * @param requestContext the request context describing the request
+     * @param responseContext the response context containing the HTTP status, headers, and body
+     * @param cause the failure the expectation reported; may be {@code null}
+     */
+    public RestClientResponseException(
+            RestClientRequestContext requestContext,
+            RestClientResponseContext responseContext,
+            @Nullable Throwable cause) {
+        super(
+                cause != null && cause.getMessage() != null
+                        ? String.format(
+                                "HTTP %d %s (%s)",
+                                responseContext.statusCode(), responseContext.statusMessage(), cause.getMessage())
+                        : String.format("HTTP %d %s", responseContext.statusCode(), responseContext.statusMessage()),
+                cause);
         this.requestContext = requestContext;
         this.responseContext = responseContext;
     }
