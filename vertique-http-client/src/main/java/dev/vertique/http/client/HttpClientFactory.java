@@ -7,14 +7,16 @@ import dev.vertique.http.client.config.HttpClientConfig;
 import dev.vertique.http.client.exception.HttpClientClosedException;
 import dev.vertique.http.client.interceptor.HttpClientInterceptor;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -31,8 +33,8 @@ public final class HttpClientFactory {
     private final Vertx vertx;
     private final List<HttpClientInterceptor> interceptors;
     private final Map<String, HttpClientConfig> index;
-    private final Map<String, HttpClient> clients = new HashMap<>();
-    private final List<HttpClient> built = new ArrayList<>();
+    private final Map<String, HttpClient> clients = new ConcurrentHashMap<>();
+    private final Queue<HttpClient> built = new ConcurrentLinkedQueue<>();
     private final AtomicReference<Future<Void>> closeFuture = new AtomicReference<>();
 
     @Inject
@@ -52,14 +54,8 @@ public final class HttpClientFactory {
      *     configured values are invalid
      * @throws HttpClientClosedException when the application has stopped
      */
-    public synchronized HttpClient client(String name) {
-        HttpClient existing = clients.get(name);
-        if (existing != null) {
-            return existing;
-        }
-        HttpClient built = newBuilder(name).build();
-        clients.put(name, built);
-        return built;
+    public HttpClient client(String name) {
+        return clients.computeIfAbsent(name, key -> newBuilder(key).build());
     }
 
     /**
@@ -70,22 +66,22 @@ public final class HttpClientFactory {
      * @return a new builder
      * @throws HttpClientClosedException when the application has stopped
      */
-    public synchronized HttpClientBuilder builder(String name) {
+    public HttpClientBuilder builder(String name) {
         return newBuilder(name);
     }
 
     /** Closes every client the factory handed out; repeated calls return the same future. */
-    synchronized Future<Void> close() {
-        Future<Void> existing = closeFuture.get();
-        if (existing != null) {
-            return existing;
+    Future<Void> close() {
+        Promise<Void> closing = Promise.promise();
+        if (!closeFuture.compareAndSet(null, closing.future())) {
+            return closeFuture.get();
         }
         List<Future<Void>> closures = built.stream().map(HttpClient::close).toList();
-        Future<Void> result = closures.isEmpty()
+        Future<Void> all = closures.isEmpty()
                 ? Future.succeededFuture()
                 : Future.join(closures).mapEmpty();
-        closeFuture.set(result);
-        return result;
+        all.onComplete(closing);
+        return closing.future();
     }
 
     private HttpClientBuilder newBuilder(String name) {
@@ -101,11 +97,12 @@ public final class HttpClientFactory {
     }
 
     /** Records a client the factory must close; a client built after the factory closed is closed at once. */
-    private synchronized void track(HttpClient client) {
+    private void track(HttpClient client) {
+        built.add(client);
         if (closeFuture.get() != null) {
+            // close() may have taken its snapshot before the add; closing twice returns the same future
             client.close();
             throw new HttpClientClosedException();
         }
-        built.add(client);
     }
 }

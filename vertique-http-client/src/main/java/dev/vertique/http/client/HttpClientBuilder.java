@@ -35,6 +35,8 @@ import org.slf4j.LoggerFactory;
  * later changes to the builder do not reach clients already built, and every build creates its own
  * HTTP agent. {@link WebClientOptions} and {@link PoolOptions} are copied when they are set. A build
  * that is rejected leaves the builder usable once the setting is corrected.
+ *
+ * <p>A builder is not thread-safe: configure and build it on one thread.
  */
 public final class HttpClientBuilder {
 
@@ -102,7 +104,7 @@ public final class HttpClientBuilder {
      * @param name the client name
      * @return this builder
      */
-    public synchronized HttpClientBuilder name(String name) {
+    public HttpClientBuilder name(String name) {
         this.name = Objects.requireNonNull(name, "name");
         return this;
     }
@@ -116,7 +118,7 @@ public final class HttpClientBuilder {
      * @return this builder
      * @throws HttpClientConfigurationException when the URL is not acceptable
      */
-    public synchronized HttpClientBuilder baseUrl(String baseUrl) {
+    public HttpClientBuilder baseUrl(String baseUrl) {
         this.base = parseBaseUrl(Objects.requireNonNull(baseUrl, "baseUrl"));
         return this;
     }
@@ -128,7 +130,7 @@ public final class HttpClientBuilder {
      * @param unit the unit of {@code timeout}
      * @return this builder
      */
-    public synchronized HttpClientBuilder readTimeout(long timeout, TimeUnit unit) {
+    public HttpClientBuilder readTimeout(long timeout, TimeUnit unit) {
         Objects.requireNonNull(unit, "unit");
         this.readTimeoutMs = timeout < 0 ? -1 : unit.toMillis(timeout);
         return this;
@@ -143,7 +145,7 @@ public final class HttpClientBuilder {
      * @param unit the unit of {@code timeout}
      * @return this builder
      */
-    public synchronized HttpClientBuilder streamIdleTimeout(long timeout, TimeUnit unit) {
+    public HttpClientBuilder streamIdleTimeout(long timeout, TimeUnit unit) {
         Objects.requireNonNull(unit, "unit");
         this.streamIdleTimeoutMs = timeout < 0 ? -1 : unit.toMillis(timeout);
         return this;
@@ -157,7 +159,7 @@ public final class HttpClientBuilder {
      * @param bytes the bound in bytes, not negative; {@code 0} means no bound
      * @return this builder
      */
-    public synchronized HttpClientBuilder maxRequestBytes(long bytes) {
+    public HttpClientBuilder maxRequestBytes(long bytes) {
         this.maxRequestBytes = bytes;
         return this;
     }
@@ -170,7 +172,7 @@ public final class HttpClientBuilder {
      * @param bytes the bound in bytes, not negative; {@code 0} means no bound
      * @return this builder
      */
-    public synchronized HttpClientBuilder maxResponseBytes(long bytes) {
+    public HttpClientBuilder maxResponseBytes(long bytes) {
         this.maxResponseBytes = bytes;
         return this;
     }
@@ -184,7 +186,7 @@ public final class HttpClientBuilder {
      * @param bytes the bound in bytes, above 0; checked when the client is built
      * @return this builder
      */
-    public synchronized HttpClientBuilder maxEventBytes(int bytes) {
+    public HttpClientBuilder maxEventBytes(int bytes) {
         this.maxEventBytes = bytes;
         return this;
     }
@@ -196,7 +198,7 @@ public final class HttpClientBuilder {
      * @param options the options to copy
      * @return this builder
      */
-    public synchronized HttpClientBuilder webClientOptions(WebClientOptions options) {
+    public HttpClientBuilder webClientOptions(WebClientOptions options) {
         this.webClientOptions = new WebClientOptions(Objects.requireNonNull(options, "options"));
         return this;
     }
@@ -207,7 +209,7 @@ public final class HttpClientBuilder {
      * @param options the options to copy
      * @return this builder
      */
-    public synchronized HttpClientBuilder poolOptions(PoolOptions options) {
+    public HttpClientBuilder poolOptions(PoolOptions options) {
         this.poolOptions = new PoolOptions(Objects.requireNonNull(options, "options"));
         return this;
     }
@@ -223,7 +225,7 @@ public final class HttpClientBuilder {
      * @return this builder
      * @throws HttpClientConfigurationException when the header is not acceptable
      */
-    public synchronized HttpClientBuilder defaultHeader(String name, String value) {
+    public HttpClientBuilder defaultHeader(String name, String value) {
         Objects.requireNonNull(name, "name");
         Objects.requireNonNull(value, "value");
         if (!HeaderRules.isToken(name)
@@ -247,7 +249,7 @@ public final class HttpClientBuilder {
      * @param policy the policy to apply
      * @return this builder
      */
-    public synchronized HttpClientBuilder egress(EgressPolicy policy) {
+    public HttpClientBuilder egress(EgressPolicy policy) {
         this.egress = Objects.requireNonNull(policy, "policy");
         return this;
     }
@@ -263,7 +265,7 @@ public final class HttpClientBuilder {
      * @param source the credential source
      * @return this builder
      */
-    public synchronized HttpClientBuilder credentials(CredentialSource source) {
+    public HttpClientBuilder credentials(CredentialSource source) {
         this.credentials = Objects.requireNonNull(source, "source");
         return this;
     }
@@ -276,7 +278,7 @@ public final class HttpClientBuilder {
      * @param allow whether to allow credentials over plain HTTP
      * @return this builder
      */
-    public synchronized HttpClientBuilder allowCredentialsOverPlainHttp(boolean allow) {
+    public HttpClientBuilder allowCredentialsOverPlainHttp(boolean allow) {
         this.allowCredentialsOverPlainHttp = allow;
         return this;
     }
@@ -291,7 +293,7 @@ public final class HttpClientBuilder {
      * @param interceptor the interceptor to add
      * @return this builder
      */
-    public synchronized HttpClientBuilder register(HttpClientInterceptor interceptor) {
+    public HttpClientBuilder register(HttpClientInterceptor interceptor) {
         interceptors.add(Objects.requireNonNull(interceptor, "interceptor"));
         return this;
     }
@@ -308,7 +310,7 @@ public final class HttpClientBuilder {
      * @param config the parsed {@code httpClient.{name}} section, or {@code null}
      * @return this builder
      */
-    public synchronized HttpClientBuilder config(@Nullable HttpClientConfig config) {
+    public HttpClientBuilder config(@Nullable HttpClientConfig config) {
         this.config = config;
         return this;
     }
@@ -319,7 +321,7 @@ public final class HttpClientBuilder {
      * @return a new client with its own HTTP agent
      * @throws HttpClientConfigurationException when a setting is invalid
      */
-    public synchronized HttpClient build() {
+    public HttpClient build() {
         if (!NAME_PATTERN.matcher(name).matches()) {
             throw new HttpClientConfigurationException("The client name must match [A-Za-z0-9._~-]{1,128}");
         }
@@ -327,7 +329,7 @@ public final class HttpClientBuilder {
     }
 
     /** Registers the owner told about every client this builder builds; the factory uses it to close them. */
-    synchronized HttpClientBuilder onBuilt(Consumer<HttpClient> owner) {
+    HttpClientBuilder onBuilt(Consumer<HttpClient> owner) {
         this.onBuilt = Objects.requireNonNull(owner, "owner");
         return this;
     }
