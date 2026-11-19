@@ -4,7 +4,6 @@
 package dev.vertique.http.client;
 
 import jakarta.annotation.Nullable;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -22,7 +21,6 @@ import java.util.Map;
  * @param egress the policy every request target is checked against
  * @param credentials the source of per-exchange credential headers, or null for none
  * @param allowCredentialsOverPlainHttp whether credentials may travel over plain HTTP to a non-loopback host
- * @param credentialOrigins the extra origins ({@code scheme://host:port}, normalized) credentials may go to
  */
 record ClientSettings(
         String basePath,
@@ -35,8 +33,7 @@ record ClientSettings(
         int maxEventBytes,
         EgressPolicy egress,
         @Nullable CredentialSource credentials,
-        boolean allowCredentialsOverPlainHttp,
-        List<String> credentialOrigins) {
+        boolean allowCredentialsOverPlainHttp) {
 
     /** Renders no setting, so a credential source or a default header never reaches a log line. */
     @Override

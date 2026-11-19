@@ -169,7 +169,6 @@ class NonBlockingIT {
             new Writer(response, payload.bytes(), sizes).run();
         });
         HttpClientBuilder builder = HttpClientBuilder.create(support.vertx);
-        support.track(builder::close);
         builder.baseUrl(server.origin());
         HttpClient client = builder.build();
         support.track(client::close);

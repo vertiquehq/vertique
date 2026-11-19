@@ -8,9 +8,6 @@ import dev.vertique.http.client.config.HttpClientEgressConfig;
 import dev.vertique.http.client.config.HttpClientPoolConfig;
 import dev.vertique.http.client.exception.HttpClientConfigurationException;
 import dev.vertique.http.client.interceptor.HttpClientInterceptor;
-import dev.vertique.resilience.Resilience;
-import dev.vertique.resilience.ResiliencePolicyRegistry;
-import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpClientAgent;
 import io.vertx.core.http.PoolOptions;
@@ -25,10 +22,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
-import java.util.TreeSet;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,12 +48,10 @@ public final class HttpClientBuilder {
     private static final long DEFAULT_STREAM_IDLE_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(60);
 
     private final Vertx vertx;
-    private final Resilience resilience;
-    private final List<HttpClient> built = new ArrayList<>();
-    private final AtomicReference<Future<Void>> closeFuture = new AtomicReference<>();
+    private Consumer<HttpClient> onBuilt = client -> {};
 
     private String name = DEFAULT_NAME;
-    private String baseUrl;
+    private BaseUrl base;
     private long readTimeoutMs = DEFAULT_READ_TIMEOUT_MS;
     private long maxRequestBytes;
     private long maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES;
@@ -70,15 +63,26 @@ public final class HttpClientBuilder {
     private EgressPolicy egress = EgressPolicy.allowAll();
     private CredentialSource credentials;
     private boolean allowCredentialsOverPlainHttp;
-    private List<String> credentialOrigins = List.of();
     private final List<HttpClientInterceptor> interceptors = new ArrayList<>();
-    private ResiliencePolicyRegistry policyRegistry = ResiliencePolicyRegistry.empty();
-    private String resiliencePolicy;
     private HttpClientConfig config;
 
-    private HttpClientBuilder(Vertx vertx, @Nullable Resilience resilience) {
+    private HttpClientBuilder(Vertx vertx) {
         this.vertx = Objects.requireNonNull(vertx, "vertx");
-        this.resilience = resilience;
+    }
+
+    private HttpClientBuilder() {
+        this.vertx = null;
+    }
+
+    /**
+     * Applies a configuration record through the setters onto a fresh builder, creating no agent and no
+     * client, so a value the builder rejects fails at once.
+     *
+     * @param external the parsed {@code httpClient.{name}} section
+     * @throws HttpClientConfigurationException with a constant message naming the key path
+     */
+    static void validate(HttpClientConfig external) {
+        new HttpClientBuilder().apply(external);
     }
 
     /**
@@ -88,19 +92,7 @@ public final class HttpClientBuilder {
      * @return a new builder
      */
     public static HttpClientBuilder create(Vertx vertx) {
-        return new HttpClientBuilder(vertx, null);
-    }
-
-    /**
-     * Creates a builder that uses a resilience runtime the caller owns. Closing the builder does not
-     * close that runtime.
-     *
-     * @param vertx the Vert.x instance the clients run on
-     * @param resilience the resilience runtime to use
-     * @return a new builder
-     */
-    public static HttpClientBuilder create(Vertx vertx, Resilience resilience) {
-        return new HttpClientBuilder(vertx, Objects.requireNonNull(resilience, "resilience"));
+        return new HttpClientBuilder(vertx);
     }
 
     /**
@@ -122,9 +114,10 @@ public final class HttpClientBuilder {
      *
      * @param baseUrl an {@code http} or {@code https} URL without user information, query or fragment
      * @return this builder
+     * @throws HttpClientConfigurationException when the URL is not acceptable
      */
     public synchronized HttpClientBuilder baseUrl(String baseUrl) {
-        this.baseUrl = Objects.requireNonNull(baseUrl, "baseUrl");
+        this.base = parseBaseUrl(Objects.requireNonNull(baseUrl, "baseUrl"));
         return this;
     }
 
@@ -221,15 +214,24 @@ public final class HttpClientBuilder {
 
     /**
      * Adds a header to every request that does not set it. A second call with the same name replaces
-     * the value. Name and value follow the request header rules; a violation is rejected by
-     * {@link #build()}.
+     * the value. The name must be a token that the transport does not own ({@code Host},
+     * {@code Content-Length}, {@code Transfer-Encoding}, {@code Connection}, {@code Upgrade},
+     * {@code TE}), and neither name nor value may hold a control character.
      *
      * @param name the header name
      * @param value the header value
      * @return this builder
+     * @throws HttpClientConfigurationException when the header is not acceptable
      */
     public synchronized HttpClientBuilder defaultHeader(String name, String value) {
-        defaultHeaders.put(Objects.requireNonNull(name, "name"), Objects.requireNonNull(value, "value"));
+        Objects.requireNonNull(name, "name");
+        Objects.requireNonNull(value, "value");
+        if (!HeaderRules.isToken(name)
+                || HeaderRules.isTransportOwned(name)
+                || HeaderRules.hasControlCharacter(value)) {
+            throw new HttpClientConfigurationException("A default header is not acceptable");
+        }
+        defaultHeaders.put(name, value);
         return this;
     }
 
@@ -253,8 +255,7 @@ public final class HttpClientBuilder {
     /**
      * Sets the source of per-exchange credential headers. The client resolves it once for every hop of
      * an exchange to the original origin, which is the origin of the base URL (or, without a base URL,
-     * of the exchange's first hop) widened by {@link #credentialOrigins(List)}, and never for a hop to
-     * another origin or after the exchange left the original origin. Each returned header replaces the
+     * of the exchange's first hop), and never for a hop to another origin or after the exchange left the original origin. Each returned header replaces the
      * request's header of that name. Requests with a server address, a virtual host or a request-level
      * proxy get no credentials. Plain HTTP to a non-loopback host is refused unless
      * {@link #allowCredentialsOverPlainHttp(boolean)} says otherwise.
@@ -281,19 +282,6 @@ public final class HttpClientBuilder {
     }
 
     /**
-     * Sets the origins besides the base URL's origin that credentials may go to. Each entry is {@code
-     * scheme://host[:port]} with an {@code http} or {@code https} scheme; a missing port is the
-     * scheme's default. An invalid entry is rejected by {@link #build()} without echoing it.
-     *
-     * @param origins the origins to add
-     * @return this builder
-     */
-    public synchronized HttpClientBuilder credentialOrigins(List<String> origins) {
-        this.credentialOrigins = List.copyOf(Objects.requireNonNull(origins, "origins"));
-        return this;
-    }
-
-    /**
      * Registers an interceptor for the clients this builder builds. Interceptors run in
      * {@link dev.vertique.core.extension.OrderedExtension} order, whatever the registration order: their
      * {@code beforeRequest} prepares each request before credentials are applied, and their
@@ -305,20 +293,6 @@ public final class HttpClientBuilder {
      */
     public synchronized HttpClientBuilder register(HttpClientInterceptor interceptor) {
         interceptors.add(Objects.requireNonNull(interceptor, "interceptor"));
-        return this;
-    }
-
-    /**
-     * Sets the named resilience policy every call of the built clients runs in unless its options say
-     * otherwise. The policy is looked up in the client's policy registry when the client is built, so an
-     * undefined policy is rejected by {@link #build()}. A client without a resilience policy runs each
-     * call as one attempt.
-     *
-     * @param tier the policy name
-     * @return this builder
-     */
-    public synchronized HttpClientBuilder resiliencePolicy(String tier) {
-        this.resiliencePolicy = Objects.requireNonNull(tier, "tier");
         return this;
     }
 
@@ -340,182 +314,123 @@ public final class HttpClientBuilder {
     }
 
     /**
-     * Sets the registry the named resilience policies are resolved from. The default is an empty
-     * registry, which defines no policy.
-     *
-     * @param registry the policy registry
-     * @return this builder
-     */
-    synchronized HttpClientBuilder policyRegistry(ResiliencePolicyRegistry registry) {
-        this.policyRegistry = Objects.requireNonNull(registry, "registry");
-        return this;
-    }
-
-    /**
      * Builds a client from the current settings.
      *
      * @return a new client with its own HTTP agent
      * @throws HttpClientConfigurationException when a setting is invalid
-     * @throws IllegalStateException when the builder is closed
      */
     public synchronized HttpClient build() {
-        if (closeFuture.get() != null) {
-            throw new IllegalStateException("The HTTP client builder is closed");
-        }
         if (!NAME_PATTERN.matcher(name).matches()) {
             throw new HttpClientConfigurationException("The client name must match [A-Za-z0-9._~-]{1,128}");
         }
-        HttpClientConfig external = config;
-        long effectiveReadTimeoutMs =
-                external != null && external.readTimeoutMs() != null ? external.readTimeoutMs() : readTimeoutMs;
-        long effectiveStreamIdleTimeoutMs = external != null && external.streamIdleTimeoutMs() != null
-                ? external.streamIdleTimeoutMs()
-                : streamIdleTimeoutMs;
-        long effectiveMaxRequestBytes =
-                external != null && external.maxRequestBytes() != null ? external.maxRequestBytes() : maxRequestBytes;
-        long effectiveMaxResponseBytes = external != null && external.maxResponseBytes() != null
-                ? external.maxResponseBytes()
-                : maxResponseBytes;
-        int effectiveMaxEventBytes =
-                external != null && external.maxEventBytes() != null ? external.maxEventBytes() : maxEventBytes;
-        if (effectiveReadTimeoutMs < 0) {
-            throw new HttpClientConfigurationException("The read timeout must not be negative");
-        }
-        if (effectiveStreamIdleTimeoutMs < 0) {
-            throw new HttpClientConfigurationException("The stream idle timeout must not be negative");
-        }
-        if (effectiveMaxRequestBytes < 0 || effectiveMaxResponseBytes < 0) {
-            throw new HttpClientConfigurationException("A body byte bound must not be negative");
-        }
-        if (effectiveMaxEventBytes <= 0) {
-            throw new HttpClientConfigurationException("The event byte bound must be above 0");
-        }
-        Map<String, String> headers = validatedDefaultHeaders(external);
-        String effectiveBaseUrl = external != null && external.baseUrl() != null ? external.baseUrl() : baseUrl;
-        BaseUrl base = effectiveBaseUrl == null ? null : parseBaseUrl(effectiveBaseUrl);
+        return (config == null ? this : configured(config)).assemble();
+    }
 
-        WebClientOptions effective = effectiveWebClientOptions(external);
-        if (base != null) {
-            effective.setDefaultHost(base.host()).setDefaultPort(base.port()).setSsl(base.secure());
-        }
-        if (WebClientOptionsHardening.isInsecure(effective)) {
-            LOG.warn("The HTTP client options trust all certificates, skip host verification or enable TLS"
-                    + " below 1.2");
-        }
-        boolean effectiveAllowPlain = external != null && external.allowCredentialsOverPlainHttp() != null
-                ? external.allowCredentialsOverPlainHttp()
-                : allowCredentialsOverPlainHttp;
-        List<String> effectiveOrigins = external != null && external.credentialOrigins() != null
-                ? external.credentialOrigins()
-                : credentialOrigins;
-        String effectivePolicy = external != null && external.resiliencePolicy() != null
-                ? external.resiliencePolicy()
-                : resiliencePolicy;
-        ClientSettings settings = new ClientSettings(
-                base == null ? "" : base.path(),
-                base != null,
-                headers,
-                effectiveReadTimeoutMs,
-                effectiveMaxRequestBytes,
-                effectiveMaxResponseBytes,
-                effectiveStreamIdleTimeoutMs,
-                effectiveMaxEventBytes,
-                effectiveEgress(external),
-                credentials,
-                effectiveAllowPlain,
-                credentialOriginSet(base, effectiveOrigins));
-        PoolOptions effectivePool = effectivePoolOptions(external);
-
-        io.vertx.core.http.HttpClientBuilder agentBuilder =
-                vertx.httpClientBuilder().with(effective).withRedirectHandler(new RedirectRules());
-        if (effectivePool != null) {
-            agentBuilder.with(effectivePool);
-        }
-        HttpClientAgent agent = agentBuilder.build();
-        try {
-            HttpClient client = new HttpClient(
-                    vertx,
-                    name,
-                    agent,
-                    effective,
-                    settings,
-                    List.copyOf(interceptors),
-                    resilience,
-                    policyRegistry,
-                    effectivePolicy);
-            built.add(client);
-            return client;
-        } catch (RuntimeException failure) {
-            agent.close();
-            throw failure;
-        }
+    /** Registers the owner told about every client this builder builds; the factory uses it to close them. */
+    synchronized HttpClientBuilder onBuilt(Consumer<HttpClient> owner) {
+        this.onBuilt = Objects.requireNonNull(owner, "owner");
+        return this;
     }
 
     /**
-     * Closes the clients this builder built. Closing again returns the same future. A resilience
-     * runtime passed to {@link #create(Vertx, Resilience)} stays open.
-     *
-     * @return a future that completes when every client is closed
+     * A copy of this builder with every key of the configuration applied through the setters, so the
+     * configuration wins over what was set and this builder keeps its own values.
      */
-    public Future<Void> close() {
-        Future<Void> existing = closeFuture.get();
-        if (existing != null) {
-            return existing;
+    private HttpClientBuilder configured(HttpClientConfig external) {
+        HttpClientBuilder copy = new HttpClientBuilder(vertx);
+        copy.name = name;
+        copy.base = base;
+        copy.readTimeoutMs = readTimeoutMs;
+        copy.maxRequestBytes = maxRequestBytes;
+        copy.maxResponseBytes = maxResponseBytes;
+        copy.streamIdleTimeoutMs = streamIdleTimeoutMs;
+        copy.maxEventBytes = maxEventBytes;
+        copy.webClientOptions = webClientOptions;
+        copy.poolOptions = poolOptions;
+        copy.defaultHeaders.putAll(defaultHeaders);
+        copy.egress = egress;
+        copy.credentials = credentials;
+        copy.allowCredentialsOverPlainHttp = allowCredentialsOverPlainHttp;
+        copy.interceptors.addAll(interceptors);
+        copy.onBuilt = onBuilt;
+        copy.apply(external);
+        return copy;
+    }
+
+    /** Applies the configured keys through the setters; a setter's failure names the key path only. */
+    private void apply(HttpClientConfig external) {
+        String path = "httpClient." + external.name() + ".";
+        if (external.baseUrl() != null) {
+            applied(
+                    path + "baseUrl must be an http or https URL with a host and no user information, query or"
+                            + " fragment",
+                    () -> baseUrl(external.baseUrl()));
         }
-        synchronized (this) {
-            existing = closeFuture.get();
-            if (existing != null) {
-                return existing;
-            }
-            List<Future<Void>> closures = built.stream().map(HttpClient::close).toList();
-            Future<Void> result = closures.isEmpty()
-                    ? Future.succeededFuture()
-                    : Future.all(closures).mapEmpty();
-            closeFuture.set(result);
-            return result;
+        if (external.readTimeoutMs() != null) {
+            readTimeout(external.readTimeoutMs(), TimeUnit.MILLISECONDS);
+        }
+        if (external.streamIdleTimeoutMs() != null) {
+            streamIdleTimeout(external.streamIdleTimeoutMs(), TimeUnit.MILLISECONDS);
+        }
+        if (external.maxRequestBytes() != null) {
+            maxRequestBytes(external.maxRequestBytes());
+        }
+        if (external.maxResponseBytes() != null) {
+            maxResponseBytes(external.maxResponseBytes());
+        }
+        if (external.maxEventBytes() != null) {
+            maxEventBytes(external.maxEventBytes());
+        }
+        if (external.allowCredentialsOverPlainHttp() != null) {
+            allowCredentialsOverPlainHttp(external.allowCredentialsOverPlainHttp());
+        }
+        external.defaultHeaders()
+                .forEach((headerName, value) -> applied(
+                        path + "defaultHeaders holds a header that is not acceptable",
+                        () -> defaultHeader(headerName, value)));
+        HttpClientEgressConfig configuredEgress = external.egress();
+        if (configuredEgress != null && configuredEgress.allowHosts() != null) {
+            applied(
+                    path + "egress.allowHosts must list hosts, *.suffix entries or *, and not be empty",
+                    () -> egress(allowedHosts(configuredEgress)));
+        }
+        JsonObject bag = external.webClient();
+        if (bag != null && !bag.isEmpty()) {
+            applied(path + "webClient cannot be converted to WebClient options", () -> webClientOptions(merged(bag)));
+        }
+        if (external.pool() != null) {
+            poolOptions(pool(external.pool()));
         }
     }
 
-    /** Resilience runtime supplied by the caller, or {@code null} when none was supplied. */
-    @Nullable
-    Resilience resilience() {
-        return resilience;
+    /** Runs a setter for a configured value; any failure becomes a configuration failure with {@code message}. */
+    private static void applied(String message, Runnable setter) {
+        try {
+            setter.run();
+        } catch (RuntimeException failure) {
+            throw new HttpClientConfigurationException(message);
+        }
     }
 
-    private Map<String, String> validatedDefaultHeaders(@Nullable HttpClientConfig external) {
-        Map<String, String> merged = new LinkedHashMap<>(defaultHeaders);
-        if (external != null) {
-            merged.putAll(external.defaultHeaders());
+    private static EgressPolicy allowedHosts(HttpClientEgressConfig configured) {
+        if (configured.allowHosts().isEmpty()) {
+            throw new IllegalArgumentException("empty");
         }
-        for (Map.Entry<String, String> header : merged.entrySet()) {
-            if (HeaderRules.violation(header.getKey(), header.getValue()) != null) {
-                throw new HttpClientConfigurationException("A default header is not acceptable");
-            }
-        }
-        return Collections.unmodifiableMap(merged);
+        return EgressPolicy.allowHosts(configured.allowHosts(), Boolean.TRUE.equals(configured.allowPlainHttp()));
     }
 
-    /** The base options with the configured {@code webClient} bag merged over them. */
-    private WebClientOptions effectiveWebClientOptions(@Nullable HttpClientConfig external) {
+    /** The builder's web client options (or the default ones) with the configured bag merged over them. */
+    private WebClientOptions merged(JsonObject bag) {
         WebClientOptions base = webClientOptions == null
                 ? new WebClientOptions().setFollowRedirects(false)
                 : new WebClientOptions(webClientOptions);
-        JsonObject bag = external == null ? null : external.webClient();
-        if (bag == null || bag.isEmpty()) {
-            return base;
-        }
         JsonObject merged = base.toJson();
         merged.mergeIn(bag);
         return new WebClientOptions(merged);
     }
 
-    /** The builder's pool options with the configured pool keys applied over them, or {@code null} for none. */
-    @Nullable
-    private PoolOptions effectivePoolOptions(@Nullable HttpClientConfig external) {
-        HttpClientPoolConfig pool = external == null ? null : external.pool();
-        if (pool == null) {
-            return poolOptions == null ? null : new PoolOptions(poolOptions);
-        }
+    /** The builder's pool options with the configured pool keys applied over them. */
+    private PoolOptions pool(HttpClientPoolConfig pool) {
         PoolOptions options = poolOptions == null ? new PoolOptions() : new PoolOptions(poolOptions);
         if (pool.http1MaxSize() != null) {
             options.setHttp1MaxSize(pool.http1MaxSize());
@@ -539,48 +454,57 @@ public final class HttpClientBuilder {
         return options;
     }
 
-    private EgressPolicy effectiveEgress(@Nullable HttpClientConfig external) {
-        HttpClientEgressConfig configured = external == null ? null : external.egress();
-        if (configured == null || configured.allowHosts() == null) {
-            return egress;
+    /** Builds the client from this builder's own values. */
+    private HttpClient assemble() {
+        if (readTimeoutMs < 0) {
+            throw new HttpClientConfigurationException("The read timeout must not be negative");
         }
-        return EgressPolicy.allowHosts(configured.allowHosts(), Boolean.TRUE.equals(configured.allowPlainHttp()));
-    }
-
-    private List<String> credentialOriginSet(BaseUrl base, List<String> credentialOrigins) {
-        Set<String> origins = new TreeSet<>();
+        if (streamIdleTimeoutMs < 0) {
+            throw new HttpClientConfigurationException("The stream idle timeout must not be negative");
+        }
+        if (maxRequestBytes < 0 || maxResponseBytes < 0) {
+            throw new HttpClientConfigurationException("A body byte bound must not be negative");
+        }
+        if (maxEventBytes <= 0) {
+            throw new HttpClientConfigurationException("The event byte bound must be above 0");
+        }
+        WebClientOptions effective = webClientOptions == null
+                ? new WebClientOptions().setFollowRedirects(false)
+                : new WebClientOptions(webClientOptions);
         if (base != null) {
-            origins.add(CredentialInterceptor.origin(base.secure(), base.host(), base.port()));
+            effective.setDefaultHost(base.host()).setDefaultPort(base.port()).setSsl(base.secure());
         }
-        for (String entry : credentialOrigins) {
-            origins.add(parseCredentialOrigin(entry));
+        if (WebClientOptionsHardening.isInsecure(effective)) {
+            LOG.warn("The HTTP client options trust all certificates, skip host verification or enable TLS"
+                    + " below 1.2");
         }
-        return List.copyOf(origins);
-    }
+        ClientSettings settings = new ClientSettings(
+                base == null ? "" : base.path(),
+                base != null,
+                Collections.unmodifiableMap(new LinkedHashMap<>(defaultHeaders)),
+                readTimeoutMs,
+                maxRequestBytes,
+                maxResponseBytes,
+                streamIdleTimeoutMs,
+                maxEventBytes,
+                egress,
+                credentials,
+                allowCredentialsOverPlainHttp);
 
-    private static String parseCredentialOrigin(String text) {
-        URI uri;
+        io.vertx.core.http.HttpClientBuilder agentBuilder =
+                vertx.httpClientBuilder().with(effective).withRedirectHandler(new RedirectRules());
+        if (poolOptions != null) {
+            agentBuilder.with(new PoolOptions(poolOptions));
+        }
+        HttpClientAgent agent = agentBuilder.build();
         try {
-            uri = new URI(Objects.requireNonNull(text, "origin"));
-        } catch (URISyntaxException invalid) {
-            throw invalidCredentialOrigin();
+            HttpClient client = new HttpClient(vertx, name, agent, effective, settings, List.copyOf(interceptors));
+            onBuilt.accept(client);
+            return client;
+        } catch (RuntimeException failure) {
+            agent.close();
+            throw failure;
         }
-        boolean secure = "https".equalsIgnoreCase(uri.getScheme());
-        String path = uri.getRawPath();
-        if (!secure && !"http".equalsIgnoreCase(uri.getScheme())
-                || uri.getHost() == null
-                || uri.getRawUserInfo() != null
-                || uri.getRawQuery() != null
-                || uri.getRawFragment() != null
-                || path != null && !path.isEmpty()) {
-            throw invalidCredentialOrigin();
-        }
-        return CredentialInterceptor.origin(
-                secure, uri.getHost(), uri.getPort() >= 0 ? uri.getPort() : secure ? 443 : 80);
-    }
-
-    private static HttpClientConfigurationException invalidCredentialOrigin() {
-        return new HttpClientConfigurationException("A credential origin must be scheme://host[:port]");
     }
 
     private static BaseUrl parseBaseUrl(String text) {

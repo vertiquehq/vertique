@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit;
  */
 public final class CallOptions {
 
-    private static final CallOptions DEFAULTS = new CallOptions(null, null, null, null, false, null);
+    private static final CallOptions DEFAULTS = new CallOptions(null, null, null, null);
 
     /** Attempt timeout in milliseconds, {@code 0} for none, {@code null} to use the client's. */
     private final @Nullable Long readTimeoutMs;
@@ -27,8 +27,6 @@ public final class CallOptions {
     private final @Nullable CancellationSignal cancellation;
 
     private final @Nullable ResiliencePipeline pipeline;
-    private final @Nullable String tier;
-    private final boolean noResilience;
 
     private final @Nullable Expectation<HttpResponseHead> expectation;
 
@@ -36,14 +34,10 @@ public final class CallOptions {
             @Nullable Long readTimeoutMs,
             @Nullable CancellationSignal cancellation,
             @Nullable ResiliencePipeline pipeline,
-            @Nullable String tier,
-            boolean noResilience,
             @Nullable Expectation<HttpResponseHead> expectation) {
         this.readTimeoutMs = readTimeoutMs;
         this.cancellation = cancellation;
         this.pipeline = pipeline;
-        this.tier = tier;
-        this.noResilience = noResilience;
         this.expectation = expectation;
     }
 
@@ -70,8 +64,7 @@ public final class CallOptions {
         if (timeout <= 0) {
             throw new IllegalArgumentException("The read timeout must be above zero");
         }
-        return new CallOptions(
-                Math.max(1L, unit.toMillis(timeout)), cancellation, pipeline, tier, noResilience, expectation);
+        return new CallOptions(Math.max(1L, unit.toMillis(timeout)), cancellation, pipeline, expectation);
     }
 
     /**
@@ -81,7 +74,7 @@ public final class CallOptions {
      * @return the new options
      */
     public CallOptions noReadTimeout() {
-        return new CallOptions(0L, cancellation, pipeline, tier, noResilience, expectation);
+        return new CallOptions(0L, cancellation, pipeline, expectation);
     }
 
     /**
@@ -93,7 +86,7 @@ public final class CallOptions {
      * @return the new options
      */
     public CallOptions cancellation(CancellationSignal signal) {
-        return new CallOptions(readTimeoutMs, signal, pipeline, tier, noResilience, expectation);
+        return new CallOptions(readTimeoutMs, signal, pipeline, expectation);
     }
 
     /**
@@ -108,51 +101,30 @@ public final class CallOptions {
      */
     public CallOptions expecting(Expectation<HttpResponseHead> expectation) {
         return new CallOptions(
-                readTimeoutMs,
-                cancellation,
-                pipeline,
-                tier,
-                noResilience,
-                Objects.requireNonNull(expectation, "expectation"));
+                readTimeoutMs, cancellation, pipeline, Objects.requireNonNull(expectation, "expectation"));
     }
 
     /**
      * Returns options that run the call through a prebuilt pipeline, used as given: its own timeout,
      * retry and breaker concerns decide, and an attempt timeout stays a
      * {@link java.util.concurrent.TimeoutException} unless the pipeline has a timeout concern. Of this
-     * method, {@link #resiliencePolicy(String)} and {@link #noResilience()} the last call wins.
+     * method and {@link #noResilience()} the last call wins.
      *
      * @param pipeline the pipeline to execute the call in
      * @return the new options
      */
     public CallOptions resilience(ResiliencePipeline pipeline) {
-        return new CallOptions(
-                readTimeoutMs, cancellation, Objects.requireNonNull(pipeline, "pipeline"), null, false, expectation);
+        return new CallOptions(readTimeoutMs, cancellation, Objects.requireNonNull(pipeline, "pipeline"), expectation);
     }
 
     /**
-     * Returns options that run the call in a named resilience policy ({@code resilience.policies.<tier>}).
-     * The client builds the policy's pipeline once and uses the policy's timeout as the attempt timeout
-     * unless {@link #readTimeout(long, TimeUnit)} or {@link #noReadTimeout()} says otherwise. Of this
-     * method, {@link #resilience(ResiliencePipeline)} and {@link #noResilience()} the last call wins.
-     *
-     * @param tier the policy name
-     * @return the new options
-     */
-    public CallOptions resiliencePolicy(String tier) {
-        return new CallOptions(
-                readTimeoutMs, cancellation, null, Objects.requireNonNull(tier, "tier"), false, expectation);
-    }
-
-    /**
-     * Returns options that run the call as one attempt without a pipeline, even when the client has a
-     * default policy. Of this method, {@link #resilience(ResiliencePipeline)} and
-     * {@link #resiliencePolicy(String)} the last call wins.
+     * Returns options that run the call as one attempt without a pipeline. Of this method and
+     * {@link #resilience(ResiliencePipeline)} the last call wins.
      *
      * @return the new options
      */
     public CallOptions noResilience() {
-        return new CallOptions(readTimeoutMs, cancellation, null, null, true, expectation);
+        return new CallOptions(readTimeoutMs, cancellation, null, expectation);
     }
 
     /** The call's attempt timeout in milliseconds: {@code 0} for none, {@code null} for the client's. */
@@ -171,17 +143,8 @@ public final class CallOptions {
         return pipeline;
     }
 
-    @Nullable
-    String tier() {
-        return tier;
-    }
-
     /** The expectation a stream head must meet. */
     Expectation<HttpResponseHead> expectation() {
         return expectation != null ? expectation : HttpExpectations.success();
-    }
-
-    boolean isNoResilience() {
-        return noResilience;
     }
 }

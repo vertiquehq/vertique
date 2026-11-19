@@ -70,7 +70,6 @@ class EgressAndRedirectIT {
     /** A client with the given policy and options; a null argument leaves that setting at its default. */
     private HttpClient client(EgressPolicy policy, WebClientOptions options) {
         HttpClientBuilder builder = HttpClientBuilder.create(support.vertx);
-        support.track(builder::close);
         if (options != null) {
             builder.webClientOptions(options);
         }

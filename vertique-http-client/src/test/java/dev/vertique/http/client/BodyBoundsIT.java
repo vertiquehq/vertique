@@ -79,7 +79,6 @@ class BodyBoundsIT {
     /** A client with the given bounds; a negative bound leaves that setting at its default. */
     private HttpClient client(RecordingServer server, long maxRequestBytes, long maxResponseBytes) {
         HttpClientBuilder builder = HttpClientBuilder.create(support.vertx);
-        support.track(builder::close);
         builder.baseUrl(server.origin());
         if (maxRequestBytes >= 0) {
             builder.maxRequestBytes(maxRequestBytes);

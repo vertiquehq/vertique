@@ -20,9 +20,17 @@ import dev.vertique.http.client.interceptor.HttpClientInterceptor;
 import dev.vertique.http.client.interceptor.HttpClientRequestContext;
 import dev.vertique.http.client.interceptor.HttpClientResponseHead;
 import dev.vertique.resilience.Resilience;
+import dev.vertique.resilience.ResilienceDefaults;
+import dev.vertique.resilience.ResiliencePipeline;
 import dev.vertique.resilience.ResiliencePolicyOverrides;
 import dev.vertique.resilience.ResiliencePolicyRegistry;
+import dev.vertique.resilience.ResolvedResiliencePolicy;
+import dev.vertique.resilience.RetryOverride;
+import dev.vertique.resilience.TimeoutOverride;
+import dev.vertique.resilience.adapter.AdapterOperationIdentity;
+import dev.vertique.resilience.adapter.ResilienceAdapterContext;
 import dev.vertique.resilience.annotation.Bulkhead;
+import dev.vertique.resilience.annotation.ResilienceAnnotations;
 import dev.vertique.resilience.config.BulkheadPolicyConfig;
 import dev.vertique.resilience.config.CircuitBreakerPolicyConfig;
 import dev.vertique.resilience.config.ResiliencePolicyConfig;
@@ -45,6 +53,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -98,7 +107,6 @@ class HttpStreamIT {
 
     private HttpClient client(RecordingServer server, Consumer<HttpClientBuilder> customize) {
         HttpClientBuilder builder = HttpClientBuilder.create(support.vertx);
-        support.track(builder::close);
         builder.baseUrl(server.origin());
         customize.accept(builder);
         HttpClient client = builder.build();
@@ -116,25 +124,53 @@ class HttpStreamIT {
         return resilience;
     }
 
+    /** The pipelines of the current test by policy name, built from the policies of {@link #resilientClient}. */
+    private final Map<String, ResiliencePipeline> pipelines = new HashMap<>();
+
     private HttpClient resilientClient(
             RecordingServer server,
-            Map<String, ResiliencePolicyOverrides> tiers,
+            Map<String, ResiliencePolicyOverrides> policies,
             Consumer<HttpClientBuilder> customize) {
-        ResiliencePolicyRegistry registry = name -> {
-            ResiliencePolicyOverrides overrides = tiers.get(name);
-            if (overrides == null) {
-                throw new IllegalArgumentException("resilience.policies." + name + " is not defined");
-            }
-            return overrides;
-        };
-        HttpClientBuilder builder = HttpClientBuilder.create(support.vertx, runtime())
-                .baseUrl(server.origin())
-                .policyRegistry(registry);
-        support.track(builder::close);
+        Resilience runtime = runtime();
+        policies.forEach((name, overrides) -> {
+            ResilienceAdapterContext context = runtime.adapterSupport().newContext();
+            support.track(context::close);
+            ResolvedResiliencePolicy resolved = runtime.policyResolver()
+                    .resolve(ResilienceAnnotations.NONE, withoutTimeout(name, overrides), ResilienceDefaults.none());
+            pipelines.put(name, context.pipeline(new AdapterOperationIdentity("stream-test", List.of(name)), resolved));
+        });
+        HttpClientBuilder builder = HttpClientBuilder.create(support.vertx).baseUrl(server.origin());
         customize.accept(builder);
         HttpClient client = builder.build();
         support.track(client::close);
         return client;
+    }
+
+    /** The options of a call that runs in the pipeline built for the policy {@code name}. */
+    private CallOptions tier(String name) {
+        return CallOptions.defaults().resilience(pipelines.get(name));
+    }
+
+    /** The policy completed the way an adapter needs it: no timeout concern, and retry of every failure not aborted. */
+    private static ResiliencePolicyOverrides withoutTimeout(String name, ResiliencePolicyOverrides tier) {
+        ResiliencePolicyRegistry registry = requested -> tier;
+        ResiliencePolicyOverrides policy = registry.layer(
+                new ResilienceAnnotations(
+                        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.of(name)),
+                ResiliencePolicyOverrides.none());
+        return new ResiliencePolicyOverrides(
+                Optional.of(new TimeoutOverride(Optional.of(false), OptionalLong.empty())),
+                policy.retry()
+                        .map(r -> new RetryOverride(
+                                r.enabled(),
+                                r.maxRetries(),
+                                r.backoff(),
+                                r.retryOn(),
+                                r.abortOn(),
+                                Optional.of((failure, retryCount) -> true),
+                                r.retryAfterMaxMs())),
+                policy.circuitBreaker(),
+                policy.bulkhead());
     }
 
     private static ResiliencePolicyOverrides retryTier(int maxRetries, long delayMs, @Nullable Long retryAfterMaxMs) {
@@ -557,7 +593,7 @@ class HttpStreamIT {
         HttpClient client = resilientClient(server, tiers("t", retryTier(3, 10, null)), b -> {});
 
         // When the caller opens stream for GET /feed with the tier
-        Opened opened = open(client, CallOptions.defaults().resiliencePolicy("t"), "/feed", true);
+        Opened opened = open(client, tier("t"), "/feed", true);
 
         // Then the future returned by stream succeeds with status 200
         HttpStream stream = opened.head();
@@ -586,8 +622,7 @@ class HttpStreamIT {
         CancellationSignal signal = CancellationSignal.create();
 
         // When the caller opens stream for GET /late with a signal and cancels (or closes the client) at 200 ms
-        Opened opened =
-                open(client, CallOptions.defaults().resiliencePolicy("t").cancellation(signal), "/late", true);
+        Opened opened = open(client, tier("t").cancellation(signal), "/late", true);
         assertThat(serverReceived(server, "/late", 1)).isTrue();
         sleep(200);
         long settledAt = System.nanoTime();
@@ -640,8 +675,7 @@ class HttpStreamIT {
         CancellationSignal signal = CancellationSignal.create();
         Context context = support.vertx.getOrCreateContext();
         AtomicReference<Opened> opened = new AtomicReference<>();
-        context.runOnContext(v -> opened.set(
-                open(client, CallOptions.defaults().resiliencePolicy("t").cancellation(signal), "/gap", viaTimeout)));
+        context.runOnContext(v -> opened.set(open(client, tier("t").cancellation(signal), "/gap", viaTimeout)));
         assertThat(serverReceived(server, "/gap", 1)).isTrue();
         assertThat(awaitCondition(() -> held.get() != null, HttpClientItSupport.WAIT_MS))
                 .isTrue();
@@ -846,7 +880,7 @@ class HttpStreamIT {
         HttpClient client = resilientClient(server, tiers("t", retryTier(2, 10, 5_000L)), b -> b.register(recorder));
 
         // When the caller opens stream for GET /feed with the tier
-        Opened opened = open(client, CallOptions.defaults().resiliencePolicy("t"), "/feed", true);
+        Opened opened = open(client, tier("t"), "/feed", true);
 
         // Then the future succeeds once with status 200 and no stream was delivered for the 429 head
         HttpStream stream = opened.head();
@@ -947,12 +981,11 @@ class HttpStreamIT {
         // And a 503 head with no body bytes on a silent connection ends with the attempt's timeout failure
         RecordingServer silent = support.server((request, body) ->
                 request.response().setStatusCode(503).setChunked(true).writeHead());
-        HttpClient timed = resilientClient(
-                silent, tiers("t", breakerTier(5, 60_000)), b -> b.readTimeout(300, TimeUnit.MILLISECONDS));
+        HttpClient timed = client(silent, b -> b.readTimeout(300, TimeUnit.MILLISECONDS));
         long timedStart = System.nanoTime();
-        Opened silentOpened = open(timed, CallOptions.defaults().resiliencePolicy("t"), "/silent", true);
+        Opened silentOpened = open(timed, CallOptions.defaults(), "/silent", true);
         Throwable timeoutFailure = awaitFailure(silentOpened.future);
-        assertThat(timeoutFailure).isInstanceOf(ResilienceTimeoutException.class);
+        assertThat(timeoutFailure).isExactlyInstanceOf(TimeoutException.class);
         assertThat(timeoutFailure).isNotInstanceOf(HttpStatusRejectedException.class);
         assertThat(millisSince(timedStart)).isLessThan(300 + 1_000);
         assertThat(serverClosedConnections(silent, 1, 1_000)).isTrue();
@@ -1069,7 +1102,7 @@ class HttpStreamIT {
                 server,
                 tiers("bulk", bulkheadTier(1), "after", breakerTier(2, 60_000), "refused", breakerTier(2, 60_000)),
                 b -> {});
-        CallOptions bulk = CallOptions.defaults().resiliencePolicy("bulk");
+        CallOptions bulk = tier("bulk");
 
         // When a stream is opened and, once its head is delivered, a second one, neither body consumed
         Opened a = open(client, bulk, "/feed", false);
@@ -1092,7 +1125,7 @@ class HttpStreamIT {
         HttpStream streamAfter = afterHead.head();
 
         // And streams that fail after an accepted head do not open a circuit of two failures
-        CallOptions after = CallOptions.defaults().resiliencePolicy("after");
+        CallOptions after = tier("after");
         for (int i = 0; i < 3; i++) {
             Opened dying = open(client, after, "/die", true);
             awaitFailure(dying.head().completion());
@@ -1102,7 +1135,7 @@ class HttpStreamIT {
                 .hasSize(3);
 
         // And a refused head counts: after two the circuit is open and the third call sends nothing
-        CallOptions refusedTier = CallOptions.defaults().resiliencePolicy("refused");
+        CallOptions refusedTier = tier("refused");
         for (int i = 0; i < 2; i++) {
             Throwable failure = awaitFailure(open(client, refusedTier, "/down", false).future);
             assertThat(failure).isExactlyInstanceOf(HttpStatusRejectedException.class);

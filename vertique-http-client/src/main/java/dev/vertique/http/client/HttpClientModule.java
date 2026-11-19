@@ -15,13 +15,11 @@ import dev.vertique.core.lifecycle.LifecyclePhase;
 import dev.vertique.http.client.config.HttpClientConfig;
 import dev.vertique.http.client.exception.HttpClientConfigurationException;
 import dev.vertique.http.client.interceptor.HttpClientInterceptor;
-import dev.vertique.resilience.ResiliencePolicyRegistry;
 import dev.vertique.resilience.dagger.ResilienceModule;
 import io.vertx.core.Future;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -29,10 +27,10 @@ import java.util.Set;
  *
  * <p>Include it in the application component next to the configuration parser module and a module
  * that provides {@code Vertx} and the {@code @VertxConfig JsonObject}. It provides
- * {@link HttpClientFactory}, the parsed {@code httpClient} index, a startup validator and the shutdown
- * step that closes every factory client. Applications contribute global interceptors with
+ * {@link HttpClientFactory}, the parsed {@code httpClient} index, a startup validator and the shutdown step that closes every
+ * factory client. Applications contribute global interceptors with
  * {@code @Provides @IntoSet HttpClientInterceptor}; they are seeded into every client and builder the
- * factory hands out. The {@code resilience.policies} registry is used when the graph provides it.
+ * factory hands out.
  */
 @Module(includes = ResilienceModule.class)
 public abstract class HttpClientModule {
@@ -63,19 +61,17 @@ public abstract class HttpClientModule {
     }
 
     /**
-     * Contributes the startup validator, which fails startup for a client whose {@code resiliencePolicy}
-     * names a tier that {@code resilience.policies} does not define.
+     * Contributes the startup validator, which applies every configured client through the builder's setters
+     * without building a client, so a value the builder rejects fails startup.
      *
      * @param index the parsed configuration
-     * @param policies the optional policy registry
      * @return the validator
      */
     @Provides
     @Singleton
     @IntoSet
-    static ComposeValidator httpClientConfigValidator(
-            Map<String, HttpClientConfig> index, Optional<ResiliencePolicyRegistry> policies) {
-        return new HttpClientConfigValidator(index, policies.orElseGet(ResiliencePolicyRegistry::empty));
+    static ComposeValidator httpClientConfigValidator(Map<String, HttpClientConfig> index) {
+        return HttpClientConfigValidator.of(index);
     }
 
     /**
@@ -89,25 +85,6 @@ public abstract class HttpClientModule {
     @IntoSet
     static ApplicationShutdownStep httpClientShutdownStep(HttpClientFactory factory) {
         return new HttpClientShutdownStep(factory);
-    }
-
-    /** Fails construction, and so startup, when a configured resilience policy is not defined. */
-    private static final class HttpClientConfigValidator implements ComposeValidator {
-
-        HttpClientConfigValidator(Map<String, HttpClientConfig> index, ResiliencePolicyRegistry policies) {
-            for (HttpClientConfig config : index.values()) {
-                String tier = config.resiliencePolicy();
-                if (tier == null) {
-                    continue;
-                }
-                try {
-                    policies.require(tier);
-                } catch (RuntimeException undefined) {
-                    throw new HttpClientConfigurationException("httpClient." + config.name()
-                            + ".resiliencePolicy names a resilience policy that is not defined");
-                }
-            }
-        }
     }
 
     /** Closes the factory's clients when the application stops. */

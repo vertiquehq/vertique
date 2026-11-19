@@ -9,13 +9,10 @@ import io.vertx.core.buffer.Buffer;
 import jakarta.annotation.Nullable;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 
 /**
  * Thrown when a status check refused a response, or a stream head was refused. The message is constant
@@ -79,7 +76,7 @@ public final class HttpStatusRejectedException extends HttpClientTechnicalExcept
     }
 
     /**
-     * Returns a read-only copy of the response headers, without {@code Set-Cookie}.
+     * Returns a fresh, mutable copy of the response headers, without {@code Set-Cookie}; changing it never changes this exception.
      *
      * @return the headers
      */
@@ -88,7 +85,7 @@ public final class HttpStatusRejectedException extends HttpClientTechnicalExcept
         for (int i = 0; i < headerPairs.size(); i += 2) {
             copy.add(headerPairs.get(i), headerPairs.get(i + 1));
         }
-        return new ReadOnlyHeaders(copy);
+        return copy;
     }
 
     /**
@@ -112,154 +109,5 @@ public final class HttpStatusRejectedException extends HttpClientTechnicalExcept
             return Optional.empty();
         }
         return Optional.of(Buffer.buffer(excerpt.clone()));
-    }
-
-    /** A header map whose every mutator throws {@link UnsupportedOperationException}. */
-    private static final class ReadOnlyHeaders implements MultiMap {
-
-        private final MultiMap delegate;
-
-        ReadOnlyHeaders(MultiMap source) {
-            this.delegate = source.copy(false);
-        }
-
-        private static UnsupportedOperationException readOnly() {
-            return new UnsupportedOperationException("The headers are read-only");
-        }
-
-        @Override
-        public String get(CharSequence name) {
-            return delegate.get(name);
-        }
-
-        @Override
-        public String get(String name) {
-            return delegate.get(name);
-        }
-
-        @Override
-        public List<String> getAll(String name) {
-            return Collections.unmodifiableList(delegate.getAll(name));
-        }
-
-        @Override
-        public List<String> getAll(CharSequence name) {
-            return Collections.unmodifiableList(delegate.getAll(name));
-        }
-
-        @Override
-        public boolean contains(String name) {
-            return delegate.contains(name);
-        }
-
-        @Override
-        public boolean contains(CharSequence name) {
-            return delegate.contains(name);
-        }
-
-        @Override
-        public boolean isEmpty() {
-            return delegate.isEmpty();
-        }
-
-        @Override
-        public Set<String> names() {
-            return Collections.unmodifiableSet(delegate.names());
-        }
-
-        @Override
-        public int size() {
-            return delegate.size();
-        }
-
-        @Override
-        public boolean isMutable() {
-            return false;
-        }
-
-        @Override
-        public MultiMap copy(boolean mutable) {
-            return mutable ? delegate.copy(true) : this;
-        }
-
-        @Override
-        public Iterator<Map.Entry<String, String>> iterator() {
-            return Collections.unmodifiableList(delegate.entries()).iterator();
-        }
-
-        @Override
-        public MultiMap add(String name, String value) {
-            throw readOnly();
-        }
-
-        @Override
-        public MultiMap add(CharSequence name, CharSequence value) {
-            throw readOnly();
-        }
-
-        @Override
-        public MultiMap add(String name, Iterable<String> values) {
-            throw readOnly();
-        }
-
-        @Override
-        public MultiMap add(CharSequence name, Iterable<CharSequence> values) {
-            throw readOnly();
-        }
-
-        @Override
-        public MultiMap addAll(MultiMap headers) {
-            throw readOnly();
-        }
-
-        @Override
-        public MultiMap addAll(Map<String, String> headers) {
-            throw readOnly();
-        }
-
-        @Override
-        public MultiMap set(String name, String value) {
-            throw readOnly();
-        }
-
-        @Override
-        public MultiMap set(CharSequence name, CharSequence value) {
-            throw readOnly();
-        }
-
-        @Override
-        public MultiMap set(String name, Iterable<String> values) {
-            throw readOnly();
-        }
-
-        @Override
-        public MultiMap set(CharSequence name, Iterable<CharSequence> values) {
-            throw readOnly();
-        }
-
-        @Override
-        public MultiMap setAll(MultiMap headers) {
-            throw readOnly();
-        }
-
-        @Override
-        public MultiMap setAll(Map<String, String> headers) {
-            throw readOnly();
-        }
-
-        @Override
-        public MultiMap remove(String name) {
-            throw readOnly();
-        }
-
-        @Override
-        public MultiMap remove(CharSequence name) {
-            throw readOnly();
-        }
-
-        @Override
-        public MultiMap clear() {
-            throw readOnly();
-        }
     }
 }

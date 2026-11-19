@@ -28,6 +28,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
@@ -43,6 +45,18 @@ import org.slf4j.LoggerFactory;
  * built client.
  */
 class HttpClientConfigTest {
+
+    private static Vertx vertx;
+
+    @BeforeAll
+    static void startVertx() {
+        vertx = Vertx.vertx();
+    }
+
+    @AfterAll
+    static void stopVertx() throws Exception {
+        vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+    }
 
     // --- helpers ---
 
@@ -77,6 +91,24 @@ class HttpClientConfigTest {
             all.append(t.getMessage()).append('\n').append(t);
         }
         return all.toString();
+    }
+
+    /**
+     * The failure at startup: the parse of the section and, for the values the builder checks, the build of
+     * each parsed client.
+     */
+    private static Throwable startupFailure(JsonObject section) {
+        try {
+            for (HttpClientConfig config : parse(section).values()) {
+                HttpClientBuilder.create(vertx)
+                        .name(config.name())
+                        .config(config)
+                        .build();
+            }
+        } catch (Throwable failure) {
+            return failure;
+        }
+        throw new AssertionError("the configuration was accepted but must fail startup: " + section.encode());
     }
 
     private static HttpClient build(HttpClientBuilder builder) {
@@ -143,16 +175,6 @@ class HttpClientConfigTest {
                 new JsonObject().put("egress", new JsonObject().put("allowHosts", new JsonArray())),
                 "httpClient.a.egress.allowHosts",
                 null));
-        cases.add(new Invalid(
-                "credentialOrigins empty",
-                new JsonObject().put("credentialOrigins", new JsonArray()),
-                "httpClient.a.credentialOrigins",
-                null));
-        cases.add(new Invalid(
-                "credentialOrigins not an origin",
-                new JsonObject().put("credentialOrigins", new JsonArray().add("ftp://zz-origin-77.example/path")),
-                "httpClient.a.credentialOrigins",
-                "zz-origin-77"));
         cases.add(new Invalid(
                 "defaultHeaders Host",
                 defaultHeaders("Host", "zz-host-value-31"),
@@ -258,8 +280,8 @@ class HttpClientConfigTest {
             // Given one invalid configuration of httpClient.a
             JsonObject section = new JsonObject().put("a", invalid.entry());
 
-            // When the application parses it
-            Throwable failure = parseFailure(section);
+            // When the application parses it and builds the client
+            Throwable failure = startupFailure(section);
 
             // Then startup fails with the configuration exception, its message names the key path
             assertThat(failure)
@@ -293,7 +315,6 @@ class HttpClientConfigTest {
                 .put("readTimeoutMs", 250)
                 .put("pool", new JsonObject().put("http1MaxSize", 3).put("maxLifetimeSeconds", 60))
                 .put("webClient", new JsonObject().put("connectTimeoutMs", 1500).put("followRedirects", true))
-                .put("resiliencePolicy", "fast")
                 .put("defaultHeaders", new JsonObject().put("X-App", "search"))
                 .put(
                         "egress",
@@ -301,7 +322,6 @@ class HttpClientConfigTest {
                                 .put("allowHosts", new JsonArray().add("*.example"))
                                 .put("allowPlainHttp", true))
                 .put("allowCredentialsOverPlainHttp", true)
-                .put("credentialOrigins", new JsonArray().add("https://auth.example:8443"))
                 .put("maxRequestBytes", 0)
                 .put("maxResponseBytes", 1024)
                 .put("maxEventBytes", 4096)
@@ -322,9 +342,7 @@ class HttpClientConfigTest {
                 new JsonObject()
                         .put("keyStoreOptions", new JsonObject().put("password", "zz-store-4473"))
                         .put("proxyOptions", new JsonObject().put("password", "zz-proxy-4474")),
-                null,
                 Map.of("Authorization", "Bearer zz-token-4472"),
-                null,
                 null,
                 null,
                 null,
@@ -428,7 +446,6 @@ class HttpClientConfigTest {
         ListAppender<ILoggingEvent> appender = new ListAppender<>();
         appender.start();
         root.addAppender(appender);
-        Vertx vertx = Vertx.vertx();
         HttpClientBuilder builder = HttpClientBuilder.create(vertx);
         try {
             builder.webClientOptions(new WebClientOptions().setVerifyHost(false));
@@ -451,8 +468,6 @@ class HttpClientConfigTest {
         } finally {
             root.detachAppender(appender);
             appender.stop();
-            builder.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
-            vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
         }
     }
 
@@ -545,83 +560,71 @@ class HttpClientConfigTest {
     /** FR-020. */
     @Test
     @DisplayName("external configuration wins over builder setters and the defaults match the contract")
-    void externalConfigurationWinsOverBuilderSettersAndDefaultsMatchTheContract() throws Exception {
-        Vertx vertx = Vertx.vertx();
+    void externalConfigurationWinsOverBuilderSettersAndDefaultsMatchTheContract() {
         HttpClientBuilder builder = HttpClientBuilder.create(vertx);
-        try {
-            // Given a configuration that sets some keys and a builder that sets those and others
-            HttpClientConfig config = parseA(new JsonObject()
-                    .put("baseUrl", "http://config.example/api")
-                    .put("readTimeoutMs", 250)
-                    .put("maxResponseBytes", 1024)
-                    .put("defaultHeaders", new JsonObject().put("X-App", "config"))
-                    .put(
-                            "egress",
-                            new JsonObject()
-                                    .put("allowHosts", new JsonArray().add("config.example"))
-                                    .put("allowPlainHttp", true))
-                    .put("credentialOrigins", new JsonArray().add("https://auth.example:8443")));
-            builder.baseUrl("http://builder.example/builder")
-                    .readTimeout(5, TimeUnit.SECONDS)
-                    .maxResponseBytes(111)
-                    .maxRequestBytes(222)
-                    .defaultHeader("X-App", "builder")
-                    .egress(EgressPolicy.allowAll());
+        // Given a configuration that sets some keys and a builder that sets those and others
+        HttpClientConfig config = parseA(new JsonObject()
+                .put("baseUrl", "http://config.example/api")
+                .put("readTimeoutMs", 250)
+                .put("maxResponseBytes", 1024)
+                .put("defaultHeaders", new JsonObject().put("X-App", "config"))
+                .put(
+                        "egress",
+                        new JsonObject()
+                                .put("allowHosts", new JsonArray().add("config.example"))
+                                .put("allowPlainHttp", true)));
+        builder.baseUrl("http://builder.example/builder")
+                .readTimeout(5, TimeUnit.SECONDS)
+                .maxResponseBytes(111)
+                .maxRequestBytes(222)
+                .defaultHeader("X-App", "builder")
+                .egress(EgressPolicy.allowAll());
 
-            // When the configuration is applied to the builder and a client is built
-            ClientSettings settings = settings(build(builder.config(config)));
+        // When the configuration is applied to the builder and a client is built
+        ClientSettings settings = settings(build(builder.config(config)));
 
-            // Then the keys the configuration sets win
-            assertThat(settings.basePath()).isEqualTo("/api");
-            assertThat(settings.readTimeoutMs()).isEqualTo(250);
-            assertThat(settings.maxResponseBytes()).isEqualTo(1024);
-            assertThat(settings.defaultHeaders()).containsEntry("X-App", "config");
-            assertThatCode(() -> settings.egress().check(URI.create("http://config.example/x")))
-                    .doesNotThrowAnyException();
-            assertThatThrownBy(() -> settings.egress().check(URI.create("http://other.example/x")))
-                    .isInstanceOf(HttpEgressDeniedException.class);
-            assertThat(settings.credentialOrigins())
-                    .contains(CredentialInterceptor.origin(false, "config.example", 80))
-                    .contains(CredentialInterceptor.origin(true, "auth.example", 8443));
+        // Then the keys the configuration sets win
+        assertThat(settings.basePath()).isEqualTo("/api");
+        assertThat(settings.readTimeoutMs()).isEqualTo(250);
+        assertThat(settings.maxResponseBytes()).isEqualTo(1024);
+        assertThat(settings.defaultHeaders()).containsEntry("X-App", "config");
+        assertThatCode(() -> settings.egress().check(URI.create("http://config.example/x")))
+                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> settings.egress().check(URI.create("http://other.example/x")))
+                .isInstanceOf(HttpEgressDeniedException.class);
 
-            // And the keys it leaves out keep the builder's value
-            assertThat(settings.maxRequestBytes()).isEqualTo(222);
+        // And the keys it leaves out keep the builder's value
+        assertThat(settings.maxRequestBytes()).isEqualTo(222);
 
-            // And a null configuration leaves the builder as it is
-            ClientSettings untouched = settings(build(HttpClientBuilder.create(vertx)
-                    .baseUrl("http://builder.example/builder")
-                    .readTimeout(5, TimeUnit.SECONDS)
-                    .config(null)));
-            assertThat(untouched.basePath()).isEqualTo("/builder");
-            assertThat(untouched.readTimeoutMs()).isEqualTo(5_000);
+        // And a null configuration leaves the builder as it is
+        ClientSettings untouched = settings(build(HttpClientBuilder.create(vertx)
+                .baseUrl("http://builder.example/builder")
+                .readTimeout(5, TimeUnit.SECONDS)
+                .config(null)));
+        assertThat(untouched.basePath()).isEqualTo("/builder");
+        assertThat(untouched.readTimeoutMs()).isEqualTo(5_000);
 
-            // And with neither, every default of the contract applies
-            ClientSettings defaults = settings(build(HttpClientBuilder.create(vertx)
-                    .config(parseA(new JsonObject().put("baseUrl", "http://defaults.example")))));
-            assertThat(defaults.readTimeoutMs()).isEqualTo(30_000);
-            assertThat(defaults.maxRequestBytes()).isZero();
-            assertThat(defaults.maxResponseBytes()).isEqualTo(10_485_760);
-            assertThat(defaults.allowCredentialsOverPlainHttp()).isFalse();
-            assertThat(defaults.defaultHeaders()).isEmpty();
-            assertThat(defaults.credentialOrigins())
-                    .containsExactly(CredentialInterceptor.origin(false, "defaults.example", 80));
-            assertThatCode(() -> defaults.egress().check(URI.create("http://anywhere.example/x")))
-                    .as("absent egress.allowHosts allows every host")
-                    .doesNotThrowAnyException();
+        // And with neither, every default of the contract applies
+        ClientSettings defaults = settings(build(HttpClientBuilder.create(vertx)
+                .config(parseA(new JsonObject().put("baseUrl", "http://defaults.example")))));
+        assertThat(defaults.readTimeoutMs()).isEqualTo(30_000);
+        assertThat(defaults.maxRequestBytes()).isZero();
+        assertThat(defaults.maxResponseBytes()).isEqualTo(10_485_760);
+        assertThat(defaults.allowCredentialsOverPlainHttp()).isFalse();
+        assertThat(defaults.defaultHeaders()).isEmpty();
+        assertThatCode(() -> defaults.egress().check(URI.create("http://anywhere.example/x")))
+                .as("absent egress.allowHosts allows every host")
+                .doesNotThrowAnyException();
 
-            // And the same defaults hold for a client with no section at all
-            ClientSettings none = settings(build(HttpClientBuilder.create(vertx)));
-            assertThat(none.readTimeoutMs()).isEqualTo(30_000);
-            assertThat(none.maxResponseBytes()).isEqualTo(10_485_760);
+        // And the same defaults hold for a client with no section at all
+        ClientSettings none = settings(build(HttpClientBuilder.create(vertx)));
+        assertThat(none.readTimeoutMs()).isEqualTo(30_000);
+        assertThat(none.maxResponseBytes()).isEqualTo(10_485_760);
 
-            // And a configuration that allows credentials over plain HTTP wins over the builder's false
-            ClientSettings plain = settings(build(HttpClientBuilder.create(vertx)
-                    .allowCredentialsOverPlainHttp(false)
-                    .config(parseA(new JsonObject().put("allowCredentialsOverPlainHttp", true)))));
-            assertThat(plain.allowCredentialsOverPlainHttp()).isTrue();
-        } finally {
-            builder.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
-            vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
-        }
+        // And a configuration that allows credentials over plain HTTP wins over the builder's false
+        ClientSettings plain = settings(build(HttpClientBuilder.create(vertx)
+                .allowCredentialsOverPlainHttp(false)
+                .config(parseA(new JsonObject().put("allowCredentialsOverPlainHttp", true)))));
+        assertThat(plain.allowCredentialsOverPlainHttp()).isTrue();
     }
 }

@@ -20,33 +20,35 @@ import dev.vertique.http.client.interceptor.HttpClientInterceptor;
 import dev.vertique.http.client.interceptor.HttpClientRequestContext;
 import dev.vertique.http.client.interceptor.HttpClientResponseHead;
 import dev.vertique.resilience.Resilience;
+import dev.vertique.resilience.ResilienceDefaults;
 import dev.vertique.resilience.ResiliencePipeline;
 import dev.vertique.resilience.ResiliencePolicyOverrides;
 import dev.vertique.resilience.ResiliencePolicyRegistry;
+import dev.vertique.resilience.ResolvedResiliencePolicy;
 import dev.vertique.resilience.RetryBackoff;
 import dev.vertique.resilience.RetryOverride;
+import dev.vertique.resilience.TimeoutOverride;
+import dev.vertique.resilience.adapter.AdapterOperationIdentity;
+import dev.vertique.resilience.adapter.CircuitFailureClassifier;
+import dev.vertique.resilience.adapter.ResilienceAdapterContext;
+import dev.vertique.resilience.annotation.ResilienceAnnotations;
 import dev.vertique.resilience.config.CircuitBreakerPolicyConfig;
 import dev.vertique.resilience.config.ResiliencePolicyConfig;
 import dev.vertique.resilience.config.RetryPolicyConfig;
-import dev.vertique.resilience.config.TimeoutPolicyConfig;
 import dev.vertique.resilience.exception.CircuitOpenException;
 import dev.vertique.resilience.exception.ResilienceTimeoutException;
-import dev.vertique.resilience.spi.event.AttemptCompleted;
 import dev.vertique.resilience.spi.event.CircuitState;
 import dev.vertique.resilience.spi.event.CircuitStateChanged;
 import dev.vertique.resilience.spi.event.ExecutionCompleted;
 import dev.vertique.resilience.spi.event.ResilienceEvent;
-import dev.vertique.resilience.spi.event.ResilienceOutcomeCategory;
 import dev.vertique.resilience.spi.event.RetryExhausted;
 import dev.vertique.resilience.spi.event.RetryScheduled;
 import dev.vertique.resilience.spi.event.TimeoutTriggered;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
-import io.vertx.core.http.HttpClosedException;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
-import java.net.ConnectException;
 import java.net.ServerSocket;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -54,6 +56,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
@@ -70,15 +73,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * Integration tests of the client's resilience composition: one pipeline execution per call, the
- * client's own attempt timer reported as a resilience timeout inside a tier, cancellation and
- * {@code Retry-After}, the default retry classification, the breaker accounting and the observation
- * of every retried exchange.
+ * Integration tests of the client's resilience composition: one pipeline execution per call in the
+ * pipeline the caller passes, the client's own attempt timer, cancellation and {@code Retry-After}, the
+ * breaker accounting and the observation of every retried exchange.
  *
- * <p>Tiers are named policies handed to a client through a package-private registry seam on the
- * builder, next to the {@link Resilience} runtime passed to {@code create(vertx, resilience)}. Every
- * test runs against real Vert.x servers on {@code 127.0.0.1} and dynamic ports; elapsed bounds carry
- * generous margins over the configured delays.
+ * <p>The pipelines are built from a {@link Resilience} runtime through its adapter context, the way the
+ * REST client builds its own, so that a pipeline can carry a {@code Retry-After} maximum and a breaker
+ * classifier. Every test runs against real Vert.x servers on {@code 127.0.0.1} and dynamic ports; elapsed
+ * bounds carry generous margins over the configured delays.
  */
 @Timeout(value = 120, unit = TimeUnit.SECONDS)
 class ClientResilienceIT {
@@ -106,17 +108,12 @@ class ClientResilienceIT {
 
     // --- fixtures: tiers ---
 
-    /** A named tier built the way {@code resilience.policies.<name>} is bound; null leaves a concern out. */
+    /** A policy built the way {@code resilience.policies.<name>} is bound; null leaves a concern out. */
     private static ResiliencePolicyOverrides tier(
-            Integer maxRetries,
-            long delayMs,
-            Long retryAfterMaxMs,
-            Long timeoutMs,
-            Integer maxFailures,
-            Long resetTimeoutMs) {
+            Integer maxRetries, long delayMs, Long retryAfterMaxMs, Integer maxFailures, Long resetTimeoutMs) {
         return new ResiliencePolicyConfig(
                         "tier",
-                        timeoutMs == null ? null : new TimeoutPolicyConfig(timeoutMs),
+                        null,
                         maxRetries == null
                                 ? null
                                 : new RetryPolicyConfig(maxRetries, delayMs, 1.0d, null, retryAfterMaxMs),
@@ -125,12 +122,34 @@ class ClientResilienceIT {
                 .toOverrides();
     }
 
+    /** The policy completed the way an adapter needs it: no timeout concern, and retry of every failure not aborted. */
+    private static ResiliencePolicyOverrides withoutTimeout(String name, ResiliencePolicyOverrides tier) {
+        ResiliencePolicyRegistry registry = requested -> tier;
+        ResiliencePolicyOverrides policy = registry.layer(
+                new ResilienceAnnotations(
+                        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.of(name)),
+                ResiliencePolicyOverrides.none());
+        return new ResiliencePolicyOverrides(
+                Optional.of(new TimeoutOverride(Optional.of(false), OptionalLong.empty())),
+                policy.retry()
+                        .map(r -> new RetryOverride(
+                                r.enabled(),
+                                r.maxRetries(),
+                                r.backoff(),
+                                r.retryOn(),
+                                r.abortOn(),
+                                Optional.of((failure, retryCount) -> true),
+                                r.retryAfterMaxMs())),
+                policy.circuitBreaker(),
+                policy.bulkhead());
+    }
+
     private static ResiliencePolicyOverrides retryTier(int maxRetries, long delayMs) {
-        return tier(maxRetries, delayMs, null, null, null, null);
+        return tier(maxRetries, delayMs, null, null, null);
     }
 
     private static ResiliencePolicyOverrides breakerTier(int maxFailures, long resetTimeoutMs) {
-        return tier(null, 0, null, null, maxFailures, resetTimeoutMs);
+        return tier(null, 0, null, maxFailures, resetTimeoutMs);
     }
 
     private static ResiliencePolicyOverrides withRetryOn(
@@ -144,23 +163,6 @@ class ClientResilienceIT {
                         r.backoff(),
                         Optional.of(retryOn),
                         r.abortOn(),
-                        r.fallbackPolicy(),
-                        r.retryAfterMaxMs())),
-                base.circuitBreaker(),
-                base.bulkhead());
-    }
-
-    private static ResiliencePolicyOverrides withAbortOn(
-            ResiliencePolicyOverrides base, Set<Class<? extends Throwable>> abortOn) {
-        RetryOverride r = base.retry().orElseThrow();
-        return new ResiliencePolicyOverrides(
-                base.timeout(),
-                Optional.of(new RetryOverride(
-                        r.enabled(),
-                        r.maxRetries(),
-                        r.backoff(),
-                        r.retryOn(),
-                        Optional.of(abortOn),
                         r.fallbackPolicy(),
                         r.retryAfterMaxMs())),
                 base.circuitBreaker(),
@@ -184,20 +186,34 @@ class ClientResilienceIT {
         return resilience;
     }
 
+    /** The pipelines of the current test by policy name, built from the policies passed to the fixtures. */
+    private final Map<String, ResiliencePipeline> pipelines = new HashMap<>();
+
+    /** Builds the pipeline of one policy: the policy's concerns, with an optional breaker classifier. */
+    private ResiliencePipeline pipeline(
+            Resilience runtime, String name, ResiliencePolicyOverrides overrides, CircuitFailureClassifier classifier) {
+        ResilienceAdapterContext context = runtime.adapterSupport().newContext();
+        support.track(context::close);
+        ResolvedResiliencePolicy resolved = runtime.policyResolver()
+                .resolve(ResilienceAnnotations.NONE, withoutTimeout(name, overrides), ResilienceDefaults.none());
+        AdapterOperationIdentity identity = new AdapterOperationIdentity("client-test", List.of(name));
+        return classifier == null
+                ? context.pipeline(identity, resolved)
+                : context.pipeline(identity, resolved, classifier);
+    }
+
     private HttpClientBuilder builder(
-            Resilience runtime, RecordingServer server, Map<String, ResiliencePolicyOverrides> tiers) {
-        ResiliencePolicyRegistry registry = name -> {
-            ResiliencePolicyOverrides overrides = tiers.get(name);
-            if (overrides == null) {
-                throw new IllegalArgumentException("resilience.policies." + name + " is not defined");
-            }
-            return overrides;
-        };
-        HttpClientBuilder builder = HttpClientBuilder.create(support.vertx, runtime)
-                .baseUrl(server.origin())
-                .policyRegistry(registry);
-        support.track(builder::close);
-        return builder;
+            Resilience runtime, RecordingServer server, Map<String, ResiliencePolicyOverrides> policies) {
+        return builder(runtime, server, policies, null);
+    }
+
+    private HttpClientBuilder builder(
+            Resilience runtime,
+            RecordingServer server,
+            Map<String, ResiliencePolicyOverrides> policies,
+            CircuitFailureClassifier classifier) {
+        policies.forEach((name, overrides) -> pipelines.put(name, pipeline(runtime, name, overrides, classifier)));
+        return HttpClientBuilder.create(support.vertx).baseUrl(server.origin());
     }
 
     private HttpClient build(HttpClientBuilder builder) {
@@ -211,15 +227,25 @@ class ClientResilienceIT {
             RecordingServer server,
             Map<String, ResiliencePolicyOverrides> tiers,
             HttpClientInterceptor... interceptors) {
-        HttpClientBuilder builder = builder(runtime, server, tiers);
+        return client(runtime, server, tiers, null, interceptors);
+    }
+
+    private HttpClient client(
+            Resilience runtime,
+            RecordingServer server,
+            Map<String, ResiliencePolicyOverrides> tiers,
+            CircuitFailureClassifier classifier,
+            HttpClientInterceptor... interceptors) {
+        HttpClientBuilder builder = builder(runtime, server, tiers, classifier);
         for (HttpClientInterceptor interceptor : interceptors) {
             builder.register(interceptor);
         }
         return build(builder);
     }
 
-    private static CallOptions tierOptions(String tier) {
-        return CallOptions.defaults().resiliencePolicy(tier);
+    /** The options of a call that runs in the pipeline built for the policy {@code name}. */
+    private CallOptions tierOptions(String name) {
+        return CallOptions.defaults().resilience(pipelines.get(name));
     }
 
     private static Future<HttpResponse<Buffer>> get(HttpClient client, CallOptions options, String path) {
@@ -429,19 +455,29 @@ class ClientResilienceIT {
 
     // --- AC-032 ---
 
+    /** Counts every failure except a 4xx rejection other than 429, which shows that the dependency answered. */
+    private static final CircuitFailureClassifier AC032_CLASSIFIER = failure -> {
+        if (failure instanceof HttpStatusRejectedException rejected) {
+            int status = rejected.statusCode();
+            return status < 400 || status >= 500 || status == 429;
+        }
+        return true;
+    };
+
     /** AC-032: an open circuit rejects without sending and a 404 does not count as a breaker failure. */
     @Test
     @DisplayName("an open circuit rejects without sending")
     void openCircuitRejectsWithoutSending() {
-        // Given a breaker tier of maxFailures 2 and no retry, an interceptor, and a server answering
-        // GET /m with 404 once and then 503
+        // Given a breaker of maxFailures 2 with a classifier that skips a 4xx other than 429, no retry, an
+        // interceptor, and a server answering GET /m with 404 once and then 503
         List<ResilienceEvent> events = new CopyOnWriteArrayList<>();
         AtomicInteger seen = new AtomicInteger();
         RecordingServer server = support.server((request, body) -> request.response()
                 .setStatusCode(seen.incrementAndGet() == 1 ? 404 : 503)
                 .end());
         Completions interceptor = new Completions();
-        HttpClient client = client(runtime(events), server, tiers("t", breakerTier(2, 60_000)), interceptor);
+        HttpClient client =
+                client(runtime(events), server, tiers("t", breakerTier(2, 60_000)), AC032_CLASSIFIER, interceptor);
 
         // When the caller runs three calls (404, 503, 503) and then one more while the circuit is open
         Throwable first = awaitFailure(get(client, tierOptions("t"), "/m"));
@@ -464,120 +500,6 @@ class ClientResilienceIT {
         // And the 404 was not counted: the third call was admitted and the circuit opened after the two 503s
         List<CircuitStateChanged> changes = of(events, CircuitStateChanged.class);
         assertThat(changes).extracting(CircuitStateChanged::newState).containsExactly(CircuitState.OPEN);
-    }
-
-    // --- AC-033 ---
-
-    /** AC-033: a POST is not retried after a timeout or a 502; every method retries a 503. */
-    @Test
-    @DisplayName("a POST is not retried after a timeout or a 502")
-    void postIsNotRetriedAfterATimeoutOrA502() {
-        // Given a retry tier, a 200 ms attempt timeout and a server with /slow silent, /bad 502 and
-        // POST /busy 503 once and then 200
-        List<ResilienceEvent> events = new CopyOnWriteArrayList<>();
-        AtomicInteger busy = new AtomicInteger();
-        RecordingServer server = support.server((request, body) -> {
-            switch (request.method().name() + " " + request.uri()) {
-                case "POST /slow", "GET /slow" -> {}
-                case "POST /orders" -> request.response().setStatusCode(200).end();
-                case "GET /status" -> request.response().setStatusCode(503).end();
-                case "POST /redirect" ->
-                    request.response()
-                            .setStatusCode(303)
-                            .putHeader("Location", "/next")
-                            .end();
-                case "GET /next" -> request.response().setStatusCode(503).end();
-                case "POST /slowpost" ->
-                    support.vertx.setTimer(1_000, id -> request.response().end());
-                case "GET /status2" ->
-                    support.vertx.setTimer(
-                            100, id -> request.response().setStatusCode(503).end());
-                case "POST /bad", "GET /bad" ->
-                    request.response().setStatusCode(502).end();
-                case "POST /busy" ->
-                    request.response()
-                            .setStatusCode(busy.incrementAndGet() == 1 ? 503 : 200)
-                            .end();
-                default -> request.response().setStatusCode(404).end();
-            }
-        });
-        HttpClient client = client(runtime(events), server, tiers("t", retryTier(2, 10)));
-        CallOptions options = tierOptions("t").readTimeout(200, TimeUnit.MILLISECONDS);
-        Buffer body = Buffer.buffer("abcd");
-
-        // When the caller sends POST /slow
-        int mark = events.size();
-        Throwable postSlow = awaitFailure(client.execute(
-                options, web -> web.post("/slow").sendBuffer(body).expecting(HttpExpectations.success())));
-        awaitExecutionsCompleted(events, 1);
-        List<TimeoutTriggered> postTimeouts = of(since(events, mark), TimeoutTriggered.class);
-
-        // Then it fails with a ResilienceTimeoutException after exactly 1 request and 1 timeout event
-        assertThat(postSlow).isExactlyInstanceOf(ResilienceTimeoutException.class);
-        assertThat(count(server, "POST /slow")).isEqualTo(1);
-        assertThat(postTimeouts).extracting(TimeoutTriggered::timeoutMs).containsExactly(200L);
-
-        // When the caller sends GET /slow
-        mark = events.size();
-        Throwable getSlow = awaitFailure(get(client, options, "/slow"));
-        awaitExecutionsCompleted(events, 2);
-        List<TimeoutTriggered> getTimeouts = of(since(events, mark), TimeoutTriggered.class);
-
-        // Then it fails the same way after exactly 3 requests and 3 timeout events
-        assertThat(getSlow).isExactlyInstanceOf(ResilienceTimeoutException.class);
-        assertThat(count(server, "GET /slow")).isEqualTo(3);
-        assertThat(getTimeouts).extracting(TimeoutTriggered::timeoutMs).containsExactly(200L, 200L, 200L);
-
-        // And POST /bad fails with a 502 after 1 request and GET /bad after 3
-        Throwable postBad = awaitFailure(client.execute(
-                options, web -> web.post("/bad").sendBuffer(body).expecting(HttpExpectations.success())));
-        Throwable getBad = awaitFailure(get(client, options, "/bad"));
-        assertRejected(postBad, 502);
-        assertRejected(getBad, 502);
-        assertThat(count(server, "POST /bad")).isEqualTo(1);
-        assertThat(count(server, "GET /bad")).isEqualTo(3);
-
-        // And POST /busy is retried because a 503 is retried for every method: 2 requests, then success
-        HttpResponse<Buffer> busyResponse = await(client.execute(
-                options, web -> web.post("/busy").sendBuffer(body).expecting(HttpExpectations.success())));
-        assertThat(busyResponse.statusCode()).isEqualTo(200);
-        assertThat(count(server, "POST /busy")).isEqualTo(2);
-
-        // And an attempt that already sent a POST is not replayed when a later exchange of the attempt fails
-        // with a status or a connection failure that is otherwise retried: exactly one POST arrives
-        Throwable statusAfterPost = awaitFailure(client.execute(options, web -> web.post("/orders")
-                .send()
-                .compose(r -> web.get("/status").send().expecting(HttpExpectations.success()))));
-        assertRejected(statusAfterPost, 503);
-        sleep(SETTLE_MS);
-        assertThat(count(server, "POST /orders")).isEqualTo(1);
-        assertThat(count(server, "GET /status")).isEqualTo(1);
-        int closedPort = unusedPort();
-        Throwable connectAfterPost = awaitFailure(
-                client.execute(options, web -> web.post("/orders").send().compose(r -> web.getAbs(
-                                "http://127.0.0.1:" + closedPort + "/status")
-                        .send())));
-        assertThat(connectAfterPost).isInstanceOf(ConnectException.class);
-        sleep(SETTLE_MS);
-        assertThat(count(server, "POST /orders")).isEqualTo(2);
-
-        // And a POST answered by a 303 is not resent when the followed GET fails with a retried 503
-        HttpClient following = build(builder(runtime(events), server, tiers("t", retryTier(2, 10)))
-                .webClientOptions(
-                        new WebClientOptions().setFollowRedirects(true).setMaxRedirects(5)));
-        Throwable afterRedirect = awaitFailure(
-                following.execute(options, web -> web.post("/redirect").send().expecting(HttpExpectations.success())));
-        assertRejected(afterRedirect, 503);
-        sleep(SETTLE_MS);
-        assertThat(count(server, "POST /redirect")).isEqualTo(1);
-
-        // And a written POST still in flight blocks the retry when a parallel GET fails with a retried 503
-        Throwable parallel = awaitFailure(client.execute(options, web -> Future.all(
-                        web.post("/slowpost").send(), web.get("/status2").send().expecting(HttpExpectations.success()))
-                .<Void>mapEmpty()));
-        assertRejected(parallel, 503);
-        sleep(SETTLE_MS * 2);
-        assertThat(count(server, "POST /slowpost")).isEqualTo(1);
     }
 
     // --- AC-035 ---
@@ -673,9 +595,7 @@ class ClientResilienceIT {
         // Given a tier with a 100 ms backoff, maxRetries 1 and retryAfterMaxMs 5000, and a 503 with Retry-After 2
         Timed honored = retryAfterServer(503, "2");
         HttpClient client = client(
-                runtime(new CopyOnWriteArrayList<>()),
-                honored.server(),
-                tiers("t", tier(1, 100, 5_000L, null, null, null)));
+                runtime(new CopyOnWriteArrayList<>()), honored.server(), tiers("t", tier(1, 100, 5_000L, null, null)));
 
         // When the caller runs GET /wait
         HttpResponse<Buffer> response = await(get(client, tierOptions("t"), "/wait"));
@@ -704,7 +624,7 @@ class ClientResilienceIT {
                 .setStatusCode(429)
                 .putHeader("Retry-After", "30")
                 .end());
-        HttpClient client = client(runtime(events), limited, tiers("t", tier(2, 100, 1_000L, null, null, null)));
+        HttpClient client = client(runtime(events), limited, tiers("t", tier(2, 100, 1_000L, null, null)));
 
         // When the caller runs GET /limited
         Throwable failure = awaitFailure(get(client, tierOptions("t"), "/limited"));
@@ -723,9 +643,7 @@ class ClientResilienceIT {
         // And with Retry-After 1 the retry is attempted at least 1000 ms after the first request
         Timed within = retryAfterServer(429, "1");
         HttpClient honoring = client(
-                runtime(new CopyOnWriteArrayList<>()),
-                within.server(),
-                tiers("t", tier(2, 100, 1_000L, null, null, null)));
+                runtime(new CopyOnWriteArrayList<>()), within.server(), tiers("t", tier(2, 100, 1_000L, null, null)));
         assertThat(await(get(honoring, tierOptions("t"), "/limited")).statusCode())
                 .isEqualTo(200);
         assertThat(within.arrivals()).hasSize(2);
@@ -742,15 +660,16 @@ class ClientResilienceIT {
         RecordingServer down = statusServer(503);
         Completions retryInterceptor = new Completions();
         Resilience runtime = runtime(new CopyOnWriteArrayList<>());
-        HttpClient retrying = client(runtime, down, tiers("t", retryTier(2, 10)), retryInterceptor);
+        HttpClient retrying = client(runtime, down, tiers("retry", retryTier(2, 10)), retryInterceptor);
 
         // And a second client with a breaker tier (maxFailures 2, no retry) and its own interceptor and server
         RecordingServer breakerServer = statusServer(503);
         Completions breakerInterceptor = new Completions();
-        HttpClient breaking = client(runtime, breakerServer, tiers("t", breakerTier(2, 60_000)), breakerInterceptor);
+        HttpClient breaking =
+                client(runtime, breakerServer, tiers("breaker", breakerTier(2, 60_000)), breakerInterceptor);
 
         // When GET /down runs on the first client
-        Throwable retried = awaitFailure(get(retrying, tierOptions("t"), "/down"));
+        Throwable retried = awaitFailure(get(retrying, tierOptions("retry"), "/down"));
 
         // Then it fails with a 503 and the interceptor saw 3 exchanges, one call id, ordinals 1, 2, 3
         assertRejected(retried, 503);
@@ -763,9 +682,9 @@ class ClientResilienceIT {
         assertThat(done).extracting(c -> c.completion().attemptOrdinal()).containsExactly(1, 2, 3);
 
         // When two failing calls and then one more run on the second client while its circuit is open
-        assertRejected(awaitFailure(get(breaking, tierOptions("t"), "/x")), 503);
-        assertRejected(awaitFailure(get(breaking, tierOptions("t"), "/x")), 503);
-        Throwable open = awaitFailure(get(breaking, tierOptions("t"), "/x"));
+        assertRejected(awaitFailure(get(breaking, tierOptions("breaker"), "/x")), 503);
+        assertRejected(awaitFailure(get(breaking, tierOptions("breaker"), "/x")), 503);
+        Throwable open = awaitFailure(get(breaking, tierOptions("breaker"), "/x"));
 
         // Then the last call fails with CircuitOpenException, nothing was sent for it and only 2 were notified
         assertThat(open).isExactlyInstanceOf(CircuitOpenException.class);
@@ -894,257 +813,38 @@ class ClientResilienceIT {
                 .isExactlyInstanceOf(CircuitOpenException.class);
     }
 
-    /** The breaker counts every failure except a 4xx other than 429 and a body-limit failure. */
-    @Test
-    @DisplayName("the breaker counts failures except a 4xx other than 429 and a body limit")
-    void breakerCountsFailuresExceptA4xxOtherThan429AndABodyLimit() {
-        // Given breaker tiers of maxFailures 2 with no retry, a 10-byte response bound and a server
-        RecordingServer server = support.server((request, body) -> {
-            switch (request.uri()) {
-                case "/fail" -> request.response().setStatusCode(503).end();
-                case "/missing" -> request.response().setStatusCode(404).end();
-                case "/limited" -> request.response().setStatusCode(429).end();
-                case "/big" -> request.response().end(Buffer.buffer(new byte[100]));
-                default -> request.response().end("ok");
-            }
-        });
-        ResiliencePolicyOverrides breaker = breakerTier(2, 60_000);
-        HttpClient client = build(builder(
-                        runtime(new CopyOnWriteArrayList<>()),
-                        server,
-                        tiers("fourxx", breaker, "limited", breaker, "bodyLimit", breaker))
-                .maxResponseBytes(10));
-
-        // When a 404 sits between two 503s, the 404 resets the consecutive count and the circuit stays closed
-        assertRejected(awaitFailure(get(client, tierOptions("fourxx"), "/fail")), 503);
-        assertRejected(awaitFailure(get(client, tierOptions("fourxx"), "/missing")), 404);
-        assertRejected(awaitFailure(get(client, tierOptions("fourxx"), "/fail")), 503);
-        assertThat(await(get(client, tierOptions("fourxx"), "/ok")).statusCode())
-                .isEqualTo(200);
-
-        // And two 429s count and open the circuit
-        assertRejected(awaitFailure(get(client, tierOptions("limited"), "/limited")), 429);
-        assertRejected(awaitFailure(get(client, tierOptions("limited"), "/limited")), 429);
-        assertThat(awaitFailure(get(client, tierOptions("limited"), "/ok")))
-                .isExactlyInstanceOf(CircuitOpenException.class);
-
-        // And a body-limit failure between two 503s does not count, so the circuit stays closed
-        assertRejected(awaitFailure(get(client, tierOptions("bodyLimit"), "/fail")), 503);
-        Throwable limit = awaitFailure(get(client, tierOptions("bodyLimit"), "/big"));
-        assertThat(limit).isExactlyInstanceOf(HttpBodyLimitException.class);
-        assertRejected(awaitFailure(get(client, tierOptions("bodyLimit"), "/fail")), 503);
-        assertThat(await(get(client, tierOptions("bodyLimit"), "/ok")).statusCode())
-                .isEqualTo(200);
-    }
-
-    /** An idempotent-only failure on a non-idempotent exchange is not retried and surfaces unchanged. */
-    @Test
-    @DisplayName(
-            "a non-idempotent exchange failing with an idempotent-only failure is not retried and the caller sees the original failure")
-    void nonIdempotentExchangeFailingWithAnIdempotentOnlyFailureIsNotRetriedAndTheCallerSeesTheOriginalFailure() {
-        // Given a retry tier, a tier naming HttpStatusRejectedException in retryOn, and a server answering
-        // /bad with 502 and closing the connection for /reset before any head
-        List<ResilienceEvent> events = new CopyOnWriteArrayList<>();
-        RecordingServer server = support.server((request, body) -> {
-            if (request.uri().equals("/reset")) {
-                request.connection().close();
-            } else {
-                request.response().setStatusCode(502).end();
-            }
-        });
-        HttpClient client = client(
-                runtime(events),
-                server,
-                tiers(
-                        "t",
-                        retryTier(2, 10),
-                        "named",
-                        withRetryOn(retryTier(2, 10), Set.of(HttpStatusRejectedException.class))));
-        Buffer payload = Buffer.buffer("abcd");
-
-        // When POST /bad runs in the default tier
-        Throwable bad = awaitFailure(client.execute(
-                tierOptions("t"), web -> web.post("/bad").sendBuffer(payload).expecting(HttpExpectations.success())));
-
-        // Then the caller sees the original 502 rejection after exactly 1 request
-        assertRejected(bad, 502);
-        assertThat(bad.getCause()).isNull();
-        assertThat(count(server, "POST /bad")).isEqualTo(1);
-        awaitExecutionsCompleted(events, 1);
-        assertThat(of(events, ExecutionCompleted.class).get(0).outcome())
-                .isEqualTo(ResilienceOutcomeCategory.APPLICATION_FAILURE);
-        assertThat(of(events, RetryScheduled.class)).isEmpty();
-
-        // And a reset before the head: POST /reset fails with the original HttpClosedException after 1 request
-        Throwable postReset = awaitFailure(
-                client.execute(tierOptions("t"), web -> web.post("/reset").sendBuffer(payload)));
-        assertThat(postReset).isInstanceOf(HttpClosedException.class);
-        assertThat(postReset).isNotInstanceOf(NonRetryableFailure.class);
-        assertThat(postReset.getClass().getName()).startsWith("io.vertx.");
-        assertThat(count(server, "POST /reset")).isEqualTo(1);
-
-        // And the same reset on GET is retried: 3 requests
-        Throwable getReset = awaitFailure(
-                client.execute(tierOptions("t"), web -> web.get("/reset").send()));
-        assertThat(getReset).isInstanceOf(HttpClosedException.class);
-        assertThat(count(server, "GET /reset")).isEqualTo(3);
-
-        // And a tier naming the retryable type gets exactly what it names: POST /bad is retried, 3 requests
-        Throwable named = awaitFailure(client.execute(
-                tierOptions("named"),
-                web -> web.post("/bad").sendBuffer(payload).expecting(HttpExpectations.success())));
-        assertRejected(named, 502);
-        assertThat(count(server, "POST /bad")).isEqualTo(4);
-    }
-
-    /** The tier timeout becomes the attempt timeout; a prebuilt pipeline is used as given. */
-    @Test
-    @DisplayName("the tier timeout becomes the attempt timeout and a prebuilt pipeline is used as given")
-    void tierTimeoutBecomesTheAttemptTimeoutAndAPrebuiltPipelineIsUsedAsGiven() {
-        // Given a tier with a 250 ms timeout concern and no retry, a recording runtime and a silent server
-        List<ResilienceEvent> events = new CopyOnWriteArrayList<>();
-        RecordingServer server = support.server((request, body) -> {});
-        Resilience runtime = runtime(events);
-        HttpClient client = client(runtime, server, tiers("t", tier(null, 0, null, 250L, null, null)));
-
-        // When the call runs in the tier
-        Throwable failure = awaitFailure(
-                client.execute(tierOptions("t"), web -> web.get("/never").send()));
-
-        // Then it fails with a ResilienceTimeoutException of 250 ms with its event, from one pipeline timer
-        assertThat(failure).isExactlyInstanceOf(ResilienceTimeoutException.class);
-        assertThat(((ResilienceTimeoutException) failure).timeoutMs()).isEqualTo(250);
-        awaitExecutionsCompleted(events, 1);
-        sleep(SETTLE_MS);
-        assertThat(of(events, TimeoutTriggered.class))
-                .extracting(TimeoutTriggered::timeoutMs)
-                .containsExactly(250L);
-        assertThat(of(events, ExecutionCompleted.class))
-                .extracting(ExecutionCompleted::outcome)
-                .containsExactly(ResilienceOutcomeCategory.TIMEOUT);
-
-        // When a prebuilt pipeline with a retry concern and no timeout concern runs with a 250 ms read timeout
-        ResiliencePipeline prebuilt = runtime.pipeline("prebuilt")
-                .retry(retry -> retry.maxRetries(1).backoff(RetryBackoff.fixed(10)))
-                .build();
-        int mark = events.size();
-        long before = count(server, "GET /prebuilt");
-        Throwable raw = awaitFailure(client.execute(
-                CallOptions.defaults().resilience(prebuilt).readTimeout(250, TimeUnit.MILLISECONDS),
-                web -> web.get("/prebuilt").send()));
-
-        // Then the timeout stays raw, the pipeline's own retry ran (2 requests) and no TimeoutTriggered arose
-        assertThat(raw).isExactlyInstanceOf(TimeoutException.class);
-        assertThat(count(server, "GET /prebuilt") - before).isEqualTo(2);
-        sleep(SETTLE_MS);
-        assertThat(of(since(events, mark), TimeoutTriggered.class)).isEmpty();
-    }
-
-    // --- AC-085 ---
-
-    /** AC-085: a tier timeout beats the builder default and a call option beats the tier. */
-    @Test
-    @DisplayName("a tier timeout overrides the builder default and a call option overrides the tier")
-    void aTierTimeoutOverridesTheBuilderDefaultAndACallOptionOverridesTheTier() {
-        // Given a client built with readTimeout 30 s, a tier with a 200 ms timeout and no retry, a silent server
-        RecordingServer server = support.server((request, body) -> {});
-        HttpClient client = build(builder(
-                        runtime(new CopyOnWriteArrayList<>()),
-                        server,
-                        tiers("t", tier(null, 0, null, 200L, null, null)))
-                .readTimeout(30, TimeUnit.SECONDS));
-
-        // When the call runs in the tier
-        long start = System.nanoTime();
-        Throwable first = awaitFailure(
-                client.execute(tierOptions("t"), web -> web.get("/never").send()));
-        long firstMs = millisSince(start);
-
-        // Then it fails with a 200 ms ResilienceTimeoutException within 200 ms plus 500 ms
-        assertThat(first).isExactlyInstanceOf(ResilienceTimeoutException.class);
-        assertThat(((ResilienceTimeoutException) first).timeoutMs()).isEqualTo(200);
-        assertThat(firstMs).isBetween(200L, 700L);
-
-        // And the server observes the connection closed
-        assertThat(awaitCondition(() -> server.closedConnections.get() >= 1, HttpClientItSupport.WAIT_MS))
-                .isTrue();
-
-        // When the same call carries a 500 ms read timeout
-        start = System.nanoTime();
-        Throwable second = awaitFailure(
-                client.execute(tierOptions("t").readTimeout(500, TimeUnit.MILLISECONDS), web -> web.get("/never")
-                        .send()));
-        long secondMs = millisSince(start);
-
-        // Then the call option wins over the tier: a 500 ms ResilienceTimeoutException within 500 ms plus 500 ms
-        assertThat(second).isExactlyInstanceOf(ResilienceTimeoutException.class);
-        assertThat(((ResilienceTimeoutException) second).timeoutMs()).isEqualTo(500);
-        assertThat(secondMs).isBetween(500L, 1_000L);
-    }
-
     // --- redirect-hop refusal ---
 
-    /** A refusal on a redirect hop is an ordinary failure: no retry and not counted by the breaker. */
+    /** A refusal on a redirect hop comes after a request was sent: an ordinary failure the pipeline retries. */
     @Test
-    @DisplayName("a redirect hop refusal is an ordinary failure, not retried and not counted by the breaker")
-    void redirectHopRefusalIsAnOrdinaryFailureNotRetriedAndNotCountedByTheBreaker() {
-        // Given a tier with maxRetries 2 and a breaker of maxFailures 2, an egress policy for 127.0.0.1 only,
-        // redirects followed, and a server redirecting to localhost, which is denied
+    @DisplayName("a redirect hop refusal is an ordinary attempt failure that the caller's pipeline classifies")
+    void redirectHopRefusalIsAnOrdinaryAttemptFailureTheCallersPipelineClassifies() {
+        // Given a pipeline with maxRetries 2, an egress policy for 127.0.0.1 only, redirects followed, and a
+        // server redirecting to localhost, which is denied
         List<ResilienceEvent> events = new CopyOnWriteArrayList<>();
         RecordingServer target = statusServer(200);
         RecordingServer redirecting = support.server((request, body) -> request.response()
                 .setStatusCode(302)
                 .putHeader("Location", "http://localhost:" + target.port() + "/")
                 .end());
-        HttpClient client = build(builder(runtime(events), redirecting, tiers("t", tier(2, 10, null, null, 2, 60_000L)))
+        HttpClient client = build(builder(runtime(events), redirecting, tiers("t", retryTier(2, 10)))
                 .egress(EgressPolicy.allowHosts(List.of("127.0.0.1"), true))
                 .webClientOptions(
                         new WebClientOptions().setFollowRedirects(true).setMaxRedirects(5)));
 
-        // When the call runs four times
-        List<Throwable> failures = new ArrayList<>();
-        for (int i = 0; i < 4; i++) {
-            failures.add(awaitFailure(get(client, tierOptions("t"), "/out")));
-        }
+        // When the call runs
+        Throwable failure = awaitFailure(get(client, tierOptions("t"), "/out"));
+        sleep(SETTLE_MS);
 
-        // Then every call fails with the egress refusal, never CircuitOpenException, and none is retried
-        assertThat(failures).allSatisfy(f -> assertThat(f).isExactlyInstanceOf(HttpEgressDeniedException.class));
-        assertThat(((HttpEgressDeniedException) failures.get(3)).reason())
-                .isEqualTo(HttpEgressDeniedException.Reason.HOST);
-        assertThat(redirecting.requests).hasSize(4);
-        assertThat(of(events, RetryScheduled.class)).isEmpty();
+        // Then it fails with the egress refusal after the pipeline retried it like any attempt failure:
+        // 3 requests reached the redirecting server, because the first hop had been sent
+        assertThat(failure).isExactlyInstanceOf(HttpEgressDeniedException.class);
+        assertThat(((HttpEgressDeniedException) failure).reason()).isEqualTo(HttpEgressDeniedException.Reason.HOST);
+        assertThat(redirecting.requests).hasSize(3);
+        assertThat(of(events, RetryScheduled.class)).hasSize(2);
 
         // And the denied hop was never dialed
         assertThat(target.openedConnections.get()).isZero();
-        assertThat(of(events, CircuitStateChanged.class))
-                .extracting(CircuitStateChanged::newState)
-                .doesNotContain(CircuitState.OPEN);
-
-        // And as the half-open trial a redirect-hop refusal is recorded like a 4xx success and closes the breaker
-        RecordingServer trialRedirect = support.server((request, body) -> {
-            if (request.uri().equals("/fail")) {
-                request.response().setStatusCode(503).end();
-            } else {
-                request.response()
-                        .setStatusCode(302)
-                        .putHeader("Location", "http://localhost:" + target.port() + "/")
-                        .end();
-            }
-        });
-        List<ResilienceEvent> trialEvents = new CopyOnWriteArrayList<>();
-        HttpClient trialClient = build(builder(runtime(trialEvents), trialRedirect, tiers("h", breakerTier(1, 300)))
-                .egress(EgressPolicy.allowHosts(List.of("127.0.0.1"), true))
-                .webClientOptions(
-                        new WebClientOptions().setFollowRedirects(true).setMaxRedirects(5)));
-        assertRejected(awaitFailure(get(trialClient, tierOptions("h"), "/fail")), 503);
-        sleep(400);
-        Throwable trial = awaitFailure(get(trialClient, tierOptions("h"), "/out"));
-        assertThat(trial).isExactlyInstanceOf(HttpEgressDeniedException.class);
-        // the next call reaches the server instead of finding an open circuit, and its failure opens it again
-        assertRejected(awaitFailure(get(trialClient, tierOptions("h"), "/fail")), 503);
-        assertThat(of(trialEvents, CircuitStateChanged.class))
-                .extracting(CircuitStateChanged::newState)
-                .containsSubsequence(CircuitState.OPEN, CircuitState.HALF_OPEN, CircuitState.CLOSED, CircuitState.OPEN);
     }
 
     // --- timeout reset cause ---
@@ -1157,21 +857,9 @@ class ClientResilienceIT {
         RecordingServer server = support.server((request, body) -> {});
         Completions interceptor = new Completions();
         Resilience runtime = runtime(new CopyOnWriteArrayList<>());
-        HttpClient client = client(runtime, server, tiers("t", tier(null, 0, null, 250L, null, null)), interceptor);
+        HttpClient client = client(runtime, server, tiers(), interceptor);
         Function<WebClient, Future<Void>> twoExchanges = web ->
                 Future.all(web.get("/one").send(), web.get("/two").send()).<Void>mapEmpty();
-
-        // When the call runs in a tier with a 250 ms timeout
-        Throwable tierFailure = awaitFailure(client.execute(tierOptions("t"), twoExchanges));
-
-        // Then both open exchanges end with the client's ResilienceTimeoutException
-        assertThat(tierFailure).isExactlyInstanceOf(ResilienceTimeoutException.class);
-        List<Completions.Completed> tierDone = interceptor.awaitCount(2);
-        assertThat(tierDone).allSatisfy(c -> {
-            assertThat(c.completion().error()).isExactlyInstanceOf(ResilienceTimeoutException.class);
-            assertThat(((ResilienceTimeoutException) c.completion().error()).timeoutMs())
-                    .isEqualTo(250);
-        });
 
         // When the same attempt runs with no resilience and a 250 ms read timeout
         Throwable rawFailure = awaitFailure(client.execute(
@@ -1179,8 +867,8 @@ class ClientResilienceIT {
 
         // Then both open exchanges end with a java.util.concurrent.TimeoutException
         assertThat(rawFailure).isExactlyInstanceOf(TimeoutException.class);
-        List<Completions.Completed> rawDone = interceptor.awaitCount(4);
-        assertThat(rawDone.subList(2, 4))
+        List<Completions.Completed> rawDone = interceptor.awaitCount(2);
+        assertThat(rawDone)
                 .allSatisfy(c -> assertThat(c.completion().error()).isExactlyInstanceOf(TimeoutException.class));
 
         // When a prebuilt pipeline's own 200 ms timer fires first (the client's default timer is 30 s)
@@ -1191,171 +879,55 @@ class ClientResilienceIT {
 
         // Then the call fails with the pipeline's timeout and the open exchanges end with a raw TimeoutException
         assertThat(ownTimer).isExactlyInstanceOf(ResilienceTimeoutException.class);
-        List<Completions.Completed> ownDone = interceptor.awaitCount(6);
-        assertThat(ownDone.subList(4, 6))
+        List<Completions.Completed> ownDone = interceptor.awaitCount(4);
+        assertThat(ownDone.subList(2, 4))
                 .allSatisfy(c -> assertThat(c.completion().error()).isExactlyInstanceOf(TimeoutException.class));
-    }
-
-    // --- default classification: 401 and 403 ---
-
-    /** The default classification retries neither 401, 403 nor 500. */
-    @Test
-    @DisplayName("401 and 403 are not retried by the default classification")
-    void status401And403AreNotRetriedByTheDefaultClassification() {
-        // Given a retry tier of maxRetries 2 and a server answering 401, 403 and 500 on their paths
-        RecordingServer server = support.server((request, body) -> {
-            switch (request.uri()) {
-                case "/unauthorized" -> request.response().setStatusCode(401).end();
-                case "/forbidden" -> request.response().setStatusCode(403).end();
-                default -> request.response().setStatusCode(500).end();
-            }
-        });
-        HttpClient client = client(runtime(new CopyOnWriteArrayList<>()), server, tiers("t", retryTier(2, 10)));
-
-        // When GET runs on each path
-        Throwable unauthorized = awaitFailure(get(client, tierOptions("t"), "/unauthorized"));
-        Throwable forbidden = awaitFailure(get(client, tierOptions("t"), "/forbidden"));
-        Throwable error = awaitFailure(get(client, tierOptions("t"), "/error"));
-        sleep(SETTLE_MS);
-
-        // Then each fails with its status after exactly 1 request
-        assertRejected(unauthorized, 401);
-        assertRejected(forbidden, 403);
-        assertRejected(error, 500);
-        assertThat(server.requestsTo("/unauthorized")).hasSize(1);
-        assertThat(server.requestsTo("/forbidden")).hasSize(1);
-        assertThat(server.requestsTo("/error")).hasSize(1);
     }
 
     // --- AC-089 ---
 
-    /** AC-089: a tier attempt timeout is a resilience timeout with its event; other calls stay raw. */
+    /** AC-089: the client's attempt timeout is a native TimeoutException, with or without a prebuilt pipeline. */
     @Test
-    @DisplayName("a tier attempt timeout is a resilience timeout with its event and other calls stay raw")
-    void aTierAttemptTimeoutIsAResilienceTimeoutWithItsEventAndOtherCallsStayRaw() {
-        // Given a runtime with a recording observer, a 300 ms builder read timeout, tier t (retry 1, no
-        // timeout concern), tier a (t plus abortOn ResilienceTimeoutException), an interceptor and a silent server
+    @DisplayName("AC-089: the attempt timeout is a native TimeoutException with no pipeline and with a prebuilt one")
+    void theAttemptTimeoutIsANativeTimeoutException() {
+        // Given a runtime with a recording observer, a 300 ms builder read timeout, a prebuilt pipeline with a
+        // retry concern and no timeout concern, an interceptor and a silent server
         List<ResilienceEvent> events = new CopyOnWriteArrayList<>();
         Resilience runtime = runtime(events);
         RecordingServer server = support.server((request, body) -> {});
-        ResiliencePolicyOverrides t = retryTier(1, 10);
         Completions interceptor = new Completions();
-        HttpClient client = build(
-                builder(runtime, server, tiers("t", t, "a", withAbortOn(t, Set.of(ResilienceTimeoutException.class))))
-                        .readTimeout(300, TimeUnit.MILLISECONDS)
-                        .register(interceptor));
-
-        // When the caller runs GET /never in tier t
-        Throwable failure = awaitFailure(
-                client.execute(tierOptions("t"), web -> web.get("/never").send()));
-        awaitExecutionsCompleted(events, 1);
-
-        // Then it fails with a 300 ms ResilienceTimeoutException keyed by the pipeline, after exactly 2 requests
-        assertThat(failure).isExactlyInstanceOf(ResilienceTimeoutException.class);
-        ResilienceTimeoutException timeout = (ResilienceTimeoutException) failure;
-        assertThat(timeout.timeoutMs()).isEqualTo(300);
-        assertThat(server.requests).hasSize(2);
-
-        // And the observer recorded 2 TimeoutTriggered(300), 2 AttemptCompleted(TIMEOUT), ExecutionCompleted(TIMEOUT)
-        sleep(SETTLE_MS);
-        assertThat(of(events, TimeoutTriggered.class))
-                .extracting(TimeoutTriggered::timeoutMs)
-                .containsExactly(300L, 300L);
-        assertThat(of(events, TimeoutTriggered.class))
-                .extracting(TimeoutTriggered::operationKey)
-                .containsOnly(timeout.operationKey());
-        assertThat(of(events, AttemptCompleted.class))
-                .extracting(AttemptCompleted::outcome)
-                .containsExactly(ResilienceOutcomeCategory.TIMEOUT, ResilienceOutcomeCategory.TIMEOUT);
-        assertThat(of(events, ExecutionCompleted.class))
-                .extracting(ExecutionCompleted::outcome)
-                .containsExactly(ResilienceOutcomeCategory.TIMEOUT);
-
-        // And onAttemptCompleted saw that ResilienceTimeoutException for each exchange
-        List<Completions.Completed> done = interceptor.awaitCount(2);
-        assertThat(done).allSatisfy(c -> assertThat(c.completion().error())
-                .isExactlyInstanceOf(ResilienceTimeoutException.class));
-        assertThat(done.get(1).completion().error()).isSameAs(failure);
-
-        // And the same call in tier a fails after exactly 1 request, because abortOn matches the type
-        int requestsBefore = server.requests.size();
-        Throwable aborted = awaitFailure(
-                client.execute(tierOptions("a"), web -> web.get("/never").send()));
-        assertThat(aborted).isExactlyInstanceOf(ResilienceTimeoutException.class);
-        assertThat(server.requests.size() - requestsBefore).isEqualTo(1);
-
-        // And with noResilience() it fails with a raw TimeoutException and the observer recorded nothing for it
-        awaitExecutionsCompleted(events, 2);
-        int mark = events.size();
-        Throwable raw = awaitFailure(client.execute(
-                CallOptions.defaults().noResilience(), web -> web.get("/never").send()));
-        assertThat(raw).isExactlyInstanceOf(TimeoutException.class);
-        sleep(SETTLE_MS);
-        assertThat(since(events, mark)).isEmpty();
-
-        // And with a prebuilt pipeline that has a retry concern and no timeout concern it stays raw
+        HttpClient client = build(HttpClientBuilder.create(support.vertx)
+                .baseUrl(server.origin())
+                .readTimeout(300, TimeUnit.MILLISECONDS)
+                .register(interceptor));
         ResiliencePipeline prebuilt = runtime.pipeline("prebuilt-89")
                 .retry(retry -> retry.maxRetries(1).backoff(RetryBackoff.fixed(10)))
                 .build();
+
+        // When the caller runs GET /never with noResilience()
+        Throwable raw = awaitFailure(client.execute(
+                CallOptions.defaults().noResilience(), web -> web.get("/never").send()));
+
+        // Then it fails with a raw TimeoutException, the interceptor saw it and the observer recorded nothing
+        assertThat(raw).isExactlyInstanceOf(TimeoutException.class);
+        assertThat(raw.getMessage()).isNotBlank();
+        List<Completions.Completed> first = interceptor.awaitCount(1);
+        assertThat(first.get(0).completion().error()).isExactlyInstanceOf(TimeoutException.class);
+        sleep(SETTLE_MS);
+        assertThat(events).isEmpty();
+
+        // When the same call runs in the prebuilt pipeline
         Throwable prebuiltFailure =
                 awaitFailure(client.execute(CallOptions.defaults().resilience(prebuilt), web -> web.get("/never")
                         .send()));
+
+        // Then it stays a raw TimeoutException, because a prebuilt pipeline is used as given, and each of its
+        // two attempts' exchanges was seen as a TimeoutException
         assertThat(prebuiltFailure).isExactlyInstanceOf(TimeoutException.class);
-    }
-
-    // --- overlapping POST timeouts ---
-
-    /** Overlapping POST timeouts on one tier are each refused retry, whichever other call settles first. */
-    @Test
-    @DisplayName("overlapping POST timeouts on one tier are each refused retry when another call settles first")
-    void overlappingPostTimeoutsOnOneTierAreEachRefusedRetryWhenAnotherCallSettlesFirst() {
-        // Given a retry tier shared by all calls, a 300 ms attempt timeout and a server that answers only /fast
-        RecordingServer server = support.server((request, body) -> {
-            if (request.uri().equals("/fast")) {
-                request.response().end("ok");
-            }
-        });
-        HttpClient client = client(runtime(new CopyOnWriteArrayList<>()), server, tiers("t", retryTier(2, 10)));
-        CallOptions options = tierOptions("t").readTimeout(300, TimeUnit.MILLISECONDS);
-        Buffer payload = Buffer.buffer("abcd");
-        int posts = 6;
-
-        // When six POSTs to distinct silent paths, one silent GET and fast calls overlap, started 15 ms apart
-        List<Future<HttpResponse<Buffer>>> postCalls = new ArrayList<>();
-        List<Future<HttpResponse<Buffer>>> others = new ArrayList<>();
-        for (int i = 0; i < posts; i++) {
-            String path = "/slow-" + i;
-            postCalls.add(client.execute(
-                    options, web -> web.post(path).sendBuffer(payload).expecting(HttpExpectations.success())));
-            others.add(get(client, options, "/fast"));
-            if (i == 2) {
-                others.add(get(client, options, "/slow-get"));
-            }
-            sleep(15);
-        }
-
-        // Then every POST fails with a ResilienceTimeoutException after exactly 1 request
-        for (Future<HttpResponse<Buffer>> call : postCalls) {
-            assertThat(awaitFailure(call)).isExactlyInstanceOf(ResilienceTimeoutException.class);
-        }
-        for (int i = 0; i < posts; i++) {
-            assertThat(count(server, "POST /slow-" + i)).as("POST /slow-%d", i).isEqualTo(1);
-        }
-
-        // And the overlapping idempotent GET is retried as usual: 3 requests, and the fast calls succeeded
-        assertThat(awaitFailure(others.get(3))).isExactlyInstanceOf(ResilienceTimeoutException.class);
-        assertThat(count(server, "GET /slow-get")).isEqualTo(3);
-        for (int i = 0; i < others.size(); i++) {
-            if (i != 3) {
-                assertThat(await(others.get(i)).statusCode()).isEqualTo(200);
-            }
-        }
-
-        // And once every call settled, the client's registry of non-retryable timeouts is empty
-        assertThat(awaitCondition(
-                        () -> ((HttpClient) client).nonRetryableTimeoutCount() == 0, HttpClientItSupport.WAIT_MS))
-                .as("non-retryable timeout registry drained")
-                .isTrue();
+        List<Completions.Completed> all = interceptor.awaitCount(3);
+        assertThat(all.subList(1, 3))
+                .allSatisfy(c -> assertThat(c.completion().error()).isExactlyInstanceOf(TimeoutException.class));
+        assertThat(of(events, TimeoutTriggered.class)).isEmpty();
     }
 
     // --- AC-090 ---
@@ -1367,8 +939,7 @@ class ClientResilienceIT {
         // Given a client with defaults, a prebuilt pipeline with a 200 ms timeout and one retry, and a hanging server
         RecordingServer server = support.server((request, body) -> {});
         Resilience runtime = runtime(new CopyOnWriteArrayList<>());
-        HttpClient client =
-                build(HttpClientBuilder.create(support.vertx, runtime).baseUrl(server.origin()));
+        HttpClient client = build(HttpClientBuilder.create(support.vertx).baseUrl(server.origin()));
         ResiliencePipeline pipeline = runtime.pipeline("prebuilt-90")
                 .timeout(timeout -> timeout.duration(Duration.ofMillis(200)))
                 .retry(retry -> retry.maxRetries(1).backoff(RetryBackoff.fixed(10)))

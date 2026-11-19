@@ -545,9 +545,7 @@ class RestClientTransportPerBuildTest {
             verify(governed, never()).egress(any());
             verify(governed, never()).credentials(any());
             verify(governed, never()).allowCredentialsOverPlainHttp(anyBoolean());
-            verify(governed, never()).credentialOrigins(any());
             verify(governed, never()).register(any());
-            verify(governed, never()).resiliencePolicy(any());
             verify(governed, never()).defaultHeader(any(), any());
             verify(governed, never()).config(any());
         } finally {

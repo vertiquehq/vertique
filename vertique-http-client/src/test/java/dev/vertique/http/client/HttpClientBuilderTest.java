@@ -10,7 +10,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dev.vertique.http.client.HttpClientItSupport.RecordingServer;
 import dev.vertique.http.client.exception.HttpClientConfigurationException;
-import dev.vertique.resilience.Resilience;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -62,7 +61,6 @@ class HttpClientBuilderTest {
 
     private HttpClientBuilder builder() {
         HttpClientBuilder builder = HttpClientBuilder.create(vertx());
-        support.track(builder::close);
         return builder;
     }
 
@@ -137,28 +135,18 @@ class HttpClientBuilderTest {
                 .isNotNull();
         await(c1.close()); // closing again is harmless
 
-        // And a rejected configuration fails with the configuration exception, leaves the supplied
-        // runtime open and the builder reusable once the setting is corrected
-        Resilience supplied = Resilience.create(vertx());
-        support.track(supplied::close);
-        HttpClientBuilder withSupplied = HttpClientBuilder.create(vertx(), supplied);
-        support.track(withSupplied::close);
+        // And a rejected configuration fails with the configuration exception and leaves the builder reusable
+        // once the setting is corrected
+        HttpClientBuilder reusable = HttpClientBuilder.create(vertx());
         String invalidName = "bad name/with:chars";
         Throwable rejected =
-                catchConfigurationFailure(() -> withSupplied.name(invalidName).build());
+                catchConfigurationFailure(() -> reusable.name(invalidName).build());
         assertThat(rejected).isInstanceOf(HttpClientConfigurationException.class);
         assertThat(rejected.getMessage()).isNotBlank().doesNotContain(invalidName);
         assertThat(rejected.getCause()).isNull();
-        HttpClient recovered =
-                withSupplied.name("fixed").baseUrl(first.origin()).build();
+        HttpClient recovered = reusable.name("fixed").baseUrl(first.origin()).build();
         support.track(recovered::close);
         assertThat(await(recovered.webClient().get("/ok").send()).statusCode()).isEqualTo(200);
-
-        // And closing the builder returns the same future every time and does not close the supplied runtime
-        Future<Void> closed = withSupplied.close();
-        assertThat(withSupplied.close()).isSameAs(closed);
-        await(closed);
-        assertThat(supplied.pipeline("still-open")).isNotNull();
     }
 
     @Test

@@ -623,6 +623,23 @@ class RestClientTransportCharacterizationIT {
     }
 
     @Test
+    @DisplayName("A header value the transport accepts but the client's header rules refuse is refused before sending")
+    void headerValueOnlyTheClientHeaderRulesRefuseIsRefusedBeforeSending() {
+        // Given a server and a header value that holds a line break followed by a space, which the transport
+        // accepts as a continuation line
+        Origin origin = startOrigin(LOOPBACK);
+        Verbs client = builder().baseUrl(origin.base()).build(Verbs.class);
+
+        // When the call is made
+        Throwable failure = failureOf(client.get("a\r\n b"));
+
+        // Then the client's own check refuses it and nothing is sent
+        assertThat(failure).isExactlyInstanceOf(IllegalArgumentException.class);
+        assertThat(failure.getMessage()).isEqualTo("A request header contains a character that is not allowed");
+        assertThat(origin.snapshot()).isEmpty();
+    }
+
+    @Test
     @DisplayName("A call after the builder is closed fails with the recorded identity")
     void callAfterBuilderCloseFailsWithTheRecordedIdentity() {
         // Given a built client that worked, then its builder is closed

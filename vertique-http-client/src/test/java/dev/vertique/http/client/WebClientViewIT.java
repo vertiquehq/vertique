@@ -72,7 +72,6 @@ class WebClientViewIT {
 
     private HttpClient client(String baseUrl) {
         HttpClientBuilder builder = HttpClientBuilder.create(support.vertx);
-        support.track(builder::close);
         if (baseUrl != null) {
             builder.baseUrl(baseUrl);
         }

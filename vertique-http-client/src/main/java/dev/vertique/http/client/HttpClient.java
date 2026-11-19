@@ -6,8 +6,6 @@ package dev.vertique.http.client;
 import dev.vertique.http.client.exception.HttpClientClosedException;
 import dev.vertique.http.client.exception.HttpExchangeCancelledException;
 import dev.vertique.http.client.interceptor.HttpClientInterceptor;
-import dev.vertique.resilience.Resilience;
-import dev.vertique.resilience.ResiliencePolicyRegistry;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
@@ -48,7 +46,6 @@ public final class HttpClient {
     private final HttpClientInterceptors interceptors;
     private final AttemptScope clientScope;
     private final WebClient webClient;
-    private final ClientResilience resilience;
     private final Set<CallExecution<?>> activeCalls = ConcurrentHashMap.newKeySet();
     private final Set<ActiveStream> openStreams = ConcurrentHashMap.newKeySet();
     private final AtomicReference<Future<Void>> closeFuture = new AtomicReference<>();
@@ -59,10 +56,7 @@ public final class HttpClient {
             HttpClientAgent agent,
             WebClientOptions webClientOptions,
             ClientSettings settings,
-            List<HttpClientInterceptor> registered,
-            @Nullable Resilience runtime,
-            ResiliencePolicyRegistry policies,
-            @Nullable String defaultPolicy) {
+            List<HttpClientInterceptor> registered) {
         this.vertx = vertx;
         this.name = name;
         this.agent = agent;
@@ -70,7 +64,6 @@ public final class HttpClient {
         this.settings = settings;
         this.interceptors = HttpClientInterceptors.of(registered, name, webClientOptions.isSsl());
         this.clientScope = new AttemptScope(interceptors, null, 1);
-        this.resilience = new ClientResilience(runtime, policies, name, defaultPolicy);
         this.webClient = scopedWebClient(clientScope, settings.readTimeoutMs(), false);
     }
 
@@ -223,25 +216,15 @@ public final class HttpClient {
         }
         Context caller = Vertx.currentContext();
         Context context = caller != null ? caller : vertx.getOrCreateContext();
-        ClientResilience.Selection selection;
-        try {
-            selection = resilience.select(options);
-        } catch (RuntimeException failure) {
-            return Future.failedFuture(failure);
-        }
         Long callTimeoutMs = options.readTimeoutMs();
-        Long policyTimeoutMs = selection.policyTimeoutMs();
-        long timeoutMs = callTimeoutMs != null
-                ? callTimeoutMs
-                : policyTimeoutMs != null ? policyTimeoutMs : settings.readTimeoutMs();
+        long timeoutMs = callTimeoutMs != null ? callTimeoutMs : settings.readTimeoutMs();
         CallExecution<T> call = new CallExecution<>(
                 vertx,
                 context,
                 options.cancellationSignal(),
                 timeoutMs,
                 interceptors,
-                selection,
-                resilience,
+                options.pipeline(),
                 webClients,
                 activeCalls::remove);
         activeCalls.add(call);
@@ -273,28 +256,20 @@ public final class HttpClient {
             // after the snapshot re-checks the marker and cancels itself.
             Promise<Void> closed = Promise.promise();
             closeFuture.set(closed.future());
-            Future<Void> resilienceClosed = resilienceClosing();
-            Future.all(List.of(agent.close(), resilienceClosed))
-                    .<Void>mapEmpty()
-                    .onComplete(closed);
+            cancelRunning();
+            agent.close().onComplete(closed);
             return closed.future();
         }
     }
 
-    /** The number of timeouts the client currently records as not retryable. */
-    int nonRetryableTimeoutCount() {
-        return resilience.refusedTimeoutCount();
-    }
-
-    /** Fails every running call with the closed failure, then closes the pipelines' state. */
-    private Future<Void> resilienceClosing() {
+    /** Fails every running call and open stream with the closed failure. */
+    private void cancelRunning() {
         for (CallExecution<?> call : new ArrayList<>(activeCalls)) {
             call.cancel(new HttpClientClosedException());
         }
         for (ActiveStream stream : new ArrayList<>(openStreams)) {
             stream.cancel(new HttpClientClosedException());
         }
-        return resilience.close();
     }
 
     private WebClientView scopedWebClient(AttemptScope scope, long exchangeTimeoutMs, boolean trackRequests) {
@@ -311,7 +286,6 @@ public final class HttpClient {
             governed.addInterceptor(new CredentialInterceptor(
                     settings.credentials(),
                     settings.allowCredentialsOverPlainHttp(),
-                    Set.copyOf(settings.credentialOrigins()),
                     settings.hasBaseUrl(),
                     webClientOptions.isSsl(),
                     webClientOptions.getDefaultHost(),

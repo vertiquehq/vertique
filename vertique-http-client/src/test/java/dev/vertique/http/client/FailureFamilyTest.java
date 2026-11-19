@@ -14,8 +14,6 @@ import dev.vertique.http.client.exception.HttpBodyLimitException;
 import dev.vertique.http.client.exception.HttpClientClosedException;
 import dev.vertique.http.client.exception.HttpClientConfigurationException;
 import dev.vertique.http.client.exception.HttpClientTechnicalException;
-import dev.vertique.http.client.exception.HttpClientUnavailableException;
-import dev.vertique.http.client.exception.HttpClientValidationException;
 import dev.vertique.http.client.exception.HttpCredentialException;
 import dev.vertique.http.client.exception.HttpEgressDeniedException;
 import dev.vertique.http.client.exception.HttpExchangeCancelledException;
@@ -57,11 +55,8 @@ class FailureFamilyTest {
     private static final String SECRET = "s3cret";
     private static final String PACKAGE = "dev.vertique.http.client.exception";
 
-    private static final List<Class<? extends RuntimeException>> ROOTS = List.of(
-            HttpClientTechnicalException.class,
-            HttpClientUnavailableException.class,
-            HttpClientValidationException.class,
-            HttpClientConfigurationException.class);
+    private static final List<Class<? extends RuntimeException>> ROOTS =
+            List.of(HttpClientTechnicalException.class, HttpClientConfigurationException.class);
 
     private static final List<Class<? extends RuntimeException>> LEAVES = List.of(
             HttpEgressDeniedException.class,
@@ -171,14 +166,12 @@ class FailureFamilyTest {
         Set<String> expected = new TreeSet<>();
         Stream.concat(ROOTS.stream(), LEAVES.stream()).forEach(t -> expected.add(t.getName()));
 
-        // Then the package holds exactly those eleven types, none public-extends RuntimeException directly,
-        // each root extends its core semantic root and each leaf extends a module root
+        // Then the package holds exactly those nine types, none public-extends RuntimeException directly,
+        // each root extends its core semantic root and each leaf extends a module root or a core root
         assertThat(exceptionPackageClassNames()).isEqualTo(expected);
         assertThat(HttpClientTechnicalException.class.getSuperclass()).isEqualTo(TechnicalException.class);
-        assertThat(HttpClientUnavailableException.class.getSuperclass()).isEqualTo(UnavailableException.class);
-        assertThat(HttpClientValidationException.class.getSuperclass()).isEqualTo(ValidationException.class);
         assertThat(HttpClientConfigurationException.class.getSuperclass()).isEqualTo(ConfigurationException.class);
-        for (Class<? extends RuntimeException> root : ROOTS.subList(0, 3)) {
+        for (Class<? extends RuntimeException> root : ROOTS.subList(0, 1)) {
             assertThat(Modifier.isAbstract(root.getModifiers()))
                     .as("%s is abstract", root.getSimpleName())
                     .isTrue();
@@ -186,15 +179,17 @@ class FailureFamilyTest {
         for (Class<? extends RuntimeException> type : LEAVES) {
             assertThat(type.getSuperclass())
                     .as("superclass of %s", type.getSimpleName())
-                    .isIn(ROOTS);
+                    .isIn(Stream.concat(
+                                    ROOTS.stream(), Stream.of(UnavailableException.class, ValidationException.class))
+                            .toList());
             assertThat(Modifier.isAbstract(type.getModifiers())).isFalse();
         }
         for (Class<? extends RuntimeException> type :
                 expected.stream().map(FailureFamilyTest::load).toList()) {
             assertThat(type.getSuperclass()).isNotEqualTo(RuntimeException.class);
         }
-        assertThat(HttpClientClosedException.class.getSuperclass()).isEqualTo(HttpClientUnavailableException.class);
-        assertThat(HttpEgressDeniedException.class.getSuperclass()).isEqualTo(HttpClientValidationException.class);
+        assertThat(HttpClientClosedException.class.getSuperclass()).isEqualTo(UnavailableException.class);
+        assertThat(HttpEgressDeniedException.class.getSuperclass()).isEqualTo(ValidationException.class);
         assertThat(HttpStatusRejectedException.class.getSuperclass()).isEqualTo(HttpClientTechnicalException.class);
         assertThat(RetryDelayHint.class).isAssignableFrom(HttpStatusRejectedException.class);
 
@@ -253,12 +248,13 @@ class FailureFamilyTest {
             MultiMap headers = failure.headers();
             source.add("X-Late", "late");
 
-            // Then it holds X-Key but no Set-Cookie, is read-only and is unaffected by the source map
+            // Then it holds X-Key but no Set-Cookie, is a mutable copy and is unaffected by the source map
             assertThat(failure.statusCode()).isEqualTo(503);
             assertThat(headers.get("X-Key")).isEqualTo(SECRET);
             assertThat(headers.getAll("Set-Cookie")).isEmpty();
             assertThat(headers.contains("X-Late")).isFalse();
-            assertThatThrownBy(() -> headers.add("X-New", "v")).isInstanceOf(UnsupportedOperationException.class);
+            headers.add("X-New", "v");
+            assertThat(failure.headers().contains("X-New")).isFalse();
             assertThat(failure.bodyExcerpt()).isNotNull();
             failure.bodyExcerpt().ifPresent(first -> {
                 byte[] before = first.getBytes();

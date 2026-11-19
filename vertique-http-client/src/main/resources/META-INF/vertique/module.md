@@ -94,8 +94,7 @@ and `If-Modified-Since` (no credentials and no other header). Every hop passes t
 **Credentials.** `credentials(CredentialSource)` supplies headers such as `Authorization` per exchange:
 `resolve(URI)` runs once for every hop to the original origin, after the request is prepared, and each
 returned header replaces the request's header of that name. The original origin is the base URL's origin
-(without a base URL, the exchange's first hop), widened by `credentialOrigins(List)` entries of the form
-`scheme://host[:port]`. The source is never called for a hop to another origin or after the exchange left
+(without a base URL, the exchange's first hop). The source is never called for a hop to another origin or after the exchange left
 the original origin, and a request with a server address, a virtual host (including a caller-set `Host`
 header) or a request-level proxy gets no credentials; on a hop to another origin only the redirect
 safelist headers travel. With a source, plain HTTP to a non-loopback host fails with
@@ -147,8 +146,7 @@ you do not control, an `allowHosts(...)` policy.
 
 | Where the attempt timer fires | The caller sees | Runtime event |
 |---|---|---|
-| A client-built tier (`resiliencePolicy(...)`, `resilience.policies.<tier>`) | `ResilienceTimeoutException` carrying the pipeline's operation key and the effective timeout | `TimeoutTriggered`, then the attempt completes as a timeout |
-| No pipeline (`noResilience()` or none configured) | raw `java.util.concurrent.TimeoutException` | none |
+| No pipeline (`noResilience()` or none passed) | raw `java.util.concurrent.TimeoutException` | none |
 | A prebuilt pipeline (`CallOptions.resilience(...)`) | raw `TimeoutException`; the pipeline's own timeout concern, if any, applies its own timeout on top | only what that concern emits |
 | A `stream(...)` body idle for `streamIdleTimeout` | raw `TimeoutException` from `completion()` | none |
 
@@ -192,14 +190,12 @@ runtime the caller owns.
 | `name(String)` | Client name, `[A-Za-z0-9._~-]{1,128}`; default `default` |
 | `baseUrl(String)` | Default origin and path prefix for relative requests |
 | `readTimeout(long, TimeUnit)` | Read timeout setting of the client, not negative; default 30 seconds, `0` for none |
-| `resiliencePolicy(String)` | Name of the resilience policy every call runs in unless its options say otherwise; an undefined name is rejected by `build()`; default none, one attempt per call |
 | `streamIdleTimeout(long, TimeUnit)` | Longest time a stream may go without a received body byte, not negative; default 60 seconds, `0` disables |
 | `maxRequestBytes(long)` | Most request body bytes sent, not negative; default `0` for no bound |
 | `maxResponseBytes(long)` | Most response body bytes read, not negative; default 10485760, `0` for no bound |
 | `maxEventBytes(int)` | Most raw bytes of one server-sent event, above 0; default 1048576 |
 | `egress(EgressPolicy)` | Targets the client may contact, checked before connecting and on every redirect hop; default `EgressPolicy.allowAll()` |
 | `credentials(CredentialSource)` | Per-exchange credential headers, resolved for hops to the original origin only; see Credentials |
-| `credentialOrigins(List<String>)` | Extra `scheme://host[:port]` origins credentials may go to, besides the base URL's origin |
 | `register(HttpClientInterceptor)` | Adds an interceptor that prepares requests before credentials and is told how each exchange ended; see Interceptors |
 | `allowCredentialsOverPlainHttp(boolean)` | Lets a credential source be used over plain HTTP to a non-loopback host; default `false` |
 | `config(HttpClientConfig)` | External `httpClient.{name}` configuration: every key it sets wins over the matching setter above, applied at `build()`; `null` removes it |
@@ -207,12 +203,12 @@ runtime the caller owns.
 | `poolOptions(PoolOptions)` | Copied; sizes the shared connection pool |
 | `defaultHeader(String, String)` | Header added to every request that does not set it |
 | `build()` | Builds a client with its own agent |
-| `close()` | Closes the clients this builder built; the returned future is the same on every call |
 
 Setters take effect at `build()`: a client keeps the values the builder held when it was built. An
 invalid setting makes `build()` throw `HttpClientConfigurationException` with a message that does
-not contain the rejected value; the builder stays usable once the setting is corrected. A runtime
-passed to `create(vertx, resilience)` is not closed by the builder.
+not contain the rejected value; the builder stays usable once the setting is corrected. The builder has no
+`close()`: close a client built by `HttpClientBuilder.create(vertx)` with `HttpClient.close()`; the factory closes
+the clients it builds, including those of its builders.
 
 ### HttpClient
 
@@ -305,42 +301,31 @@ settings.
 | `expecting(Expectation<HttpResponseHead>)` | Decides whether a `stream` head is accepted; default `HttpExpectations.success()`; other calls ignore it |
 | `cancellation(CancellationSignal)` | Binds the call to a signal a caller can cancel from any thread |
 | `resilience(ResiliencePipeline)` | Runs the call in a prebuilt pipeline, used as given |
-| `resiliencePolicy(String)` | Runs the call in a named resilience policy; the client builds its pipeline once |
-| `noResilience()` | Runs the call as one attempt without a pipeline; of the three resilience methods the last call wins |
+| `noResilience()` | Runs the call as one attempt without a pipeline; of the two resilience methods the last call wins |
 
-The attempt timeout is, in this order, the call's `readTimeout` or `noReadTimeout()`, the timeout of the
-call's resilience policy, then the client's `readTimeout`. It covers the whole attempt including the response
-body. When it fires, every exchange the attempt has open is reset. In a pipeline the client built from a policy the
-attempt fails with a `ResilienceTimeoutException` that carries the pipeline's operation key and the effective
-timeout, so the runtime reports `TimeoutTriggered` and a `retryOn` or `abortOn` entry naming that type matches;
-otherwise (no resilience, a prebuilt pipeline) it fails with a `java.util.concurrent.TimeoutException` with a
-constant message, and a prebuilt pipeline's own timeout concern, when it has one, turns that into its own
+The attempt timeout is, in this order, the call's `readTimeout` or `noReadTimeout()`, then the client's `readTimeout`. It covers the whole attempt including the response
+body. When it fires, every exchange the attempt has open is reset and the attempt fails with a
+`java.util.concurrent.TimeoutException` with a constant message; a prebuilt pipeline's own timeout concern, when it has one, turns that into its own
 `ResilienceTimeoutException`. A request sent straight through `webClient()` is one attempt bounded by the client's `readTimeout` in the same way, resetting just that exchange. A request still waiting for a pooled connection when the attempt ends sends
 nothing once the connection frees.
 
 ### Resilience
 
-A call runs in one pipeline execution: the options' prebuilt pipeline, else the options' or the client's named
-policy (`resilience.policies.<name>`), else a single attempt. The client builds a policy's pipeline once per policy,
-without the policy's timeout concern, because its own attempt timer is the only timer. Each attempt calls the
+A call runs in one pipeline execution: the options' prebuilt pipeline, else a single attempt. The client builds
+no pipeline and ships no retry or breaker classification: build the pipeline with `Resilience` and name its
+`retryOn`, `abortOn` and breaker classifier yourself. Each attempt calls the
 function again with a new scoped `WebClient`, so requests, bodies and decoding are rebuilt every time.
 
-The default retry classification of a policy's pipeline applies when the policy names no `retryOn`: every method
-retries a connection failure before anything was written (`ConnectException`, `UnknownHostException`,
-`NoRouteToHostException`, `SSLHandshakeException`) and a `HttpStatusRejectedException` with status 429 or 503; only an
-attempt whose every exchange used GET, HEAD, OPTIONS, TRACE, PUT or DELETE retries a 502, a 504, the attempt timeout, an
-`HttpClosedException` and a stream reset. A policy's `retryOn` and `abortOn` replace this, except that a cancelled
-call, a closed client, a refusal before the first request was written (a failed credential source, an egress denial
-on the first hop, an invalid request header, a refused request body) are never retried; the default classification
-also declines a refusal on a redirect hop. `Retry-After` is honored only when the policy sets `retry.retryAfterMaxMs` above 0.
+A cancelled call, a closed client and a refusal before the first request was written (a failed credential source,
+an egress denial on the first hop, an invalid request header, a refused request body) are never retried, whatever the
+pipeline says. A refusal on a redirect hop comes after a request was sent and is an ordinary attempt failure that the
+pipeline classifies. `Retry-After` is honored when the pipeline sets `retry.retryAfterMaxMs` above 0.
 
 Callers always see the original failure. A refusal before the first request was written ends the execution without
 retry and the breaker treats it like a cancelled one: it re-opens a half-open breaker and, like any success, resets the
-failure count of a closed one. The circuit breaker counts every failure that reaches it except a 4xx
-`HttpStatusRejectedException` other than 429, `HttpBodyLimitException` and a refusal on a redirect hop, which are
-recorded as successes. Cancelling a call or closing the client ends the execution at once with
+failure count of a closed one. Cancelling a call or closing the client ends the execution at once with
 `HttpExchangeCancelledException` or `HttpClientClosedException`, whatever `retryOn` says, and starts no further
-attempt. The policy's pipelines are owned by the client and closed with it.
+attempt.
 
 `CancellationSignal.create()` makes a signal; `cancel()` works from any thread and repeating it does
 nothing. Cancelling resets the open exchanges of every call bound to the signal that has not settled
@@ -365,9 +350,8 @@ HttpClient client = HttpClientBuilder.create(vertx)
 
 ### HttpClientConfigurationException
 
-Extends `ConfigurationException`. Thrown by `build()` for an invalid name, base URL, read timeout,
-negative body bound, default header or credential origin, when a configured client names a resilience policy that is
-not defined, and when a policy is named but the client has no resilience runtime.
+Extends `ConfigurationException`. Thrown for an invalid name, base URL, read timeout, negative body bound or default
+header, by the setter that takes the value or by `build()`; for a configured value the message names the key path.
 
 ### HttpExpectations
 
@@ -393,16 +377,14 @@ header value, body text or cause message.
 | Type | Extends | Thrown when | Extra accessors |
 | --- | --- | --- | --- |
 | `HttpClientTechnicalException` (abstract) | `TechnicalException` | Root of the technical failures | none |
-| `HttpClientUnavailableException` (abstract) | `UnavailableException` | Root of the failures that mean the client cannot serve the call | none |
-| `HttpClientValidationException` (abstract) | `ValidationException` | Root of the requests the client's policy refuses | none |
 | `HttpClientConfigurationException` | `ConfigurationException` | A builder or configuration setting is invalid | none |
-| `HttpEgressDeniedException` | `HttpClientValidationException` | The egress rules refused a target | `reason()`: `Reason` (`NO_HOST`, `USER_INFO`, `SCHEME`, `HOST`, `CONNECT_ADDRESS`, `VIRTUAL_HOST`, `PROXY`, `PLAIN_HTTP_CREDENTIALS`) |
+| `HttpEgressDeniedException` | `ValidationException` (core) | The egress rules refused a target | `reason()`: `Reason` (`NO_HOST`, `USER_INFO`, `SCHEME`, `HOST`, `CONNECT_ADDRESS`, `VIRTUAL_HOST`, `PROXY`, `PLAIN_HTTP_CREDENTIALS`) |
 | `HttpCredentialException` | `HttpClientTechnicalException` | The credential source failed or returned an invalid value | `causeType()`; `getCause()` is always null |
 | `HttpBodyLimitException` | `HttpClientTechnicalException` | A byte bound was exceeded | `direction()`: `Direction` (`REQUEST`, `RESPONSE`, `EVENT`); `limitBytes()` |
-| `HttpStatusRejectedException` | `HttpClientTechnicalException` | A status check refused the response | `statusCode()`, `headers()` (read-only, no `Set-Cookie`), `retryAfter()`, `bodyExcerpt()` (at most 2048 bytes) |
+| `HttpStatusRejectedException` | `HttpClientTechnicalException` | A status check refused the response | `statusCode()`, `headers()` (a fresh copy on each call, no `Set-Cookie`), `retryAfter()`, `bodyExcerpt()` (at most 2048 bytes) |
 | `SseProtocolException` | `HttpClientTechnicalException` | Events were requested from a head that is not `text/event-stream` | `contentType()` (media type only) |
 | `HttpExchangeCancelledException` | `HttpClientTechnicalException` | The call was cancelled | none |
-| `HttpClientClosedException` | `HttpClientUnavailableException` | The client was closed before or during the call | none |
+| `HttpClientClosedException` | `UnavailableException` (core) | The client was closed before or during the call | none |
 
 `HttpStatusRejectedException` implements `RetryDelayHint`: `retryAfter()` is the `Retry-After` header
 as delta-seconds or an HTTP-date, zero for a past date, empty when absent or unparseable, and capped
@@ -439,9 +421,10 @@ package-private.
 Named clients are configured under `httpClient.{name}.*`; `{name}` matches `[A-Za-z0-9._~-]{1,128}`. The
 section is read at startup through the framework configuration parser. A key that is not set keeps the builder's
 value, and below it the default: external configuration wins over builder setters over defaults. An unknown key,
-a value of the wrong type or outside its bounds, a raw Vert.x duration name and a rejected default header fail
-startup with an `HttpClientConfigurationException` whose constant message names the key path
-`httpClient.<name>.<key>` and never shows the value.
+a value of the wrong type or outside its bounds, a raw Vert.x duration name fail startup with an
+`HttpClientConfigurationException` whose constant message names the key path `httpClient.<name>.<key>` and never
+shows the value. A base URL, default header or `egress.allowHosts` the builder rejects fails the same way when the
+client is built.
 
 | Key | Type | Default | Rule |
 |---|---|---|---|
@@ -449,12 +432,10 @@ startup with an `HttpClientConfigurationException` whose constant message names 
 | `readTimeoutMs` | long | 30000 | Attempt timeout in milliseconds, above 0 |
 | `pool.http1MaxSize`, `pool.http2MaxSize`, `pool.maxWaitQueueSize`, `pool.eventLoopSize`, `pool.cleanerPeriodMs`, `pool.maxLifetimeSeconds` | int | Vert.x defaults | `http1MaxSize` and `http2MaxSize` at least 1; `eventLoopSize` and `maxLifetimeSeconds` not negative; the other two passed to Vert.x unchecked |
 | `webClient` | object | `{}` | Vert.x `WebClientOptions` pass-through, see below |
-| `resiliencePolicy` | string | none | A `resilience.policies.<tier>` name; an undefined tier fails startup |
 | `defaultHeaders` | object of string | `{}` | Rejects CR, LF, NUL and the names `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Upgrade` and `TE`; rendered as `***` in logs |
 | `egress.allowHosts` | string list | absent: every host | Exact host, `*.suffix` or `*`; an empty list is rejected |
 | `egress.allowPlainHttp` | boolean | `false` | Read only together with `egress.allowHosts` |
 | `allowCredentialsOverPlainHttp` | boolean | `false` | As `allowCredentialsOverPlainHttp(...)` |
-| `credentialOrigins` | string list | the base URL's origin | `scheme://host[:port]` entries; an empty list is rejected |
 | `maxRequestBytes` | long | 0 (no bound) | At least 0 |
 | `maxResponseBytes` | long | 10485760 | At least 0, 0 for no bound |
 | `maxEventBytes` | int | 1048576 | Above 0; the most raw bytes of one server-sent event read through `events()`; wins over `maxEventBytes(...)` |
@@ -486,16 +467,12 @@ that provides `Vertx` and the `@VertxConfig JsonObject`. It includes the resilie
 - `Set<HttpClientInterceptor>`, empty by default: contribute global interceptors with
   `@Provides @IntoSet HttpClientInterceptor`. They are seeded into every client and builder of the factory
   and run in `OrderedExtension` order with the ones a builder registers.
-- the parsed `httpClient` index, and a startup validator that fails startup with
-  `httpClient.<name>.resiliencePolicy` when a client names a `resilience.policies` tier that is not defined.
+- the parsed `httpClient` index.
 - the shutdown step that closes the factory's clients.
-
-When the graph provides the `resilience.policies` registry (`ResiliencePoliciesModule`), the factory hands it to
-every client; without it no tier is defined.
 
 ## Lifecycle
 
-`close()` on a client fails running calls and open streams with `HttpClientClosedException`, closes the policy pipelines and the
+`close()` on a client fails running calls and open streams with `HttpClientClosedException`, closes the
 agent, and returns the same future when repeated. Clients built by the factory, and by builders it hands out,
 close when the application stops, in the `INFRA` shutdown phase; calling `client(name)` or `builder(name)`
 afterwards fails with `HttpClientClosedException`.

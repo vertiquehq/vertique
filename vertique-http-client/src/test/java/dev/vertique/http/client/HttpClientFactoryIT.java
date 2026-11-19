@@ -316,7 +316,6 @@ class HttpClientFactoryIT {
 
         // When the client is built on the framework's base options
         HttpClientBuilder onFrameworkBase = app.factory().builder("merge");
-        support.track(onFrameworkBase::close);
         HttpClient noRedirects = onFrameworkBase.build();
         HttpResponse<Buffer> notFollowed =
                 await(noRedirects.execute(web -> web.get("/r1").send()));
@@ -327,7 +326,6 @@ class HttpClientFactoryIT {
 
         // When the Java builder replaced the base with followRedirects true
         HttpClientBuilder onReplacedBase = app.factory().builder("merge");
-        support.track(onReplacedBase::close);
         HttpClient oneHop = onReplacedBase
                 .webClientOptions(new WebClientOptions().setFollowRedirects(true))
                 .build();
@@ -373,7 +371,6 @@ class HttpClientFactoryIT {
 
         // When a client is built on a Java base with trust options (host verification off for 127.0.0.1)
         HttpClientBuilder trustedBuilder = app.factory().builder("trusted");
-        support.track(trustedBuilder::close);
         HttpClient trusted = trustedBuilder
                 .webClientOptions(new WebClientOptions()
                         .setVerifyHost(false)
@@ -386,7 +383,6 @@ class HttpClientFactoryIT {
 
         // When a client is built on a Java base with proxy options
         HttpClientBuilder proxiedBuilder = app.factory().builder("proxied");
-        support.track(proxiedBuilder::close);
         HttpClient proxied = proxiedBuilder
                 .webClientOptions(new WebClientOptions()
                         .setProxyOptions(new ProxyOptions()
@@ -415,7 +411,6 @@ class HttpClientFactoryIT {
         CountingInterceptor recorder = new CountingInterceptor("rec");
         HttpClientBuilder builder =
                 HttpClientBuilder.create(support.vertx).baseUrl(server.origin()).register(recorder);
-        support.track(builder::close);
         HttpClient client = builder.build();
         support.track(client::close);
 
@@ -463,7 +458,6 @@ class HttpClientFactoryIT {
         CountingInterceptor directRecorder = new CountingInterceptor("direct");
         HttpClientBuilder directBuilder =
                 HttpClientBuilder.create(support.vertx).baseUrl(direct.origin()).register(directRecorder);
-        support.track(directBuilder::close);
         HttpClient directClient = directBuilder.build();
         support.track(directClient::close);
         Future<HttpResponse<Buffer>> inFlight =
@@ -487,46 +481,19 @@ class HttpClientFactoryIT {
 
     /** FR-020. */
     @Test
-    @DisplayName("the Dagger graph provides the factory, the global interceptor set and the startup validator")
-    void daggerGraphProvidesTheFactoryWithGlobalInterceptorsAndStartupValidator() {
-        // Given a graph with a global interceptor, a configured client and the resilience.policies tier "fast"
-        AtomicInteger seen = new AtomicInteger();
-        RecordingServer server = support.server((request, body) -> {
-            if (seen.incrementAndGet() % 2 == 1) {
-                request.response().setStatusCode(503).end();
-            } else {
-                request.response().end("ok");
-            }
-        });
+    @DisplayName("the Dagger graph provides the factory, the global interceptor set and the shutdown step")
+    void daggerGraphProvidesTheFactoryWithGlobalInterceptorsAndShutdownStep() {
+        // Given a graph with a global interceptor and a configured client
+        RecordingServer server =
+                support.server((request, body) -> request.response().end("ok"));
         CountingInterceptor global = new CountingInterceptor("global");
-        JsonObject config = section(new JsonObject()
-                        .put("plain", new JsonObject().put("baseUrl", server.origin()))
-                        .put(
-                                "dflt",
-                                new JsonObject().put("baseUrl", server.origin()).put("resiliencePolicy", "fast")))
-                .put(
-                        "resilience",
-                        new JsonObject()
-                                .put(
-                                        "policies",
-                                        new JsonObject()
-                                                .put(
-                                                        "fast",
-                                                        new JsonObject()
-                                                                .put(
-                                                                        "retry",
-                                                                        new JsonObject()
-                                                                                .put("maxRetries", 1)
-                                                                                .put("delayMs", 10)))));
+        JsonObject config = section(new JsonObject().put("plain", new JsonObject().put("baseUrl", server.origin())));
         AppComponent app = tracked(component(config, global));
 
         // Then the graph provides the factory as a singleton and the global interceptor set
         HttpClientFactory factory = app.factory();
         assertThat(factory).isNotNull().isSameAs(app.factory());
         assertThat(app.globalInterceptors()).containsExactly(global);
-
-        // And the startup validators materialize without failure for a valid configuration
-        assertThat(app.composeValidators()).isNotEmpty();
 
         // And the application stop is contributed as a shutdown step
         assertThat(app.shutdownSteps()).isNotEmpty();
@@ -539,69 +506,27 @@ class HttpClientFactoryIT {
         int afterPlain = global.completed.get();
 
         // And so is a builder from the factory
-        HttpClientBuilder builder = factory.builder("plain");
-        support.track(builder::close);
-        HttpClient built = builder.build();
+        HttpClient built = factory.builder("plain").build();
         await(built.execute(web -> web.get("/hello").send()));
         assertThat(awaitCondition(() -> global.completed.get() > afterPlain, HttpClientItSupport.WAIT_MS))
                 .isTrue();
-
-        // And the factory supplies the resilience.policies registry: a call naming the tier "fast" retries a 503
-        int before = server.requests.size();
-        String body = await(plain.execute(CallOptions.defaults().resiliencePolicy("fast"), web -> web.get("/tiered")
-                .send()
-                .expecting(HttpExpectations.success())
-                .map(HttpResponse::bodyAsString)));
-        assertThat(body).isEqualTo("ok");
-        assertThat(server.requests.size() - before).isEqualTo(2);
-
-        // And so does the client's own resiliencePolicy key, with no policy named on the call
-        HttpClient tiered = factory.client("dflt");
-        int beforeDefault = server.requests.size();
-        String viaDefault = await(tiered.execute(web ->
-                web.get("/tiered").send().expecting(HttpExpectations.success()).map(HttpResponse::bodyAsString)));
-        assertThat(viaDefault).isEqualTo("ok");
-        assertThat(server.requests.size() - beforeDefault).isEqualTo(2);
-
-        // And a call naming a tier that is not defined fails
-        assertThat(awaitFailure(plain.execute(CallOptions.defaults().resiliencePolicy("nope"), web -> web.get("/x")
-                        .send())))
-                .isNotNull();
     }
 
-    /** AC-050: the startup validator rejects what only the graph can know. */
+    /** AC-050: the startup validator rejects a configured value the builder rejects, without the value. */
     @Test
-    @DisplayName("startup fails for a resiliencePolicy that names an unknown tier, without the tier name")
-    void startupFailsForAnUnknownResilienceTier() {
-        // Given a client whose resiliencePolicy names a tier that resilience.policies does not define
-        JsonObject config = section(new JsonObject()
-                        .put(
-                                "a",
-                                new JsonObject()
-                                        .put("baseUrl", "http://127.0.0.1:1")
-                                        .put("resiliencePolicy", "zz-nope-tier")))
-                .put(
-                        "resilience",
-                        new JsonObject()
-                                .put(
-                                        "policies",
-                                        new JsonObject()
-                                                .put(
-                                                        "fast",
-                                                        new JsonObject()
-                                                                .put(
-                                                                        "retry",
-                                                                        new JsonObject()
-                                                                                .put("maxRetries", 1)
-                                                                                .put("delayMs", 10)))));
+    @DisplayName("AC-050: startup fails for a bad baseUrl, naming the key path and not the value")
+    void startupFailsForABadBaseUrl() {
+        // Given a client whose baseUrl is not acceptable
+        JsonObject config = section(
+                new JsonObject().put("x", new JsonObject().put("baseUrl", "ftp://zz-bad-host-81.example/zz-path")));
         AppComponent app = tracked(component(config, new CountingInterceptor("g")));
 
         // When the startup validators are materialized
-        // Then startup fails with a constant message naming the key path and not the tier
+        // Then startup fails with a constant message naming the key path and not the value
         assertThatThrownBy(app::composeValidators)
                 .isInstanceOf(HttpClientConfigurationException.class)
-                .hasMessageContaining("httpClient.a.resiliencePolicy")
-                .satisfies(e -> assertThat(e.toString()).doesNotContain("zz-nope-tier"));
+                .hasMessageContaining("httpClient.x.baseUrl")
+                .satisfies(e -> assertThat(e.toString()).doesNotContain("zz-bad-host-81"));
     }
 
     // --- TP-008 ---
@@ -610,7 +535,8 @@ class HttpClientFactoryIT {
     @Test
     @DisplayName("application shutdown closes every factory client")
     void applicationShutdownClosesEveryFactoryClient() {
-        // Given two factory clients with a call in flight each, and a third that is idle
+        // Given two factory clients with a call in flight each, a third that is idle and one built through
+        // factory.builder(name)
         RecordingServer server = support.server((request, body) -> {});
         JsonObject config = section(new JsonObject()
                 .put("a", new JsonObject().put("baseUrl", server.origin()))
@@ -621,6 +547,7 @@ class HttpClientFactoryIT {
         HttpClient a = factory.client("a");
         HttpClient b = factory.client("b");
         HttpClient c = factory.client("c");
+        HttpClient d = factory.builder("d").baseUrl(server.origin()).build();
         Future<HttpResponse<Buffer>> inA = a.execute(web -> web.get("/never").send());
         Future<HttpResponse<Buffer>> inB = b.execute(web -> web.get("/never").send());
         assertThat(awaitCondition(() -> server.requestsTo("/never").size() == 2, HttpClientItSupport.WAIT_MS))
@@ -633,8 +560,9 @@ class HttpClientFactoryIT {
         assertThat(awaitFailure(inA)).isExactlyInstanceOf(HttpClientClosedException.class);
         assertThat(awaitFailure(inB)).isExactlyInstanceOf(HttpClientClosedException.class);
 
-        // And every factory client, including the idle one, refuses new calls
-        for (HttpClient client : List.of(a, b, c)) {
+        // And every factory client, including the idle one and the one built through factory.builder(name), refuses new
+        // calls
+        for (HttpClient client : List.of(a, b, c, d)) {
             assertThat(awaitFailure(client.execute(web -> web.get("/after").send())))
                     .isExactlyInstanceOf(HttpClientClosedException.class);
         }

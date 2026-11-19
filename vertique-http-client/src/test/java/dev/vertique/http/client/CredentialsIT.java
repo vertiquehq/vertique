@@ -168,7 +168,6 @@ class CredentialsIT {
     }
 
     private HttpClient build(HttpClientBuilder builder) {
-        support.track(builder::close);
         HttpClient client = builder.build();
         support.track(client::close);
         return client;
@@ -620,91 +619,6 @@ class CredentialsIT {
         assertThat(a.requestsTo("/plain").get(0).headers().getAll("Authorization"))
                 .containsExactly(BEARER);
         assertThat(source.targetStrings()).containsExactly(a.origin() + "/go", a.origin() + "/plain");
-    }
-
-    /** AC-087. */
-    @Test
-    @DisplayName("credential origins widen explicitly and the default is the base URL origin only")
-    void credentialOriginsWidenExplicitlyAndTheDefaultIsTheBaseUrlOriginOnly() {
-        // Given servers A and C on 127.0.0.1 (two ports) and B on localhost, allowAll, and two clients with
-        // A's origin as base URL: one with credentialOrigins for A and B, one without
-        RecordingServer a = support.server((request, body) -> answer(request, 200, "a"));
-        RecordingServer b = support.server((request, body) -> answer(request, 200, "b"));
-        RecordingServer c = support.server((request, body) -> answer(request, 200, "c"));
-        RecordingSource widenedSource = RecordingSource.bearer();
-        RecordingSource defaultSource = RecordingSource.bearer();
-        WebClient widened = build(builder(widenedSource)
-                        .egress(EgressPolicy.allowAll())
-                        .baseUrl(a.origin())
-                        .credentialOrigins(List.of(a.origin(), localhostOrigin(b))))
-                .webClient();
-        WebClient narrow = build(
-                        builder(defaultSource).egress(EgressPolicy.allowAll()).baseUrl(a.origin()))
-                .webClient();
-
-        // When the caller sends getAbs to A, to B and to C through each client
-        for (WebClient web : List.of(widened, narrow)) {
-            assertThat(status(web.getAbs(a.origin() + "/p").send())).isEqualTo(200);
-            assertThat(status(web.getAbs(localhostOrigin(b) + "/p").send())).isEqualTo(200);
-            assertThat(status(web.getAbs(c.origin() + "/p").send())).isEqualTo(200);
-        }
-
-        // Then the widened client sent the credential to A and to B and none to C, and resolved for those two
-        // (each server saw one request from each client, widened first)
-        assertThat(a.requests.get(0).headers().getAll("Authorization")).containsExactly(BEARER);
-        assertThat(b.requests.get(0).headers().getAll("Authorization")).containsExactly(BEARER);
-        assertThat(c.requests.get(0).headers().contains("Authorization")).isFalse();
-        assertThat(widenedSource.targetStrings()).containsExactly(a.origin() + "/p", localhostOrigin(b) + "/p");
-
-        // And the default client sent it to A only and resolved once, for A
-        assertThat(a.requests.get(1).headers().getAll("Authorization")).containsExactly(BEARER);
-        assertThat(b.requests.get(1).headers().contains("Authorization")).isFalse();
-        assertThat(c.requests.get(1).headers().contains("Authorization")).isFalse();
-        assertThat(defaultSource.targetStrings()).containsExactly(a.origin() + "/p");
-
-        // Given a redirect-following client with base URL A, listing only B as a credential origin, a
-        // server A redirecting /start to B's /landing and /viaC to C's /hop, and C redirecting to B's /landing
-        RecordingSource listedSource = RecordingSource.bearer();
-        RecordingServer b2 = support.server((request, body) -> answer(request, 200, "b"));
-        RecordingServer c2 =
-                support.server((request, body) -> redirect(request, 302, localhostOrigin(b2) + "/landing"));
-        RecordingServer a2 = support.server((request, body) -> {
-            switch (request.path()) {
-                case "/start" -> redirect(request, 302, localhostOrigin(b2) + "/landing");
-                default -> redirect(request, 302, c2.origin() + "/hop");
-            }
-        });
-        WebClient following = build(builder(listedSource)
-                        .egress(EgressPolicy.allowAll())
-                        .baseUrl(a2.origin())
-                        .credentialOrigins(List.of(localhostOrigin(b2)))
-                        .webClientOptions(
-                                new WebClientOptions().setFollowRedirects(true).setMaxRedirects(5)))
-                .webClient();
-        String landingOnB = localhostOrigin(b2) + "/landing";
-
-        // When the caller sends GET /start, which redirects from A to the listed origin B
-        assertThat(status(following.get("/start").send())).isEqualTo(200);
-
-        // Then B's /landing received the credential and the source was resolved for B's URI
-        assertThat(b2.requestsTo("/landing")).hasSize(1);
-        assertThat(b2.requestsTo("/landing").get(0).headers().getAll("Authorization"))
-                .containsExactly(BEARER);
-        assertThat(listedSource.targetStrings()).contains(landingOnB);
-
-        // And when the caller sends GET /viaC, a chain A -> C (unlisted) -> B
-        int resolvedBefore = listedSource.targets.size();
-        assertThat(status(following.get("/viaC").send())).isEqualTo(200);
-
-        // Then neither C nor B afterwards received the credential, and the source was not resolved for them
-        assertThat(c2.requestsTo("/hop")).hasSize(1);
-        assertThat(c2.requestsTo("/hop").get(0).headers().contains("Authorization"))
-                .isFalse();
-        assertThat(b2.requestsTo("/landing")).hasSize(2);
-        assertThat(b2.requestsTo("/landing").get(1).headers().contains("Authorization"))
-                .isFalse();
-        assertThat(listedSource.targetStrings().subList(resolvedBefore, listedSource.targets.size()))
-                .doesNotContain(c2.origin() + "/hop", landingOnB);
     }
 
     /** Supporting proof of origin tracking. */

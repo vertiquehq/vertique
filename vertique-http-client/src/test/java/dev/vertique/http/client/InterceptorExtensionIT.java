@@ -273,7 +273,6 @@ class InterceptorExtensionIT {
     }
 
     private HttpClient build(HttpClientBuilder builder) {
-        support.track(builder::close);
         HttpClient client = builder.build();
         support.track(client::close);
         return client;

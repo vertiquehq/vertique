@@ -7,7 +7,6 @@ import static dev.vertique.http.client.HttpClientItSupport.await;
 import static dev.vertique.http.client.HttpClientItSupport.awaitCondition;
 import static dev.vertique.http.client.HttpClientItSupport.awaitFailure;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dev.vertique.http.client.HttpClientItSupport.RecordingServer;
 import dev.vertique.http.client.exception.HttpClientTechnicalException;
@@ -86,7 +85,6 @@ class StatusExpectationIT {
 
     private HttpClient client(String baseUrl, PoolOptions pool) {
         HttpClientBuilder builder = HttpClientBuilder.create(support.vertx);
-        support.track(builder::close);
         if (baseUrl != null) {
             builder.baseUrl(baseUrl);
         }
@@ -147,15 +145,15 @@ class StatusExpectationIT {
         Throwable failure = awaitFailure(client.execute(web ->
                 web.get("/limited").send().expecting(HttpExpectations.success()).map(HttpResponse::statusCode)));
 
-        // Then it fails with a status rejection carrying 429, the headers, Retry-After and a read-only excerpt
+        // Then it fails with a status rejection carrying 429, the headers, Retry-After and an excerpt
         assertThat(failure).isInstanceOf(HttpStatusRejectedException.class).isInstanceOf(RetryDelayHint.class);
         HttpStatusRejectedException rejected = (HttpStatusRejectedException) failure;
         assertThat(rejected.statusCode()).isEqualTo(429);
         assertThat(rejected.retryAfter()).isEqualTo(Optional.of(Duration.ofSeconds(7)));
         assertThat(rejected.headers().get("X-Req")).isEqualTo("r1");
         assertThat(rejected.headers().getAll("Set-Cookie")).isEmpty();
-        assertThatThrownBy(() -> rejected.headers().add("X-New", "v"))
-                .isInstanceOf(UnsupportedOperationException.class);
+        rejected.headers().add("X-New", "v");
+        assertThat(rejected.headers().contains("X-New")).isFalse();
         assertThat(rejected.bodyExcerpt()).isPresent();
         Buffer excerpt = rejected.bodyExcerpt().orElseThrow();
         assertThat(excerpt.length()).isEqualTo(2048);

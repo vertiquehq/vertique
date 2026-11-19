@@ -5,6 +5,7 @@ package dev.vertique.http.client;
 
 import dev.vertique.http.client.exception.HttpExchangeCancelledException;
 import dev.vertique.resilience.ResilienceCancellation;
+import dev.vertique.resilience.ResiliencePipeline;
 import dev.vertique.resilience.exception.ResilienceTimeoutException;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Context;
@@ -13,8 +14,6 @@ import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.ext.web.client.WebClient;
 import jakarta.annotation.Nullable;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
@@ -41,15 +40,13 @@ final class CallExecution<T> implements CancellationSignal.Registration {
     private final @Nullable CancellationSignal signal;
     private final long timeoutMs;
     private final HttpClientInterceptors interceptors;
-    private final ClientResilience.Selection selection;
-    private final ClientResilience resilience;
+    private final @Nullable ResiliencePipeline pipeline;
     private final Function<AttemptScope, WebClient> webClients;
     private final Consumer<CallExecution<?>> onSettled;
     private final String callId = UUID.randomUUID().toString();
     private final Promise<T> promise = Promise.promise();
     private final AtomicReference<Throwable> cancelReason = new AtomicReference<>();
     private final @Nullable ResilienceCancellation cancellation;
-    private final List<Throwable> refusedTimeouts = new ArrayList<>();
     private Function<WebClient, Future<T>> attemptFunction;
     private Attempt current;
     private int ordinal;
@@ -61,8 +58,7 @@ final class CallExecution<T> implements CancellationSignal.Registration {
             @Nullable CancellationSignal signal,
             long timeoutMs,
             HttpClientInterceptors interceptors,
-            ClientResilience.Selection selection,
-            ClientResilience resilience,
+            @Nullable ResiliencePipeline pipeline,
             Function<AttemptScope, WebClient> webClients,
             Consumer<CallExecution<?>> onSettled) {
         this.vertx = vertx;
@@ -70,11 +66,10 @@ final class CallExecution<T> implements CancellationSignal.Registration {
         this.signal = signal;
         this.timeoutMs = timeoutMs;
         this.interceptors = interceptors;
-        this.selection = selection;
-        this.resilience = resilience;
+        this.pipeline = pipeline;
         this.webClients = webClients;
         this.onSettled = onSettled;
-        this.cancellation = selection.pipeline() == null ? null : ResilienceCancellation.create();
+        this.cancellation = pipeline == null ? null : ResilienceCancellation.create();
     }
 
     /**
@@ -100,9 +95,7 @@ final class CallExecution<T> implements CancellationSignal.Registration {
         }
         Future<T> result;
         try {
-            result = selection.pipeline() == null
-                    ? beginAttempt()
-                    : selection.pipeline().execute(this::supplier, cancellation);
+            result = pipeline == null ? beginAttempt() : pipeline.execute(this::supplier, cancellation);
         } catch (RuntimeException failure) {
             result = Future.failedFuture(failure);
         }
@@ -162,14 +155,14 @@ final class CallExecution<T> implements CancellationSignal.Registration {
         if (current != null) {
             current.abandon(reason);
         }
-        if (selection.pipeline() == null) {
+        if (pipeline == null) {
             settle(Future.failedFuture(reason));
         }
     }
 
     /**
-     * Ends the call with {@code outcome}: leaves the signal, ends the attempt that is still running,
-     * forgets the timeouts it refused retry for and only then completes the caller's future with the
+     * Ends the call with {@code outcome}: leaves the signal, ends the attempt that is still running
+     * and only then completes the caller's future with the
      * original failure. Later endings do nothing.
      */
     private void settle(AsyncResult<T> outcome) {
@@ -188,10 +181,9 @@ final class CallExecution<T> implements CancellationSignal.Registration {
         if (current != null) {
             current.abandon(failure instanceof ResilienceTimeoutException ? new TimeoutException(TIMED_OUT) : failure);
         }
-        resilience.forget(refusedTimeouts);
         onSettled.accept(this);
         if (failure != null) {
-            promise.fail(NonRetryableFailure.unwrap(failure));
+            promise.fail(failure);
         } else {
             promise.complete(outcome.result());
         }
@@ -212,7 +204,6 @@ final class CallExecution<T> implements CancellationSignal.Registration {
         private final Promise<T> promise = Promise.promise();
         private long timerId = -1;
         private boolean done;
-        private Throwable timeoutFailure;
 
         private Attempt(int ordinal) {
             this.scope = new AttemptScope(interceptors, callId, ordinal);
@@ -241,10 +232,7 @@ final class CallExecution<T> implements CancellationSignal.Registration {
             if (done) {
                 return;
             }
-            timeoutFailure = selection.fromPolicy()
-                    ? new ResilienceTimeoutException(selection.pipeline().operationKey(), timeoutMs)
-                    : new TimeoutException(TIMED_OUT);
-            finish(Future.failedFuture(timeoutFailure));
+            finish(Future.failedFuture(new TimeoutException(TIMED_OUT)));
         }
 
         /** The attempt's future settled, or its timer fired: ends the attempt's scope, then its future. */
@@ -269,31 +257,15 @@ final class CallExecution<T> implements CancellationSignal.Registration {
         }
 
         /**
-         * Applies the client's classification to a failure of a policy pipeline: a refusal before the first
-         * hop's request was written ends the execution through its cancellation; any failure is made
-         * unrepeatable once a non-idempotent exchange wrote its request and was answered other than 429 or 503
-         * or failed after writing, and a failure only an idempotent attempt may repeat is made unrepeatable
-         * when the attempt had a non-idempotent exchange.
+         * Applies the client's one classification to a failure of a pipeline execution: a refusal before the
+         * first hop's request was written ends the execution through its cancellation, so no pipeline
+         * retries it.
          */
         private Throwable classified(Throwable failure) {
-            if (!selection.fromPolicy()) {
-                return failure;
-            }
-            if (scope.wasRefusedBeforeSend(failure)) {
+            if (pipeline != null && scope.wasRefusedBeforeSend(failure)) {
                 cancellation.cancel(failure);
-                return failure;
             }
-            if (!selection.guarded() || !scope.hasNonIdempotentExchange()) {
-                return failure;
-            }
-            if (failure == timeoutFailure) {
-                resilience.refuseRetry(failure);
-                refusedTimeouts.add(failure);
-                return failure;
-            }
-            return scope.hasSettledNonIdempotentWrite() || ClientResilience.isIdempotentOnly(failure)
-                    ? new NonRetryableFailure(failure)
-                    : failure;
+            return failure;
         }
 
         /** Ends an attempt that no longer matters: resets what is open and stops accepting requests. */

@@ -38,8 +38,7 @@ import java.util.function.Consumer;
  * exchange. A scope that belongs to one attempt of a call defers the notification of an exchange that
  * completed with a response until the attempt ends, because only then is a status expectation the
  * attempt applied known; every other ending is notified when it happens. The scope also remembers the
- * methods of its exchanges and the failures that were refused before a request was written, which the
- * client's resilience classification reads.
+ * failures that were refused before a request was written, which a call's pipeline execution reads.
  */
 final class AttemptScope {
 
@@ -52,9 +51,6 @@ final class AttemptScope {
     private final @Nullable String callId;
     private final int attemptOrdinal;
     private final Set<Throwable> refusedBeforeSend = Collections.newSetFromMap(new IdentityHashMap<>());
-    private boolean nonIdempotent;
-    private boolean wroteNonIdempotent;
-    private int unansweredWrites;
     private boolean closedByClient;
     private @Nullable Throwable endReason;
     private boolean requestCreated;
@@ -108,33 +104,6 @@ final class AttemptScope {
         return ended;
     }
 
-    /** Records the method of an exchange of this scope. */
-    synchronized void noteMethod(String method) {
-        if (!isIdempotent(method)) {
-            nonIdempotent = true;
-        }
-    }
-
-    /**
-     * Records that a non-idempotent exchange of this scope wrote its request and then received a response
-     * other than 429 or 503, or failed after writing it.
-     */
-    private synchronized void settledAfterWriting() {
-        wroteNonIdempotent = true;
-    }
-
-    /**
-     * Whether a non-idempotent exchange of this scope wrote its request and then received a response other
-     * than 429 or 503, or failed after writing it: repeating the attempt would repeat that request.
-     */
-    synchronized boolean hasSettledNonIdempotentWrite() {
-        return wroteNonIdempotent || unansweredWrites > 0;
-    }
-
-    private synchronized void unansweredWrites(int delta) {
-        unansweredWrites += delta;
-    }
-
     /** The failure the scope ended with: the call's failure (cancel, timeout, close), or {@code null}. */
     @Nullable
     synchronized Throwable endReason() {
@@ -156,18 +125,6 @@ final class AttemptScope {
             return null;
         }
         return endReason instanceof TimeoutException ? endReason : new TimeoutException(CallExecution.TIMED_OUT);
-    }
-
-    /** Whether some exchange of this scope used a method that is not idempotent. */
-    synchronized boolean hasNonIdempotentExchange() {
-        return nonIdempotent;
-    }
-
-    static boolean isIdempotent(String method) {
-        return switch (method) {
-            case "GET", "HEAD", "OPTIONS", "TRACE", "PUT", "DELETE" -> true;
-            default -> false;
-        };
     }
 
     /**
@@ -293,9 +250,6 @@ final class AttemptScope {
         private volatile HttpClientResponse response;
         private final AtomicInteger hops = new AtomicInteger();
         private final AtomicInteger created = new AtomicInteger();
-        private volatile int status;
-        private volatile boolean nonIdempotent;
-        private volatile boolean unanswered;
         private volatile boolean expired;
         private volatile boolean done;
         private volatile Runnable onFinish;
@@ -318,27 +272,9 @@ final class AttemptScope {
             snapshot = request;
         }
 
-        /** Records the method of the exchange's request. */
-        void method(String method) {
-            nonIdempotent = !isIdempotent(method);
-            scope.noteMethod(method);
-        }
-
         /** Records that Vert.x creates a request for a hop: the first hop, or a followed redirect. */
         void hopCreated() {
-            // a followed redirect means the previous hop was answered with a redirect status
-            if (created.get() > 0 && nonIdempotent) {
-                scope.settledAfterWriting();
-            }
             created.incrementAndGet();
-        }
-
-        /** Counts the exchange as a written non-idempotent request still waiting for its answer, or not. */
-        private void writtenUnanswered(boolean pending) {
-            if (nonIdempotent && pending != unanswered) {
-                unanswered = pending;
-                scope.unansweredWrites(pending ? 1 : -1);
-            }
         }
 
         /** Records the hop the exchange currently goes to. */
@@ -359,11 +295,9 @@ final class AttemptScope {
          */
         boolean attach(HttpClientRequest sent) {
             request = sent;
-            writtenUnanswered(true);
             hops.incrementAndGet();
             scope.requestCreated();
             head = null; // a followed redirect starts a new hop
-            status = 0;
             response = null; // a followed redirect reuses the exchange: never reset an earlier hop's response
             return !expired && !scope.hasEnded();
         }
@@ -376,7 +310,6 @@ final class AttemptScope {
          */
         boolean attach(HttpClientResponse received) {
             response = received;
-            status = received.statusCode();
             return !expired && !scope.hasEnded();
         }
 
@@ -411,10 +344,6 @@ final class AttemptScope {
                 owner.bodyEnded();
                 return;
             }
-            writtenUnanswered(false);
-            if (nonIdempotent && status != 429 && status != 503) {
-                scope.settledAfterWriting();
-            }
             markEnded();
             done = true;
             Runnable cleanup = onFinish;
@@ -424,20 +353,22 @@ final class AttemptScope {
             scope.responded(this);
         }
 
-        /** The exchange failed with {@code failure}: it is over and the interceptors are told. */
-        void fail(@Nullable Throwable failure) {
+        /**
+         * The exchange failed with {@code failure}: it is over and the interceptors are told.
+         *
+         * @param failure the failure, or {@code null}
+         * @param answered whether a response had already arrived for the hop that failed, which a redirect
+         *     rule refusal comes after
+         */
+        void fail(@Nullable Throwable failure, boolean answered) {
             ActiveStream owner = stream;
             if (owner != null) {
                 owner.failed(failure != null ? failure : new IllegalStateException(ENDED_MESSAGE));
                 return;
             }
-            if (failure != null && created.get() <= 1 && hops.get() <= 1 && response == null) {
+            if (failure != null && created.get() <= 1 && hops.get() <= 1 && response == null && !answered) {
                 scope.refusedBeforeSend(failure, hops.get() == 0);
             }
-            if (nonIdempotent && hops.get() > 0 && status != 429 && status != 503) {
-                scope.settledAfterWriting();
-            }
-            writtenUnanswered(false);
             finish();
             complete(failure != null ? failure : new IllegalStateException(ENDED_MESSAGE));
         }

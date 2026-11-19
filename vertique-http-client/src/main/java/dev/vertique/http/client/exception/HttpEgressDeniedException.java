@@ -3,13 +3,14 @@
 
 package dev.vertique.http.client.exception;
 
+import dev.vertique.core.exception.ValidationException;
 import java.util.Objects;
 
 /**
  * Thrown when the egress policy or the redirect rules refuse a request target. The message is constant;
  * {@link #reason()} names the rule that refused.
  */
-public final class HttpEgressDeniedException extends HttpClientValidationException {
+public final class HttpEgressDeniedException extends ValidationException {
 
     private static final String MESSAGE = "The request target was refused by the egress rules";
 

@@ -16,6 +16,7 @@ import io.vertx.core.http.RequestOptions;
 import io.vertx.core.internal.FutureInternal;
 import io.vertx.ext.web.client.impl.ClientPhase;
 import io.vertx.ext.web.client.impl.HttpContext;
+import jakarta.annotation.Nullable;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -35,7 +36,7 @@ import java.util.function.Predicate;
  * header added after the redirect handler ran does not travel to another origin. It then resolves the
  * source and replaces the request's header of each returned name, but only while every hop of the
  * exchange so far was to the original origin, which is the origin of the client's base URL or, without a
- * base URL, of the exchange's first hop, widened by the configured origins. A hop with a server
+ * base URL, of the exchange's first hop. A hop with a server
  * address, a virtual host (including a caller-set {@code Host} header) or a request-level proxy never
  * gets credentials.
  *
@@ -50,9 +51,6 @@ final class CredentialInterceptor implements Handler<HttpContext<?>> {
     private static final String CHAIN_LEFT = "vertique.credentials.left";
 
     private static final String HOST_HEADER = "Host";
-
-    private static final Set<String> TRANSPORT_OWNED =
-            Set.of("host", "content-length", "transfer-encoding", "connection", "upgrade", "te");
 
     private static final Set<String> KEPT_ON_ANOTHER_ORIGIN = Set.of(
             "accept",
@@ -69,8 +67,7 @@ final class CredentialInterceptor implements Handler<HttpContext<?>> {
 
     private final CredentialSource source;
     private final boolean allowPlainHttp;
-    private final Set<String> originsAllowed;
-    private final boolean hasBaseUrl;
+    private final @Nullable String baseOrigin;
     private final boolean defaultSecure;
     private final String defaultHost;
     private final int defaultPort;
@@ -81,19 +78,16 @@ final class CredentialInterceptor implements Handler<HttpContext<?>> {
      *
      * @param source the credential source
      * @param allowPlainHttp whether credentials may be used over plain HTTP to a non-loopback host
-     * @param originsAllowed the origins, in the {@link #origin(boolean, String, int)} form, credentials
-     *     may go to
-     * @param hasBaseUrl whether the client has a base URL; without one the first hop's origin is the
-     *     original origin too
+     * @param hasBaseUrl whether the client has a base URL, whose origin is then the original origin;
+     *     without one the first hop's origin is the original origin
      * @param defaultSecure whether a request that does not choose a scheme uses TLS
-     * @param defaultHost the host of a request that does not name one, or null
-     * @param defaultPort the port of a request that does not name one
+     * @param defaultHost the host of a request that does not name one, or null; with a base URL, its host
+     * @param defaultPort the port of a request that does not name one; with a base URL, its port
      * @param loopback tells whether a host name or IP literal is loopback
      */
     CredentialInterceptor(
             CredentialSource source,
             boolean allowPlainHttp,
-            Set<String> originsAllowed,
             boolean hasBaseUrl,
             boolean defaultSecure,
             String defaultHost,
@@ -101,8 +95,7 @@ final class CredentialInterceptor implements Handler<HttpContext<?>> {
             Predicate<String> loopback) {
         this.source = Objects.requireNonNull(source, "source");
         this.allowPlainHttp = allowPlainHttp;
-        this.originsAllowed = Set.copyOf(originsAllowed);
-        this.hasBaseUrl = hasBaseUrl;
+        this.baseOrigin = hasBaseUrl && defaultHost != null ? origin(defaultSecure, defaultHost, defaultPort) : null;
         this.defaultSecure = defaultSecure;
         this.defaultHost = defaultHost;
         this.defaultPort = defaultPort;
@@ -189,7 +182,7 @@ final class CredentialInterceptor implements Handler<HttpContext<?>> {
             }
         }
         // the chain leaves the original origins at the first hop outside them, and never comes back
-        left = left || !(originsAllowed.contains(hop) || !hasBaseUrl && hop.equals(first));
+        left = left || !hop.equals(baseOrigin != null ? baseOrigin : first);
         ctx.set(LAST_ORIGIN, hop);
         left = left || hasOwnTransportTarget(ctx, options);
         ctx.set(CHAIN_LEFT, left);
@@ -250,24 +243,7 @@ final class CredentialInterceptor implements Handler<HttpContext<?>> {
         for (Map.Entry<String, String> header : headers.entrySet()) {
             String name = header.getKey();
             String value = header.getValue();
-            if (!isToken(name) || TRANSPORT_OWNED.contains(name.toLowerCase(Locale.ROOT)) || !isValue(value)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static boolean isToken(String name) {
-        if (name == null || name.isEmpty()) {
-            return false;
-        }
-        for (int i = 0; i < name.length(); i++) {
-            char c = name.charAt(i);
-            boolean token = c >= 'a' && c <= 'z'
-                    || c >= 'A' && c <= 'Z'
-                    || c >= '0' && c <= '9'
-                    || "!#$%&'*+-.^_`|~".indexOf(c) >= 0;
-            if (!token) {
+            if (!HeaderRules.isToken(name) || HeaderRules.isTransportOwned(name) || !isValue(value)) {
                 return false;
             }
         }

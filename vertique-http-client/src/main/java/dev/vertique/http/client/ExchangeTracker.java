@@ -78,7 +78,6 @@ final class ExchangeTracker implements Handler<HttpContext<?>> {
                     }
                     ctx.set(EXCHANGE, exchange);
                     exchange.beforeRequest(cause -> failOnOwner(ctx, exchange, cause));
-                    exchange.method(ctx.request().method().name());
                     if (!interceptors.isEmpty()) {
                         exchange.snapshot(interceptors.describe(ctx.request(), exchange.callId()));
                         exchange.target(interceptors.targetOf(ctx.request()));
@@ -136,7 +135,7 @@ final class ExchangeTracker implements Handler<HttpContext<?>> {
             case FAILURE -> {
                 AttemptScope.Exchange exchange = ctx.get(EXCHANGE);
                 if (exchange != null) {
-                    exchange.fail(ctx.failure());
+                    exchange.fail(ctx.failure(), ctx.clientResponse() != null);
                 }
             }
             default -> {

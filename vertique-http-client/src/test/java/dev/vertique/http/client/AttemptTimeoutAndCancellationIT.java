@@ -68,7 +68,6 @@ class AttemptTimeoutAndCancellationIT {
 
     private HttpClient client(RecordingServer server, long readTimeoutMs, PoolOptions pool) {
         HttpClientBuilder builder = HttpClientBuilder.create(support.vertx);
-        support.track(builder::close);
         builder.baseUrl(server.origin());
         if (readTimeoutMs >= 0) {
             builder.readTimeout(readTimeoutMs, TimeUnit.MILLISECONDS);
@@ -83,7 +82,6 @@ class AttemptTimeoutAndCancellationIT {
 
     private HttpClient redirectingClient(RecordingServer server, long readTimeoutMs) {
         HttpClientBuilder builder = HttpClientBuilder.create(support.vertx);
-        support.track(builder::close);
         builder.baseUrl(server.origin()).webClientOptions(new WebClientOptions().setFollowRedirects(true));
         if (readTimeoutMs >= 0) {
             builder.readTimeout(readTimeoutMs, TimeUnit.MILLISECONDS);

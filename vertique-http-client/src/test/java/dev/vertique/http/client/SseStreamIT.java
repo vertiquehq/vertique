@@ -72,7 +72,6 @@ class SseStreamIT {
 
     private HttpClient client(RecordingServer server, Consumer<HttpClientBuilder> customize) {
         HttpClientBuilder builder = HttpClientBuilder.create(support.vertx);
-        support.track(builder::close);
         builder.baseUrl(server.origin());
         customize.accept(builder);
         HttpClient client = builder.build();
