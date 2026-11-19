@@ -248,9 +248,7 @@ public class WorkflowExecutionProbeIT {
     void eachListOfTheReportIsBounded() throws Exception {
         // Given an instance with 1005 parked commands
         WorkflowInstanceId a = insertInstance(1);
-        for (long seq = 1; seq <= 1005; seq++) {
-            command(a, seq, "SIGNAL", "PARKED").insert();
-        }
+        insertParkedSignals(a, 1, 1005);
 
         // When the probe reports on it
         IdleReport report = join(probe.awaitIdle(a, Duration.ofSeconds(5)), Duration.ofSeconds(6));
@@ -545,6 +543,21 @@ public class WorkflowExecutionProbeIT {
                 throw new IllegalStateException(failure);
             }
         }
+    }
+
+    /**
+     * Inserts parked signal commands with the sequences {@code first} to {@code last} in one statement, the rows
+     * {@link CommandBuilder#insert()} would write one connection at a time; a thousand separate connections take most
+     * of a test's time budget on a busy machine.
+     */
+    static void insertParkedSignals(WorkflowInstanceId instance, long first, long last) {
+        update("""
+                INSERT INTO workflow_commands
+                    (workflow_id, seq, kind, timer_kind, task_id, state, recorded_at, available_at, fire_at,
+                     attempts, last_error, claim_token, lease_until)
+                SELECT '%s'::uuid, seq, 'SIGNAL', NULL, NULL, 'PARKED', now(), now(), NULL, 0, NULL, NULL, NULL
+                FROM generate_series(%d, %d) AS seq
+                """.formatted(instance.value(), first, last));
     }
 
     /** Inserts a running instance whose id is derived from {@code n}, so ids order like their numbers. */
