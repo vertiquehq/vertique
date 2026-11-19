@@ -38,7 +38,8 @@ import lombok.extern.jackson.Jacksonized;
  *     },
  *     "tags": { "service": null, "extra": {} },
  *     "cardinality": { "maxTagValuesPerKey": 200, "maxMeters": 0 },
- *     "security": { "enabled": true }
+ *     "security": { "enabled": true },
+ *     "histograms": { "enabled": false }
  *   }
  * }
  * }</pre>
@@ -115,6 +116,17 @@ public class MetricsConfig {
     @Builder.Default
     @JsonSetter(nulls = Nulls.SKIP)
     private final SecurityConfig security = SecurityConfig.builder().build();
+
+    /**
+     * Percentile-histogram configuration (default: disabled).
+     *
+     * <p>{@code @JsonSetter(nulls = Nulls.SKIP)} ensures that an explicit JSON {@code null} value
+     * for this field is treated the same as a missing key — the {@code @Builder.Default} value is
+     * retained rather than overwriting the field with {@code null}.
+     */
+    @Builder.Default
+    @JsonSetter(nulls = Nulls.SKIP)
+    private final HistogramsConfig histograms = HistogramsConfig.builder().build();
 
     // --- Nested config classes ---
 
@@ -266,5 +278,25 @@ public class MetricsConfig {
         /** Whether security metrics are collected (default {@code true}). */
         @Builder.Default
         private final boolean enabled = true;
+    }
+
+    /**
+     * Configuration for percentile histograms on timers.
+     *
+     * <p>When enabled, every timer in the composite registry publishes a percentile histogram
+     * (for Prometheus, {@code _bucket} series next to {@code _count} and {@code _sum}). A timer
+     * that configures its own distribution statistics keeps them.
+     */
+    @Getter
+    @Builder
+    @Jacksonized
+    @Accessors(fluent = true)
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    @JsonAutoDetect(fieldVisibility = Visibility.ANY, getterVisibility = Visibility.NONE)
+    public static class HistogramsConfig {
+
+        /** Whether timers publish percentile histograms (default {@code false}). */
+        @Builder.Default
+        private final boolean enabled = false;
     }
 }

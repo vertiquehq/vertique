@@ -162,7 +162,7 @@ Outcome mapping:
 | other / 0 | `UNKNOWN` |
 
 Prometheus rendering: `vertique_rest_server_requests_seconds_count` /
-`vertique_rest_server_requests_seconds_sum` / `vertique_rest_server_requests_seconds_bucket`.
+`vertique_rest_server_requests_seconds_sum` / `vertique_rest_server_requests_seconds_bucket`. Buckets appear only when `metrics.histograms.enabled=true`; with the default `false`, the timer publishes only `_count`, `_sum` and `_max`.
 
 ### `vertique.rest.server.active` — Gauge
 

@@ -115,8 +115,9 @@ Package-private. Assembles the `CompositeMeterRegistry` in a defined order:
 
 1. Common-tag filter (service name + extra tags)
 2. Cardinality-guard filters (`CardinalityGuard.filters(config.cardinality())`)
-3. Backend children in `OrderedExtension` order
-4. JVM binders (when `metrics.jvm.enabled=true`): `JvmMemoryMetrics`, `JvmGcMetrics`,
+3. Percentile-histogram filter (only when `metrics.histograms.enabled=true`)
+4. Backend children in `OrderedExtension` order
+5. JVM binders (when `metrics.jvm.enabled=true`): `JvmMemoryMetrics`, `JvmGcMetrics`,
    `JvmThreadMetrics`, `ClassLoaderMetrics`, `ProcessorMetrics`
 
 All state is local during assembly — nothing is published until `MeterRegistryHolder.bootstrap(assembly)`
@@ -351,6 +352,7 @@ All keys live under the `metrics` section.
 | `metrics.cardinality.maxTagValuesPerKey` | int | `200` | Max distinct values per guarded tag key on `vertique.*` meters. |
 | `metrics.cardinality.maxMeters` | int | `0` | Global max meter count across the composite. Name-agnostic: it counts every meter, `vertique.*` or not, so size it against the whole population rather than the framework's own subset. `0` = unlimited. |
 | `metrics.security.enabled` | boolean | `true` | Enable security-event metrics from `SecurityMetricsObserver`. |
+| `metrics.histograms.enabled` | boolean | `false` | Opt-in percentile histograms on timers. Off, timers publish count, sum and max only; on, every timer in the composite registry (the framework's, Vert.x's and application timers) also publishes histogram buckets, which Prometheus renders as `_bucket` series. A timer that sets its own distribution statistics keeps them, and a timer registered before the registry is bootstrapped keeps the configuration it was created with. Raises the series count by one per bucket per tag combination, so enable it where the backend and the tag cardinality can carry it. |
 | `metrics.backends.<name>.*` | object | `{}` | Per-backend subtree passed to `MeterRegistryProvider.create()`. Each provider receives only its own subtree. |
 
 Example:
@@ -367,6 +369,7 @@ Example:
     "cardinality": {
       "maxTagValuesPerKey": 500
     },
+    "histograms": { "enabled": true },
     "backends": {
       "prometheus": {}
     }
