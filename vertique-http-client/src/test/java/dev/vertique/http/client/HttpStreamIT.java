@@ -19,6 +19,7 @@ import dev.vertique.http.client.interceptor.HttpClientAttemptCompletion;
 import dev.vertique.http.client.interceptor.HttpClientInterceptor;
 import dev.vertique.http.client.interceptor.HttpClientRequestContext;
 import dev.vertique.http.client.interceptor.HttpClientResponseHead;
+import dev.vertique.resilience.BulkheadConfig;
 import dev.vertique.resilience.Resilience;
 import dev.vertique.resilience.ResilienceDefaults;
 import dev.vertique.resilience.ResiliencePipeline;
@@ -27,8 +28,6 @@ import dev.vertique.resilience.ResiliencePolicyRegistry;
 import dev.vertique.resilience.ResolvedResiliencePolicy;
 import dev.vertique.resilience.RetryOverride;
 import dev.vertique.resilience.TimeoutOverride;
-import dev.vertique.resilience.adapter.AdapterOperationIdentity;
-import dev.vertique.resilience.adapter.ResilienceAdapterContext;
 import dev.vertique.resilience.annotation.Bulkhead;
 import dev.vertique.resilience.annotation.ResilienceAnnotations;
 import dev.vertique.resilience.config.BulkheadPolicyConfig;
@@ -133,11 +132,31 @@ class HttpStreamIT {
             Consumer<HttpClientBuilder> customize) {
         Resilience runtime = runtime();
         policies.forEach((name, overrides) -> {
-            ResilienceAdapterContext context = runtime.adapterSupport().newContext();
-            support.track(context::close);
             ResolvedResiliencePolicy resolved = runtime.policyResolver()
                     .resolve(ResilienceAnnotations.NONE, withoutTimeout(name, overrides), ResilienceDefaults.none());
-            pipelines.put(name, context.pipeline(new AdapterOperationIdentity("stream-test", List.of(name)), resolved));
+            ResiliencePipeline.Builder pipeline = runtime.pipeline(name);
+            resolved.retry()
+                    .ifPresent(config -> pipeline.retry(r -> r.maxRetries(config.maxRetries())
+                            .backoff(config.backoff())
+                            .retryOn(config.retryOn())
+                            .abortOn(config.abortOn())
+                            .fallbackPolicy(config.fallbackPolicy())
+                            .retryAfterMaxMs(config.retryAfterMaxMs())));
+            resolved.circuitBreaker()
+                    .ifPresent(config -> pipeline.circuitBreaker(cb -> cb.maxFailures(config.maxFailures())
+                            .resetTimeout(Duration.ofMillis(config.resetTimeoutMs()))));
+            resolved.bulkhead()
+                    .ifPresent(config -> pipeline.bulkhead(b -> {
+                        switch (config) {
+                            case BulkheadConfig.Reject reject ->
+                                b.maxConcurrentCalls(reject.maxConcurrentCalls())
+                                        .reject();
+                            case BulkheadConfig.Queue queue ->
+                                b.maxConcurrentCalls(queue.maxConcurrentCalls())
+                                        .queue(queue.maxQueueSize(), Duration.ofMillis(queue.queueTimeoutMs()));
+                        }
+                    }));
+            pipelines.put(name, pipeline.build());
         });
         HttpClientBuilder builder = HttpClientBuilder.create(support.vertx).baseUrl(server.origin());
         customize.accept(builder);

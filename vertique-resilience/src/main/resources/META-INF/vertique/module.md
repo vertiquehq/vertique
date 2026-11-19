@@ -232,7 +232,9 @@ chosen. The hint never makes a failure retryable and never overrides `abortOn`. 
 `RetryDelayHint` in the failure's cause chain is used; an accessor that throws, or returns `null`, an
 empty value, or a negative or overflowing duration, counts as no hint. A negative backoff still stops the
 retry. Set the maximum with `RetryConfig.Builder.retryAfterMaxMs(long)` or the tier key
-`resilience.policies.<name>.retry.retryAfterMaxMs`.
+`resilience.policies.<name>.retry.retryAfterMaxMs`. The public builders expose the same maximum as
+`Retry.Builder.retryAfterMaxMs(long)`, so a pipeline built with `resilience.pipeline(name).retry(r ->
+r.maxRetries(2).retryAfterMaxMs(5000))` honors a hint of up to five seconds; a negative value is rejected.
 Callback failures become cause-free `ResiliencePolicyException` values with only safe callback-kind
 and exception-class metadata. Fatal `Error` values are rethrown.
 
@@ -262,6 +264,21 @@ builder accepts a positive failure threshold and `Duration` reset timeout. `exec
 directly or a prebuilt breaker can be placed in a pipeline. Inline pipeline construction creates a
 pipeline-local breaker. A pipeline uses its own operation key in `CircuitOpenException`, while the
 breaker contributes only its state key; direct breaker execution uses the state key for both.
+
+By default every final failure counts against the breaker. `CircuitBreaker.Builder.countsAsFailure(Predicate<?
+super Throwable>)` narrows that: a failure the predicate rejects still surfaces to the caller unchanged, but
+it is recorded as a success, so it neither opens the breaker nor extends a failure streak. A predicate that
+throws counts the failure, and fatal errors are never reclassified. A classifier supplied by a framework
+adapter takes precedence over the builder's predicate.
+
+```java
+ResiliencePipeline pipeline = resilience.pipeline("inventory")
+        .circuitBreaker(cb -> cb.maxFailures(5).countsAsFailure(f -> !(f instanceof IllegalArgumentException)))
+        .build();
+```
+
+A client library can classify its own failures the same way, for example by not counting a rejection whose
+status code signals a caller mistake.
 
 Framework adapters should obtain `ResilienceAdapterContext` from
 `ResilienceAdapterSupport.newContext()`. The context creates structured-identity breakers and

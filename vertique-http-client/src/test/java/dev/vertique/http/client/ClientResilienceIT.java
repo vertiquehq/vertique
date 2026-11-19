@@ -28,9 +28,6 @@ import dev.vertique.resilience.ResolvedResiliencePolicy;
 import dev.vertique.resilience.RetryBackoff;
 import dev.vertique.resilience.RetryOverride;
 import dev.vertique.resilience.TimeoutOverride;
-import dev.vertique.resilience.adapter.AdapterOperationIdentity;
-import dev.vertique.resilience.adapter.CircuitFailureClassifier;
-import dev.vertique.resilience.adapter.ResilienceAdapterContext;
 import dev.vertique.resilience.annotation.ResilienceAnnotations;
 import dev.vertique.resilience.config.CircuitBreakerPolicyConfig;
 import dev.vertique.resilience.config.ResiliencePolicyConfig;
@@ -64,6 +61,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
@@ -189,17 +187,27 @@ class ClientResilienceIT {
     /** The pipelines of the current test by policy name, built from the policies passed to the fixtures. */
     private final Map<String, ResiliencePipeline> pipelines = new HashMap<>();
 
-    /** Builds the pipeline of one policy: the policy's concerns, with an optional breaker classifier. */
+    /** Builds the pipeline of one policy through the public builder, with an optional breaker classifier. */
     private ResiliencePipeline pipeline(
-            Resilience runtime, String name, ResiliencePolicyOverrides overrides, CircuitFailureClassifier classifier) {
-        ResilienceAdapterContext context = runtime.adapterSupport().newContext();
-        support.track(context::close);
+            Resilience runtime, String name, ResiliencePolicyOverrides overrides, Predicate<Throwable> classifier) {
         ResolvedResiliencePolicy resolved = runtime.policyResolver()
                 .resolve(ResilienceAnnotations.NONE, withoutTimeout(name, overrides), ResilienceDefaults.none());
-        AdapterOperationIdentity identity = new AdapterOperationIdentity("client-test", List.of(name));
-        return classifier == null
-                ? context.pipeline(identity, resolved)
-                : context.pipeline(identity, resolved, classifier);
+        ResiliencePipeline.Builder pipeline = runtime.pipeline(name);
+        resolved.retry()
+                .ifPresent(config -> pipeline.retry(r -> r.maxRetries(config.maxRetries())
+                        .backoff(config.backoff())
+                        .retryOn(config.retryOn())
+                        .abortOn(config.abortOn())
+                        .fallbackPolicy(config.fallbackPolicy())
+                        .retryAfterMaxMs(config.retryAfterMaxMs())));
+        resolved.circuitBreaker()
+                .ifPresent(config -> pipeline.circuitBreaker(cb -> {
+                    cb.maxFailures(config.maxFailures()).resetTimeout(Duration.ofMillis(config.resetTimeoutMs()));
+                    if (classifier != null) {
+                        cb.countsAsFailure(classifier);
+                    }
+                }));
+        return pipeline.build();
     }
 
     private HttpClientBuilder builder(
@@ -211,7 +219,7 @@ class ClientResilienceIT {
             Resilience runtime,
             RecordingServer server,
             Map<String, ResiliencePolicyOverrides> policies,
-            CircuitFailureClassifier classifier) {
+            Predicate<Throwable> classifier) {
         policies.forEach((name, overrides) -> pipelines.put(name, pipeline(runtime, name, overrides, classifier)));
         return HttpClientBuilder.create(support.vertx).baseUrl(server.origin());
     }
@@ -234,7 +242,7 @@ class ClientResilienceIT {
             Resilience runtime,
             RecordingServer server,
             Map<String, ResiliencePolicyOverrides> tiers,
-            CircuitFailureClassifier classifier,
+            Predicate<Throwable> classifier,
             HttpClientInterceptor... interceptors) {
         HttpClientBuilder builder = builder(runtime, server, tiers, classifier);
         for (HttpClientInterceptor interceptor : interceptors) {
@@ -456,7 +464,7 @@ class ClientResilienceIT {
     // --- AC-032 ---
 
     /** Counts every failure except a 4xx rejection other than 429, which shows that the dependency answered. */
-    private static final CircuitFailureClassifier AC032_CLASSIFIER = failure -> {
+    private static final Predicate<Throwable> AC032_CLASSIFIER = failure -> {
         if (failure instanceof HttpStatusRejectedException rejected) {
             int status = rejected.statusCode();
             return status < 400 || status >= 500 || status == 429;

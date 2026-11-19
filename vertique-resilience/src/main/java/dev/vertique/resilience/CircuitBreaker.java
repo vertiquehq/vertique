@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /** Independently executable local circuit breaker with explicit instance-owned state. */
@@ -30,8 +31,18 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
     private final AtomicBoolean closeStarted = new AtomicBoolean();
     private final Promise<Void> closePromise = Promise.promise();
     private final AtomicReference<CircuitState> lastObservedState = new AtomicReference<>(CircuitState.CLOSED);
+    private final CircuitFailureClassifier failureClassifier;
 
     private CircuitBreaker(Resilience resilience, String stateKey, CircuitBreakerConfig configuration) {
+        this(resilience, stateKey, configuration, null);
+    }
+
+    private CircuitBreaker(
+            Resilience resilience,
+            String stateKey,
+            CircuitBreakerConfig configuration,
+            CircuitFailureClassifier failureClassifier) {
+        this.failureClassifier = failureClassifier;
         this.resilience = Objects.requireNonNull(resilience, "resilience");
         this.stateKey = Objects.requireNonNull(stateKey, "stateKey");
         CircuitBreakerOptions options = new CircuitBreakerOptions()
@@ -167,6 +178,7 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
         private final String stateKey;
         private int maxFailures = 5;
         private Duration resetTimeout = Duration.ofSeconds(10);
+        private Predicate<? super Throwable> countsAsFailure;
         private boolean built;
 
         private Builder(Resilience resilience, String stateKey) {
@@ -199,6 +211,23 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
         }
 
         /**
+         * Sets which final failures count against this breaker.
+         *
+         * <p>A failure the predicate rejects surfaces to the caller unchanged and is recorded as a
+         * success, so it neither opens the breaker nor extends a failure streak. A predicate that throws
+         * counts the failure. Without a predicate every failure counts. A pipeline built through a
+         * framework adapter with its own classifier uses that classifier instead.
+         *
+         * @param counts returns {@code true} for a failure that counts
+         * @return this builder
+         */
+        public Builder countsAsFailure(Predicate<? super Throwable> counts) {
+            ensureMutable();
+            countsAsFailure = Objects.requireNonNull(counts, "counts");
+            return this;
+        }
+
+        /**
          * Builds the immutable breaker.
          *
          * @return the runtime-owned breaker
@@ -207,8 +236,12 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
             ensureMutable();
             built = true;
             resilience.ensureOpenForConstruction();
-            CircuitBreaker breaker =
-                    new CircuitBreaker(resilience, stateKey, CircuitBreakerConfig.of(maxFailures, resetTimeout));
+            Predicate<? super Throwable> counts = countsAsFailure;
+            CircuitBreaker breaker = new CircuitBreaker(
+                    resilience,
+                    stateKey,
+                    CircuitBreakerConfig.of(maxFailures, resetTimeout),
+                    counts == null ? null : counts::test);
             if (!resilience.register(breaker)) {
                 throw new IllegalStateException("Resilience runtime is closed");
             }
@@ -247,7 +280,7 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
                 ResilienceExecutionObservation observation) {
             this.context = context;
             this.operationKey = operationKey;
-            this.classifier = classifier;
+            this.classifier = classifier != null ? classifier : failureClassifier;
             this.operation = operation;
             this.contextOpen = contextOpen;
             this.executionRegistrar = executionRegistrar == null ? ignored -> () -> {} : executionRegistrar;
