@@ -66,9 +66,7 @@ public interface HttpClientInterceptor extends OrderedExtension {
      * and a call cancelled before its exchange began have no exchange and no notification. An exchange whose
      * {@link #beforeRequest} ran is always completed, even when it is cancelled before a request exists.
      * For a refusal before {@link #beforeRequest} (an invalid caller header, a refused request body) the
-     * snapshot is the request as prepared before {@link #beforeRequest}. The header re-check after
-     * {@link #beforeRequest} follows the client's header validation, which is off only for framework
-     * clients built through the framework's client options.
+     * snapshot is the request as prepared before {@link #beforeRequest}.
      * An attempt whose future never completes leaves its completed exchanges without a notification
      * until the call ends.
      *
