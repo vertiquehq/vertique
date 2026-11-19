@@ -549,10 +549,12 @@ The engine does not depend on in-memory workflow state for correctness.
 
 ## Lock-Order Requirements
 
-Operations that touch multiple workflow tables follow a fixed lock order to avoid deadlocks with the timer firing executor and the signal claim path:
+One rule keeps the engine's transactions from deadlocking on an instance's rows: **the instance's execution lock comes
+first.** Every transaction that writes an instance, its history or its rows takes the execution lock before it writes
+or locks any row of that instance. The rows themselves are not ordered between tables by a second rule.
 
 ```
-execution lock (instance)  →  workflow_timers  →  workflow_tasks  →  workflow_branch_tokens  →  workflow_instances  →  workflow_command_queues
+execution lock (instance)  →  the instance's rows, in the order the path that holds the lock takes them
 ```
 
 The execution lock is an exclusive, transaction-scoped PostgreSQL advisory lock in the two-integer form, derived from the
@@ -565,9 +567,37 @@ the rest of the caller's transaction. A timeout (`55P03`) or a deadlock (`40P01`
 `tryLockInstance` takes the lock without waiting. `nextQueueSequence` allocates from `workflow_command_queues` under the
 lock, creating the queue row on first touch (the first value is 1); a rolled-back transaction gives its value back.
 
-Reversing any segment of this chain deadlocks against an already-running firing executor or a concurrent signal claim. All engine code paths — fire, signal, cancel, complete, supersede — follow it.
+How each kind of caller takes it:
 
-Integrator rule: do not write custom transactions that lock workflow tables in a different order. Prefer the public workflow APIs or the provided transactional services. When extending storage behavior, preserve the established ordering across timers, tasks, branch state, and workflow instances.
+| Caller | Execution lock |
+|---|---|
+| Recording paths: start, signal, signal by key or business key, task completion, task reassignment, cancel, retry, migrate | waits, up to `lockTimeoutMs`, before any row is written or locked |
+| Executor: claim, defer, fail, and a segment | tries; a busy instance is skipped, never waited for; the command row of the executing command is the first row the segment locks |
+| Retention (archive, purge) | tries per candidate instance; a busy instance is skipped |
+| Releasing or rescheduling one command after a transient failure | not taken; one statement on the command's own row, which holds nothing else while it waits |
+
+What follows from the rule:
+
+- **Two transactions never wait for each other's rows of one instance.** The one that holds the execution lock is the
+  only one that locks them, so the order in which a path locks timers, tasks, branch tokens, join state, the instance row
+  and the command rows does not matter between paths. The paths do not agree on it (cancel and the supersede of a race
+  join lock timers, then tasks, then branch tokens, then the instance; a join evaluation locks the join state before the
+  instance row; a retry that resumes a failed wait locks the instance row before it re-arms the timers), and they need not.
+- **A path that locks or writes rows of an instance without holding its execution lock is the defect.** It is the only
+  way to deadlock against a firing executor, a concurrent signal or a cancel, and `ExecutionLockCoverageIT` fails for
+  it by name.
+- **Callers that touch two instances can deadlock.** Two transactions that each hold one instance and wait for the
+  other's lock are detected by PostgreSQL; the victim fails with a retryable `WorkflowPersistenceException`. Take the
+  instances in one order, or use the public workflow APIs, which touch one instance per call.
+- **Definition-level locks are separate.** The pin admission and the lifecycle mutations lock by definition id (a
+  different advisory space) and are taken after the execution lock.
+
+Integrator rule: do not write custom transactions that change workflow tables of an instance without holding its
+execution lock. Prefer the public workflow APIs or the provided transactional services.
+
+The comments in `V1__create_workflow_tables.sql` that state a lock chain of timers, tasks and instances describe the
+order the first release's paths followed; they are not the rule above. The file is not edited, because Flyway validates
+its checksum.
 
 ---
 
@@ -618,7 +648,7 @@ This module implements the workflow-side durable context propagation surfaces fo
 
 ## Invariants & Gotchas
 
-- **Branch tables have no FK to workflow_instances.** `workflow_tasks` and `workflow_timers` carry nullable `branch_token_id` / `fork_step_id` / `branch_id` columns but no FK constraint, by design — adding one would invert the established lock order.
+- **Branch tables have no FK to workflow_instances.** `workflow_tasks` and `workflow_timers` carry nullable `branch_token_id` / `fork_step_id` / `branch_id` columns but no FK constraint, by design — branch tokens are always written before the tasks and timers that name them, and the instance cascade removes all of them.
 - **Dispatch dedup lives in the engine, not the recorder.** Branch service-dispatch idempotency is enforced inside the persistence engine before the recorder runs, so the `workflow-services` boundary stays generic.
 - **Stranded re-enqueue is detected by row count.** Timer-store mutations are guarded by `status = 'SCHEDULED'` and fail when `rowCount = 0`, rolling back the transaction rather than silently re-enqueuing into the wrong state.
 - **Late callbacks are swallowed deliberately.** Task / timer callbacks carrying a `branchTokenId` from a superseded branch are recorded as `BRANCH_LATE_CALLBACK_IGNORED` history entries and return without raising — preventing zombie callbacks from corrupting later state.
