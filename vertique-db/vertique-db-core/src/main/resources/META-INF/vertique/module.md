@@ -788,6 +788,7 @@ produced.
 | `maxWaitQueueSize` | int | `-1` | Requests allowed to wait for a connection; `-1` is unbounded |
 | `eventLoopSize` | int | `0` | Event-loop threads for the pool; `0` uses the Vert.x default |
 | `connectionTimeoutMs` | int | `30000` | Maximum wait for a pooled connection |
+| `connectTimeoutMs` | int | `60000` | Maximum time to establish the TCP connection to the database |
 | `idleTimeoutMs` | int | `0` | Idle time before eviction; `0` disables |
 | `maxLifetimeMs` | int | `0` | Maximum connection lifetime; `0` is unlimited |
 | `poolCleanerPeriodMs` | int | `1000` | Pool cleaner interval |
