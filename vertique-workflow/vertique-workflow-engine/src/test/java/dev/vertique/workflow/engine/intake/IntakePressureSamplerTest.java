@@ -26,6 +26,7 @@ import io.vertx.junit5.VertxExtension;
 import io.vertx.sqlclient.SqlClient;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -265,10 +266,52 @@ class IntakePressureSamplerTest {
         assertThat(readsSoFar()).isEqualTo(1);
     }
 
+    @Test
+    @DisplayName("stopping the sampler waits for its outstanding read to settle")
+    void stoppingWaitsForTheOutstandingRead() throws Exception {
+        // Given a sampler whose first read is outstanding and whose interval is far longer than the test
+        Promise<Long> outstanding = Promise.promise();
+        when(commands.countDue(anyLong())).thenReturn(outstanding.future());
+        String deployment = deploy(60_000L, observer);
+        await(() -> readsSoFar() >= 1, "a first read");
+
+        // When the sampler is undeployed
+        CompletableFuture<Void> undeployed =
+                vertx.undeploy(deployment).toCompletionStage().toCompletableFuture();
+
+        // Then the undeployment waits while the read is outstanding and completes once it settles
+        Thread.sleep(3 * INTERVAL_MS);
+        assertThat(undeployed).isNotDone();
+        outstanding.complete(0L);
+        undeployed.get(10, TimeUnit.SECONDS);
+    }
+
+    @Test
+    @DisplayName("stopping the sampler waits at most one sample interval for a read that never settles")
+    void stoppingWaitsAtMostOneIntervalForAHungRead() throws Exception {
+        // Given a sampler whose first read never settles
+        when(commands.countDue(anyLong())).thenReturn(Promise.<Long>promise().future());
+        String deployment = deploy();
+        await(() -> readsSoFar() >= 1, "a first read");
+
+        // When the sampler is undeployed
+        long started = System.nanoTime();
+        vertx.undeploy(deployment).toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+
+        // Then the undeployment waited one sample interval, and not without end
+        assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started))
+                .isGreaterThanOrEqualTo(INTERVAL_MS)
+                .isLessThan(TimeUnit.SECONDS.toMillis(5));
+    }
+
     // --- Helpers ---
 
     private String deploy(WorkflowExecutorObserver... observers) throws Exception {
-        WorkflowIntakeConfig config = new WorkflowIntakeConfig(true, HIGH, LOW, INTERVAL_MS);
+        return deploy(INTERVAL_MS, observers);
+    }
+
+    private String deploy(long intervalMs, WorkflowExecutorObserver... observers) throws Exception {
+        WorkflowIntakeConfig config = new WorkflowIntakeConfig(true, HIGH, LOW, intervalMs);
         var deployment = IntakePressureSampler.deployment(
                 commands,
                 config,
