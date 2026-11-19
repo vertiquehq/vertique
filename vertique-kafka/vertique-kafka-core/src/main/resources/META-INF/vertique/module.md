@@ -720,6 +720,12 @@ producer: this includes an application with no `kafka` configuration at all, and
 address only under `kafka.consumers.{name}.properties`. Set `bootstrap.servers` at the `kafka` root
 or in `kafka.properties`; the address is never contacted at construction.
 
+**Why consumers run the check.** The consumer deployment manager takes the producer factory for
+dead-letter sends, so an application with consumers and no producers constructs the factory too. The
+check fails only when no `bootstrap.servers` reaches the producer layers: the root-level `kafka.*`
+connection keys, `kafka.properties` and `kafka.producer.properties`. An application that sets the address
+only per consumer would already have failed at its first dead-letter send; it now fails at startup.
+
 **Properties files.** With Vert.x hierarchical expansion (`hierarchical=true`), dotted keys such as
 `kafka.bootstrap.servers` expand into nested JSON. Both the flat and nested forms resolve.
 
