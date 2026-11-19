@@ -123,6 +123,7 @@ public final class JaxRsDescriptorEmitter {
     // --- State ---
 
     private final CodegenContext ctx;
+    private final GenericTypeExpressions genericTypes;
     private final ParameterAnnotationMaterializer parameterAnnotationMaterializer;
 
     // --- Constructor ---
@@ -134,6 +135,7 @@ public final class JaxRsDescriptorEmitter {
      */
     public JaxRsDescriptorEmitter(CodegenContext ctx) {
         this.ctx = ctx;
+        this.genericTypes = new GenericTypeExpressions(ctx);
         this.parameterAnnotationMaterializer = new ParameterAnnotationMaterializer(ctx);
     }
 
@@ -582,14 +584,10 @@ public final class JaxRsDescriptorEmitter {
      * Builds the {@link CodeBlock} for a single {@code new ParamMeta(...)} constructor call
      * with all fields populated.
      *
-     * <p>For {@link dev.vertique.codegen.jaxrs.JaxRsParamSource#BODY} parameters whose
-     * {@link EffectiveParamContract#genericType()} is a parameterized type (e.g. {@code List<Foo>}),
-     * the {@code genericType} slot is emitted as an anonymous Jackson
-     * {@code TypeReference<List<Foo>>} subclass literal:
-     * {@code new com.fasterxml.jackson.core.type.TypeReference<List<Foo>>() {}.getType()}.
-     * Jackson is already on the runtime classpath for body deserialization, so this adds no new
-     * dependency. Scalar body types (non-parameterized) emit {@code null} — the runtime uses
-     * {@code param.type()} for those.
+     * <p>The {@code genericType} slot is built by {@link GenericTypeExpressions}: the parameter's
+     * {@code Class} for a type without type arguments, an anonymous Jackson {@code TypeReference}
+     * literal for a parameterized type, and a startup reflection lookup for a type that mentions a type
+     * variable. It is {@code null} for a source whose contract carries no generic type.
      *
      * @param pc          the param contract
      * @param pConstName          the string FQN constant identifier for this param's type
@@ -646,7 +644,11 @@ public final class JaxRsDescriptorEmitter {
         // genericType — emit TypeReference token for parameterized BODY types; null otherwise.
         // Using Jackson's TypeReference because it is already on the runtime classpath for body
         // deserialization and captures the full parameterized Type without reflection.
-        CodeBlock genericTypeExpr = buildGenericTypeExpr(pc);
+        CodeBlock genericTypeExpr = genericTypes.of(
+                pc,
+                descriptorClass.packageName(),
+                CodeBlock.of("resolveClass(support, cl_, $L)", pConstName),
+                () -> CodeBlock.of("support.resolvedParameterType(resourceType(), $L, $L)", methodVar, paramIndex));
         cb.add("$L, ", genericTypeExpr);
 
         // defaultValue
@@ -686,70 +688,6 @@ public final class JaxRsDescriptorEmitter {
             ctx.diagnostics()
                     .error(null, "Failed to write %s: %s", file.typeSpec().name(), e.getMessage());
         }
-    }
-
-    /**
-     * Builds the {@code genericType} expression for a parameter's {@code ParamMeta} constructor
-     * argument.
-     *
-     * <p>For {@link dev.vertique.codegen.jaxrs.JaxRsParamSource#BODY} parameters with a
-     * parameterized type, emits:
-     * <pre>{@code
-     *   new com.fasterxml.jackson.core.type.TypeReference<List<Foo>>() {}.getType()
-     * }</pre>
-     * For non-body or non-parameterized types, emits {@code null}.
-     *
-     * @param pc the parameter contract
-     * @return the code block expression
-     */
-    private CodeBlock buildGenericTypeExpr(EffectiveParamContract pc) {
-        if (pc.genericType() == null || pc.source() != dev.vertique.codegen.jaxrs.JaxRsParamSource.BODY) {
-            return CodeBlock.of("null");
-        }
-        // Only emit a TypeReference for parameterized types (DeclaredType with type args)
-        if (!(pc.genericType() instanceof javax.lang.model.type.DeclaredType dt)
-                || dt.getTypeArguments().isEmpty()) {
-            return CodeBlock.of("null");
-        }
-        // Emit: new com.fasterxml.jackson.core.type.TypeReference<RawType<Args...>>() {}.getType()
-        // We use the source-form type name (not binary) for the TypeReference generic argument.
-        String sourceTypeName = sourceTypeName(pc.genericType());
-        return CodeBlock.of("new com.fasterxml.jackson.core.type.TypeReference<$L>() {}.getType()", sourceTypeName);
-    }
-
-    /**
-     * Returns the source-form type name for use in a TypeReference generic argument. For a
-     * parameterized type like {@code List<Foo>}, returns {@code "java.util.List<com.example.Foo>"}.
-     * For a raw type, returns the erased source-form FQN.
-     *
-     * <p>Non-declared types (notably array type arguments such as the {@code Outer.Inner[]} in
-     * {@code List<Outer.Inner[]>}) go through
-     * {@link TypeMirrorFqn#erasedSourceFqn(TypeMirror, dev.vertique.codegen.CodegenContext)}, not
-     * {@link TypeMirrorFqn#erasedFqn(TypeMirror, dev.vertique.codegen.CodegenContext)}: this string
-     * is interpolated into the generated source, where a binary {@code Outer$Inner} base name would
-     * not compile.
-     *
-     * @param type the type mirror to render
-     * @return the source-form type name string
-     */
-    private String sourceTypeName(TypeMirror type) {
-        if (!(type instanceof javax.lang.model.type.DeclaredType dt)) {
-            return erasedSourceFqn(type);
-        }
-        var element = ctx.types().asElement(ctx.types().erasure(type));
-        String rawName =
-                element instanceof TypeElement te ? te.getQualifiedName().toString() : erasedSourceFqn(type);
-        var args = dt.getTypeArguments();
-        if (args.isEmpty()) {
-            return rawName;
-        }
-        StringBuilder sb = new StringBuilder(rawName).append('<');
-        for (int i = 0; i < args.size(); i++) {
-            if (i > 0) sb.append(", ");
-            sb.append(sourceTypeName(args.get(i)));
-        }
-        sb.append('>');
-        return sb.toString();
     }
 
     /**
@@ -1002,14 +940,6 @@ public final class JaxRsDescriptorEmitter {
      */
     private String erasedFqn(TypeMirror type) {
         return TypeMirrorFqn.erasedFqn(type, ctx);
-    }
-
-    /**
-     * Returns the erased source-form FQN of {@code type} — for strings interpolated into the
-     * generated source rather than resolved at runtime. Delegates to {@link TypeMirrorFqn}.
-     */
-    private String erasedSourceFqn(TypeMirror type) {
-        return TypeMirrorFqn.erasedSourceFqn(type, ctx);
     }
 
     /**

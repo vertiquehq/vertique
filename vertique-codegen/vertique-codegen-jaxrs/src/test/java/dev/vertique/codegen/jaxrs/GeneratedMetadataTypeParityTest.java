@@ -209,6 +209,148 @@ class GeneratedMetadataTypeParityTest {
         assertEquals(row.expected(), types(generatedMetas(row.sources())), "generated code");
     }
 
+    // --- ParamMeta.genericType ---
+
+    static Stream<Arguments> genericTypeRows() {
+        return Stream.of(
+                        new Row(
+                                "declared parameter types of every source",
+                                List.of(src("Leaf", """
+                                                @Path("/x") public class Leaf {
+                                                    @POST @Path("/bodyList")
+                                                    public String bodyList(List<String> v) { return ""; }
+                                                    @POST @Path("/bodyString")
+                                                    public String bodyString(String v) { return ""; }
+                                                    @POST @Path("/bodyInt")
+                                                    public String bodyInt(int v) { return ""; }
+                                                    @POST @Path("/bodyArray")
+                                                    public String bodyArray(List<String>[] v) { return ""; }
+                                                    @POST @Path("/bodyWildcard")
+                                                    public String bodyWildcard(List<? extends Number> v) { return ""; }
+                                                    @POST @Path("/bodyNested")
+                                                    public String bodyNested(Map<String, List<Integer>> v) { return ""; }
+                                                    @GET @Path("/queryList")
+                                                    public String queryList(@QueryParam("q") List<String> q) { return ""; }
+                                                    @GET @Path("/queryString")
+                                                    public String queryString(@QueryParam("q") String q) { return ""; }
+                                                    @GET @Path("/queryArray")
+                                                    public String queryArray(@QueryParam("q") String[] q) { return ""; }
+                                                    @GET @Path("/header")
+                                                    public String header(@HeaderParam("h") java.util.Optional<String> h) { return ""; }
+                                                    @GET @Path("/cookie")
+                                                    public String cookie(@jakarta.ws.rs.CookieParam("c") String c) { return ""; }
+                                                    @GET @Path("/path/{id}")
+                                                    public String path(@PathParam("id") String id) { return ""; }
+                                                    @POST @Path("/form") @jakarta.ws.rs.Consumes("application/x-www-form-urlencoded")
+                                                    public String form(@jakarta.ws.rs.FormParam("f") List<String> f) { return ""; }
+                                                }
+                                                """)),
+                                List.of(
+                                        "bodyArray=[java.util.List<java.lang.String>[]]",
+                                        "bodyInt=[int]",
+                                        "bodyList=[java.util.List<java.lang.String>]",
+                                        "bodyNested=[java.util.Map<java.lang.String,java.util.List<java.lang.Integer>>]",
+                                        "bodyString=[java.lang.String]",
+                                        "bodyWildcard=[java.util.List<? extends java.lang.Number>]",
+                                        "cookie=[java.lang.String]",
+                                        "form=[null]",
+                                        "header=[java.util.Optional<java.lang.String>]",
+                                        "path=[null]",
+                                        "queryArray=[java.lang.String[]]",
+                                        "queryList=[java.util.List<java.lang.String>]",
+                                        "queryString=[java.lang.String]")),
+                        new Row(
+                                "inherited parameter types resolved against the resource class",
+                                List.of(src("Api", """
+                                                public interface Api<T> {
+                                                    @POST @Path("/body")
+                                                    default String body(List<T> v) { return ""; }
+                                                    @GET @Path("/query")
+                                                    default String query(@QueryParam("q") T q) { return ""; }
+                                                    @POST @Path("/array")
+                                                    default String array(T[] v) { return ""; }
+                                                }
+                                                """), src("Leaf", """
+                                                @Path("/x") public class Leaf implements Api<Integer> {}
+                                                """)),
+                                List.of(
+                                        "array=[java.lang.Integer[]]",
+                                        "body=[java.util.List<java.lang.Integer>]",
+                                        "query=[java.lang.Integer]")),
+                        new Row(
+                                "unresolved type variables of a raw leaf and of a method",
+                                List.of(src("Api", """
+                                                public interface Api<T> {
+                                                    @POST @Path("/body")
+                                                    default String body(T v) { return ""; }
+                                                    @POST @Path("/list")
+                                                    default String list(List<T> v) { return ""; }
+                                                    @POST @Path("/own")
+                                                    default <M> String own(M v) { return ""; }
+                                                }
+                                                """), src("Leaf", """
+                                                @SuppressWarnings("rawtypes")
+                                                @Path("/x") public class Leaf implements Api {}
+                                                """)),
+                                List.of("body=[var T]", "list=[java.util.List<var T>]", "own=[var M]")),
+                        new Row(
+                                "a parameterized type that the generated class cannot name",
+                                List.of(src("Leaf", """
+                                                @Path("/x") public class Leaf {
+                                                    private static class Hidden {}
+                                                    @POST @Path("/body")
+                                                    String body(List<Hidden> v) { return ""; }
+                                                }
+                                                """)),
+                                List.of("body=[java.util.List<" + PKG + ".Leaf$Hidden>]")))
+                .map(Arguments::of);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("genericTypeRows")
+    @DisplayName("runtime scanning and generated code report the same generic parameter types")
+    void bothPathsReportTheExpectedGenericTypes(Row row) throws Throwable {
+        assertEquals(row.expected(), genericTypes(runtimeMetas(row.sources())), "runtime scanning");
+        assertEquals(row.expected(), genericTypes(generatedMetas(row.sources())), "generated code");
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("genericTypeRows")
+    @DisplayName("the generated execution plan reports the generic types the descriptor does")
+    void executionPlanReportsTheGenericTypesOfTheDescriptor(Row row) throws Throwable {
+        int compared = 0;
+        for (ResourceMethodMeta meta : generatedMetas(row.sources())) {
+            if (meta.executionPlan() == null) {
+                continue;
+            }
+            for (int i = 0; i < meta.params().size(); i++) {
+                java.lang.reflect.Field field;
+                try {
+                    field = meta.executionPlan().getClass().getDeclaredField("P" + i);
+                } catch (NoSuchFieldException noParamMeta) {
+                    continue;
+                }
+                field.setAccessible(true);
+                var planned = (ResourceMethodMeta.ParamMeta) field.get(null);
+                assertEquals(
+                        render(meta.params().get(i).genericType()),
+                        render(planned.genericType()),
+                        meta.method().getName() + " parameter " + i);
+                compared++;
+            }
+        }
+        org.junit.jupiter.api.Assertions.assertTrue(
+                compared > 0 || row.label().contains("cannot name"), "the plan carried no parameter metadata");
+    }
+
+    static List<String> genericTypes(List<ResourceMethodMeta> metas) {
+        return metas.stream()
+                .sorted(Comparator.comparing(m -> m.method().getName()))
+                .map(m -> m.method().getName() + "="
+                        + m.params().stream().map(p -> render(p.genericType())).collect(Collectors.toList()))
+                .toList();
+    }
+
     // --- The two paths ---
 
     private static final class NoOpProcessor extends AbstractProcessor {
@@ -276,7 +418,7 @@ class GeneratedMetadataTypeParityTest {
             return "null";
         }
         if (type instanceof Class<?> cls) {
-            return cls.getName();
+            return cls.getTypeName();
         }
         if (type instanceof ParameterizedType pt) {
             return render(pt.getRawType()) + "<"
