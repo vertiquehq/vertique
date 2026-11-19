@@ -190,8 +190,13 @@ jobs:
 
       # Formatting is a required pre-build gate: fail fast before compiling or
       # running tests when Java sources do not match the repository formatter.
+      # A pull request checks the Java files it changes (every file when it
+      # changes the root POM, which owns the formatter configuration); a push
+      # checks every file. fetch-depth 0 above makes the base branch available.
       - name: Check formatting
-        run: ./mvnw -ntp spotless:check
+        env:
+          FORMAT_BASE_REF: ${{ github.base_ref }}
+        run: bash scripts/check-formatting.sh
 
       # Per-module HTML reports are skipped: the vertique-coverage-report
       # aggregate XML produced by this same invocation is the only coverage

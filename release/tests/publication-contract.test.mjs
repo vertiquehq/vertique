@@ -636,7 +636,13 @@ describe('PublicCiContractTest', () => {
     assert.match(yaml, /push:/, 'ci.yml must run on push');
     const bodies = runStepBodies(yaml).join('\n');
     assert.match(bodies, /bash scripts\/ci-build\.sh/, 'ci.yml must run the Maven verification entry point');
-    assert.match(bodies, /spotless:check/, 'ci.yml must run the formatting check');
+    assert.match(bodies, /^bash scripts\/check-formatting\.sh$/m, 'ci.yml must run the formatting check');
+    // Fail fast: formatting is checked before the Maven build starts.
+    assert.ok(
+      yaml.indexOf('      - name: Check formatting\n') < yaml.indexOf('      - name: Build and test\n'),
+      'the formatting check must run before the build'
+    );
+    assert.match(yaml, /FORMAT_BASE_REF: \$\{\{ github\.base_ref \}\}\n\s+run: bash scripts\/check-formatting\.sh/);
     // A glob, never an enumeration: a hand-maintained list silently drops
     // every release-contract test nobody remembers to add.
     assert.match(
