@@ -543,6 +543,8 @@ class ResilienceCancellationTest {
         assertTrue(reasons.stream().anyMatch(reason -> reason == winner), "the failure must be one of the reasons");
         cancellation.cancel(new IllegalArgumentException("later"));
         assertSame(winner, result.cause());
+        // ExecutionCompleted is emitted by a completion listener that may run after the caller sees the failure
+        awaitCondition(() -> !executionCompleted().isEmpty());
         assertEquals(1, executionCompleted().size());
         assertEquals(
                 ResilienceOutcomeCategory.APPLICATION_FAILURE,
