@@ -163,13 +163,15 @@ Each step has an `id` and `type`. Common step fields:
 | `service` | Record a service-dispatch side effect | `target`, `payloadMapper`, `next`, optional `compensation` |
 | `wait-signal` | Suspend until a named signal arrives | `signal`, `payloadType`, `stateReducer`, `next`, optional `timeout`, optional `correlationKey` |
 | `timer` | Suspend until a resolved time | `fireAt`, `next` |
-| `human-task` | Create a task and wait for a decision | `taskType`, `assignment`, `decisions`, optional `due`, `reminders`, `requireVersionStability` |
+| `human-task` | Create a task and wait for a decision | `assignment`, `decisions`, optional `taskType`, `due`, `reminders`, `requireVersionStability` |
 | `decision` | Route based on CEL expressions or named conditions | `routes`, `default` |
 | `fork` | Start parallel branches | `branches`, `join`, optional `retryPolicy` |
 | `join` | Fan branches back into one path | `policy`, `reducer`, `next`, optional `onFailure` |
 | `compensation` | Record compensating service dispatch | `forwardStep`, `target`, `payloadMapper` |
 | `complete` | End successfully | none beyond `id` |
 | `fail` | End with failure and optional compensation | `errorType`, `messageFactory` |
+
+A `human-task` step's `taskType` is the logical type of the tasks it creates (for example `approval`). The compiler passes it to the plan's task node, every task the step creates carries it (`TaskRecord.taskType()`), and task lists filter on it with `TaskFilter.withTaskType(...)`. Omit it, or leave it blank, for a task with no type. It is not part of the plan hash, so a document that changes only its task type keeps the hash of its plan.
 
 Callback-like fields are string identifiers resolved against registries contributed by the application. The document never embeds Java lambdas or scripts.
 
@@ -214,7 +216,7 @@ A well-formed definition is one that passes both parsing and semantic validation
 - Contract names and type names are separate namespaces: a contract name given as `stateType`, or a type name given as `contract`, is unknown.
 - Named callbacks must resolve through the registered callback registries. An unregistered `correlationKey` resolver id fails with `CORRELATION_KEY_RESOLVER_UNKNOWN`, naming the step and the id and suggesting the nearest registered ids. A registered resolver whose state type is not the document's state type fails with `CORRELATION_KEY_RESOLVER_STATE_TYPE_MISMATCH`, naming the step, the resolver id and both types.
 - Decision expressions must parse through the expression profile.
-- Step ids must be unique, reachable from `initialStep`, and all step references must point to existing steps.
+- Step ids must be unique, and all step references must point to existing steps. Every step must be reachable from `initialStep`: a step that no chain of references reaches fails with `UNREACHABLE_STEP`, one violation per step, naming it. Reachability follows `next`, a wait-signal `timeout.next`, a human-task decision or `due.next`, a decision route's `to` and `default`, a service step's `compensation`, a fork's branch `startStep` and `join`, and a join's `next` and `onFailure`. A document with an unknown `initialStep` reports `INITIAL_STEP_UNKNOWN` only. Documents that loaded before this rule existed and carry an orphan step are refused; remove the step or reference it.
 - The plan of a document is built through the registry's build path, so core plan validation and the contributed validators still apply. Publishing a loaded definition through the service builds its plan once to validate it and completes the row; nothing is registered, and the node builds the plan again from the row when it is first used. A definition loaded into one scope is not found under the default scope. Documents packaged with the application are recorded in the default scope.
 
 There is currently no separate published JSON Schema or YAML Schema file for workflow definitions. The authoritative validation is strict Jackson mapping plus `WorkflowDefinitionDocumentValidator`.

@@ -384,6 +384,8 @@ wf.task("editorial-review")
 
 Decisions carry typed payloads; `void.class`, as used for `approve` above, declares a decision with no payload.
 
+`taskType(String)` on the task builder sets an optional logical type such as `"approval"`. Every task the step creates carries it in `TaskRecord.taskType()`, and `TaskFilter.withTaskType(...)` lists tasks by it. The type labels the task and changes no flow, so it is not part of the plan hash: a plan that adds, changes or removes a task type keeps its hash. A blank type is refused. `HumanTaskNode` and `TaskRecord` gain the type as a trailing nullable component and keep their earlier constructors.
+
 When version stability is required, task completion compares the version the reviewer saw with the version snapshotted when the task was created. The engine does not read live domain content; applications remain responsible for authorization and for loading current object state.
 
 ---
@@ -1200,7 +1202,7 @@ Behaviors that are load-bearing for correct use and not obvious from method sign
 - **Listener events are not authorization input.** An event with `HistoryAttribution.DEGRADED` or `ABSENT` was not attributed to a verified identity.
 - **A listener makes a call wait for the instance lock.** With a `WorkflowHistoryListener` bound, even a duplicate signal waits for the instance's execution lock, and a lock timeout fails the call with a retryable `WorkflowPersistenceException`.
 - **Human task DSL guard rails.** A task step's decision list must be non-empty with unique decision names (enforced by the `HumanTaskNode` compact constructor). The optional due-date triplet (`dueDate`, `onDueMutator`, `dueNextStepId`) is all-or-nothing — supplying a partial subset is rejected at construction.
-- **`TaskFilter` single-assignee-kind guard.** At most one of `assigneeUser` / `assigneeRole` / `assigneeQueue` may be set, mirroring the single-`assignee_type` storage shape. Use `TaskFilter.empty()` plus `with*` copies to compose filters. The optional `scopeKey` filter is an exact match, not validated, and `null` means every scope.
+- **`TaskFilter` single-assignee-kind guard.** At most one of `assigneeUser` / `assigneeRole` / `assigneeQueue` may be set, mirroring the single-`assignee_type` storage shape. Use `TaskFilter.empty()` plus `with*` copies to compose filters. The optional `scopeKey` filter is an exact match, not validated, and `null` means every scope. The optional `taskType` filter is an exact match on the task type the step declared; a task created without a type matches no task type.
 - **Version-stable approvals.** `.requireVersionStability()` on a task captures `subject_version` at task creation; completion fails with `WorkflowStaleSubjectVersionException` when the reviewer's `reviewedSubjectVersion` does not match the snapshot. Creating a stability-required task with a null `subject_version` fails with `WorkflowSubjectVersionUnavailableException`.
 - **Subject resolver precedence.** An explicit `StartCommand.subjectRef` wins; otherwise a definition-level `.subject(...)` resolver is invoked with the initial state. A configured resolver returning `null` is a contract violation (`WorkflowDefinitionException`), not a silent "no subject".
 - **`WorkflowActor` is required on every task mutation command.** `TaskCompletionCommand` and `TaskReassignmentCommand` reject null / blank actor identity through their compact constructors. Blank `reason` is normalized to `null` before the command is fingerprinted for idempotency.

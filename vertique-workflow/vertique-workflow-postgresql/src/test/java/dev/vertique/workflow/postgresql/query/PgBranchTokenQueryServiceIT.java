@@ -278,6 +278,56 @@ public class PgBranchTokenQueryServiceIT {
     }
 
     @Test
+    @DisplayName("findByWorkflow narrows by branchId across forks")
+    void findByWorkflowFiltersByBranchId(VertxTestContext ctx) {
+        WorkflowInstanceId wf = insertInstance();
+        insertTokens(
+                token(wf, "fork-1", "a", BranchStatus.RUNNING, null, null),
+                token(wf, "fork-1", "b", BranchStatus.RUNNING, null, null),
+                token(wf, "fork-2", "a", BranchStatus.COMPLETED, null, null));
+        BranchTokenFilter filter = new BranchTokenFilter(null, null, null, "a");
+        service.findByWorkflow(wf, filter)
+                .onComplete(ar -> ctx.verify(() -> {
+                    assertTrue(ar.succeeded());
+                    assertEquals(2, ar.result().size());
+                    assertTrue(ar.result().stream().allMatch(t -> t.branchId().equals("a")));
+                    ctx.completeNow();
+                }));
+    }
+
+    @Test
+    @DisplayName("findByWorkflow combines branchId with forkStepId to select one branch")
+    void findByWorkflowCombinesBranchIdWithFork(VertxTestContext ctx) {
+        WorkflowInstanceId wf = insertInstance();
+        insertTokens(
+                token(wf, "fork-1", "a", BranchStatus.RUNNING, null, null),
+                token(wf, "fork-2", "a", BranchStatus.COMPLETED, null, null),
+                token(wf, "fork-2", "b", BranchStatus.COMPLETED, null, null));
+        BranchTokenFilter filter = new BranchTokenFilter(BranchStatus.COMPLETED, null, "fork-2", "a");
+        service.findByWorkflow(wf, filter)
+                .onComplete(ar -> ctx.verify(() -> {
+                    assertTrue(ar.succeeded());
+                    assertEquals(1, ar.result().size());
+                    assertEquals("fork-2", ar.result().get(0).forkStepId());
+                    assertEquals("a", ar.result().get(0).branchId());
+                    ctx.completeNow();
+                }));
+    }
+
+    @Test
+    @DisplayName("findByWorkflow returns an empty list for an unknown branchId")
+    void findByWorkflowUnknownBranchIdReturnsEmpty(VertxTestContext ctx) {
+        WorkflowInstanceId wf = insertInstance();
+        insertTokens(token(wf, "fork", "a", BranchStatus.RUNNING, null, null));
+        service.findByWorkflow(wf, new BranchTokenFilter(null, null, null, "missing"))
+                .onComplete(ar -> ctx.verify(() -> {
+                    assertTrue(ar.succeeded());
+                    assertTrue(ar.result().isEmpty());
+                    ctx.completeNow();
+                }));
+    }
+
+    @Test
     @DisplayName("findByWorkflow returns an empty list when no row matches")
     void findByWorkflowReturnsEmptyWhenNoMatch(VertxTestContext ctx) {
         WorkflowInstanceId wf = insertInstance();

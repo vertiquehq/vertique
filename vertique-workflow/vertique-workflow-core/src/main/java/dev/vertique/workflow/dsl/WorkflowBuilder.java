@@ -1507,6 +1507,9 @@ public final class WorkflowBuilder<S> {
         // False means no version-stability enforcement (default).
         private boolean requireVersionStability;
 
+        // Null means the tasks carry no task type (default).
+        private String taskType;
+
         /**
          * Constructs a {@code TaskBuilder} for the given step id.
          *
@@ -1514,6 +1517,25 @@ public final class WorkflowBuilder<S> {
          */
         private TaskBuilder(String stepId) {
             this.stepId = stepId;
+        }
+
+        // --- Task type ---
+
+        /**
+         * Sets the logical type of the task (for example {@code "approval"}). Every task this step creates carries
+         * it, and task queries can filter on it. It labels the task and changes no flow, so it is not part of the
+         * plan hash.
+         *
+         * @param taskType the task type; must not be null or blank
+         * @return this builder for chaining
+         * @throws WorkflowDefinitionException if {@code taskType} is null or blank
+         */
+        public TaskBuilder taskType(String taskType) {
+            if (taskType == null || taskType.isBlank()) {
+                throw new WorkflowDefinitionException("task '" + stepId + "': taskType must not be null or blank");
+            }
+            this.taskType = taskType;
+            return this;
         }
 
         // --- Assignment methods ---
@@ -1808,7 +1830,8 @@ public final class WorkflowBuilder<S> {
                     onDueMutatorCbId,
                     dueNextStepId,
                     reminders,
-                    requireVersionStability));
+                    requireVersionStability,
+                    taskType));
             return WorkflowBuilder.this;
         }
 
