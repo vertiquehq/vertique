@@ -130,7 +130,15 @@ class GeneratedMetadataTypeParityTest {
                         new Row(
                                 "inherited array bound to a plain class",
                                 arrayApi("String"),
-                                arrayExpected("java.lang.String")))
+                                arrayExpected("java.lang.String")),
+                        new Row(
+                                "raw leaf of an unbounded generic interface",
+                                rawLeaf(""),
+                                rawLeafExpected("java.lang.Object")),
+                        new Row(
+                                "raw leaf of a bounded generic interface",
+                                rawLeaf(" extends Number"),
+                                rawLeafExpected("java.lang.Number")))
                 .map(Arguments::of);
     }
 
@@ -146,6 +154,43 @@ class GeneratedMetadataTypeParityTest {
                             default Future<T[]> fut() { return null; }
                         }
                         """), src("Leaf", "@Path(\"/x\") public class Leaf implements Api<" + binding + "> {}\n"));
+    }
+
+    private static List<JavaFileObject> rawLeaf(String bound) {
+        return List.of(src("Api", """
+                        public interface Api<T%s> {
+                            @POST @Path("/body")
+                            default String body(T value) { return ""; }
+                            @GET @Path("/direct")
+                            default T direct() { return null; }
+                            @GET @Path("/fut")
+                            default Future<T> fut() { return null; }
+                            @POST @Path("/list")
+                            default String list(List<T> value) { return ""; }
+                            @POST @Path("/arr")
+                            default String arr(T[] value) { return ""; }
+                            @GET @Path("/nested")
+                            default Future<List<T>> nested() { return null; }
+                            @SuppressWarnings("rawtypes")
+                            @GET @Path("/rawfut")
+                            default Future rawFut() { return null; }
+                        }
+                        """.formatted(bound)), src("Leaf", """
+                        @SuppressWarnings("rawtypes")
+                        @Path("/x") public class Leaf implements Api {}
+                        """));
+    }
+
+    private static List<String> rawLeafExpected(String erasure) {
+        String array = "[L" + erasure + ";";
+        return List.of(
+                "arr ret=java.lang.String future=false params=[BODY:" + array + "/-]",
+                "body ret=java.lang.String future=false params=[BODY:" + erasure + "/-]",
+                "direct ret=" + erasure + " future=false params=[]",
+                "fut ret=" + erasure + " future=true params=[]",
+                "list ret=java.lang.String future=false params=[BODY:java.util.List/-]",
+                "nested ret=java.util.List future=true params=[]",
+                "rawFut ret=io.vertx.core.Future future=true params=[]");
     }
 
     private static List<String> arrayExpected(String component) {

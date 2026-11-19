@@ -18,6 +18,7 @@ import dev.vertique.codegen.jaxrs.EffectiveParamContract;
 import dev.vertique.codegen.jaxrs.EffectiveResourceContract;
 import dev.vertique.codegen.jaxrs.EffectiveSecurityContract;
 import dev.vertique.codegen.jaxrs.EffectiveSecurityContract.SecurityKind;
+import dev.vertique.codegen.jaxrs.JaxRsHierarchy;
 import dev.vertique.codegen.jaxrs.JaxRsParamSource;
 import dev.vertique.codegen.support.Identifiers;
 import jakarta.annotation.Nullable;
@@ -214,11 +215,7 @@ public final class JaxRsDescriptorEmitter {
             }
 
             // Return type FQN constant
-            TypeMirror returnType = ((javax.lang.model.type.ExecutableType) ctx.types()
-                            .asMemberOf(
-                                    (javax.lang.model.type.DeclaredType)
-                                            contract.concreteClass().asType(),
-                                    concreteMethod))
+            TypeMirror returnType = JaxRsHierarchy.memberTypeOf(ctx, contract.concreteClass(), concreteMethod)
                     .getReturnType();
             TypeMirror unwrapped = ctx.unwrapFuture(returnType);
             String returnFqn = erasedFqn(unwrapped);

@@ -658,8 +658,7 @@ public final class EffectiveJaxRsContractResolver {
         List<javax.lang.model.element.VariableElement> annotationSources =
                 resolveParamAnnotationSources(concreteParam, paramIndex, method, resourceClass);
 
-        TypeMirror type = ((javax.lang.model.type.ExecutableType)
-                        ctx.types().asMemberOf((DeclaredType) resourceClass.asType(), method))
+        TypeMirror type = JaxRsHierarchy.memberTypeOf(ctx, resourceClass, method)
                 .getParameterTypes()
                 .get(paramIndex);
 
@@ -725,8 +724,7 @@ public final class EffectiveJaxRsContractResolver {
         // ordinal among the concrete parameter and the matching parameter of each declaration.
         JaxRsParamSource effective = JaxRsParamClassifier.classify(
                 concreteParam,
-                ((javax.lang.model.type.ExecutableType)
-                                ctx.types().asMemberOf((DeclaredType) resourceClass.asType(), method))
+                JaxRsHierarchy.memberTypeOf(ctx, resourceClass, method)
                         .getParameterTypes()
                         .get(paramIndex),
                 ctx.types(),
@@ -736,8 +734,7 @@ public final class EffectiveJaxRsContractResolver {
             if (paramIndex >= declaredParams.size()) continue;
             JaxRsParamSource declaredSource = JaxRsParamClassifier.classify(
                     declaredParams.get(paramIndex),
-                    ((javax.lang.model.type.ExecutableType)
-                                    ctx.types().asMemberOf((DeclaredType) resourceClass.asType(), method))
+                    JaxRsHierarchy.memberTypeOf(ctx, resourceClass, method)
                             .getParameterTypes()
                             .get(paramIndex),
                     ctx.types(),
