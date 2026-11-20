@@ -7,7 +7,9 @@ package dev.vertique.inboxoutbox;
  * Lifecycle states for an outbox entry as it progresses through the relay pipeline.
  *
  * <p>The normal progression is {@link #PENDING} → {@link #PROCESSING} → {@link #PUBLISHED}.
- * Entries that exhaust their retry budget transition to {@link #DEAD_LETTER}.
+ * Entries that exhaust their retry budget transition to {@link #DEAD_LETTER}. An operator can move a
+ * pending or dead-lettered entry to {@link #DISCARDED} and bring a dead-lettered or discarded entry back to
+ * {@link #PENDING}.
  */
 public enum OutboxEntryState {
 
@@ -35,5 +37,14 @@ public enum OutboxEntryState {
      * Terminal error state — the entry is retained for inspection and manual intervention.
      * The cleanup job removes dead-letter entries after the configured dead-letter retention period.
      */
-    DEAD_LETTER
+    DEAD_LETTER,
+
+    /**
+     * An operator dropped the entry through {@code OutboxOperations.discard}, so the relay will never
+     * deliver it. The row stays, with its attempt count and last error, until the cleanup job removes
+     * discarded entries after the configured discarded retention period. An operator can bring it back with
+     * {@code OutboxOperations.retry} until then. The relay never claims a discarded entry, and a discarded
+     * entry does not hold back later entries of the same aggregate.
+     */
+    DISCARDED
 }
