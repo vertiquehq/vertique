@@ -276,7 +276,7 @@ no message.
 
 ## Configuration
 
-Pool configuration comes from the `"db"` config section (see `DbPoolConfig` in `dev.vertique:vertique-db-core`). The PostgreSQL default port is 5432.
+Pool configuration comes from the `"db"` config section (see `DbPoolConfig` in `dev.vertique:vertique-db-core`). An omitted `port` uses the PostgreSQL default port, 5432; a port below 1 or above 65535 fails startup with a `ConfigurationException` naming `db.port`.
 
 ```json
 {
