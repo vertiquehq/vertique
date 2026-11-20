@@ -56,8 +56,12 @@ Under `web-validation` the body document's regular expressions are compiled at r
 
 **Per-route handler order** (as installed by `JaxRsRouteRegistrar`):
 ```
-auth handler(s) → @Consumes 415 gate → validation gate → OperationHandlerContributors → ResourceMethodInvoker
+operation-route identity (PlatformHandler) → auth handler(s) → @Consumes 415 gate → validation gate → OperationHandlerContributors → ResourceMethodInvoker
 ```
+
+The operation-route identity handler records the operation's route template and operation id for
+the request's completion event; it runs ahead of authentication and never fails a request. See the
+`vertique-rest-jaxrs` module reference for the full chain.
 
 ---
 

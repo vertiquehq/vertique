@@ -33,7 +33,7 @@ it validates programmatically.
 |---|---|
 | `dev.vertique:vertique-rest-jaxrs` | Resource-method parameters are validated on every invocation; violations become HTTP 400 problem details with per-parameter location context |
 | `dev.vertique:vertique-rest-websocket` | Decoded `@OnMessage` payloads are validated with the endpoint's `@ValidateWith` groups |
-| any module | `BeanValidator` is injectable for service-layer and event-bus validation |
+| any module | `BeanValidator` is injectable for programmatic validation in application code; the framework does not call it on service or event-bus dispatch |
 
 Without this module the framework compiles and runs; `BeanValidator` is simply absent and REST
 parameter validation is silently skipped.
@@ -134,14 +134,25 @@ validator.validate(request, Create.class);
 ```java
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record ViolationDetail(
-        String path,                        // "name", "address.city"
+        @Nullable String path,              // "name", "address.city"; null = locates nothing
         String message,                     // interpolated constraint message
         @Nullable String type,              // classification, e.g. "required", "size"
-        @Nullable Map<String, Object> args  // e.g. {min: 1, max: 100}
+        @Nullable Map<String, Object> args, // e.g. {min: 1, max: 100}
+        @JsonIgnore ViolationPathForm form  // how `path` is written; null = JAVA_PROPERTY_PATH
 ) {
+    // four-argument constructor: form = JAVA_PROPERTY_PATH
     public static ViolationDetail of(String path, String message) { ... }
+    public static ViolationDetail atPointer(
+            String pointer, String message, @Nullable String type, @Nullable Map<String, Object> args) { ... }
+    public static ViolationDetail unlocated(String message, @Nullable String type) { ... }
 }
 ```
+
+`path` is the producer's own path, in the form `form` states: a Java property path for an object the
+producer validated (`JAVA_PROPERTY_PATH`) or an RFC 6901 pointer for a document it validated
+(`JSON_POINTER`, built by `atPointer`). `form` is never part of the JSON form of a detail. A `null`
+path (`unlocated`) says the violation locates nothing in any validated value, as for a rule that
+concerns the whole operation.
 
 ### `ParameterViolation`
 
@@ -215,7 +226,7 @@ contract interface can pin the groups for all its implementations.
   varying `min`/`max`) belong on the reflection tier.
 - Two Dagger-contributed `ConstraintValidator` instances of the same concrete class fail component
   construction with `IllegalStateException: Duplicate ConstraintValidator class: …`.
-- `ViolationDetail.args()` and `type()` may be `null`; both are omitted from JSON.
+- `ViolationDetail.path()`, `type()` and `args()` may be `null`; each is omitted from JSON.
 
 ---
 
@@ -461,8 +472,10 @@ A `BeanValidationException` thrown from your own code — `validator.validate(dt
 method or service — also renders as 400 with a `ValidationProblemDetail`, but its entries carry no
 `location`, because a programmatic validation has no parameter to attribute.
 
-For WebSocket endpoints, `vertique-rest-websocket` validates the decoded `@OnMessage` payload with
-`BeanValidator.validate(decoded, groups)` when the method declares `@ValidateWith`.
+For WebSocket endpoints, `vertique-rest-websocket` validates every decoded typed `@OnMessage`
+payload with `BeanValidator`; no annotation is needed to turn it on. `@ValidateWith` only selects the
+groups: `BeanValidator.validate(decoded, groups)` when the method declares it, `validate(decoded)`
+(the default group) otherwise. A `String` or `Buffer` message is not validated.
 
 ---
 
