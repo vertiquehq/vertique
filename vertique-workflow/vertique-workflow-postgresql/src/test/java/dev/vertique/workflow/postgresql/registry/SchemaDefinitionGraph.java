@@ -19,6 +19,7 @@ import dev.vertique.workflow.definition.di.WorkflowDefinitionModule;
 import dev.vertique.workflow.definition.parser.WorkflowDefinitionParserProbe;
 import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
 import dev.vertique.workflow.di.WorkflowDefinitionsConfigModule;
+import dev.vertique.workflow.di.WorkflowExecutorConfigModule;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.migration.WorkflowMigrationModule;
 import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
@@ -86,7 +87,7 @@ final class SchemaDefinitionGraph {
             StartStateMapperContributor extraMapper) {
         WorkflowDefinitionSource none = List::of;
         return DaggerSchemaDefinitionGraph_SchemaApp.builder()
-                .vertxModule(new VertxModule(vertx, config))
+                .vertxModule(new VertxModule(vertx, ManagedDefinitionDatabase.withFastExecutor(config)))
                 .postgresInfrastructureModule(new PostgresInfrastructureModule(pool))
                 .bootObservationModule(
                         new BootObservationModule(new BootObservation("schema-unused", 1, "unused", false)))
@@ -138,6 +139,7 @@ final class SchemaDefinitionGraph {
                 VertxModule.class,
                 ConfigParsingModule.class,
                 WorkflowDefinitionsConfigModule.class,
+                WorkflowExecutorConfigModule.class,
                 DeployerModule.class,
                 CoreLifecycleStepsModule.class,
                 WorkflowPostgresqlModule.class,
