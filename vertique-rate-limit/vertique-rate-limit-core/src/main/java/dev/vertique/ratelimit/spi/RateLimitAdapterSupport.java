@@ -24,7 +24,7 @@ import java.util.Optional;
 /**
  * One shared, hand-roll-free seam every framework adapter ({@code @RateLimited}, the REST edge
  * limiter, and future MCP tools) builds on to resolve a handle and frame an identity-based key
- * component (contracts/rate-limit-runtime.md, "Framework adapter seam"; {@code spec.md} §5.2).
+ * component.
  *
  * <p>{@link #subjectKey} distinguishes two situations that must never collapse into one:
  *

@@ -10,7 +10,7 @@ package dev.vertique.workflow.plan;
  * <p>If any required branch reaches {@code FAILED}, {@code CANCELLED}, or {@code EXPIRED} with no
  * retry budget remaining, the join takes the failure route declared on its
  * {@link JoinNode#failureStepId()}. {@code ALL_REQUIRED} branches may declare compensation;
- * compensation runs in reverse declaration order across siblings (PRD-WF-002 FR-WF-PAR-061..065).
+ * compensation runs in reverse declaration order across siblings.
  *
  * <p>Marker record — V1 carries no policy-specific state.
  */

@@ -38,15 +38,18 @@ opt-out is `@NoAutoWire`.
 
 ### Two implementation patterns
 
-The processor scans **concrete implementation types** in the compilation round, not annotated
-interfaces, so a contract interface compiled in another module is handled correctly.
+The processor scans the **top-level concrete implementation types** of the compilation round, not
+annotated interfaces, so a contract interface compiled in another module is handled correctly. A
+nested class that implements a contract or `ServiceHandler<C>` is not scanned and gets no
+generated contributor; declare the implementation as a top-level class, or register the nested
+class by hand.
 
 | Shape | Pattern | Result |
 |---|---|---|
 | Any supertype carries `@ServiceContract` | DIRECT | Contract method and invoked method are the same |
 | Implements `ServiceHandler<C>` where `C` carries `@ServiceContract` | HANDLER | Contract method and handler method are separate; the handler may add injectable parameters |
 | Both of the above | — | Compile error |
-| Neither | — | Skipped silently |
+| Neither, including `ServiceHandler<C>` where `C` does not carry `@ServiceContract` | — | Skipped silently |
 | Carries `@NoAutoWire` | — | Skipped silently |
 
 Interfaces and abstract classes are never candidates.
@@ -349,9 +352,16 @@ from `process` so Dagger, Lombok, and other processors see unmodified elements.
 
 ## Validation Failures
 
-Every rule below is a compile-time `ERROR` unless stated otherwise. All applicable validators run
-before the processor gives up on a candidate, so one build surfaces the complete list rather than one
-error per cycle.
+Every rule below is a compile-time `ERROR` unless stated otherwise. The contract-shape rules apply
+to every contract the processor can resolve; a generic contract (one that declares type parameters, or
+whose method stays generic) compiled without an implementation
+in the same compilation unit (see [Generic contracts skip client-proxy
+emission](#generic-contracts-skip-client-proxy-emission)) is not validated until an implementation
+resolves it. Once a candidate's contract is extracted, all applicable validators run together, so one
+build reports every violation they find for that candidate. A candidate whose contract cannot be
+extracted at all — for example an operation whose return type is not a `Future`, or one with a second
+payload parameter — stops at that error, and the checks that need the extracted contract run only after
+it is fixed, so a build can report further errors once the first ones are corrected.
 
 The **client proxy for that contract?** column states whether a *different, otherwise-valid* contract
 in the same compilation unit still gets its `{Contract}_ServiceClientProxy` (see
@@ -371,8 +381,8 @@ contract's shape alone, so an impl-only defect never withholds it, while a contr
 | `@ServiceOperation` value must not be blank | A blank value produces an empty operation id and malformed addresses | Yes |
 | No two operations in a contract may resolve to the same operation name | One would silently shadow the other on the event bus | Yes |
 | Exactly one `@Inject` constructor on the implementation | Zero means Dagger cannot construct it; more than one is ambiguous | No — impl-only |
-| `ServiceHandler<C>`: `C` must be a `@ServiceContract` interface, and the handler must not implement `C` directly or any other `@ServiceContract` interface | Ambiguous registration shape | No — impl-only |
-| Each contract method needs exactly one matching handler method: same name, identical payload parameters in order and type, identical `Future<T>` return type | Name-based matching cannot disambiguate anything looser | No — impl-only |
+| A `ServiceHandler<C>` handler, where `C` is a `@ServiceContract` interface, must not implement `C` directly or any other `@ServiceContract` interface | Ambiguous registration shape | No — impl-only |
+| Each contract method needs exactly one matching handler method: same name, payload parameters of the same erased type in order (type arguments are not compared), identical `Future<T>` return type | Name-based matching cannot disambiguate anything looser | No — impl-only |
 | Extra handler parameters must be `SecurityContext` subtypes or `@DispatchContextValue`-annotated types | Anything else cannot be supplied at dispatch time; the diagnostic names the offending parameter | No — impl-only |
 | A contract's `@RequiresPolicy` declarations must resolve: at most one distinct policy per type-level set and per method-level set (declarations on the contract and its parent interfaces are collected together), and no mixing with an inline `@RolesAllowed`, `@PermitAll`, `@DenyAll`, `@Authorized`, or `@RequiresAction` | The runtime applies the same selection when it registers the service, so this turns a startup rejection into a build error. A type-level failure is reported once on the contract; a method-level failure on the method | Yes |
 | A referenced policy must be well formed: a public, non-generic interface that extends only `AccessPolicy`, declares no members, declares at least one direct requirement, has no empty or blank role or scope, and has a three-segment lower-case action | The diagnostic names the policy and carries the resolver's reason | Yes |

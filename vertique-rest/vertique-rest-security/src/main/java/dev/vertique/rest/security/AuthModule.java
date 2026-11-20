@@ -141,8 +141,8 @@ public abstract class AuthModule {
      * Optional binding for a custom synchronous {@link AuthorizationPolicy} (core SPI).
      *
      * <p>When an application provides this binding, {@link SecurityPolicyEnforcer} wraps it in a
-     * {@link SyncPolicyDecisionPoint} so the sync policy participates in the async pipeline. Per
-     * ADR-0114 the enforcement layer ({@code SecurityPolicyEnforcer}) — not the decision point —
+     * {@link SyncPolicyDecisionPoint} so the sync policy participates in the async pipeline. The
+     * enforcement layer ({@code SecurityPolicyEnforcer}) — not the decision point —
      * emits exactly one {@link dev.vertique.security.events.AuthorizationDecisionEvent} per
      * decision; the wrapped {@link AuthorizationPolicy} (and the {@link SyncPolicyDecisionPoint}
      * around it) does not emit. Takes precedence over the default {@link VertxProviderDecisionPoint},
@@ -174,7 +174,7 @@ public abstract class AuthModule {
      * {@link dev.vertique.security.authz.Authorizer}); it is empty otherwise. The
      * {@link SecurityPolicyEnforcer} composes the action gate only when an operation carries a present
      * {@code @RequiresAction}, and a present {@code @RequiresAction} can only pass startup validation
-     * when the engine is installed (slice 11). Mirrors the optional-presence idiom used for the
+     * when the engine is installed. Mirrors the optional-presence idiom used for the
      * {@code ActionRegistry} binding in {@code RestModule}.
      *
      * @return the optional core {@code Authorizer} binding
@@ -198,7 +198,7 @@ public abstract class AuthModule {
 
     /**
      * Declares the optional {@link AuthorizationGateConfig} binding, defaulting to {@link
-     * AuthorizationGateConfig#defaults()} when absent (issue #417, R42).
+     * AuthorizationGateConfig#defaults()} when absent.
      *
      * <p>Bounds every {@link SecurityPolicyEnforcer#decide} role/scope and action gate future.
      * {@link AuthorizationGateConfigModule} is the opt-in companion that config-drives this value
@@ -409,19 +409,41 @@ public abstract class AuthModule {
     }
 
     /**
-     * Provides the default {@link RequestOriginConfig}.
+     * Optional binding for a custom {@link RequestOriginConfig}.
      *
-     * <p>Defaults to trusting no proxy (empty CIDR set), capping the forwarded chain at
-     * {@value RequestOriginConfig#DEFAULT_FORWARDED_FOR_CAP} entries, and not trusting forwarded
-     * scheme or host headers. Production deployments behind a load balancer should override this
-     * binding with their proxy's outbound CIDR range.
+     * <p>Applications behind a load balancer or reverse proxy replace the default by providing their
+     * own binding with the proxy's outbound CIDR range; without one, {@link
+     * #requestOriginCapturer(Optional)} resolves {@link RequestOriginConfig#defaults()}, which
+     * trusts no proxy, caps the forwarded chain at {@value
+     * RequestOriginConfig#DEFAULT_FORWARDED_FOR_CAP} entries, and does not trust forwarded scheme
+     * or host headers:
+     * <pre>{@code
+     * @Provides
+     * @Singleton
+     * RequestOriginConfig originConfig() {
+     *     return new RequestOriginConfig(Set.of("10.0.0.0/8"), 16, true, true);
+     * }
+     * }</pre>
      *
-     * @return the default request origin configuration
+     * @return the optional-binding declaration (Dagger-generated; never invoked directly)
+     */
+    @BindsOptionalOf
+    abstract RequestOriginConfig optionalRequestOriginConfig();
+
+    /**
+     * Provides the {@link RequestOriginCapturer} from the application's {@link RequestOriginConfig}
+     * when it binds one, and from {@link RequestOriginConfig#defaults()} otherwise.
+     *
+     * <p>The class keeps its own {@code @Inject} constructor for hand-wiring call sites, but this
+     * explicit binding takes precedence wherever both could apply.
+     *
+     * @param config the optional application-provided request origin configuration
+     * @return the origin capturer the {@link OriginCaptureMiddleware} uses
      */
     @Provides
     @Singleton
-    static RequestOriginConfig requestOriginConfig() {
-        return RequestOriginConfig.defaults();
+    static RequestOriginCapturer requestOriginCapturer(Optional<RequestOriginConfig> config) {
+        return new RequestOriginCapturer(config.orElseGet(RequestOriginConfig::defaults));
     }
 
     /**

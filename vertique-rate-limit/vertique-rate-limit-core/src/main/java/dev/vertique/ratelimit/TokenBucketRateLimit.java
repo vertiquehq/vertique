@@ -8,7 +8,7 @@ import java.util.Objects;
 
 /**
  * The only {@link RateLimitAlgorithm} v1 permits: a fixed-capacity token bucket refilled by
- * {@link #refill()} (contracts/rate-limit-runtime.md, "Policy model").
+ * {@link #refill()}.
  *
  * @param capacity token-bucket capacity; bounded {@code 1..1_000_000_000_000}
  * @param refill the native refill shape (greedy or interval)
@@ -19,7 +19,7 @@ public record TokenBucketRateLimit(long capacity, RateLimitRefill refill) implem
     private static final long MAX_CAPACITY = 1_000_000_000_000L;
 
     /**
-     * Compact constructor — validates {@code capacity} against §5.8's bounds and requires
+     * Compact constructor — validates {@code capacity} against its declared bounds and requires
      * {@code refill}.
      *
      * @throws ConfigurationException if {@code capacity} is out of bounds

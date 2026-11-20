@@ -14,7 +14,7 @@ import java.util.function.Function;
  *
  * <p>The {@link #fingerprintedCallbackId()} participates in the plan hash via
  * {@link dev.vertique.workflow.dsl.WorkflowBuilder#decideWithCallbackId}, so any semantic change
- * to the route table is automatically reflected in the plan hash (FR-WF-DEF-055, AC #8).
+ * to the route table is automatically reflected in the plan hash.
  *
  * @param resolverFn the synthesized {@code Function<Object, String>} that walks the route table in
  *     declaration order and returns the target step id for the first matching route, or the default

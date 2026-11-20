@@ -19,9 +19,9 @@ import java.util.Objects;
  * {@link SecuritySchemeHandler#schemeName()}. The recorded type is an {@link AuthenticationHandler} so
  * the mount can compose alternative single-scheme requirements into a Vert.x
  * {@code ChainAuthHandler.any()} (an OR over schemes); {@code configure} is called once per handler with
- * no contract gating — resolving FR-014. The contributing handler is carried (rather than just its
+ * no contract gating. The contributing handler is carried (rather than just its
  * scheme name) so the collector can name the conflicting handler classes when two handlers claim the
- * same scheme (finding W5).
+ * same scheme.
  */
 final class CollectingSecuritySchemeRegistry implements SecuritySchemeRegistry {
 

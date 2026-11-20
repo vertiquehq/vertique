@@ -8,7 +8,7 @@ import java.util.Objects;
 
 /**
  * Binds a signed {@link IdentitySnapshot} to the specific durable row-carrier it was written for,
- * backing the F5 replay defense of PRD identity-002 (§14.6 amendment A9): a snapshot signed for one
+ * backing the replay defense: a snapshot signed for one
  * carrier cannot be transplanted onto another row and reconstructed.
  *
  * <p>The {@link #carrierId()} is a framework-generated identity allocated <em>before</em> the durable

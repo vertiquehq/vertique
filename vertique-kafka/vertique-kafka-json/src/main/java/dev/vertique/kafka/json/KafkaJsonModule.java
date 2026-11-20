@@ -28,7 +28,7 @@ import jakarta.inject.Singleton;
  * interface AppComponent { ... }
  * }</pre>
  *
- * <p>This module installs {@link JsonRuntimeModule} (FR-JSON-007B) so the
+ * <p>This module installs {@link JsonRuntimeModule} so the
  * {@link JsonMapperProfileRegistry} and {@link JsonConfig} are available to the JSON serde provider
  * and to {@link KafkaDefaultProfileValidator}. The serde provider applies the three-tier precedence:
  * per-endpoint bag id &gt; {@code json.jsonProfile} global default &gt; {@code vertx} floor.
@@ -56,7 +56,7 @@ public abstract class KafkaJsonModule {
     /**
      * Contributes the {@link KafkaDefaultProfileValidator} into the {@code Set<ComposeValidator>}
      * multibinding so the {@code VALIDATE} startup phase forces its construction, failing fast when
-     * {@code kafka.jsonProfile} names an unknown profile (FR-JSON-050).
+     * {@code kafka.jsonProfile} names an unknown profile.
      *
      * @param impl the Kafka per-boundary default-profile validator
      * @return the validator contributed into the compose-validator set

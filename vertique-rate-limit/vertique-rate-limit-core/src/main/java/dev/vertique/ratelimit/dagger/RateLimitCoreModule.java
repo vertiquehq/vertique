@@ -52,8 +52,7 @@ import java.util.function.ToLongFunction;
  *
  * <p>The {@code @IntoSet ApplicationShutdownStep} contributed below forces eager construction of
  * {@link RateLimiters} at bootstrap, so its startup validation runs unconditionally before any
- * handle is requested (contracts/rate-limit-runtime.md, "Dagger wiring"; `plan.md` pre-flight
- * finding 5) — the same pattern {@code ResilienceModule} uses.
+ * handle is requested — the same pattern {@code ResilienceModule} uses.
  *
  * <p>Includes {@code ContextRuntimeModule} (mirroring {@code CacheCoreModule}) so the default
  * {@link RateLimitSubjectResolver} — {@link DefaultRateLimitSubjectResolver} — has a bound {@code
@@ -72,13 +71,16 @@ public abstract class RateLimitCoreModule {
 
     /**
      * Default applied when {@code rateLimit.local.maxTrackedKeys} is omitted — the documented
-     * default (contracts/rate-limit-runtime.md, "Configuration" example config). An omitted value
+     * default. An omitted value
      * degrades to this default, never to a silently-accepted {@code 0}; the resolved value (default
-     * or explicit) is still eagerly bounds-validated (below 1 fails startup) by {@link
+     * or explicit) is still eagerly bounds-validated (below 1 or above 10,000,000 fails startup) by {@link
      * #localRateLimitBackend}, at this provider's own construction, the same eager-construction
      * discipline {@link RateLimiters}'s own startup validation uses.
      */
     private static final long DEFAULT_MAX_TRACKED_KEYS = 100_000L;
+
+    /** Largest accepted {@code maxTrackedKeys}, global or per-policy; a larger value fails startup. */
+    private static final long MAX_TRACKED_KEYS_LIMIT = 10_000_000L;
 
     /** Same default/validation contract as {@link #DEFAULT_MAX_TRACKED_KEYS}, for {@code cleanupIntervalMs}. */
     private static final long DEFAULT_CLEANUP_INTERVAL_MS = 60_000L;
@@ -101,8 +103,7 @@ public abstract class RateLimitCoreModule {
     /**
      * Declares the optional custom {@link RateLimitSubjectResolver} binding. Present only when an
      * application module explicitly binds one; the framework default ({@link
-     * DefaultRateLimitSubjectResolver}) applies otherwise (contracts/rate-limit-runtime.md,
-     * "Subject resolution SPI").
+     * DefaultRateLimitSubjectResolver}) applies otherwise.
      */
     @BindsOptionalOf
     abstract RateLimitSubjectResolver rateLimitSubjectResolver();
@@ -147,7 +148,7 @@ public abstract class RateLimitCoreModule {
 
     /**
      * Contributes the runtime shutdown step to the host lifecycle, forcing {@link RateLimiters} to
-     * construct eagerly at bootstrap so its startup validation (§4.3) runs unconditionally — the
+     * construct eagerly at bootstrap so its startup validation runs unconditionally — the
      * same {@code @IntoSet ApplicationShutdownStep} pattern {@code ResilienceModule} uses.
      *
      * @param rateLimiters application-scoped rate-limit runtime
@@ -190,7 +191,7 @@ public abstract class RateLimitCoreModule {
 
     /**
      * Typed {@code rateLimit.enabled}/{@code rateLimit.defaultMode} configuration, parsed through
-     * the canonical injected {@link ConfigParser} (docs/standards/config.md rule R10) instead of
+     * the canonical injected {@link ConfigParser} instead of
      * the raw scalar {@code JsonObject} reads this module used before — so a string-encoded value
      * (e.g. {@code "enabled": "true"}) coerces reliably through the parser's dedicated,
      * coercion-lenient mapper, independent of any global/REST mapper strictness.
@@ -234,8 +235,8 @@ public abstract class RateLimitCoreModule {
 
     /**
      * Typed {@code rateLimit.local.*} configuration, parsed through the canonical injected {@link
-     * ConfigParser} (R10). Every field defaults when omitted, mirroring the documented defaults
-     * (contracts/rate-limit-runtime.md, "Configuration" example: {@code maxTrackedKeys=100000},
+     * ConfigParser}. Every field defaults when omitted, mirroring the documented defaults
+     * ({@code maxTrackedKeys=100000},
      * {@code cleanupIntervalMs=60000}) — see {@link #localRateLimitBackend} for the eager bound
      * validation applied to the resolved values.
      *
@@ -256,7 +257,7 @@ public abstract class RateLimitCoreModule {
 
     /**
      * Typed {@code rateLimit.policies.<name>.local} per-policy override section, parsed through the
-     * canonical injected {@link ConfigParser} (R10). Unlike {@link RateLimitLocalConfig}, {@code
+     * canonical injected {@link ConfigParser}. Unlike {@link RateLimitLocalConfig}, {@code
      * maxTrackedKeys} stays a nullable boxed {@link Long} here — {@code null} distinguishes "no
      * override present" (fall back to the resolved global default) from an explicit override,
      * which standard Jackson record binding over the parser's lenient mapper already handles
@@ -269,7 +270,7 @@ public abstract class RateLimitCoreModule {
     /**
      * Merges root-configuration policies over Dagger {@code @IntoSet}-contributed (programmatic)
      * policies: a config policy replaces a same-name programmatic policy <strong>wholesale</strong>
-     * — fields never merge across tiers (contracts/rate-limit-runtime.md, "Policy model"). A name
+     * — fields never merge across tiers. A name
      * present in only one tier passes through unchanged. This is a pure resolution step; it never
      * rejects a same-name overlap between tiers as a duplicate — that override is the intended
      * mechanism. {@link RateLimiters}'s own constructor separately rejects any duplicate name that
@@ -290,8 +291,8 @@ public abstract class RateLimitCoreModule {
     /**
      * Fills a per-policy {@code mode} from {@code defaultMode} when the raw config entry omits it,
      * leaving an explicit per-policy {@code mode} untouched. {@code rateLimit.policies.<name>.mode}
-     * is optional in raw configuration only via this fallback (contracts/rate-limit-runtime.md,
-     * "Configuration" — {@code rateLimit.defaultMode}: "Baseline mode when a policy omits mode").
+     * is optional in raw configuration only via this fallback ({@code rateLimit.defaultMode} is the
+     * baseline mode when a policy omits {@code mode}).
      *
      * @param policiesJson the raw {@code rateLimit.policies} section
      * @param defaultMode the resolved {@code rateLimit.defaultMode}
@@ -313,8 +314,8 @@ public abstract class RateLimitCoreModule {
     /**
      * Contributes the LOCAL Bucket4j backend, resolving each policy's own bounded registry size
      * lazily by name: {@code rateLimit.policies.<name>.local.maxTrackedKeys} when present, else the
-     * shared {@code rateLimit.local.maxTrackedKeys} default (contracts/rate-limit-runtime.md,
-     * "Local engine contract" — per-policy budget, never one shared pool).
+     * shared {@code rateLimit.local.maxTrackedKeys} default (a per-policy budget, never one shared
+     * pool).
      *
      * <p>{@code rateLimit.local.maxTrackedKeys}/{@code cleanupIntervalMs} (default and any
      * per-policy override) are eagerly bounds-validated here, at this provider's own construction —
@@ -326,7 +327,8 @@ public abstract class RateLimitCoreModule {
      * @param parser the framework's config-parsing seam
      * @return the LOCAL {@link RateLimitBackend}
      * @throws ConfigurationException if the resolved global {@code maxTrackedKeys}/{@code
-     *     cleanupIntervalMs}, or any per-policy {@code maxTrackedKeys} override, is below 1
+     *     cleanupIntervalMs}, or any per-policy {@code maxTrackedKeys} override, is below 1, or if
+     *     any {@code maxTrackedKeys} is above 10,000,000
      */
     @Provides
     @IntoMap
@@ -336,7 +338,7 @@ public abstract class RateLimitCoreModule {
         JsonObject rateLimit = JsonConfigPaths.navigateObject(config, "rateLimit");
         JsonObject local = JsonConfigPaths.navigateObject(rateLimit, LOCAL);
         RateLimitLocalConfig localConfig = parser.parse(local, RateLimitLocalConfig.class);
-        requireAtLeastOne(localConfig.maxTrackedKeys(), "rateLimit.local.maxTrackedKeys");
+        requireValidMaxTrackedKeys(localConfig.maxTrackedKeys(), "rateLimit.local.maxTrackedKeys");
         requireAtLeastOne(localConfig.cleanupIntervalMs(), "rateLimit.local.cleanupIntervalMs");
         JsonObject policiesJson = JsonConfigPaths.navigateObject(rateLimit, POLICIES);
         validatePerPolicyMaxTrackedKeysOverrides(policiesJson, parser);
@@ -362,12 +364,19 @@ public abstract class RateLimitCoreModule {
                 RateLimitPolicyLocalOverrideConfig override =
                         parser.parse(policyLocal, RateLimitPolicyLocalOverrideConfig.class);
                 if (override.maxTrackedKeys() != null) {
-                    requireAtLeastOne(
+                    requireValidMaxTrackedKeys(
                             override.maxTrackedKeys(),
                             "rateLimit.policies." + entry.getKey() + ".local.maxTrackedKeys");
                 }
             }
         });
+    }
+
+    private static void requireValidMaxTrackedKeys(long value, String path) {
+        requireAtLeastOne(value, path);
+        if (value > MAX_TRACKED_KEYS_LIMIT) {
+            throw new ConfigurationException(path + " must be at most " + MAX_TRACKED_KEYS_LIMIT + ", got " + value);
+        }
     }
 
     private static void requireAtLeastOne(long value, String path) {

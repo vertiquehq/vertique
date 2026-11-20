@@ -4,11 +4,19 @@
 package dev.vertique.redis;
 
 import dev.vertique.core.config.ConfigSecretRenderer;
+import dev.vertique.core.exception.ConfigurationException;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.List;
 import java.util.Objects;
 
-/** Validated named Redis connection profile. */
+/**
+ * Validated named Redis connection profile.
+ *
+ * <p>A profile whose endpoints include a {@code rediss://} URI must set {@code tlsEnabled} to
+ * {@code true}; the contradictory combination fails with a {@link ConfigurationException} that names
+ * {@code redis.connections.<name>.tlsEnabled}. {@code tlsEnabled} still defaults to {@code false}.
+ */
 public record RedisConnectionConfig(
         String name,
         List<String> endpoints,
@@ -26,6 +34,12 @@ public record RedisConnectionConfig(
             throw new IllegalArgumentException("endpoints must not be empty");
         }
         endpoints.forEach(RedisConnectionConfig::validateEndpoint);
+        if (!tlsEnabled && endpoints.stream().anyMatch(RedisConnectionConfig::usesTlsScheme)) {
+            // Names the key only: the endpoint is never rendered. A rediss:// endpoint asks for TLS, and
+            // a profile that turns TLS off would connect in plaintext to a server that expects it.
+            throw new ConfigurationException(
+                    "redis.connections." + name + ".tlsEnabled must be true when an endpoint uses rediss://");
+        }
         username = optional(username, "username");
         passwordSecret = optional(passwordSecret, "passwordSecret");
         if (connectTimeoutMs < 1 || connectTimeoutMs > 60_000) {
@@ -58,19 +72,30 @@ public record RedisConnectionConfig(
                 + "]";
     }
 
+    private static boolean usesTlsScheme(String endpoint) {
+        return endpoint.regionMatches(true, 0, "rediss:", 0, "rediss:".length());
+    }
+
     private static void validateEndpoint(String endpoint) {
+        requireNonBlank(endpoint, "endpoint");
+        URI uri;
         try {
-            URI uri = URI.create(requireNonBlank(endpoint, "endpoint"));
-            if (!("redis".equalsIgnoreCase(uri.getScheme()) || "rediss".equalsIgnoreCase(uri.getScheme()))
-                    || uri.getHost() == null
-                    || uri.getUserInfo() != null
-                    || uri.getFragment() != null
-                    || uri.getQuery() != null
-                    || (uri.getPort() == 0 || uri.getPort() < -1 || uri.getPort() > 65_535)) {
-                throw new IllegalArgumentException("endpoint must be a credential-free redis URI");
-            }
-        } catch (IllegalArgumentException invalid) {
-            throw new IllegalArgumentException("invalid Redis endpoint", invalid);
+            uri = new URI(endpoint);
+        } catch (URISyntaxException malformed) {
+            // Neither attach the cause nor echo the input: the URISyntaxException message quotes the whole
+            // raw endpoint, credentials included.
+            throw new IllegalArgumentException("invalid Redis endpoint: endpoint is not a valid URI");
+        }
+        if (!("redis".equalsIgnoreCase(uri.getScheme()) || "rediss".equalsIgnoreCase(uri.getScheme()))
+                || uri.getHost() == null
+                || uri.getUserInfo() != null
+                || uri.getFragment() != null
+                || uri.getQuery() != null
+                || uri.getPort() == 0
+                || uri.getPort() > 65_535) {
+            // No part of the endpoint is rendered: a mistyped credential can sit in the host or port
+            // position (redis://user:123456, redis://user@pass), so even parsed components are not safe.
+            throw new IllegalArgumentException("invalid Redis endpoint: endpoint must be a credential-free redis URI");
         }
     }
 

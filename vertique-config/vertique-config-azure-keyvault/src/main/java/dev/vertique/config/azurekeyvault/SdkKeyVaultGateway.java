@@ -43,7 +43,7 @@ import org.slf4j.LoggerFactory;
  * Any other {@link HttpResponseException} or runtime exception →
  * {@link ConfigPropertySourceException} naming the source and original placeholder key. The
  * SDK cause is intentionally NOT attached to sever any potential secret content in the
- * SDK exception chain (NFR-CONF-002). Azure SDK error messages for {@code getSecret} are
+ * SDK exception chain. Azure SDK error messages for {@code getSecret} are
  * HTTP-status + request-ID shaped (generally safe), but the discipline is maintained.
  *
  * <h2>Null-Response Guard</h2>
@@ -110,7 +110,7 @@ class SdkKeyVaultGateway implements KeyVaultGateway {
      * {@link HttpResponseException} or runtime exception results in a
      * {@link ConfigPropertySourceException} that names the source and original placeholder
      * key, but NEVER the secret value. The SDK exception cause is intentionally NOT attached —
-     * the cause chain is severed as a belt-and-suspenders measure per NFR-CONF-002.
+     * the cause chain is severed as a belt-and-suspenders value-redaction measure.
      *
      * <p>The {@link HttpResponseException} catch block guards against a null
      * {@link com.azure.core.http.HttpResponse}: Azure SDK credential exceptions
@@ -175,7 +175,7 @@ class SdkKeyVaultGateway implements KeyVaultGateway {
             String sourceName, String originalKey, String normalizedName, HttpResponseException e) {
         // Guard against null response: Azure SDK credential exceptions extend
         // HttpResponseException but are constructed with a null HttpResponse. Without this
-        // guard, getResponse().getStatusCode() would itself NPE (NFR-CONF-002).
+        // guard, getResponse().getStatusCode() would itself NPE.
         String detail = e.getResponse() != null
                 ? "HTTP " + e.getResponse().getStatusCode()
                 : e.getClass().getSimpleName();

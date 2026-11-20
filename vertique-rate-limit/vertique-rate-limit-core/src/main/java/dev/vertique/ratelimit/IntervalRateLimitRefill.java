@@ -11,8 +11,8 @@ import java.util.Objects;
 
 /**
  * All-at-once token refill: the full {@link #tokens()} amount arrives exactly at each
- * {@link #period()} boundary, never fractionally in between (contracts/rate-limit-runtime.md,
- * "Bucket4j translation contract" — maps to Bucket4j's {@code refillIntervally}).
+ * {@link #period()} boundary, never fractionally in between (maps to Bucket4j's
+ * {@code refillIntervally}).
  *
  * @param tokens tokens added per {@link #period()}; bounded {@code 1..1_000_000_000_000}
  * @param period the refill period; bounded {@code 1ms..31_536_000_000ms}
@@ -25,7 +25,7 @@ public record IntervalRateLimitRefill(long tokens, Duration period) implements R
     private static final long MAX_PERIOD_MS = 31_536_000_000L;
 
     /**
-     * Compact constructor — validates {@code tokens} and {@code period} against §5.8's bounds.
+     * Compact constructor — validates {@code tokens} and {@code period} against their declared bounds.
      *
      * @throws ConfigurationException if {@code period} is {@code null} or either bound is violated
      */

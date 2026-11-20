@@ -13,7 +13,7 @@ import java.lang.reflect.Method;
  * ({@code ResourceScanner} via {@link AnnotationResolver#resolveParameterAnnotations}) produces,
  * including annotations declared on superclass and interface method overrides.
  *
- * <p>Used by codegen-generated {@code ParameterMetadata} implementations (ADR-0146, parity-first
+ * <p>Used by codegen-generated {@code ParameterMetadata} implementations (parity-first
  * policy) as the lazy reflective fallback for parameters that carry at least one annotation whose
  * member shape the compile-time {@code AnnotationLiteralEmitter} cannot render into a literal (most
  * commonly Swagger's {@code @Parameter}, whose {@code schema} member defaults to a nested
@@ -80,7 +80,7 @@ public final class GeneratedJaxRsReflectiveAnnotations {
             Method method = declaringClass.getMethod(methodName, parameterTypes);
             // declaringClassFqn is the concrete resource class; use it as the annotation view so a
             // superclass-declared method inherits parameter annotations from the resource's
-            // interfaces (vertiquehq/vertique-dev#636).
+            // interfaces.
             Class<?> declaring = method.getDeclaringClass();
             Class<?> annotationView = declaring.isInterface() ? declaring : declaringClass;
             return AnnotationResolver.resolveParameterAnnotations(method, parameterIndex, annotationView);

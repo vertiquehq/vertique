@@ -38,7 +38,7 @@ starter or feature module. Depend on it **directly** when:
 Pair core with the module that implements the contract you are using: `vertique-config-core` for
 `ConfigParser`, `vertique-validation` for `BeanValidator`, `vertique-json` for the JSON profile
 registry, `vertique-context` and `vertique-correlation` for context propagation,
-`vertique-management` for health-check aggregation, `vertique-services` for typed event-bus service
+`vertique-management` for the HTTP health probes, `vertique-services` for typed event-bus service
 calls.
 
 ---
@@ -80,10 +80,13 @@ first use. Module internals depend on the typed record, never on the raw `JsonOb
 ### Two ordering contracts, deliberately unrelated
 
 `OrderedExtension` orders behavioral extensions (interceptors, customizers, observers).
-`LifecycleOrdered` orders lifecycle participants (startup and shutdown steps, verticle
-deployments). Both sort **phase ascending → priority ascending → `orderKey` ascending**, and both
-expose a static `comparator()`. They are separate interfaces because their `phase()` methods return
-different enums — `ExtensionPhase` and `LifecyclePhase`.
+`LifecycleOrdered` orders startup and shutdown steps. Both sort **phase ascending → priority
+ascending → `orderKey` ascending**, and both expose a static `comparator()`. They are separate
+interfaces because their `phase()` methods return different enums — `ExtensionPhase` and
+`LifecyclePhase`. Verticle deployments share the lifecycle contract: `VerticleDeployment` in
+`vertique-deploy` implements `LifecycleOrdered` with its name as the `orderKey`, so deployments
+start sequentially in phase, priority, then name order and are undeployed in reverse order.
+`vertique-deploy` documents the deployment sequence.
 
 The rules an extension author must know:
 
@@ -414,7 +417,7 @@ framework's own scanners provide the implementations.
 | `findAnnotation(Class<A>)` | `Optional<A>` | reflection-free |
 | `hasAnnotation(Class<? extends Annotation>)` | `boolean` | reflection-free |
 | `genericReturnType()` | `Type` | reflection-free on generated metadata; reflective on scan metadata |
-| `asMethod()` | `Method` | reflective |
+| `asMethod()` | `Method` | reflective; opt-in, resolved lazily on the first call and cached on generated metadata |
 
 `ParameterMetadata`:
 
@@ -434,6 +437,14 @@ framework's own scanners provide the implementations.
   `genericReturnType()` — is safe on the critical path and needs no GraalVM `reflect-config.json`
   entry. `asMethod()`, `ParameterMetadata.genericType()`, and `annotationsLazy()` remain reflective;
   the scan-path implementation of `genericReturnType()` is reflective too.
+- `asMethod()` is implemented on both paths and opt-in. Generated metadata resolves the `Method` on
+  the first call through `declaringType().getDeclaredMethod(name(), parameterTypes())` and caches it;
+  scan metadata returns the wrapped `Method`. Generated proxy overrides and the framework's built-in
+  `AspectProvider`s never call it, so a consumer that never calls it stays reflection-free. A
+  GraalVM native-image consumer that does call it needs a `reflect-config.json` entry registering
+  the declaring type's methods (`allDeclaredMethods`, or the specific method). A declaring class
+  that no longer declares the method surfaces as an `IllegalStateException` naming the expected
+  signature, with the `NoSuchMethodException` as its cause.
 - On the codegen path, annotation lookups query compile-time-captured annotation literals, not live
   runtime annotations. An annotation added after compilation — by a dynamic proxy or a bytecode
   agent — is invisible. Only `@Retention(RUNTIME)` annotations are ever visible.
@@ -495,6 +506,43 @@ fail-closed emission sites that still need an audit join key when no ambient cor
 The runtime that binds this context, and the `CorrelationIdGenerator` SPI it uses, ship in
 `dev.vertique:vertique-correlation`. An application overrides ID generation by binding its own
 `CorrelationIdGenerator` — that module declares the binding as optional.
+
+### General-purpose helpers
+
+Core also ships a small set of public, final utility classes. They are part of the module's
+public surface and application code may use them like any other core type.
+
+- **`dev.vertique.core.async.Futures`** — converts between Vert.x `Future` failures and `Result`
+  values (`toFuture`, `reflect`), settles a collection of futures into a list of `Result`s without
+  short-circuiting (`settle`), and maps a failure cause without touching successful values
+  (`mapFailure`).
+- **`dev.vertique.core.async.Timeouts`** — the shared timeout boundaries `awaitCondition` and
+  `withTimeout`; see [Asynchronous timeouts](#asynchronous-timeouts).
+- **`dev.vertique.core.async.Combinators`** — asynchronous control-flow kernels over a pre-ordered
+  list: a sequential value fold, a first-success-wins recovery chain, an all-settled join that
+  swallows per-item failures, a synchronous swallowing loop, and a fire-and-forget dispatch. They
+  preserve the caller's order, never reorder, and route a synchronous throw from a callback into
+  the same channel as an asynchronous failure; whether a failure continues or propagates is the
+  caller's lambda's decision.
+- **`dev.vertique.core.util.Strings`** — pure string helpers shared across modules: `firstNonBlank`
+  and the `errorTypeToken` validator.
+- **`dev.vertique.core.util.TypeResolver`** — resolves the concrete type argument bound to a target
+  interface (`resolveTypeArgument`) and collects all transitively reachable interfaces
+  (`getAllInterfaces`). Type variables forwarded through a parameterized intermediate interface are
+  not resolved by `resolveTypeArgument`. `resolveMemberType(context, type)` substitutes the type
+  variables of a reflective member type (a parameter or return type) with the arguments the
+  concrete `context` class binds through its class and interface hierarchy, including variables
+  forwarded through intermediate supertypes and nested in parameterized, array and wildcard types.
+  A variable that no class in the hierarchy binds, or a method's own type variable, stays
+  unresolved; the result's `equals`/`hashCode` follow the JDK reflective type contracts.
+- **`dev.vertique.core.util.AnnotationResolver`** — resolves method, class, and parameter
+  annotations across the superclass chain and interface hierarchy (`resolveMethodAnnotations`,
+  `resolveClassAnnotations`, `resolveParameterAnnotations`) and finds composed annotations through
+  meta-annotations (`findMetaAnnotation`). Deduplication is by annotation equality, so same-type
+  annotations with different member values are all kept in traversal order.
+  `inheritedDeclarations` and `overridesBySignature` are internal framework seams.
+- **`dev.vertique.core.util.UUIDV7`** — time-ordered RFC 9562 UUIDv7 identifiers; see
+  [`UUIDV7`](#uuidv7).
 
 ### `UUIDV7`
 
@@ -721,7 +769,8 @@ Every extension below is contributed through Dagger multibinding unless stated o
 
 Reports the health of one component. Classify each check with the `@Liveness` or `@Readiness`
 qualifier; `HealthCheckModule` declares both empty-by-default sets so a module can contribute
-without depending on `dev.vertique:vertique-management`, which is what reads them.
+without depending on `dev.vertique:vertique-management`, which serves them over HTTP. The sets are
+evaluated in process by `HealthCheckAggregator`, below, which the same module binds.
 
 ```java
 public interface HealthCheck {
@@ -760,8 +809,63 @@ exception, so a failure that cannot describe itself still yields a `DOWN` result
 second failure. It rejects a `null` cause with a `NullPointerException`. Return a completed future
 carrying a `DOWN` result rather than a failed future — a failed future or a thrown exception is
 still reported as `DOWN`, but with the error text instead of your diagnostic data. `name()` must be
-unique within its qualifier set and must not return `null`; the management endpoint reports a `null`
+unique within its qualifier set and must not return `null`; the aggregator reports a `null`
 name under the check's implementing class name.
+
+#### `HealthCheckAggregator` and `HealthReport`
+
+`HealthCheckAggregator` turns a check set into a verdict without an HTTP server. Inject it together
+with the qualified set to evaluate — `HealthCheckModule` binds it, unscoped, with the default
+five-second per-check timeout (`HealthCheckAggregator.DEFAULT_CHECK_TIMEOUT_SECONDS`) — or construct
+`new HealthCheckAggregator(checkTimeoutSeconds)` for another timeout; a zero or negative timeout is
+rejected with `IllegalArgumentException`.
+
+```java
+@Singleton
+public final class ReadinessGate {
+    private final HealthCheckAggregator aggregator;
+    private final Set<HealthCheck> readinessChecks;
+
+    @Inject
+    public ReadinessGate(HealthCheckAggregator aggregator, @Readiness Set<HealthCheck> readinessChecks) {
+        this.aggregator = aggregator;
+        this.readinessChecks = readinessChecks;
+    }
+
+    public Future<Boolean> ready() {
+        return aggregator.evaluate(readinessChecks).map(HealthReport::isUp);
+    }
+}
+```
+
+`evaluate(Set<HealthCheck>)` returns a `Future<HealthReport>`. `HealthReport` is a
+`record (HealthStatus status, List<Entry> checks)` with `isUp()`; each `Entry` is a
+`record (String name, HealthCheckResult result)` with `status()`. The rules are the same ones the
+management probes answer by:
+
+- Every check is started, in the set's iteration order, before any is waited for; the report holds
+  one entry per check in that order and is produced only once every check has settled or timed out.
+  An empty set is `UP` with no entries, and completes synchronously.
+- The status is `UP` only when every entry is `UP`. A report cannot claim `UP` while carrying a `DOWN`
+  entry: the canonical constructor rejects a status that contradicts the entries, and
+  `HealthReport.of(List<Entry>)` derives it.
+- A check that has not settled within the timeout is `DOWN`, described by the `TimeoutException`.
+- A failed future, an exception thrown from `check()`, or a `null` returned instead of a future is
+  `DOWN` with `HealthCheckResult.down(Throwable)` describing the failure; a future that succeeds with a
+  `null` result is `DOWN` with empty data. A `null` `name()` is reported under the implementing class
+  name and the check still runs; a `name()` that throws an exception is `DOWN` under the class name and
+  the check is not run. `name()` is called once per evaluation.
+- An `Error` thrown by `name()` or `check()` propagates synchronously out of `evaluate`, abandoning the
+  checks already started; an `Error` raised while a failure is being described (a `getMessage()` that
+  throws one) fails the returned future. The caller decides how to answer for a broken check.
+
+No Vert.x context is needed. The future completes on whichever thread settles the last check — a
+check's own thread or the timer thread that fires the timeout — and inline, before `evaluate`
+returns, when every check is already settled. A check that blocks indefinitely inside `name()`,
+`check()` or `getMessage()` stalls the evaluation with no future left to time out, and a future that
+reports itself failed with a `null` cause never settles it; neither is absorbed. The report carries each
+check's `data` as the check produced it and does not serialize it; a consumer that renders the data,
+such as the management probes, may still judge an entry `DOWN` when its data cannot be rendered.
 
 ### `ApplicationStartupStep` and `ApplicationShutdownStep`
 
@@ -1198,14 +1302,55 @@ The seam is entirely optional — an application that binds nothing gets the fra
 default. Because the framework finalizes the supplied mapper in place, do not share that instance
 concurrently for any other purpose.
 
+### `ConfigSecret`
+
+Field-level marker (`@Retention(RUNTIME)`; targets field, method, parameter and record component) for
+a config property whose whole value is a secret — typically an open bag whose keys cannot be named in
+advance (`DbPoolConfig#properties`, `FlywayConfig#placeholders`). The config mapper behind
+`ConfigParser` writes a non-empty value of a marked property as the single string `"***"` without
+descending into it, whatever the property's path or type, and the marker wins over the path rule. An
+empty map, collection, array or string, and a `null` or empty `Optional`, are written as given, so an
+unset bag stays visible as unset. The marker affects serialization only: the record keeps the live value, and
+a record that carries a marked property must still redact it in its own `toString()` (for example with
+`ConfigSecretRenderer.redactBag`, or by printing the keys only). Configuring a marked bag as the string
+`"***"` fails binding like any other wrong shape, without echoing a value. Like the rest of the masking,
+it applies only to the config mapper: another `ObjectMapper` prints the value.
+
 ### `ConfigSecretRenderer`
 
 Shared redactor so every module's config `toString()` masks the same things. `MASK` is `"***"`, and
 the input is never mutated — masking is applied to a copy used only for the returned string.
 
+`isSensitivePath` is the framework's one definition of what counts as a secret, and the same rule
+governs the config mapper behind `ConfigParser` (`dev.vertique:vertique-config-core`): when that
+mapper serializes a configuration record, every field whose dotted path within the record is
+sensitive renders as `"***"` when it has a value and is omitted when it is absent, and `ConfigParser`
+rejects a literal `"***"` at such a path so a masked dump cannot be fed back as a secret. A scalar
+secret component whose serialized name the rule recognises therefore needs no
+`@JsonProperty(access = WRITE_ONLY)`; it stays readable from configuration and through its accessor.
+An open bag that may hold a secret under any key carries `@ConfigSecret` (above) and renders whole as
+`"***"` when non-empty. Only the config mapper masks —
+a record serialized with another `ObjectMapper` prints the secret — and the substring rule also masks
+look-alikes such as `keyStorePath` or `maxTokens`.
+
+`isUriPath` names the string fields the config mapper renders through `redactUri` instead of as given:
+a field whose dotted path contains `url`, `uri`, `endpoint` or `connectionstring` after lower-casing
+and separator stripping (`jdbcUrl`, `baseUrl`, `endpoints`, `connection-string`) has its authority
+userinfo and credential-named query-parameter values masked while scheme, host, port and path stay
+visible. A secret-named path wins (`tokenUrl` renders as `"***"`). The config mapper applies the rule
+to every string it walks at such a path — a field, an `Optional`, a list element, a bag entry — but
+`redactBag`, and so a bag's `toString()`, does not. The rule covers `scheme://user:pass@host` and
+`?name=value` forms only, with the userinfo percent-encoded: a raw `/`, `?` or `#` inside a password
+ends the authority early and leaves the rest visible, only the first authority of a comma-joined value
+is masked, a scheme-less or semicolon-style connection string is printed as given, a `java.net.URI`,
+`URL` or array-typed value is written as given, a URL under a name without one of the tokens
+(`address`, `host`) is not recognized, and a masked URL fed back to `ConfigParser` is not rejected
+(only the literal `"***"` at a secret path is).
+
 | Method | Behavior |
 |---|---|
-| `isSensitivePath(String dottedPath)` | `true` when the lower-cased path contains `password`, `secret`, `token`, `passphrase`, `credential`, `jaas.config`, `user.info`, `private.key`, `keystore`, or `truststore`; or when its separator-stripped, lower-cased form contains `apikey`, `accesskey`, or `secretkey`. |
+| `isSensitivePath(String dottedPath)` | `true` when the lower-cased path contains `password`, `secret`, `token`, `passphrase`, `credential`, `jaas.config`, `user.info`, `private.key`, `keystore`, or `truststore`; or when its separator-stripped, lower-cased form contains `apikey`, `accesskey`, `secretkey`, `privatekey`, `jaasconfig`, or `userinfo` (so `privateKeyPem`, `private-key`, `private_key`, `jaasConfig`, `jaas-config`, `userInfo` and `user_info` all match). |
+| `isUriPath(String dottedPath)` | `true` when the separator-stripped, lower-cased path contains `url`, `uri`, `endpoint` or `connectionstring`. Biased towards matching: `security` and `during` match through `uri`; a wrong match costs at most a rewritten non-URL string that contains `//…@` or a credential-named `?name=value`, because `redactUri` returns an equal string otherwise. The token set may widen in a minor release and never narrows. |
 | `redactBag(JsonObject bag)` | Renders a bag as a log-safe `String`, descending through nested objects *and* arrays and masking every leaf whose full dotted path is sensitive. |
 | `redactUri(String uri)` | Masks authority userinfo (`user:pass` between `//` and `@`) and the value of any credential-bearing query parameter. Best-effort; never throws. |
 
@@ -1371,7 +1516,10 @@ runtime or annotation vocabulary.
   provided by generated code and by the framework's own scanners.
 - **Never log a secret-bearing config record without redaction.** Route the value through
   `ConfigSecretRenderer` in the record's `toString()` rather than relying on `@JsonIgnore`, which on
-  a record would also block deserialization and make the value unreadable from configuration.
+  a record would also block deserialization and make the value unreadable from configuration. Do not
+  serialize a configuration record with a mapper other than the config mapper: the masking lives
+  there, and secret components carry no `WRITE_ONLY` annotation of their own (an open bag carries
+  `@ConfigSecret`).
 
 ---
 

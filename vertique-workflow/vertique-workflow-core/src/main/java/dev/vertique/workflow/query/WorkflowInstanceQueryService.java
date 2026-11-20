@@ -28,8 +28,7 @@ import java.util.Optional;
  * read through {@link dev.vertique.workflow.history.WorkflowInstanceHistoryService}; the external durable event stream
  * published via the outbox relay is a separate surface.
  *
- * <p>REST/management endpoints ({@code FR-WF-180}–{@code FR-WF-185}) remain deferred; cycle 5
- * ships the programmatic API only.
+ * <p>REST/management endpoints remain deferred; only the programmatic API ships.
  *
  * <p>Implementations are expected to be {@code @Singleton} and must not block the Vert.x event
  * loop. All operations return {@link Future} values.

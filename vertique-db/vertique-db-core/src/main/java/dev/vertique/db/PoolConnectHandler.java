@@ -13,6 +13,16 @@ import io.vertx.sqlclient.SqlConnection;
  * framework calls {@code conn.close()} automatically when the returned future completes —
  * implementations must <b>NOT</b> call it themselves.
  *
+ * <p>The returned future must complete. The pool applies no time limit to it:
+ *
+ * <ul>
+ *   <li>A completed future admits the connection whether it succeeded or failed; a failed handler
+ *       does not reject the connection.
+ *   <li>A future that never completes keeps the connection out of the pool. It holds one of the
+ *       pool's slots, callers waiting for a connection fail with a timeout after {@code
+ *       connectionTimeoutMs}, and the pool serves callers again only once the future completes.
+ * </ul>
+ *
  * <p>Example: setting the session timezone:
  *
  * <pre>{@code

@@ -179,7 +179,7 @@ public final class WorkflowSignalContributor implements ServiceContractContribut
      * to {@link RelayedSignals#signal} is unchanged — the engine's
      * {@code workflow_dedup} table already scopes dedup to the instance.
      *
-     * <p>PRD-WF-007 (Contract Appendix C4): when {@link WorkflowSignalRequest#metadata()} is
+     * <p>Explicit carrier: when {@link WorkflowSignalRequest#metadata()} is
      * non-null, it is decoded via {@link DurableMetadata#fromCarrier(io.vertx.core.json.JsonObject)}
      * and delivered through the metadata-aware 8-arg {@link RelayedSignals#signal}
      * overload. A {@code null} carrier keeps calling the legacy 7-arg overload byte-for-byte.
@@ -212,9 +212,9 @@ public final class WorkflowSignalContributor implements ServiceContractContribut
      *     idempotently skipped as a duplicate)
      */
     Future<Void> handleSignal(WorkflowSignalRequest req) {
-        // PRD-WF-002 D11a: scope the inbox message id by branch identity when the request targets a
+        // Scope the inbox message id by branch identity when the request targets a
         // specific fork-group branch so two sibling branches sharing a dedupKey do not collide in
-        // the inbox table. Non-branch requests preserve the cycle-2 form (workflowId + ":" + key).
+        // the inbox table. Non-branch requests preserve the original form (workflowId + ":" + key).
         String inboxMessageId =
                 WorkflowDedupScopes.signalInboxId(req.workflowId(), req.forkStepId(), req.branchId(), req.dedupKey());
         RelayedSignals<SqlClient> relayed = relayedSignalsProvider.get();

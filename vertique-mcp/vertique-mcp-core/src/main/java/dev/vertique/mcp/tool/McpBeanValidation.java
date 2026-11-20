@@ -11,7 +11,7 @@ import java.util.Set;
 
 /**
  * The one shared Jakarta Bean Validation {@link Validator} for stage 4 of the fixed request-time input
- * pipeline (contract §4.7).
+ * pipeline.
  *
  * <p>{@link Validation#buildDefaultValidatorFactory()} builds a full XML/provider-discovery bootstrap,
  * which is expensive to repeat; every generated invoker's {@code prepare()} that runs Bean Validation

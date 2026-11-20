@@ -627,7 +627,7 @@ public final class InputProcessorEmitter {
                 //             FIELD_CANON, FIELD_SANIT, skipCanon, skipSanit,
                 //             resolver, location, childPath, "fieldName", OriginClass.class)
                 // The InputValueContext's logicalName is the JAVA property name because this arm
-                // matched a declared property; childPath stays the WIRE path (§3.7), so a
+                // matched a declared property; childPath stays the WIRE path, so a
                 // diagnostic still points at the key the caller actually sent.
                 arm.addStatement(
                         "case $S -> out.put(k, $L(v, rootCtx, OBJ_CANON, OBJ_SANIT, OBJ_SKIP_CANON, OBJ_SKIP_SANIT, "

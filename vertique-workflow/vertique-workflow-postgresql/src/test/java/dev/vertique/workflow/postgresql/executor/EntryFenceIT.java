@@ -810,8 +810,7 @@ class EntryFenceIT {
             TimerRecord keyedTimer = only(f.timerRecords(keyed));
             CommandRow keyedTimeout = only(f.timerCommands(keyed));
 
-            // When the first is retried after an instance-id signal parked for its branch; the second is migrated and
-            // an
+            // When the first is retried after a signal parked for its branch; the second is migrated and an
             // instance-id signal is recorded for the re-entered wait past the old fire time; the third likewise
             f.signalBranch(node, forked, PRINTED, new Payment("txn-1"), "i-1", "fork", "b");
             f.idle(node, forked);
@@ -824,9 +823,10 @@ class EntryFenceIT {
             f.signalInstance(node, keyed, SHIPPED, new Payment("txn-3"), "i-3");
             f.idle(node, unkeyed, keyed);
 
-            // Then the first signal applied in the retry's segment while the instance stayed FAILED, as it does today
+            // Then the first signal is still parked: the retry failed the instance again at its failure node, and no
+            // signal applies while the instance is FAILED
             SignalRow first = only(f.signalRows(forked));
-            assertThat(first.state()).isEqualTo("COMPLETE");
+            assertThat(first.state()).isEqualTo("PARKED");
             assertThat(f.fixture.instanceOf(forked).status()).isEqualTo("FAILED");
             assertThat(first.waitId()).isNull();
 

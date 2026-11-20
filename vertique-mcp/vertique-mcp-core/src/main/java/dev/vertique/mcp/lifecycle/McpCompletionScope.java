@@ -5,10 +5,9 @@ package dev.vertique.mcp.lifecycle;
 
 /**
  * Opt-in capability a per-request {@link McpRequestObservation} session may implement to bracket the
- * synchronous completion dispatch loop with an ambient scope (contract
- * §4.10).
+ * synchronous completion dispatch loop with an ambient scope.
  *
- * <p>The motivating use is the Micrometer exemplar obligation the frozen contract freezes: "when a
+ * <p>The motivating use is the Micrometer exemplar obligation: "when a
  * sampled HTTP span is current at terminal settlement, the adapter always invokes the Micrometer
  * exemplar path." Vert.x's OpenTelemetry tracer ends the HTTP server span before any completion
  * callback runs, so without this scope {@code Span.current()} is a no-op span by the time a Micrometer

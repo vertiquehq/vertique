@@ -117,6 +117,8 @@ A plain `http://` address is accepted but sends the Vault token in cleartext. Us
 | `openTimeoutMs` | No | 5000 | Connection open timeout in milliseconds |
 | `readTimeoutMs` | No | 5000 | Read timeout in milliseconds |
 
+A blank `namespace`, `auth.method` or `auth.jwtPath` counts as absent and takes the same default as an omitted key (no namespace, token auth, and the service-account token path).
+
 **Timeout note:** The jopenlibs driver accepts timeouts in integer seconds. Both `openTimeoutMs` and `readTimeoutMs` are converted at build time via `Math.max(1, ceil(ms / 1000.0))`. Sub-1000 ms values map to 1 second (the driver treats zero as "no timeout").
 
 ### Auth Methods
@@ -182,6 +184,7 @@ The factory discovered by `ServiceLoader`. Registered in `META-INF/services/dev.
 
 #### Invariants and Gotchas
 
+- A wrong-typed field (for example `auth` or `paths` that is not an object or array) also throws `ConfigPropertySourceException`, naming the field and never echoing its value. A gateway failure while logging in, such as an unreadable Kubernetes JWT file, is reported the same way.
 - `create()` is fail-closed: any declared path that returns 404 (not found), 403 (permission denied), a non-2xx HTTP status, or a TCP error throws `ConfigPropertySourceException` and aborts bootstrap. The default configured on a `${key:default}` placeholder is not used as a fallback.
 - Timeouts are converted from milliseconds to seconds via ceiling division; values below 1000 ms round up to 1 second.
 - `create()` is called from the single-threaded bootstrap path; no thread-safety is required.
@@ -234,18 +237,18 @@ The source config subtree is resolved in pass 1 (tree-only), so `address` and `a
 
 ## Security Notes
 
-NFR-CONF-002 applies throughout this module:
+The value-redaction rule applies throughout this module:
 
 - Secret values **never** appear in log output at any level, in exception messages, or in `toString()` output of any internal type.
 - Exception messages contain only: source instance name, path name, key name, HTTP status codes, and structural descriptions of the failure.
-- The `auth.method` string is echoed in error messages (it is a structural identifier, not a secret). The `auth.token`, `auth.secretId`, and JWT file contents are never echoed.
+- A rejected configuration value is never echoed, because a mistyped secret can sit in any field. An unknown `auth.method`, a rejected timeout and an unreadable Kubernetes JWT file are each reported by the key that failed (`auth.method`, the timeout key, `auth.jwtPath`); the failure text carries neither the value nor the OS error text. The `auth.token`, `auth.secretId`, and JWT file contents are never echoed either.
 - The jopenlibs driver returns 403 responses as an empty data map rather than throwing; this module inspects the HTTP status after every read and throws `ConfigPropertySourceException` for 403, ensuring a bad or revoked token aborts startup visibly rather than producing a silently empty source.
 
 ### Driver cause-chain severing
 
 The jopenlibs driver embeds raw HTTP response bodies in `VaultException` messages for non-2xx reads and failed logins (format: `"...\nResponse body: <body>"`). An untrusted proxy 502 HTML page or a Vault error body can flow up the exception cause chain and reach startup logs as unbounded, untrusted text.
 
-To match the severed-cause discipline of `vertique-config-azure-keyvault` and `vertique-config-aws-secrets`:
+To match the severed-cause discipline of `vertique-config-azure-keyvault` (the AWS Secrets source differs: it keeps the SDK exception as the cause of its failure, see its module reference):
 
 - Every caught `VaultException` is sanitized by `JOpenLibsVaultGateway.sanitizeDriverFailure(path, e)` before being rethrown as a `VaultReadException`.
 - The sanitized detail contains only: `VaultException` class simple name + `"HTTP <code>"` when the driver set a non-zero status. The driver message is discarded.

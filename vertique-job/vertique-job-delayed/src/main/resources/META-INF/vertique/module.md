@@ -27,9 +27,10 @@ this module when the work fires once, at a known time, and must survive a restar
 
 ## When To Use It
 
-Install it when work must run **later** and **exactly once**, and losing it on a restart is
-unacceptable — send a reminder in an hour, retry a webhook with backoff, expire a reservation at a
-deadline. Enqueue inside your own transaction when the job must not exist unless the business write
+Install it when work must run **later**, and losing it on a restart is unacceptable — send a
+reminder in an hour, retry a webhook with backoff, expire a reservation at a deadline. Delivery is
+**at-least-once**, not exactly-once, so handlers must be idempotent (see
+[Core Concepts](#core-concepts)). Enqueue inside your own transaction when the job must not exist unless the business write
 commits. Reach for `dev.vertique:vertique-job-cron` instead for recurring wall-clock schedules, and
 for a plain `dev.vertique:vertique-services` call when you need sub-second latency — this queue is
 poll-based. PostgreSQL is required: the module pulls in `dev.vertique:vertique-job-postgresql`, and
@@ -60,13 +61,20 @@ replies within `job.coordinator.executionTimeoutMs` is an **interruption**, not 
 it is atomically marked `ABANDONED` and re-enqueued when attempts remain, or dead-lettered directly
 when they are exhausted. Either way exactly one state transition is recorded.
 
+**Delivery is at-least-once.** An interruption does not stop the handler that is still running: the
+watchdog re-enqueues an execution with attempts remaining after `executionTimeoutMs`, and dead-node
+recovery re-enqueues such executions from a node that missed its heartbeats, so the same job can run again while an earlier attempt
+is still executing or after it has already had side effects. A handler that is retried after a
+failure also runs again by design. **Make handlers idempotent**, for example by deduplicating on the
+stable `executionId` or on a business key.
+
 Backoff is configured **per queue**, not per job:
 
 | Strategy | Delay for attempt *n* (zero-based) |
 |---|---|
 | `FIXED` | `backoffBaseDelayMs` |
 | `LINEAR` *(default)* | `min(backoffBaseDelayMs × (n + 1), backoffMaxDelayMs)` |
-| `EXPONENTIAL` | `backoffBaseDelayMs × 2ⁿ`, capped at `backoffMaxDelayMs` |
+| `EXPONENTIAL` | `backoffBaseDelayMs × 2ⁿ`, capped at `backoffMaxDelayMs`, plus a random jitter of up to `min(delay, 1000 ms)` added after the cap, so the delay can exceed `backoffMaxDelayMs` by up to one second |
 
 **Ordering and concurrency.** Claiming is exclusive across nodes and poller instances, so deploying
 more instances is always safe, and higher `priority` is claimed first. There is **no** per-job
@@ -140,7 +148,8 @@ Lombok `@Builder` value object. Only `handler` is required.
 | `queue` | `"default"` | Logical queue name |
 | `priority` | `0` | Higher values claimed first |
 | `maxAttempts` | `3` | Attempts before dead-letter; must be in `[1, 1000]` |
-| `jobId` | auto-generated | Logical job id, stable across retries; generated as `delayed-<uuid>` when `null` |
+| `jobId` | auto-generated | Label for the job, stable across retries; generated as `delayed-<uuid>` when `null`. It is not unique and does not de-duplicate |
+| `idempotencyKey` | `null` | Makes the enqueue repeatable; see [Idempotent enqueue](#idempotent-enqueue). Must not be blank, at most 255 characters |
 | `metadata` | empty `DurableMetadata` | Durable propagation context; normally left alone |
 | `scopeKey` | `"default"` | Scope label stored with the execution; validated as a core `ScopeKey` at enqueue |
 
@@ -181,6 +190,9 @@ Two semantic roots: `DelayedJobConfigurationException` (core `ConfigurationExcep
 problems, with `DelayedJobRegistrationException` under it exposing `violations()`; and
 `DelayedJobTechnicalException` (core `TechnicalException`) for runtime failures, with
 `DelayedJobPersistenceException` under it.
+
+Startup registration collects its violations into one `DelayedJobRegistrationException`, including a
+`@DelayedJobHandlerMethod` name outside `[a-zA-Z0-9._-]{1,128}`.
 
 Every `enqueue*` method translates persistence failures automatically, so callers never see a raw
 `DataAccessException`. They surface as `DelayedJobPersistenceException`, whose `retryable()` flag is
@@ -283,16 +295,43 @@ through it, and registration fails.
 
 Per-enqueue overrides; every field is nullable and `null` means "use the effective contract default".
 `runAt` (`Instant`), `queue` (`String`), `priority` (`Integer`), `maxAttempts` (`Integer`) and
-`jobId` (`String`, a stable id for idempotency) are the application-facing fields.
+`jobId` (`String`, a label, not an idempotency key) and `idempotencyKey` (`String`, see
+[Idempotent enqueue](#idempotent-enqueue)) are the application-facing fields.
 `premergedMetadata` is framework-internal — leave it `null`.
 
 ```java
 job.enqueue(payload, DelayedJobOptions.builder()
         .runAt(Instant.now().plusHours(1))
         .queue("priority")
-        .jobId("webhook-pay_123")
+        .idempotencyKey("welcome-email-user-42")
         .build());
 ```
+
+#### Idempotent enqueue
+
+An enqueue that carries an `idempotencyKey` (`DelayedJob#idempotencyKey`, `DelayedJobOptions#idempotencyKey`)
+creates an execution only if no unfinished execution of the same handler and scope already holds that key.
+When one does, the enqueue creates nothing and completes with **the existing execution's id**; the repeated
+enqueue's payload, `runAt`, queue, priority and context are discarded, not merged.
+
+- **Unfinished** means any state except `SUCCEEDED`, `CANCELLED` and `DEAD_LETTER`. An execution waiting
+  for a retry (`FAILED`, `ABANDONED`) still holds its key, so a retry never collides with a repeat.
+- **The key is released** as soon as the execution reaches one of those three states. Cancelling releases it at
+  once, even while the handler is still running. The next enqueue with the key then creates a new execution.
+- **Scope of the key.** The same key under another handler, or in another scope, is a different key. Two
+  executions of one handler on different queues share the key.
+- **Atomic.** One `INSERT ... ON CONFLICT DO NOTHING` decides, so concurrent enqueues of one key create one
+  execution, a held key never raises a database error, and the transaction of the `enqueue(job, SqlClient)`
+  variants stays usable. In a transaction, a concurrent enqueue of the same key waits for that transaction to
+  commit or roll back.
+- **Validation.** A blank key, or one longer than 255 characters, fails the enqueue with an
+  `IllegalArgumentException` that never repeats the key.
+- **Not a de-duplication window.** The key says nothing about executions that have finished: it does not stop a
+  repeat after the first run succeeded. To process each inbound event once, record it in the inbox
+  (`InboxService#processOnce`) and enqueue from the same transaction.
+
+`jobId` is only a label. It is stored unchanged, shows in logs and dashboards, and is not unique: two
+enqueues with the same `jobId` are two executions.
 
 ### DelayedJobClientFactory
 
@@ -366,7 +405,7 @@ annotation-based handler resolves to the framework defaults (`"default"` queue, 
 | `maxConcurrentJobs` | `5` | Maximum in-flight dispatches per poller instance |
 | `backoffStrategy` | `"LINEAR"` | `FIXED`, `LINEAR` or `EXPONENTIAL`, case-insensitive |
 | `backoffBaseDelayMs` | `30000` | Base retry delay |
-| `backoffMaxDelayMs` | `3600000` | Retry delay cap |
+| `backoffMaxDelayMs` | `3600000` | Retry delay cap (before `EXPONENTIAL` jitter) |
 | `instances` | `1` | Poller verticles deployed for this queue |
 
 Every numeric field must be `> 0` and `backoffStrategy` must name a known strategy; a violation fails
@@ -436,6 +475,10 @@ For durable outcomes on *every* path — including timeout, dead-node recovery a
 
 `DelayedJobModule` is the single module to include. It transitively includes `JobModule`,
 `JobPostgresqlModule`, `JobCoordinatorModule`, the context runtime and the logging context module.
+Through `JobCoordinatorModule` the application starts the `JobCoordinator` before the pollers deploy
+and stops it after they undeploy, so node heartbeats run and a surviving node re-enqueues (or dead-letters,
+when attempts are exhausted) an execution whose node died while it was `PROCESSING`. Set
+`job.coordinator.enabled: false` to turn that off.
 
 ```java
 @Component(modules = {VertxModule.class, DispatchModule.class, DbPostgresqlModule.class,

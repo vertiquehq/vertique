@@ -16,7 +16,7 @@ import java.util.Objects;
 import java.util.function.BiFunction;
 
 /**
- * Fluent scope for configuring a fan-in join (PRD-WF-002).
+ * Fluent scope for configuring a fan-in join.
  *
  * <p>Returned by {@link WorkflowBuilder#join(String)}. The caller selects the join policy and
  * registers a reducer (one of {@link #allRequired}, {@link #firstSuccess}, {@link #firstFailure}),

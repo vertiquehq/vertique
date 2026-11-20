@@ -53,7 +53,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * Victools instance. The generated input schema is then hardened at the protocol argument-object
  * boundary by {@link McpSchemaHardener} and re-serialized deterministically by
  * {@link McpCanonicalJsonWriter}; a declared structured-output schema is published exactly as
- * JSON-005 generates it, since output is server-produced and carries no argument-object boundary to
+ * {@code vertique-json-schema} generates it, since output is server-produced and carries no argument-object boundary to
  * close. None of this happens on the request path: it runs exactly once per tool, here, during
  * composition.
  *
@@ -113,7 +113,7 @@ public final class McpToolRuntimeFactory {
     /**
      * Builds the one immutable runtime binding of a generated tool.
      *
-     * <p>The effective JSON profile is resolved once, JSON-005's profile-aware generator contract
+     * <p>The effective JSON profile is resolved once, {@code vertique-json-schema}'s profile-aware generator
      * builds the canonical input (and, when declared, output) schema, MCP's own hardening and
      * canonical re-serialization apply to the input schema, and the resulting descriptor and stable
      * mapper are bound into the returned, immutable runtime.

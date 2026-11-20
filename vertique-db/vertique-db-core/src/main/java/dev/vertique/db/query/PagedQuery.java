@@ -15,6 +15,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
@@ -97,8 +98,8 @@ public abstract class PagedQuery<T> {
     private final QueryClause queryClause;
     private final Set<String> uniqueKeyColumns;
 
-    /** Guards against emitting the tiebreaker warning more than once per instance. */
-    private volatile boolean tiebreakerWarningEmitted;
+    /** Guards against emitting the tiebreaker warning more than once per process. */
+    private static final AtomicBoolean TIEBREAKER_WARNING_EMITTED = new AtomicBoolean();
 
     /**
      * Constructs a PagedQuery from the given builder.
@@ -132,7 +133,6 @@ public abstract class PagedQuery<T> {
                 }
             }
         }
-        this.tiebreakerWarningEmitted = false;
     }
 
     /**
@@ -197,9 +197,8 @@ public abstract class PagedQuery<T> {
     public Future<PagedResult<T>> page(PageCursor cursor) {
         Objects.requireNonNull(cursor, "cursor must not be null");
 
-        // Emit a one-time warning if no unique tiebreaker column has been declared
-        if (uniqueKeyColumns == null && !tiebreakerWarningEmitted) {
-            tiebreakerWarningEmitted = true;
+        // Emit a one-time (per process) warning if no unique tiebreaker column has been declared
+        if (uniqueKeyColumns == null && TIEBREAKER_WARNING_EMITTED.compareAndSet(false, true)) {
             log.warn("PagedQuery has no declared unique tiebreaker column (use .uniqueKey()). "
                     + "Pagination may skip or duplicate rows if the ORDER BY columns are not unique.");
         }

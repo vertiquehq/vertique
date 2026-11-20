@@ -25,9 +25,6 @@ import java.util.Optional;
  * metadata. Resolvers that need origin or correlation should guard their use with
  * {@link Optional#isPresent()}.
  *
- * <p>See PRD §7.5 and the Contract Appendix sections "SecurityIdentityResolver" and
- * "SecurityIdentityResolutionContext" for the full contract.
- *
  * @param evidence    accumulated authentication evidence in insertion order; never {@code null};
  *                    defensive copy taken at construction; returned list is unmodifiable
  * @param origin      network-envelope snapshot captured before authentication; {@link Optional#empty()}

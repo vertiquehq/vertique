@@ -44,7 +44,7 @@ import jakarta.annotation.Nullable;
  *                           empty {@link JwtValidationConfig} when omitted. Its {@code issuer}/{@code audience}
  *                           drive post-authentication enforcement in {@link JwtBearerSecuritySchemeHandler}
  *                           (rejecting mismatched tokens), not merely evidence/rejection metadata
- * @param sessionCorrelation token-derived {@code CorrelationContext.session()} enrichment (FR-COR-100..105);
+ * @param sessionCorrelation token-derived {@code CorrelationContext.session()} enrichment;
  *                           defaults to {@link JwtSessionCorrelationConfig#defaults()}
  */
 public record JwtAuthConfig(

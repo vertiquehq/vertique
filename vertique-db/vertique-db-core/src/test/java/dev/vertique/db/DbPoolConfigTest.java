@@ -40,6 +40,7 @@ class DbPoolConfigTest {
         assertEquals(-1, config.maxWaitQueueSize());
         assertEquals(0, config.eventLoopSize());
         assertEquals(30_000, config.connectionTimeoutMs());
+        assertEquals(60_000, config.connectTimeoutMs());
         assertEquals(0, config.idleTimeoutMs());
         assertEquals(0, config.maxLifetimeMs());
         assertEquals(1_000, config.poolCleanerPeriodMs());
@@ -48,6 +49,12 @@ class DbPoolConfigTest {
         assertEquals(0, config.reconnectAttempts());
         assertEquals(1_000, config.reconnectIntervalMs());
         assertTrue(config.properties().isEmpty());
+    }
+
+    @Test
+    void shouldRenderConnectTimeoutInToString() {
+        DbPoolConfig config = DbPoolConfig.builder().connectTimeoutMs(1234).build();
+        assertTrue(config.toString().contains("connectTimeoutMs=1234"));
     }
 
     @Test
@@ -62,6 +69,7 @@ class DbPoolConfigTest {
                   "maxPoolSize": 20,
                   "maxWaitQueueSize": 100,
                   "connectionTimeoutMs": 5000,
+                  "connectTimeoutMs": 2500,
                   "idleTimeoutMs": 60000,
                   "maxLifetimeMs": 3600000,
                   "cachePreparedStatements": true,
@@ -73,6 +81,7 @@ class DbPoolConfigTest {
         assertEquals(20, config.maxPoolSize());
         assertEquals(100, config.maxWaitQueueSize());
         assertEquals(5000, config.connectionTimeoutMs());
+        assertEquals(2500, config.connectTimeoutMs());
         assertEquals(60000, config.idleTimeoutMs());
         assertEquals(3600000, config.maxLifetimeMs());
         assertTrue(config.cachePreparedStatements());

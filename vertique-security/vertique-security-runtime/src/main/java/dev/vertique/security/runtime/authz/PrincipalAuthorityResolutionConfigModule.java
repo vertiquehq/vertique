@@ -14,8 +14,7 @@ import jakarta.inject.Singleton;
 /**
  * Opt-in Dagger module that config-drives {@link PrincipalAuthorityResolutionConfig} — the Mode-2
  * {@link dev.vertique.security.authz.PrincipalAuthorityResolver} resolution timeout — from the
- * {@code identity.authz} section of the application config (PRD identity-002 §14.3 Phase-2
- * Appendix, ADR-0169).
+ * {@code identity.authz} section of the application config.
  *
  * <p>{@code SecurityAuthzModule} declares {@code Optional<PrincipalAuthorityResolutionConfig>} via
  * {@code @BindsOptionalOf}, defaulting to {@link PrincipalAuthorityResolutionConfig#defaults()}

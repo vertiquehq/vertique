@@ -69,7 +69,8 @@ public interface RestClientDispatcher {
      *   <li>Build Vert.x {@link io.vertx.ext.web.client.HttpRequest} from final URI.</li>
      *   <li>Apply per-method timeout.</li>
      *   <li>Send inside circuit breaker if configured.</li>
-     *   <li>Apply {@link io.vertx.core.Expectation}.</li>
+     *   <li>Apply {@link io.vertx.core.Expectation}: an accepted response continues whatever its
+     *       status, a rejected one fails with a {@code RestClientResponseException}.</li>
      *   <li>Capture response context; fire sync {@code onResponse} observers.</li>
      *   <li>Run async {@code afterResponse} interceptors.</li>
      *   <li>Handle {@code Optional<T>}: 404 → {@code Optional.empty()}.</li>

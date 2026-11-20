@@ -26,7 +26,6 @@ import lombok.extern.jackson.Jacksonized;
  *     "openapiPath": "openapi.json",
  *     "mediaTypeValidation": "STRICT",
  *     "validationMode": "aggregate",
- *     "autoEtag": false,
  *     "defaultHeaders": {
  *       "cacheControl": "no-store",
  *       "strictTransportSecurity": "max-age=31536000"
@@ -69,7 +68,7 @@ public class JaxRsConfig {
      *
      * <ul>
      *   <li>{@code "WARN"} (default) — log a warning for each unsupported media type</li>
-     *   <li>{@code "STRICT"} — throw a {@link dev.vertique.rest.core.RestConfigurationException} on the first mismatch</li>
+     *   <li>{@code "STRICT"} — throw a {@link dev.vertique.rest.core.RestConfigurationException} listing all mismatches</li>
      *   <li>{@code "OFF"} — skip validation entirely</li>
      * </ul>
      */
@@ -162,15 +161,6 @@ public class JaxRsConfig {
     @Builder.Default
     private final DefaultHeadersConfig defaultHeaders =
             DefaultHeadersConfig.builder().build();
-
-    /**
-     * Whether the framework should automatically compute and attach a weak ETag to responses
-     * that have a serializable entity but no explicit {@code ETag} header. When {@code true},
-     * a weak ETag derived from a hash of the serialized body is added before precondition
-     * evaluation. Defaults to {@code false}.
-     */
-    @Builder.Default
-    private final boolean autoEtag = false;
 
     /**
      * Server-Sent Events configuration controlling keep-alive behavior and default channel buffer

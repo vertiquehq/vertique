@@ -255,13 +255,32 @@ if [[ ! -s "$work_dir/test-sources.txt" ]]; then
     exit 1
 fi
 
-scanned=0
+# --- Candidate selection ---------------------------------------------------
+#
+# Rule 1 matches createHttpClient(, createWebSocketClient( or WebClient.create(;
+# rule 2 reports only a .send( or ::send in a file that names the
+# io.vertx.core.http package. Stripping removes comments and literals, so it
+# can join text across them, but Java cannot split an identifier that way: a
+# file whose raw text lacks createHttpClient, createWebSocketClient and
+# WebClient cannot break rule 1, and one lacking send or http cannot break
+# rule 2. One grep per identifier over the whole list selects the files the
+# per-file scan below must strip and read, instead of spawning its matchers for
+# every test source. `|| true`: grep exits 1 when no file in a batch matches.
+files_containing() {
+    { tr '\n' '\0' < "$work_dir/test-sources.txt" | xargs -0 grep -lE "$1" -- || true; } | LC_ALL=C sort
+}
+{
+    files_containing 'createHttpClient|createWebSocketClient|WebClient'
+    LC_ALL=C comm -12 <(files_containing 'send') <(files_containing 'http')
+} | LC_ALL=C sort -u > "$work_dir/candidates.txt"
+
+scanned="$(wc -l < "$work_dir/test-sources.txt" | tr -d '[:space:]')"
 
 while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
     relative="${file#"$repository_root"/}"
     stripped="$work_dir/stripped.java"
     strip_noise "$file" > "$stripped"
-    scanned=$((scanned + 1))
 
     # --- Rule 1: client created straight into a chain --------------------
     while IFS= read -r line_number; do
@@ -321,7 +340,7 @@ while IFS= read -r file; do
             fi
         fi
     fi
-done < "$work_dir/test-sources.txt"
+done < "$work_dir/candidates.txt"
 
 if (( failures > 0 )); then
     printf '\n%d violation(s) of the test HTTP client policy.\n' "$failures" >&2

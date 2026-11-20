@@ -8,8 +8,7 @@ import java.util.Objects;
 
 /**
  * The typed, <strong>framework-mediated</strong> verified-reconstruction signal a
- * {@link SecurityContext} carries via {@link SecurityContext#reconstruction()} (PRD identity-002
- * §14.3 Phase-2 Appendix).
+ * {@link SecurityContext} carries via {@link SecurityContext#reconstruction()}.
  *
  * <p>A Mode-2 authorizer MUST key off <em>this</em> typed accessor to decide whether a context is
  * a framework-verified reconstruction — <strong>never</strong> the descriptive
@@ -31,7 +30,7 @@ import java.util.Objects;
  * otherwise ordinary {@link SecurityContexts#assemble} call — a capability {@link
  * SecurityContexts#assemble} already grants to any in-process caller.
  *
- * <p>Carries <strong>no principal of its own</strong>. Per FR-ID-DG-006, v1 delegation resolves the
+ * <p>Carries <strong>no principal of its own</strong>. In v1, delegation resolves the
  * intersection of the context's own {@link SecurityIdentity#actor() actor} authority and the grant
  * scope — subject-authority evaluation (impersonation) is explicitly out of v1 scope. A Mode-2
  * authorizer (e.g. {@code ReconstructedAuthorityResolvingAuthorizer}) therefore derives the

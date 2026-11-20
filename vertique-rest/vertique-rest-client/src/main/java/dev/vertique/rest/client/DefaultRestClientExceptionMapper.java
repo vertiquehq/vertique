@@ -5,6 +5,7 @@ package dev.vertique.rest.client;
 
 import dev.vertique.core.failure.FailureMapper;
 import dev.vertique.core.failure.FailureTranslator;
+import dev.vertique.http.client.exception.HttpEgressDeniedException;
 import dev.vertique.rest.client.exception.RestClientConnectionException;
 import dev.vertique.rest.client.exception.RestClientException;
 import dev.vertique.rest.client.exception.RestClientTimeoutException;
@@ -39,6 +40,8 @@ import java.util.concurrent.TimeoutException;
  *       {@code NoStackTraceTimeoutException})</li>
  *   <li>{@link HttpClosedException} → {@link RestClientConnectionException} (empty/reset
  *       responses)</li>
+ *   <li>{@link HttpEgressDeniedException} → {@link RestClientException} (a redirect hop the client
+ *       refuses; constant message with no target details, the refusal is the cause)</li>
  *   <li>{@link VertxException} → {@link RestClientException} (safety net for remaining Vert.x
  *       failures)</li>
  * </ul>
@@ -53,6 +56,8 @@ import java.util.concurrent.TimeoutException;
  * @see RestClientBuilder#exceptionMapper(RestClientExceptionMapper)
  */
 public class DefaultRestClientExceptionMapper implements RestClientExceptionMapper {
+
+    private static final String REDIRECT_REFUSED_MESSAGE = "Request refused by the client's redirect rules";
 
     private final FailureMapper failureMapper = new FailureMapper();
 
@@ -74,6 +79,7 @@ public class DefaultRestClientExceptionMapper implements RestClientExceptionMapp
         on(
                 HttpClosedException.class,
                 t -> new RestClientConnectionException("Connection closed: " + t.getMessage(), t));
+        on(HttpEgressDeniedException.class, t -> new RestClientException(REDIRECT_REFUSED_MESSAGE, t));
         on(VertxException.class, t -> new RestClientException("Request failed: " + t.getMessage(), t));
     }
 

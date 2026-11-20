@@ -38,7 +38,7 @@ public final class DispatchBoundary {
      * {@code DelayedJobService.toExecution} to merge ambient durable context into the persisted
      * {@code job_executions.metadata} row, and by {@code DelayedJobPoller.dispatch} to decode that
      * metadata into the outgoing service envelope's caller-overrides on the non-duplicated poller
-     * context (FR-CTX-172 path 2).
+     * context.
      */
     public static final String DELAYED_JOB = "delayed-job";
 

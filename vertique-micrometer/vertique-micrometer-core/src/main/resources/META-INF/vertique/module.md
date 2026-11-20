@@ -115,8 +115,9 @@ Package-private. Assembles the `CompositeMeterRegistry` in a defined order:
 
 1. Common-tag filter (service name + extra tags)
 2. Cardinality-guard filters (`CardinalityGuard.filters(config.cardinality())`)
-3. Backend children in `OrderedExtension` order
-4. JVM binders (when `metrics.jvm.enabled=true`): `JvmMemoryMetrics`, `JvmGcMetrics`,
+3. Percentile-histogram filter (only when `metrics.histograms.enabled=true`)
+4. Backend children in `OrderedExtension` order
+5. JVM binders (when `metrics.jvm.enabled=true`): `JvmMemoryMetrics`, `JvmGcMetrics`,
    `JvmThreadMetrics`, `ClassLoaderMetrics`, `ProcessorMetrics`
 
 All state is local during assembly — nothing is published until `MeterRegistryHolder.bootstrap(assembly)`
@@ -127,8 +128,13 @@ shutdown and rollback.
 
 ### MeterRegistryHolder
 
-Package-private static holder. `registry()` is never null — it returns an empty composite before
-bootstrap and the fully assembled composite after.
+Package-private static holder. `registry()` is never null and always returns the same outer composite
+for the JVM lifetime — it is never replaced, not even by `resetForTests()`. The outer composite has no
+children before bootstrap, so recording is a no-op. `bootstrap(assembly)` adds the assembly's composite as a
+child of the outer, and Micrometer late-wires meters created through the outer earlier to that child. One
+permanent delegating `MeterFilter`, installed on the outer at class initialization, applies the assembly's
+filters (common tags, cardinality guards and, when enabled, the percentile-histogram filter) to meters created through the outer; without it they would register
+directly in the backends and bypass those filters.
 
 ```java
 static CompositeMeterRegistry registry();    // never null
@@ -142,8 +148,12 @@ static void resetForTests();                 // @AfterEach test isolation
 - `bootstrap()` throws `IllegalStateException` on the second call. `contribute()` preflights with
   `bootstrapped()` and throws `MetricsBootstrapException` before assembly begins, so embedded
   multi-launch fails loud rather than silently reusing stale backends.
-- `resetForTests()` closes any existing assembly and restores the pre-bootstrap state. Call it from
+- `resetForTests()` closes any existing assembly, removes its composite from the outer, clears the active
+  filters, and restores the pre-bootstrap state; the outer composite instance is kept. Call it from
   `@AfterEach` in any test that exercises the contributor or the holder directly.
+- A meter created through the outer before bootstrap keeps its unfiltered id (no common tags) after
+  bootstrap, because Micrometer caches each meter's id mapping. In the supported application flow no meter
+  exists before bootstrap.
 
 ### MicrometerMetricsContributor
 
@@ -170,6 +180,8 @@ normal stop and subsequent-contributor failures — but never after a failed act
 - The `vertx.options` overlay in the launcher replaces the `VertxOptions` JSON, but the metrics
   **factory** (`withMetrics(...)`) is builder state, not options state, and survives the overlay.
   `MetricsOptions` retains its source JSON across the overlay-triggered rebuild. No action needed.
+- A `metrics` value that cannot be bound (for example a non-boolean `metrics.enabled`) fails startup with a
+  `ConfigurationException` that names the `metrics` section and carries no value or cause.
 - `ConfigurationException` from tag validation is re-thrown as-is. All other exceptions are wrapped
   in `MetricsBootstrapException` (cause severed) to prevent backend SDK messages from reaching the
   launcher log.
@@ -201,6 +213,8 @@ Bindings provided:
 | `MeterRegistry` | — | `MeterRegistryHolder.registry()` |
 | `MetricsConfig` | — | Deserialized from `metrics` config section |
 | `SecurityEventObserver` | `@IntoSet` | `SecurityMetricsObserver` |
+| `Optional<MetricsConfig>` | — | `@BindsOptionalOf` declaration; resolves to the `MetricsConfig` above |
+| `AspectProvider<Timed>` | — | `TimedAspect` |
 
 Adapter modules gate their hot-path callbacks by declaring `@BindsOptionalOf MetricsConfig` and
 injecting `Optional<MetricsConfig>`. They read `.map(MetricsConfig::enabled).orElse(true)` — absent
@@ -227,10 +241,15 @@ in `maximumAllowableTags` handles this).
 The list only grows: entries are never removed or reordered. Adding a new `vertique.*` tag key to
 any adapter requires extending this list — this is a review-enforced constraint.
 
-The list ends with `rest.application`, the key for the REST server request meter's application
-tag. It is guarded ahead of its emitter: no meter emits it yet, but any `rest.application` tag on a
-`vertique.*` meter already has its values capped at `metrics.cardinality.maxTagValuesPerKey`
+The list ends with `rest.application`, the key under which `vertique-micrometer-rest`'s request
+timer (`vertique.rest.server.requests`) carries the owning REST application's name, `none` outside
+applications. Like every guarded key, its values are capped at `metrics.cardinality.maxTagValuesPerKey`
 (default `200`), and `metrics.tags.extra` cannot claim the key (see `TagPolicyValidator`).
+
+After `rest.application` the list carries the five keys `vertique-micrometer-workflow` emits: `kind`
+(the executor command kind) and `transport`, `contract`, `signal` and `definition` (the signal source
+outcome meter). Their values come from targets the application declares, so they are bounded by the
+application; the per-key value cap still applies to them, and `metrics.tags.extra` cannot claim them.
 
 ### TagPolicyValidator
 
@@ -253,14 +272,24 @@ key and violated rule but never any part of the value. Rules:
 
 **Compatibility.** Every key added to `GUARDED_TAG_KEYS` becomes reserved. Configuration that sets
 `metrics.tags.extra.rest.application` now fails startup with a `ConfigurationException` naming the
-key; choose another key name (for example `application`, which is accepted). The rejection applies when metrics are
-active: the validator runs when metrics are enabled and at least one backend provider exists.
+key; choose another key name (for example `application`, which is accepted).
+
+The rejection applies when metrics are active: the validator runs when metrics are enabled and at least one
+backend provider exists.
+
+#### Behaviour change
+
+`kind`, `transport`, `contract`, `signal` and `definition` are now reserved too. Configuration that sets any
+of them under `metrics.tags.extra` fails startup with a `ConfigurationException` naming the key; rename the
+extra tag (for example `workflow_kind`) before upgrading.
 
 ### `@Timed` and `TimedAspect`
 
 Times a method and records the sample on the application registry. `@Timed` is the annotation an
-application puts on its own beans; `TimedAspect` is the `AspectProvider<Timed>` that implements it,
-and an application binds it once in a Dagger module.
+application puts on its own beans; `TimedAspect` is the `AspectProvider<Timed>` that implements it.
+`MicrometerModule` binds `TimedAspect` as `AspectProvider<Timed>`, so an application that installs
+`MicrometerModule` binds nothing more; a second `AspectProvider<Timed>` binding would be a duplicate in
+the Dagger graph.
 
 ```java
 @Timed                                   // vertique.greeter.greet
@@ -270,12 +299,18 @@ String greet(String name) { ... }
 Future<Receipt> checkout(Cart cart) { ... }
 ```
 
+An application that does not install `MicrometerModule` binds it once in its own Dagger module,
+together with the optional `MetricsConfig` declaration `TimedAspect` injects:
+
 ```java
 @Module
 abstract class AopBindingsModule {
 
     @Binds
     abstract AspectProvider<Timed> bindTimedAspect(TimedAspect aspect);
+
+    @BindsOptionalOf
+    abstract MetricsConfig optionalMetricsConfig();
 }
 ```
 
@@ -338,6 +373,7 @@ All keys live under the `metrics` section.
 | `metrics.cardinality.maxTagValuesPerKey` | int | `200` | Max distinct values per guarded tag key on `vertique.*` meters. |
 | `metrics.cardinality.maxMeters` | int | `0` | Global max meter count across the composite. Name-agnostic: it counts every meter, `vertique.*` or not, so size it against the whole population rather than the framework's own subset. `0` = unlimited. |
 | `metrics.security.enabled` | boolean | `true` | Enable security-event metrics from `SecurityMetricsObserver`. |
+| `metrics.histograms.enabled` | boolean | `false` | Opt-in percentile histograms on timers. Off, timers publish count, sum and max only; on, every timer in the composite registry (the framework's, Vert.x's and application timers) also publishes histogram buckets, which Prometheus renders as `_bucket` series. A timer that sets its own distribution statistics keeps them, and a timer registered before the registry is bootstrapped keeps the configuration it was created with. Raises the series count by one per bucket per tag combination, so enable it where the backend and the tag cardinality can carry it. |
 | `metrics.backends.<name>.*` | object | `{}` | Per-backend subtree passed to `MeterRegistryProvider.create()`. Each provider receives only its own subtree. |
 
 Example:
@@ -354,6 +390,7 @@ Example:
     "cardinality": {
       "maxTagValuesPerKey": 500
     },
+    "histograms": { "enabled": true },
     "backends": {
       "prometheus": {}
     }
@@ -418,8 +455,8 @@ only this type adaptation; configuration, registry, and optional bindings remain
 - `dev.vertique:vertique-aop` — `AspectProvider` and `Invocation`, the substrate `TimedAspect`
   implements
 - `dev.vertique:vertique-codegen-core` — the wiring annotations this module's own components carry;
-  `dev.vertique:vertique-codegen-dagger` is `provided`, a build-time processor that is not resolved
-  by any consumer
+  `provided`, and with `dev.vertique:vertique-codegen-dagger` (also `provided`) a build-time
+  dependency that no consumer resolves
 - `io.micrometer:micrometer-core` — `MeterRegistry`, `CompositeMeterRegistry`, `MeterFilter`,
   `JvmGcMetrics` and other binders; kept aligned with the version `vertx-micrometer-metrics` builds against
 - `io.vertx:vertx-micrometer-metrics` — `MicrometerMetricsFactory`, `MicrometerMetricsOptions`,
@@ -434,7 +471,7 @@ only this type adaptation; configuration, registry, and optional bindings remain
 
 When no backends are on the classpath (or all are disabled), the injected `MeterRegistry` is an
 empty `CompositeMeterRegistry`. Micrometer's empty composite short-circuits all recording
-operations to a no-op. This satisfies NFR-TEL-003: the module has no measurable hot-path cost
+operations to a no-op. The module has no measurable hot-path cost
 when metrics are not in use.
 
 Measured on JVM 21 (3 × 1 million counter increment runs):

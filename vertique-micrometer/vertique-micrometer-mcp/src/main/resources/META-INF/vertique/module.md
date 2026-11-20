@@ -56,7 +56,7 @@ with a one-time WARN, mirroring `vertique-micrometer-core`'s `SecurityMetricsObs
 `onTerminal`; every instrument reflects the request's actual transport settlement
 (`McpRequestCompletedEvent`), not merely its logical outcome.
 
-**Bounded dimensions only (FR-MCP-201, FR-MCP-203).** Every tag value is drawn from a fixed,
+**Bounded dimensions only.** Every tag value is drawn from a fixed,
 low-cardinality domain:
 
 - `method` — an `McpMethod` name, with `McpMethod.OTHER` remapped to the underscore-prefixed
@@ -70,7 +70,7 @@ low-cardinality domain:
   drawn from a small fixed set.
 
 No request ID, correlation ID, trace ID, principal, argument, result, or exception text is ever read
-by this class, so none can become a tag (FR-MCP-202). The observer performs no meter-filter
+by this class, so none can become a tag. The observer performs no meter-filter
 registration of its own; each tag value's domain is bounded structurally by the type it is read
 from, independent of any registry-level cardinality guard.
 
@@ -80,7 +80,7 @@ now also lists `tool`, `result.type`, and `transport.outcome` alongside `method`
 and warned by the registry-level guard, not silently unbounded.
 
 **Zero-overhead when unconfigured.** Before `VertiqueApplication` bootstrap the injected
-`MeterRegistry` is an empty composite whose recording is a no-op (NFR-TEL-003). When the optional
+`MeterRegistry` is an empty composite whose recording is a no-op. When the optional
 `MetricsConfig` binding is absent (i.e., `MicrometerModule` is not installed), the observer defaults
 to enabled — it records against whatever registry is injected.
 
@@ -124,7 +124,7 @@ Per-request timer. One sample is recorded per `McpRequestCompletedEvent`.
 | `transport.outcome` | `WRITTEN`, `DISCONNECTED`, `RESET`, `WRITE_FAILED` | `McpTransportOutcome` enum name |
 
 Prometheus rendering: `vertique_mcp_server_requests_seconds_count` /
-`vertique_mcp_server_requests_seconds_sum` / `vertique_mcp_server_requests_seconds_bucket`.
+`vertique_mcp_server_requests_seconds_sum` / `vertique_mcp_server_requests_seconds_bucket`. Buckets appear only when `metrics.histograms.enabled=true`; with the default `false`, the timer publishes only `_count`, `_sum` and `_max`.
 
 ### `vertique.mcp.server.active` — Gauge
 
@@ -156,7 +156,7 @@ Recorded only for `TOOLS_CALL` requests, once per completed request.
 | `error.type` | see above | |
 
 Prometheus rendering: `vertique_mcp_tool_calls_seconds_count` /
-`vertique_mcp_tool_calls_seconds_sum` / `vertique_mcp_tool_calls_seconds_bucket`.
+`vertique_mcp_tool_calls_seconds_sum` / `vertique_mcp_tool_calls_seconds_bucket`. Buckets appear only when `metrics.histograms.enabled=true`; with the default `false`, the timer publishes only `_count`, `_sum` and `_max`.
 
 ---
 

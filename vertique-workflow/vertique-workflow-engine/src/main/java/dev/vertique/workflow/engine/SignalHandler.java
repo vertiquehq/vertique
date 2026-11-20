@@ -63,8 +63,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Package-private collaborator owning the workflow-signal delivery paths.
  *
- * <p>This class is extracted from {@link WorkflowEngine} as part of the Phase-1 decomposition
- * (PRD-WF-006, Slice C6). It absorbs:
+ * <p>This class is extracted from {@link WorkflowEngine}. It owns:
  * <ul>
  *   <li>{@link #applyBranchSignal} — branch-scoped signal resumption: clears the branch wait, runs
  *       the {@link WaitSignalNode} state updater, drives the branch forward via
@@ -199,8 +198,8 @@ final class SignalHandler {
      * @param payload the incoming signal payload; coerced to the declared type
      * @param tx the active transaction
      * @param effectiveBaseOverride when non-null, the already-computed effective durable context
-     *     document ({@code explicitCarrier.merge(instance.metadata(), MergePolicy.CALLER_WINS)},
-     *     PRD-WF-007 Contract Appendix C3) to bind for the branch drive instead of the branch
+     *     document ({@code explicitCarrier.merge(instance.metadata(), MergePolicy.CALLER_WINS)})
+     *     to bind for the branch drive instead of the branch
      *     token's own {@code metadata()}; {@code null} preserves today's behavior
      * @return a {@link Future} that completes when the branch resumption (and any join) is applied
      */
@@ -268,9 +267,8 @@ final class SignalHandler {
             return Future.failedFuture(new WorkflowDefinitionException("stateUpdater threw for branch '"
                     + waiting.branchId() + "' signal '" + signalName + "': " + e.getMessage()));
         }
-        // Lock-order rule: timers → branch token → instance.
-        // If the branch has a signal-timeout timer (wait_aux_id set), cancel it FIRST before
-        // touching the branch token — timers must be locked before branch tokens.
+        // If the branch has a signal-timeout timer (wait_aux_id set), cancel it before touching the branch
+        // token. The execution lock of the instance is held, so the order of the rows is not a rule.
         UUID timeoutTimerId = waiting.waitAuxId();
         Future<Void> cancelTimeout = Future.succeededFuture();
         if (timeoutTimerId != null) {
@@ -281,7 +279,7 @@ final class SignalHandler {
 
         // Clear the branch's wait and advance to nextStepId.
         BranchToken cleared = waiting.withClearedWait(BranchStatus.RUNNING, wsn.nextStepId(), clock.instant());
-        // Branch token update second (lock order: timers → branch token → instance).
+        // Branch token update second.
         return cancelTimeout
                 .compose(v -> branchTokens.updateOptimistic(cleared, waiting.version(), tx))
                 .compose(rc -> {
@@ -289,7 +287,7 @@ final class SignalHandler {
                         return Future.<Void>failedFuture(new WorkflowConflictException(
                                 "Optimistic concurrency conflict on branch token during signal resumption"));
                     }
-                    // Instance update second (lock order: branch token → instance).
+                    // Instance update second.
                     long instVersion = inst.version();
                     WorkflowInstance updatedInst = inst.withVersion(instVersion + 1)
                             .withState(Json.encode(newState))

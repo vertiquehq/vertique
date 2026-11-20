@@ -96,6 +96,20 @@ class DelayedJobHandlerRegistrarTest {
         }
     }
 
+    /** Implementation whose handler name contains characters outside {@code [a-zA-Z0-9._-]}. */
+    static class MalformedNameImpl implements JobHandlerService {
+        @DelayedJobHandlerMethod("bad name!")
+        @Override
+        public Future<Void> processItem(String payload) {
+            return Future.succeededFuture();
+        }
+
+        @Override
+        public Future<Void> sendNotification(String payload) {
+            return Future.succeededFuture();
+        }
+    }
+
     // --- Second service for duplicate detection tests ---
 
     @ServiceContract(namespace = "test", value = "other-svc")
@@ -177,6 +191,17 @@ class DelayedJobHandlerRegistrarTest {
 
             DelayedJobRegistrationException ex = assertThrows(DelayedJobRegistrationException.class, registrar::scan);
             assertTrue(ex.violations().stream().anyMatch(v -> v.contains("blank handler name")));
+        }
+
+        @Test
+        @DisplayName("rejects a handler name outside the allowed pattern at startup")
+        void rejectsMalformedHandlerName() {
+            ServiceContractRegistry registry =
+                    ServiceContractRegistry.build(Set.of(new MalformedNameImpl()), configParser());
+            DelayedJobHandlerRegistrar registrar = new DelayedJobHandlerRegistrar(registry);
+
+            DelayedJobRegistrationException ex = assertThrows(DelayedJobRegistrationException.class, registrar::scan);
+            assertTrue(ex.violations().stream().anyMatch(v -> v.contains("bad name!")));
         }
 
         @Test

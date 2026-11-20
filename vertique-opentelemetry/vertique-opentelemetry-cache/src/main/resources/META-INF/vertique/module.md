@@ -28,7 +28,9 @@ nothing. This module owns no configuration keys of its own.
 
 The contributed `CacheObserver` creates spans named `cache.<operation>` with bounded `provider`,
 `cache`, and `outcome` attributes plus `duration_ms`. Failed observations mark the span as an error.
-Tracer and span failures are swallowed so telemetry cannot alter cache behavior. Cleanup events
+The span is started at the operation's start (the event's end time minus its elapsed time), so its width
+covers the operation. Tracer and span failures are swallowed so telemetry cannot alter cache behavior, except
+a `VirtualMachineError`, `ThreadDeath` or `LinkageError`, which is never caught. Cleanup events
 remain metrics-only and produce no span. No key, identity, IP address, or exception message is ever
 set as a span attribute.
 

@@ -54,9 +54,11 @@ import java.util.concurrent.ConcurrentMap;
  * Canonicalize canon = AnnotationResolver.findMetaAnnotation(field, Canonicalize.class);
  * }</pre>
  *
- * <p>Duplicate annotations (same type appearing on both the class and an interface) are
- * deduplicated in hierarchy traversal: the first occurrence (in class-before-interface traversal
- * order) wins.
+ * <p>Hierarchy traversal deduplicates by annotation <em>equality</em>, not by annotation type: an
+ * annotation that is equal (same type, same member values) at several levels appears once, at its
+ * first occurrence in class-before-interface traversal order. Annotations of the same type whose
+ * member values differ are all kept, in traversal order, so a caller that takes the first
+ * annotation of a type gets the nearest declaration.
  */
 public final class AnnotationResolver {
 
@@ -99,9 +101,10 @@ public final class AnnotationResolver {
      * its own super-interface hierarchy is consulted first — not a resource class that may list
      * sibling interfaces in a different order.
      *
-     * <p>If the same annotation type appears multiple times across the hierarchy the first
-     * occurrence is retained and later duplicates are silently dropped (via
-     * {@link LinkedHashSet} equality).
+     * <p>Deduplication is by annotation equality ({@link LinkedHashSet} semantics), not by type:
+     * an annotation that is equal at several levels of the hierarchy is retained at its first
+     * occurrence and the later equal ones are dropped. Annotations of the same type with differing
+     * member values are all kept, in traversal order.
      *
      * @param method   the method whose annotations should be resolved; must not be {@code null}
      * @param viewType the type whose interface hierarchy supplies inherited annotations; must not
@@ -132,8 +135,9 @@ public final class AnnotationResolver {
      *       {@link TypeResolver#getAllInterfaces})</li>
      * </ol>
      *
-     * <p>Duplicates are dropped in the same way as {@link #resolveMethodAnnotations}: the first
-     * occurrence wins.
+     * <p>Duplicates are dropped in the same way as {@link #resolveMethodAnnotations}: equal
+     * annotations collapse to their first occurrence, while same-type annotations with differing
+     * member values are all kept.
      *
      * @param clazz the class whose annotations should be resolved; must not be {@code null}
      * @return an immutable, ordered list of all resolved annotations; never {@code null}

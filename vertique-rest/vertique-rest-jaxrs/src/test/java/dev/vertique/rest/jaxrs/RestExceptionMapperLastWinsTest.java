@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import dev.vertique.core.extension.ExtensionPhase;
 import dev.vertique.core.extension.OrderedExtension;
+import dev.vertique.rest.core.RestExceptionMapper;
+import dev.vertique.rest.core.RestExceptionMapperCustomizer;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;

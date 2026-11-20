@@ -10,7 +10,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Artifact:** `vertique-micrometer-rest`
 > **Depends on:** micrometer-core, rest-core, core, codegen-core
 
-Observe-only REST server metrics adapter. When installed alongside `RestCoreModule` (or `RestModule`)
+Observe-only REST server metrics adapter. When installed alongside `RestModule` (the JAX-RS mount)
 and `MicrometerModule`, it emits a per-request timer (`vertique.rest.server.requests`) that covers
 every JAX-RS operation request, and an in-flight-requests gauge (`vertique.rest.server.active`).
 
@@ -26,8 +26,12 @@ configuration keys beyond following `metrics.enabled`.
 
 ## When To Use It
 
-Install `vertique-micrometer-rest` whenever an application exposes an HTTP server via
-`RestModule`/`RestCoreModule` and metrics are enabled. Pair it with `vertique-micrometer-core` and
+Install `vertique-micrometer-rest` whenever an application serves JAX-RS resources through
+`RestModule` and metrics are enabled. The JAX-RS mount is what is metered: the gauge is
+incremented by the request interceptor, which only the JAX-RS mount and the WebSocket mount call,
+and the timer records only requests that a JAX-RS operation route claimed. An application that
+includes `RestCoreModule` without a JAX-RS mount gets no request timer series, and the
+active-requests gauge never moves. Pair it with `vertique-micrometer-core` and
 at least one backend module (e.g., `vertique-micrometer-registry-prometheus`) to make the emitted
 meters visible. Without a backend the injected `MeterRegistry` is an empty composite whose recording
 is a no-op.
@@ -41,7 +45,7 @@ into their respective multibinding sets. Neither contribution touches the respon
 exceptions toward the caller — every callback body is wrapped in a try/catch that logs at WARN and
 swallows.
 
-**Active gauge design (SP-5 rationale).** The original PRD design paired `onRequest` with
+**Active gauge design.** An earlier design paired `onRequest` with
 `afterResponse`. That pairing leaks: WebSocket upgrades and bare-metal 500s where the error pipeline
 never fires both produce an `onRequest` with no matching `afterResponse`, leaving the gauge
 permanently inflated. The implementation instead uses `onRequest` to increment and `rc.addEndHandler`
@@ -56,13 +60,13 @@ dispatch layer.
 detected; those requests are counted as regular requests. This is a documented limitation.
 
 **Auth-rejected and pre-dispatch requests.** A request denied after it matched a JAX-RS operation
-route (401, 403, 415, or a validation 400) carries its real `route` and `operation` tags, because
-the framework records the operation before authentication. A request that no JAX-RS operation
-claimed is not timed: `ROOT` rejections, 404/405 routing misses, JAX-RS mount-level rejections
-before any operation route matched, MCP requests, and failed WebSocket upgrades. The timer therefore
-has no `UNKNOWN` `route` or `operation` series. For transport-wide counts, use Vert.x's native HTTP
-server metrics (`metrics.vertx.httpServer` in `vertique-micrometer-core`, default `true` when its
-Vert.x metrics are enabled).
+route (401, 403, 415, or a validation 400) carries its real `route`, `operation` and
+`rest.application` tags, because the framework records the operation before authentication. A
+request that no JAX-RS operation claimed is not timed: `ROOT` rejections, 404/405 routing misses,
+JAX-RS mount-level rejections before any operation route matched, MCP requests, and failed WebSocket
+upgrades. The timer therefore has no `UNKNOWN` `route` or `operation` series. For transport-wide
+counts, use Vert.x's native HTTP server metrics (`metrics.vertx.httpServer` in
+`vertique-micrometer-core`, default `true` when its Vert.x metrics are enabled).
 
 **Per-event registry lookup (no meter cache, D-L).** Both adapters call
 `Timer.builder(...).tags(...).register(registry)` on every event. Micrometer's internal registry
@@ -72,7 +76,7 @@ drop-on-saturation variant silently stops recording real time series once legiti
 exceed any fixed cap.
 
 **Zero-overhead when unconfigured.** Before `VertiqueApplication` bootstrap the injected
-`MeterRegistry` is an empty composite whose recording is a no-op (NFR-TEL-003). When the optional
+`MeterRegistry` is an empty composite whose recording is a no-op. When the optional
 `MetricsConfig` binding is absent (i.e., `MicrometerModule` is not installed), both contributions
 default to enabled — they record against whatever registry is injected.
 
@@ -114,6 +118,7 @@ framework synthetic operations (see **API document reads** below).
 | `method` | HTTP method string, e.g. `GET` | Falls back to `UNKNOWN` when unavailable |
 | `route` | OpenAPI path template, e.g. `/orders/{id}` | The operation's route template, `event.operation().routeTemplate()`; never `UNKNOWN` |
 | `operation` | OpenAPI operationId | The operation's operationId, `event.operation().operationId()`; never `UNKNOWN` |
+| `rest.application` | The owning REST application's name, else `none` | `event.operation().applicationName()`; `none` for an operation of a hand-built or zero-declaration mount. Always present. `none` is a reserved application name, so it never collides with a declared one |
 | `status` | HTTP response status code as a string, e.g. `200` | Always a numeric string |
 | `outcome` | Low-cardinality bucket: `INFORMATIONAL`, `SUCCESS`, `REDIRECTION`, `CLIENT_ERROR`, `SERVER_ERROR`, `UNKNOWN` | Derived by integer division of the status code by 100; status 0 or outside 100–599 → `UNKNOWN` |
 | `error.type` | `failureCode`, else `wireFailureCode`, else `none` | Simple class name of the pipeline-mapped failure (e.g. `IllegalStateException`); when absent, falls back to the post-handoff wire-failure classification on `RestRequestCompletedEvent` (e.g. `ConnectionClosed`) |
@@ -125,16 +130,19 @@ across the composite. See `vertique-micrometer-core`'s module reference for the 
 **API document reads.** A read of a protected API document, and its `401` or `403` denial,
 completes as a REST operation completion whose operation is a framework synthetic operation. It is
 timed in `vertique.rest.server.requests` with `operation` `apidocs:<name>:json` or
-`apidocs:<name>:yaml` and `route` `/<name>/openapi.json` or `/<name>/openapi.yaml`: the descriptor's
-route template, the document path relative to the documentation prefix (`apidocs.path`), which it
-does not include. `method` is the request's method, so a `HEAD` read is tagged `HEAD`. A public
+`apidocs:<name>:yaml`, `rest.application` `<name>` (the documented application) and `route`
+`/<name>/openapi.json` or `/<name>/openapi.yaml`: the descriptor's route template, the document
+path relative to the documentation prefix (`apidocs.path`), which it does not include. `method` is the request's method, so a `HEAD` read is tagged `HEAD`. A public
 document read is claimed by no operation route, completes as an `HttpRequestCompletedEvent`, and is
 not timed there. Vert.x's native HTTP server metrics count document reads with every other request.
 
-**No application tag yet.** The timer does not carry the application name (`rest.application`).
-When one resource is mounted by more than one application with the same operationId and route, both
-mounts produce identical tags and their series merge until the meter adds the `rest.application`
-tag.
+**Application tag.** Every series carries `rest.application`: the name of the application whose
+mount served the operation, or `none` outside applications. One resource mounted by several
+applications under the same operationId and mount-relative route (which the mount validator permits
+for one owner) therefore records one series per application instead of merging them. When the
+registry comes from `MicrometerModule`, the key is cardinality-guarded in `vertique-micrometer-core`
+and cannot be claimed by `metrics.tags.extra`.
+Dashboards that aggregate the timer across applications must sum over `rest.application`.
 
 **`error.type` on a 200-status series.** Because `error.type` falls back to `wireFailureCode`, a
 timer sample tagged `status=200` MAY carry a non-`none` `error.type` — that combination (`status`
@@ -158,7 +166,7 @@ Outcome mapping:
 | other / 0 | `UNKNOWN` |
 
 Prometheus rendering: `vertique_rest_server_requests_seconds_count` /
-`vertique_rest_server_requests_seconds_sum` / `vertique_rest_server_requests_seconds_bucket`.
+`vertique_rest_server_requests_seconds_sum` / `vertique_rest_server_requests_seconds_bucket`. Buckets appear only when `metrics.histograms.enabled=true`; with the default `false`, the timer publishes only `_count`, `_sum` and `_max`.
 
 ### `vertique.rest.server.active` — Gauge
 
@@ -198,5 +206,5 @@ only those type adaptations; the optional `MetricsConfig` binding remains hand-w
 | `vertique-micrometer-core` | `MetricsConfig` / `metrics.enabled` gate |
 | `vertique-rest-core` | Completion listener and request interceptor SPIs |
 | `vertique-core` | `OrderedExtension` |
-| `vertique-codegen-core` | Codegen support for generated registrations |
+| `vertique-codegen-core` | Wiring annotations for this module's components; `provided`, so it is not on a consumer's runtime classpath |
 | `io.micrometer:micrometer-core` | `MeterRegistry`, `Timer`, `Gauge`, `Tags` |

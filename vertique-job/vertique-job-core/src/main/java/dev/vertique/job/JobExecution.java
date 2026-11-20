@@ -43,7 +43,7 @@ import java.util.UUID;
  * @param progress      latest progress snapshot, or {@code ProgressSnapshot#EMPTY}
  * @param parameters    static parameters provided at scheduling time (immutable copy)
  * @param attributes    runtime attributes set by interceptors or handlers (immutable copy)
- * @param metadata      durable context-propagation metadata (FR-CTX-177) persisted as
+ * @param metadata durable context-propagation metadata persisted as
  *                      {@code {"context":{...}}} JSONB. Captured at enqueue via
  *                      {@code DurableContextPropagator.mergeCaptured(..., DELAYED_JOB)} and
  *                      decoded on poll via
@@ -53,6 +53,11 @@ import java.util.UUID;
  *                      enqueued; {@code null} is read as {@link ScopeKey#DEFAULT}, so the accessor
  *                      never returns {@code null}. The text is stored exactly as supplied and is not
  *                      validated here; the enqueue path validates it as a {@link ScopeKey}.
+ * @param idempotencyKey the caller-chosen key that makes an enqueue repeatable, or {@code null} for an
+ *                      execution without one. While an execution that holds a key is unfinished, the
+ *                      repository stores no second execution of the same handler and scope with the same
+ *                      key. The text is stored exactly as supplied and is not validated here; the enqueue
+ *                      path validates it.
  */
 public record JobExecution(
         UUID id,
@@ -76,7 +81,8 @@ public record JobExecution(
         Map<String, Object> parameters,
         Map<String, Object> attributes,
         DurableMetadata metadata,
-        @Nullable String scopeKey) {
+        @Nullable String scopeKey,
+        @Nullable String idempotencyKey) {
 
     /**
      * Creates an execution in the default scope.
@@ -150,6 +156,84 @@ public record JobExecution(
                 parameters,
                 attributes,
                 metadata,
+                null,
+                null);
+    }
+
+    /**
+     * Creates an execution without an idempotency key.
+     *
+     * <p>This is the constructor shape that predates {@code idempotencyKey}; it passes {@code null}.
+     *
+     * @param id            unique execution identifier
+     * @param jobId         logical job identifier
+     * @param jobType       scheduling mechanism that triggered this execution
+     * @param handler       event bus address of the handler processing this job
+     * @param queue         logical queue or group this execution belongs to
+     * @param state         current lifecycle state
+     * @param attemptNumber zero-based attempt counter
+     * @param maxAttempts   maximum number of attempts allowed
+     * @param payload       the typed job data, or {@code null}
+     * @param priority      priority for claiming order
+     * @param lockedBy      node identity of the worker processing this execution, or {@code null}
+     * @param scheduledAt   when this execution was scheduled
+     * @param enqueuedAt    when this execution was placed on the work queue, or {@code null}
+     * @param startedAt     when processing began, or {@code null}
+     * @param completedAt   when processing finished, or {@code null}
+     * @param errorMessage  human-readable error message on failure, or {@code null}
+     * @param errorType     the exception class name on failure, or {@code null}
+     * @param progress      latest progress snapshot, or {@code null} for {@code ProgressSnapshot#EMPTY}
+     * @param parameters    static parameters provided at scheduling time
+     * @param attributes    runtime attributes set by interceptors or handlers
+     * @param metadata      durable context-propagation metadata, or {@code null} for empty
+     * @param scopeKey      the scope this execution belongs to, or {@code null} for the default scope
+     */
+    public JobExecution(
+            UUID id,
+            String jobId,
+            JobType jobType,
+            String handler,
+            String queue,
+            JobState state,
+            int attemptNumber,
+            int maxAttempts,
+            Object payload,
+            int priority,
+            String lockedBy,
+            Instant scheduledAt,
+            Instant enqueuedAt,
+            Instant startedAt,
+            Instant completedAt,
+            String errorMessage,
+            String errorType,
+            ProgressSnapshot progress,
+            Map<String, Object> parameters,
+            Map<String, Object> attributes,
+            DurableMetadata metadata,
+            String scopeKey) {
+        this(
+                id,
+                jobId,
+                jobType,
+                handler,
+                queue,
+                state,
+                attemptNumber,
+                maxAttempts,
+                payload,
+                priority,
+                lockedBy,
+                scheduledAt,
+                enqueuedAt,
+                startedAt,
+                completedAt,
+                errorMessage,
+                errorType,
+                progress,
+                parameters,
+                attributes,
+                metadata,
+                scopeKey,
                 null);
     }
 
@@ -157,7 +241,7 @@ public record JobExecution(
      * Compact constructor that defensively copies the maps to ensure immutability.
      * The {@code payload} field is left as-is because it is an opaque reference.
      *
-     * <p>{@code metadata} carries durable context-propagation metadata (FR-CTX-177) as a
+     * <p>{@code metadata} carries durable context-propagation metadata as a
      * {@link DurableMetadata} namespaced document. Persisted into
      * {@code job_executions.metadata JSONB} via {@link DurableMetadata#toCarrier()} so the
      * original ambient durable context survives the delayed-job persistence hop. On poll,
@@ -202,7 +286,8 @@ public record JobExecution(
                 parameters,
                 attributes,
                 metadata,
-                scopeKey);
+                scopeKey,
+                idempotencyKey);
     }
 
     /**
@@ -234,7 +319,8 @@ public record JobExecution(
                 parameters,
                 attributes,
                 metadata,
-                scopeKey);
+                scopeKey,
+                idempotencyKey);
     }
 
     /**
@@ -266,7 +352,8 @@ public record JobExecution(
                 parameters,
                 attributes,
                 metadata,
-                scopeKey);
+                scopeKey,
+                idempotencyKey);
     }
 
     /**
@@ -299,7 +386,8 @@ public record JobExecution(
                 parameters,
                 attributes,
                 metadata,
-                scopeKey);
+                scopeKey,
+                idempotencyKey);
     }
 
     /**
@@ -332,7 +420,8 @@ public record JobExecution(
                 parameters,
                 attributes,
                 metadata,
-                scopeKey);
+                scopeKey,
+                idempotencyKey);
     }
 
     /**
@@ -367,7 +456,8 @@ public record JobExecution(
                 parameters,
                 attributes,
                 metadata,
-                scopeKey);
+                scopeKey,
+                idempotencyKey);
     }
 
     /**
@@ -401,6 +491,7 @@ public record JobExecution(
                 parameters,
                 attributes,
                 metadata,
-                scopeKey);
+                scopeKey,
+                idempotencyKey);
     }
 }

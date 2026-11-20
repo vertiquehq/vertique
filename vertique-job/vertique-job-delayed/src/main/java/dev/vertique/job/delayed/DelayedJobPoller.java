@@ -176,7 +176,7 @@ public class DelayedJobPoller extends AbstractVerticle {
 
     /**
      * Optional dispatch envelope builder; when present, outbound job-dispatch envelopes are built
-     * through the context substrate (FR-CTX-015) so registered
+     * through the context substrate so registered
      * {@link dev.vertique.core.context.ServiceDispatchContextEncoder}s capture currently-bound
      * holder values. Pass {@code null} only in tests.
      */
@@ -184,11 +184,11 @@ public class DelayedJobPoller extends AbstractVerticle {
 
     /**
      * Durable context propagator used to decode {@code job_executions.metadata} into an
-     * FQCN-keyed dispatch-context map at poll time (FR-CTX-177). The decoded values are seeded
+     * FQCN-keyed dispatch-context map at poll time. The decoded values are seeded
      * into the outgoing envelope's {@code callerOverrides} so the receiving
      * {@code ServiceMethodInvoker} installs them via {@code InboundDispatchScope} on its own
      * duplicated event-bus context. The poller itself runs on the verticle's deployment context
-     * (non-duplicated), so holder writes are not performed here (FR-CTX-172 path 2).
+     * (non-duplicated), so holder writes are not performed here.
      */
     private final DurableContextPropagator propagator;
 
@@ -256,11 +256,11 @@ public class DelayedJobPoller extends AbstractVerticle {
      *                          (phase → priority → orderKey)
      * @param eventBusClient    the event bus client for dispatch protocol sends
      * @param envelopeBuilder   envelope builder used to construct outgoing job-dispatch envelopes
-     *                          through the context substrate (FR-CTX-015); tests that do not
+     * through the context substrate; tests that do not
      *                          exercise context propagation pass
      *                          {@link dev.vertique.context.DispatchEnvelopeBuilder#forTesting()}
      * @param propagator        durable context propagator for decoding {@code job_executions.metadata}
-     *                          into the outgoing envelope's caller-overrides (FR-CTX-177)
+     * into the outgoing envelope's caller-overrides
      */
     public DelayedJobPoller(
             String queue,
@@ -286,8 +286,8 @@ public class DelayedJobPoller extends AbstractVerticle {
 
     /**
      * Full constructor including the {@link dev.vertique.context.DispatchEnvelopeBuilder}
-     * for context-substrate capture (FR-CTX-015) and the {@link DurableContextPropagator} for
-     * durable metadata decoding (FR-CTX-177). Currently bound holder values flow into the outgoing
+     * for context-substrate capture and the {@link DurableContextPropagator} for
+     * durable metadata decoding. Currently bound holder values flow into the outgoing
      * dispatch envelope via registered
      * {@link dev.vertique.core.context.ServiceDispatchContextEncoder}s.
      *
@@ -304,7 +304,7 @@ public class DelayedJobPoller extends AbstractVerticle {
      *                                {@code 0} disables
      * @param envelopeBuilder         envelope builder used to construct outgoing job-dispatch envelopes
      * @param propagator              durable context propagator for decoding persisted metadata into
-     *                                the outgoing envelope's caller-overrides (FR-CTX-177); must not
+     * the outgoing envelope's caller-overrides; must not
      *                                be {@code null}
      */
     public DelayedJobPoller(
@@ -400,7 +400,7 @@ public class DelayedJobPoller extends AbstractVerticle {
      *                                {@code 0} disables
      * @param envelopeBuilder         envelope builder used to construct outgoing job-dispatch envelopes
      * @param propagator              durable context propagator for decoding persisted metadata into
-     *                                the outgoing envelope's caller-overrides (FR-CTX-177); must not
+     * the outgoing envelope's caller-overrides; must not
      *                                be {@code null}
      * @param shutdownFlushTimeoutMs  upper bound, in milliseconds, on how long {@code stop()} waits
      *                                for one execution's cutoff flush drain to settle; must be positive
@@ -458,9 +458,8 @@ public class DelayedJobPoller extends AbstractVerticle {
         this.executionTimeoutMs = executionTimeoutMs;
         this.progressFlushIntervalMs = progressFlushIntervalMs;
         this.shutdownFlushTimeoutMs = shutdownFlushTimeoutMs;
-        this.envelopeBuilder =
-                java.util.Objects.requireNonNull(envelopeBuilder, "envelopeBuilder must not be null (FR-CTX-015)");
-        this.propagator = java.util.Objects.requireNonNull(propagator, "propagator must not be null (FR-CTX-177)");
+        this.envelopeBuilder = java.util.Objects.requireNonNull(envelopeBuilder, "envelopeBuilder must not be null");
+        this.propagator = java.util.Objects.requireNonNull(propagator, "propagator must not be null");
         this.interceptors =
                 interceptors.stream().sorted(OrderedExtension.comparator()).toList();
     }
@@ -780,7 +779,7 @@ public class DelayedJobPoller extends AbstractVerticle {
 
         JobDispatchContext dispatchCtx = JobDispatchContext.fromExecution(execution, executionId, startedAt);
 
-        // F5 row binding (PRD identity-002 §14.6/A9): decode against THIS executing row's own carrier
+        // Row binding: decode against THIS executing row's own carrier
         // so a durable identity snapshot signed for a different execution id fails closed at the
         // receive-side decoder. The carrier mirrors the schedule side (DelayedJobService.toExecution):
         // carrierId = the executing row id; target = (delayed-job, the row's handler event-bus
@@ -792,7 +791,7 @@ public class DelayedJobPoller extends AbstractVerticle {
 
         // Decode persisted durable metadata into an FQCN-keyed map without touching the holder —
         // the poller runs on the verticle's deployment context (NOT a duplicated context), so a
-        // holder write would fail the substrate's duplicated-context guard (FR-CTX-172 path 2).
+        // holder write would fail the substrate's duplicated-context guard.
         // Decoded values — including DurablePropagationMetadata — ride in the outgoing envelope's
         // callerOverrides; the receiving ServiceMethodInvoker installs them into the holder via
         // InboundDispatchScope on its own duplicated event-bus context.
@@ -806,7 +805,7 @@ public class DelayedJobPoller extends AbstractVerticle {
         ctx.put(JobContext.class.getName(), jobContext);
         ctx.put(JobDispatchContext.class.getName(), dispatchCtx);
         // Provenance proving this is deferred (delayed-job) execution so the receive-side identity
-        // reconstruction initializer may mint a bounded SYSTEM context (W2/A6). Keyed by FQCN like
+        // reconstruction initializer may mint a bounded SYSTEM context. Keyed by FQCN like
         // the JobDispatchContext entry; reinstated before InboundContextInitializers run. Uses the
         // handler's event-bus address — a stable, resolver-mappable id — rather than jobId, which is
         // often an auto-generated "delayed-" + UUID per DelayedJobService. The .of factory sanitizes
@@ -825,7 +824,7 @@ public class DelayedJobPoller extends AbstractVerticle {
         }
 
         String replyAddress = "job.completions." + executionId;
-        // FR-CTX-015: always route through DispatchEnvelopeBuilder. The builder is required
+        // Always route through DispatchEnvelopeBuilder. The builder is required
         // (non-null) per the constructor contract.
         DispatchEnvelope<?> body = envelopeBuilder.build(
                 payload, ctx, dev.vertique.core.context.DispatchBoundary.SERVICE_DISPATCH, replyAddress);

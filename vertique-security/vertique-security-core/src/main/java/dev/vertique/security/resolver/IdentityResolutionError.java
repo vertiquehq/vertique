@@ -34,8 +34,7 @@ public enum IdentityResolutionError {
      * The evidence classifies the actor as {@code USER} or {@code SERVICE}, but no stable
      * identifier ({@code sub}, {@code client_id}, {@code azp}, or an equivalent claim) could be
      * derived from it. Resolution fails rather than fabricating a shared placeholder id, which
-     * would collide across distinct principals lacking evidence (PRD identity-002
-     * FR-ID-CA-012).
+     * would collide across distinct principals lacking evidence.
      */
     UNDERIVABLE_PRINCIPAL_ID
 }

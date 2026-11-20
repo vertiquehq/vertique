@@ -79,18 +79,20 @@ import java.util.function.Consumer;
  * profile overrides differ between modes.
  *
  * <p><strong>Which properties the input direction describes.</strong>
- * {@link #forInputProfile(JsonMapperProfile)} describes a walked property when Jackson reports it
- * deserializable or it has a backing field, and its access is not {@code READ_ONLY}. A backing field
- * counts because Jackson populates a private field through reflection wherever the mapper infers
- * property mutators — its default, and the setting every built-in profile leaves alone — so a
- * getter-only property with a field behind it is bound and is described. A builder type is filled
+ * {@link #forInputProfile(JsonMapperProfile)} describes a property when the profile mapper's own
+ * resolved bean deserializer reports it bound — a field, a setter, a creator parameter or a builder
+ * method — and never through a walk of the Java source's fields. Jackson populates a private field
+ * through reflection wherever the mapper infers property mutators — its default, and the setting
+ * every built-in profile leaves alone — so a getter-only property with a field behind it is bound and
+ * is described; a mapper that disables that inference does not bind a private field that has no setter,
+ * so such a scalar property is not described. A builder type is filled
  * through its builder rather than through the field: a builder method's own constraint is borrowed
  * from the built type's Jackson-introspected property of the same wire name — unconditionally, for
  * any builder, when that property has a getter and a backing field; only when it has no getter does
  * the borrow require {@link BuilderBorrowDetector} to judge it sound (a Lombok {@code @Builder
  * @Jacksonized} type, or the exact shape it generates). A property Jackson's introspection reports no
  * accessor for at all — a Lombok {@code @Builder} type's constrained private field with no {@code
- * @Getter} (BG1) — still
+ * @Getter} — still
  * publishes by type, with no borrowed constraint, since the floor has nothing to join it by; a {@link
  * jakarta.validation.Validator} supplement, when one is active, still renders the constraint for that
  * one property by its own field-name join, independent of the floor's own borrow. The backing storage
@@ -174,9 +176,9 @@ import java.util.function.Consumer;
  * under {@code properties} with a deep copy of the schema that property is published with, so the
  * same constraints apply under either spelling instead of the alias passing a gate undescribed. A
  * spelling that is already another property's name — the type's own name for it, whether or not the
- * document publishes that property — is not listed, and neither is a spelling more than one property
- * of the type claims: the generator cannot predict which claimant Jackson binds such a key to, so it
- * is published nowhere, named in no rule and, where extras are described, reserved.
+ * document publishes that property — is not listed. A spelling more than one property of the type
+ * claims is listed with the claimant Jackson's own deserializer routes it to, the property the
+ * spelling actually binds into, and where extras are described nothing is reserved for it.
  * Listing runs over the finished document, after generation, so every reference a copied schema
  * carries is already resolved; it copies the owning property's own entry in the finished {@code
  * properties} object and does nothing when that entry is absent, so a spelling is listed exactly
@@ -283,7 +285,7 @@ public final class AnnotationJsonSchemaGenerator {
      * <p>{@code true} only for a profile-aware generator ({@link #forInputProfile(JsonMapperProfile)}
      * / {@link #forOutputProfile(JsonMapperProfile)}) whose profile declares at least one applicable
      * schema-type override — the only case in which a member's declared numeric Java type can end up
-     * with a non-numeric effective wire type (PRD §6.2 wire-honesty). {@code
+     * with a non-numeric effective wire type (wire-honesty). {@code
      * withVictoolsDefaults()} never substitutes a wire type for a Java type, so this is always {@code
      * false} for that mode.
      */
@@ -964,7 +966,7 @@ public final class AnnotationJsonSchemaGenerator {
                 // unsatisfiable, and is refused before it can be canonicalized and handed to a consumer.
                 DisjointTypeDetector.requireNoDisjointTypes(generated);
                 if (suppressInapplicableNumericKeywords) {
-                    // PRD §6.2 wire-honesty: a Jakarta numeric-domain constraint (e.g. @DecimalMin)
+                    // Wire-honesty: a Jakarta numeric-domain constraint (e.g. @DecimalMin)
                     // must not be advertised against a wire type an override replaced with a non-number.
                     NumericDomainKeywordFilter.suppressInapplicableNumericKeywords(generated);
                 }
@@ -986,7 +988,7 @@ public final class AnnotationJsonSchemaGenerator {
                 throw alreadyBounded;
             } catch (RuntimeException failed) {
                 // A walk failure is still a generation failure: it normalizes to the module's bounded
-                // type rather than escaping as raw, unbounded third-party text (FR-JSON-075/076).
+                // type rather than escaping as raw, unbounded third-party text.
                 throw Diagnostics.failure(
                         "post-generation validation of the generated JSON Schema failed for "
                                 + Diagnostics.typeIdentity(type),

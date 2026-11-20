@@ -36,7 +36,7 @@ import java.util.Set;
  *
  * <p>Application modules may contribute additional resolvers at the default priority ({@code 0})
  * via {@code @Provides @IntoSet RestContextResolver}. Application resolvers run before all
- * framework built-ins and may shadow them for the same type (FR-REST-194).
+ * framework built-ins and may shadow them for the same type.
  *
  * <p><b>Internal — not a public application API.</b>
  */

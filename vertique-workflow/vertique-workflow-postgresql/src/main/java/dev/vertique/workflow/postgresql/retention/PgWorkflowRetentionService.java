@@ -26,8 +26,9 @@ import java.time.ZoneOffset;
  * Applications should call archive/purge methods repeatedly while
  * {@link RetentionResult#moreRowsRemaining()} (or {@link PurgeResult#moreRowsRemaining()}) is
  * {@code true} to drain large backlogs without locking rows for long periods. The repository's
- * {@code FOR UPDATE SKIP LOCKED} subquery means concurrent batch runs (e.g., rolling cron jobs on
- * different nodes) progress without blocking one another.
+ * per-instance advisory try-lock on each candidate's execution lock means concurrent batch runs
+ * (e.g., rolling cron jobs on different nodes) progress without blocking one another: an instance
+ * whose lock is held is skipped and picked up by a later run.
  */
 @Singleton
 public final class PgWorkflowRetentionService implements WorkflowRetentionService {

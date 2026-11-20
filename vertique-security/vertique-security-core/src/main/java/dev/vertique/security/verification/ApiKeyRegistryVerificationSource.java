@@ -9,7 +9,7 @@ import java.util.Objects;
  * Verification source for credentials validated against an application-managed API key registry.
  *
  * <p>The {@code registryId} identifies which registry was consulted. The concrete registry
- * implementation is defined in the consuming application or auth module (deferred to auth-001).
+ * implementation is defined in the consuming application or auth module.
  *
  * @param registryId stable identifier of the API key registry; must not be null or blank
  */

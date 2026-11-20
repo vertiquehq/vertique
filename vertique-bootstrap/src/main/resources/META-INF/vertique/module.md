@@ -56,7 +56,10 @@ Contributors receive:
   cannot mutate each other's view.
 - **`BootstrapContext.vertxOptions()`** — the live, shared `VertxOptions` instance. Mutations made
   by one contributor are immediately visible to subsequent contributors and take effect when the
-  `Vertx` instance is built.
+  `Vertx` instance is built. The launcher rebuilds the options from their JSON form when the
+  resolved configuration has a non-empty `vertx.options` section, so option state with no JSON
+  representation (for example a pre-built metrics registry) set by a contributor is not preserved
+  on that path.
 
 ### Shutdown hooks
 

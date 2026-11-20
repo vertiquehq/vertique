@@ -19,9 +19,9 @@ import java.util.Objects;
 /**
  * MCP's own package-private neutral JSON reader and canonical writer.
  *
- * <p>JSON-005's own {@code SchemaCanonicalizer} and {@code NeutralJson} are package-private inside
- * {@code vertique-json-schema} and are never called, referenced, or reflected into from this
- * module. After {@link McpSchemaHardener} mutates a parsed JSON-005 canonical document, MCP must
+ * <p>{@code vertique-json-schema}'s own {@code SchemaCanonicalizer} and {@code NeutralJson} are
+ * package-private inside that module and are never called, referenced, or reflected into from this
+ * module. After {@link McpSchemaHardener} mutates a parsed canonical schema document, MCP must
  * re-serialize it deterministically itself; this class is that seam.
  *
  * <p>Canonicalization rebuilds every object with its keys ordered by
@@ -29,7 +29,7 @@ import java.util.Objects;
  * never changed. The rebuilt tree is written as compact JSON through a plain, never-mutated
  * {@link ObjectMapper} — never through a profile's payload mapper, so the result is independent of
  * any application-configured serialization feature. This is the same UTF-16 key ordering and
- * compact encoding JSON-005's own canonicalizer uses, which is what keeps a document MCP has not
+ * compact encoding {@code vertique-json-schema}'s own canonicalizer uses, which is what keeps a document MCP has not
  * mutated byte-identical after a round trip through this class (the differential compatibility
  * corpus bound).
  */

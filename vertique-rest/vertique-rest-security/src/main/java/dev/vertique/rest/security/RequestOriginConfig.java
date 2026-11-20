@@ -32,10 +32,12 @@ import java.util.Set;
  * @param forwardedForCap     maximum number of {@code X-Forwarded-For} chain entries to accept;
  *                            chains longer than this are dropped entirely with
  *                            {@code forwardedForChainRejected=true}; must be {@code >= 0}
- * @param trustForwardedScheme when {@code true} and the direct peer is trusted, the
- *                             {@code X-Forwarded-Proto} header overrides the connection scheme
- * @param trustForwardedHost   when {@code true} and the direct peer is trusted, the
- *                             {@code X-Forwarded-Host} header overrides the {@code Host} header
+ * @param trustForwardedScheme when {@code true}, the direct peer is trusted and the request carries
+ *                             a valid {@code X-Forwarded-For} chain, the {@code X-Forwarded-Proto}
+ *                             header overrides the connection scheme
+ * @param trustForwardedHost   when {@code true}, the direct peer is trusted and the request carries
+ *                             a valid {@code X-Forwarded-For} chain, the {@code X-Forwarded-Host}
+ *                             header overrides the {@code Host} header
  */
 public record RequestOriginConfig(
         Set<String> trustedProxyCidrs, int forwardedForCap, boolean trustForwardedScheme, boolean trustForwardedHost) {

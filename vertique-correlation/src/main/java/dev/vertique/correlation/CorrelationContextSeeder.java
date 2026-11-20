@@ -21,13 +21,13 @@ import java.util.Objects;
  *
  * <p>First-ingress {@link InboundContextInitializer} that ensures a {@link CorrelationContext} is
  * bound for the current Vert.x duplicated context AND that the safe-by-default mirrored MDC
- * keys reflect that context's values (FR-COR-125 / FR-COR-162).
+ * keys reflect that context's values.
  *
  * <p>Runs after the substrate's inbound install step (the dispatch-context map or durable
  * metadata was decoded and bound on the holder). Two cases:
  * <ul>
  *   <li><b>Context already present</b> — an upstream decoder (service-dispatch / durable) bound
- *       it. The decoded value wins per FR-COR-125 (no reseed). The seeder still projects the
+ *       it. The decoded value wins (no reseed). The seeder still projects the
  *       mirrored MDC keys from that context so the dispatch sees the correlation fields in MDC
  *       output, since on non-REST boundaries (Kafka, delayed-job, workflow timer/branch) there
  *       is no separate REST middleware doing the MDC write.</li>

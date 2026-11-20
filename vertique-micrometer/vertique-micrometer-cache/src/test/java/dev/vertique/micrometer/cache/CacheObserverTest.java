@@ -68,6 +68,26 @@ class CacheObserverTest {
     }
 
     @Test
+    void fatalRegistryFailuresAreRethrown() {
+        io.micrometer.core.instrument.MeterRegistry virtualMachineFailure =
+                org.mockito.Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
+        org.mockito.Mockito.when(virtualMachineFailure.config())
+                .thenThrow(new InternalError("virtual machine failure"));
+        io.micrometer.core.instrument.MeterRegistry linkageFailure =
+                org.mockito.Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
+        org.mockito.Mockito.when(linkageFailure.config()).thenThrow(new NoClassDefFoundError("linkage failure"));
+        CacheOperationCompleted event = new CacheOperationCompleted(
+                CacheOperation.GET, "redis", "profiles", CacheOutcome.ERROR, Duration.ofMillis(1));
+
+        org.junit.jupiter.api.Assertions.assertThrows(InternalError.class, () -> new CacheMetricsObserver(
+                        virtualMachineFailure, MetricsConfig.builder().build())
+                .onEvent(event));
+        org.junit.jupiter.api.Assertions.assertThrows(LinkageError.class, () -> new CacheMetricsObserver(
+                        linkageFailure, MetricsConfig.builder().build())
+                .onEvent(event));
+    }
+
+    @Test
     void recordsCleanupCountsWithOnlyBoundedDimensions() {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
         CacheMetricsObserver observer =

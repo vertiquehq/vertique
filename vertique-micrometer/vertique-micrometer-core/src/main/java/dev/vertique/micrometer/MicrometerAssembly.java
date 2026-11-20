@@ -4,6 +4,7 @@
 package dev.vertique.micrometer;
 
 import dev.vertique.core.extension.OrderedExtension;
+import io.micrometer.core.instrument.Meter;
 import io.micrometer.core.instrument.Tag;
 import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.binder.jvm.ClassLoaderMetrics;
@@ -13,6 +14,7 @@ import io.micrometer.core.instrument.binder.jvm.JvmThreadMetrics;
 import io.micrometer.core.instrument.binder.system.ProcessorMetrics;
 import io.micrometer.core.instrument.composite.CompositeMeterRegistry;
 import io.micrometer.core.instrument.config.MeterFilter;
+import io.micrometer.core.instrument.distribution.DistributionStatisticConfig;
 import io.vertx.core.json.JsonObject;
 import java.util.ArrayList;
 import java.util.List;
@@ -323,6 +325,8 @@ final class MicrometerAssembly implements AutoCloseable {
      *   <li>Per-key cardinality guards from {@link CardinalityGuard#filters}.</li>
      *   <li>Optional global meter cap (when {@link MetricsConfig.CardinalityConfig#maxMeters()}
      *       is greater than zero).</li>
+     *   <li>Optional percentile-histogram filter (when {@link MetricsConfig.HistogramsConfig#enabled()}
+     *       is {@code true}).</li>
      * </ol>
      *
      * @param config the metrics configuration
@@ -343,7 +347,28 @@ final class MicrometerAssembly implements AutoCloseable {
         // --- Cardinality-guard filters (per-key caps + optional global meter cap) ---
         result.addAll(CardinalityGuard.filters(config.cardinality()));
 
+        // --- Opt-in percentile histograms on every timer ---
+        if (config.histograms() != null && config.histograms().enabled()) {
+            result.add(percentileHistogramFilter());
+        }
+
         return List.copyOf(result);
+    }
+
+    /**
+     * Builds the filter that turns on percentile histograms for timers. A timer's own
+     * distribution configuration takes precedence over the histogram default, so a timer that sets
+     * its own statistics keeps them.
+     */
+    private static MeterFilter percentileHistogramFilter() {
+        DistributionStatisticConfig histogram =
+                DistributionStatisticConfig.builder().percentilesHistogram(true).build();
+        return new MeterFilter() {
+            @Override
+            public DistributionStatisticConfig configure(Meter.Id id, DistributionStatisticConfig config) {
+                return id.getType() == Meter.Type.TIMER ? config.merge(histogram) : config;
+            }
+        };
     }
 
     /**

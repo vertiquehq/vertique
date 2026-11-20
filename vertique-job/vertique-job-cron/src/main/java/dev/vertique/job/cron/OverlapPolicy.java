@@ -31,7 +31,7 @@ public enum OverlapPolicy {
      * <p><strong>Restriction:</strong> Only supported with {@link ExecutionMode#EVERY_INSTANCE}.
      * {@link ExecutionMode#SINGLE_INSTANCE} is not currently supported; when it is, it will
      * require {@link #SKIP} because {@code QUEUE_ONE} needs cross-node coordination via a
-     * database (planned for Phase 2).
+     * database.
      */
     QUEUE_ONE
 }

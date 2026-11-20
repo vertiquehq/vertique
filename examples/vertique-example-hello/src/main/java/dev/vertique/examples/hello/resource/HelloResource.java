@@ -170,11 +170,11 @@ public class HelloResource {
 
     /**
      * Rate-limited greeting, admitted through the real runtime via the generated {@code $AopProxy}
-     * Dagger substitution (plan.md Pre-flight finding 1): {@code @RateLimited} resolves the {@code
+     * Dagger substitution: {@code @RateLimited} resolves the {@code
      * hello-limited} policy handle at proxy-construction time and calls {@code
      * RateLimiter#execute(...)} at invocation time, so a quota denial surfaces as {@code
      * RateLimitExceededException}, mapped to {@code 429} by {@code RestRateLimitModule}'s exception
-     * mapper (contracts/rest-adapter.md) — never a hand-rolled response.
+     * mapper — never a hand-rolled response.
      *
      * @param name the name to greet
      * @return a future completing with the greeting, or failing with {@code

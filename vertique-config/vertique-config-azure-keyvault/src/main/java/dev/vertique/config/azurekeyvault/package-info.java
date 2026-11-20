@@ -50,7 +50,7 @@
  *       {@link java.util.Optional#empty()} without calling the SDK.</li>
  * </ol>
  *
- * <h2>Redaction Rule (NFR-CONF-002)</h2>
+ * <h2>Redaction Rule</h2>
  * <p>Resolved secret values MUST NEVER appear in log messages, exception messages, or any other
  * observable output. Only source names, placeholder key names, and structural/diagnostic detail
  * strings are safe to include. Azure SDK error messages for {@code getSecret} failures are

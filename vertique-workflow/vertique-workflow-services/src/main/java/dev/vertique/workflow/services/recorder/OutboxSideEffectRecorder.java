@@ -197,7 +197,7 @@ public final class OutboxSideEffectRecorder implements WorkflowSideEffectRecorde
         merged.put("x-workflow-definition-scope", correlation.definitionScopeKey());
         merged.put("x-workflow-scope", correlation.scopeKey());
         merged.put("x-workflow-step-id", correlation.stepId());
-        // PRD-WF-002 D8a: branch-identity headers when the intent originates from a fan-out branch.
+        // Branch-identity headers when the intent originates from a fan-out branch.
         if (correlation.branchTokenId() != null) {
             merged.put("x-workflow-branch-token-id", correlation.branchTokenId().toString());
         }

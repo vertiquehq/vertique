@@ -26,9 +26,10 @@ The registered `CacheAnnotationProcessor` validates `@Cacheable` and `@CacheEvic
 rejects co-located cacheable and eviction annotations, and returns all proxy and metadata generation
 to the generic AOP processor. Provider composition
 is explicit: the application includes a concrete provider module, which includes the cache core
-and cache AOP bindings. The generic AOP processor emits the application-owned subclass proxy and
-reflection-free `MethodMetadata`; generated types belong to the consuming application
-compilation and are not supplied by a runtime provider module.
+and its JSON runtime support (the Redis provider also includes the Redis connection module); the
+application also installs `CacheAopModule` for the cache annotation bindings. The generic AOP processor
+emits the application-owned subclass proxy and reflection-free `MethodMetadata`; generated types
+belong to the consuming application compilation and are not supplied by a runtime provider module.
 
 ## Validation boundary
 
@@ -53,7 +54,7 @@ processor's supported scalar shapes:
 |---|---|
 | Text and primitives | `String`, `char`/`Character`, `boolean`/`Boolean`, and numeric primitives or wrappers |
 | Numeric values | `BigInteger`, `BigDecimal` |
-| Other scalar values | `UUID`, enum types, and `java.time.temporal.TemporalAccessor` types |
+| Other scalar values | `UUID`, enum types, and the `java.time` types `Instant`, `LocalDate`, `LocalDateTime`, `OffsetDateTime`, and `ZonedDateTime` |
 
 Blank paths, invalid identifiers, unresolved parameters or accessors, excessive property
 depth, object/container terminals, and unsupported return shapes produce compile-time
@@ -70,9 +71,11 @@ For a JAX-RS `@GET` method, `@Cacheable` accepts an entity or `Future<entity>` r
 response wrappers, transport response types, buffers, routing contexts, streams, publishers,
 and `Multi` results are rejected. The processor emits no selector `toString()` fallback.
 The generic AOP processor emits reflection-free method metadata; the cache annotation adapter
-uses it to invoke the validated record or bean accessor and fails open when a null or invalid
-value cannot produce a key. The configured `CacheConfig.maxKeyBytes` limit applies to the complete
-canonical UTF-8 key; its default is 1,024 bytes.
+resolves selector paths through the framework-internal `SelectorPaths` resolver, which invokes
+the validated record or bean accessor reflectively (the documented reflective exception of the
+generic AOP module, relevant to native-image reflection configuration), and fails open when a
+null or invalid value cannot produce a key. The configured `CacheConfig.maxKeyBytes` limit applies
+to the complete canonical UTF-8 key; its default is 1,024 bytes.
 
 Inherited annotations are not promoted to a different concrete bean by this processor; the
 validated method belongs to its declaring class. Self-invocation is not diagnosed here:

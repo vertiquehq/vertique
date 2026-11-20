@@ -23,8 +23,8 @@ import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * Durable metadata encoder for {@link IdentitySnapshotContext} (PRD-ID-002 §14.3 "Durable
- * carriage", §14.6 amendment A9 — schema v2 content/envelope split + carrier binding).
+ * Durable metadata encoder for {@link IdentitySnapshotContext} (schema v2 content/envelope split +
+ * carrier binding).
  *
  * <p>Resolves the {@link IdentitySnapshotContent} to sign — see {@link #resolveContent(IdentitySnapshotContext)}
  * — assembles the schema-v2 {@link IdentitySnapshot} envelope around it (the {@link SnapshotCarrierBinding}
@@ -60,10 +60,10 @@ import lombok.extern.slf4j.Slf4j;
  * sentinel is deliberately <em>not</em> keyed on the boundary string: a producer and its relay can carry
  * different {@link dev.vertique.core.context.DispatchBoundary} labels (e.g. {@code OUTBOX} on merge,
  * {@code OUTBOX_SERVICE} on decode), so a boundary-keyed sentinel would spuriously mismatch. The paired
- * decoder builds the identical sentinel, so the F5 carrier check is a no-op until real per-row carriers
+ * decoder builds the identical sentinel, so the carrier check is a no-op until real per-row carriers
  * arrive with the boundary-wiring commits, and enforced once they flow.
  *
- * <p><strong>Doomed-expiry detection (F5, PRD-ID-002 §14.6 A9).</strong> When
+ * <p><strong>Doomed-expiry detection.</strong> When
  * {@link DurableEncodeContext#fireTime()} is present — populated only by the delayed-job schedule path
  * today — and the freshly-computed signed {@code expiresAt} would not be after that fire time, the
  * envelope this encoder is about to sign would already be expired by the time the durable row fires. The
@@ -113,7 +113,7 @@ public final class IdentitySnapshotDurableEncoder implements DurableContextMetad
     private final IdentitySnapshotDegradationPolicy policy;
 
     /**
-     * Constructs an encoder backed by the given codec, applying the given policy to the F5
+     * Constructs an encoder backed by the given codec, applying the given policy to the
      * doomed-expiry degrade path (see class javadoc).
      *
      * @param codec  the codec used to sign and serialize the assembled snapshot; must not be
@@ -133,7 +133,7 @@ public final class IdentitySnapshotDurableEncoder implements DurableContextMetad
      * {@link IdentitySnapshotDegradationPolicy#FAIL} — mirrors {@link IdentitySnapshotConfig}'s own
      * fail-closed default when {@code onDegradation} is omitted from config. The production Dagger
      * wiring uses the two-arg constructor with the config-resolved policy; this keeps unit fixtures
-     * that do not exercise the F5 doomed-expiry degrade path concise.
+     * that do not exercise the doomed-expiry degrade path concise.
      *
      * @param codec the codec used to sign and serialize the assembled snapshot; must not be
      *              {@code null}
@@ -188,7 +188,7 @@ public final class IdentitySnapshotDurableEncoder implements DurableContextMetad
     }
 
     /**
-     * Detects the F5 doomed-expiry window and applies the configured {@link #policy} when it is hit
+     * Detects the doomed-expiry window and applies the configured {@link #policy} when it is hit
      * (see class javadoc): when {@link DurableEncodeContext#fireTime()} is present and {@code expiresAt}
      * would not be after it, the envelope this encoder is about to sign would already be expired by
      * the time the durable row fires.
@@ -214,7 +214,7 @@ public final class IdentitySnapshotDurableEncoder implements DurableContextMetad
             throw new DurableEncodeRejectedException(detail + " (onDegradation=FAIL, enqueue rejected)");
         }
         log.warn(
-                "{} — proceeding without the '{}' namespace per onDegradation=CONTINUE_WITHOUT_IDENTITY (F5 doomed-expiry"
+                "{} — proceeding without the '{}' namespace per onDegradation=CONTINUE_WITHOUT_IDENTITY (doomed-expiry"
                         + " detection)",
                 detail,
                 NAMESPACE);

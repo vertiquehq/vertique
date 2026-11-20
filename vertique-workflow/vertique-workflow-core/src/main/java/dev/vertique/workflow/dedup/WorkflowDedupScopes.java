@@ -10,8 +10,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
 /**
- * Canonical, length-bounded encoders for {@code workflow_dedup} scopes/keys (PRD-WF-002 §A.4.4
- * and §D6). Lives in {@code workflow-core} so both {@code workflow-postgresql} (engine + repos)
+ * Canonical, length-bounded encoders for {@code workflow_dedup} scopes/keys. Lives in
+ * {@code workflow-core} so both {@code workflow-postgresql} (engine + repos)
  * and {@code workflow-services} ({@code WorkflowSignalContributor}) can call the same encoders
  * without crossing module boundaries.
  *
@@ -19,15 +19,16 @@ import java.security.NoSuchAlgorithmException;
  * <ul>
  *   <li><b>signal</b> — instance scope is {@code workflowId.toString()} (UUID, 36 chars). The
  *       key is the caller's {@code dedupKey} for non-branch signals (back-compat with the
- *       cycle-2 form), or a 64-char SHA-256 hex digest of the
- *       {@code (forkStepId, branchId, dedupKey)} tuple for branch signals (FR-WF-PAR-026).</li>
- *   <li><b>dispatch</b> (PRD-WF-002 D6) — kind {@code 'dispatch'} (8 chars; fits the existing
+ *       original form), or a 64-char SHA-256 hex digest of the
+ * {@code (forkStepId, branchId, dedupKey)} tuple for branch signals.</li>
+ *   <li><b>dispatch</b> — kind {@code 'dispatch'} (8 chars; fits the existing
  *       {@code workflow_dedup.kind VARCHAR(16)} column). Scope is {@code workflowId.toString()}
  *       (36 chars). Key is a 64-char SHA-256 hex digest of
- *       {@code (forkStepId, branchId, stepId, targetId, operation)}. The engine inserts the
+ *       {@code (forkStepId, branchId, stepId, targetId, operation)}, where the operation component is
+ *       the constant {@code "dispatch"}. The engine inserts the
  *       dedup row in {@code BranchTransitionEngine} BEFORE invoking {@code RecorderRouter}; on
- *       conflict the dispatch is treated as already-recorded and not re-emitted
- *       (FR-WF-PAR-038).</li>
+ *       conflict the dispatch is treated as already-recorded and not re-emitted.
+ * </li>
  *   <li><b>correlated</b> — kind {@code 'correlated'}. The namespace is a 64-char SHA-256 hex digest of
  *       {@code (contract name, signal name, scope or empty)} and the key a 64-char digest of the caller's
  *       dedup key, so one event is unique across instances and no name, scope or key is stored in clear.</li>
@@ -38,7 +39,7 @@ import java.security.NoSuchAlgorithmException;
  *   <li><b>signalInboxId</b> — composite id used by {@code WorkflowSignalContributor} for the
  *       inbox-message-id ({@code inbox.message_id VARCHAR(255)}). For non-branch signals it
  *       reproduces today's {@code workflowId + ":" + dedupKey} string so existing inbox rows
- *       remain unique. For branch signals it concatenates {@code workflowId:forkStepId:branchId:
+ *       remain unique, hashing the dedup key when that string would exceed 255 chars. For branch signals it concatenates {@code workflowId:forkStepId:branchId:
  *       dedupKey}, hashing the suffix when the natural composite would exceed 255 chars.</li>
  * </ul>
  *
@@ -74,9 +75,11 @@ public final class WorkflowDedupScopes {
      * Returns the {@code workflow_dedup.key} string for a signal claim.
      *
      * <p>For non-branch signals (both {@code forkStepId} and {@code branchId} null), returns
-     * {@code dedupKey} unchanged so existing single-path entries remain compatible. For branch
+     * {@code dedupKey} unchanged so existing single-path entries remain compatible, except that a
+     * key longer than 255 characters (the {@code workflow_dedup.key} column) is replaced by its
+     * 64-char SHA-256 hex digest. For branch
      * signals the key is a 64-char SHA-256 hex digest of {@code (forkStepId, branchId, dedupKey)}
-     * so two sibling branches sharing a {@code dedupKey} do not collide (FR-WF-PAR-026).
+     * so two sibling branches sharing a {@code dedupKey} do not collide.
      *
      * @param dedupKey caller-supplied dedup key
      * @param forkStepId optional fork step id (paired with {@code branchId})
@@ -88,7 +91,7 @@ public final class WorkflowDedupScopes {
     public static String signalKey(String dedupKey, @Nullable String forkStepId, @Nullable String branchId) {
         requireBothOrNeither(forkStepId, branchId);
         if (forkStepId == null) {
-            return dedupKey;
+            return dedupKey.length() <= INBOX_MESSAGE_ID_MAX_LENGTH ? dedupKey : sha256Hex(dedupKey);
         }
         return sha256Hex(forkStepId, branchId, dedupKey);
     }
@@ -97,7 +100,9 @@ public final class WorkflowDedupScopes {
      * Returns the inbox-message-id used by {@code WorkflowSignalContributor}.
      *
      * <p>Reproduces today's {@code workflowId + ":" + dedupKey} for non-branch signals (so
-     * existing inbox rows remain stable). For branch signals the composite is
+     * existing inbox rows remain stable); when that string would exceed
+     * {@link #INBOX_MESSAGE_ID_MAX_LENGTH}, the dedup key is replaced with its 64-char SHA-256 hex
+     * digest. For branch signals the composite is
      * {@code workflowId:forkStepId:branchId:dedupKey}; if that string would exceed
      * {@link #INBOX_MESSAGE_ID_MAX_LENGTH}, the suffix portion is replaced with a 64-char
      * SHA-256 hex digest.
@@ -113,7 +118,11 @@ public final class WorkflowDedupScopes {
         requireBothOrNeither(forkStepId, branchId);
         String wfPrefix = workflowId.value().toString();
         if (forkStepId == null) {
-            return wfPrefix + ":" + dedupKey;
+            String plain = wfPrefix + ":" + dedupKey;
+            if (plain.length() <= INBOX_MESSAGE_ID_MAX_LENGTH) {
+                return plain;
+            }
+            return wfPrefix + ":" + sha256Hex(dedupKey);
         }
         String composite = wfPrefix + ":" + forkStepId + ":" + branchId + ":" + dedupKey;
         if (composite.length() <= INBOX_MESSAGE_ID_MAX_LENGTH) {
@@ -138,13 +147,15 @@ public final class WorkflowDedupScopes {
     /**
      * Returns the {@code workflow_dedup.key} string for a branch service-dispatch claim. Always a
      * 64-char SHA-256 hex digest so the value fits {@code workflow_dedup.key VARCHAR(255)}
-     * regardless of input lengths.
+     * regardless of input lengths. A branch step has one target and no operation of its own, so the
+     * engine passes the constant {@link #DISPATCH_KIND} as the operation component; within the instance's {@link #dispatchScope} the key
+     * is unique per fork step, branch and step.
      *
      * @param forkStepId fork step id; non-null
      * @param branchId branch id; non-null
      * @param stepId branch step id; non-null
      * @param targetId service target id; non-null
-     * @param operation operation name; non-null
+     * @param operation operation component; the engine passes {@link #DISPATCH_KIND}
      * @return 64-char SHA-256 hex digest
      */
     public static String dispatchKey(

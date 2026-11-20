@@ -11,7 +11,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Applies MCP's protocol-owned hardening pass to a JSON-005 canonical schema document.
+ * Applies MCP's protocol-owned hardening pass to a {@code vertique-json-schema} canonical schema document.
  *
  * <p>Hardening is document-driven, never type-graph-driven, and never dereferences a {@code $ref}:
  * it descends a fixed, fixture-backed schema grammar — {@code properties}, {@code items},
@@ -39,7 +39,7 @@ import java.util.Objects;
  * </ol>
  *
  * <p>The supplied document is mutated in place: the caller owns a private tree parsed by
- * {@link McpCanonicalJsonWriter#read(String)} from JSON-005's own output, so no caller-visible alias
+ * {@link McpCanonicalJsonWriter#read(String)} from the schema generator's own output, so no caller-visible alias
  * is affected. This is not a re-serialization step — {@link McpCanonicalJsonWriter} owns MCP's own
  * canonical re-encoding afterward.
  */
@@ -51,10 +51,10 @@ final class McpSchemaHardener {
     private McpSchemaHardener() {}
 
     /**
-     * Hardens one JSON-005 canonical document: closes the argument-object boundary and attaches the
+     * Hardens one canonical schema document: closes the argument-object boundary and attaches the
      * declared parameter descriptions to the root carrier's properties.
      *
-     * @param json005CanonicalDocument the parsed JSON-005 canonical document; must be a JSON object,
+     * @param json005CanonicalDocument the parsed canonical schema document; must be a JSON object,
      *     and is mutated in place
      * @param parameters the position-stable declared-parameter metadata whose descriptions apply to
      *     root-carrier properties only
@@ -66,7 +66,7 @@ final class McpSchemaHardener {
         Objects.requireNonNull(json005CanonicalDocument, "json005CanonicalDocument");
         Objects.requireNonNull(parameters, "parameters");
         if (!json005CanonicalDocument.isObject()) {
-            throw new IllegalArgumentException("the JSON-005 canonical document must be a JSON object");
+            throw new IllegalArgumentException("the canonical schema document must be a JSON object");
         }
         ObjectNode root = (ObjectNode) json005CanonicalDocument;
         closeRecursively(root, true, new IdentityHashMap<>());
@@ -83,7 +83,7 @@ final class McpSchemaHardener {
      */
     private static void closeRecursively(ObjectNode node, boolean isRoot, Map<JsonNode, Boolean> visited) {
         if (visited.put(node, Boolean.TRUE) != null) {
-            // Defensive cycle guard: a tree parsed from JSON-005's own document text cannot
+            // Defensive cycle guard: a tree parsed from the schema generator's own document text cannot
             // structurally cycle (no dereferencing happens here), but the walk stays terminating.
             return;
         }

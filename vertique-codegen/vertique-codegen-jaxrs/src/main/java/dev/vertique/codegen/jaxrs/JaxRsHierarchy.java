@@ -14,6 +14,8 @@ import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.ExecutableType;
 import javax.lang.model.type.TypeMirror;
 
 /**
@@ -326,6 +328,52 @@ public final class JaxRsHierarchy {
         }
         var el = ctx.types().asElement(superMirror);
         return el instanceof TypeElement te ? te : null;
+    }
+
+    /**
+     * Returns the type of {@code method} as a member of {@code resourceClass}, reading a method
+     * inherited through a raw supertype the way the runtime scanner does.
+     *
+     * <p>{@link javax.lang.model.util.Types#asMemberOf} erases the whole signature of a member that
+     * the resource class inherits through a raw supertype ({@code class Things implements Base}
+     * for a generic {@code Base<T>}), so {@code Future<T>} becomes the raw {@code Future}. The
+     * runtime scanner binds nothing for such a supertype and leaves {@code T} unresolved, which it
+     * then erases to its bound at the point of use. For that case this method returns the declared
+     * member type, with its type variables intact, so the two paths erase at the same place. Every
+     * other member keeps the {@code asMemberOf} result.
+     *
+     * @param ctx           the shared codegen context; must not be {@code null}
+     * @param resourceClass the resource class; must not be {@code null}
+     * @param method        the method, declared on the resource class or inherited by it
+     * @return the member type of {@code method} as seen from {@code resourceClass}
+     */
+    public static ExecutableType memberTypeOf(CodegenContext ctx, TypeElement resourceClass, ExecutableElement method) {
+        if (inheritedThroughRawType(ctx, resourceClass, method)) {
+            return (ExecutableType) method.asType();
+        }
+        return (ExecutableType) ctx.types().asMemberOf((DeclaredType) resourceClass.asType(), method);
+    }
+
+    private static boolean inheritedThroughRawType(
+            CodegenContext ctx, TypeElement resourceClass, ExecutableElement method) {
+        if (!(method.getEnclosingElement() instanceof TypeElement declaring)
+                || declaring.getTypeParameters().isEmpty()) {
+            return false;
+        }
+        Deque<TypeMirror> queue = new ArrayDeque<>();
+        Set<String> seen = new LinkedHashSet<>();
+        queue.add(resourceClass.asType());
+        while (!queue.isEmpty()) {
+            TypeMirror current = queue.poll();
+            if (!(current instanceof DeclaredType declared) || !seen.add(current.toString())) {
+                continue;
+            }
+            if (declaring.equals(declared.asElement())) {
+                return declared.getTypeArguments().isEmpty();
+            }
+            queue.addAll(ctx.types().directSupertypes(current));
+        }
+        return false;
     }
 
     // --- Private helpers ---

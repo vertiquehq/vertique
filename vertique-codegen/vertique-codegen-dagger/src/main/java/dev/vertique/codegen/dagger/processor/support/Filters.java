@@ -12,7 +12,7 @@ import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.TypeElement;
 
 /**
- * Shared candidate-filter helpers used by all CG-002 collectors and scanners.
+ * Shared candidate-filter helpers used by all auto-wire collectors and scanners.
  *
  * <p>Centralises the {@link NoAutoWire} opt-out check and the single-{@code @Inject}-constructor
  * validation so that the discovery classes ({@code AnnotationRootedCollector},

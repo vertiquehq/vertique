@@ -9,9 +9,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.rest.core.ValidationErrorDetail;
+import dev.vertique.rest.core.request.FileContentVerifier;
 import dev.vertique.rest.core.request.FilePart;
-import dev.vertique.rest.jaxrs.validation.FileContentVerifier;
-import dev.vertique.rest.jaxrs.validation.FileVerificationResult;
+import dev.vertique.rest.core.request.FileVerificationResult;
 import dev.vertique.rest.test.RestTestContributions;
 import dev.vertique.rest.test.RestTestMounts;
 import io.swagger.v3.oas.annotations.Operation;

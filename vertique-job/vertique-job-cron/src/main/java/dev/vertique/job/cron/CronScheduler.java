@@ -150,45 +150,13 @@ public class CronScheduler {
     private volatile boolean running;
 
     /**
-     * Creates a new cron scheduler with the default concurrent job limit and no timeout or
-     * progress-flush support.
+     * Creates a cron scheduler that stamps the given node identity as {@code locked_by} on the executions
+     * this scheduler persists.
      *
-     * @param vertx                 the Vert.x instance for timer management and event bus dispatch
-     * @param interceptors          the set of job interceptors to invoke around each dispatch
-     * @param repository            optional job repository for persistent execution tracking and
-     *                              SINGLE_INSTANCE leader election; may be {@code null} for
-     *                              in-memory mode
-     * @param serviceTargetResolver resolver for translating stable service target ids to runtime
-     *                              event bus addresses, once per admitted fire
-     * @param eventBusClient        the event bus client for dispatch protocol sends
-     * @param envelopeBuilder       envelope builder used to construct outgoing job-dispatch
-     *                              envelopes through the context substrate (FR-CTX-015); tests
-     *                              that do not exercise context propagation pass
-     *                              {@link dev.vertique.context.DispatchEnvelopeBuilder#forTesting()}
-     */
-    public CronScheduler(
-            Vertx vertx,
-            Set<JobInterceptor> interceptors,
-            JobRepository repository,
-            ServiceTargetResolver serviceTargetResolver,
-            EventBusClient eventBusClient,
-            dev.vertique.context.DispatchEnvelopeBuilder envelopeBuilder) {
-        this(
-                vertx,
-                interceptors,
-                repository,
-                serviceTargetResolver,
-                eventBusClient,
-                DEFAULT_MAX_CONCURRENT_JOBS,
-                0L,
-                0L,
-                envelopeBuilder,
-                new SystemCronTickPlanner());
-    }
-
-    /**
-     * Full constructor including the {@link dev.vertique.context.DispatchEnvelopeBuilder}
-     * used to construct outgoing job-dispatch envelopes through the context substrate (FR-CTX-015).
+     * <p>Pass the value the node's {@link dev.vertique.job.JobCoordinator} heartbeats under (the
+     * {@link dev.vertique.job.JobNodeId} binding), so that a surviving node's coordinator finds this
+     * node's tracked cron executions when this node dies; {@code CronModule} and
+     * {@code CronPersistenceModule} do.
      *
      * @param vertx                   the Vert.x instance for timer management and event bus dispatch
      * @param interceptors            the set of job interceptors to invoke around each dispatch
@@ -204,7 +172,9 @@ public class CronScheduler {
      * @param progressFlushIntervalMs interval in milliseconds for flushing progress snapshots;
      *                                {@code 0} disables
      * @param envelopeBuilder         envelope builder used to construct outgoing job-dispatch
-     *                                envelopes through the context substrate (FR-CTX-015)
+     * envelopes through the context substrate
+     * @param nodeId                  this node's identity; must not be {@code null} or blank
+     * @throws IllegalArgumentException if {@code nodeId} is {@code null} or blank
      */
     public CronScheduler(
             Vertx vertx,
@@ -215,7 +185,8 @@ public class CronScheduler {
             int maxConcurrentJobs,
             long executionTimeoutMs,
             long progressFlushIntervalMs,
-            dev.vertique.context.DispatchEnvelopeBuilder envelopeBuilder) {
+            dev.vertique.context.DispatchEnvelopeBuilder envelopeBuilder,
+            String nodeId) {
         this(
                 vertx,
                 interceptors,
@@ -226,15 +197,16 @@ public class CronScheduler {
                 executionTimeoutMs,
                 progressFlushIntervalMs,
                 envelopeBuilder,
-                new SystemCronTickPlanner());
+                new SystemCronTickPlanner(),
+                nodeId);
     }
 
     /**
      * Test seam constructor: the public full constructor's parameter list with the
-     * {@link CronTickPlanner} appended.
+     * {@link CronTickPlanner} inserted before the node identity.
      *
      * <p>Package-private on purpose — the planner is an internal collaborator, not configuration.
-     * Production always uses {@link SystemCronTickPlanner}, wired by both public constructors; tests
+     * Production always uses {@link SystemCronTickPlanner}, wired by the public constructor; tests
      * inject a compressed planner so the scheduler's real timer loop runs without the whole-second
      * alignment floor of the underlying {@link CronExpression}.
      *
@@ -252,9 +224,10 @@ public class CronScheduler {
      * @param progressFlushIntervalMs interval in milliseconds for flushing progress snapshots;
      *                                {@code 0} disables
      * @param envelopeBuilder         envelope builder used to construct outgoing job-dispatch
-     *                                envelopes through the context substrate (FR-CTX-015)
+     * envelopes through the context substrate
      * @param tickPlanner             planner computing each tick's nominal fire instant and real
      *                                timer delay; must not be {@code null}
+     * @param nodeId                  this node's identity; must not be {@code null} or blank
      */
     CronScheduler(
             Vertx vertx,
@@ -266,17 +239,21 @@ public class CronScheduler {
             long executionTimeoutMs,
             long progressFlushIntervalMs,
             dev.vertique.context.DispatchEnvelopeBuilder envelopeBuilder,
-            CronTickPlanner tickPlanner) {
+            CronTickPlanner tickPlanner,
+            String nodeId) {
         if (maxConcurrentJobs <= 0) {
             throw new IllegalArgumentException("maxConcurrentJobs must be positive, got: " + maxConcurrentJobs);
         }
-        java.util.Objects.requireNonNull(envelopeBuilder, "envelopeBuilder must not be null (FR-CTX-015)");
+        java.util.Objects.requireNonNull(envelopeBuilder, "envelopeBuilder must not be null");
         this.tickPlanner = java.util.Objects.requireNonNull(tickPlanner, "tickPlanner must not be null");
         this.vertx = vertx;
         this.maxConcurrentJobs = maxConcurrentJobs;
         this.repository = repository;
         this.serviceTargetResolver = serviceTargetResolver;
-        this.nodeId = resolveNodeId();
+        if (nodeId == null || nodeId.isBlank()) {
+            throw new IllegalArgumentException("nodeId must not be null or blank");
+        }
+        this.nodeId = nodeId;
         List<JobInterceptor> sortedInterceptors =
                 interceptors.stream().sorted(OrderedExtension.comparator()).toList();
         this.concurrency = new CronConcurrencyManager(maxConcurrentJobs);
@@ -755,8 +732,8 @@ public class CronScheduler {
      * {@link CronTargetReference.ServiceTarget}, and
      * {@link CronTargetReference.EventBusTarget#address()} for the other — rather than from
      * {@link CronJobDefinition#handlerAddress()}, which is only a copy the registrar derives from
-     * the target and leaves {@code null} for service targets. Trusting the derived copy is what
-     * produced the defect ADR-0201 records; the target is the authority. Both variants are then
+     * the target and leaves {@code null} for service targets. The derived copy is not trusted;
+     * the target is the authority. Both variants are then
      * subject to the same non-blank check, so no caller can produce an execution record with a
      * {@code null} or blank {@link JobExecution#handler()} — including a caller that builds a
      * definition directly rather than going through {@link CronJobRegistrar}.
@@ -784,7 +761,7 @@ public class CronScheduler {
      * because the built-in {@code DefaultServiceTargetResolver} snapshots its indexes with
      * {@code Map.copyOf} at construction. "Per fire" therefore means <em>fixed at fire
      * admission</em>. A mutable or reloadable {@link ServiceTargetResolver} implementation would
-     * invalidate that assumption; see ADR-0201.
+     * invalidate that assumption.
      *
      * @param job the cron job whose target is being resolved
      * @return the non-blank effective event bus address, or {@code null} when the target cannot be
@@ -923,20 +900,5 @@ public class CronScheduler {
                 Map.of(),
                 dev.vertique.core.context.DurableMetadata
                         .empty()); // cron executions carry no durable propagation metadata (out of scope)
-    }
-
-    /**
-     * Generates a stable node identifier from hostname and a short random suffix.
-     *
-     * @return the node identifier
-     */
-    private static String resolveNodeId() {
-        String hostname;
-        try {
-            hostname = java.net.InetAddress.getLocalHost().getHostName();
-        } catch (Exception e) {
-            hostname = "unknown";
-        }
-        return hostname + "-" + UUID.randomUUID().toString().substring(0, 8);
     }
 }

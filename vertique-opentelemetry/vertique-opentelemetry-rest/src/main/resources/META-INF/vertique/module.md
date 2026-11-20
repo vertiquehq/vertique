@@ -70,7 +70,7 @@ it as the ambient OTel context; Micrometer exemplar samplers (e.g.
 timer samples recorded in `RestRequestCompletedListener` implementations (including
 `vertique-micrometer-rest`).
 
-**NFR-TEL-002 note.** `vertique-micrometer-rest` has no compile dependency on `opentelemetry-api`.
+**No OpenTelemetry compile dependency.** `vertique-micrometer-rest` has no compile dependency on `opentelemetry-api`.
 The `RequestCompletionScope` SPI lives in `vertique-rest-core` and the implementation lives in
 `vertique-opentelemetry-rest`, keeping the micrometer-rest module free of any OTel compile
 dependency.
@@ -158,6 +158,6 @@ The adapter's SPI contributions are declared on their injectable implementations
 |---|---|
 | `vertique-rest-core` | Operation contributor, request interceptor, and completion-scope SPIs |
 | `vertique-core` | Shared extension ordering |
-| `vertique-codegen-core` | Codegen support for generated registrations |
+| `vertique-codegen-core` | Wiring annotations for this module's components; `provided`, so it is not on a consumer's runtime classpath |
 | `io.opentelemetry:opentelemetry-api` | `Span`, `SpanContext`, `StatusCode`, `AttributeKey` |
 | `io.opentelemetry:opentelemetry-semconv` | `HttpAttributes`, `ErrorAttributes` |

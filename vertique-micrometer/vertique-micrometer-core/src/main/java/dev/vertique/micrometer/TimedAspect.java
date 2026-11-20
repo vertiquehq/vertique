@@ -24,7 +24,7 @@ import lombok.extern.slf4j.Slf4j;
  * {@link dev.vertique.aop.Invocation#proceed() proceed()}, then records a timing sample when the
  * downstream future settles. The timer name is the
  * annotation's {@link Timed#value()}, or — when empty — the auto-derived
- * {@code vertique.<simpleClassName>.<method>} (lower-cased) per §3b. Every sample carries the
+ * {@code vertique.<simpleClassName>.<method>} (lower-cased). Every sample carries the
  * always-present {@code outcome} ({@code SUCCESS}/{@code ERROR}) and {@code error.type} (exception
  * simple name, or {@code none}) tags, plus any {@link Timed#extraTags()} pairs.
  *
@@ -112,7 +112,7 @@ public final class TimedAspect implements AspectProvider<Timed> {
 
     /**
      * Resolves the timer name: the annotation's explicit {@link Timed#value()} when non-empty,
-     * otherwise the auto-derived {@code vertique.<simpleClassName>.<method>} (lower-cased) per §3b.
+     * otherwise the auto-derived {@code vertique.<simpleClassName>.<method>} (lower-cased).
      *
      * @param target the metadata of the intercepted method
      * @param annotation the {@code @Timed} instance

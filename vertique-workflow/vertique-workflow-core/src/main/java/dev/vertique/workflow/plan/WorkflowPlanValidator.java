@@ -16,7 +16,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Semantic validator for the PRD-WF-002 fork/join plan model.
+ * Semantic validator for the fork/join plan model.
  *
  * <p>Run by {@code DefaultWorkflowRegistry} immediately after {@code WorkflowBuilder.build(...)}
  * returns and before existing graph/signal/callback validation. Plans without {@link ForkNode} or
@@ -30,15 +30,15 @@ import java.util.Set;
  *   <li>Every {@code ForkNode} is paired with exactly one {@code JoinNode} whose stepId equals
  *       {@link ForkNode#joinStepId()}; the join's policy and routes are well-formed.</li>
  *   <li>No nested fan-out: the sub-graph reachable from a branch's {@code startStepId} (following
- *       static next-step references) MUST NOT contain another {@code ForkNode}
- *       (FR-WF-PAR-008).</li>
+ *       static next-step references) MUST NOT contain another {@code ForkNode}.
+ * </li>
  *   <li>Race policies ({@link FirstSuccessJoinPolicy}, {@link FirstFailureJoinPolicy}) require all
  *       branches to declare {@link RaceSafety#CANCEL_SAFE} or
- *       {@link RaceSafety#IGNORE_LATE_RESULT_SAFE} (FR-WF-PAR-011); reject plans whose branch sub-
+ * {@link RaceSafety#IGNORE_LATE_RESULT_SAFE}; reject plans whose branch sub-
  *       graph contains a {@link CompensationNode} or any {@link ServiceDispatchNode} with a
- *       non-null {@code compensationStepId} (FR-WF-PAR-054); and every reachable
+ * non-null {@code compensationStepId}; and every reachable
  *       {@link ServiceDispatchNode} must resolve via {@link RaceSafetyTargetRegistry} to a non-
- *       {@link RaceSafety#NORMAL} value (FR-WF-PAR-012).</li>
+ * {@link RaceSafety#NORMAL} value.</li>
  * </ul>
  *
  * <p>Static reachability follows {@link ServiceDispatchNode#nextStepId()},
@@ -51,7 +51,7 @@ import java.util.Set;
 @Singleton
 public final class WorkflowPlanValidator {
 
-    /** V1 cap on branches per fork group (PRD-WF-002 §A.4.1). */
+    /** V1 cap on branches per fork group. */
     public static final int MAX_BRANCHES_V1 = 16;
 
     private final RaceSafetyTargetRegistry raceSafetyTargets;
@@ -67,7 +67,7 @@ public final class WorkflowPlanValidator {
     }
 
     /**
-     * Validates the plan against the PRD-WF-002 fork/join rules.
+     * Validates the plan against the fork/join rules.
      *
      * <p>Plans without {@code ForkNode}/{@code JoinNode} are accepted unchanged.
      *
@@ -101,7 +101,7 @@ public final class WorkflowPlanValidator {
         }
         if (branches.size() > MAX_BRANCHES_V1) {
             throw new WorkflowDefinitionException("ForkNode '" + fork.stepId() + "' in " + label + " declares "
-                    + branches.size() + " branches; PRD-WF-002 V1 caps fork groups at " + MAX_BRANCHES_V1);
+                    + branches.size() + " branches; V1 caps fork groups at " + MAX_BRANCHES_V1);
         }
         // 2. Branch ids unique
         Set<String> seenIds = new HashSet<>();
@@ -126,11 +126,10 @@ public final class WorkflowPlanValidator {
             throw new WorkflowDefinitionException("ForkNode '" + fork.stepId() + "' in " + label
                     + " references joinStepId '" + fork.joinStepId() + "' which does not resolve to a JoinNode");
         }
-        // 5. Nested-fork detection + branch-owned wait rejection (Codex review round-2 W-new):
-        //    branch-owned TimerNode / HumanTaskNode / WaitSignalNode-with-timeout aren't yet
-        //    implemented in BranchTransitionEngine. Without this validator gate they would only
-        //    fail at runtime, AFTER sibling branches may have committed durable side effects.
-        //    Reject at registration so authors see the gap immediately.
+        // 5. Nested-fork detection + branch-owned DecisionNode rejection. Without this validator
+        //    gate an unsupported node inside a branch would only fail at runtime, AFTER sibling
+        //    branches may have committed durable side effects. Reject at registration so authors
+        //    see the gap immediately.
         for (BranchStart bs : branches) {
             Set<String> reachable = reachableFrom(bs.startStepId(), fork.stepId(), nodeById);
             for (String stepId : reachable) {
@@ -138,22 +137,20 @@ public final class WorkflowPlanValidator {
                 if (n instanceof ForkNode nested && !nested.stepId().equals(fork.stepId())) {
                     throw new WorkflowDefinitionException("ForkNode '" + fork.stepId() + "' in " + label + " branch '"
                             + bs.branchId() + "' reaches another ForkNode '" + nested.stepId()
-                            + "'; nested fan-out is not supported in PRD-WF-002 V1 (FR-WF-PAR-008)");
+                            + "'; nested fan-out is not supported in V1");
                 }
-                // PRD-WF-002 AC #4 / AC #5 implemented: branch-owned HumanTaskNode, TimerNode,
-                // and WaitSignalNode-with-timeout are now supported by BranchTransitionEngine.
-                // The previous rejection blocks for these node types are intentionally lifted.
-                // DecisionNode remains rejected: its dynamic resolution still cannot be statically
-                // proven safe.
+                // Branch-owned HumanTaskNode, TimerNode and WaitSignalNode-with-timeout are
+                // supported by BranchTransitionEngine and pass. DecisionNode is rejected: its
+                // dynamic resolution cannot be statically proven safe.
                 if (n instanceof DecisionNode) {
                     throw new WorkflowDefinitionException("ForkNode '" + fork.stepId() + "' in " + label + " branch '"
                             + bs.branchId() + "' contains DecisionNode '" + stepId
                             + "'; DecisionNode resolution is dynamic and could route to node types not yet"
-                            + " supported inside branches in PRD-WF-002 V1. Move the decision outside the fork.");
+                            + " supported inside branches in V1. Move the decision outside the fork.");
                 }
             }
         }
-        // 6. Race-policy enforcement (FR-WF-PAR-011/012/054)
+        // 6. Race-policy enforcement
         boolean isRace = jn.policy() instanceof FirstSuccessJoinPolicy || jn.policy() instanceof FirstFailureJoinPolicy;
         if (isRace) {
             // 6a. Race-safety per branch
@@ -161,8 +158,7 @@ public final class WorkflowPlanValidator {
                 if (bs.raceSafety() == RaceSafety.NORMAL) {
                     throw new WorkflowDefinitionException("ForkNode '" + fork.stepId() + "' in " + label + " uses "
                             + jn.policy().getClass().getSimpleName() + " but branch '" + bs.branchId()
-                            + "' has RaceSafety.NORMAL; race joins require CANCEL_SAFE or IGNORE_LATE_RESULT_SAFE"
-                            + " (FR-WF-PAR-011)");
+                            + "' has RaceSafety.NORMAL; race joins require CANCEL_SAFE or IGNORE_LATE_RESULT_SAFE");
                 }
             }
             // 6b. No compensation in race branches; every dispatch target must be race-safe
@@ -174,13 +170,13 @@ public final class WorkflowPlanValidator {
                         throw new WorkflowDefinitionException("ForkNode '" + fork.stepId() + "' in " + label
                                 + " uses " + jn.policy().getClass().getSimpleName() + " but branch '" + bs.branchId()
                                 + "' contains CompensationNode '" + stepId + "'; race joins reject compensable"
-                                + " branches (FR-WF-PAR-054)");
+                                + " branches");
                     }
                     if (n instanceof ServiceDispatchNode sdn && sdn.compensationStepId() != null) {
                         throw new WorkflowDefinitionException("ForkNode '" + fork.stepId() + "' in " + label
                                 + " uses " + jn.policy().getClass().getSimpleName() + " but branch '" + bs.branchId()
                                 + "' ServiceDispatchNode '" + sdn.stepId() + "' declares a compensationStepId; race"
-                                + " joins reject compensable branches (FR-WF-PAR-054)");
+                                + " joins reject compensable branches");
                     }
                     if (n instanceof ServiceDispatchNode sdn) {
                         RaceSafety declared = raceSafetyTargets.lookup(sdn.targetId());
@@ -190,7 +186,7 @@ public final class WorkflowPlanValidator {
                                     + bs.branchId() + "' dispatches to target '" + sdn.targetId()
                                     + "' which has no race-safe registration; register it via a"
                                     + " RaceSafetyTargetContributor with CANCEL_SAFE or"
-                                    + " IGNORE_LATE_RESULT_SAFE (FR-WF-PAR-012)");
+                                    + " IGNORE_LATE_RESULT_SAFE");
                         }
                     }
                 }

@@ -12,7 +12,7 @@ import java.util.Set;
 
 /**
  * Validates the match-rule mutual-exclusion constraint on each {@code @KafkaHandler} method
- * within a Model 3 router listener (FR-CG006-005).
+ * within a Model 3 router listener.
  *
  * <p>Each {@code @KafkaHandler} method must specify <em>exactly one</em> of:
  * <ul>

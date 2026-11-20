@@ -12,10 +12,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.db.DbPoolConfig;
+import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.job.CronJobSchedule;
+import dev.vertique.job.JobCoordinator;
+import dev.vertique.job.JobCoordinatorConfig;
 import dev.vertique.job.JobExecution;
 import dev.vertique.job.JobState;
 import dev.vertique.job.JobType;
@@ -82,7 +85,7 @@ public class PgJobRepositoryIT {
                         .setPassword(config.password()))
                 .using(vertx)
                 .build();
-        repository = new PgJobRepository(pool, new PgDbExceptionMapper());
+        repository = new PgJobRepository(pool, new PgDbExceptionMapper(), DbSchemas.empty(), "test-node");
         ctx.completeNow();
     }
 
@@ -518,6 +521,74 @@ public class PgJobRepositoryIT {
     }
 
     @Test
+    @DisplayName("cancelExecution marks a PROCESSING execution CANCELLED")
+    void cancelMarksAProcessingExecutionCancelled(Vertx vertx, VertxTestContext ctx) {
+        String queue = "cancel-processing-" + UUID.randomUUID();
+        JobCoordinator coordinator = new JobCoordinator(
+                vertx, repository, JobCoordinatorConfig.builder().build(), "test-node");
+
+        repository
+                .save(newExecution(queue, 0))
+                .compose(id -> repository.claimNextJob(queue, 1))
+                .compose(claimed -> {
+                    UUID id = claimed.get(0).id();
+                    return coordinator.cancelExecution(id).compose(v -> repository.findById(id));
+                })
+                .onSuccess(found -> ctx.verify(() -> {
+                    assertTrue(found.isPresent());
+                    assertEquals(JobState.CANCELLED, found.get().state());
+                    assertNotNull(found.get().completedAt());
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("cancelExecution leaves an ENQUEUED execution unchanged")
+    void cancelLeavesAnEnqueuedExecutionUnchanged(Vertx vertx, VertxTestContext ctx) {
+        String queue = "cancel-enqueued-" + UUID.randomUUID();
+        JobCoordinator coordinator = new JobCoordinator(
+                vertx, repository, JobCoordinatorConfig.builder().build(), "test-node");
+
+        repository
+                .save(newExecution(queue, 0))
+                .compose(id -> coordinator.cancelExecution(id).compose(v -> repository.findById(id)))
+                .onSuccess(found -> ctx.verify(() -> {
+                    assertTrue(found.isPresent());
+                    assertEquals(JobState.ENQUEUED, found.get().state(), "a cancel does not touch an ENQUEUED row");
+                    assertNull(found.get().completedAt());
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("cancelExecution leaves an ABANDONED execution unchanged")
+    void cancelLeavesAnAbandonedExecutionUnchanged(Vertx vertx, VertxTestContext ctx) {
+        String queue = "cancel-abandoned-" + UUID.randomUUID();
+        JobCoordinator coordinator = new JobCoordinator(
+                vertx, repository, JobCoordinatorConfig.builder().build(), "test-node");
+
+        repository
+                .save(newExecution(queue, 0))
+                .compose(id -> repository.claimNextJob(queue, 1))
+                .compose(claimed -> {
+                    UUID id = claimed.get(0).id();
+                    return repository
+                            .completeExecution(id, JobState.ABANDONED, "node died", "Abandoned", ProgressSnapshot.EMPTY)
+                            .compose(abandoned -> coordinator.cancelExecution(id))
+                            .compose(v -> repository.findById(id));
+                })
+                .onSuccess(found -> ctx.verify(() -> {
+                    assertTrue(found.isPresent());
+                    assertEquals(JobState.ABANDONED, found.get().state(), "a cancel does not touch an ABANDONED row");
+                    assertEquals("node died", found.get().errorMessage());
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
     @DisplayName("scheduleRetry transitions execution back to ENQUEUED with new scheduled_at")
     void scheduleRetryTransitionsBackToEnqueued(VertxTestContext ctx) {
         String queue = "retry-test-" + UUID.randomUUID();
@@ -916,6 +987,96 @@ public class PgJobRepositoryIT {
                     assertEquals("Europe/Helsinki", row.getString("timezone"), "timezone should be updated");
                     assertEquals(5, row.getInteger("max_attempts"), "max_attempts should be updated");
                     assertFalse(row.getBoolean("tracked"), "tracked should be updated to false");
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("saveSchedule stores the computed next fire instant of the schedule")
+    void saveScheduleStoresNextFireAt(VertxTestContext ctx) {
+        String jobId = "sched-next-fire-" + UUID.randomUUID();
+        Instant nextFireAt = Instant.now().plus(1, ChronoUnit.HOURS).truncatedTo(ChronoUnit.MILLIS);
+        CronJobSchedule schedule = new CronJobSchedule(
+                jobId,
+                "0 0 8 * * *",
+                "test/my-svc/doWork",
+                "eventbus:test/my-svc/doWork",
+                "EVERY_INSTANCE",
+                "UTC",
+                true,
+                "SKIP",
+                3,
+                false,
+                null,
+                nextFireAt);
+
+        repository
+                .saveSchedule(schedule)
+                .compose(v -> repository.findSchedule(jobId))
+                .onSuccess(found -> ctx.verify(() -> {
+                    assertEquals(nextFireAt, found.orElseThrow().nextFireAt(), "next_fire_at should be stored");
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("saveSchedule refreshes next_fire_at on conflict and keeps it when the new instant is null")
+    void saveScheduleUpsertKeepsOrRefreshesNextFireAt(VertxTestContext ctx) {
+        String jobId = "sched-next-fire-upsert-" + UUID.randomUUID();
+        Instant first = Instant.now().plus(1, ChronoUnit.HOURS).truncatedTo(ChronoUnit.MILLIS);
+        Instant second = first.plus(1, ChronoUnit.HOURS);
+        CronJobSchedule base = new CronJobSchedule(
+                jobId,
+                "0 0 8 * * *",
+                "test/my-svc/doWork",
+                "eventbus:test/my-svc/doWork",
+                "EVERY_INSTANCE",
+                "UTC",
+                true,
+                "SKIP",
+                3,
+                false,
+                null,
+                first);
+        CronJobSchedule refreshed = new CronJobSchedule(
+                jobId,
+                base.cronExpression(),
+                base.handler(),
+                base.target(),
+                base.executionMode(),
+                base.timezone(),
+                true,
+                "SKIP",
+                3,
+                false,
+                null,
+                second);
+        CronJobSchedule withoutInstant = new CronJobSchedule(
+                jobId,
+                base.cronExpression(),
+                base.handler(),
+                base.target(),
+                base.executionMode(),
+                base.timezone(),
+                true,
+                "SKIP",
+                3,
+                false,
+                null,
+                null);
+
+        repository
+                .saveSchedule(base)
+                .compose(v -> repository.saveSchedule(refreshed))
+                .compose(v -> repository.findSchedule(jobId))
+                .compose(found -> {
+                    ctx.verify(() -> assertEquals(second, found.orElseThrow().nextFireAt(), "new instant replaces"));
+                    return repository.saveSchedule(withoutInstant).compose(v -> repository.findSchedule(jobId));
+                })
+                .onSuccess(found -> ctx.verify(() -> {
+                    assertEquals(second, found.orElseThrow().nextFireAt(), "null keeps the stored instant");
                     ctx.completeNow();
                 }))
                 .onFailure(ctx::failNow);

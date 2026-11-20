@@ -81,8 +81,8 @@ public final class PgWorkflowRetentionRepository extends PgSqlRepository {
 
     /**
      * Archive candidate SQL: up to {@code $4} unarchived rows of the given status whose {@code completed_at <= $2},
-     * optionally filtered by {@code definition_id}, locked with {@code SKIP LOCKED}, and then only those whose
-     * execution lock this transaction won without waiting.
+     * optionally filtered by {@code definition_id}, and then only those whose execution lock this transaction won
+     * without waiting ({@code pg_try_advisory_xact_lock}). Candidate rows themselves take no row lock.
      *
      * <p>Parameters: $1=status, $2=completed_at cutoff, $3=definition_id (nullable text), $4=limit.
      */
@@ -99,8 +99,8 @@ public final class PgWorkflowRetentionRepository extends PgSqlRepository {
 
     /**
      * Purge candidate SQL: up to {@code $3} archived rows whose {@code archived_at <= $1}, optionally filtered by
-     * {@code definition_id}, locked with {@code SKIP LOCKED}, and then only those whose execution lock this
-     * transaction won without waiting.
+     * {@code definition_id}, and then only those whose execution lock this transaction won without waiting
+     * ({@code pg_try_advisory_xact_lock}). Candidate rows themselves take no row lock.
      *
      * <p>Parameters: $1=archived_at cutoff, $2=definition_id (nullable text), $3=limit.
      */

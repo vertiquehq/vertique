@@ -15,7 +15,7 @@ package dev.vertique.json.schema;
  * carries it under {@code serializedName}. The record carries names only, never a schema fragment.
  *
  * <p>OpenAPI publication consumes this shape. Components evolve only by appending nullable trailing
- * fields (ADR-0254).
+ * fields.
  *
  * @param declaringType  the binary name ({@link Class#getName()}) of the class declaring the member
  * @param member         the Java member's own name ({@link java.lang.reflect.Member#getName()})

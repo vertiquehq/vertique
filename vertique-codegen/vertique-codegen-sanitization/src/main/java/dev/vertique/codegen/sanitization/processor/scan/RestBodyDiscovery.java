@@ -208,7 +208,7 @@ public final class RestBodyDiscovery {
      *   <li>Types assignable to {@code RoutingContext} (subclasses).</li>
      *   <li>Types assignable to {@link dev.vertique.core.context.ContextValue} — covers all
      *       unannotated auto-injected context parameters, matching the runtime
-     *       {@code ResourceScanner} CONTEXT classification (FR-REST-168).</li>
+     * {@code ResourceScanner} CONTEXT classification.</li>
      * </ul>
      *
      * @param type the parameter type mirror
@@ -227,7 +227,7 @@ public final class RestBodyDiscovery {
             TypeMirror paramErasure = ctx.types().erasure(type);
             if (ctx.types().isAssignable(paramErasure, routingErasure)) return true;
         }
-        // Assignability check for ContextValue subtypes (FR-REST-168 parity with runtime classifier)
+        // Assignability check for ContextValue subtypes (parity with the runtime classifier)
         TypeElement contextValueEl = ctx.elements().getTypeElement(CONTEXT_VALUE_FQN);
         if (contextValueEl != null) {
             TypeMirror contextValueErasure = ctx.types().erasure(contextValueEl.asType());

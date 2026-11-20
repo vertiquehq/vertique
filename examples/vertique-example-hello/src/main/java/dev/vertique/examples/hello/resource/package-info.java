@@ -8,7 +8,7 @@
  * (admitted through the real rate-limit runtime and mapped to {@code 429} by {@code
  * vertique-rest-rate-limit}'s exception mapper, not a hand-rolled error response — the prototype
  * {@code GreetingLimitExceededException}/{@code GreetingLimitExceptionMapper}/{@code
- * GreetingLimitProblemDetail} scaffolding this endpoint used before is retired, T013); and
+ * GreetingLimitProblemDetail} scaffolding this endpoint used before is retired); and
  * {@code ResourceModule}, the Dagger module that contributes non-resource JAX-RS extension
  * bindings — resource instances themselves are auto-generated into the
  * {@code @JaxRsResources} multibinding so they are discovered and registered at startup.

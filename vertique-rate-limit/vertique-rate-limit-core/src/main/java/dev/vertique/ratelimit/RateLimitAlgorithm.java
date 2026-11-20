@@ -7,8 +7,8 @@ import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 
 /**
- * Sealed, Vertique-owned admission algorithm family (contracts/rate-limit-runtime.md, "Policy
- * model"). v1 permits only {@link TokenBucketRateLimit} — no application-defined member is
+ * Sealed, Vertique-owned admission algorithm family.
+ * v1 permits only {@link TokenBucketRateLimit} — no application-defined member is
  * permitted.
  *
  * <p>Jackson polymorphic typing is configured via the {@code "type"} property discriminator so

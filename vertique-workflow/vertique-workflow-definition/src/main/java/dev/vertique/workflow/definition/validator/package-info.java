@@ -3,8 +3,8 @@
 
 /**
  * Validates parsed {@link dev.vertique.workflow.definition.schema.WorkflowDefinitionDocument}
- * instances against the full set of structural, semantic, and registry-resolution rules defined in
- * PRD-WF-003 (FR-WF-DEF-101/102/103).
+ * instances against the full set of structural, semantic, and registry-resolution rules of the
+ * document format.
  *
  * <p>Key types:
  * <ul>

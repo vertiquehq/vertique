@@ -63,7 +63,7 @@ public abstract class SecurityModule {
      *
      * <p>When carriage is installed, its {@code @Provides IdentitySnapshotCapture} satisfies the
      * optional and the middleware captures an identity snapshot at ingress; when absent the optional
-     * is empty and the middleware pays nothing on the REST hot path (PRD-ID-002 §15 A3). Mirrors the
+     * is empty and the middleware pays nothing on the REST hot path. Mirrors the
      * {@code @BindsOptionalOf IdentitySnapshotDegradationPolicy} declaration in
      * {@code DispatchModule}.
      *

@@ -420,7 +420,7 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
         // build() validates that init() was called; throws WorkflowDefinitionException if not
         WorkflowPlan plan = builder.build(definitionId, definitionVersion, stateTypeName);
 
-        // PRD-WF-002: fork/join semantic validation runs FIRST so structural fork/join issues
+        // Fork/join semantic validation runs FIRST so structural fork/join issues
         // surface before the existing graph/signal/callback checks.
         if (forkJoinValidator != null) {
             forkJoinValidator.validate(plan);

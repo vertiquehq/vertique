@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
 import dev.vertique.db.DbPoolConfig;
+import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
@@ -80,7 +81,7 @@ public class OutboxMaintenanceSchedulePersistenceIT {
                         .setPassword(config.password()))
                 .using(vertx)
                 .build();
-        jobRepository = new PgJobRepository(pool, new PgDbExceptionMapper());
+        jobRepository = new PgJobRepository(pool, new PgDbExceptionMapper(), DbSchemas.empty(), "test-node");
         ctx.completeNow();
     }
 
@@ -106,7 +107,11 @@ public class OutboxMaintenanceSchedulePersistenceIT {
                 jobRepository,
                 resolver,
                 null,
-                dev.vertique.context.DispatchEnvelopeBuilder.forTesting());
+                CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
+                0L,
+                0L,
+                dev.vertique.context.DispatchEnvelopeBuilder.forTesting(),
+                "test-node");
 
         new CronJobRegistrar(
                         scheduler,

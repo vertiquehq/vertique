@@ -8,7 +8,8 @@ import io.vertx.core.Future;
 /**
  * SPI for health check indicators. Implementations report the health of a
  * component (database pool, downstream service, etc.) and are auto-discovered
- * via Dagger {@code Set<HealthCheck>} multibinding.
+ * via Dagger {@code Set<HealthCheck>} multibinding. {@link HealthCheckAggregator}
+ * evaluates a set and reduces it to a {@link HealthReport}.
  *
  * <p>Classify checks using qualifier annotations:
  * <ul>
@@ -25,6 +26,7 @@ import io.vertx.core.Future;
  * }</pre>
  *
  * @see HealthCheckResult
+ * @see HealthCheckAggregator
  * @see Liveness
  * @see Readiness
  */
@@ -34,7 +36,7 @@ public interface HealthCheck {
      * Returns the human-readable name of this health check, used as a key in
      * the aggregated health response (e.g., {@code "database"}, {@code "services"}).
      *
-     * <p>Implementations must not return {@code null} or throw. The management endpoint
+     * <p>Implementations must not return {@code null} or throw. {@link HealthCheckAggregator}
      * tolerates a violation by reporting the check under its implementing class name: a
      * {@code null} name still runs the check and keeps its own result, while an exception from
      * this method reports the check {@code DOWN} without running it.
@@ -48,7 +50,7 @@ public interface HealthCheck {
      *
      * <p>Implementations should return a completed {@link Future} with an appropriate
      * {@link HealthCheckResult} rather than a failed future. If the check throws an
-     * exception or returns a failed future, the management endpoint will report it
+     * exception or returns a failed future, {@link HealthCheckAggregator} reports it
      * as {@link HealthStatus#DOWN} with the throwable's message, or its fully
      * qualified class name when it has no message.
      *

@@ -35,7 +35,7 @@
       "packaging": "pom"
     }
   ],
-  "expectedPublishableGavCount": 123,
+  "expectedPublishableGavCount": 125,
   "expectedPublishableGavs": [
     "dev.vertique:vertique-aop",
     "dev.vertique:vertique-app-parent",
@@ -83,6 +83,7 @@
     "dev.vertique:vertique-db-test",
     "dev.vertique:vertique-deploy",
     "dev.vertique:vertique-events",
+    "dev.vertique:vertique-http-client",
     "dev.vertique:vertique-inbox-outbox-core",
     "dev.vertique:vertique-inbox-outbox-delayed-job",
     "dev.vertique:vertique-inbox-outbox-kafka",
@@ -109,6 +110,7 @@
     "dev.vertique:vertique-micrometer-cache",
     "dev.vertique:vertique-micrometer-core",
     "dev.vertique:vertique-micrometer-mcp",
+    "dev.vertique:vertique-micrometer-outbox",
     "dev.vertique:vertique-micrometer-rate-limit",
     "dev.vertique:vertique-micrometer-registry-prometheus",
     "dev.vertique:vertique-micrometer-resilience",

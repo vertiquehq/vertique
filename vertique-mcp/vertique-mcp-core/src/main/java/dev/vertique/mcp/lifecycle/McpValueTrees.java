@@ -23,7 +23,7 @@ import java.util.function.Supplier;
  * different package per generated invoker) calls {@link #deepUnmodifiableMap} to build the deeply
  * immutable {@code normalizedArguments} map {@link
  * dev.vertique.mcp.tool.McpPreparedToolCall#normalizedArguments()} contractually promises, in place
- * of {@code Map.copyOf} — which both throws on an explicit {@code null} value (INP-001 deliberately
+ * of {@code Map.copyOf} — which both throws on an explicit {@code null} value (the input pipeline deliberately
  * preserves an explicit-null {@code Optional<T>} argument all the way through materialization) and
  * only freezes the root map, leaving nested {@code Map}/{@code List} values mutable.
  */

@@ -40,7 +40,7 @@ public interface GreeterComponent {
      * Returns the {@link DeferringBean} — substituted by the generated {@code DeferringBean$AopProxy}
      * via the generated {@code @Binds} in {@code GeneratedAopModule}. Its sync method carries the
      * deliberately-deferring {@link Deferring @Deferring} aspect, so calling it through this proxy
-     * trips the FR-013-05 sync-defer guard.
+     * trips the sync-defer guard.
      *
      * @return the AOP-proxied deferring bean; never {@code null}
      */

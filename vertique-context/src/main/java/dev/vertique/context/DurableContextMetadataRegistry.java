@@ -22,15 +22,14 @@ import java.util.Set;
  *
  * <p>Boot-time validation in the constructor enforces:
  * <ul>
- *   <li>No duplicate durable encoder types (FR-CTX-113).
- *   <li>No two durable encoders owning the same namespace (FR-CTX-113).
- *   <li>No duplicate durable decoder types (FR-CTX-114).
- *   <li>No two durable decoders owning the same namespace (FR-CTX-114).
- *   <li>Empty encoder and decoder sets are valid (FR-CTX-112).
+ * <li>No duplicate durable encoder types.
+ * <li>No two durable encoders owning the same namespace.
+ * <li>No duplicate durable decoder types.
+ * <li>No two durable decoders owning the same namespace.
+ * <li>Empty encoder and decoder sets are valid.
  * </ul>
  *
- * <p>Encoder and decoder validation are independent: a type may be durable encoder-only
- * (FR-CTX-115).
+ * <p>Encoder and decoder validation are independent: a type may be durable encoder-only.
  *
  * <p>{@link DurableContextPropagator} MUST inject this registry rather than raw multibinding sets
  * so validation happens once at application bootstrap.

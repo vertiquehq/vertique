@@ -50,7 +50,7 @@ import software.amazon.awssdk.services.ssm.model.ParameterType;
  * succeeded {@link Future} carrying an empty {@link JsonObject}. This is intentional — a
  * declared-but-empty path is not an error; the store contributes nothing to the merged tree.
  *
- * <h2>NFR-CONF-002</h2>
+ * <h2>Value redaction</h2>
  * <p>Parameter values MUST NOT appear in log messages, exception messages, or any other
  * observable output. Only parameter names, counts, and structural diagnostics are logged.
  *

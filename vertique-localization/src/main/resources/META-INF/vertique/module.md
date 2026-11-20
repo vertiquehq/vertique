@@ -53,7 +53,7 @@ SPI for resolving and formatting localized messages backed by Java `ResourceBund
 | `findMessage(code, locale, args...)` | Returns `Optional.empty()` (never applies `useCodeAsDefaultMessage`) |
 | `getMessage(resolvable, locale)` | Tries codes in order; falls back to `resolvable.defaultMessage()`; throws for first code on total miss |
 
-Null `code` or `locale` → `NullPointerException`. Blank `code` → `NoSuchMessageException`. Null `args` array → treated as empty (FR-LOC-083).
+Null `code` or `locale` → `NullPointerException`. Blank `code` → `NoSuchMessageException`. Null `args` array → treated as empty.
 
 ### MessageSourceFactory
 
@@ -293,7 +293,7 @@ The encoder serializes `LocalizationContext` into a single `localization` namesp
    failures produce `failure(...)`. Optional fields read leniently — a non-string value drops the
    field with a `"unparseable-<field>"` warning but the result is still a success with warnings.
    `localeSource` and `zoneSource` are unconditionally set to `"persisted-metadata"` on decode
-   (FR-LOC-223) — a rehydrated context's provenance is the durable metadata itself, regardless of
+ — a rehydrated context's provenance is the durable metadata itself, regardless of
    whatever source value the original producer recorded in the body. The body's `localeSource` /
    `zoneSource` fields are never read on decode; they are retained on the wire for forensics only.
 
@@ -391,6 +391,6 @@ public class OrderService {
 - `jakarta.inject:jakarta.inject-api`
 - `org.projectlombok:lombok` (provided scope — `MessageSourceOptions` builder)
 
-Maven Enforcer `bannedDependencies` rule excludes all `dev.vertique:vertique-rest-*` artifacts to keep the module REST-free (AC-LOC-005).
+Maven Enforcer `bannedDependencies` rule excludes all `dev.vertique:vertique-rest-*` artifacts to keep the module REST-free.
 
 `ContextRuntimeModule` from `vertique-context` is not a compile-time dependency of this module — it declares the multibinding sets that `LocalizationModule` contributes into, but `LocalizationModule` need not depend on `vertique-context` directly. Applications include both modules in their AppComponent.

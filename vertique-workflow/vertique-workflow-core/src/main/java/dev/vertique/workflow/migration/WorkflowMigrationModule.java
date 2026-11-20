@@ -22,8 +22,6 @@ import java.util.Set;
  *
  * <p>Include this module in any {@code @Component} that requires migration support alongside
  * {@link dev.vertique.workflow.di.WorkflowCoreModule}.
- *
- * <p>PRD-WF-003 FR-WF-DEF-063.
  */
 @Module
 public abstract class WorkflowMigrationModule {

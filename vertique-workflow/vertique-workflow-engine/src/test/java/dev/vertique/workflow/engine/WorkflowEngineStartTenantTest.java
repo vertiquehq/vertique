@@ -153,6 +153,7 @@ class WorkflowEngineStartTenantTest {
         BranchTransitionEngine branchEngine = inboundExecScope == null
                 ? new BranchTransitionEngine(
                         branchTokens,
+                        instances,
                         dedup,
                         history,
                         recorderRouter,
@@ -163,6 +164,7 @@ class WorkflowEngineStartTenantTest {
                         signalWaits)
                 : new BranchTransitionEngine(
                         branchTokens,
+                        instances,
                         dedup,
                         history,
                         recorderRouter,

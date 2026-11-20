@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.workflow.definition`
 > **Artifact:** `vertique-workflow-definition`
-> **Depends on:** workflow-core, vertique-core, jackson-databind, jackson-dataformat-yaml, dev.cel:cel-runtime
+> **Depends on:** workflow-core, vertique-core, jackson-databind, jackson-dataformat-yaml, dev.cel:cel
 
 `vertique-workflow-definition` adds YAML/JSON workflow authoring on top of `workflow-core`. A definition document is parsed, validated, compiled into the same `WorkflowPlan` used by code-first definitions, and stored as a row of the definition table; a node builds the plan from the row when it is first used.
 
@@ -94,7 +94,7 @@ steps:
   - id: route-review
     type: decision
     routes:
-      - when: "review.riskLevel in ['high', 'critical']"
+      - when: "state.riskLevel in ['high', 'critical']"
         to: manual-review
       - condition: policy.lowRiskAutoApprove
         to: ship-order
@@ -163,13 +163,15 @@ Each step has an `id` and `type`. Common step fields:
 | `service` | Record a service-dispatch side effect | `target`, `payloadMapper`, `next`, optional `compensation` |
 | `wait-signal` | Suspend until a named signal arrives | `signal`, `payloadType`, `stateReducer`, `next`, optional `timeout`, optional `correlationKey` |
 | `timer` | Suspend until a resolved time | `fireAt`, `next` |
-| `human-task` | Create a task and wait for a decision | `taskType`, `assignment`, `decisions`, optional `due`, `reminders`, `requireVersionStability` |
+| `human-task` | Create a task and wait for a decision | `assignment`, `decisions`, optional `taskType`, `due`, `reminders`, `requireVersionStability` |
 | `decision` | Route based on CEL expressions or named conditions | `routes`, `default` |
 | `fork` | Start parallel branches | `branches`, `join`, optional `retryPolicy` |
 | `join` | Fan branches back into one path | `policy`, `reducer`, `next`, optional `onFailure` |
 | `compensation` | Record compensating service dispatch | `forwardStep`, `target`, `payloadMapper` |
 | `complete` | End successfully | none beyond `id` |
 | `fail` | End with failure and optional compensation | `errorType`, `messageFactory` |
+
+A `human-task` step's `taskType` is the logical type of the tasks it creates (for example `approval`). The compiler passes it to the plan's task node, every task the step creates carries it (`TaskRecord.taskType()`), and task lists filter on it with `TaskFilter.withTaskType(...)`. Omit it, or leave it blank, for a task with no type. It is not part of the plan hash, so a document that changes only its task type keeps the hash of its plan.
 
 Callback-like fields are string identifiers resolved against registries contributed by the application. The document never embeds Java lambdas or scripts.
 
@@ -183,7 +185,7 @@ Decision routes support two mutually exclusive condition forms:
 
 ```yaml
 routes:
-  - when: "state.total > 1000 && review.country == 'FI'"
+  - when: "state.total > 1000 && state.country == 'FI'"
     to: manual-review
   - condition: policy.lowRiskAutoApprove
     to: auto-approve
@@ -194,6 +196,8 @@ default: manual-review
 
 - `state` - the workflow state converted to a map.
 - Registered named conditions - pre-evaluated booleans keyed by condition id.
+
+The expression environment declares `state` as an untyped map, so field paths such as `state.total` are not checked against the workflow's state type when the document loads. A path that names a property the state type does not have, or a comparison whose operand types do not fit the property, is not reported at load time: the expression compiles. When the route is evaluated, a missing key (use `has(state.field)` for an optional one) and an ordering comparison (`<`, `>`) of mismatched types fail the evaluation, while `==` and `!=` between mismatched types do not fail and evaluate to `false` and `true`. Parsing, unsupported syntax and the expression limits are still checked at load time.
 
 `condition` references a named condition callback directly. Named conditions are evaluated once per decision evaluation and may be reused by multiple routes.
 
@@ -206,13 +210,13 @@ CEL is intentionally isolated behind `ExpressionProfile`; replacing CEL should r
 A well-formed definition is one that passes both parsing and semantic validation:
 
 - Jackson YAML/JSON parsing is strict: unknown fields and invalid step types fail.
-- Required top-level fields and required step fields must be present.
+- Required top-level fields and required step fields must be present. A null or blank `stateType`, `contract`, `startPayloadType` or `initialStateMapper` fails with `STATE_TYPE_MISSING`, `CONTRACT_MISSING`, `START_PAYLOAD_TYPE_MISSING` or `INITIAL_STATE_MAPPER_MISSING`; null or empty `steps` fails with `STEPS_MISSING`; a step with a null or blank `id` fails with `STEP_ID_MISSING`, naming its position. All of them are reported together with the other violations.
 - Type and contract names resolve through the `WorkflowTypeNames` index only (types for state and payload names, contracts for the contract name). The index holds the classes of every contributed `WorkflowTypeCatalog` and of every registered definition, under their logical and binary names. Before validation the pipeline resolves the contract, the state type, the start payload type, then the signal and decision payload types in step order, and the first name the index does not hold fails the load with `WorkflowUnknownTypeNameException`, which names the document field, and repeats the name only when it consists of letters, digits, underscore, dot, dollar sign and hyphen and is at most 255 characters long. No class is loaded by a name the document supplies.
 - The contract class must be annotated with `@WorkflowContract`. A contract names no definition, so several documents and versions can share one contract. A document's plan is built under the same plan rules as a Java definition's, including the check that every signal it waits for is declared on its contract.
 - Contract names and type names are separate namespaces: a contract name given as `stateType`, or a type name given as `contract`, is unknown.
 - Named callbacks must resolve through the registered callback registries. An unregistered `correlationKey` resolver id fails with `CORRELATION_KEY_RESOLVER_UNKNOWN`, naming the step and the id and suggesting the nearest registered ids. A registered resolver whose state type is not the document's state type fails with `CORRELATION_KEY_RESOLVER_STATE_TYPE_MISMATCH`, naming the step, the resolver id and both types.
 - Decision expressions must parse through the expression profile.
-- Step ids must be unique, reachable from `initialStep`, and all step references must point to existing steps.
+- Step ids must be unique, and all step references must point to existing steps. Every step must be reachable from `initialStep`: a step that no chain of references reaches fails with `UNREACHABLE_STEP`, one violation per step, naming it. Reachability follows `next`, a wait-signal `timeout.next`, a human-task decision or `due.next`, a decision route's `to` and `default`, a service step's `compensation`, a fork's branch `startStep` and `join`, and a join's `next` and `onFailure`. A document with an unknown `initialStep` reports `INITIAL_STEP_UNKNOWN` only. Documents that loaded before this rule existed and carry an orphan step are refused; remove the step or reference it.
 - The plan of a document is built through the registry's build path, so core plan validation and the contributed validators still apply. Publishing a loaded definition through the service builds its plan once to validate it and completes the row; nothing is registered, and the node builds the plan again from the row when it is first used. A definition loaded into one scope is not found under the default scope. Documents packaged with the application are recorded in the default scope.
 
 There is currently no separate published JSON Schema or YAML Schema file for workflow definitions. The authoritative validation is strict Jackson mapping plus `WorkflowDefinitionDocumentValidator`.
@@ -290,9 +294,10 @@ All nodes sharing live documents must have the appropriate loader and applicatio
 are never fetched.
 
 `deprecate(DefinitionKey)` moves an AVAILABLE version to DEPRECATED durably and reports DEPRECATED in service metadata
-and lists. New starts of that version and migrations to it are refused with reason `DEPRECATED`, including a retry of an
-explicit start under an idempotency key used before the deprecation, on every node at once, because a start reads the
-status of the row in its own transaction; instances already pinned to it keep running. Deprecating a version leaves every
+and lists. New starts of that version and migrations to it are refused with reason `DEPRECATED` on every node at once, because a
+start reads the status of the row in its own transaction. A retry of an earlier start under the same idempotency key
+is not a new start: deprecation does not refuse it, and it returns the existing instance when it matches that start (same contract, and any version or scope it names). Instances already pinned to it
+keep running. Deprecating a version leaves every
 other version available. The default scope's current version, which an activation record selects, cannot be deprecated
 until another version is activated or `deactivateDefault` clears the record. It requires the durable registry:
 without one, the returned Future fails.
@@ -337,15 +342,17 @@ default-scope CODE row, and a document of another scope may publish the same id 
 A load into a scope writes only that scope's rows; it never touches the default scope's or another scope's rows. Documents
 packaged with the application are loaded into the default scope. The service does not check identity: the application decides who may load
 into which scope, so restrict `load`, `publish`, `deprecate`, `retire`, `reinstate`, `activate`, `deactivateDefault`, `follow` and `activations` to authorized callers. The
-public `currentStatus` of a version that is only persisted metadata (a candidate or retired row that startup did
-not compile) reports the persisted status instead of returning `null`; it returns `null` only when nothing is known about the version. An equal plan hash no longer proves equal text: a
+status of a version that is only persisted metadata (a candidate or retired row that startup did
+not compile) is read from the durable row: `list` returns its persisted status in `WorkflowDefinitionRecord#status`,
+and `sourceMetadata` returns its attribution, empty when no row exists for the key. An equal plan hash no longer proves equal text: a
 packaged document whose text differs (even by a comment, whitespace or line endings) from the stored text of the
 same id and version fails startup, so bump the version of a changed document; a retired row of that id and version blocks it too.
 
 A listed `WorkflowDefinitionRecord` of a scope row that newly deployed code conflicts with carries `failure()`, a
 `DefinitionFailure` naming the rule (`STATE_TYPE_NOT_EXTENDED` or `NAME_BINDING_UNRESOLVED`); `list(new DefinitionFilter(scope,
-id, null))` shows it in every status, and it is `null` for a row that is not failing. New starts on such a version are
-refused with `WorkflowDefinitionFailingException` (see the engine reference).
+id, null))` shows it in every status, and it is `null` for a row that is not failing. A start that selects a version marked
+`STATE_TYPE_NOT_EXTENDED` is recorded, and the executor then fails its command and its instance with the reason
+`DEFINITION_FAILING`; a start of a `NAME_BINDING_UNRESOLVED` version stays deferred (see the engine reference).
 
 `sourceMetadata(DefinitionKey)` reads attribution without fetching source text. Lists contain immutable,
 key-bearing metadata. `list` and `sourceMetadata` read the durable table and have no
@@ -416,7 +423,7 @@ Applications must also contribute at least one `WorkflowDefinitionSource` for bo
 - **workflow-core** - builder DSL, registry, plan model, callback ids, and workflow errors.
 - **vertique-core** - common exception hierarchy.
 - **jackson-databind** and **jackson-dataformat-yaml** - strict JSON/YAML parsing.
-- **dev.cel:cel-runtime** - default expression engine, isolated behind `ExpressionProfile`.
+- **dev.cel:cel** - default expression engine, isolated behind `ExpressionProfile`.
 
 ---
 

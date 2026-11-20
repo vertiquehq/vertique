@@ -70,7 +70,7 @@ import lombok.extern.slf4j.Slf4j;
 @RegisterIntoSet(SecurityEventObserver.class)
 final class SecuritySpanEventObserver implements SecurityEventObserver {
 
-    // --- Event names (frozen per SP-12 plan) ---
+    // --- Event names (frozen) ---
 
     /** Span event name for a successfully accepted credential. */
     private static final String EVENT_CREDENTIAL_ACCEPTED = "vertique.security.credential.accepted";

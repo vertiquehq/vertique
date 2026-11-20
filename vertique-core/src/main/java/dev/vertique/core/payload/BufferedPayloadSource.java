@@ -18,7 +18,7 @@ import java.util.OptionalLong;
  * a double-checked-locking {@link #bufferView()} helper. This avoids the allocation on capture
  * paths that never request the {@link Buffer} form: {@link #bufferedStream()} and
  * {@link #copyPrefix(int)} both operate directly on the {@code byte[]} and do not trigger buffer
- * construction (FR-AUD-405).
+ * construction.
  *
  * <p>Note: {@link Buffer#buffer(byte[])} in Vert.x allocates a new heap {@code ByteBuf}
  * and <em>copies</em> the array — the "wraps without copying" claim in older javadoc is incorrect

@@ -10,8 +10,7 @@ import java.util.Optional;
 
 /**
  * Immutable {@link SecurityContext} implementation for a framework-verified reconstruction,
- * created by {@link SecurityContexts#assembleReconstructed} (PRD identity-002 §14.3 Phase-2
- * Appendix).
+ * created by {@link SecurityContexts#assembleReconstructed}.
  *
  * <p>Identical in shape to {@link DefaultSecurityContext} — the same four typed pillars — plus a
  * fifth field, {@link #marker()}, carrying the typed, unforgeable verified-reconstruction signal

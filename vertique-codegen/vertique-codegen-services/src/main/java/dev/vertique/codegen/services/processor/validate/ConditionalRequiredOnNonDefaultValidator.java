@@ -12,7 +12,7 @@ import java.util.stream.Collectors;
 import javax.lang.model.element.TypeElement;
 
 /**
- * Group-level validator that enforces FR-CG011-012: in any contract group with more than one
+ * Group-level validator: in any contract group with more than one
  * candidate <em>and</em> at least one unconditional default, every non-default candidate must
  * declare at least one {@code @ConditionalOnProperty} annotation.
  *

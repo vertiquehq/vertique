@@ -26,27 +26,26 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * Branch-scoped compensation orchestrator (PRD-WF-002 §7.5 / §A.5.1).
+ * Branch-scoped compensation orchestrator.
  *
  * <p>When an {@code ALL_REQUIRED} fork takes the failure route, branches that completed forward
  * dispatches with {@code compensationStepId} declarations need to be compensated in reverse
- * declaration order across siblings, and within each branch in reverse logical order
- * (FR-WF-PAR-064/065).
+ * declaration order across siblings, and within each branch in reverse logical order.
  *
  * <p>For each branch this helper:
  * <ol>
  *   <li>Walks the parent instance's history to find {@code SIDE_EFFECT_RECORDED} entries scoped
  *       to that branch (via {@code branchTokenId}) whose corresponding {@link ServiceDispatchNode}
  *       declares a compensation step.</li>
- *   <li>Routes a compensating side-effect intent for each, in reverse arrival order
- *       (FR-WF-PAR-064).</li>
+ *   <li>Routes a compensating side-effect intent for each, in reverse arrival order.
+ * </li>
  *   <li>Appends {@code BRANCH_COMPENSATING_START} / {@code BRANCH_COMPENSATING_STEP} /
  *       {@code BRANCH_COMPENSATED} history entries.</li>
  * </ol>
  *
- * <p>Branches that did not record a successful forward intent are skipped (FR-WF-PAR-063). Race
+ * <p>Branches that did not record a successful forward intent are skipped. Race
  * joins are guarded against this orchestrator by the validator (no compensable steps allowed in
- * race branches; FR-WF-PAR-054).
+ * race branches).
  */
 @Singleton
 final class BranchCompensationOrchestrator {
@@ -64,7 +63,7 @@ final class BranchCompensationOrchestrator {
     }
 
     /**
-     * Runs branch compensation for the failed fork group (PRD-WF-002 §7.5).
+     * Runs branch compensation for the failed fork group.
      *
      * @param inst the parent workflow instance
      * @param fork the failed fork node (used to enumerate branches in declaration order)
@@ -81,7 +80,7 @@ final class BranchCompensationOrchestrator {
             RuntimeWorkflow rw,
             SqlClient tx) {
         return history.listByInstance(inst.id(), tx).compose(allEntries -> {
-            // Reverse declaration order across sibling branches (FR-WF-PAR-065).
+            // Reverse declaration order across sibling branches.
             List<dev.vertique.workflow.plan.BranchStart> reversed = new ArrayList<>(fork.branches());
             Collections.reverse(reversed);
             Future<Void> chain = Future.succeededFuture();
@@ -91,12 +90,11 @@ final class BranchCompensationOrchestrator {
                         .findFirst()
                         .orElse(null);
                 if (branchToken == null) continue;
-                // Codex review fix M3: SUPERSEDED branches don't reach here (race policies
-                // forbid compensable steps via the validator). Other terminal statuses might
-                // have committed forward intents before failing — let compensateBranch's
-                // history walk filter on `SIDE_EFFECT_RECORDED` entries scoped by branchTokenId
-                // so we compensate any committed forward intent regardless of the branch's
-                // final terminal status (FR-WF-PAR-063 explicitly allows this).
+                // SUPERSEDED branches don't reach here (race policies forbid compensable steps
+                // via the validator). Other terminal statuses might have committed forward
+                // intents before failing — let compensateBranch's history walk filter on
+                // `SIDE_EFFECT_RECORDED` entries scoped by branchTokenId so we compensate any
+                // committed forward intent regardless of the branch's final terminal status.
                 if (branchToken.status() == BranchStatus.SUPERSEDED) continue;
                 chain = chain.compose(v -> compensateBranch(inst, branchToken, allEntries, rw, tx));
             }
@@ -110,7 +108,7 @@ final class BranchCompensationOrchestrator {
             List<WorkflowHistoryEntry> allEntries,
             RuntimeWorkflow rw,
             SqlClient tx) {
-        // Collect this branch's dispatches in reverse arrival order (FR-WF-PAR-064).
+        // Collect this branch's dispatches in reverse arrival order.
         List<SideEffectRecordedHistoryPayload> branchDispatches = new ArrayList<>();
         for (WorkflowHistoryEntry e : allEntries) {
             if (e.entryType() != WorkflowEntryType.SIDE_EFFECT_RECORDED) continue;

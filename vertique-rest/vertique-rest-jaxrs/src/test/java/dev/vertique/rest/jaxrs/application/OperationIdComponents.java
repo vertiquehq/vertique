@@ -27,11 +27,12 @@ import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 
 /**
- * Dagger components for {@link JaxRsApplicationMountConflictIT} (T023's TP-009, rest-024's ported
- * FR-014 test): six named nested compositions, one per lettered case (a) to (f), proving the
- * rest-jaxrs validator's cross-mount operationId owner rule (FR-014), plus three more (TP-009's own
- * rows (a) to (c)) proving the refusal still holds, unrelaxed, under the {@code web-validation} and
- * {@code openapi-contract} strategies and their distinct or shared contract locations (CX-007).
+ * Dagger components for {@link JaxRsApplicationMountConflictIT}: six named nested compositions, one
+ * per lettered case (a) to (f), proving the rest-jaxrs validator's cross-mount operationId rule,
+ * plus three more ({@code public} and {@code partner} rows (a) to (c)) proving that distinct owners
+ * on two application mounts deploy under the {@code web-validation} strategy and under the {@code
+ * openapi-contract} strategy at distinct contract locations, and fail when both mounts share one
+ * contract location under {@code openapi-contract}.
  * Every component's factory takes the deployment configuration as a
  * {@code @BindsInstance @VertxConfig JsonObject}, matching {@link ConflictDeploymentComponents}.
  * {@link ConflictSpyModule}'s two counting spies are included in every composition, so a failing
@@ -56,8 +57,8 @@ public final class OperationIdComponents {
     /**
      * Case (a): two applications at non-conflicting paths ({@code OpidApis.OpidAlphaApi},
      * {@code OpidApis.OpidBetaApi}), each listing a different resource class that declares a method
-     * with operationId {@code "list"}. The two operations have no common owner, so the collision
-     * must fail deployment.
+     * with operationId {@code "list"}. The two operations have no common owner but sit on
+     * application mounts with no shared contract location, so this deploys with one shared-id WARN.
      */
     @Singleton
     @Component(
@@ -151,8 +152,8 @@ public final class OperationIdComponents {
      * {@code OpidApis.OpidInheritedSecondApi}), each listing a different concrete subclass of one
      * base class that declares {@code list()}; neither subclass overrides it. The two operations
      * share the inherited method's name and parameter types but have different normalized owner
-     * classes (each subclass's own {@code @Path} defeats {@code sameSurface}), so the collision
-     * must fail deployment.
+     * classes (each subclass's own {@code @Path} defeats {@code sameSurface}); both sit on
+     * application mounts, so this deploys with one shared-id WARN.
      */
     @Singleton
     @Component(
@@ -249,11 +250,11 @@ public final class OperationIdComponents {
     }
 
     /**
-     * TP-009 row (a) (T023 contract): {@code public} and {@code partner}, active, listing
+     * Row (a): {@code public} and {@code partner}, active, listing
      * {@link dev.vertique.rest.jaxrs.application.conflict.opid.crossmount.PublicListResource} and
      * {@link dev.vertique.rest.jaxrs.application.conflict.opid.crossmount.PartnerListResource}, whose
-     * distinct owners' {@code list()} operations collide, under the {@code web-validation}
-     * pass-through strategy.
+     * distinct owners' {@code list()} operations share an operationId, under the {@code web-validation}
+     * pass-through strategy, which compares no contract locations, so this deploys.
      */
     @Singleton
     @Component(
@@ -282,11 +283,10 @@ public final class OperationIdComponents {
     }
 
     /**
-     * TP-009 row (b) (T023 contract): {@code public} and {@code partner}, active, at their own
-     * distinct contract locations ({@code public.yaml}, {@code partner.yaml}), under the
-     * {@code openapi-contract} pass-through strategy, whose flag gates the validator's location
-     * parse. FR-027's per-mount relaxation stays staged to CO-4 (CX-007): distinct locations do not
-     * exempt this collision.
+     * Row (b): {@code public} and {@code partner}, active, at their own distinct contract locations
+     * ({@code public.yaml}, {@code partner.yaml}), under the {@code openapi-contract} pass-through
+     * strategy, whose flag makes the validator compare locations: distinct locations, so this
+     * deploys.
      */
     @Singleton
     @Component(
@@ -315,11 +315,10 @@ public final class OperationIdComponents {
     }
 
     /**
-     * TP-009 row (c) (T023 contract): {@code public} and {@code partner}, active, both with an
-     * empty own contract location, falling back to the deployment configuration's global
-     * {@code jaxrs.openapiPath} ({@code shared.yaml}), under the {@code openapi-contract}
-     * pass-through strategy. FR-027's shared-contract-location clause stays staged to CO-4
-     * (CX-007): the two mounts sharing one location do not exempt this collision.
+     * Row (c): {@code public} and {@code partner}, active, both with an empty own contract location,
+     * falling back to the deployment configuration's global {@code jaxrs.openapiPath} ({@code
+     * shared.yaml}), under the {@code openapi-contract} pass-through strategy: the two mounts share
+     * one contract location, so the shared operationId fails deployment.
      */
     @Singleton
     @Component(

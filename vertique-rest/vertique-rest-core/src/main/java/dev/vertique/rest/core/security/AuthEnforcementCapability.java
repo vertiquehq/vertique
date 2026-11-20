@@ -20,8 +20,8 @@ package dev.vertique.rest.core.security;
  * <p>This type is deliberately non-instantiable from application code: its constructor is
  * {@code private} and the single framework-owned value is exposed as {@link #INSTANCE}. Only the
  * security module's Dagger module binds it, so an application cannot accidentally {@code new} a
- * value and spoof the "auth installed" signal. Replacing the former {@code @Named}-qualified
- * {@code Boolean} presence signal with this typed marker is the change recorded in ADR-0105.
+ * value and spoof the "auth installed" signal. This typed marker replaces the former
+ * {@code @Named}-qualified {@code Boolean} presence signal.
  */
 public final class AuthEnforcementCapability {
 

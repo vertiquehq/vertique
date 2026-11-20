@@ -77,6 +77,8 @@ The processor enforces the following at compile time:
 | Observer method must return `void` | `@Observes` on a non-`void` method is a compile error |
 | Observer method must have exactly one parameter | A method with multiple parameters (even if one carries `@Observes`) is rejected |
 | `@Observes Object` is rejected | The registry's superclass walk excludes `Object`; such an observer would silently never fire |
+| Observer method must be `public` | A non-`public` observer method is rejected at the method |
+| Observer class must be reachable | The generated module calls the observer from the package it is emitted into (by default the longest common prefix of the event packages), so a declaring class that is not `public` and not in that package is rejected at the observer |
 
 ---
 
@@ -86,7 +88,6 @@ The processor enforces the following at compile time:
 
 ```java
 // placed in the event type's own package (e.g. com.example.events)
-@Generated("dev.vertique.codegen.events.EventsProcessor")
 public final class OrderCreated$Event extends Event<OrderCreated> {
 
     @Inject
@@ -195,7 +196,7 @@ The publisher classes (`X$Event`) are always placed in the event type's own pack
 
 ### Observer silently never fires
 
-When `GeneratedEventsModule` is not included in `@Component`, the `Set<ObserverRegistration>` multibinding is empty (or absent) and `ObserverRegistry.match()` returns no registrations for any event type. Firing an event is a no-op. There is no compile error from the events module itself — the failure is detectable only if `ObserverRegistry` injection also fails (no `@Multibinds` anchor).
+When the only `GeneratedEventsModule` is left out of `@Component`, no `Event<X>` binding exists, so a bean that injects `Event<X>` fails at Dagger graph compilation (see `Event<X>` injection fails below). That omission is not a silent no-op. A silent no-op arises only when the omitted module is one of several: the observers it would contribute through `@Provides @IntoSet ObserverRegistration` are missing from the `Set<ObserverRegistration>`, `ObserverRegistry.match()` returns no registration for them, and firing an event reaches only the observers of the modules that are present. There is no compile error in that case.
 
 Mitigation: include `GeneratedEventsModule.class` explicitly in `@Component`. This turns processor misconfiguration (missing `annotationProcessorPaths` entry) into a compile error because the generated class will not exist.
 

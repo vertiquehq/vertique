@@ -13,8 +13,8 @@ import jakarta.annotation.Nullable;
  *
  * @param reason the cancellation reason; may be {@code null} when no reason was provided
  * @param commandCorrelationId the correlation id bound to the ambient execution context at the
- *     point this entry was appended, or {@code null} when no correlation context was bound (PRD
- *     FR-WF-CTX-050/051). Additive field — history rows written before this field existed
+ *     point this entry was appended, or {@code null} when no correlation context was bound.
+ *     Additive field — history rows written before this field existed
  *     deserialize with {@code null}.
  */
 record CancelledHistoryPayload(String reason, @Nullable String commandCorrelationId) {}

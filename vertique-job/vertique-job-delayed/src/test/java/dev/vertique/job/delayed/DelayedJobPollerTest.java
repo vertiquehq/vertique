@@ -418,12 +418,22 @@ class DelayedJobPollerTest {
         @DisplayName("an undecodable payload fails through the completion handler and releases its slot")
         void undecodablePayloadFailsAndReleasesSlot(Vertx vertx, VertxTestContext ctx) {
             String handlerAddress = "test.undecodable.handler";
+            AtomicReference<DelayedJobPoller> poller = new AtomicReference<>();
             JobExecution execution = sampleExecution("undecodable-job", handlerAddress, 3, new JsonObject());
             when(repository.claimNextJob(anyString(), anyInt()))
                     .thenReturn(Future.succeededFuture(List.of(execution)))
                     .thenReturn(Future.succeededFuture(List.of()));
-            when(completionHandler.handleCompletion(any(), any(), any())).thenReturn(Future.succeededFuture());
-            DelayedJobPoller poller = new DelayedJobPoller(
+            // The slot is released right after the completion handler returns, in the same task on the
+            // poller's context; a task queued on that context from inside the handler runs after the release.
+            when(completionHandler.handleCompletion(any(), any(), any())).thenAnswer(invocation -> {
+                io.vertx.core.Context pollerContext = Vertx.currentContext();
+                pollerContext.runOnContext(ignored -> ctx.verify(() -> {
+                    assertEquals(0, poller.get().inFlightCount());
+                    ctx.completeNow();
+                }));
+                return Future.succeededFuture();
+            });
+            poller.set(new DelayedJobPoller(
                     "default",
                     fastConfig(),
                     repository,
@@ -434,21 +444,14 @@ class DelayedJobPollerTest {
                     0L,
                     DispatchEnvelopeBuilder.forTesting(),
                     noOpPropagator(),
-                    Map.of(handlerAddress, UUID.class));
+                    Map.of(handlerAddress, UUID.class)));
 
-            vertx.deployVerticle(poller).onFailure(ctx::failNow);
+            vertx.deployVerticle(poller.get()).onFailure(ctx::failNow);
 
             ArgumentCaptor<Result<?>> result = ArgumentCaptor.captor();
             verify(completionHandler, timeout(5000)).handleCompletion(eq(execution), result.capture(), any());
             ctx.verify(() -> assertInstanceOf(
                     IllegalArgumentException.class, result.getValue().cause()));
-            // The slot is released right after the completion handler returns, on the poller's context.
-            vertx.setPeriodic(5, id -> {
-                if (poller.inFlightCount() == 0) {
-                    vertx.cancelTimer(id);
-                    ctx.completeNow();
-                }
-            });
         }
     }
 

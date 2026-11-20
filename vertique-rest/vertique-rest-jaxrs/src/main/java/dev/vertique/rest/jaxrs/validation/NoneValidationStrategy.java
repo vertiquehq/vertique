@@ -13,7 +13,7 @@ import java.util.Optional;
 
 /**
  * The {@code none} {@link RequestValidationStrategy}: installs no validation gate for any operation
- * (FR-004). Requests flow straight to dispatch, so a body or parameter that would violate a schema
+ * Requests flow straight to dispatch, so a body or parameter that would violate a schema
  * constraint is never rejected by a 400 gate — it is deserialized and dispatched as-is. Applications
  * that want no request-validation overhead select this strategy by its {@link #id()}.
  */

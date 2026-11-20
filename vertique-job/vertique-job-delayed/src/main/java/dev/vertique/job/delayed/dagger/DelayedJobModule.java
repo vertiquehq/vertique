@@ -56,8 +56,9 @@ import java.util.Set;
  *   <li>{@link DelayedJobHandlerRegistrar} — scans service registry for
  *       {@link dev.vertique.job.delayed.DelayedJobHandlerMethod} annotations and typed
  *       {@link dev.vertique.job.delayed.DelayedJobExecutor} contributors</li>
- *   <li>{@link dev.vertique.job.delayed.DelayedJobClientFactory} — creates JDK dynamic proxies
- *       for {@link dev.vertique.job.delayed.DelayedJobClient} contract interfaces</li>
+ *   <li>{@link dev.vertique.job.delayed.DelayedJobClientFactory} — creates the proxies for
+ *       {@link dev.vertique.job.delayed.DelayedJobClient} contract interfaces, preferring a generated
+ *       static proxy and falling back to a JDK dynamic proxy</li>
  *   <li>{@link ServiceContractContributor} via {@code @IntoSet} — registers typed
  *       {@link dev.vertique.job.delayed.DelayedJobExecutor} instances as service contract entries</li>
  *   <li>{@link Set}&lt;{@link VerticleDeployment}&gt; via {@link ElementsIntoSet} — one
@@ -95,7 +96,7 @@ public abstract class DelayedJobModule {
     /**
      * Boundary provider that parses the {@code delayedJob} configuration section into a typed,
      * validated {@link DelayedJobsConfig}. This is the only delayed-job class permitted to inject the
-     * raw {@code @VertxConfig JsonObject} (config rule R2): the keyed {@code queues}/{@code contracts}
+     * raw {@code @VertxConfig JsonObject}: the keyed {@code queues}/{@code contracts}
      * objects are parsed into typed records (key → identity), validated, and indexed; all other
      * delayed-job runtime classes depend on the typed config or its indexes.
      *
@@ -131,7 +132,7 @@ public abstract class DelayedJobModule {
      * @param pgRepository    the PostgreSQL repository for transactional enqueueing
      * @param registrar       the handler registrar used to resolve handler names to event bus addresses
      * @param propagator      the durable context propagator for merging ambient durable context into
-     *                        job metadata at enqueue time (FR-CTX-177)
+     * job metadata at enqueue time
      * @param exceptionMapper the stage-2 exception mapper that translates data-access failures into
      *                        delayed-job-domain exceptions at the enqueue boundary
      * @return the singleton delayed job service
@@ -185,7 +186,7 @@ public abstract class DelayedJobModule {
      * @param coordinatorConfig  the coordinator configuration supplying timeout and flush interval
      * @param envelopeBuilder    the dispatch envelope builder for context-substrate capture
      * @param propagator         the durable context propagator for decoding persisted metadata into
-     *                           each poller's outgoing envelope caller-overrides (FR-CTX-177)
+     * each poller's outgoing envelope caller-overrides
      * @param registrar          the handler registrar supplying each handler's declared payload type;
      *                           lazy so that collecting the deployments does not build the contract
      *                           registry
@@ -255,7 +256,7 @@ public abstract class DelayedJobModule {
     }
 
     /**
-     * Provides the {@link DelayedJobClientFactory} used to create JDK dynamic proxies for
+     * Provides the {@link DelayedJobClientFactory} used to create the proxies for
      * typed {@link dev.vertique.job.delayed.DelayedJobClient} contract interfaces.
      *
      * @param jobService        the delayed job service for enqueue delegation

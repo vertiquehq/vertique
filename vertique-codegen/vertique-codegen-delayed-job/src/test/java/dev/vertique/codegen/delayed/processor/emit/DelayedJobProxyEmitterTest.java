@@ -186,6 +186,29 @@ class DelayedJobProxyEmitterTest {
         verify(service, never()).enqueue(any(DelayedJob.class));
     }
 
+    @Test
+    @DisplayName("options idempotencyKey reaches the enqueued job, with and without a transaction")
+    @SuppressWarnings("unchecked")
+    void idempotencyKeyReachesTheJob() throws Exception {
+        DelayedJobService service = mock(DelayedJobService.class);
+        when(service.enqueue(any(DelayedJob.class))).thenReturn(Future.succeededFuture(UUID.randomUUID()));
+        when(service.enqueue(any(DelayedJob.class), any(SqlClient.class)))
+                .thenReturn(Future.succeededFuture(UUID.randomUUID()));
+
+        DelayedJobClient<String> client = (DelayedJobClient<String>) instantiate(service);
+        DelayedJobOptions options =
+                DelayedJobOptions.builder().idempotencyKey("order-42").build();
+        client.enqueue("payload", options);
+        client.enqueue("payload", options, mock(SqlClient.class));
+
+        ArgumentCaptor<DelayedJob> pooled = ArgumentCaptor.forClass(DelayedJob.class);
+        ArgumentCaptor<DelayedJob> transactional = ArgumentCaptor.forClass(DelayedJob.class);
+        verify(service).enqueue(pooled.capture());
+        verify(service).enqueue(transactional.capture(), any(SqlClient.class));
+        assertEquals("order-42", pooled.getValue().idempotencyKey());
+        assertEquals("order-42", transactional.getValue().idempotencyKey());
+    }
+
     /** Compiles the contract, then constructs the generated proxy with the given (mock) service. */
     private static Object instantiate(DelayedJobService service) throws Exception {
         ProcessorTestHarness.Result result = ProcessorTestHarness.run(

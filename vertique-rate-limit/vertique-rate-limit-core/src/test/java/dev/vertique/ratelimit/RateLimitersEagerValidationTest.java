@@ -100,6 +100,15 @@ class RateLimitersEagerValidationTest {
                         "shouldFailForPerPolicyLocalMaxTrackedKeysOverrideBelowOne",
                         RateLimitersEagerValidationTest::shouldFailForPerPolicyLocalMaxTrackedKeysOverrideBelowOne),
                 new MatrixRow(
+                        "shouldFailForLocalMaxTrackedKeysAboveLimitAtGlobalDefault",
+                        RateLimitersEagerValidationTest::shouldFailForLocalMaxTrackedKeysAboveLimitAtGlobalDefault),
+                new MatrixRow(
+                        "shouldFailForPerPolicyLocalMaxTrackedKeysOverrideAboveLimit",
+                        RateLimitersEagerValidationTest::shouldFailForPerPolicyLocalMaxTrackedKeysOverrideAboveLimit),
+                new MatrixRow(
+                        "shouldSucceedForLocalMaxTrackedKeysAtLimit",
+                        RateLimitersEagerValidationTest::shouldSucceedForLocalMaxTrackedKeysAtLimit),
+                new MatrixRow(
                         "shouldFailForUnrecognizedDefaultMode",
                         RateLimitersEagerValidationTest::shouldFailForUnrecognizedDefaultMode));
     }
@@ -257,6 +266,51 @@ class RateLimitersEagerValidationTest {
                 .isInstanceOf(ConfigurationException.class)
                 .hasMessageContaining("quota-x")
                 .hasMessageContaining("maxTrackedKeys");
+    }
+
+    // --- maxTrackedKeys upper bound (10,000,000), global and per-policy ---
+
+    private static void shouldFailForLocalMaxTrackedKeysAboveLimitAtGlobalDefault() {
+        JsonObject config = new JsonObject()
+                .put("rateLimit", new JsonObject().put("local", new JsonObject().put("maxTrackedKeys", 10_000_001L)));
+
+        assertThatThrownBy(() -> buildViaDagger(config).rateLimiters())
+                .as("rateLimit.local.maxTrackedKeys=10000001 (global default)")
+                .isInstanceOf(ConfigurationException.class)
+                .hasMessageContaining("rateLimit.local.maxTrackedKeys")
+                .hasMessageContaining("10000000");
+    }
+
+    private static void shouldFailForPerPolicyLocalMaxTrackedKeysOverrideAboveLimit() {
+        JsonObject config = new JsonObject()
+                .put(
+                        "rateLimit",
+                        new JsonObject()
+                                .put(
+                                        "policies",
+                                        new JsonObject()
+                                                .put(
+                                                        "quota-x",
+                                                        new JsonObject()
+                                                                .put(
+                                                                        "local",
+                                                                        new JsonObject()
+                                                                                .put("maxTrackedKeys", 10_000_001L)))));
+
+        assertThatThrownBy(() -> buildViaDagger(config).rateLimiters())
+                .as("rateLimit.policies.quota-x.local.maxTrackedKeys=10000001 (per-policy override)")
+                .isInstanceOf(ConfigurationException.class)
+                .hasMessageContaining("rateLimit.policies.quota-x.local.maxTrackedKeys")
+                .hasMessageContaining("10000000");
+    }
+
+    private static void shouldSucceedForLocalMaxTrackedKeysAtLimit() {
+        JsonObject config = new JsonObject()
+                .put("rateLimit", new JsonObject().put("local", new JsonObject().put("maxTrackedKeys", 10_000_000L)));
+
+        assertThatCode(() -> buildViaDagger(config).rateLimiters())
+                .as("rateLimit.local.maxTrackedKeys=10000000 is the inclusive upper bound")
+                .doesNotThrowAnyException();
     }
 
     // --- Row 9 (m4): an unrecognized rateLimit.defaultMode wraps into ConfigurationException ---

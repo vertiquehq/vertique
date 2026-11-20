@@ -237,7 +237,7 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
         List<EffectiveResourceContract> validatedContracts = new java.util.ArrayList<>();
 
         // Per-round dedup set for <Ann>$JaxRsLiteral classes materialized by both ExecutionPlanEmitter's
-        // and JaxRsDescriptorEmitter's literal-backed parameter annotations (GitHub issue #162).
+        // and JaxRsDescriptorEmitter's literal-backed parameter annotations.
         // Scoped to a single process() round and shared across every emit(...) call to EITHER
         // emitter in that round, since the same parameter (hence the same annotation occurrence) is
         // visited by both emitters — without a shared set, a runtime-retained annotation type (e.g.
@@ -318,7 +318,7 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
             // Null entries mean the method is not eligible for plan emission (non-public method,
             // inaccessible types) — the descriptor will pass null for those methods' executionPlan.
             //
-            // emittedLiteralFqns (GitHub issue #162) is shared across every emit(...) call to EITHER
+            // emittedLiteralFqns is shared across every emit(...) call to EITHER
             // emitter in this round — see its declaration above.
             List<ClassName> planClassNames = new ArrayList<>(verbMethods.size());
             for (int i = 0; i < verbMethods.size(); i++) {

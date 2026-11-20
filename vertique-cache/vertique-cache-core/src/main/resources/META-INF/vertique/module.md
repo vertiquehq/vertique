@@ -72,7 +72,9 @@ selector function. Components are type-framed by the runtime; a `CacheKey` is ne
 
 ### CacheMode, CacheIdentity, AnonymousCachePolicy
 
-`CacheMode` is `DEFAULT`, `LOCAL`, or `CLUSTERED`; `DEFAULT` defers to `cache.defaultMode`.
+`CacheMode` is `DEFAULT`, `LOCAL`, or `CLUSTERED`; `DEFAULT` defers to `cache.defaultMode`, except on a
+synchronous annotated method, where it resolves to `LOCAL` (only a `Future`-returning method can use a
+clustered store). A synchronous method whose effective mode is `CLUSTERED` fails when its cache is built.
 `CacheIdentity` is `NONE`, `ACTOR`, `EFFECTIVE_PRINCIPAL` (the default), or `ACTOR_AND_SUBJECT`.
 `AnonymousCachePolicy` is `BYPASS` (the default) or `CACHE_AS_ANONYMOUS`.
 
@@ -143,7 +145,7 @@ bound as a whole record and omitted keys are **not** defaulted: supply every glo
 | Key | Type | Default | Range / rule | Description |
 |---|---|---|---|---|
 | `cache.enabled` | boolean | `true` | | Kill switch. When `false`, every handle runs its loader directly without touching a provider, and no provider needs to be installed. |
-| `cache.defaultMode` | `LOCAL` \| `CLUSTERED` | `LOCAL` | required; `DEFAULT` is not a usable value | Mode applied when neither the definition nor `cache.caches.<name>.mode` selects one. |
+| `cache.defaultMode` | `LOCAL` \| `CLUSTERED` | `LOCAL` | required; `DEFAULT` is not a usable value | Mode applied when neither the definition nor `cache.caches.<name>.mode` selects one. A synchronous `@Cacheable` method that selects none resolves to `LOCAL` instead. |
 | `cache.defaultTtlSeconds` | long (s) | `60` | `>= 0`, and `<= maxTtlSeconds` | TTL for a definition that declares none. `0` disables time expiration. |
 | `cache.maxTtlSeconds` | long (s) | `86400` | `> 0`, and `>= defaultTtlSeconds` | Ceiling for every declared or configured TTL. A TTL above it is rejected, never clamped. |
 | `cache.jsonProfile` | string | `system` | not blank | JSON profile used to serialize cached values. **Independent of `json.jsonProfile`**: the cache never follows the edge JSON profile, so changing the edge default cannot make durable entries unreadable. |
@@ -157,7 +159,7 @@ bound as a whole record and omitted keys are **not** defaulted: supply every glo
 
 | Key | Type | Default | Range / rule | Description |
 |---|---|---|---|---|
-| `cache.caches.<name>.mode` | `LOCAL` \| `CLUSTERED` \| `DEFAULT` | required | | Overrides the definition's mode unless `DEFAULT`, which defers to the definition and then `cache.defaultMode`. |
+| `cache.caches.<name>.mode` | `LOCAL` \| `CLUSTERED` \| `DEFAULT` | required | | Overrides the definition's mode unless `DEFAULT`, which defers to the definition and then `cache.defaultMode`. `CLUSTERED` fails startup when a synchronous `@Cacheable` method uses the cache. |
 | `cache.caches.<name>.ttlSeconds` | long (s) | `0` when omitted | `-1`, `0`, or `1..maxTtlSeconds` | `-1` inherits the definition's TTL (then `defaultTtlSeconds`); `0` disables time expiration; a positive value overrides the definition. An omitted value binds as `0`, not as inherit. A value above `cache.maxTtlSeconds` fails configuration. |
 | `cache.caches.<name>.jsonProfile` | string | inherits `cache.jsonProfile` | not blank when present | Per-cache JSON profile. |
 
@@ -191,7 +193,8 @@ two-argument seam must be updated to supply that schema.
 ## Runtime behavior
 
 The cache runtime is fail-open: disabled caches, invalid or oversized keys, backend
-failures, and observer failures preserve the business invocation. A successful local
+failures, and observer failures (other than a `VirtualMachineError`, `ThreadDeath` or `LinkageError`,
+which is never caught) preserve the business invocation. A successful local
 miss may populate the provider-neutral `CacheStore`; a hit skips the target after the
 outer framework authorization boundary has run. Programmatic callers must invoke the handle
 only after their application authorization decision. The optional `CacheObserver` set is

@@ -40,16 +40,16 @@ import javax.lang.model.element.TypeElement;
  *       {@link BeanAccessorEmitter} (deduplicated across all interfaces in the round).</li>
  * </ol>
  *
- * <p>Interfaces annotated with {@link NoAutoWire} are skipped (respects the CG-002 opt-out
+ * <p>Interfaces annotated with {@link NoAutoWire} are skipped (respects the auto-wire opt-out
  * convention).
  *
  * <p>The processor runs a single emit round via the {@code emitted} guard flag — no accumulation
- * across rounds. This mirrors the pattern established by CG-002's {@code AutoWireProcessor}.
+ * across rounds. This mirrors the pattern established by {@code AutoWireProcessor}.
  *
  * <p>Processor options:
  * <ul>
- *   <li>{@code vertique.codegen.package} — overrides the output package for generated sources
- *       (default: same package as the origin type, per {@link CodegenContext#outputPackage}).</li>
+ *   <li>{@code vertique.codegen.package} — accepted but ignored for placement: the generated proxy
+ *       and accessor always land in the package of the origin type.</li>
  *   <li>{@code vertique.codegen.restclient.warnExternalBeans} — when {@code true} (default),
  *       a {@code WARNING} is emitted for {@code @BeanParam} types not visible in the compilation
  *       unit; set to {@code false} to suppress.</li>
@@ -183,7 +183,8 @@ public final class RestClientProcessor extends AbstractProcessor {
                 allBeanModels.add(beanModel);
             }
 
-            if (!hasExternalBean) {
+            // A declaring interface the generated class cannot name leaves the reflective proxy in charge.
+            if (!hasExternalBean && declaringTypesAccessible(model)) {
                 proxyEmitter.emit(model, beanModelsByFqn);
             }
         }
@@ -196,6 +197,42 @@ public final class RestClientProcessor extends AbstractProcessor {
     }
 
     // --- Internal helpers ---
+
+    /**
+     * Returns {@code true} when the generated proxy, which lives in the client's package, can name the
+     * interface that declares each operation: an inherited operation is looked up on its declaring
+     * interface, which may be package-private to another package.
+     *
+     * @param model the scanned client interface
+     * @return {@code false} when some declaring interface is not accessible from the client's package
+     */
+    private boolean declaringTypesAccessible(ClientInterfaceModel model) {
+        String clientPackage = ctx.packageNameOf(model.clientType());
+        for (var method : model.methods()) {
+            if (method.method().getEnclosingElement() instanceof TypeElement declaring
+                    && !declaring.equals(model.clientType())
+                    && !accessibleFrom(declaring, clientPackage)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean accessibleFrom(TypeElement type, String fromPackage) {
+        for (Element current = type; current instanceof TypeElement t; current = t.getEnclosingElement()) {
+            var modifiers = t.getModifiers();
+            if (modifiers.contains(javax.lang.model.element.Modifier.PRIVATE)) {
+                return false;
+            }
+            boolean implicitlyPublic =
+                    t.getEnclosingElement() instanceof TypeElement outer && outer.getKind() == ElementKind.INTERFACE;
+            boolean samePackage = ctx.packageNameOf(t).equals(fromPackage);
+            if (!modifiers.contains(javax.lang.model.element.Modifier.PUBLIC) && !implicitlyPublic && !samePackage) {
+                return false;
+            }
+        }
+        return true;
+    }
 
     /**
      * Returns {@code true} when the given type is not in the current compilation unit (i.e., it

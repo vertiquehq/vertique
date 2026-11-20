@@ -99,7 +99,7 @@ import java.util.Set;
 import java.util.function.Supplier;
 
 /**
- * Dispatches the bounded discovery endpoint over the hardened stateless HTTP contract (§4.7).
+ * Dispatches the bounded discovery endpoint over the hardened stateless HTTP contract.
  *
  * <p>The dispatcher wires the framework-owned strict codec onto the live request path, enforces the
  * method/origin/content-type/accept admission checks, registers the disconnect/reset settlement seam,
@@ -121,21 +121,21 @@ import java.util.function.Supplier;
  * McpToolRegistry}, reauthorizes the resolved descriptor through {@link McpPolicyEnforcer#decide}
  * exactly like {@code tools/list}, and maps an unknown name or a denied decision to the same
  * {@code -32602} JSON response {@link #writeUnknownOrUnauthorized} already produces — no tool is ever
- * invoked on that path. Only once a call is known and authorized does the dispatcher select
- * request-scoped SSE ({@code text/event-stream}, {@code X-Accel-Buffering: no}) — unconditionally,
- * before {@link McpToolInvoker#prepare} runs, so the response is committed to SSE framing regardless
- * of how invocation later resolves and never falls back to JSON afterward — and only then runs stage 1
- * of the fixed request-time input pipeline (contract §4.7): the precompiled input schema
- * validator compiled at composition. A schema rejection settles as the bounded text-only {@code
+ * invoked on that path. Only once a call is known, authorized, carries the client capabilities its
+ * tool requires and passes tool admission (a missing capability or an admission rejection is answered
+ * as JSON first) does the dispatcher select request-scoped SSE ({@code text/event-stream}, {@code
+ * X-Accel-Buffering: no}) — unconditionally, before {@link McpToolInvoker#prepare} runs, so the
+ * response is committed to SSE framing regardless of how invocation later resolves and never falls
+ * back to JSON afterward — and only then runs stage 1 of the fixed request-time input pipeline: the
+ * precompiled input schema validator compiled at composition. A schema rejection settles as the bounded text-only {@code
  * isError=true} tool-error outcome without ever calling {@code prepare()}. Only once schema validation
  * passes does the dispatcher invoke the generated invoker directly (no reflection); {@code prepare()}
- * itself then owns stages 2–4 (INP-001 canonicalization/sanitization, materialization, Bean
+ * itself then owns stages 2–4 (input-processing canonicalization/sanitization, materialization, Bean
  * Validation), signalling a rejection there through {@link McpInputRejectionException}. Every complete
  * result is then normalized exactly once, bounded at {@code mcp.output.maxBytes} as bytes
  * are produced, validated against the tool's advertised output schema before exposure, encoded into the
  * same bounded terminal envelope, reported through the completion view's {@code toolOutput} only once that
- * envelope exists, and only then handed to the single terminal writer — contract §4.7 stage 7's fixed
- * order.
+ * envelope exists, and only then handed to the single terminal writer — a fixed order.
  */
 final class McpRequestDispatcher {
     private static final String DISCOVER_METHOD = "server/discover";
@@ -194,8 +194,8 @@ final class McpRequestDispatcher {
 
     /**
      * The bounded JSON-RPC server-error-range code {@link McpProtocolCodec#validateNegotiation} settles
-     * a protocol-negotiation failure as (contract §4.7 — "Header/body mismatch is HTTP
-     * 400 with -32020"). Mirrors {@link McpProtocolCodec}'s own private constant of the same value —
+     * a protocol-negotiation failure as (header/body mismatch is HTTP 400 with -32020). Mirrors
+     * {@link McpProtocolCodec}'s own private constant of the same value —
      * this class already redeclares every other codec-classified code above for the same reason: {@link
      * #httpStatusFor} needs it locally. An unsupported protocol version is the one negotiation failure
      * that is not this code: it is {@link McpProtocolCodec#UNSUPPORTED_PROTOCOL_VERSION} ({@code
@@ -205,7 +205,7 @@ final class McpRequestDispatcher {
 
     /**
      * The bounded JSON-RPC server-error-range code a pre-dispatch {@link McpRequestInterceptor}
-     * rejection settles as (§4.7 "request-interceptor rejection ... return JSON"). Reserved
+     * rejection settles as (a request-interceptor rejection always returns JSON). Reserved
      * strictly for this stage, distinct from the protocol (-3270x/-3260x) and tool-authorization
      * (-32602) codes above.
      */
@@ -213,14 +213,13 @@ final class McpRequestDispatcher {
 
     /**
      * The standard, non-leaking message paired with {@link #INTERCEPTOR_REJECTED}: no interceptor
-     * class name, reason, or exception text ever reaches the wire (contract §4.4 — "no exception
-     * message").
+     * class name, reason, or exception text ever reaches the wire.
      */
     private static final String INTERCEPTOR_REJECTED_MESSAGE = "Request rejected";
 
     /**
      * The bounded, non-leaking text returned as the sole content item of a post-validation
-     * {@link McpToolInterceptor} rejection (contract §4.4). SSE was already selected before
+     * {@link McpToolInterceptor} rejection. SSE was already selected before
      * this stage runs (invocation always follows {@link #selectSse}), so — like a stage 1 schema
      * rejection and a stage 2–4 {@link McpInputRejectionException} — this settles as a bounded
      * text-only {@code isError=true} tool result through {@link #writeToolResult}, never a JSON-RPC
@@ -239,7 +238,7 @@ final class McpRequestDispatcher {
 
     /**
      * The bounded, non-leaking text returned as the sole content item of a stage-1 (schema) rejection
-     * — §4.7's "bounded invalid-arguments/tool-error outcome". Deliberately generic rather than
+     * — the bounded invalid-arguments/tool-error outcome. Deliberately generic rather than
      * echoing the failing keyword or property: the compiled validator's {@code OutputUnit} detail is
      * diagnostic-only and never reaches the wire, matching {@link
      * McpPolicyEnforcer#unknownOrUnauthorizedError()}'s established non-leaking-message convention for
@@ -248,7 +247,7 @@ final class McpRequestDispatcher {
     private static final String SCHEMA_REJECTION_MESSAGE = "Invalid tool arguments: schema validation failed";
 
     /**
-     * The hard per-page examination cap (§4.7): a page examines at most this many multiples of
+     * The hard per-page examination cap: a page examines at most this many multiples of
      * {@code mcp.tools.pageSize} candidates, bounding the authorization fan-out an unauthenticated
      * {@code tools/list} scan can trigger.
      */
@@ -299,8 +298,8 @@ final class McpRequestDispatcher {
 
     /**
      * Routing-context key for a snapshot of this request's live {@link CorrelationContext},
-     * established once in {@link #begin} — via {@link #bindCorrelation} —
-     * contract §4.7 stage 2, "establish correlation ... before optional authentication" — and read by
+     * established once in {@link #begin} — via {@link #bindCorrelation}, before optional
+     * authentication — and read by
      * every terminal-event construction site and every tool-interceptor context for the remainder of
      * the request through {@link #correlationOf}. Always a snapshot of the same live context bound onto
      * {@code ContextHolder} by {@link #bindCorrelation}, never an independently generated value. {@code
@@ -315,7 +314,7 @@ final class McpRequestDispatcher {
      * McpProtocolCodec#validateNegotiation} succeeds in {@link #dispatch}, and read by every later
      * terminal-event construction site through {@link #protocolVersionOf}. {@code null} whenever
      * negotiation never ran or did not complete — a request rejected at or before negotiation carries
-     * no negotiated version, exactly as contract §4.7's "emit only when negotiation completed" requires.
+     * no negotiated version: it is emitted only when negotiation completed.
      */
     private static final String PROTOCOL_VERSION_KEY = KEY_PREFIX + ".protocolVersion";
 
@@ -325,8 +324,8 @@ final class McpRequestDispatcher {
      * {@link #writeToolsCall} immediately once that decision resolves and read by every
      * later terminal-event construction site on the same request through {@link #authorizationOf}.
      * {@code null} for every other method, and for a {@code tools/call} request that never reaches an
-     * actual policy evaluation (a structurally missing/blank name) — matching contract §4.7's
-     * "authorization is present only after an actual policy evaluation."
+     * actual policy evaluation (a structurally missing/blank name): authorization is present only
+     * after an actual policy evaluation.
      */
     private static final String AUTHORIZATION_KEY = KEY_PREFIX + ".authorization";
 
@@ -505,7 +504,7 @@ final class McpRequestDispatcher {
     /**
      * Sorts {@code interceptors} by {@link OrderedExtension#comparator()} — phase, then priority,
      * then {@code orderKey} — and validates that no two share the same {@code (phase, priority,
-     * orderKey)} triple (contract §4.4). Ordering never falls back to Dagger set iteration: this is
+     * orderKey)} triple. Ordering never falls back to Dagger set iteration: this is
      * the one place that establishes it, at composition time, before any request reaches {@link
      * #runRequestInterceptors}.
      *
@@ -542,7 +541,7 @@ final class McpRequestDispatcher {
     /**
      * Sorts {@code interceptors} by {@link OrderedExtension#comparator()} — phase, then priority,
      * then {@code orderKey} — and validates that no two share the same {@code (phase, priority,
-     * orderKey)} triple (contract §4.4), reusing exactly the same ordering and duplicate-key
+     * orderKey)} triple, reusing exactly the same ordering and duplicate-key
      * validation {@link #sortedAndValidatedRequestInterceptors} establishes for the sibling
      * request-interceptor stage. Ordering never falls back to Dagger set iteration: this is the one place that
      * establishes it, at composition time, before any request reaches {@link #runToolInterceptors}.
@@ -577,7 +576,7 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Applies the cheap HTTP admission checks (§4.7 stage 1) — method, {@code Origin}, {@code
+     * Applies the cheap HTTP admission checks — method, {@code Origin}, {@code
      * Content-Type}, {@code Accept} — before any request body is read.
      *
      * <p>Mounted by {@link McpRouterMount} strictly <em>before</em> {@code BodyHandler}: every check
@@ -635,7 +634,7 @@ final class McpRequestDispatcher {
 
     /**
      * Constructs the request's completion coordinator, establishes the live request-scoped {@link
-     * CorrelationContext}, and registers its disconnect/reset settlement hooks (§4.7 stage 2), for a
+     * CorrelationContext}, and registers its disconnect/reset settlement hooks, for a
      * request that already passed {@link #admitCheap}'s cheap admission checks and {@code
      * BodyHandler}'s body aggregation.
      *
@@ -860,8 +859,8 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Establishes the one live {@link CorrelationContext} for this request (contract §4.7 stage 2 —
-     * "establish correlation ... before optional authentication") and binds it
+     * Establishes the one live {@link CorrelationContext} for this request (before optional
+     * authentication) and binds it
      * onto the shared {@code ContextHolder} substrate — the same mechanism REST's {@code
      * CorrelationIngressMiddleware} uses for its own ingress boundary. MCP defines no inbound
      * correlation header of its own, so the context is minted, not resolved, via {@link
@@ -916,8 +915,7 @@ final class McpRequestDispatcher {
 
     /**
      * Returns this request's negotiated {@code io.modelcontextprotocol/protocolVersion}, or {@code
-     * null} when negotiation never ran or did not complete (contract §4.7 — "emit only when negotiation
-     * completed").
+     * null} when negotiation never ran or did not complete (emitted only when negotiation completed).
      *
      * <p>Total by construction — every terminal-event construction
      * site in this class feeds this method's return value straight into a factory that would throw
@@ -942,8 +940,8 @@ final class McpRequestDispatcher {
 
     /**
      * Returns the {@link McpAuthorizationSummary} of this request's one real policy evaluation, or
-     * {@code null} when this request never reached one (contract §4.7 — "authorization is present only
-     * after an actual policy evaluation").
+     * {@code null} when this request never reached one (authorization is present only after an
+     * actual policy evaluation).
      */
     @Nullable
     private static McpAuthorizationSummary authorizationOf(RoutingContext context) {
@@ -1085,13 +1083,15 @@ final class McpRequestDispatcher {
             return;
         }
         context.put(PROTOCOL_VERSION_KEY, negotiation.protocolVersion());
-        // Extracted at most once per request, independent of negotiation's own outcome — a
-        // malformed or absent body trace reference never affects protocol admission — and only when
-        // mcp.bodyTracePolicy is LINK. Under the default IGNORE policy, extractBodyTraceContext is
-        // never called at all: no parse, no diagnostics, no cost. The result is bound onto the
-        // coordinator (when one exists — a fixture dispatch that bypasses begin() has none) so the
-        // terminal observation carries it (McpRequestTerminalObservation#linkedTrace()); McpRequestContext
-        // does not carry a body trace component.
+        // Extracted at most once per request, only after the official params check and negotiation
+        // have succeeded — a request rejected at either step is answered without extraction and carries
+        // no linked trace — and only when mcp.bodyTracePolicy is LINK. A malformed or absent body
+        // trace reference never affects protocol admission. Under the default IGNORE policy,
+        // extractBodyTraceContext is never called at all: no parse, no diagnostics, no cost. The
+        // result is bound onto the coordinator (when one exists — a fixture dispatch that bypasses
+        // begin() has none) so the terminal observation carries it
+        // (McpRequestTerminalObservation#linkedTrace()); McpRequestContext does not carry a body
+        // trace component.
         TraceReference linkedTrace =
                 config.bodyTracePolicy() == McpBodyTracePolicy.LINK ? codec.extractBodyTraceContext(envelope) : null;
         McpCompletionCoordinator coordinator = ownedCoordinator(context);
@@ -1295,7 +1295,7 @@ final class McpRequestDispatcher {
 
     /**
      * Runs the ordered pre-dispatch request-interceptor chain sequentially from {@code index},
-     * short-circuiting at the first rejection (contract §4.4): a synchronous
+     * short-circuiting at the first rejection: a synchronous
      * {@link McpRequestInterceptor#beforeRequest} throw, a {@code null} returned future, and a future
      * that resolves failed all fail closed the same way — the next interceptor is never invoked and
      * dispatch never runs. An empty ordered chain (the zero-interceptor composition) succeeds
@@ -1351,7 +1351,7 @@ final class McpRequestDispatcher {
 
     /**
      * Runs the ordered post-validation tool-interceptor chain sequentially from {@code index},
-     * short-circuiting at the first rejection (contract §4.4): a synchronous
+     * short-circuiting at the first rejection: a synchronous
      * {@link McpToolInterceptor#beforeInvocation} throw, a {@code null} returned future, and a future
      * that resolves failed all fail closed the same way — the next interceptor is never invoked and
      * the generated invocation never runs. An empty ordered chain (the zero-interceptor composition)
@@ -1381,7 +1381,7 @@ final class McpRequestDispatcher {
         } catch (RuntimeException | StackOverflowError thrown) {
             // Mirrors runRequestInterceptors above — interceptor.beforeInvocation is the same
             // class of application-supplied lifecycle callback, and a StackOverflowError from it is no
-            // less able to strand this request than one from stage 5 or stage 7.
+            // less able to strand this request than one from the invocation or terminal-write callbacks.
             return Future.failedFuture(thrown);
         }
         if (outcome == null) {
@@ -1403,7 +1403,7 @@ final class McpRequestDispatcher {
 
     /**
      * Writes the bounded, non-leaking JSON-RPC error response for a pre-dispatch interceptor
-     * rejection (contract §4.7 — "request-interceptor rejection ... return JSON"). Carries no
+     * rejection (a request-interceptor rejection always returns JSON). Carries no
      * interceptor class name, reason, or exception text — only the fixed
      * {@link #INTERCEPTOR_REJECTED}/{@link #INTERCEPTOR_REJECTED_MESSAGE} pair, exactly like
      * {@link McpPolicyEnforcer#unknownOrUnauthorizedError()} does for its own stage.
@@ -1612,9 +1612,9 @@ final class McpRequestDispatcher {
         ArrayNode supportedVersions = OUTPUT_ENCODER.createArrayNode();
         supportedVersions.add(PROTOCOL_VERSION);
         ObjectNode capabilities = OUTPUT_ENCODER.createObjectNode();
-        // D011: capability means the operation family is implemented, not that this immutable
+        // Capability means the operation family is implemented, not that this immutable
         // registry (or a caller's authorized view) currently contains a tool. listChanged stays
-        // absent because MCP-001 has no dynamic-registry notification mechanism.
+        // absent because this server has no dynamic-registry notification mechanism.
         capabilities.set("tools", OUTPUT_ENCODER.createObjectNode());
         ObjectNode result = OUTPUT_ENCODER.createObjectNode();
         // The official DiscoverResult requires resultType, supportedVersions, capabilities, ttlMs,
@@ -1636,7 +1636,7 @@ final class McpRequestDispatcher {
     // --- tools/list ---
 
     /**
-     * Serves one bounded, authorized page of the immutable tool registry (§4.7).
+     * Serves one bounded, authorized page of the immutable tool registry.
      *
      * <p>Scans the registry in global name order starting from the request's cursor anchor (or the
      * beginning, when absent), reauthorizing every candidate examined through {@link
@@ -2076,7 +2076,7 @@ final class McpRequestDispatcher {
      * an unknown tool all yield byte-identical bodies and the same HTTP status — the
      * status comes from the shared {@link #httpStatusFor} mapping, never a bespoke one. Always
      * {@code application/json}: an unknown or denied {@code tools/call} never reaches SSE selection
-     * (§4.7 — "unknown tool[s] and authorization denial return JSON").
+     * (unknown tools and authorization denial return JSON).
      *
      * @param toolName the requested tool name recorded on the internal terminal event for telemetry
      *     only — never serialized to the wire, so it has no bearing on the indistinguishability
@@ -2287,8 +2287,8 @@ final class McpRequestDispatcher {
                 // McpPolicyEnforcer#decide never fails per its own contract; defended here so a
                 // contract-violating extension cannot escape as an unhandled exception. No invocation
                 // was ever attempted, so this stays a JSON (never SSE) response. No decision was ever
-                // actually produced, so no summary is recorded (contract §4.7 — "authorization is
-                // present only after an actual policy evaluation").
+                // actually produced, so no summary is recorded (authorization is present only after
+                // an actual policy evaluation).
                 writeUnknownOrUnauthorized(context, envelope, security, McpMethod.TOOLS_CALL, toolName);
                 return;
             }
@@ -2376,21 +2376,23 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Selects request-scoped SSE, runs stage 1 of the fixed request-time input pipeline (contract
-     * §4.7), then invokes the resolved tool directly.
+     * Selects request-scoped SSE, runs stage 1 of the fixed request-time input pipeline, then
+     * invokes the resolved tool directly.
      *
-     * <p>{@link #selectSse} runs unconditionally as the first statement here — strictly before {@link
-     * McpToolInvoker#prepare} is ever called — so the response is committed to SSE framing before
-     * invocation begins and independently of how invocation later resolves: a synchronous {@code
-     * prepare}/{@code invoke} throw and a failed invocation future both settle through {@link
-     * #writeSseFallback}, never a JSON response. The official schema has already admitted only an
-     * absent or object-valued {@code arguments} member; explicit {@code null} and every other
-     * non-object value are rejected as {@code -32602} before SSE selection.
+     * <p>The tool-admission stage runs first and answers a rate-limit rejection as JSON. Once it
+     * admits the call, {@link #selectSse} runs unconditionally as the first statement of {@link
+     * #invokeAfterAdmission} — strictly before {@link McpToolInvoker#prepare} is ever called — so the
+     * response is committed to SSE framing before invocation begins and independently of how
+     * invocation later resolves: a synchronous {@code prepare}/{@code invoke} throw and a failed
+     * invocation future both settle through {@link #writeSseFallback}, never a JSON response. The
+     * official schema has already admitted only an absent or object-valued {@code arguments}
+     * member; explicit {@code null} and every other non-object value are rejected as {@code -32602}
+     * before SSE selection.
      *
      * <p>Stage 1 — the precompiled schema validator compiled at composition — runs next, on
      * exactly this {@code arguments} tree, before {@code prepare()} is ever called: a schema rejection
      * settles through {@link #writeToolResult} as the bounded text-only {@code isError=true} outcome
-     * and never invokes {@code prepare()}. Stages 2–4 (INP-001 canonicalization/sanitization at
+     * and never invokes {@code prepare()}. Stages 2–4 (input-processing canonicalization/sanitization at
      * {@code InputLocation.PAYLOAD}, materialization through the effective mapper, and Bean Validation)
      * are the generated fixed input boundary's own responsibility inside {@code prepare()}; a stage
      * 2–4 rejection is signalled by {@link McpInputRejectionException} and settles exactly like a
@@ -2490,7 +2492,7 @@ final class McpRequestDispatcher {
             return;
         } catch (RuntimeException | StackOverflowError | LinkageError prepareFailure) {
             // invoker.prepare() (stages 2-4, the generated fixed input boundary) walks the
-            // envelope-permitted 1,000-level-deep argument tree — the same depth stage 5's comment
+            // envelope-permitted 1,000-level-deep argument tree — the same depth the invocation comment
             // above already calls out as StackOverflowError-capable — and may itself invoke
             // application-supplied Bean Validation constraint code. A RuntimeException-only catch here
             // would let a native-recursion StackOverflowError escape before beginWrite is ever called:
@@ -2562,7 +2564,7 @@ final class McpRequestDispatcher {
                         // prepared.invoke() is the generated call directly into the application's own tool
                         // handler — the most direct lifecycle callback on this whole path. Catching
                         // StackOverflowError here, not just RuntimeException, prevents a recursing handler from
-                        // stranding the request, exactly like the stage 5/7 callbacks below.
+                        // stranding the request, exactly like the invocation and terminal-write callbacks below.
                         writeSseFallback(context, envelope, security, toolName, invokeFailure);
                         return;
                     }
@@ -2676,7 +2678,7 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Runs stage 1 of the fixed request-time input pipeline (contract §4.7): validates {@code
+     * Runs stage 1 of the fixed request-time input pipeline: validates {@code
      * arguments} against {@code toolName}'s precompiled input schema.
      *
      * <p>Never compiles a schema or a validator here — {@link McpSchemaRegistry} compiled every
@@ -2707,8 +2709,8 @@ final class McpRequestDispatcher {
      * this class converts a handler's raw structured value a second time: {@link #writeToolResult} and
      * {@link #toolCallResponse} accept and reuse the already-normalized value.
      *
-     * <p><strong>Bounded as bytes are produced, in one pass over {@code value}.</strong> Contract §4.3
-     * describes two halves for the output cap to enforce independently: the normalization of an
+     * <p><strong>Bounded as bytes are produced, in one pass over {@code value}.</strong> The output
+     * cap has two halves to enforce independently: the normalization of an
      * application structured value, and the complete terminal message. Both now run through the same
      * mechanism: {@code value} is serialized exactly once into a {@link CappedOutputStream} via {@link
      * #encodeCapped}, which aborts with {@link OutputCapExceededException} the moment the running byte
@@ -3106,7 +3108,7 @@ final class McpRequestDispatcher {
      * Settles an invocation-path failure — a synchronous {@code prepare}/{@code invoke} throw, a
      * failed invocation future, or a null direct result — through the bounded pre-encoded
      * internal-error fallback, framed as SSE: SSE was already selected before invocation began, and
-     * the response never falls back to JSON after that point (§4.7).
+     * the response never falls back to JSON after that point.
      */
     private void writeSseFallback(
             RoutingContext context,
@@ -3533,8 +3535,10 @@ final class McpRequestDispatcher {
      * <p>Settlement is driven from {@link RoutingContext#addEndHandler}, which Vert.x Web multicasts to
      * every registered handler and which fires on normal end, on an exception, and on a connection
      * close. A failed outcome is a premature disconnect or a stream reset, classified by cause; a
-     * succeeded outcome is a normal end, already settled by the two-phase write path, so nothing is done
-     * with it. A failed outcome signalled from inside this request's own terminal {@code end()} call
+     * succeeded outcome is a normal end: MCP's two-phase write path has already settled it, or, when
+     * another handler answered the request, the observation {@code begin} opened is closed one context turn
+     * later with a cancelled, not-settled-by-MCP terminal (see {@link
+     * McpCompletionCoordinator#settleNotSettledByMcp}). A failed outcome signalled from inside this request's own terminal {@code end()} call
      * (see {@link McpCompletionCoordinator#endResponse}) was produced by that write rather than by
      * the peer: a response written outside the connection's read loop, such as from a timer task, is
      * reported that way over HTTP/2 although the write succeeds. It is settled one context turn
@@ -3580,8 +3584,8 @@ final class McpRequestDispatcher {
      * It never claims on a succeeded outcome, because
      * MCP settles a normal end only through its own write path, which has already claimed: a request
      * that ended normally without that write, because an earlier mount's failure handler took it or a
-     * reroute took it out of this mount, is not MCP's to report, and rest-core reports it instead.
-     * Neither {@link #begin} nor an admission rejection on a request's first entry into the mount
+     * reroute took it out of this mount, is not MCP's to report, and rest-core reports it instead; MCP only closes the observation it
+     * opened, without a claim. Neither {@link #begin} nor an admission rejection on a request's first entry into the mount
      * claims: {@link #begin} runs before MCP knows it will settle the request, and such an admission
      * rejection is written before any coordinator or hook exists. The claim reaches the emitter in time, because this hook is registered in {@link #begin},
      * after the emitter's own end handler, and Vert.x Web runs end handlers in reverse registration
@@ -3592,7 +3596,13 @@ final class McpRequestDispatcher {
             RoutingContext context, McpCompletionCoordinator coordinator, Instant startedAt) {
         context.addEndHandler(outcome -> {
             if (outcome.succeeded()) {
-                // A normal response end: the two-phase write path owns this settlement.
+                // A normal response end: the two-phase write path owns this settlement when it ran. When
+                // it did not, another handler answered the request, so close the observation begin opened
+                // without claiming the request, which rest-core reports.
+                int status = context.response().getStatusCode();
+                coordinator.settleNotSettledByMcp(
+                        () -> settlementTerminal(context, startedAt, McpErrorType.HTTP, status, null),
+                        context.response().headWritten());
                 return;
             }
             RequestCompletionRecorder.claimForOtherTransport(context);
@@ -4030,7 +4040,7 @@ final class McpRequestDispatcher {
      * bytes are produced rather than after the full byte array is materialized. Accepts any
      * Jackson-serializable value — a {@link JsonNode} response envelope (every terminal writer) or a
      * handler's raw structured-content object ({@link #normalizeStructuredContent}) — so the same
-     * single mechanism bounds both halves contract §4.3 names: normalization of an application
+     * single mechanism bounds both halves of the output cap: normalization of an application
      * structured value, and the complete terminal message.
      *
      * @param value the value to encode
@@ -4110,8 +4120,8 @@ final class McpRequestDispatcher {
      * <p>This sentinel never escapes {@link
      * McpRequestDispatcher} during real request handling — every catch site in this class converts it
      * into a bounded {@code isError} or internal-fallback response before returning, and it is never
-     * rethrown past this class. It does not, however, take the standard's {@code private} inner-sentinel
-     * exemption (java-conventions.md § Exception Classes), because it is deliberately referenced from
+     * rethrown past this class. It does not, however, take the exception-class convention's {@code private}
+     * inner-sentinel exemption, because it is deliberately referenced from
      * outside this class for direct white-box testing of {@link CappedOutputStream} across three test
      * classes in this package — a {@code private} nested type would be inaccessible to those sibling
      * top-level test classes (nestmate access does not extend across separate top-level classes). It

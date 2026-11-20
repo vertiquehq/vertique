@@ -22,13 +22,13 @@ import dev.vertique.json.schema.validation.PatternInputGuard;
 import dev.vertique.rest.core.RestValidationException;
 import dev.vertique.rest.core.ValidationErrorDetail;
 import dev.vertique.rest.core.config.JaxRsConfig;
+import dev.vertique.rest.core.request.FileContentVerifier;
 import dev.vertique.rest.jaxrs.convert.ConversionContexts;
 import dev.vertique.rest.jaxrs.routing.BodyDescriptor;
 import dev.vertique.rest.jaxrs.routing.FilePartDescriptor;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 import dev.vertique.rest.jaxrs.routing.ParamDescriptor;
 import dev.vertique.rest.jaxrs.routing.ParamLocation;
-import dev.vertique.rest.jaxrs.validation.FileContentVerifier;
 import dev.vertique.rest.jaxrs.validation.OperationSchemas;
 import io.vertx.core.Handler;
 import io.vertx.core.MultiMap;
@@ -142,6 +142,13 @@ class FormatCheckReuseTest {
 
     /** TP-007's elapsed-time budget (S4-001). */
     private static final long BUDGET_ELAPSED_NANOS = Duration.ofMillis(250).toNanos();
+
+    /**
+     * The timed runs of each direct call. The elapsed budget is checked against the fastest of them: a single
+     * wall-clock sample also measures a GC pause or a descheduled thread on a busy machine, while a check that
+     * is too slow in itself is slow on every run.
+     */
+    private static final int BUDGET_TIMED_RUNS = 3;
 
     /** TP-007's allocation budget's fixed term (S4-001): 1 MiB. */
     private static final long BUDGET_ALLOCATION_FIXED = 1L << 20;
@@ -1246,24 +1253,37 @@ class FormatCheckReuseTest {
 
     /**
      * One untimed warm-up judgement of {@code value} at {@code renamedFormat} via {@link
-     * PatternInputGuard#validateFormat(String, String, Object)}, then the timed run whose elapsed time and
-     * allocated bytes are measured on this call's own thread (PK5-002, E10).
+     * PatternInputGuard#validateFormat(String, String, Object)}, then {@link #BUDGET_TIMED_RUNS} timed runs
+     * whose elapsed time and allocated bytes are measured on this call's own thread (PK5-002, E10). Every
+     * run must give the same verdict.
      *
      * @param renamedFormat the already-renamed format name
      * @param value         the already-decoded string value
-     * @return the timed run's verdict, elapsed nanoseconds, and allocated bytes
+     * @return the verdict, the fastest run's elapsed nanoseconds, and the largest run's allocated bytes
      */
     private static DirectMeasurement directMeasurement(String renamedFormat, String value) {
         PatternInputGuard guard = new PatternInputGuard(MAX_CHARS, MAX_TOTAL_CHARS);
         guard.validateFormat("string", renamedFormat, value); // untimed warm-up
 
         ThreadMXBean bean = threadMxBean();
-        long allocatedBefore = bean.getCurrentThreadAllocatedBytes();
-        long start = System.nanoTime();
-        String message = guard.validateFormat("string", renamedFormat, value);
-        long elapsed = System.nanoTime() - start;
-        long allocated = bean.getCurrentThreadAllocatedBytes() - allocatedBefore;
-        return new DirectMeasurement(message == null, elapsed, allocated);
+        Boolean valid = null;
+        long fastest = Long.MAX_VALUE;
+        long largestAllocation = 0;
+        for (int run = 0; run < BUDGET_TIMED_RUNS; run++) {
+            long allocatedBefore = bean.getCurrentThreadAllocatedBytes();
+            long start = System.nanoTime();
+            String message = guard.validateFormat("string", renamedFormat, value);
+            long elapsed = System.nanoTime() - start;
+            long allocated = bean.getCurrentThreadAllocatedBytes() - allocatedBefore;
+            boolean runValid = message == null;
+            if (valid != null && valid != runValid) {
+                throw new AssertionError("the timed runs of " + renamedFormat + " disagree on the verdict");
+            }
+            valid = runValid;
+            fastest = Math.min(fastest, elapsed);
+            largestAllocation = Math.max(largestAllocation, allocated);
+        }
+        return new DirectMeasurement(valid, fastest, largestAllocation);
     }
 
     private static ThreadMXBean threadMxBean() {
@@ -1275,8 +1295,8 @@ class FormatCheckReuseTest {
      *
      * @param valid          whether {@link PatternInputGuard#validateFormat(String, String, Object)}
      *                       returned {@code null} (valid)
-     * @param elapsedNanos   the timed run's elapsed nanoseconds
-     * @param allocatedBytes the timed run's allocated bytes on its own thread
+     * @param elapsedNanos   the fastest timed run's elapsed nanoseconds
+     * @param allocatedBytes the largest timed run's allocated bytes on its own thread
      */
     private record DirectMeasurement(boolean valid, long elapsedNanos, long allocatedBytes) {}
 

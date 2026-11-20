@@ -31,10 +31,10 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Package-private collaborator owning the PRD-WF-002 fork dispatch and join evaluation flow.
+ * Package-private collaborator owning the fork dispatch and join evaluation flow.
  *
- * <p>This class is extracted from {@link WorkflowEngine} as part of the Phase-1 decomposition
- * (PRD-WF-006, Slice C4). It absorbs the highest-risk concurrency surface of the engine:
+ * <p>This class is extracted from {@link WorkflowEngine}. It owns the highest-risk concurrency
+ * surface of the engine:
  * <ul>
  *   <li><b>Fork dispatch</b> — {@link #handleForkNode} inserts the join state, one
  *       {@link BranchToken} per declared branch, parks the instance at the join, and drives each
@@ -161,6 +161,9 @@ final class ForkJoinCoordinator {
      * applicator, onDueMutator, onTimeoutMutator) MUST pass the post-mutation
      * {@link WorkflowInstance} so the drive sees fresh {@code state_json} and {@code subjectRef}.
      *
+     * <p>The drive binds the branch token's carrier with the instance's durable context filling every
+     * namespace the carrier lacks; the carrier wins on a clash and the identity snapshot is never bound.
+     *
      * @param inst    the parent instance reflecting the current state (post-mutation if any)
      * @param cleared the branch token with wait fields cleared and {@code currentStepId} advanced
      * @param rw      the resolved runtime workflow
@@ -180,7 +183,7 @@ final class ForkJoinCoordinator {
                         rw,
                         BranchTransitionEngine.InstanceScope.of(inst),
                         tx,
-                        null,
+                        carrierWithInstanceFill(cleared, inst),
                         commandId)
                 .compose(advanced -> {
                     if (isBranchTerminal(advanced.status())) {
@@ -190,6 +193,23 @@ final class ForkJoinCoordinator {
                 })
                 // a branch that reached a signal wait applies the parked signals its wait accepts
                 .compose(done -> driverPvd.get().afterInlineDrive(inst.id(), tx));
+    }
+
+    /**
+     * Builds the durable document a branch drive binds: the token's own carrier, with the instance's carrier filling
+     * every namespace the token lacks. The token wins on a clash, and the identity snapshot is excluded from the
+     * instance side.
+     */
+    private static dev.vertique.core.context.DurableMetadata carrierWithInstanceFill(
+            BranchToken token, WorkflowInstance inst) {
+        dev.vertique.core.context.DurableMetadata instanceMetadata = inst.metadata();
+        if (instanceMetadata == null) {
+            return token.metadata();
+        }
+        return token.metadata()
+                .merge(
+                        instanceMetadata.without(WorkflowEngine.IDENTITY_SNAPSHOT_NAMESPACE),
+                        dev.vertique.core.context.DurableMetadata.MergePolicy.CALLER_WINS);
     }
 
     /**
@@ -271,13 +291,13 @@ final class ForkJoinCoordinator {
     }
 
     // ===================================================================================
-    // PRD-WF-002: Fork dispatch + join evaluation
+    // Fork dispatch + join evaluation
     // ===================================================================================
 
     /**
      * Handles a {@link dev.vertique.workflow.plan.ForkNode}: inserts the join state, inserts one
      * {@link BranchToken} per declared branch, parks the workflow instance at the join, and drives
-     * each branch's first transition inline (PRD-WF-002 §A.4.4 / §D3).
+     * each branch's first transition inline.
      *
      * @param inst the parent instance currently positioned at the fork node
      * @param fork the fork node to dispatch
@@ -309,7 +329,7 @@ final class ForkJoinCoordinator {
         // Capture ambient durable context once for the entire fork. All branches in this fork
         // share the same persistence-time durable metadata — they were all forked under the same
         // bound holder context. Boundary is WORKFLOW because branch-token metadata is a
-        // workflow-native carrier (FR-CTX-178), distinct from the DELAYED_JOB boundary used by
+        // workflow-native carrier, distinct from the DELAYED_JOB boundary used by
         // workflow timers.
         dev.vertique.core.context.DurableMetadata branchMetadata = propagator != null
                 ? propagator
@@ -492,7 +512,7 @@ final class ForkJoinCoordinator {
      * Evaluates a join under a {@code SELECT … FOR UPDATE} lock on the join-state row, dispatching
      * to the policy applicator that matches the join's policy.
      *
-     * <p>Algorithm (PRD-WF-002 §10):
+     * <p>Algorithm:
      * <ol>
      *   <li>SELECT FOR UPDATE on the join state row.</li>
      *   <li>If status != OPEN, append BRANCH_LATE_RESULT_IGNORED and return — the join was already
@@ -677,7 +697,7 @@ final class ForkJoinCoordinator {
                         // Concurrent decider won the race — treat this caller as a late loser.
                         return Future.<Void>succeededFuture();
                     }
-                    // Codex review round-3 fix H-new-1: the reducer must see post-supersede
+                    // The reducer must see post-supersede
                     // statuses for losing siblings. Patch the in-memory branches list so
                     // applyJoinReducer sees losers as SUPERSEDED, not the stale RUNNING/WAITING
                     // status from before supersedeNonTerminalSiblings ran.
@@ -689,7 +709,7 @@ final class ForkJoinCoordinator {
                                 return supersededWithClearedWait(b, supersededAt);
                             })
                             .toList();
-                    return supersedeNonTerminalSiblings(branches, winningBranchId, tx)
+                    return supersedeNonTerminalSiblings(inst, branches, winningBranchId, tx)
                             .compose(v -> appendFanInDecided(inst, fork, joinNode, success, tx))
                             .compose(v -> advanceInstanceAfterJoin(inst, joinNode, success, patched, rw, tx));
                 });
@@ -697,7 +717,6 @@ final class ForkJoinCoordinator {
 
     /**
      * Marks every non-terminal sibling branch (other than the winner) as {@code SUPERSEDED}
-     * (PRD-WF-002 FR-WF-PAR-049/050/053).
      *
      * <p>Lock order: timers → tasks → branch token. For each losing branch,
      * {@link WorkflowEngine#cancelBranchOwnedWaits} closes the branch's owned timers and tasks
@@ -705,25 +724,29 @@ final class ForkJoinCoordinator {
      * The {@code cancelBranchOwnedWaits} helper is reached through the lazy engine provider because
      * the engine's single-path {@code cancel} path also uses it, so it stays on the engine.
      *
+     * @param inst the parent instance
      * @param branches all branch tokens of the fork
      * @param winningBranchId the elected winning branch id (never superseded)
      * @param tx the active transaction
      * @return a {@link Future} that completes when all losing siblings are superseded
      */
     private Future<Void> supersedeNonTerminalSiblings(
-            java.util.List<dev.vertique.workflow.state.BranchToken> branches, String winningBranchId, SqlClient tx) {
+            WorkflowInstance inst,
+            java.util.List<dev.vertique.workflow.state.BranchToken> branches,
+            String winningBranchId,
+            SqlClient tx) {
         Future<Void> chain = Future.succeededFuture();
         java.time.Instant now = clock.instant();
         for (var b : branches) {
             if (b.branchId().equals(winningBranchId)) continue;
             if (isTerminal(b.status())) continue;
             // Cancel owned timers and tasks first (lock order: timers → tasks → branch token).
-            // PRD-WF-002 FR-WF-PAR-052: null out wait_type/wait_key on the SUPERSEDED row so it
+            // Null out wait_type/wait_key on the SUPERSEDED row so it
             // no longer matches the branch-token repository's find-by-wait query (which has no
             // status predicate) — late signals/timer-fires on SUPERSEDED branches are silently no-ops.
             final BranchToken loser = b;
             BranchToken superseded = supersededWithClearedWait(b, now);
-            chain = chain.compose(v -> enginePvd.get().cancelBranchOwnedWaits(loser, tx))
+            chain = chain.compose(v -> enginePvd.get().cancelBranchOwnedWaits(inst, loser, tx))
                     // The loser's signal wait ends with it: its record goes in the transaction that supersedes it.
                     .compose(v -> signalWaits.close(
                             loser.workflowId(), loser.currentStepId(), loser.forkStepId(), loser.branchId(), null, tx))
@@ -802,7 +825,7 @@ final class ForkJoinCoordinator {
                     }
                     Future<Void> after = appendFanInDecided(inst, fork, joinNode, success, tx);
                     if (!success && branchCompensation != null) {
-                        // PRD-WF-002 AC #2 (Codex review fix H1): a failed required branch must
+                        // A failed required branch must
                         // trigger deterministic compensation for completed compensable sibling
                         // branches BEFORE the instance advances through the failure route.
                         after = after.compose(
@@ -869,10 +892,9 @@ final class ForkJoinCoordinator {
             java.util.List<dev.vertique.workflow.state.BranchToken> branches,
             RuntimeWorkflow rw,
             SqlClient tx) {
-        // PRD-WF-002 FR-WF-PAR-044 (Codex review round-2 fix): apply the join's reducer to
-        // produce the post-fan-in state JSON. Reducer registration is mandatory (DSL guarantees
-        // it via JoinScope.allRequired/firstSuccess/firstFailure); the engine had been silently
-        // dropping the result and carrying state_json unchanged.
+        // Apply the join's reducer to produce the post-fan-in state JSON. Reducer registration is
+        // mandatory (DSL guarantees it via JoinScope.allRequired/firstSuccess/firstFailure); the
+        // result must replace state_json rather than be dropped.
         String nextStep = success ? joinNode.nextStepId() : joinNode.failureStepId();
         return instances.findByIdForUpdate(inst.id(), tx).compose(opt -> {
             if (opt.isEmpty()) {
@@ -881,7 +903,7 @@ final class ForkJoinCoordinator {
                                 + inst.id().value()));
             }
             WorkflowInstance current = opt.get();
-            // Codex review round-2 fix: fence against concurrent terminal transitions
+            // Fence against concurrent terminal transitions
             // (e.g., cancel() uses non-locking read + optimistic write to avoid a deadlock with
             // timer locking). The instance MUST still be parked at THIS join when we advance —
             // otherwise a parallel cancel/fail/timeout committed and we must NOT overwrite it.
@@ -957,7 +979,7 @@ final class ForkJoinCoordinator {
     /**
      * Records the triggering branch as a late loser when the join was already decided. If the
      * triggering branch is non-terminal, also mark it SUPERSEDED so its identity reflects the
-     * race outcome (PRD-WF-002 FR-WF-PAR-052/055).
+     * race outcome.
      *
      * @param inst the parent instance
      * @param triggeringBranch the late-arriving branch token
@@ -1032,7 +1054,7 @@ final class ForkJoinCoordinator {
     }
 
     /**
-     * Invokes the join's branch-result reducer (PRD-WF-002 FR-WF-PAR-044). Decodes the parent
+     * Invokes the join's branch-result reducer. Decodes the parent
      * instance's {@code state_json}, builds a {@code Map<branchId, BranchResult>} from the branch
      * tokens, calls the registered reducer, and returns the JSON-encoded new state. Throws if
      * the reducer is missing (defensive — the DSL guarantees registration via JoinScope) or

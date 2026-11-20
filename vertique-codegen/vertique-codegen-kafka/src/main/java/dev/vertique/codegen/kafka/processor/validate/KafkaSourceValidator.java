@@ -14,7 +14,7 @@ import javax.lang.model.element.TypeElement;
 
 /**
  * Validates compile-time constraints for {@link dev.vertique.kafka.KafkaSource @KafkaSource}
- * methods on service-implementation classes (CG-012 Track A, Slice 5).
+ * methods on service-implementation classes.
  *
  * <p>Validation rules:
  * <ol>

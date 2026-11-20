@@ -78,7 +78,7 @@ public final class WebSocketChannelAdapter {
      * {@link WebSocketChannelBinding#releaseResources()}) before propagating the failure. The
      * returned future therefore fails only after the scope has been released, so the caller
      * ({@link WebSocketEndpointRegistrar}) can fail closed by closing the socket without separately
-     * releasing the scope (F-W5).
+     * releasing the scope.
      *
      * <p>The {@link dev.vertique.security.channel.ChannelIdentityManager#register} SPI documents a
      * non-null {@link Future} return, but a custom manager could violate that contract by throwing

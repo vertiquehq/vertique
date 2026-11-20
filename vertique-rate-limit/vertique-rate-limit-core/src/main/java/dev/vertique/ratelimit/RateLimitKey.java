@@ -22,12 +22,12 @@ import java.util.UUID;
  * Bounded, canonical key construction from scalar components.
  *
  * <p>Components use the same type-framed scalar encoding discipline as {@code
- * dev.vertique.cache.CacheKey} (read-only precedent; not a shared dependency —
- * {@code spec.md} §14 defers a shared extraction): each component is independently framed as a
+ * dev.vertique.cache.CacheKey} (read-only precedent; not a shared dependency): each component is
+ * independently framed as a
  * single type tag plus a percent-encoded payload, and framed components are joined with an
  * unforgeable {@code :} separator — framed payloads can only contain the tag alphabet, so no raw
  * component value can forge the join. Distinct component tuples therefore always produce
- * distinct canonical encodings ({@code contracts/rate-limit-runtime.md}, "Key model").
+ * distinct canonical encodings.
  */
 public final class RateLimitKey {
 
@@ -106,8 +106,7 @@ public final class RateLimitKey {
 
     /**
      * Per-component type-tag encoding: one letter tag plus a percent-encoded payload, bounded to
-     * 256 bytes UTF-8 post-encoding ({@code contracts/rate-limit-runtime.md},
-     * "Key-component byte bound"). A component that exceeds the bound is deterministically
+     * 256 bytes UTF-8 post-encoding. A component that exceeds the bound is deterministically
      * replaced by {@code h:} followed by the lowercase-hex {@code SHA-256} digest of its own type
      * tag and pre-encoding payload, domain-separated by {@code :} — fixed-width and
      * distinctness-preserving, never a rejection or a silent truncation. Domain separation by tag

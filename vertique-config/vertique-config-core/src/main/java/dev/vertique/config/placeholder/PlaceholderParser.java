@@ -30,6 +30,16 @@ import java.util.List;
  *       immediately followed by {@code ${} is treated as a literal backslash.</li>
  * </ul>
  *
+ * <h2>Escape inside a reference</h2>
+ * <p>Inside {@code ${...}} the escape is kept as written: the key and the default text carry
+ * {@code \${}, not {@code ${}. The engine re-parses a default text when it is used, and that
+ * parse turns the escape into the literal {@code ${} — so an escape is expanded exactly once, and
+ * {@code ${a:\${b}}} yields the text {@code ${b}} when {@code a} is missing instead of resolving
+ * {@code b}. The escaped {@code ${} still opens a brace level, so the {@code }} that closes it
+ * belongs to the escaped text and does not close the enclosing reference: {@code ${a:\${b}}} is
+ * one reference whose default is {@code \${b}}. An escaped {@code ${} with no closing brace
+ * therefore leaves the enclosing reference unterminated.
+ *
  * <h2>Blank-key rule</h2>
  * <p>A placeholder whose key is blank (empty or whitespace-only before the first
  * top-level colon) is reported as a {@link Malformed} segment. Whitespace inside
@@ -105,9 +115,12 @@ final class PlaceholderParser {
                 while (i < len && depth > 0) {
                     char ch = input.charAt(i);
 
-                    // Nested escape inside placeholder content: \${ → emit literal ${ into content
+                    // Escape inside placeholder content: keep \${ as written so that the default
+                    // text is unescaped exactly once, by the engine's re-parse. The escaped ${ still
+                    // opens a brace level: its closing } must not close the enclosing reference.
                     if (ch == '\\' && i + 2 < len && input.charAt(i + 1) == '$' && input.charAt(i + 2) == '{') {
-                        content.append("${");
+                        content.append("\\${");
+                        depth++;
                         i += 3;
                         continue;
                     }
@@ -146,7 +159,7 @@ final class PlaceholderParser {
                 if (!foundClose) {
                     // Unterminated placeholder — report as Malformed
                     String rawText = input.substring(start, i);
-                    segments.add(new Malformed(rawText));
+                    segments.add(new Malformed(rawText, start));
                     // Do not advance i further; it's already at end-of-string
                     break;
                 }
@@ -171,7 +184,7 @@ final class PlaceholderParser {
                 if (key.isBlank()) {
                     // Reconstruct the raw text for the Malformed segment
                     String rawText = input.substring(start, i);
-                    segments.add(new Malformed(rawText));
+                    segments.add(new Malformed(rawText, start));
                 } else {
                     segments.add(new Placeholder(key, defaultValue));
                 }
@@ -191,9 +204,11 @@ final class PlaceholderParser {
 
     /**
      * Returns {@code true} if the input contains at least one {@link Placeholder} or
-     * {@link Malformed} segment — i.e., if placeholder resolution needs to be performed.
+     * {@link Malformed} segment — i.e., if the input holds a live reference.
      *
-     * <p>An escaped {@code \${...}} does NOT count; it produces only a {@link Literal}.
+     * <p>An escaped {@code \${...}} does NOT count; it produces only a {@link Literal}. The engine's
+     * test for whether a string must go through the parser at all is {@link #needsResolution},
+     * which also accepts an escape.
      *
      * <p>Uses a fast {@link String#indexOf(String)} pre-check: if the input contains no
      * {@code ${} sequence it cannot contain any placeholder or malformed segment and
@@ -207,6 +222,23 @@ final class PlaceholderParser {
             return false;
         }
         return parse(input).stream().anyMatch(s -> !(s instanceof Literal));
+    }
+
+    /**
+     * Returns {@code true} if parsing {@code input} would change it — i.e., if it
+     * {@linkplain #containsPlaceholder contains a placeholder} or an escape sequence {@code \${}
+     * that the scan turns into the literal {@code ${}.
+     *
+     * <p>This is the engine's test for whether a string value must go through the parser. It is
+     * applied to a walked value and to a tree value reached through a reference alike, so a value
+     * reads the same either way: {@code \${b}} yields the text {@code ${b}} in place and through
+     * {@code ${a}}.
+     *
+     * @param input the string to inspect; must not be {@code null}
+     * @return {@code true} if the parsed text or segments differ from the input
+     */
+    static boolean needsResolution(String input) {
+        return input.contains("\\${") || containsPlaceholder(input);
     }
 
     // --- Private helpers ---
@@ -265,6 +297,10 @@ final class PlaceholderParser {
      *       ({@code ${key:}}).</li>
      *   <li>{@link #defaultValue()} may contain nested {@code ${...}} text; the parser
      *       does not recurse — nested resolution is the engine's responsibility.</li>
+     *   <li>An escape inside the reference is kept as written: {@link #key()} and
+     *       {@link #defaultValue()} carry {@code \${}. The key is looked up as written; only the
+     *       default text is re-parsed by the engine, which turns the escape into the literal
+     *       {@code ${}.</li>
      * </ul>
      *
      * @param key          the placeholder key; never blank
@@ -285,8 +321,15 @@ final class PlaceholderParser {
      *       entire content if no colon) is blank (empty or whitespace-only).</li>
      * </ol>
      *
+     * <p>The {@link #offset()} is the zero-based index of the opening {@code ${} in the parsed
+     * input. Diagnostics report a malformed segment by that position only; {@link #rawText()} is
+     * kept solely so the resolver can pass the original characters through into the resolved
+     * value, and it must never be written to a log, an exception, or any other observable output,
+     * because an unterminated reference swallows the rest of the value — which may be a secret.
+     *
      * @param rawText the unterminated or blank-key placeholder text starting at {@code ${};
-     *                never {@code null}
+     *                never {@code null}; never observable
+     * @param offset  the zero-based index of the opening {@code ${} within the parsed input
      */
-    record Malformed(String rawText) implements Segment {}
+    record Malformed(String rawText, int offset) implements Segment {}
 }

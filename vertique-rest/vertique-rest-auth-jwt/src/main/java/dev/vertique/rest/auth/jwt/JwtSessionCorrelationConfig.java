@@ -12,7 +12,7 @@ import java.util.Objects;
 
 /**
  * Configuration for binding a JWT claim into {@link dev.vertique.core.correlation.CorrelationSessionRef}
- * after authentication succeeds (Correlation Context PRD §7.6 / FR-COR-100..105).
+ * after authentication succeeds.
  *
  * <p>Parsed from {@code jwt.sessionCorrelation}. Defaults prefer {@code sid}, then {@code jti}, with
  * {@code durableSafe=false} so the session id is not persisted or projected into audit unless the

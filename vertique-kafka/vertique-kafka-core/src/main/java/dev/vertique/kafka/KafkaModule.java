@@ -118,7 +118,7 @@ public abstract class KafkaModule {
 
     /**
      * Parses the {@code kafka} section of the root config into the typed {@link KafkaConfig} at the
-     * Dagger provider boundary (config rule R2/R10). This is the <em>only</em> remaining
+     * Dagger provider boundary. This is the <em>only</em> remaining
      * {@code @VertxConfig JsonObject} site in kafka-core: every runtime provider below depends on the
      * typed {@link KafkaConfig} (or the indexes derived from it), never on the raw root config.
      *

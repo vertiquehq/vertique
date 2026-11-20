@@ -12,7 +12,8 @@ import java.util.List;
  * <p>Fields:
  * <ul>
  *   <li>{@code id} — unique step identifier within the workflow.
- *   <li>{@code taskType} — logical type of the human task (e.g., {@code "approval"}).
+ *   <li>{@code taskType} — optional logical type of the human task (e.g., {@code "approval"}). Every task the
+ *       step creates carries it, and task queries can filter on it; null or blank means no type.
  *   <li>{@code assignment} — who the task is assigned to.
  *   <li>{@code decisions} — list of possible decisions the assignee can make, each leading to a
  *       different next step.
@@ -29,7 +30,7 @@ import java.util.List;
  */
 public record HumanTaskStep(
         String id,
-        String taskType,
+        @Nullable String taskType,
         AssignmentBlock assignment,
         List<TaskDecisionBlock> decisions,
         @Nullable DueBlock due,

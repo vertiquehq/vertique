@@ -18,7 +18,7 @@ import java.util.Objects;
  * identity: it does not survive identity-snapshot durable capture (capture projects client
  * attributes out unconditionally — see {@link IdentitySnapshotFactory}). A client that must remain
  * distinguishable across a durable boundary must carry that scoping in {@code clientId} itself,
- * which the framework treats as opaque (PRD identity-002 FR-ID-CA-012).
+ * which the framework treats as opaque.
  *
  * <p>Construction rules:
  * <ul>

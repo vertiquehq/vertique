@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: EUPL-1.2
 
 /**
- * CG-008 — Annotation processor that generates {@code {DTO}_InputProcessor} walkers for REST
+ * Annotation processor that generates {@code {DTO}_InputProcessor} walkers for REST
  * request body DTOs annotated with {@code @Sanitize}/{@code @Canonicalize}, replacing reflective
  * Map traversal in {@code DefaultInputObjectProcessor} with direct field-name {@code switch}
  * statements and pre-resolved chain class constants.
@@ -21,6 +21,6 @@
  * {@link ClassNotFoundException} as the only cached miss; broken generated classes propagate.
  *
  * <p>This module emits no Dagger module: the registry self-populates classloader-driven, so
- * CG-008 is a transparent optimization rather than a new registration path.
+ * the processor is a transparent optimization rather than a new registration path.
  */
 package dev.vertique.codegen.sanitization;

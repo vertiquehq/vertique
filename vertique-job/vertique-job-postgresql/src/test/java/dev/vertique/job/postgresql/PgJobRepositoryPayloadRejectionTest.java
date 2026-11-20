@@ -11,6 +11,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.fasterxml.jackson.annotation.JsonValue;
+import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.job.JobExecution;
 import dev.vertique.job.JobState;
@@ -39,7 +40,8 @@ class PgJobRepositoryPayloadRejectionTest {
     private static final String SECRET = "do-not-log-me";
 
     private final Pool pool = mock(Pool.class);
-    private final PgJobRepository repository = new PgJobRepository(pool, new PgDbExceptionMapper());
+    private final PgJobRepository repository =
+            new PgJobRepository(pool, new PgDbExceptionMapper(), DbSchemas.empty(), "test-node");
 
     /** Serializes to JSON {@code null}, which the column would not read back as a value. */
     record JsonNullPayload() {

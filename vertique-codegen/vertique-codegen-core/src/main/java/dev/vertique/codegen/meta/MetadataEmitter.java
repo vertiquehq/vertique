@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
@@ -39,7 +40,8 @@ import javax.lang.model.util.Types;
  * annotations this module documents and never calls this type.
  *
  * <p>Reusable JavaPoet emitter that, given a method element, generates a {@code MethodMetadata}
- * implementation whose accessors return compile-time constants and never reflect at call time.
+ * implementation whose constant-only accessors return compile-time constants and never reflect at call
+ * time; only the opt-in {@code asMethod()} accessor reflects, lazily, when a consumer calls it.
  *
  * <p>The generated class implements {@code dev.vertique.core.codegen.MethodMetadata} and carries a
  * nested {@code ParameterMetadataImpl implements dev.vertique.core.codegen.ParameterMetadata} for
@@ -58,15 +60,18 @@ import javax.lang.model.util.Types;
  * {@link dev.vertique.codegen.dagger.DaggerModuleWriter} references Dagger annotations.
  *
  * <p><strong>Scope note:</strong> the method-level <em>and</em> parameter-level
- * {@code findAnnotation}/{@code hasAnnotation} surfaces are reflection-free and literal-backed (Phase 2
- * slice 2.1). For each runtime-retained method annotation supplied by the caller, the impl bakes a
+ * {@code findAnnotation}/{@code hasAnnotation} surfaces are reflection-free and literal-backed.
+ * For each runtime-retained method annotation supplied by the caller, the impl bakes a
  * {@code static final <Ann>} literal constant and resolves the method-level {@code findAnnotation} by a
  * {@code type == <Ann>.class} match, with {@code hasAnnotation} delegating to it — never
  * {@link Method#getAnnotation}. Likewise, each parameter's runtime-retained annotations are baked as
  * {@code PARAM_<p>_ANNOTATION_<i>} literal constants and passed to the nested
  * {@code ParameterMetadataImpl}, whose parameter-level {@code findAnnotation} matches the looked-up
  * {@code type} against each literal's {@code annotationType()} — never {@code Parameter.getAnnotation}.
- * The opt-in reflective-accessor group ({@code asMethod}, {@code genericType}) remains stubbed;
+ * The opt-in reflective accessor {@code asMethod()} is emitted as a lazy, cached
+ * {@code declaringType().getDeclaredMethod(name(), parameterTypes())} lookup (see
+ * {@link #asMethodAccessor}); it is the only reflective call site in the generated class, and
+ * generated proxy overrides never call it. Parameter-level {@code genericType()} remains stubbed;
  * {@code genericReturnType()} is emitted as a reflection-free {@link Type} graph so generated
  * consumers can inspect declared payload types without a method lookup. The constant-only core
  * accessors are fully real.
@@ -83,6 +88,9 @@ public final class MetadataEmitter {
 
     /** Simple name of the nested parameter-metadata implementation class. */
     private static final String PARAM_IMPL_SIMPLE_NAME = "ParameterMetadataImpl";
+
+    /** Name of the generated {@code volatile Method} field that caches the {@code asMethod()} result. */
+    private static final String AS_METHOD_CACHE_FIELD = "resolvedMethod";
 
     private MetadataEmitter() {}
 
@@ -220,7 +228,8 @@ public final class MetadataEmitter {
         return builder.addMethod(findAnnotation(methodAnnotations, literalFieldNames))
                 .addMethod(hasAnnotation())
                 .addMethod(genericReturnTypeAccessor(method, types))
-                .addMethod(asMethodStub())
+                .addField(asMethodCacheField())
+                .addMethod(asMethodAccessor(method, types))
                 .addType(parameterMetadataImpl(paramImpl));
     }
 
@@ -268,7 +277,7 @@ public final class MetadataEmitter {
      * Emits a standalone {@code ParameterMetadata} implementation with an optional reflective
      * fallback for annotations that could not be materialized into literals.
      *
-     * <p>This is the parity-first variant used by {@code vertique-codegen-jaxrs} (ADR-0146). JAX-RS
+     * <p>This is the parity-first variant used by {@code vertique-codegen-jaxrs}. JAX-RS
      * resource parameters routinely carry annotations this literal emitter cannot render — most
      * commonly Swagger's {@code @Parameter}, whose {@code schema} member defaults to a nested
      * {@code @Schema} instance. Rather than silently omit such annotations (which would make codegen
@@ -320,8 +329,81 @@ public final class MetadataEmitter {
                 erasedTypeName(type, types),
                 annotations,
                 "ANNOTATION_",
-                reflectiveFallbackSupplier);
+                reflectiveFallbackSupplier,
+                null);
         return JavaFile.builder(generatedName.packageName(), typeSpec).build();
+    }
+
+    /**
+     * Emits a standalone {@code ParameterMetadata} implementation whose {@code type()} the generated
+     * class loads by name at class initialization, for a parameter type the generated class cannot
+     * write as a class literal (a private class, or one nested in a private class).
+     *
+     * @param generatedName the fully-qualified name for the generated implementation class; must not
+     *                       be {@code null}
+     * @param index          the compile-time-captured parameter index constant
+     * @param name           the compile-time-captured parameter name constant (nullable, preserved as-is)
+     * @param typeBinaryName the binary name of the parameter's erased type, or of its element type for
+     *                       an array; must not be {@code null}
+     * @param arrayDimensions the number of array dimensions of the parameter's type, {@code 0} for a
+     *                       type that is not an array
+     * @param annotations    the materialized annotation literals; must not be {@code null}
+     * @param reflectiveFallbackSupplier see
+     *                       {@link #emitParameterMetadata(ClassName, int, String, TypeMirror, Types, List, CodeBlock)}
+     * @return a {@link JavaFile} containing the generated top-level {@code ParameterMetadata}
+     *         implementation
+     */
+    public static JavaFile emitParameterMetadataLoadingType(
+            ClassName generatedName,
+            int index,
+            String name,
+            String typeBinaryName,
+            int arrayDimensions,
+            List<AnnotationLiteralRef> annotations,
+            CodeBlock reflectiveFallbackSupplier) {
+        TypeSpec typeSpec = parameterMetadataType(
+                generatedName,
+                List.of(Modifier.PUBLIC, Modifier.FINAL),
+                CodeBlock.of("$L", index),
+                name == null ? CodeBlock.of("null") : CodeBlock.of("$S", name),
+                null,
+                annotations,
+                "ANNOTATION_",
+                reflectiveFallbackSupplier,
+                loadTypeByName(typeBinaryName, arrayDimensions));
+        return JavaFile.builder(generatedName.packageName(), typeSpec).build();
+    }
+
+    /**
+     * The {@code Class} expression that loads a type by binary name with the generated class's own
+     * class loader and applies {@code arrayDimensions} array levels, as a call of a private static
+     * helper the generated class carries.
+     */
+    private static CodeBlock loadTypeByName(String typeBinaryName, int arrayDimensions) {
+        return CodeBlock.of("loadType($S, $L)", typeBinaryName, arrayDimensions);
+    }
+
+    /** Emits {@code private static Class<?> loadType(String, int)}, which the by-name type expression calls. */
+    private static MethodSpec loadTypeHelper(ClassName generatedName) {
+        return MethodSpec.methodBuilder("loadType")
+                .addModifiers(Modifier.PRIVATE, Modifier.STATIC)
+                .returns(classOfWildcard())
+                .addParameter(String.class, "binaryName")
+                .addParameter(int.class, "dimensions")
+                .beginControlFlow("try")
+                .addStatement(
+                        "$T type = $T.forName(binaryName, false, $T.class.getClassLoader())",
+                        classOfWildcard(),
+                        Class.class,
+                        generatedName)
+                .beginControlFlow("for (int i = 0; i < dimensions; i++)")
+                .addStatement("type = type.arrayType()")
+                .endControlFlow()
+                .addStatement("return type")
+                .nextControlFlow("catch ($T e)", ClassNotFoundException.class)
+                .addStatement("throw new $T(e)", IllegalStateException.class)
+                .endControlFlow()
+                .build();
     }
 
     // --- MethodMetadata constant-core accessors ---
@@ -415,7 +497,7 @@ public final class MetadataEmitter {
                 .build();
     }
 
-    // --- MethodMetadata annotation lookup (reflection-free, literal-backed) + reflective-group stubs ---
+    // --- MethodMetadata annotation lookup (reflection-free, literal-backed) + opt-in reflective asMethod() ---
 
     /**
      * Emits the reflection-free {@code findAnnotation(Class<A>)} for the method-level metadata impl.
@@ -491,21 +573,68 @@ public final class MetadataEmitter {
     }
 
     /**
-     * Emits an {@code asMethod} accessor from the reflective-accessor group.
+     * Emits the {@code private volatile Method resolvedMethod;} cache backing {@link #asMethodAccessor}.
      *
-     * <p>Not part of the reflection-free guarantee; throws {@link UnsupportedOperationException}
-     * until the reflective-accessor group is implemented (Phase 2).
+     * <p>The field is {@code volatile} so that a resolved {@code Method} published by one thread is
+     * seen fully constructed by every other thread; it is deliberately not guarded by a lock. The
+     * race is benign: two threads that both observe {@code null} both call
+     * {@code Class.getDeclaredMethod}, which returns equal copies of the same declared method, and
+     * the last write wins without changing what any caller observes.
      */
-    private static MethodSpec asMethodStub() {
+    private static FieldSpec asMethodCacheField() {
+        return FieldSpec.builder(Method.class, AS_METHOD_CACHE_FIELD, Modifier.PRIVATE, Modifier.VOLATILE)
+                .build();
+    }
+
+    /**
+     * Emits the opt-in reflective {@code asMethod()} accessor: a lazy, cached
+     * {@code declaringType().getDeclaredMethod(name(), parameterTypes())} lookup.
+     *
+     * <p>This is the one reflective call site in the generated metadata and is not part of the
+     * reflection-free guarantee: generated proxy overrides never call it, so a consumer that never
+     * calls {@code asMethod()} never triggers the lookup. The first call resolves the {@link Method}
+     * through the constant-only accessors ({@code declaringType()}, {@code name()},
+     * {@code parameterTypes()} — all compile-time constants) and caches it in the field emitted by
+     * {@link #asMethodCacheField}; later calls return the published instance. A lookup miss — the
+     * declaring class on the runtime classpath no longer declares the method — is reported as an
+     * {@link IllegalStateException} that names the expected signature, with the
+     * {@link NoSuchMethodException} as its cause. Native-image consumers must register the declaring
+     * type's methods for reflection; the generated code adds no registration of its own.
+     */
+    private static MethodSpec asMethodAccessor(ExecutableElement method, Types types) {
         return MethodSpec.methodBuilder("asMethod")
                 .addAnnotation(Override.class)
                 .addModifiers(Modifier.PUBLIC)
                 .returns(Method.class)
+                .addComment("Lazy and cached; the volatile field makes the publish safe and the race benign:")
+                .addComment("concurrent first callers resolve equal Method copies and the last write wins.")
+                .addStatement("$T method = $N", Method.class, AS_METHOD_CACHE_FIELD)
+                .beginControlFlow("if (method == null)")
+                .beginControlFlow("try")
+                .addStatement("method = declaringType().getDeclaredMethod(name(), parameterTypes())")
+                .nextControlFlow("catch ($T e)", NoSuchMethodException.class)
                 .addStatement(
-                        "throw new $T($S)",
-                        UnsupportedOperationException.class,
-                        "asMethod is part of the reflective-accessor group (Phase 2)")
+                        "throw new $T($S, e)",
+                        IllegalStateException.class,
+                        "Method " + methodSignature(method, types) + " is not declared on its declaring type")
+                .endControlFlow()
+                .addStatement("$N = method", AS_METHOD_CACHE_FIELD)
+                .endControlFlow()
+                .addStatement("return method")
                 .build();
+    }
+
+    /**
+     * Renders {@code <DeclaringType>.<name>(<erased param types>)} for the {@code asMethod()} failure
+     * message, e.g. {@code com.example.Greeter.greet(java.lang.String)}.
+     */
+    private static String methodSignature(ExecutableElement method, Types types) {
+        String declaring =
+                ClassName.get((TypeElement) method.getEnclosingElement()).canonicalName();
+        String params = method.getParameters().stream()
+                .map(p -> erasedTypeName(p.asType(), types).toString())
+                .collect(Collectors.joining(", "));
+        return declaring + "." + method.getSimpleName() + "(" + params + ")";
     }
 
     // --- Nested ParameterMetadataImpl ---
@@ -571,7 +700,7 @@ public final class MetadataEmitter {
                         .addStatement(
                                 "throw new $T($S)",
                                 UnsupportedOperationException.class,
-                                "genericType is part of the reflective-accessor group (Phase 2)")
+                                "genericType is part of the reflective-accessor group")
                         .build())
                 .build();
     }
@@ -609,6 +738,9 @@ public final class MetadataEmitter {
      *                         {@code null} (may be empty)
      * @param literalFieldPrefix the prefix used for the per-annotation literal constant field names
      *                         (e.g. {@code "ANNOTATION_"} for the standalone case)
+     * @param reflectiveFallbackSupplier the full-merged-annotations supplier, or {@code null}
+     * @param loadedType       an expression that loads the type by name, for a type with no class
+     *                         literal ({@code typeLiteral} is then ignored), or {@code null}
      * @return the {@code ParameterMetadata}-implementing {@link TypeSpec}
      */
     private static TypeSpec parameterMetadataType(
@@ -619,7 +751,8 @@ public final class MetadataEmitter {
             TypeName typeLiteral,
             List<AnnotationLiteralRef> annotations,
             String literalFieldPrefix,
-            CodeBlock reflectiveFallbackSupplier) {
+            CodeBlock reflectiveFallbackSupplier,
+            CodeBlock loadedType) {
         ArrayTypeName annotationArray = ArrayTypeName.of(ClassName.get(Annotation.class));
 
         List<String> literalFieldNames = new ArrayList<>();
@@ -645,7 +778,7 @@ public final class MetadataEmitter {
                         .build());
 
         // Optional reflective fallback for annotations that could not be materialized into literals
-        // (ADR-0146 parity-first policy). When present, findAnnotation checks literals first then the
+        // (parity-first policy). When present, findAnnotation checks literals first then the
         // reflective array, and annotationsLazy returns the full merged reflective set (defensively
         // copied). When null, the impl is purely literal-backed and never reflects.
         boolean hasReflectiveFallback = reflectiveFallbackSupplier != null;
@@ -658,6 +791,15 @@ public final class MetadataEmitter {
                             Modifier.FINAL)
                     .initializer(reflectiveFallbackSupplier)
                     .build());
+        }
+
+        if (loadedType != null) {
+            // The type cannot be written as a class literal here: load it once, by name.
+            builder.addField(
+                    FieldSpec.builder(classOfWildcard(), "TYPE", Modifier.PRIVATE, Modifier.STATIC, Modifier.FINAL)
+                            .initializer(loadedType)
+                            .build());
+            builder.addMethod(loadTypeHelper(generatedName));
         }
 
         return builder.addMethod(MethodSpec.methodBuilder("index")
@@ -676,7 +818,10 @@ public final class MetadataEmitter {
                         .addAnnotation(Override.class)
                         .addModifiers(Modifier.PUBLIC)
                         .returns(classOfWildcard())
-                        .addStatement("return $T.class", typeLiteral)
+                        .addCode(
+                                loadedType != null
+                                        ? CodeBlock.of("return TYPE;\n")
+                                        : CodeBlock.of("return $T.class;\n", typeLiteral))
                         .build())
                 .addMethod(standaloneFindAnnotation(annotations, literalFieldNames, hasReflectiveFallback))
                 .addMethod(hasAnnotation())
@@ -688,7 +833,7 @@ public final class MetadataEmitter {
                         .addStatement(
                                 "throw new $T($S)",
                                 UnsupportedOperationException.class,
-                                "genericType is part of the reflective-accessor group (Phase 2)")
+                                "genericType is part of the reflective-accessor group")
                         .build())
                 .build();
     }
@@ -698,7 +843,7 @@ public final class MetadataEmitter {
      * matches each materialized literal by {@code type == <Ann>.class} first, then — when a reflective
      * fallback is present — scans {@code REFLECTIVE_FALLBACK.get()} for an annotation whose
      * {@link Annotation#annotationType()} equals {@code type}, so an annotation that could not be
-     * materialized into a literal is still resolvable (ADR-0146 parity-first policy). With no literals
+     * materialized into a literal is still resolvable (parity-first policy). With no literals
      * and no fallback the body collapses to {@code Optional.<A>empty()}.
      *
      * @param annotations          the materialized annotation literals, parallel to {@code literalFields}
@@ -743,7 +888,7 @@ public final class MetadataEmitter {
      * carries the full merged effective set, so it supersedes the literal subset). The backing array
      * is a per-route singleton passed directly to external {@code ParamConverterProvider}s by
      * {@code ParamConversionResolver}; cloning prevents an external mutation from corrupting it for
-     * every subsequent request (ADR-0146).
+     * every subsequent request.
      *
      * @param annotationArray        the {@code Annotation[]} array type name
      * @param hasReflectiveFallback  whether a {@code REFLECTIVE_FALLBACK} supplier field is present
@@ -814,7 +959,7 @@ public final class MetadataEmitter {
      * it receives (a technically legal {@code Annotation[]} caller, since nothing about the JAX-RS
      * contract forbids it) would otherwise corrupt the shared array for every subsequent request on
      * that route/method. Cloning trades one array allocation per {@code annotationsLazy()} call
-     * (already gated to only fire when a JAX-RS provider is registered, per ADR-0142) for eliminating
+     * (already gated to only fire when a JAX-RS provider is registered) for eliminating
      * a cross-request data-corruption hazard.
      *
      * @param annotationArray the {@code Annotation[]} array type name, reused from the enclosing
@@ -853,7 +998,7 @@ public final class MetadataEmitter {
      * <p>Primitives, arrays, and {@code void} are delegated to JavaPoet's
      * {@link TypeName#get(TypeMirror)} visitor. This replaces the earlier {@code DeclaredType}-only
      * cast, which threw a {@link ClassCastException} on primitive/array/void return and parameter
-     * types (the slice-0.2 watch-item). Erasure preserves array depth, so {@code int[]} erases to
+     * types. Erasure preserves array depth, so {@code int[]} erases to
      * {@code int[]} and renders as {@code int[].class}.
      *
      * @param mirror the type mirror to erase and render; must not be {@code null}
@@ -868,8 +1013,7 @@ public final class MetadataEmitter {
         // whose thin DeclaredType mocks cannot drive JavaPoet's full TypeName.get(TypeMirror)
         // visitor; collapsing the whole method to that single call NPEs on those mocks.
         // Primitives, arrays, and void are delegated to JavaPoet's visitor, which renders them as the
-        // correct {@code int.class} / {@code int[].class} / {@code void.class} literals (the slice-0.2
-        // watch-item).
+        // correct {@code int.class} / {@code int[].class} / {@code void.class} literals.
         if (erased instanceof DeclaredType declared && declared.asElement() instanceof TypeElement element) {
             return ClassName.get(element);
         }

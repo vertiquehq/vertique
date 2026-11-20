@@ -20,13 +20,16 @@ import java.util.List;
 /**
  * Hand-written companion in the generated descriptor shape for {@link GeneratedKindsResource}: one
  * literal {@link ResourceMethodMeta} with one literal {@link ParamMeta} per method parameter, in
- * declaration order. As in generated code, no parameter carries a generic type (only a request
- * body would), so the two collection parameters report the raw {@code List}; the collection and
+ * declaration order. As in generated code, each query parameter carries its declared type as its
+ * generic type, so the two collection parameters report {@code List<String>}; the collection and
  * array parameters carry {@code String} as their component type. Found by the descriptor
  * registry through the {@code _JaxRsDescriptor} naming convention.
  */
 public final class GeneratedKindsResource_JaxRsDescriptor
         implements GeneratedJaxRsResourceDescriptor<GeneratedKindsResource> {
+
+    private static final java.lang.reflect.Type LIST_OF_STRING =
+            new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {}.getType();
 
     private static final String RESOURCE_FQN = "dev.vertique.rest.jaxrs.publication.inventory.GeneratedKindsResource";
 
@@ -64,16 +67,16 @@ public final class GeneratedKindsResource_JaxRsDescriptor
             throw new IllegalStateException("fixture method GeneratedKindsResource#listKinds", e);
         }
         List<ParamMeta> params = List.of(
-                new ParamMeta("size", QUERY, Integer.class, null, null, "5", annotations(0)),
-                new ParamMeta("tags", QUERY, List.class, String.class, null, null, annotations(1)),
-                new ParamMeta("ids", QUERY, List.class, String.class, null, null, annotations(2)),
-                new ParamMeta("codes", QUERY, String[].class, String.class, null, null, annotations(3)),
-                new ParamMeta("name", QUERY, String.class, null, null, null, annotations(4)),
-                new ParamMeta("title", QUERY, String.class, null, null, null, annotations(5)),
-                new ParamMeta("both", QUERY, String.class, null, null, null, annotations(6)),
-                new ParamMeta("note", QUERY, String.class, null, null, null, annotations(7)),
-                new ParamMeta("zip", QUERY, String.class, null, null, null, annotations(8)),
-                new ParamMeta("plain", QUERY, String.class, null, null, null, annotations(9)),
+                new ParamMeta("size", QUERY, Integer.class, null, Integer.class, "5", annotations(0)),
+                new ParamMeta("tags", QUERY, List.class, String.class, LIST_OF_STRING, null, annotations(1)),
+                new ParamMeta("ids", QUERY, List.class, String.class, LIST_OF_STRING, null, annotations(2)),
+                new ParamMeta("codes", QUERY, String[].class, String.class, String[].class, null, annotations(3)),
+                new ParamMeta("name", QUERY, String.class, null, String.class, null, annotations(4)),
+                new ParamMeta("title", QUERY, String.class, null, String.class, null, annotations(5)),
+                new ParamMeta("both", QUERY, String.class, null, String.class, null, annotations(6)),
+                new ParamMeta("note", QUERY, String.class, null, String.class, null, annotations(7)),
+                new ParamMeta("zip", QUERY, String.class, null, String.class, null, annotations(8)),
+                new ParamMeta("plain", QUERY, String.class, null, String.class, null, annotations(9)),
                 new ParamMeta(null, BEAN_PARAM, GeneratedPaging.class, null, null, null, annotations(10)));
         return List.of(new ResourceMethodMeta(
                 resource,

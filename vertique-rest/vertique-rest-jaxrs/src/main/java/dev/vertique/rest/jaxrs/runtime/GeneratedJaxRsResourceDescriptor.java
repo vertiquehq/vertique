@@ -23,7 +23,7 @@ import java.util.List;
  *
  * <p>The {@code violations} list mirrors the shape of
  * {@code ResourceScanner.scanResource(Object, List<SecurityPolicyViolation>)}'s sink parameter.
- * Generated descriptors produced by the CG-010 pipeline <strong>never append to this list</strong>
+ * Generated descriptors produced by the codegen pipeline <strong>never append to this list</strong>
  * because the {@code SecurityAnnotationValidator} (step 3 in the pipeline) rejects
  * {@code CONFLICTING_SECURITY_ANNOTATIONS} and {@code EMPTY_ROLES_ALLOWED} at compile time.
  * The sink is retained in the SPI for forward-compatibility with potential non-pipeline

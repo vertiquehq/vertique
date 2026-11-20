@@ -46,7 +46,7 @@ import java.util.regex.PatternSyntaxException;
  * AnnotatedParameter#getIndex()}; a static-factory creator parameter joins to nothing here — that
  * shape is outside what Bean Validation exposes ({@link BeanDescriptor#getConstraintsForConstructor}
  * covers constructors only) — but {@link WalkConstraintSource} still renders its own annotations
- * directly as the floor, so the constraint is not lost (C3).
+ * directly as the floor, so the constraint is not lost.
  *
  * <p><strong>Resolved-definition contract.</strong> For a setter or builder method,
  * {@link #forUnscopedMember} never resolves the built type's Jackson property itself: {@link
@@ -59,19 +59,19 @@ import java.util.regex.PatternSyntaxException;
  * neither the field nor the {@code set}/{@code with} convention) still joins the field Bean Validation
  * actually constrains. The implied Java name ({@code javaBeanName}) survives as a fallback only when
  * no definition was resolved at all (a getter-less Lombok-built field Jackson exposes no built
- * property for; see "BG1" below) or the definition carries no field (an ordinary setter whose only
+ * property for) or the definition carries no field (an ordinary setter whose only
  * Jackson accessor is the setter itself). A builder-method property follows the same two-branch rule
- * {@link InputPropertyDescriber}'s own floor-side borrow does (round 2), evaluated against that same
+ * {@link InputPropertyDescriber}'s own floor-side borrow does, evaluated against that same
  * resolved definition: when it has a getter and a backing field, this class joins unconditionally,
  * exactly as the floor does — so a constraint declared through an XML mapping, or on a member Jackson
  * does not merge annotations for, still supplements a
  * getter-backed builder property once a {@code Validator} is supplied, the same as it already does for
  * a field or getter with a schema-library member scope. Only for the getter-less property (including
- * when no definition was resolved for the member's wire name at all — BG1, or the inverse-rename shape
+ * when no definition was resolved for the member's wire name at all, or the inverse-rename shape
  * where the floor itself finds no built property to borrow) does this class still require {@link
  * BuilderBorrowDetector} to judge the join sound (a Lombok builder, or the exact Lombok builder shape)
  * — otherwise it contributes no supplement either, matching the floor's own refusal to borrow, so this
- * class does not silently reintroduce the over-strict schema the owner ruling removed whenever a
+ * class does not silently reintroduce an over-strict schema whenever a
  * {@code Validator} happens to be supplied. Where a property matches nothing, it contributes no
  * supplement.
  *
@@ -89,11 +89,11 @@ import java.util.regex.PatternSyntaxException;
  * PropertyDescriptor#getConstrainedContainerElementTypes()}, type-argument index 0) merge onto the
  * property's {@code items} subschema when that subschema is an inline object; a {@code Map} value's
  * element position is not described by the generator today, so it is left unchanged, matching the
- * pre-existing gap. Rendered as an addition: an item-level correction is not a shape #606 covers.
+ * pre-existing gap. Rendered as an addition: no item-level shape is a known floor misrendering.
  *
  * <p><strong>Additions vs. corrections.</strong> A rendered keyword is a <em>correction</em> — merged
  * onto the schema unconditionally, replacing whatever the floor already wrote — exactly when it comes
- * from one of the four shapes vertiquehq/vertique-dev#606 named as wrong: {@code @Range}, {@code
+ * from one of the four shapes the floor is known to render wrongly: {@code @Range}, {@code
  * @Length}, {@code @URL}, or a {@code @Pattern} carrying a flag the floor cannot embed. Every other
  * rendered keyword is an <em>addition</em> — merged only where the floor left that keyword unset — so
  * a constraint the floor already rendered correctly (the common case: {@code @Size}, {@code @Min},
@@ -102,7 +102,7 @@ import java.util.regex.PatternSyntaxException;
  */
 final class MetadataConstraintSource implements ConstraintSource {
 
-    // W3: every recognized constraint type is matched by its fully-qualified annotation class name,
+    // Every recognized constraint type is matched by its fully-qualified annotation class name,
     // never by annotation-type simple name alone — an application-defined constraint whose simple name
     // collides with one of these (e.g. its own "@Size" composing "@Pattern") must never be mistaken for
     // the real jakarta.validation/Hibernate Validator type merely because the name happens to match.
@@ -125,19 +125,19 @@ final class MetadataConstraintSource implements ConstraintSource {
     private static final String C_URL = "org.hibernate.validator.constraints.URL";
 
     /**
-     * The annotation types (by fully-qualified class name, W3) whose rendering is a <em>correction</em>
-     * (vertiquehq/vertique-dev#606): the floor — the schema library's Jakarta Validation module for a
+     * The annotation types (by fully-qualified class name) whose rendering is a <em>correction</em>:
+     * the floor — the schema library's Jakarta Validation module for a
      * scoped member, or {@link WalkConstraintSource} for an unscoped one — either does not recognize
      * these at all ({@code @Range}, {@code @Length}, {@code @URL}, which {@link WalkConstraintSource}
      * never renders) or renders them incompletely ({@code @Pattern}'s flags, which neither the module
      * nor the walk embeds into the {@code pattern} keyword; a second {@code @Pattern} on the same
-     * member, S5, which neither can express as more than one {@code pattern} keyword at all). Every
+     * member, which neither can express as more than one {@code pattern} keyword at all). Every
      * other recognized annotation type is rendered as an addition instead.
      */
     private static final Set<String> CORRECTING_ANNOTATION_TYPES = Set.of(C_RANGE, C_LENGTH, C_URL, C_PATTERN);
 
     /**
-     * JDK {@code System.Logger} rather than SLF4J: this module's own architecture rule (FR-JSON-070)
+     * JDK {@code System.Logger} rather than SLF4J: this module's own architecture rule
      * freezes its compile dependencies to victools, Jackson, Jakarta Validation/Swagger annotations,
      * and {@code vertique-core}, with no logging facade among them.
      */
@@ -190,10 +190,10 @@ final class MetadataConstraintSource implements ConstraintSource {
         if (raw instanceof Method method
                 && method.getDeclaringClass() != builtClass
                 && !method.getDeclaringClass().isAssignableFrom(builtClass)) {
-            // A builder method: the same two-branch rule the floor's own borrow follows (round 2),
+            // A builder method: the same two-branch rule the floor's own borrow follows,
             // evaluated against the same resolved definition the floor itself used — see the class
             // Javadoc's "Resolved-definition contract". A getter-backed built property joins
-            // unconditionally; a getter-less one (including a null definition — BG1, or the
+            // unconditionally; a getter-less one (including a null definition, or the
             // inverse-rename shape where the floor itself borrows nothing) still needs
             // BuilderBorrowDetector's soundness check, matching the floor's own refusal to borrow, so a
             // Validator supplied to the generator cannot silently reintroduce the over-strict constraint
@@ -208,7 +208,7 @@ final class MetadataConstraintSource implements ConstraintSource {
         // A setter, or a sound builder method: the Bean Validation join key is the resolved
         // definition's own field name when it has one — never the setter's or builder method's own
         // implied name — falling back to that implied name only when no definition was resolved at all
-        // (BG1) or the definition has no field (an ordinary setter's own W1 fallback).
+        // or the definition has no field (an ordinary setter's own fallback).
         return renderProperty(builtClass, builtPropertyFieldName(builtProperty, javaName), kind);
     }
 
@@ -263,7 +263,7 @@ final class MetadataConstraintSource implements ConstraintSource {
         if (!(owner instanceof Constructor<?> constructor)) {
             // A static-factory creator: Bean Validation exposes constrained constructors only. This
             // contributes no supplement, but the floor — WalkConstraintSource, reading the parameter's
-            // own annotations directly — still renders its own constraint independently (C3).
+            // own annotations directly — still renders its own constraint independently.
             return ResolvedConstraints.NONE;
         }
         ConstructorDescriptor constructorDescriptor = validator
@@ -292,7 +292,7 @@ final class MetadataConstraintSource implements ConstraintSource {
                 continue;
             }
             Rendered rendered = render(element.getConstraintDescriptors(), ConstraintValueKind.OTHER, label + "[item]");
-            // Item-level shapes are always additions: #606 names no item-level correction, and the
+            // Item-level shapes are always additions: no item-level shape is a known floor misrendering, and the
             // floor never describes a Map value position's or a List/array item's own constraints at
             // all, so there is nothing here for a correction to unconditionally replace.
             Map<String, Object> combined = rendered.additions;
@@ -333,7 +333,7 @@ final class MetadataConstraintSource implements ConstraintSource {
         if (patterns.size() == 1) {
             corrections.put("pattern", patterns.get(0));
         } else if (patterns.size() > 1) {
-            // S5: two (or more) @Pattern constraints in the default group on one member — the schema's
+            // Two (or more) @Pattern constraints in the default group on one member — the schema's
             // "pattern" keyword can only ever hold one regular expression, so multiple render as an
             // allOf of single-pattern subschemas instead of the second silently overwriting the first.
             // Sorted for deterministic output: ConstraintDescriptor#getComposingConstraints() and the
@@ -364,7 +364,7 @@ final class MetadataConstraintSource implements ConstraintSource {
             // @Min + @Max with the same bounds; confirmed by disassembly/instrumentation), so their
             // leaves must still render, on top of — never instead of — the composing annotation's own
             // case below. What actually guards against misreading an unrelated shape is fully-qualified
-            // matching (W3), not skipping the switch: an application-defined constraint whose simple
+            // matching, not skipping the switch: an application-defined constraint whose simple
             // name collides with a recognized type (an app "@Size" composing "@Pattern") has a
             // different fully-qualified class name than jakarta.validation/Hibernate Validator's own
             // annotation, so it can never match one of the cases below and falls to the default branch
@@ -375,7 +375,7 @@ final class MetadataConstraintSource implements ConstraintSource {
         }
         String fqcn = descriptor.getAnnotation().annotationType().getName();
         Map<String, Object> attributes = descriptor.getAttributes();
-        // #606: the floor either cannot recognize this annotation at all, or renders it incompletely,
+        // A correction: the floor either cannot recognize this annotation at all, or renders it incompletely,
         // so its keyword replaces the floor's unconditionally; every other keyword below only fills a
         // gap the floor left.
         Map<String, Object> keywords = CORRECTING_ANNOTATION_TYPES.contains(fqcn) ? corrections : additions;
@@ -454,7 +454,7 @@ final class MetadataConstraintSource implements ConstraintSource {
     /**
      * The {@code minLength}/{@code minItems}/{@code minProperties} keyword a {@code @Size}, {@code
      * @NotEmpty}, or {@code @NotBlank} constraint targets for the given kind — or {@code null} for
-     * {@link ConstraintValueKind#NUMBER} or {@link ConstraintValueKind#OTHER} (D4): none of the three
+     * {@link ConstraintValueKind#NUMBER} or {@link ConstraintValueKind#OTHER}: none of the three
      * size/range keyword families applies to a number or an unrecognized kind, so the constraint
      * contributes no keyword there rather than defaulting to the string family, matching the walk (which
      * never runs for a scoped member at all — see {@link WalkConstraintSource#forScopedMember}).

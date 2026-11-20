@@ -12,11 +12,10 @@ import java.math.BigInteger;
 /**
  * Pure-function translation from the public {@link TokenBucketRateLimit} shape to Bucket4j's
  * {@link Bandwidth}, and the worst-case time-to-full computation the Vertique-issued {@code
- * PEXPIRE} bound uses (contracts/rate-limit-runtime.md, "Bucket4j translation contract", "Redis
- * integration contract").
+ * PEXPIRE} bound uses.
  *
  * <p>Duplicated in shape from {@code vertique-rate-limit-core}'s equivalent (package-private,
- * un-exported there — {@code spec.md} §14 defers a shared extraction) rather than reused across
+ * un-exported there) rather than reused across
  * the module boundary. Package-private; {@link Bucket4jRedisRateLimitBackend} is this class's only
  * caller.
  */

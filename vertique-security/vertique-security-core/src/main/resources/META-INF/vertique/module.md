@@ -21,7 +21,7 @@ The runtime implementation lives in `dev.vertique:vertique-security-runtime`. Co
 Include `vertique-security-core` when a module needs to:
 
 - Read the typed security model from a `SecurityContext` (identity, authentication state, authorization claims, network origin)
-- Implement a custom `SecurityIdentityResolver`, `Authorizer`, `PolicyDefinitionSource`, `RolePolicyResolver`, `ActionContributor`, `AuthorizationNarrower`, `DelegationGrantValidator`, `PrincipalAuthorityResolver`, or `ChannelIdentityManager`
+- Implement a custom `SecurityIdentityResolver`, `Authorizer`, `PolicyDefinitionSource`, `RolePolicyResolver`, `ActionContributor`, `AuthorizationNarrower`, `DelegationGrantValidator`, `PrincipalAuthorityResolver`, `ServiceIdentityResolver`, or `ChannelIdentityManager`
 - Declare or reference an `ActionRef` for `@RequiresAction` enforcement
 - Declare authentication and scope requirements with `@Authorized` on supported framework surfaces
 - Observe security lifecycle events by implementing `SecurityEventObserver`
@@ -177,7 +177,7 @@ public final class SecurityContexts {
 - **`system(...)` is doubly constrained.** It throws `IllegalArgumentException` unless the actor's `PrincipalType` is `SYSTEM` *and* the identity is actor-only (no `subject`, `delegation`, or `client`). Stamping `custom("system")` onto a `SERVICE` actor would misattribute it as system-acting, so use `unauthenticated(...)` for a `SERVICE` actor instead. Both factories assemble with `AuthorizationClaims.empty()` and no origin.
 - None of these methods emit `SecurityEventObserver` events — a static method cannot invoke an injected emitter by construction, so consuming flows decide whether and how to audit.
 - The concrete types built here are package-private; callers use `SecurityContexts` and the `SecurityContext` interface, never a concrete record. No framework-built context reaches a non-empty `reconstruction()` except through `assembleReconstructed`; an application that implements the `SecurityContext` interface directly can return one without it.
-- `assemble(...)` takes `authorization()` verbatim from its `claims` argument and makes no authority decision of its own. Reconstruction exploits this by passing `AuthorizationClaims.empty()`, so a reconstructed context carries no frozen authority (FR-ID-CA-010).
+- `assemble(...)` takes `authorization()` verbatim from its `claims` argument and makes no authority decision of its own. Reconstruction exploits this by passing `AuthorizationClaims.empty()`, so a reconstructed context carries no frozen authority.
 
 ---
 
@@ -191,7 +191,7 @@ public record PrincipalRef(PrincipalType type, String id, Map<String, Object> at
 
 **Construction rules:** `type` and `id` are required (non-null; `id` non-blank). A null `attributes` map is treated as empty. The attributes map is defensively copied at construction.
 
-**Durable capture caveat:** `attributes` (and the analogous attribute maps on `ClientRef` and `AuthorityClaim`) is request-scoped provenance only and is non-authoritative for identity — it does not survive identity-snapshot durable capture. Capture projects subject/client/claim attribute maps to empty unconditionally; the sole survivor is a bounded (≤ 256 chars) `system.reason` string on a `SYSTEM`-typed actor. Durable principal identity is the trust-domain-unique `(PrincipalType, id)` tuple (**FR-ID-CA-012**): applications using tenant-, issuer-, or realm-local identifiers must namespace or otherwise qualify `id`/`clientId` before constructing the ref — e.g. `new PrincipalRef(PrincipalType.USER, "urn:example:tenant:acme:user:01J…", Map.of("displayName", "alice"))` — because the framework treats ids as opaque and never reconstructs identity scope from attributes.
+**Durable capture caveat:** `attributes` (and the analogous attribute maps on `ClientRef` and `AuthorityClaim`) is request-scoped provenance only and is non-authoritative for identity — it does not survive identity-snapshot durable capture. Capture projects subject/client/claim attribute maps to empty unconditionally; the sole survivor is a bounded (≤ 256 chars) `system.reason` string on a `SYSTEM`-typed actor. Durable principal identity is the trust-domain-unique `(PrincipalType, id)` tuple (): applications using tenant-, issuer-, or realm-local identifiers must namespace or otherwise qualify `id`/`clientId` before constructing the ref — e.g. `new PrincipalRef(PrincipalType.USER, "urn:example:tenant:acme:user:01J…", Map.of("displayName", "alice"))` — because the framework treats ids as opaque and never reconstructs identity scope from attributes.
 
 `PrincipalType` enum: `USER`, `SERVICE`, `SYSTEM`, `ANONYMOUS`.
 
@@ -310,7 +310,7 @@ public record InvocationOrigin(String kind, Map<String, Object> attributes) impl
 }
 ```
 
-`kind` is a non-blank, transport-neutral ingress identifier drawn from `DispatchBoundary` values (e.g. `"rest"`, `"external"`, `"delayed-job"`, `"kafka"`, `"workflow"`) — centralizing the string constants there avoids typos. Implements `ContextValue` so an ingress boundary can bind a real `InvocationOrigin` as the ambient invocation origin on `ContextHolder`, and downstream authorization/snapshot-capture code reads it back via `contextHolder.current(InvocationOrigin.class)`. A caller that doesn't seed one gets `unspecified()`. Origin-aware policies and narrowers that allowlist interactive ingress must treat `unspecified` as deny — never as implied `"rest"`.
+`kind` is a non-blank, transport-neutral ingress identifier drawn from `DispatchBoundary` values (e.g. `"rest"`, `"delayed-job"`, `"kafka"`, `"workflow"`) — centralizing the string constants there avoids typos. Implements `ContextValue` so an ingress boundary can bind a real `InvocationOrigin` as the ambient invocation origin on `ContextHolder`, and downstream authorization/snapshot-capture code reads it back via `contextHolder.current(InvocationOrigin.class)`. A caller that doesn't seed one gets `unspecified()`. Origin-aware policies and narrowers that allowlist interactive ingress must treat `unspecified` as deny — never as implied `"rest"`.
 
 Service dispatch is root-ingress-aware rather than an unconditional overwrite: an already-present upstream origin is preserved, a propagated `DeferredExecutionOrigin` is mapped to an origin of the same `kind()` so deferred work stays distinguishable, and only when neither is present does it seed its own boundary. See `dev.vertique:vertique-services` for the full precedence.
 
@@ -573,7 +573,7 @@ public record DelegationSummary(String kind, Optional<String> authorityId)
 - **Content/envelope split.** `IdentitySnapshotFactory.capture(...)` returns `IdentitySnapshotContent` only — capture cannot legitimately produce a carrier binding, temporal bounds, or a signature. Capturing or carrying a snapshot never by itself grants or removes authorization standing; only reconstruction acts on its contents.
 - **Freshness is a three-term minimum, re-checked at both decode and reconstruction.** The runtime rejects a snapshot past `min(expiresAt, issuedAt + maxCarrierLifetime, content.capturedAt + maxSnapshotLifetime)` — the latter two terms only when an operator configured that budget. The snapshot-lifetime term is anchored on the *immutable* `content.capturedAt()`, never `issuedAt`, so a chained re-encode (which mints a fresh `issuedAt` for a new carrier) cannot renew authority past what the original capture earned. Reconstruction re-evaluates freshness against the current clock, so a snapshot that decoded fresh but has since aged out while held in memory is still rejected.
 - **Carrier binding is enforced again at reconstruction**, independently of the decode-time check: a signed `carrier()` that does not match the receive-side's expected carrier is rejected fail-closed.
-- `authorizationClaims` are **attribution only** — audit lineage of what the principal was authorized for at capture time. Under the default mode they are never restored as current authority (a reconstructed `authorization()` is empty); see `IdentityReconstruction` below (FR-ID-CA-010).
+- `authorizationClaims` are **attribution only** — audit lineage of what the principal was authorized for at capture time. Under the default mode they are never restored as current authority (a reconstructed `authorization()` is empty); see `IdentityReconstruction` below.
 
 ---
 
@@ -635,7 +635,7 @@ public record ReconstructionMarker(ReconstructedAuthorityMode mode)
 
 `ReconstructionMarker` is the typed, **unforgeable** verified-reconstruction signal `SecurityContext.reconstruction()` returns — present only for a context produced by the framework's verified-reconstruction path or the Mode-2 authorizer's evaluation-context rebuild, both of which go through `SecurityContexts.assembleReconstructed(...)`. Any code deciding whether a context is a verified reconstruction MUST key off this typed accessor — **never** the descriptive `identity.reconstructed=true` string attribute on `AuthenticationState#safeAttributes()`, which any code populating `safeAttributes` could set on an otherwise live-authored context.
 
-**Carries no principal of its own.** A Mode-2 authorizer derives the `PrincipalKey` to re-resolve from `SecurityContext#identity()#actor()` — never from this marker and never from `SecurityIdentity#subject()` (FR-ID-DG-006).
+**Carries no principal of its own.** A Mode-2 authorizer derives the `PrincipalKey` to re-resolve from `SecurityContext#identity()#actor()` — never from this marker and never from `SecurityIdentity#subject()`.
 
 `ReconstructedAuthorityMode` values:
 
@@ -782,7 +782,7 @@ Asynchronous because storage and revocation lookup can require I/O (mirroring `A
 
 - **A permit must echo the requested `grantId`.** The framework's delegation narrower discards a permitted `DelegationGrantDecision` whose `grantId()` does not equal the `grantId` it asked about, replacing it with a deny carrying `GRANT_LOOKUP_FAILED`. An implementation that permits while echoing a different (or empty) grant id therefore grants nothing.
 - Returning a *failed* `Future` is a contract violation, not a deny signal — implementations catch their own storage exceptions and map them to `GRANT_LOOKUP_FAILED`.
-- Principal matching should compare only `(PrincipalType, id)`, never `attributes` (**FR-ID-CA-012**).
+- Principal matching should compare only `(PrincipalType, id)`, never `attributes` ().
 
 Expiry and scope checks ship in the framework's `InMemoryDelegationGrantValidator` default (`dev.vertique:vertique-security-runtime`); storage and revocation lookup live behind this seam for consumer-owned durable implementations.
 
@@ -871,7 +871,7 @@ public interface PrincipalAuthorityResolver {
 
 `PrincipalKey` (`record PrincipalKey(PrincipalType type, String id)`, `id` non-blank) is the capability-minimized durable principal key: it structurally carries **no attributes**, so an implementation cannot resolve scope from request-scoped attributes even by accident — it must consult durable, principal-keyed authority storage (a role/entitlement store, an IdP claim cache).
 
-**Resolves the actor, never the subject-of-record.** Per **FR-ID-DG-006**, the Mode-2 authorizer derives the key exclusively from `SecurityContext#identity()#actor()`: for `resumeAsPrincipal` that is the resumed principal, for `deferredExecution` the executing service. `SecurityIdentity#subject()` is never passed to this SPI — impersonation is out of v1 scope; a downstream `AuthorizationNarrower` may still intersect the resolved actor authority against a grant's scope.
+**Resolves the actor, never the subject-of-record.** Per, the Mode-2 authorizer derives the key exclusively from `SecurityContext#identity()#actor()`: for `resumeAsPrincipal` that is the resumed principal, for `deferredExecution` the executing service. `SecurityIdentity#subject()` is never passed to this SPI — impersonation is out of v1 scope; a downstream `AuthorizationNarrower` may still intersect the resolved actor authority against a grant's scope.
 
 **Bounded and fail-closed.** The runtime wraps every installed resolver in a timeout decorator (`identity.authz.resolutionTimeoutMs`, default 5000ms), so a delegate whose `Future` never completes cannot hang authorization. The timeout does **not** cancel the delegate's work — a resolver performing I/O should also set a transport-level timeout. Any failure, timeout, or ambiguous result becomes a deny with `AuthzReasonCodes#AUTHORITY_RESOLUTION_FAILED`, never a fallback to the snapshot's captured claims. A *resolvable* principal holding no authority succeeds with `AuthorizationClaims.empty()` — a normal downstream deny, distinct from a resolution failure.
 
@@ -902,10 +902,38 @@ public interface IdentityReconstruction {
 #### Invariants & Gotchas
 
 - **Fail-closed, never partial.** Both entry points re-verify integrity *and* current freshness and confirm the signed `carrier()` matches `expectedCarrier` before minting anything. A `null` snapshot, a failed verification, or a carrier mismatch throws `IdentityReconstructionException` before any `SecurityContext` is built — there is never a partial or unbound result.
-- **Reconstructed authority is attribution-only** (FR-ID-CA-010). Every context these methods mint has `authorization()` == `AuthorizationClaims.empty()` and marker mode `ATTRIBUTION_ONLY`, so a principal demoted or revoked during the pause never resumes with frozen standing. Live re-resolution (Mode 2) and captured authority (Mode 3) are opt-in layers on top of this default.
+- **Reconstructed authority is attribution-only**. Every context these methods mint has `authorization()` == `AuthorizationClaims.empty()` and marker mode `ATTRIBUTION_ONLY`, so a principal demoted or revoked during the pause never resumes with frozen standing. Live re-resolution (Mode 2) and captured authority (Mode 3) are opt-in layers on top of this default.
 - **`isReconstructed(ctx)` is a descriptive convenience, not a trust decision.** It reads the `identity.reconstructed` string attribute from `ctx.authentication().safeAttributes()`, which any code populating `safeAttributes` can set. Never use it to decide authority; use `SecurityContext#reconstruction()`, whose marker only the framework's reconstruction path can produce.
 - **`IdentityReconstructionException`** carries a typed `reason()` (`SnapshotDegradationReason`) classifying which failure occurred, so a caller can bind a precise `SnapshotDegradationMarker` rather than a catch-all code. A `null` snapshot or a carrier mismatch defaults to `DECODE_FAILED`.
 - The reconstruction marker attributes (`identity.reconstructed`, `.mode`, `.capturedAt`, `.authenticatedAt`) are purely descriptive of how the authentication state was produced; setting them grants nothing. `.authenticatedAt` is the one a chained re-capture reads back, so the original authentication instant survives each hop.
+
+---
+
+### ServiceIdentityResolver
+
+Functional SPI that names the executing service identity used as the actor when the runtime mints a service-only or reconstructed `SecurityContext` for a deferred dispatch (delayed job, cron, inbox handler). An application binds its own resolver to choose which service identity acts for each execution path; with none bound, the runtime falls back to a built-in default.
+
+```java
+@FunctionalInterface
+public interface ServiceIdentityResolver {
+    SecurityIdentity resolve(DeferredExecutionOrigin origin);
+}
+```
+
+`DeferredExecutionOrigin` (`dev.vertique.core.context`) carries the provenance `kind()` (`delayed-job`, `cron`, `outbox-relay`) and a `reference()` — the job type, cron name or event type — which the built-in default turns into the identity's audit reason; a custom resolver chooses its own identity and reason. The resolver is consulted only when an origin is present; a dispatch with a snapshot but no origin gets a boundary-keyed system identity without calling it. Bind the resolver in an application module:
+
+```java
+@Provides @Singleton
+static ServiceIdentityResolver serviceIdentityResolver() {
+    return origin -> SystemIdentities.internal("job:" + origin.reference());
+}
+```
+
+#### Invariants & Gotchas
+
+- **Never `null`.** A `null` result fails the dispatch with a `NullPointerException`.
+- **Actor-only identity.** The resolved identity must carry no subject, delegation or client, or the dispatch fails with `IllegalArgumentException`; it must also be a `SYSTEM` or `SERVICE` principal, and any other principal type is rejected. The resolved identity is the actor, never an impersonation of the user whose snapshot was carried.
+- **Moved from the runtime module.** The interface previously lived in `dev.vertique.security.runtime` in `vertique-security-runtime`; it now lives in `dev.vertique.security` here, with no forwarding type left behind. Change the import to `dev.vertique.security.ServiceIdentityResolver`.
 
 ---
 

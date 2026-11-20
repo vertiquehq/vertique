@@ -23,7 +23,7 @@ import javax.lang.model.util.ElementFilter;
 
 /**
  * Validates security annotation combinations on JAX-RS resource classes and methods at
- * compile time (CG-009 Tier-A).
+ * compile time.
  *
  * <p>Mirrors the conflict matrix in
  * {@link dev.vertique.rest.core.security.AnnotationSecurityPolicyResolver} and the
@@ -51,9 +51,9 @@ import javax.lang.model.util.ElementFilter;
  * only an error when it is the effective policy for a method (i.e., the method declares no
  * security annotation of its own).
  *
- * <p>Two APIs are provided: the original element-based API (used by CG-009 tests) and an
+ * <p>Two APIs are provided: the original element-based API (used by existing tests) and an
  * {@link EffectiveResourceContract}/{@link EffectiveMethodContract}-based API used by
- * {@code JaxRsPipelineProcessor} (CG-010).
+ * {@code JaxRsPipelineProcessor}.
  */
 public final class SecurityAnnotationValidator {
 
@@ -68,7 +68,7 @@ public final class SecurityAnnotationValidator {
         this.ctx = ctx;
     }
 
-    // --- Element-based API (CG-009, preserved for existing tests) ---
+    // --- Element-based API (preserved for existing tests) ---
 
     /**
      * Validates the class-level security annotations on the given resource type.
@@ -183,7 +183,7 @@ public final class SecurityAnnotationValidator {
         return true;
     }
 
-    // --- Contract-based API (CG-010) ---
+    // --- Contract-based API ---
 
     /**
      * Validates the class-level security annotations from the resolved resource contract.

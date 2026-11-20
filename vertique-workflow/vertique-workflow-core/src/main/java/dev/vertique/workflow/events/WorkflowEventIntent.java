@@ -36,7 +36,7 @@ import java.util.UUID;
  * @param stepId           the plan step id that produced the event; null when not step-bound
  * @param attributes       arbitrary key-value metadata; null is promoted to {@link Map#of()}
  * @param correlationId    optional correlation trace id propagated across systems
- * @param causationId      optional id of the cause event that produced this event
+ * @param causationId      optional id of the cause of this event: the row id of the command whose segment emitted it
  */
 public record WorkflowEventIntent(
         WorkflowEventType eventType,

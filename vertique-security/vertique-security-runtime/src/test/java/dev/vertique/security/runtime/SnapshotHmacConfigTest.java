@@ -4,11 +4,14 @@
 package dev.vertique.security.runtime;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.core.exception.ConfigurationException;
+import io.vertx.core.json.JsonObject;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -92,6 +95,28 @@ class SnapshotHmacConfigTest {
             String boundarySecret = "01234567890123456789012345678901"; // exactly 32 bytes UTF-8
 
             assertDoesNotThrow(() -> new SnapshotHmacKeyConfig("ok-key", boundarySecret));
+        }
+    }
+
+    @Nested
+    @DisplayName("SnapshotHmacKeyConfig secret masking")
+    class SecretMasking {
+
+        @Test
+        @DisplayName("the config mapper serializes secretRef as *** at every keyset position")
+        void secretRefMaskedByConfigMapper() throws Exception {
+            String secret = "01234567890123456789012345678901";
+            SnapshotHmacConfig config = new SnapshotHmacConfig(
+                    new SnapshotHmacKeyConfig("active-key", secret),
+                    List.of(new SnapshotHmacKeyConfig("previous-key", secret)));
+
+            String serialized = DefaultConfigMapper.lenient().writeValueAsString(config);
+
+            assertFalse(serialized.contains(secret), serialized);
+            JsonObject json = new JsonObject(serialized);
+            assertEquals("***", json.getJsonObject("active").getString("secretRef"));
+            assertEquals("active-key", json.getJsonObject("active").getString("keyId"));
+            assertEquals("***", json.getJsonArray("previous").getJsonObject(0).getString("secretRef"));
         }
     }
 }

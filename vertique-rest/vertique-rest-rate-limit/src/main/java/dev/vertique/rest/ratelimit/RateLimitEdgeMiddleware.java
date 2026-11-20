@@ -29,8 +29,8 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Optional, config-driven {@link Middleware} contributed at {@link MiddlewareScope#ROOT} that
- * applies ordered, composable-dimension admission rules pre-authorization
- * (contracts/rest-adapter.md, "Edge limiter"). Mounted before any {@code RouterMount}/{@code
+ * applies ordered, composable-dimension admission rules pre-authorization.
+ * Mounted before any {@code RouterMount}/{@code
  * BodyHandler}, and strictly after {@link OriginCaptureMiddleware} at {@link #ORDER}.
  *
  * <p>Rules are evaluated in declared order via {@link RateLimiter#acquire}; the first
@@ -66,8 +66,8 @@ import org.slf4j.LoggerFactory;
  * mount's own real {@code ExceptionMapperRegistry} the same way an {@code execute()}/{@code
  * @RateLimited} throw does: the packaged {@code RateLimitExceptionMapper} pair (contributed
  * unconditionally by {@code RestRateLimitModule}) renders them when installed; {@link
- * RateLimitExceededException} additionally extends the core {@code TooManyRequestsException} root
- * (T020), so a graph with no rate-limit-specific mapper still renders {@code 429} (with {@code
+ * RateLimitExceededException} additionally extends the core {@code TooManyRequestsException} root,
+ * so a graph with no rate-limit-specific mapper still renders {@code 429} (with {@code
  * Retry-After} threaded from the decision) via the framework's default exception mapper, wired by
  * {@code RestModule}; {@link RateLimitUnavailableException} already extends {@code UnavailableException} and
  * gets the equivalent {@code 503} default. An application that contributes its own {@code
@@ -87,7 +87,7 @@ public final class RateLimitEdgeMiddleware implements Middleware {
 
     private static final Logger log = LoggerFactory.getLogger(RateLimitEdgeMiddleware.class);
 
-    /** {@link OriginCaptureMiddleware#ORDER} + 20 (contracts/rest-adapter.md, "Edge limiter"). */
+    /** {@link OriginCaptureMiddleware#ORDER} + 20. */
     public static final int ORDER = OriginCaptureMiddleware.ORDER + 20;
 
     /**
@@ -105,15 +105,12 @@ public final class RateLimitEdgeMiddleware implements Middleware {
     /**
      * Compiles {@code config}'s rules against {@code rateLimiters}, resolving one {@link
      * RateLimiter} handle per rule via {@link RateLimiters#limiter(String)} — an unknown policy
-     * name fails synchronously here, exactly as any other {@code limiter(...)} caller observes
-     * (contracts/rest-adapter.md, "Configuration").
+     * name fails synchronously here, exactly as any other {@code limiter(...)} caller observes.
      *
      * @param config the enabled edge config (callers must not construct this for a disabled config)
      * @param rateLimiters the application-scoped rate-limit runtime
      * @param originCaptureBound whether {@link OriginCaptureMiddleware} is bound in the Dagger
      *     graph; an {@code IP}-dimension rule fails construction when this is {@code false}
-     *     (contracts/rest-adapter.md, "Rule composition semantics" — IP mechanism, startup
-     *     validation)
      * @throws ConfigurationException if an {@code IP}-dimension rule is declared without {@code
      *     originCaptureBound}, or a rule's declared {@code cost} exceeds its referenced policy's
      *     capacity
@@ -140,9 +137,9 @@ public final class RateLimitEdgeMiddleware implements Middleware {
             // Read directly off the resolved handle (RateLimiter#failureMode()) rather than
             // re-deriving it from a separate configuration source: this classifies correctly for a
             // policy declared only via a Dagger @IntoSet RateLimitPolicy contribution, which carries
-            // no rateLimit.policies.<name> JSON section at all (contracts/rate-limit-runtime.md,
-            // "Policy model"; RateLimitCoreModule merges config- and programmatic-tier policies
-            // before either RateLimiters or this middleware ever sees them).
+            // no rateLimit.policies.<name> JSON section at all (RateLimitCoreModule merges config-
+            // and programmatic-tier policies before either RateLimiters or this middleware ever
+            // sees them).
             RateLimitFailureMode ipFailureMode = usesIp ? limiter.failureMode() : null;
             compiled.add(new CompiledRule(rule, limiter, ipFailureMode));
         }
@@ -197,8 +194,8 @@ public final class RateLimitEdgeMiddleware implements Middleware {
             } else {
                 // OPEN admits without ever deriving a key or calling acquire() — log internally so
                 // an operator can see this rule is silently bypassed (never surfaced to the
-                // response body/headers: contracts/rest-adapter.md, "HTTP mapping" carries no
-                // policy/rule identity). Policy name only; never the request's key material.
+                // response body/headers: the HTTP mapping carries no policy/rule identity).
+                // Policy name only; never the request's key material.
                 log.warn(
                         "rate-limit edge rule for policy '{}': RequestOrigin absent, failureMode=OPEN — admitting"
                                 + " request without evaluating this rule",
@@ -214,9 +211,8 @@ public final class RateLimitEdgeMiddleware implements Middleware {
                 : compiled.limiter().acquire(key);
         acquired.onComplete(result -> {
             if (result.failed()) {
-                // Defensive-only: acquire() only fails its future for a cost/capacity mismatch
-                // (contracts/rate-limit-runtime.md, "Handle semantics"), which eager policy
-                // validation should already have ruled out. Fail closed rather than let an
+                // Defensive-only: acquire() only fails its future for a cost/capacity mismatch,
+                // which eager policy validation should already have ruled out. Fail closed rather than let an
                 // unmapped rate-limit exception cross the pre-authorization boundary.
                 ctx.request().resume();
                 ctx.fail(503, new UnavailableException(FIXED_UNAVAILABLE_MESSAGE));
@@ -239,8 +235,8 @@ public final class RateLimitEdgeMiddleware implements Middleware {
 
     /**
      * Aggregates an IPv6 {@code clientIp} onto {@code ipv6PrefixBits}; an IPv4 address always keys
-     * on the full address regardless of {@code ipv6PrefixBits} (contracts/rest-adapter.md,
-     * "Cardinality caution"). {@code clientIp} is guaranteed to be a validated IP literal by {@link
+     * on the full address regardless of {@code ipv6PrefixBits}.
+     * {@code clientIp} is guaranteed to be a validated IP literal by {@link
      * RequestOrigin}'s own construction, so {@link InetAddress#getByName} below never triggers a
      * DNS lookup.
      *
@@ -248,7 +244,7 @@ public final class RateLimitEdgeMiddleware implements Middleware {
      * RateLimitEdgeMiddlewareIpKeyComponentTest} can pin this derivation's golden vectors directly,
      * independent of a full HTTP round trip.
      *
-     * <p>T021 S1: an IPv4-mapped IPv6 literal (e.g. {@code ::ffff:192.0.2.1}) resolves through
+     * <p>An IPv4-mapped IPv6 literal (e.g. {@code ::ffff:192.0.2.1}) resolves through
      * {@link InetAddress#getByName} to a 4-byte {@code Inet4Address}, not a 16-byte {@code
      * Inet6Address} — the {@code bytes.length != 16} branch below normalizes it to that resolved
      * address's dotted-quad {@code getHostAddress()} form rather than passing the original literal
@@ -291,7 +287,7 @@ public final class RateLimitEdgeMiddleware implements Middleware {
 
         /**
          * Derives this rule's key for {@code ctx}, or signals a bypass/origin-absent outcome
-         * instead (contracts/rest-adapter.md, "Rule composition semantics").
+         * instead.
          */
         KeyOutcome deriveKey(RoutingContext ctx) {
             List<RateLimitEdgeKeyDimension> dimensions = rule.key();

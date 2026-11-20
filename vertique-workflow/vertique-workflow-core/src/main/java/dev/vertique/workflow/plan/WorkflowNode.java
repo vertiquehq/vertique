@@ -19,8 +19,8 @@ package dev.vertique.workflow.plan;
  *   <li>{@link CompensationNode} — records a compensating action for a forward dispatch step</li>
  *   <li>{@link TimerNode} — schedules a timer and advances when it fires</li>
  *   <li>{@link HumanTaskNode} — creates a human task and waits for its completion</li>
- *   <li>{@link ForkNode} — fans out to a bounded set of named branches; PRD-WF-002 placeholder
- *       until engine integration lands in a later slice</li>
+ *   <li>{@link ForkNode} — fans out to a bounded set of named branches; placeholder
+ *       until engine integration lands</li>
  *   <li>{@link JoinNode} — joins branches at a matching fork; placeholder until engine
  *       integration lands</li>
  * </ul>

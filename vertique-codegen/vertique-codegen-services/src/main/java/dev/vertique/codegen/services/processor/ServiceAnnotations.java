@@ -59,7 +59,7 @@ public final class ServiceAnnotations {
     /** FQN of {@code dev.vertique.codegen.NoAutoWire}. */
     public static final String NO_AUTO_WIRE = "dev.vertique.codegen.NoAutoWire";
 
-    // --- Conditional registration (CG-011) ---
+    // --- Conditional registration ---
 
     /** FQN of {@code dev.vertique.codegen.ConditionalOnProperty}. */
     public static final String CONDITIONAL_ON_PROPERTY = "dev.vertique.codegen.ConditionalOnProperty";

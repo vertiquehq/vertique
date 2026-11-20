@@ -10,6 +10,8 @@ import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.ConfigSecretRenderer;
 import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.core.exception.ConfigurationException;
+import dev.vertique.http.client.WebClientOptionsNormalizer;
+import dev.vertique.http.client.exception.HttpClientConfigurationException;
 import dev.vertique.rest.client.exception.RestClientConfigurationException;
 import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
@@ -27,7 +29,7 @@ import java.util.Map;
  * record (or the {@code name -> RestClientConfig} index), never on the raw {@link JsonObject}.
  *
  * <p>The {@code webClient} component is an intentionally-open Vert.x {@code WebClientOptions}
- * pass-through bag (the framework does not own its schema — config rule R9). Because a Vert.x
+ * pass-through bag (the framework does not own its schema). Because a Vert.x
  * {@link JsonObject} field cannot round-trip through the shared {@link ConfigParser} mapper (it lacks
  * the Vert.x Jackson serializers, so a mapped {@code JsonObject} would come back empty), the
  * {@code webClient} subtree is read directly from the source section in {@link #indexFromConfig} and
@@ -173,7 +175,7 @@ public record RestClientConfig(
 
     /**
      * Parses the {@code restClient.defaults} reserved sub-object from the root config into a typed
-     * {@link RestClientDefaults} record using the canonical {@link ConfigParser} (config rule R10).
+     * {@link RestClientDefaults} record using the canonical {@link ConfigParser}.
      *
      * <p>The reserved {@code defaults} key is excluded from the keyed client map produced by
      * {@link #indexFromConfig} — it is parsed separately by this method. The caller (the Dagger
@@ -187,7 +189,7 @@ public record RestClientConfig(
      * {@code null}.
      *
      * @param rootConfig the root application config, qualified {@code @VertxConfig} at the boundary
-     * @param parser the injected config parser — used to parse the section (config rule R10)
+     * @param parser the injected config parser — used to parse the section
      * @return the parsed {@link RestClientDefaults}; never {@code null}
      */
     public static RestClientDefaults defaultsFromConfig(JsonObject rootConfig, ConfigParser parser) {
@@ -230,57 +232,10 @@ public record RestClientConfig(
         if (config == null) {
             return null;
         }
-        // --- Validate: reject raw Vert.x native duration keys in the INPUT ---
-        // Each pair: native key (forbidden in input) → required explicit-unit key (correct key).
-        rejectNativeKey(config, "connectTimeout", "connectTimeoutMs");
-        rejectNativeKey(config, "idleTimeout", "idleTimeoutSeconds");
-        rejectNativeKey(config, "readIdleTimeout", "readIdleTimeoutSeconds");
-        rejectNativeKey(config, "writeIdleTimeout", "writeIdleTimeoutSeconds");
-        rejectNativeKey(config, "keepAliveTimeout", "keepAliveTimeoutSeconds");
-        rejectNativeKey(config, "http2KeepAliveTimeout", "http2KeepAliveTimeoutSeconds");
-        rejectNativeKey(config, "sslHandshakeTimeout", "sslHandshakeTimeoutSeconds");
-
-        // --- Translate: rename the framework explicit-unit keys to Vert.x native names ---
-        JsonObject translated = config.copy();
-        renameKey(translated, "connectTimeoutMs", "connectTimeout");
-        renameKey(translated, "idleTimeoutSeconds", "idleTimeout");
-        renameKey(translated, "readIdleTimeoutSeconds", "readIdleTimeout");
-        renameKey(translated, "writeIdleTimeoutSeconds", "writeIdleTimeout");
-        renameKey(translated, "keepAliveTimeoutSeconds", "keepAliveTimeout");
-        renameKey(translated, "http2KeepAliveTimeoutSeconds", "http2KeepAliveTimeout");
-        renameKey(translated, "sslHandshakeTimeoutSeconds", "sslHandshakeTimeout");
-        return translated;
-    }
-
-    /**
-     * Renames a key in a {@link JsonObject} if the old key is present. Removes the old key and inserts
-     * its value under the new key.
-     *
-     * @param json the object to mutate
-     * @param oldKey the key to rename
-     * @param newKey the replacement key name
-     */
-    private static void renameKey(JsonObject json, String oldKey, String newKey) {
-        if (json.containsKey(oldKey)) {
-            json.put(newKey, json.getValue(oldKey));
-            json.remove(oldKey);
-        }
-    }
-
-    /**
-     * Throws {@link RestClientConfigurationException} if the given config contains the raw Vert.x
-     * native duration key. Operators must use the explicit-unit framework key instead (e.g.
-     * {@code connectTimeoutMs} rather than {@code connectTimeout}).
-     *
-     * @param config the {@code webClient} input config to inspect
-     * @param nativeKey the forbidden raw Vert.x native key (e.g. {@code connectTimeout})
-     * @param requiredKey the required framework explicit-unit key (e.g. {@code connectTimeoutMs})
-     * @throws RestClientConfigurationException if {@code nativeKey} is present in {@code config}
-     */
-    private static void rejectNativeKey(JsonObject config, String nativeKey, String requiredKey) {
-        if (config.containsKey(nativeKey)) {
-            throw new RestClientConfigurationException("webClient duration key '" + nativeKey
-                    + "' is a raw Vert.x key; use the explicit-unit key '" + requiredKey + "' instead");
+        try {
+            return WebClientOptionsNormalizer.normalize(config);
+        } catch (HttpClientConfigurationException e) {
+            throw new RestClientConfigurationException(e.getMessage(), e);
         }
     }
 
@@ -289,7 +244,7 @@ public record RestClientConfig(
     /**
      * Renders this client config with secrets redacted so a log line or exception message never leaks
      * a credential. The {@code webClient} bag is an open Vert.x {@code WebClientOptions} pass-through
-     * (config rule R9) that can carry {@code ssl} key-store/trust-store passwords at any depth, and
+     * that can carry {@code ssl} key-store/trust-store passwords at any depth, and
      * {@code baseUrl} can embed credentials in its authority userinfo ({@code https://user:pass@host}).
      * The default record {@code toString()} would render both verbatim; this override delegates to the
      * framework-wide {@link ConfigSecretRenderer} — masking the {@code webClient} bag at every depth

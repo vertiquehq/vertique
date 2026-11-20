@@ -367,6 +367,103 @@ class PlaceholderParserTest {
         }
     }
 
+    // --- Escape inside a reference ---
+
+    @Nested
+    @DisplayName("Escape inside a reference is kept as written and counts as a brace level")
+    class EscapeInsideReferenceTests {
+
+        @Test
+        @DisplayName("${a:\\${b}} is one placeholder with key 'a' and default text '\\${b}'")
+        void escapedReferenceInDefaultKeptAsWritten() {
+            // The escaped ${b} belongs to the default text, including its closing brace
+            List<Segment> result = parse("${a:\\${b}}");
+
+            assertEquals(1, result.size(), "Expected exactly one segment: " + result);
+            Placeholder ph = placeholderAt(result, 0);
+            assertEquals("a", ph.key());
+            assertEquals("\\${b}", ph.defaultValue());
+        }
+
+        @Test
+        @DisplayName("${a:${c:\\${b}}} keeps the escape inside the nested default text")
+        void escapedReferenceInNestedDefaultKeptAsWritten() {
+            List<Segment> result = parse("${a:${c:\\${b}}}");
+
+            assertEquals(1, result.size(), "Expected exactly one segment: " + result);
+            Placeholder outer = placeholderAt(result, 0);
+            assertEquals("a", outer.key());
+            assertEquals("${c:\\${b}}", outer.defaultValue());
+
+            // Re-parsing the default text, as the engine does, keeps the escape one level further down
+            Placeholder inner = placeholderAt(parse(outer.defaultValue()), 0);
+            assertEquals("c", inner.key());
+            assertEquals("\\${b}", inner.defaultValue());
+        }
+
+        @Test
+        @DisplayName("re-parsing the default text '\\${b}' yields the literal '${b}' — the escape expands once")
+        void defaultTextReparseExpandsEscapeOnce() {
+            Placeholder ph = placeholderAt(parse("${a:\\${b}}"), 0);
+
+            List<Segment> reparsed = parse(ph.defaultValue());
+
+            assertEquals(List.of(new Literal("${b}")), reparsed);
+        }
+
+        @Test
+        @DisplayName("text after the escaped reference stays in the default: ${a:\\${b} and more}")
+        void textAfterEscapedReferenceStaysInDefault() {
+            List<Segment> result = parse("${a:\\${b} and more}");
+
+            assertEquals(1, result.size(), "Expected exactly one segment: " + result);
+            assertEquals("\\${b} and more", placeholderAt(result, 0).defaultValue());
+        }
+
+        @Test
+        @DisplayName("an escaped ${ with no closing brace leaves the reference unterminated: ${a:x\\${}")
+        void escapedOpenWithoutCloseIsUnterminated() {
+            List<Segment> result = parse("${a:x\\${}");
+
+            assertEquals(1, result.size(), "Expected exactly one segment: " + result);
+            assertEquals(1, allMalformed(result).size());
+            assertEquals(0, allMalformed(result).get(0).offset());
+        }
+
+        @Test
+        @DisplayName("an escape in the key is kept as written: ${\\${x}} has key '\\${x}'")
+        void escapeInKeyKeptAsWritten() {
+            List<Segment> result = parse("${\\${x}}");
+
+            assertEquals(1, result.size(), "Expected exactly one segment: " + result);
+            Placeholder ph = placeholderAt(result, 0);
+            assertEquals("\\${x}", ph.key());
+            assertNull(ph.defaultValue());
+        }
+
+        @Test
+        @DisplayName("the first top-level colon after an escape in the key still splits: ${\\${x}:d}")
+        void colonAfterEscapeInKeySplits() {
+            List<Segment> result = parse("${\\${x}:d}");
+
+            assertEquals(1, result.size(), "Expected exactly one segment: " + result);
+            Placeholder ph = placeholderAt(result, 0);
+            assertEquals("\\${x}", ph.key());
+            assertEquals("d", ph.defaultValue());
+        }
+
+        @Test
+        @DisplayName("a colon inside the escaped group is not top-level: ${\\${b:c}} has key '\\${b:c}' and no default")
+        void colonInsideEscapedGroupIsNotTopLevel() {
+            List<Segment> result = parse("${\\${b:c}}");
+
+            assertEquals(1, result.size(), "Expected exactly one segment: " + result);
+            Placeholder ph = placeholderAt(result, 0);
+            assertEquals("\\${b:c}", ph.key());
+            assertNull(ph.defaultValue());
+        }
+    }
+
     // --- Malformed / unterminated ---
 
     @Nested
@@ -380,6 +477,26 @@ class PlaceholderParserTest {
             List<Malformed> malformed = allMalformed(result);
             assertEquals(1, malformed.size());
             assertEquals("${abc", malformed.get(0).rawText());
+            assertEquals(0, malformed.get(0).offset());
+        }
+
+        @Test
+        @DisplayName("offset is the index of the opening ${ in the input: pa${ss → 2")
+        void unterminatedOffsetAfterLiteral() {
+            List<Segment> result = parse("pa${ss");
+            List<Malformed> malformed = allMalformed(result);
+            assertEquals(1, malformed.size());
+            assertEquals(2, malformed.get(0).offset());
+        }
+
+        @Test
+        @DisplayName("offset counts the escape as written: \\${x}y${ → 6")
+        void unterminatedOffsetAfterEscape() {
+            // The escape \${ occupies three input characters but emits two; the offset is in input coordinates
+            List<Segment> result = parse("\\${x}y${");
+            List<Malformed> malformed = allMalformed(result);
+            assertEquals(1, malformed.size());
+            assertEquals(6, malformed.get(0).offset());
         }
 
         @Test
@@ -409,6 +526,7 @@ class PlaceholderParserTest {
             List<Malformed> malformed = allMalformed(result);
             assertEquals(1, malformed.size());
             assertEquals("${:default}", malformed.get(0).rawText());
+            assertEquals(0, malformed.get(0).offset());
         }
 
         @Test
@@ -421,9 +539,10 @@ class PlaceholderParserTest {
             // One valid placeholder with key 'real'
             assertEquals(1, phs.size());
             assertEquals("real", phs.get(0).key());
-            // One Malformed for the unterminated '${abc'
+            // One Malformed for the unterminated '${abc', starting after the 7-character ${real}
             assertEquals(1, malformed.size());
             assertEquals("${abc", malformed.get(0).rawText());
+            assertEquals(7, malformed.get(0).offset());
         }
 
         @Test
@@ -485,6 +604,44 @@ class PlaceholderParserTest {
         @DisplayName("$x → false")
         void dollarXFalse() {
             assertFalse(PlaceholderParser.containsPlaceholder("$x"));
+        }
+    }
+
+    // --- needsResolution: placeholder or escape ---
+
+    @Nested
+    @DisplayName("needsResolution: true when the parse would change the input")
+    class NeedsResolutionTests {
+
+        @Test
+        @DisplayName("plain text → false")
+        void plainTextFalse() {
+            assertFalse(PlaceholderParser.needsResolution("no placeholders here"));
+        }
+
+        @Test
+        @DisplayName("${key} → true")
+        void placeholderTrue() {
+            assertTrue(PlaceholderParser.needsResolution("${key}"));
+        }
+
+        @Test
+        @DisplayName("unterminated ${abc → true")
+        void malformedTrue() {
+            assertTrue(PlaceholderParser.needsResolution("${abc"));
+        }
+
+        @Test
+        @DisplayName("escaped-only \\${b} → true, although containsPlaceholder is false")
+        void escapedOnlyTrue() {
+            assertTrue(PlaceholderParser.needsResolution("\\${b}"));
+            assertFalse(PlaceholderParser.containsPlaceholder("\\${b}"));
+        }
+
+        @Test
+        @DisplayName("a backslash not followed by ${ → false")
+        void loneBackslashFalse() {
+            assertFalse(PlaceholderParser.needsResolution("C:\\path\\$x"));
         }
     }
 

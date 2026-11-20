@@ -78,7 +78,7 @@ new group then reads all retained history. A binding that requires its strategie
 
 | Header | Direction | Meaning |
 |---|---|---|
-| `x-correlation-id` | read on consume | Seeds the record's correlation id. A record without it gets a generated UUID. Bound to MDC as `kafka.correlationId` for the dispatch |
+| `x-correlation-id` | read on consume | Seeds the record's correlation id. A record without it gets a generated UUID. Bound to MDC as `kafka.correlationId` for the dispatch, next to the framework's own `correlationId` key. The record's `kafka.consumer`, `kafka.topic`, `kafka.partition` and `kafka.offset` are bound for the same span, for handler and event-bus bindings alike |
 | the `matchHeader` of a route | read on consume | Selects a model-3 route |
 | `vertique-<namespace>` | read on consume | Decoded into the durable context that is bound for the dispatch. A value that is not a JSON object is skipped |
 | `x-dlq-source-topic` | written on DLQ publish | Original topic; kept when the record already carries all three source headers |
@@ -213,7 +213,7 @@ A binding names a `handler` or a `dispatchTo` target, not both: `build()` throws
 `ignoreUndecodable`, `noHeaderContext` or `requireBindingStrategies` is set and no `handler` is, and when
 `requireBindingStrategies` is set without `commitStrategy(CommitStrategy.MANUAL)`: the default `AUTO` could
 commit past an unsettled record when the consumer closes. A binding
-that names neither a handler nor a target builds, and the registrar refuses it at startup. A handler binding is registered as a handler-kind consumer
+that names neither a handler nor a target builds, and the registrar refuses it at startup with a violation naming the binding, collected with the other registration violations. A handler binding is registered as a handler-kind consumer
 (see Model 4): it receives the decoded `KafkaMessage<V>` with key, topic, partition, offset,
 timestamp and headers, runs with the record's durable context installed, and keeps the binding's
 filter, commit strategy, error and retry strategy, dead-letter topic, custom deserializer and
@@ -681,13 +681,16 @@ build time.
 | `jsonProfile` | unset | JSON mapper profile id for value deserialization |
 | `serdeProperties` | — | Serde and registry config; never passed to the Kafka client |
 | `properties` | — | Kafka-client property overrides for this consumer only |
-| `retry.maxRetries` | `3` | Must be `>= 0` |
+| `retry.maxRetries` | `3` | Must be `>= 0`; `0` sends the first failure straight to `exhaustedStrategy` with no retry |
 | `retry.backoffMs` | `1000` | Must be `>= 0` |
 | `retry.backoffMultiplier` | `2.0` | Must be `>= 1.0` |
 | `retry.maxBackoffMs` | `60000` | Must be `>= 0` |
 | `retry.exhaustedStrategy` | `DEAD_LETTER` | Must not be `RETRY` |
 
-A violated constraint fails startup with a `ConfigurationException` naming the exact config path.
+A violated constraint fails startup with a `ConfigurationException` naming the exact config path and
+carrying no configured value. The `retry` block is validated whenever it is configured, whatever the
+consumer's `errorStrategy`: a `retry.exhaustedStrategy` of `RETRY` or a `retry.maxBackoffMs` below
+`retry.backoffMs` fails startup even on a consumer that does not retry.
 
 ### Kafka client property merge order
 
@@ -698,16 +701,35 @@ Later entries win:
 2. global `kafka.properties`;
 3. per-consumer `kafka.consumers.{name}.properties`.
 
-`sasl.jaas.config` is constructed automatically when `sasl.username` and `sasl.password` are present
-and `sasl.jaas.config` is absent.
+`sasl.jaas.config` is constructed automatically when `security.protocol` contains `SASL`,
+`sasl.username` and `sasl.password` are present, and `sasl.jaas.config` is absent. In every other case
+`sasl.username` and `sasl.password` are dropped before the Kafka client is created, so credentials
+alone never trigger construction. Producers and consumers share this rule.
 
 Producers merge fixed serializers, then the root-level connection scalars, then `kafka.properties`,
 then `kafka.producer.properties`. The framework sets no `acks` or `enable.idempotence`, so producers
 inherit the Kafka client defaults (`acks=all` and `enable.idempotence=true` with the `kafka-clients`
 4.x line brought in by Vert.x) unless one of those property bags sets them.
 
-When `bootstrap.servers` is not configured through any source, producer startup fails with an
-`IllegalStateException` rather than silently falling back to `localhost:9092`.
+When `bootstrap.servers` is missing or blank after those layers are merged, constructing the
+`KafkaProducerFactory` fails with an `IllegalStateException` rather than silently falling back to
+`localhost:9092`. The check only merges the property bags and never connects; the shared producer
+client is still created on the first send. The factory is a lazily built singleton, so the failure
+happens when the application graph first requests it (for example the consumer deployment or an
+injected producer proxy), which is application startup in the usual wiring, instead of the first
+publish.
+
+**Behaviour change.** The check used to run on the first send. An application that wires the Kafka
+module but has no producer-level `bootstrap.servers` now fails at startup, even when it declares no
+producer: this includes an application with no `kafka` configuration at all, and one that sets the
+address only under `kafka.consumers.{name}.properties`. Set `bootstrap.servers` at the `kafka` root
+or in `kafka.properties`; the address is never contacted at construction.
+
+**Why consumers run the check.** The consumer deployment manager takes the producer factory for
+dead-letter sends, so an application with consumers and no producers constructs the factory too. The
+check fails only when no `bootstrap.servers` reaches the producer layers: the root-level `kafka.*`
+connection keys, `kafka.properties` and `kafka.producer.properties`. An application that sets the address
+only per consumer would already have failed at its first dead-letter send; it now fails at startup.
 
 **Properties files.** With Vert.x hierarchical expansion (`hierarchical=true`), dotted keys such as
 `kafka.bootstrap.servers` expand into nested JSON. Both the flat and nested forms resolve.
@@ -719,20 +741,27 @@ Serde and schema-registry configuration lives in its own namespace:
 
 | Path | Purpose |
 |---|---|
-| `kafka.schemaRegistry.*` | Global schema-registry config (URL, auth) |
+| `kafka.schemaRegistry.url` | Global schema-registry URL; the block carries `url` only |
 | `kafka.consumers.{name}.serdeProperties.*` | Per-consumer serde overrides |
 | `kafka.producers.{name}.serdeProperties.*` | Per-producer serde overrides |
 | `kafka.producers.{name}.methods.{method}.serdeProperties.*` | Per-method serde overrides |
 
-Merge order, most specific last: `kafka.schemaRegistry.*` → per-producer or per-consumer
+Registry credentials and other client settings (for example the `apicurio.registry.*` keys) go in
+`serdeProperties`, not in `schemaRegistry`. The Avro provider fails startup on any other key under
+`kafka.schemaRegistry`, naming the key and never its value; see the `vertique-kafka-avro` reference.
+
+Merge order, most specific last: `kafka.schemaRegistry.url` → per-producer or per-consumer
 `serdeProperties` → per-method `serdeProperties`.
 
 ### Secrets
 
-Secret keys inside `properties`, `serdeProperties`, `schemaRegistry`, and the root connection
-properties are masked when a config object is rendered, so a startup log or a `ConfigurationException`
-never reveals a credential. `kafka.messageKeyHash.hmacSecret` is write-only — it deserializes in and
-is never serialized back out.
+Secret keys inside `properties`, `serdeProperties`, `schemaRegistry` (which accepts `url` only; masked as
+defense in depth), and the root connection properties are masked when a config object is rendered, so a startup log or a `ConfigurationException`
+never reveals a credential. `kafka.messageKeyHash.hmacSecret` deserializes in and stays readable; the
+config mapper behind `ConfigParser` serializes it as `"***"` when set and omits it when absent (the
+shared secret rule, `ConfigSecretRenderer` in `dev.vertique:vertique-core`), and `ConfigParser`
+rejects a literal `"***"` as its value. Only the config mapper masks; another `ObjectMapper` prints
+the secret.
 
 ### JSON mapper profile precedence
 
@@ -987,12 +1016,13 @@ First match wins:
 
 1. the endpoint's own `format` — consumer or producer-method config;
 2. global `kafka.format`;
-3. auto-detection — each registered provider's `autoDetects(valueType)` in registration order;
+3. auto-detection — the one registered provider whose `autoDetects(valueType)` returns `true`; if two
+   providers claim the type, startup fails naming both, so set an explicit `format`;
 4. `"json"`, the terminal fallback key.
 
 `"json"` is an ordinary provider key, not a built-in. Resolving to it still requires a registered
-provider, so a format with no provider fails startup with an `IllegalArgumentException` naming the
-missing module.
+provider, so a format with no provider fails startup naming the missing module: as a violation in the
+`KafkaRegistrationException` for a consumer, as an `IllegalArgumentException` for a producer.
 
 ### Worker threading for blocking formats
 
@@ -1084,8 +1114,8 @@ later interceptors are not invoked.
 value, rawEvidence, headers, timestamp, retryCount, filtered, attributes)` — with copy-on-write
 `withFiltered(boolean)` and `withAttribute(String, Object)`. `headers` is the record's
 `KafkaRecordHeaders` as received; both `with…` methods carry the same instance over. `retryCount` is
-0-based and counts Kafka-native redeliveries, so a retry-topic routing decision in `recoverError`
-can read it.
+0-based and counts the in-memory retries started for the record in this consumer, so a retry-topic routing
+decision in `recoverError` can read it. It restarts at 0 after a partition revocation or a restart.
 
 ### Record completion: `onRecordCompleted`
 
@@ -1308,11 +1338,10 @@ default accepts every producer interface.
 
 | Failure | Cause |
 |---|---|
-| `ConfigurationException` | A consumer config bound is violated — an unknown `commitStrategy`, `errorStrategy`, or `retry.exhaustedStrategy`, `eventBusTimeoutMs <= 0`, `maxInFlight < 1`, `instances < 1`, `maxRetries < 0`, `backoffMs < 0`, `backoffMultiplier < 1.0`, `maxBackoffMs < 0`. Enum failures identify the invalid type and value; other validation messages name the exact config path |
-| `KafkaRegistrationException` | An invalid consumer declaration, or a generated binding companion that is present but malformed. A `ConfigurationException` subtype — broken generated code is never silently skipped |
-| `IllegalArgumentException` | The resolved format has no registered `KafkaSerdeProvider`; the message names the missing module |
-| `IllegalStateException` | `worker = false` on a consumer whose effective deserializer reports `mayBlock()` |
-| `IllegalStateException` | `bootstrap.servers` missing for a producer |
+| `ConfigurationException` | A consumer config bound is violated — an unknown `commitStrategy`, `errorStrategy`, or `retry.exhaustedStrategy`, `eventBusTimeoutMs <= 0`, `maxInFlight < 1`, `instances < 1`, `maxRetries < 0`, `backoffMs < 0`, `backoffMultiplier < 1.0`, `maxBackoffMs < 0`. Every failure names the exact config path (`kafka.consumers.{name}.errorStrategy`, `.commitStrategy`, `.retry.exhaustedStrategy`, or `.retry`) and carries no value, including an unknown enum value |
+| `KafkaRegistrationException` | An invalid consumer declaration, or a generated binding companion that is present but malformed. A `ConfigurationException` subtype — broken generated code is never silently skipped. All violations of one registration are collected into one exception, including a consumer's resolved format with no registered `KafkaSerdeProvider` (the message names the missing module), an ambiguous format auto-detection, and `worker = false` on a consumer whose effective deserializer reports `mayBlock()` |
+| `IllegalArgumentException` | A producer's resolved format has no registered `KafkaSerdeProvider`; the message names the missing module |
+| `IllegalStateException` | `bootstrap.servers` missing or blank when the producer factory is constructed |
 
 ### Runtime failures
 
@@ -1340,7 +1369,7 @@ default accepts every producer interface.
 - **Contributing a model-3 router instance.** A routing interface contributes its `Class<?>` literal;
   models 1 and 4 contribute instances.
 - **Putting serde settings in `properties`.** That bag goes verbatim to the Kafka client. Serde and
-  registry settings belong in `serdeProperties` and `kafka.schemaRegistry`.
+  registry settings belong in `serdeProperties`, with only the registry URL in `kafka.schemaRegistry`.
 - **Expecting consumers to start themselves.** Nothing calls `deployAll()` for you.
 - **Installing `KafkaModule` alone.** With no format provider, any consumer needing a serde fails at
   startup.

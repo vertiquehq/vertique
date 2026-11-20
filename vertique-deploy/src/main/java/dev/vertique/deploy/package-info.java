@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: EUPL-1.2
 
 /**
- * Dagger-based verticle deployment with phase orchestration, multi-instance, and priority support.
+ * Dagger-based verticle deployment with sequential phase/priority/name ordering and multi-instance support.
  *
  * <p>Key types:
  * <ul>

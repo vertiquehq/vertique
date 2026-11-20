@@ -18,8 +18,8 @@ import java.util.function.ToLongFunction;
  * outside the maturity promise. Applications use the surface the module document lists.
  *
  * LOCAL {@link RateLimitBackend}: routes each request to the requesting policy's own bounded
- * {@link LocalRateLimitRegistry} (contracts/rate-limit-runtime.md, "Local engine contract" — the
- * registry, and its {@code maxTrackedKeys} budget, is per policy, never one shared pool).
+ * {@link LocalRateLimitRegistry} (the registry, and its {@code maxTrackedKeys} budget, is per
+ * policy, never one shared pool).
  *
  * <p>The policy name is recovered from {@code request.storageKey()}'s leading {@code ':'}-delimited
  * segment — safe because policy-name syntax ({@code [A-Za-z0-9._~-]{1,128}}) never contains a colon,

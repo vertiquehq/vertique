@@ -119,7 +119,7 @@ received or processed it, and server failures cannot reach the caller.
 
 `DispatchEnvelope` may additionally carry an optional reply address alongside the payload and
 dispatch metadata. When one is present, the operation's outcome — success, or the final failure
-after any `ServiceInterceptor` recovery — is published to that address instead of being sent back
+after any `ServiceInterceptor` recovery — is sent to that address (point-to-point, to one consumer) instead of being sent back
 on the originating event-bus message. This is a third delivery mode ("fire-and-report"), distinct
 from both request/reply and `@OneWay`.
 
@@ -183,8 +183,10 @@ public interface UserService {
 }
 ```
 
-At most one parameter may be a domain payload. A contract may declare dispatch-context values, but
-server-only values such as `SecurityContext` are better added to a `ServiceHandler` method.
+At most one parameter may be a domain payload. A contract method may take `SecurityContext` as its only
+dispatch-context parameter, but `@DispatchContextValue` parameters are handler-only: on a contract method
+such a parameter is an ordinary payload. Server-only values such as `SecurityContext` are better added to
+a `ServiceHandler` method.
 
 ### 2. Implement a handler
 
@@ -634,7 +636,7 @@ Configuration lives under `services`. The empty namespace uses `_` as its config
 
 | Key | Default | Constraint |
 |---|---:|---|
-| `services.sendTimeoutMs` | `30000` | greater than 0 |
+| `services.sendTimeoutMs` | none; absent means derived from the resilience budget, with `30000` ms as the last fallback | greater than 0 |
 | `security.authz.gateDeadlineMs` | `5000` | greater than 0, a number or a numeric string; the authorizer-call deadline, the key the REST, WebSocket and MCP gates also read |
 | `contracts.{ns}.{name}.instances` | `1` | at least 1 |
 | `contracts.{ns}.{name}.worker` | `false` | boolean |

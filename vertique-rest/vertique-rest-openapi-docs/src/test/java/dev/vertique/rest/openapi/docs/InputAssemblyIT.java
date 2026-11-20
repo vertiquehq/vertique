@@ -18,6 +18,7 @@ import dev.vertique.rest.jaxrs.routing.ParamLocation;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsDescriptorRegistry;
 import dev.vertique.rest.openapi.docs.InputTestComponents.FrozenComponent;
 import dev.vertique.rest.openapi.docs.InputTestComponents.PatternsComponent;
+import dev.vertique.rest.openapi.docs.InputTestComponents.SharedOperationIdComponent;
 import dev.vertique.rest.openapi.docs.InputTestComponents.TwinsComponent;
 import dev.vertique.rest.openapi.docs.InputTestComponents.TwoApplicationsComponent;
 import dev.vertique.rest.openapi.docs.InputTestComponents.VerbatimComponent;
@@ -44,6 +45,10 @@ import dev.vertique.rest.openapi.docs.fixture.input.patterns.FlaggedRequest;
 import dev.vertique.rest.openapi.docs.fixture.input.patterns.FoldedRequest;
 import dev.vertique.rest.openapi.docs.fixture.input.patterns.PatternsApi;
 import dev.vertique.rest.openapi.docs.fixture.input.patterns.PatternsResource;
+import dev.vertique.rest.openapi.docs.fixture.input.sharedid.DeliveryResource;
+import dev.vertique.rest.openapi.docs.fixture.input.sharedid.ShelfResource;
+import dev.vertique.rest.openapi.docs.fixture.input.sharedid.StoreApi;
+import dev.vertique.rest.openapi.docs.fixture.input.sharedid.SupplierApi;
 import dev.vertique.rest.openapi.docs.fixture.support.Futures;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Verticle;
@@ -497,6 +502,55 @@ public class InputAssemblyIT {
         } finally {
             undeploy(deployment);
         }
+    }
+
+    @Test
+    @DisplayName("Two applications whose distinct resources share the operation id 'list' each publish their own"
+            + " 'list' in their own document")
+    void twoApplicationsSharingAnOperationIdEachDescribeTheirOwn() throws Exception {
+        // Given: two documented applications whose distinct resource methods both have the id 'list'.
+        SharedOperationIdComponent component = DaggerInputTestComponents_SharedOperationIdComponent.factory()
+                .create(webValidationConfig(StoreApi.NAME, SupplierApi.NAME));
+
+        // When: the composition starts (the deployment succeeds) and both documents are requested.
+        Deployment deployment = deploy(component::httpVerticle);
+        try {
+            JsonObject store = fetchJsonDocument(deployment.port(), StoreApi.NAME);
+            JsonObject supplier = fetchJsonDocument(deployment.port(), SupplierApi.NAME);
+
+            // Then: each document publishes 'list' once, at its own route, with its own parameter.
+            assertOwnListOperation(store, StoreApi.PATH, ShelfResource.ROUTE, ShelfResource.PARAMETER);
+            assertOwnListOperation(supplier, SupplierApi.PATH, DeliveryResource.ROUTE, DeliveryResource.PARAMETER);
+            assertFalse(
+                    store.encode().contains(DeliveryResource.PARAMETER), "the store document holds no supplier input");
+            assertFalse(
+                    supplier.encode().contains(ShelfResource.PARAMETER), "the supplier document holds no store input");
+        } finally {
+            undeploy(deployment);
+        }
+    }
+
+    /**
+     * Checks that a document publishes exactly one operation, {@code list}, at {@code route}, with a
+     * single query parameter named {@code parameter}, and names {@code mountPath} as its server.
+     */
+    private static void assertOwnListOperation(JsonObject document, String mountPath, String route, String parameter) {
+        String label = "document at " + mountPath;
+        assertEquals(
+                Map.of(ShelfResource.LIST, "get " + route),
+                operationsById(document),
+                () -> label + ": exactly its own 'list' operation, at its own route: " + document.encode());
+        assertEquals(
+                mountPath,
+                document.getJsonArray("servers").getJsonObject(0).getString("url"),
+                () -> label + ": servers[0].url is the application's mount");
+        JsonArray parameters = operation(document, route, "get").getJsonArray("parameters");
+        assertNotNull(parameters, () -> label + ": the list operation's parameters");
+        assertEquals(1, parameters.size(), () -> label + ": one parameter: " + parameters.encode());
+        assertEquals(
+                parameter,
+                parameters.getJsonObject(0).getString("name"),
+                () -> label + ": its own query parameter: " + parameters.encode());
     }
 
     /**

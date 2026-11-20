@@ -32,7 +32,8 @@ import lombok.extern.jackson.Jacksonized;
  * }</pre>
  *
  * <p>All fields have sensible defaults. The scrape path must match {@code ^/[A-Za-z0-9._/-]*$},
- * must not contain {@code *} or {@code :}, and must not equal or start with {@code /health}.
+ * must not contain {@code *} or {@code :}, and must not equal {@code /health} or start with
+ * {@code /health/}.
  * These constraints are validated in {@link MicrometerPrometheusModule} before the application
  * starts.
  *

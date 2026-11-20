@@ -6,7 +6,7 @@ package dev.vertique.security.runtime;
 /**
  * Policy governing what happens when a deferred execution's carried
  * {@link dev.vertique.security.IdentitySnapshot} is present but fails HMAC verification
- * (PRD-ID-002 §14.3 "Durable carriage" — {@code identity.snapshot.onDegradation}).
+ * ({@code identity.snapshot.onDegradation}).
  *
  * <p>Consulted by the service-dispatch degradation gate (in {@code vertique-services}) after the
  * receive-side initializer binds a {@code SnapshotDegradationMarker} for an unverifiable snapshot.

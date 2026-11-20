@@ -6,6 +6,7 @@ package dev.vertique.rest.jaxrs;
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.response.ResponseBodyEncoder;
+import io.vertx.core.buffer.Buffer;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
@@ -30,6 +31,14 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 class MediaTypeValidator {
 
+    /**
+     * Target types probed at startup. The declared parameter or return type is not available to
+     * the validator, so a media type counts as supported when any decoder or encoder accepts it for
+     * any of these: the built-in decoders and encoders are keyed on the target type as well as the
+     * media type, and no single type is accepted by all of them.
+     */
+    private static final List<Class<?>> PROBE_TYPES = List.of(Object.class, String.class, Buffer.class, byte[].class);
+
     private MediaTypeValidator() {}
 
     /**
@@ -38,9 +47,10 @@ class MediaTypeValidator {
      * type has at least one matching {@link ResponseBodyEncoder}.
      *
      * <p>Validation is performed by calling {@link RequestBodyDecoder#canDecode(Class, String)}
-     * and {@link ResponseBodyEncoder#canEncode(Class, String)} with {@code Object.class} as the
-     * target type, since the actual parameter or return type is irrelevant for media-type support
-     * checks at startup.
+     * and {@link ResponseBodyEncoder#canEncode(Class, String)} with each of {@code Object},
+     * {@code String}, {@code Buffer} and {@code byte[]} as the target type, since the actual
+     * parameter or return type is not known at startup. A media type is supported when any
+     * decoder or encoder accepts it for any of those types.
      *
      * <p>When {@code mode} is {@code "OFF"} (case-insensitive), this method returns immediately
      * without performing any checks.
@@ -70,7 +80,7 @@ class MediaTypeValidator {
             }
 
             for (String type : mediaTypes.consumes()) {
-                if (decoders.stream().noneMatch(d -> d.canDecode(Object.class, type))) {
+                if (!anyDecoderSupports(decoders, type)) {
                     violations.add("Operation '" + method.operationId()
                             + "' declares @Consumes(\""
                             + type
@@ -79,7 +89,7 @@ class MediaTypeValidator {
             }
 
             for (String type : mediaTypes.produces()) {
-                if (encoders.stream().noneMatch(e -> e.canEncode(Object.class, type))) {
+                if (!anyEncoderSupports(encoders, type)) {
                     violations.add("Operation '" + method.operationId()
                             + "' declares @Produces(\""
                             + type
@@ -97,5 +107,13 @@ class MediaTypeValidator {
         }
 
         violations.forEach(v -> log.warn("Media type mismatch: {}", v));
+    }
+
+    private static boolean anyDecoderSupports(List<RequestBodyDecoder> decoders, String type) {
+        return decoders.stream().anyMatch(d -> PROBE_TYPES.stream().anyMatch(t -> d.canDecode(t, type)));
+    }
+
+    private static boolean anyEncoderSupports(List<ResponseBodyEncoder> encoders, String type) {
+        return encoders.stream().anyMatch(e -> PROBE_TYPES.stream().anyMatch(t -> e.canEncode(t, type)));
     }
 }

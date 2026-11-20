@@ -76,7 +76,8 @@ public record ResiliencePolicyOverrides(
                 mergeBackoff(high.backoff(), low.backoff()),
                 prefer(high.retryOn(), low.retryOn()),
                 prefer(high.abortOn(), low.abortOn()),
-                prefer(high.fallbackPolicy(), low.fallbackPolicy())));
+                prefer(high.fallbackPolicy(), low.fallbackPolicy()),
+                high.retryAfterMaxMs() != null ? high.retryAfterMaxMs() : low.retryAfterMaxMs()));
     }
 
     private static Optional<CircuitBreakerOverride> mergeCircuitBreaker(
@@ -142,6 +143,7 @@ public record ResiliencePolicyOverrides(
 
     private static boolean hasRetrySiblingValue(RetryOverride value) {
         return value.maxRetries().isPresent()
+                || value.retryAfterMaxMs() != null
                 || value.backoff().isPresent()
                 || value.retryOn().isPresent()
                 || value.abortOn().isPresent()

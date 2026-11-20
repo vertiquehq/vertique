@@ -5,6 +5,7 @@ package dev.vertique.workflow.postgresql.executor;
 
 import static dev.vertique.workflow.postgresql.executor.ExecutionLockTestSupport.LONG_LOCK_TIMEOUT_MS;
 import static dev.vertique.workflow.postgresql.executor.ExecutionLockTestSupport.await;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
@@ -37,6 +38,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -44,8 +46,9 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Proves that every entry point that changes an instance holds the instance's execution lock when it returns, so that
- * a path that is added or changed without taking the lock fails here by name.
+ * Proves that every entry point that changes an instance holds the instance's execution lock when it returns, and
+ * waits for that lock before it writes or locks any row, so that a path that is added or changed without taking the
+ * lock first fails here by name.
  *
  * <p>Each entry point runs on an instance prepared for it, in a transaction that stays open after the call. The proof
  * looks at the lock table for the backend of that transaction and asks a second session for the lock of the same
@@ -150,6 +153,37 @@ class ExecutionLockCoverageIT {
                     otherSessionGotIt,
                     entryPoint + " does not hold the execution lock of instance " + changed.value() + "; the call "
                             + outcome.get());
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("entryPoints")
+    void everyInstanceChangingEntryPointWaitsForTheExecutionLockBeforeTakingAnyRowLock(EntryPoint entryPoint) {
+        // Given an instance in the state the entry point works on; the entry point that creates its instance has none
+        Call prepared = entryPoint.prepare().apply(assembly);
+        Assumptions.assumeTrue(prepared.instance() != null, entryPoint + " creates its instance");
+        try (TwoSessions sessions = new TwoSessions(assembly.runner(), pool, vertx)) {
+
+            // And another session that holds the execution lock of the instance
+            Held<WorkflowInstanceId> holder = sessions.holdOpen(tx ->
+                    assembly.commands().lockInstance(prepared.instance(), tx).map(locked -> prepared.instance()));
+            holder.ready();
+
+            // When the entry point runs in its own transaction and waits for that lock
+            Held<WorkflowInstanceId> waiting =
+                    sessions.holdOpen(tx -> prepared.call().apply(tx));
+            sessions.awaitBlocked(waiting);
+
+            // Then it has written no row and locked none: whatever order the row locks of the engine follow, they are
+            // taken only by the one transaction that holds the instance
+            assertEquals(
+                    0L,
+                    sessions.transactionIdLocksHeldBy(waiting.pid()),
+                    entryPoint + " took a row lock before it held the execution lock");
+
+            // And once the holder commits it completes
+            holder.commit();
+            assertNotNull(waiting.ready(), entryPoint + " did not complete after the lock was released");
         }
     }
 

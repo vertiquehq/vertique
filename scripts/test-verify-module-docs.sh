@@ -113,7 +113,7 @@ write_document_with_violation() {
 # $3 = document mode: present|empty|whitespace|missing, or one of the
 #      content-rule violations adr-hyphen|adr-space|task-reference|
 #      contract-section|related-adrs-heading|version-history|planned-additions|
-#      missing-status|invalid-status|unresolved-repo-path
+#      missing-status|invalid-status|retired-status|unresolved-repo-path
 fixture_write_document() {
     local module_path="$1"
     local artifact_id="$2"
@@ -187,6 +187,14 @@ DOC
             {
                 printf '# %s\n\n' "$artifact_id"
                 printf '%s\n\n' '> **Status:** Maintained'
+                printf '%s\n' 'One-paragraph overview of what the module does.'
+            } > "$document"
+            ;;
+        retired-status)
+            mkdir -p "$(dirname "$document")"
+            {
+                printf '# %s\n\n' "$artifact_id"
+                printf '%s\n\n' '> **Status:** Implemented'
                 printf '%s\n' 'One-paragraph overview of what the module does.'
             } > "$document"
             ;;
@@ -560,6 +568,14 @@ fixture_add_baseline_artifacts
 fixture_add_aligned_artifact vertique-delta vertique-delta jar invalid-status
 fixture_finish
 run_case "invalid-status-value" fail "$fixture_root" \
+    'vertique-delta has no valid "> **Status:**" blockquote'
+
+# `Implemented` is a retired status value: no document may reintroduce it.
+fixture_reset retired-status-value
+fixture_add_baseline_artifacts
+fixture_add_aligned_artifact vertique-delta vertique-delta jar retired-status
+fixture_finish
+run_case "retired-status-value" fail "$fixture_root" \
     'vertique-delta has no valid "> **Status:**" blockquote'
 
 # A backticked repository-relative path that resolves to nothing is a link the

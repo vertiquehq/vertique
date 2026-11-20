@@ -24,7 +24,7 @@ import lombok.extern.slf4j.Slf4j;
 
 /**
  * {@link McpRequestLifecycleObserver} implementation that records MCP server outcomes as Micrometer
- * meters (contract §4.10).
+ * meters.
  *
  * <p>Contributed to the {@link McpRequestLifecycleObserver} multibinding by {@link
  * McpMicrometerModule}. {@link #open} increments the untagged {@value #ACTIVE_GAUGE} gauge; the
@@ -47,7 +47,7 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p><b>Bounded dimensions only.</b> Every tag value is drawn from a fixed, low-cardinality domain:
  * {@code method} is an {@link McpMethod} name with {@link McpMethod#OTHER} remapped to {@value
- * #OTHER_METHOD_TAG} (FR-MCP-203); {@code outcome}, {@code error.type}, {@code result.type}, and
+ * #OTHER_METHOD_TAG}; {@code outcome}, {@code error.type}, {@code result.type}, and
  * {@code transport.outcome} are the corresponding enum names; {@code tool} is {@link
  * McpRequestTerminalEvent#toolName()}, which {@code McpRequestTerminalEvent}'s own compact
  * constructor already bounds to either the literal {@link McpRequestTerminalEvent#UNKNOWN_TOOL_NAME}
@@ -55,7 +55,7 @@ import lombok.extern.slf4j.Slf4j;
  * client-requested tool name never reaches this observer as a distinct value; every producer
  * upstream of the lifecycle SPI collapses it to {@code UNKNOWN} first. No request ID, correlation ID,
  * trace ID, principal, argument, result, or exception text is ever read by this class, so none can
- * become a tag (FR-MCP-202).
+ * become a tag.
  *
  * <p>Throwing meter registries are isolated: any exception during gauge registration, gauge
  * maintenance, or meter recording is caught, logged at WARN, and swallowed, so a misbehaving registry
@@ -98,8 +98,8 @@ final class McpServerMetricsObserver implements McpRequestLifecycleObserver {
     static final String TAG_TRANSPORT_OUTCOME = "transport.outcome";
 
     /**
-     * Bounded fallback tag value for an unrecognized client-provided {@link McpMethod}
-     * (FR-MCP-203). {@link McpMethod#OTHER} already exists to represent this case, but its enum
+     * Bounded fallback tag value for an unrecognized client-provided {@link McpMethod}.
+     * {@link McpMethod#OTHER} already exists to represent this case, but its enum
      * name is remapped here to the underscore-prefixed literal so the tag value cannot be confused
      * with a raw, unbounded client-supplied method string.
      */
@@ -262,7 +262,7 @@ final class McpServerMetricsObserver implements McpRequestLifecycleObserver {
 
     /**
      * Maps a recognized {@link McpMethod} to its bounded tag value, collapsing {@link
-     * McpMethod#OTHER} to {@value #OTHER_METHOD_TAG} (FR-MCP-203).
+     * McpMethod#OTHER} to {@value #OTHER_METHOD_TAG}.
      *
      * @param method the terminal event's recognized method class; never {@code null}
      * @return the bounded tag value; never {@code null}

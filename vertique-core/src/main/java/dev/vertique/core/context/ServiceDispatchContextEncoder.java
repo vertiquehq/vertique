@@ -12,9 +12,9 @@ package dev.vertique.core.context;
  * wire value stored under {@link #key()} in the dispatch-context map.
  *
  * <p>Implementations MUST NOT return {@code null} from {@link #encode} — a null return is an SPI
- * contract violation that fails the outgoing service call (FR-CTX-050).
+ * contract violation that fails the outgoing service call.
  *
- * <p>Implementations MUST NOT block the Vert.x event loop (FR-CTX-049).
+ * <p>Implementations MUST NOT block the Vert.x event loop.
  *
  * @param <T> the context value type this encoder handles; must implement {@link ContextValue}
  */

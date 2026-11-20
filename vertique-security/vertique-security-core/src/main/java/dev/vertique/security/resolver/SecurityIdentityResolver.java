@@ -18,7 +18,7 @@ import java.util.Optional;
  * returns a non-empty {@link Optional}. A resolver that cannot interpret the context returns
  * {@link Optional#empty()} to pass control to the next resolver in the chain.
  *
- * <p><b>Priority and id contract (NFR-ID-003):</b> Lower {@link #priority()} values run first.
+ * <p><b>Priority and id contract:</b> Lower {@link #priority()} values run first.
  * Custom resolvers SHOULD pick stable priorities:
  * <ul>
  *   <li>{@code < 100} — run before framework defaults</li>
@@ -54,7 +54,7 @@ public interface SecurityIdentityResolver extends OrderedExtension {
 
     /**
      * Returns the stable identifier used as the deterministic tie-break when two resolvers share
-     * the same {@link #priority()} (NFR-ID-003).
+     * the same {@link #priority()}.
      *
      * <p>The default is the fully-qualified class name. Custom resolvers MAY override this to pin a
      * stable id that survives class rename or refactor. Two resolvers with the same

@@ -15,7 +15,7 @@ import java.util.Optional;
  * <p>Contains the operation metadata as a transport-neutral {@link RestOperationDescriptor} and the
  * per-operation {@link RouteRegistration} onto which contributors add handlers. Both are neutral
  * rest-core types — the context no longer exposes the Vert.x OpenAPI {@code OpenAPIRoute} or
- * {@code RouterBuilder} (FR-022).
+ * {@code RouterBuilder}.
  *
  * <p>The {@link #requiredAction()} component carries the canonical {@link ActionRef} resolved from a
  * {@code @RequiresAction} annotation on the operation's method or class (method overrides class),

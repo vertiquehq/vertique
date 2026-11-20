@@ -21,8 +21,8 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Durable metadata decoder for {@link IdentitySnapshotContext} (PRD-ID-002 §14.3 "Durable
- * carriage", §14.6 amendment A9 — schema v2 verification + carrier binding).
+ * Durable metadata decoder for {@link IdentitySnapshotContext} (schema v2 verification + carrier
+ * binding).
  *
  * <p>Pairs with {@link IdentitySnapshotDurableEncoder}: reads the base64-encoded, signed snapshot
  * bytes from the {@value IdentitySnapshotDurableEncoder#NAMESPACE} namespace, delegates to the injected
@@ -162,7 +162,7 @@ public final class IdentitySnapshotDurableDecoder implements DurableContextMetad
                             + "sentinel) and cannot be verified");
         }
 
-        // F5 carrier binding: the snapshot must be bound to the carrier the receiving dispatch was
+        // Carrier binding: the snapshot must be bound to the carrier the receiving dispatch was
         // written for. A mismatch is a replay/transplant onto a different row — bind nothing usable.
         if (!carrierMatches(decoded.carrier(), expectedCarrier)) {
             return unverifiable(

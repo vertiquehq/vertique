@@ -22,8 +22,7 @@ import jakarta.inject.Singleton;
  * throws {@link JsonProfileConfigurationException}. A {@code null}/blank id is a no-op.
  *
  * <p>This validator is forced unconditionally by {@code ComposeValidationStep} (VALIDATE phase)
- * even when <strong>zero</strong> rest clients are configured — closing the inert-boundary gap
- * ({@code FR-JSON-050}).
+ * even when <strong>zero</strong> rest clients are configured — closing the inert-boundary gap.
  */
 @Singleton
 public final class RestClientDefaultProfileValidator implements ComposeValidator {

@@ -76,7 +76,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * generator's own message and its preserved third-party cause keep their own bounds. That quoting
  * and that cause are the generator's exception alone: any other runtime exception the synthesis
  * catch admits contributes only its class's simple name, is attached neither as a cause nor as a
- * suppressed exception, and leaves the whole message within FR-JSON-075's bound.
+ * suppressed exception, and leaves the whole message within the message bound.
  * Request-validation outcomes and error categories are otherwise unaffected.
  *
  * <p><strong>No per-operation schema cache.</strong> This is a {@link Singleton} shared across every
@@ -105,7 +105,7 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
     private static final int MAX_OPERATION_IDENTITY_LENGTH = 256;
 
     /**
-     * FR-JSON-075's message bound, in UTF-16 code units. Applied to the whole diagnostic only when
+     * The diagnostic message bound, in UTF-16 code units. Applied to the whole diagnostic only when
      * this class authors all of it; see {@link #synthesisFailure(String, RuntimeException)}.
      */
     private static final int MAX_MESSAGE_LENGTH = 512;
@@ -333,9 +333,9 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
      * prepended.
      *
      * <p>Two failures reach this point and they are not treated alike. The generator's own
-     * {@link JsonSchemaGenerationException} is the single bounded exception type FR-JSON-076 defines:
-     * its message is quoted and it is preserved as the cause, which is exactly the raw-cause allowance
-     * FR-008 grants. <strong>Any other</strong> runtime exception is third-party text of unknown
+     * {@link JsonSchemaGenerationException} is the generator's single bounded exception type:
+     * its message is quoted and it is preserved as the cause, which is the only raw-cause allowance
+     * made here. <strong>Any other</strong> runtime exception is third-party text of unknown
      * shape and unknown length — a decode failure's message embeds the document it choked on — so it
      * contributes only its class's simple name and is not attached as a cause or as a suppressed
      * exception. Nothing it carries can then reach the message or the cause chain whatever its

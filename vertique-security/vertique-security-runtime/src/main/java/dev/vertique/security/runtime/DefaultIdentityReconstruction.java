@@ -29,7 +29,7 @@ import java.util.Optional;
 
 /**
  * Default {@link IdentityReconstruction} implementation, provided only by the privileged Dagger
- * module installed on framework infrastructure components (identity-002 §14.3).
+ * module installed on framework infrastructure components.
  *
  * <p>Both entry points re-verify the snapshot's integrity envelope <em>and</em> its current freshness
  * via {@link IdentitySnapshotCodec#verifyForUse(IdentitySnapshot)} before minting any
@@ -44,7 +44,7 @@ import java.util.Optional;
  * lineage recorded on the durable {@link IdentitySnapshot} capturing who/what the principal was at
  * capture time. The reconstructed context's {@link SecurityContext#authorization()} is therefore
  * always {@link AuthorizationClaims#empty()}; snapshot claims are never presented as current
- * authority. Current authority is resolved by mode per FR-ID-CA-010 (Phase-2
+ * authority. Current authority is resolved by mode (see
  * {@code PrincipalAuthorityResolver}), out of scope here.
  *
  * <p>Both entry points also mint the typed, unforgeable {@link ReconstructionMarker} signal
@@ -96,7 +96,7 @@ public final class DefaultIdentityReconstruction implements IdentityReconstructi
      * <p>The snapshot's {@code authorizationClaims} are attribution only (audit lineage on the
      * {@link IdentitySnapshot}); the reconstructed context's {@link SecurityContext#authorization()}
      * is {@link AuthorizationClaims#empty()} — snapshot claims are never presented as current
-     * authority. Current authority is resolved by mode per FR-ID-CA-010 (Phase-2
+     * authority. Current authority is resolved by mode (see
      * {@code PrincipalAuthorityResolver}).
      *
      * <p>The returned context's typed {@link ReconstructionMarker} carries no principal of its own
@@ -132,7 +132,7 @@ public final class DefaultIdentityReconstruction implements IdentityReconstructi
      * <p>The snapshot's {@code authorizationClaims} are attribution only (audit lineage on the
      * {@link IdentitySnapshot}); the reconstructed context's {@link SecurityContext#authorization()}
      * is {@link AuthorizationClaims#empty()} — snapshot claims are never presented as current
-     * authority. Current authority is resolved by mode per FR-ID-CA-010 (Phase-2
+     * authority. Current authority is resolved by mode (see
      * {@code PrincipalAuthorityResolver}).
      *
      * <p>The reconstructed identity carries a framework-mediated {@link DelegationContext} whose
@@ -140,17 +140,17 @@ public final class DefaultIdentityReconstruction implements IdentityReconstructi
      * {@code authorityId} is the stable framework marker {@code "deferred-execution"} (never the
      * snapshot's origin summary). This is a scheduling relationship, not a grant-backed delegation —
      * {@code DelegationEnforcementNarrower} recognizes this {@code kind} and passes the evaluation
-     * through unchanged rather than validating it as a grant (FR-ID-DG-006 excludes framework-
-     * scheduled deferred work from grant-scope intersection). When the snapshot carried a
+     * through unchanged rather than validating it as a grant (framework-scheduled deferred work is
+     * excluded from grant-scope intersection). When the snapshot carried a
      * {@link DelegationSummary}, that captured lineage is preserved as the bounded, audit-safe
      * attributes {@code delegation.captured.kind} and {@code delegation.captured.authorityId}
-     * (FR-ID-CA-004) — so a chained deferral never loses who the work is ultimately for.
+     * — so a chained deferral never loses who the work is ultimately for.
      *
      * <p>The returned context's typed {@link ReconstructionMarker} carries no principal of its own
      * — Mode 2 resolves current authority directly from the returned context's
      * {@link SecurityIdentity#actor()}, which here is {@code executingService}'s own actor (the
      * <strong>executing service</strong>, never the subject-of-record — subject-authority evaluation
-     * / impersonation is explicitly out of v1 scope per FR-ID-DG-006). The subject-of-record — the
+     * / impersonation is explicitly out of v1 scope). The subject-of-record — the
      * snapshot's {@link IdentitySnapshotContent#subject() subject} when present, else its
      * {@link IdentitySnapshotContent#actor() actor} — is carried on {@link SecurityIdentity#subject()}
      * as attribution only. The marker's authority mode is
@@ -207,7 +207,7 @@ public final class DefaultIdentityReconstruction implements IdentityReconstructi
     }
 
     /**
-     * Enforces the F5 carrier-binding check: the snapshot's signed
+     * Enforces the carrier-binding check: the snapshot's signed
      * {@link IdentitySnapshot#carrier()} must match the trusted receive-side {@code expectedCarrier}
      * on both {@code carrierId} and {@code target}. A mismatch means the snapshot was signed for a
      * different durable row (a replay/transplant), so reconstruction fails closed before any context
@@ -250,9 +250,9 @@ public final class DefaultIdentityReconstruction implements IdentityReconstructi
      * reconstruction's delegation lineage has already narrowed to the synthetic
      * deferred-execution summary, and the reconstructed {@link SecurityContext#origin()} is
      * already empty — see {@link DefaultIdentitySnapshotFactory} for how each of those is derived
-     * on re-capture. No Phase-1 production path re-captures a reconstructed context, so this
+     * on re-capture. No production path re-captures a reconstructed context, so this
      * narrowing is presently latent; carrying the remaining fields across a chained re-capture is
-     * tracked as a deferred item in the identity-002 PRD (§13).
+     * a known, deferred gap.
      *
      * @param content the captured identity content being reconstructed from
      * @param mode    the reconstruction mode marker value ({@code "RESUME"} or {@code "DEFERRED"})
@@ -298,7 +298,7 @@ public final class DefaultIdentityReconstruction implements IdentityReconstructi
      * lineage onto a deferred reconstruction's framework-mediated {@link DelegationContext}. When
      * the snapshot carried a {@link DelegationSummary}, its {@code kind} (and {@code authorityId}
      * when present) are recorded under the {@code delegation.captured.*} keys so the lineage
-     * survives the chained deferral (FR-ID-CA-004); when it carried none, the map is empty.
+     * survives the chained deferral; when it carried none, the map is empty.
      *
      * @param content the captured identity content being reconstructed from
      * @return the captured-lineage attributes, or {@link Map#of()} when the content carried no

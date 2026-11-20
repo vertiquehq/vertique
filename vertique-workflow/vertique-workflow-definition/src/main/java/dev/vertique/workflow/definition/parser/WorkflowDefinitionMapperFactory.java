@@ -76,7 +76,7 @@ public class WorkflowDefinitionMapperFactory {
 
     /**
      * Builds a {@link YAMLFactory} with explicit SnakeYAML {@link LoaderOptions} that enforce
-     * document-size and alias-bomb caps (NFR-WF-DEF-006).
+     * document-size and alias-bomb caps.
      *
      * @return a YAML factory with safety limits applied
      */

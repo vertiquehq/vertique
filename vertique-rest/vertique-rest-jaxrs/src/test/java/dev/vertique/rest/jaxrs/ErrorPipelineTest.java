@@ -11,6 +11,7 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.rest.core.ProblemDetail;
+import dev.vertique.rest.core.RestExceptionMapper;
 import dev.vertique.rest.core.ValidationErrorDetail;
 import dev.vertique.rest.core.ValidationProblemDetail;
 import dev.vertique.rest.core.interceptor.ErrorInterceptor;

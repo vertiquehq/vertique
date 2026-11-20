@@ -45,7 +45,8 @@ validation error; a synchronous throw, failed future, null future, null result, 
 timeout is a 500 infrastructure error. Each verifier invocation is bounded by
 `jaxrs.fileContentVerifierDeadlineMs` (per call, not an overall chain budget); the framework stops
 waiting on timeout but does not cancel verifier-owned work — see [FileContentVerifier](#filecontentverifier-multibinding).
-The built-in magic-byte verifier is opt-in through `MagicBytesVerifierModule`.
+The built-in magic-byte verifier is opt-in through `MagicBytesVerifierModule`, which this module owns (`dev.vertique.rest.validation`).
+`FileContentVerifier` and `FileVerificationResult` are declared in `dev.vertique:vertique-rest-core` (`dev.vertique.rest.core.request`).
 
 **Schema synthesis** happens at router construction: `AnnotationSchemaSource` reads JAX-RS (`@PathParam`, `@QueryParam`, `@NotNull`, `@Pattern`, `@Size`, etc.) and Bean Validation annotations from each resource method and emits JSON Schema fragments. Body-type generation is **always profiled**: every route's body schema is produced by `dev.vertique:vertique-json-schema`'s `AnnotationJsonSchemaGenerator.forInputProfile(profile)` for the effective JSON profile the registrar resolved for that operation, so the synthesized document describes the wire shape that profile's mapper actually parses and the profile's input type overrides land in the schema the gate enforces. There is no profile-agnostic generation path and no fallback to a default generator. This module holds **no profile-selection rule**: the effective profile arrives as the `schemasFor(op, profile)` argument, and nothing here reads a profile id, a mapper identity, or configuration to choose one. Loose-parameter schema assembly remains owned by this module: the generator introspects types and fields, not individual method parameters, and loose parameters are not profiled. A body the profile's generator cannot represent fails router construction with a `RestConfigurationException` naming the operation id and carrying the generator's failure as cause — the mount is never installed and none of its routes serve traffic; request-validation outcomes and error categories for bodies that do generate are unaffected. Each operation's schemas are synthesized once at registration — no per-request reflection. There is deliberately no per-operationId schema cache: duplicate-operationId is enforced only within a single mount, so two mounts may legitimately reuse an operationId for different operations, and an operationId-keyed cache would hand the second mount the first mount's schema.
 
@@ -55,8 +56,12 @@ Under `web-validation` the body document's regular expressions are compiled at r
 
 **Per-route handler order** (as installed by `JaxRsRouteRegistrar`):
 ```
-auth handler(s) → @Consumes 415 gate → validation gate → OperationHandlerContributors → ResourceMethodInvoker
+operation-route identity (PlatformHandler) → auth handler(s) → @Consumes 415 gate → validation gate → OperationHandlerContributors → ResourceMethodInvoker
 ```
+
+The operation-route identity handler records the operation's route template and operation id for
+the request's completion event; it runs ahead of authentication and never fails a request. See the
+`vertique-rest-jaxrs` module reference for the full chain.
 
 ---
 

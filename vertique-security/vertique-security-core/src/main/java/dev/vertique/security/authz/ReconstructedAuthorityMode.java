@@ -4,8 +4,7 @@
 package dev.vertique.security.authz;
 
 /**
- * Selects how a reconstructed {@code SecurityContext}'s current authority is determined (PRD
- * identity-002 §14.3 Phase-2 Appendix).
+ * Selects how a reconstructed {@code SecurityContext}'s current authority is determined.
  *
  * <p>Each constant names one of the three reconstruction-authority strategies the framework
  * supports; the reconstructed context's typed
@@ -15,7 +14,7 @@ package dev.vertique.security.authz;
 public enum ReconstructedAuthorityMode {
 
     /**
-     * Phase-1 default: the snapshot's captured {@link AuthorityClaim}s are audit lineage only,
+     * Default: the snapshot's captured {@link AuthorityClaim}s are audit lineage only,
      * never presented as current authority — a reconstructed context's
      * {@code SecurityContext#authorization()} is always {@link AuthorizationClaims#empty()}.
      */
@@ -39,7 +38,7 @@ public enum ReconstructedAuthorityMode {
      * mode is surfaced, so an embedding {@code AuthorizationDecisionEvent} can distinguish which
      * strategy produced a given decision. Absence of this key on a decision means the request was
      * not stamped by a Mode-2/Mode-3 authority-mode decorator (either a non-reconstructed context,
-     * or a reconstructed context under the Phase-1 {@link #ATTRIBUTION_ONLY} default with no
+     * or a reconstructed context under the {@link #ATTRIBUTION_ONLY} default with no
      * decorator installed).
      */
     public static final String DECISION_ATTRIBUTE = "authz.authority.mode";

@@ -7,10 +7,10 @@ import io.vertx.core.Future;
 
 /**
  * Seam answering whether a {@link DelegationGrant} authorizes a given (actor, subject, scope) triple
- * at evaluation time (PRD identity-002 FR-ID-DG-003).
+ * at evaluation time.
  *
  * <p>Asynchronous because storage and revocation lookup can require I/O (matching
- * {@code Authorizer}'s contract, NFR-ID2-005): implementations return a {@link Future} and never block
+ * {@code Authorizer}'s contract): implementations return a {@link Future} and never block
  * the caller. A lookup failure or timeout is <strong>never</strong> a failed {@link Future} — it maps
  * to a fail-closed deny with reason {@link DelegationReasonCodes#GRANT_LOOKUP_FAILED}, so callers can
  * {@code compose}/{@code map} the result without needing a {@code recover()} for the "storage is down"

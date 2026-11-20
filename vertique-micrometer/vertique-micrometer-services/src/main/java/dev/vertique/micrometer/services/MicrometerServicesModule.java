@@ -30,7 +30,7 @@ import dev.vertique.micrometer.MetricsConfig;
  *
  * <p>Zero-overhead when unconfigured: before {@code VertiqueApplication} bootstrap the backing
  * {@link io.micrometer.core.instrument.MeterRegistry} is an empty composite whose recording is a
- * no-op (NFR-TEL-003). When {@code metrics.enabled=false}, the contributed interceptor returns
+ * no-op. When {@code metrics.enabled=false}, the contributed interceptor returns
  * immediately without touching the registry.
  *
  * <p>Contributed bindings:

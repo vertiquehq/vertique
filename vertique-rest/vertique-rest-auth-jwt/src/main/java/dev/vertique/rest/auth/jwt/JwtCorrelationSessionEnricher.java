@@ -9,9 +9,9 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Builds a {@link CorrelationSessionRef} from already-validated JWT claims (FR-COR-100).
+ * Builds a {@link CorrelationSessionRef} from already-validated JWT claims.
  *
- * <p>Does not parse tokens. Does not imply identity, delegation, or session validity (FR-COR-103).
+ * <p>Does not parse tokens. Does not imply identity, delegation, or session validity.
  * Kind is {@code jwt-<claimName>} for the built-in {@code sid}/{@code jti} names and
  * {@code jwt-claim} for any other configured claim; source is always {@code jwt-claim}.
  */

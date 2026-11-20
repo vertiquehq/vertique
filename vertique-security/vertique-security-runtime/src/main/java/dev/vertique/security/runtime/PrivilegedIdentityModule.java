@@ -12,7 +12,7 @@ import jakarta.inject.Singleton;
  * Dagger {@link Module} that provides {@link IdentityReconstruction} to framework infrastructure
  * components only (job execution, inbox/outbox, workflow resume).
  *
- * <p>Per identity-002 §14.3's privileged-boundary rule, this binding is deliberately kept out of
+ * <p>Per the privileged-boundary rule, this binding is deliberately kept out of
  * the general {@code SecurityEventsModule}/{@code SecurityAuthzModule} wiring: an application
  * that includes this module is doing so visibly, so accidental general-purpose injection of the
  * reconstruction service is caught at code review by an unexpected module in the component's

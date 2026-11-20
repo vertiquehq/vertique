@@ -25,8 +25,9 @@ import java.util.Set;
  * into the element record's identity field via {@link KeyedBy @KeyedBy("name")}. Per-method producer
  * config nests one level deeper under {@code kafka.producers.{name}.methods.{method}}.
  *
- * <p>The {@code properties} and {@code schemaRegistry} blocks are intentionally open property bags
- * (config rule R9) whose values are kept intact for runtime use; secret keys in every open bag —
+ * <p>The {@code properties} block is an intentionally open property bag, and {@code schemaRegistry} is
+ * kept as a raw block whose values stay intact for runtime use (the Avro provider accepts only its
+ * {@code url} key and rejects any other); secret keys in every such bag —
  * {@code properties}, {@code schemaRegistry}, {@code connectionProperties}, {@code producerProperties}
  * — are masked at every depth only when this record is rendered to a string (see {@link #toString()}).
  *
@@ -49,7 +50,7 @@ import java.util.Set;
  *
  * @param format the top-level default value format (e.g. {@code "avro"}), or {@code null} when not set
  * @param properties the open top-level Kafka native property bag, or {@code null} when none
- * @param schemaRegistry the open schema-registry block, or {@code null} when none
+ * @param schemaRegistry the schema-registry block (only {@code url} is meaningful), or {@code null} when none
  * @param consumers the configured consumers; identity per element is {@code name} (default empty)
  * @param producers the configured producers; identity per element is {@code name} (default empty)
  * @param messageKeyHash the Kafka message-key hash configuration (defaults applied; never {@code
@@ -262,9 +263,9 @@ public record KafkaConfig(
      * message never reveals a credential. {@code properties}, {@code schemaRegistry},
      * {@code connectionProperties}, and {@code producerProperties} are all routed through the recursive
      * {@link KafkaSecretKeys#scrubToString(JsonObject)} (masking secret keys at every depth): the
-     * connection and producer bags may carry {@code sasl.*} secrets, and {@code schemaRegistry} is an
-     * open registry bag that can carry Confluent auth credentials (e.g. {@code schema.registry.ssl.*}
-     * passwords), so it is scrubbed rather than rendered verbatim.
+     * connection and producer bags may carry {@code sasl.*} secrets, and {@code schemaRegistry} is
+     * scrubbed as well, as defense in depth, so a credential placed there by mistake is never rendered
+     * verbatim.
      *
      * @return a log-safe string rendering of this config
      */

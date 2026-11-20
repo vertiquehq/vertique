@@ -14,6 +14,7 @@ import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
 import dev.vertique.json.JsonMapperProfiles;
 import dev.vertique.json.VertxJsonSupport;
+import dev.vertique.rest.client.exception.RestClientConfigurationException;
 import io.vertx.core.Vertx;
 import jakarta.ws.rs.GET;
 import java.util.Set;
@@ -43,7 +44,7 @@ import org.junit.jupiter.api.Test;
  * it: a registry maps each {@link JsonProfileId} to a distinct {@link ObjectMapper} instance, and the
  * test asserts the resolved mapper is reference-identical to the expected profile's mapper.
  * Build-fails cases drive the public {@link RestClientBuilder#build(Class)} path and assert the
- * thrown {@link IllegalStateException}.
+ * thrown {@link RestClientConfigurationException}.
  */
 @DisplayName("RestClient @JsonProfile annotation reading")
 class RestClientJsonProfileAnnotationTest {
@@ -140,9 +141,9 @@ class RestClientJsonProfileAnnotationTest {
         // GIVEN a @RestClient interface with @JsonProfile on a METHOD (not the TYPE).
         RestClientBuilder builder = RestClientBuilder.create(vertx).jsonMapperProfileRegistry(registry());
 
-        // WHEN building, THEN an IllegalStateException naming the method and requiring TYPE placement.
-        IllegalStateException ex =
-                assertThrows(IllegalStateException.class, () -> builder.build(MethodLevelJsonProfileClient.class));
+        // WHEN building, THEN a RestClientConfigurationException naming the method and requiring TYPE placement.
+        RestClientConfigurationException ex = assertThrows(
+                RestClientConfigurationException.class, () -> builder.build(MethodLevelJsonProfileClient.class));
 
         String message = ex.getMessage();
         assertTrue(message.contains("get"), "message should name the offending method 'get': " + message);
@@ -150,8 +151,6 @@ class RestClientJsonProfileAnnotationTest {
                 message.toUpperCase().contains("TYPE"),
                 "message should state TYPE-level placement is required: " + message);
     }
-
-    // --- 3. method-level @JsonProfile fails even with an explicit objectMapper (FR-066 not bypassed) ---
 
     @Test
     @DisplayName("methodLevelJsonProfileOnRestClientInterface_failsEvenWithExplicitMapper — guard not bypassed")
@@ -163,9 +162,9 @@ class RestClientJsonProfileAnnotationTest {
         ObjectMapper explicit = newVertxAwareMapper();
         RestClientBuilder builder = RestClientBuilder.create(vertx).objectMapper(explicit);
 
-        // WHEN building, THEN an IllegalStateException is STILL thrown despite the explicit mapper.
+        // WHEN building, THEN a RestClientConfigurationException is STILL thrown despite the explicit mapper.
         assertThrows(
-                IllegalStateException.class,
+                RestClientConfigurationException.class,
                 () -> builder.build(MethodLevelJsonProfileClient.class),
                 "the FR-066 method-level guard must run before the explicit-mapper early-return");
     }

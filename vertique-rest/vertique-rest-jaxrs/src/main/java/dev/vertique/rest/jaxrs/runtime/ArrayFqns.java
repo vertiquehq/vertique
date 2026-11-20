@@ -6,7 +6,7 @@ package dev.vertique.rest.jaxrs.runtime;
 import java.lang.reflect.Array;
 
 /**
- * Resolves type names emitted by the CG-010 codegen pipeline — including array types in Java
+ * Resolves type names emitted by the codegen pipeline — including array types in Java
  * <em>source</em> form — to their {@link Class} objects.
  *
  * <p>{@code TypeMirrorFqn.erasedFqn} emits an array parameter's erased type as Java source form

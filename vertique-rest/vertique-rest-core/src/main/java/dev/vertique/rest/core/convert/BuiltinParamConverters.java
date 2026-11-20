@@ -26,7 +26,7 @@ import java.util.UUID;
 import java.util.function.Function;
 
 /**
- * Holder for the framework's built-in {@link ParamConverter} registrations covering the FR-015-02
+ * Holder for the framework's built-in {@link ParamConverter} registrations covering the supported
  * target-type set: {@code String}, the primitive and boxed numeric/boolean/char types, the big
  * numerics, {@link UUID}, {@link URI}, and the {@code java.time} family.
  *

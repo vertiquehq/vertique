@@ -7,8 +7,7 @@ import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 
 /**
- * Sealed native refill family a {@link TokenBucketRateLimit} uses
- * (contracts/rate-limit-runtime.md, "Policy model" and "Bucket4j translation contract"). Permits
+ * Sealed native refill family a {@link TokenBucketRateLimit} uses. Permits
  * exactly {@link GreedyRateLimitRefill} and {@link IntervalRateLimitRefill} — no
  * application-defined member is permitted.
  *

@@ -56,11 +56,11 @@ import javax.lang.model.element.TypeElement;
  * add, unless an earlier round already raised an error.
  *
  * <p>JAX-RS resource binding ({@code @Path} &#8594; {@code GeneratedJaxRsResourcesModule}) is
- * owned by {@code JaxRsPipelineProcessor} in {@code vertique-codegen-jaxrs} (CG-010).
- * CG-002 does not own {@code @JaxRsResources} wiring.
+ * owned by {@code JaxRsPipelineProcessor} in {@code vertique-codegen-jaxrs}.
+ * This processor does not own {@code @JaxRsResources} wiring.
  *
- * <p>{@code @ServiceContract} implementations are wired by {@code vertique-codegen-services}
- * (CG-005), which generates contributor classes plus a {@code GeneratedServicesModule}. CG-002 does
+ * <p>{@code @ServiceContract} implementations are wired by {@code vertique-codegen-services},
+ * which generates contributor classes plus a {@code GeneratedServicesModule}. This processor does
  * not emit {@code @Services} bindings.
  *
  * <p>Discovery uses two modes:

@@ -12,7 +12,7 @@ import java.lang.annotation.Target;
 /**
  * Specifies the validation groups to apply when validating method parameters.
  *
- * <p>Place on JAX-RS resource methods or event bus service methods to control which
+ * <p>Place on JAX-RS resource methods or WebSocket {@code @OnMessage} methods to control which
  * validation groups are active for that operation. When absent, the default validation
  * group is used.
  *

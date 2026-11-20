@@ -16,7 +16,7 @@ import java.util.UUID;
  * <p>This event deliberately carries only low-cardinality identifiers, the new state, attempt counts,
  * timing, the exception class name, and the persisted {@link DurableMetadata} context document. It
  * <strong>never</strong> carries the job payload, the raw error message, or the {@code parameters} /
- * {@code attributes} maps (PRD-AUD-002 §10.3). {@code metadata} is the durable context carrier
+ * {@code attributes} maps. {@code metadata} is the durable context carrier
  * (correlation / localization namespaces only — no payload or credentials); consumers that need
  * correlation decode it through the correlation runtime, keeping this module free of that dependency.
  *

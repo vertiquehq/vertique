@@ -18,8 +18,8 @@ A thin build-time module that provides Swagger `ModelConverter`s and an `OpenAPI
 Add `vertique-rest-openapi-plugin` to the **swagger-maven-plugin classpath** (build-time only) when
 generating OpenAPI from JAX-RS resources that return `Future`, SSE `ReadStream`, use
 `BigDecimal` / scalar `Optional*` wire forms, or aggregate parameters with `@RequestParams`. List
-the converter/extension class names explicitly in the plugin configuration — they are not
-ServiceLoader-discovered. Do not put this artifact on an application runtime classpath; it has no
+the model converter class names explicitly in the plugin configuration — they are not
+ServiceLoader-discovered; the `OpenAPIExtension` is. Do not put this artifact on an application runtime classpath; it has no
 runtime role.
 
 ---

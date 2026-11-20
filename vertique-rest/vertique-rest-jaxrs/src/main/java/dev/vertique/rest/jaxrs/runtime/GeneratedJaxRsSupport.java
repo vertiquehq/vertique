@@ -109,7 +109,7 @@ public interface GeneratedJaxRsSupport {
      *
      * <p>Delegates to {@link dev.vertique.rest.core.context.RestContextResolution#require} which
      * walks the sorted resolver chain and returns the first non-empty result. When no resolver can
-     * supply a value, {@link RestContextUnavailableException} is thrown (FR-REST-185).
+     * supply a value, {@link RestContextUnavailableException} is thrown.
      *
      * @param declaredType  the declared Java type of the {@code @Context} parameter; must not be
      *                      {@code null}
@@ -119,7 +119,7 @@ public interface GeneratedJaxRsSupport {
      * @param methodName    the name of the resource method declaring the parameter; used in the
      *                      exception message; must not be {@code null}
      * @return the resolved context value; never {@code null}
-     * @throws RestContextUnavailableException when required and unbound (FR-REST-185)
+     * @throws RestContextUnavailableException when required and unbound
      */
     Object resolveContext(Class<?> declaredType, RoutingContext ctx, String resourceClass, String methodName);
 }

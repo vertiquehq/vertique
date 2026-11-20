@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -485,6 +486,86 @@ class DelayedJobServiceTest {
             DelayedJob jobMax =
                     DelayedJob.builder().handler("h").maxAttempts(1000).build();
             assertTrue(service.enqueue(jobMax).succeeded());
+        }
+    }
+
+    @Nested
+    @DisplayName("idempotency key")
+    class IdempotencyKey {
+
+        @Test
+        @DisplayName("carries the key onto the stored execution through every enqueue variant")
+        void carriesTheKeyThroughEveryVariant() {
+            io.vertx.sqlclient.SqlClient client = org.mockito.Mockito.mock(io.vertx.sqlclient.SqlClient.class);
+            when(repository.save(any())).thenReturn(Future.succeededFuture(UUID.randomUUID()));
+            when(pgRepository.save(any(), any())).thenReturn(Future.succeededFuture(UUID.randomUUID()));
+            DelayedJob job =
+                    DelayedJob.builder().handler("h").idempotencyKey("order-42").build();
+
+            service.enqueue(job);
+            service.enqueue(job, client);
+            service.enqueuePremerged(job);
+            service.enqueuePremerged(job, client);
+
+            ArgumentCaptor<JobExecution> pool = ArgumentCaptor.forClass(JobExecution.class);
+            ArgumentCaptor<JobExecution> tx = ArgumentCaptor.forClass(JobExecution.class);
+            verify(repository, org.mockito.Mockito.times(2)).save(pool.capture());
+            verify(pgRepository, org.mockito.Mockito.times(2)).save(tx.capture(), any());
+            java.util.stream.Stream.concat(pool.getAllValues().stream(), tx.getAllValues().stream())
+                    .forEach(execution -> assertEquals("order-42", execution.idempotencyKey()));
+        }
+
+        @Test
+        @DisplayName("completes with the id the repository returns for a held key")
+        void returnsTheExistingExecutionId() {
+            UUID existing = UUID.randomUUID();
+            when(repository.save(any())).thenReturn(Future.succeededFuture(existing));
+
+            Future<UUID> result = service.enqueue(
+                    DelayedJob.builder().handler("h").idempotencyKey("k").build());
+
+            assertEquals(existing, result.result());
+        }
+
+        @Test
+        @DisplayName("stores no key when none is given")
+        void noKeyByDefault() {
+            when(repository.save(any())).thenReturn(Future.succeededFuture(UUID.randomUUID()));
+
+            service.enqueue(DelayedJob.builder().handler("h").build());
+
+            ArgumentCaptor<JobExecution> captor = ArgumentCaptor.forClass(JobExecution.class);
+            verify(repository).save(captor.capture());
+            assertNull(captor.getValue().idempotencyKey());
+        }
+
+        @Test
+        @DisplayName("rejects a blank key and a key over 255 characters without repeating the key")
+        void rejectsInvalidKeys() {
+            Future<UUID> blank = service.enqueue(
+                    DelayedJob.builder().handler("h").idempotencyKey("  ").build());
+            String tooLong = "secret-".concat("x".repeat(256));
+            Future<UUID> overlong = service.enqueue(
+                    DelayedJob.builder().handler("h").idempotencyKey(tooLong).build());
+
+            assertInstanceOf(IllegalArgumentException.class, blank.cause());
+            assertInstanceOf(IllegalArgumentException.class, overlong.cause());
+            assertTrue(overlong.cause().getMessage().contains("255"));
+            assertFalse(overlong.cause().getMessage().contains("secret-"));
+            org.mockito.Mockito.verifyNoInteractions(repository);
+        }
+
+        @Test
+        @DisplayName("accepts a key of exactly 255 characters")
+        void acceptsBoundaryKey() {
+            when(repository.save(any())).thenReturn(Future.succeededFuture(UUID.randomUUID()));
+
+            Future<UUID> result = service.enqueue(DelayedJob.builder()
+                    .handler("h")
+                    .idempotencyKey("k".repeat(255))
+                    .build());
+
+            assertTrue(result.succeeded());
         }
     }
 

@@ -359,6 +359,13 @@ public class TimerCommandIT {
                     .build();
             node.startExecutor();
             try {
+                // The executor starts before its listener has issued LISTEN; a start recorded before then is
+                // announced to nobody and would wait for the next poll, a minute away
+                awaitCondition(
+                        "the command listener to listen",
+                        IDLE,
+                        () -> f.fixture.listenBackends().size() == 1);
+
                 // When the start executes
                 WorkflowInstanceId id = node.record(f.start("two-seconds"));
                 awaitCondition("the timer command to exist", IDLE, () -> !timers.all(id)

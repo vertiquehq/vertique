@@ -9,7 +9,7 @@ import javax.lang.model.type.ArrayType;
 import javax.lang.model.type.TypeMirror;
 
 /**
- * Shared FQN-resolution helpers used by the four CG-010 emitters. Centralised here so the
+ * Shared FQN-resolution helpers used by the four emitters. Centralised here so the
  * three places that emit string FQN constants for runtime {@code Class.forName(...)} stay in
  * sync — getting nested-type form ({@code Outer$Inner}) right matters because runtime
  * registries and {@link dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsDescriptorSupport#resolveClass}

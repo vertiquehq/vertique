@@ -25,10 +25,10 @@ graph — that is what the framework's own codegen modules do.
 mark a type for inclusion in the generated Dagger module; the processor emits the binding, so there
 is no runtime scan and no reflection at startup.
 
-**Conditions are evaluated by the compiler, not the runtime.** `@ConditionalOnProperty` decides
-whether a binding is emitted at all. A binding that a condition excluded is absent from the graph
-rather than present-and-disabled, so a wrong condition is a compile-time or wiring failure, not a
-silent no-op at request time.
+**Conditions are emitted by the compiler and evaluated at run time.** The processor reads
+`@ConditionalOnProperty` at compile time and emits the condition into the generated code, which
+checks it against the live configuration. A resource or implementation whose condition does not
+match contributes no binding rather than being present-and-disabled.
 
 **Violations are compile errors.** A type that cannot be proxied, an injectable constructor that
 does not qualify, a selector path that cannot be parsed — each is reported against the offending
@@ -129,7 +129,7 @@ Obtain via `CodegenContext.annotations()`.
 
 ### Diagnostics
 
-Combines instance methods bound to a `Messager` with static factory methods for consistent message wording. The static formatters form an externally-stable contract — downstream processors must use them so error messages stay consistent across the framework's codegen modules.
+Combines instance methods bound to a `Messager` with static factory methods for consistent message wording. The static formatters fix message wording for the framework's own processors — downstream processors must use them so error messages stay consistent across the framework's codegen modules. `Diagnostics` is an internal seam (see Framework seams), so the wording is a contract between the framework's own processors and carries no compatibility promise to applications or to processors outside the framework.
 
 Obtain via `CodegenContext.diagnostics()`.
 
@@ -144,7 +144,7 @@ Obtain via `CodegenContext.diagnostics()`.
 
 All instance methods accept a `String.format`-style format string.
 
-**Static message formatters (externally-stable contract):**
+**Static message formatters (wording fixed for the framework's own processors):**
 
 | Method | Output template |
 |--------|----------------|
@@ -278,7 +278,7 @@ JavaPoet emitter that, given a method element, generates a `dev.vertique.core.co
 | `emitMethodMetadata(ExecutableElement, ClassName, Types)` | Emits a `MethodMetadata` implementation with no materialized annotation literals (`findAnnotation`/`hasAnnotation` resolve nothing) |
 | `methodMetadataType(ExecutableElement, ClassName, Types, List<AnnotationLiteralRef>, List<List<AnnotationLiteralRef>>)` | Builds the `MethodMetadata`-implementing `TypeSpec.Builder` with method-level **and** parameter-level annotation literals baked in, without top-level modifiers (so the caller can emit it top-level or nested) |
 
-Both the method-level and parameter-level `findAnnotation`/`hasAnnotation` surfaces are reflection-free and literal-backed: for each runtime-retained method annotation the emitter bakes a `static final <Ann>` literal constant (`ANNOTATION_<i>`) and resolves `findAnnotation` by a `type == <Ann>.class` match; for each parameter's runtime-retained annotations it bakes `PARAM_<p>_ANNOTATION_<i>` literal constants and passes them to the nested `ParameterMetadataImpl`, whose `findAnnotation` matches the looked-up `type` against each literal's `annotationType()` — never `Method.getAnnotation`/`Parameter.getAnnotation`. This backs `ParameterMetadata.findAnnotation`/`hasAnnotation` on the codegen path. Generated method metadata emits `genericReturnType()` as a reflection-free `Type` graph, including parameterized, wildcard, and generic-array return shapes. `asMethod()` and parameter `genericType()` remain stubbed and throw `UnsupportedOperationException`.
+Both the method-level and parameter-level `findAnnotation`/`hasAnnotation` surfaces are reflection-free and literal-backed: for each runtime-retained method annotation the emitter bakes a `static final <Ann>` literal constant (`ANNOTATION_<i>`) and resolves `findAnnotation` by a `type == <Ann>.class` match; for each parameter's runtime-retained annotations it bakes `PARAM_<p>_ANNOTATION_<i>` literal constants and passes them to the nested `ParameterMetadataImpl`, whose `findAnnotation` matches the looked-up `type` against each literal's `annotationType()` — never `Method.getAnnotation`/`Parameter.getAnnotation`. This backs `ParameterMetadata.findAnnotation`/`hasAnnotation` on the codegen path. Generated method metadata emits `genericReturnType()` as a reflection-free `Type` graph, including parameterized, wildcard, and generic-array return shapes. `asMethod()` is the opt-in reflective accessor: the generated implementation resolves `declaringType().getDeclaredMethod(name(), parameterTypes())` on the first call, caches the `Method` in a `volatile` field (concurrent first callers resolve equal copies and the last write wins, so the race is benign), and wraps `NoSuchMethodException` in an `IllegalStateException` that names the expected signature. It is the only reflective call site in the generated class; generated proxy overrides never call it, so a consumer that never calls `asMethod()` stays reflection-free. Parameter `genericType()` remains stubbed and throws `UnsupportedOperationException`.
 
 The caller owns the generator namespace when materializing each `AnnotationLiteralRef`. `AnnotationLiteralEmitter.literalClassName(...)` and `emit(...)` require that namespace and generate `<Ann>$<Namespace>Literal`; there is no shared literal suffix or unnamespaced overload. `AopProxyEmitter` uses `Aop` and the JAX-RS emitters use `JaxRs`; each caller deduplicates its own generated FQNs before writing them. The dedicated `meta.AnnotationLiteralEmitter` entry below is authoritative for supported member kinds, exact floating-point representation, equality/hash semantics, defensive array behavior, and the retained JAX-RS compatibility hook.
 
@@ -374,7 +374,7 @@ present, where generated artifacts are named and placed, and that a violation fa
 
 ### Static Diagnostics Formatters
 
-The four static methods on `Diagnostics` (`mustReturnFuture`, `duplicateOperation`, `unsupportedAnnotation`, `expectedRecord`) are an externally-stable string contract. Downstream codegen processors must call these methods rather than inline the strings. Any change to their string values is a breaking change across the codegen modules.
+The four static methods on `Diagnostics` (`mustReturnFuture`, `duplicateOperation`, `unsupportedAnnotation`, `expectedRecord`) have fixed string values that the framework's own codegen modules share; `Diagnostics` is an internal seam, so the wording carries no promise to code outside the framework. Downstream codegen processors must call these methods rather than inline the strings. Changing a string value changes the message of every codegen module that uses it, so the strings are pinned by `DiagnosticsTest`.
 
 ---
 
@@ -388,6 +388,5 @@ None. This is a compile-time-only helper library with no Dagger `@Module`.
 
 | Dependency | Scope | Purpose |
 |------------|-------|---------|
-| `com.palantir.javapoet:javapoet:0.14.0` | compile | Java source generation with record and sealed-class support |
-| `com.google.dagger:dagger` (annotations only) | compile | `ClassName` references for `@Module`, `@Provides`, etc. in generated output |
+| `com.palantir.javapoet:javapoet` | compile | Java source generation with record and sealed-class support |
 | JDK annotation processing API (`javax.annotation.processing`, `javax.lang.model`) | provided (JDK) | APT runtime |

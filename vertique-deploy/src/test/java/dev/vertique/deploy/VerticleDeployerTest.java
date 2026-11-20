@@ -171,7 +171,7 @@ class VerticleDeployerTest {
     }
 
     @Test
-    void undeployAll_groupFailure_continuesOtherGroups(Vertx vertx, VertxTestContext ctx) {
+    void undeployAll_stopFailure_continuesOtherPhases(Vertx vertx, VertxTestContext ctx) {
         VerticleDeployer deployer = new VerticleDeployer(vertx);
 
         deployer.deploy(VerticleDeployment.of("infra", NoOpVerticle::new, LifecyclePhase.INFRA))
@@ -182,12 +182,12 @@ class VerticleDeployerTest {
                     return vertx.undeploy(edgeId);
                 })
                 .compose(v -> {
-                    // undeployAll: EDGE group will fail (stale), but INFRA must still undeploy
+                    // undeployAll: EDGE stop will fail (stale), but INFRA must still undeploy
                     return deployer.undeployAll();
                 })
                 .onComplete(ctx.succeeding(v -> {
-                    // INFRA must have been undeployed despite EDGE group failure
-                    assertNull(deployer.deploymentId("infra"), "INFRA must be undeployed even if EDGE group fails");
+                    // INFRA must have been undeployed despite EDGE stop failure
+                    assertNull(deployer.deploymentId("infra"), "INFRA must be undeployed even if EDGE stop fails");
                     ctx.completeNow();
                 }));
     }

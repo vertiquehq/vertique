@@ -31,7 +31,8 @@ Extends `DbExceptionMapper` with PostgreSQL-specific SQL state translations pre-
 | SQL state `40P01` | `DeadlockException` |
 | SQL state `55P03` (lock not available) | `PessimisticLockingFailureException` |
 | SQL state `57014` (statement timeout) | `QueryTimeoutException` |
-| `VertxException` with message `"Timeout"` | `QueryTimeoutException` |
+| `VertxException` with a message containing `"timeout"` in any case, such as `"Timeout waiting for connection"` when the pool is exhausted | `QueryTimeoutException` |
+| Network failures that are not database errors: `java.net.ConnectException` (connection refused, connect timeout), `java.net.SocketException` (connection reset), `java.nio.channels.ClosedChannelException` and `io.vertx.sqlclient.ClosedConnectionException` (connection closed) | `ConnectionException` (cause kept, no SQL state) |
 | `DataAccessException` | pass-through (identity) — inherited from `DbExceptionMapper` constructor |
 | Any other `Throwable` | `DataAccessException` (catch-all) — inherited from `DbExceptionMapper.fallback` |
 
@@ -90,7 +91,7 @@ public class ItemRepository extends PgSqlRepository {
     public Future<PagedResult<Item>> findItems(PageCursor cursor) {
         return this.<Item>pagedQuery("SELECT id, name, description FROM items")
                 .mapping(Item::fromRow)
-                .keysetColumns("name", "id")
+                .orderBy("name", "id")
                 .page(cursor);
     }
 
@@ -103,7 +104,7 @@ public class ItemRepository extends PgSqlRepository {
 }
 ```
 
-`inTransaction` and `withConnection` (inherited from `AbstractSqlRepository`) automatically translate exceptions via the `PgDbExceptionMapper`.
+`transaction().execute(...)` and `withConnection` (inherited from `AbstractSqlRepository`) automatically translate exceptions via the `PgDbExceptionMapper`.
 
 ### `PgQuery<T>`
 
@@ -111,7 +112,7 @@ PostgreSQL implementation of `Query`. In addition to the base `Query` behavior, 
 
 ```java
 // Lock mode applied via queryClause in a transaction
-inTransaction(conn ->
+transaction().execute(conn ->
     this.<Item>query("SELECT id, name FROM items WHERE id = $1")
         .on(conn)
         .params(Tuple.of(id))
@@ -256,7 +257,7 @@ interface AppComponent {
 |------|-------|-------------|
 | `Pool` | `@Singleton` | PostgreSQL connection pool built from `DbPoolConfig` |
 | `PgDbExceptionMapper` | `@Singleton` | Pre-configured PostgreSQL exception mapper |
-| `PoolConnectHandler` | `@BindsOptionalOf` | Optional; provide via `@Provides` to initialize new connections |
+| `PoolConnectHandler` | `@BindsOptionalOf` | Optional; provide via `@Provides` to initialize new connections; its future must complete (see the db-core reference) |
 | `HealthCheck` | `@IntoSet` `@Readiness` | `DatabaseHealthCheck`, contributed automatically |
 
 ---
@@ -275,7 +276,7 @@ no message.
 
 ## Configuration
 
-Pool configuration comes from the `"db"` config section (see `DbPoolConfig` in `dev.vertique:vertique-db-core`). The PostgreSQL default port is 5432.
+Pool configuration comes from the `"db"` config section (see `DbPoolConfig` in `dev.vertique:vertique-db-core`). An omitted `port` uses the PostgreSQL default port, 5432; a port below 1 or above 65535 fails startup with a `ConfigurationException` naming `db.port`.
 
 ```json
 {

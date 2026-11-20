@@ -11,17 +11,17 @@
  *   <li><strong>Registry implementation</strong> — {@code DefaultJsonMapperProfileRegistry}
  *       resolves named {@link dev.vertique.core.json.JsonMapperProfile} instances by
  *       {@link dev.vertique.core.json.JsonProfileId}, validates uniqueness at construction
- *       time, and runs a structural round-trip probe for each application-contributed profile.
+ *       time, and runs a structural round-trip probe for every profile, built-in or application-contributed.
  *   <li><strong>Built-in {@code system}, {@code vertique} and {@code vertique-strict}
  *       profiles</strong> — all three are seeded <strong>separately</strong> from the application set
- *       and are <strong>probe-exempt</strong>; applications may contribute none of the three ids, nor
+ *       and are probed like every other mapper; applications may contribute none of the three ids, nor
  *       the retired {@code vertx} id the {@code system} profile was renamed from.
  *       {@code SystemJsonMapperProfile} owns a copy of {@code DatabindCodec.mapper()} carrying the
  *       baseline recipe, so it never exposes or mutates the shared
  *       {@link com.fasterxml.jackson.databind.ObjectMapper} Vert.x uses internally.
  *       {@code VertiqueJsonMapperProfile} owns an independent mapper carrying the framework's
- *       opinionated defaults on top of that recipe (it is probe-exempt because its {@code NON_NULL}
- *       inclusion would make the null-bearing round-trip probe falsely fail).
+ *       opinionated defaults on top of that recipe (its {@code NON_NULL}
+ *       inclusion is accepted by the probe because the probe payload carries no null-valued field).
  *       {@code VertiqueStrictJsonMapperProfile} owns a further independent mapper layering the
  *       strict-decimal / strict-string serdes on those defaults, with
  *       {@code USE_BIG_DECIMAL_FOR_FLOATS} disabled so untyped decimals keep the JSON-number wire

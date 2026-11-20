@@ -38,7 +38,7 @@ import java.util.Optional;
  * the caller may use the typed value directly. In concatenation contexts, the value is converted
  * to a string via {@link #stringify(Object)}.
  *
- * <h2>NFR-CONF-002 — value redaction</h2>
+ * <h2>Value redaction</h2>
  * <p>Callers must not include resolved values in logs, exception messages, or any observable
  * output. Log keys and counts only.
  *

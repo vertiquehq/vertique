@@ -14,7 +14,7 @@ import java.util.Optional;
  * existing decoder implementations.
  *
  * @param boundary the durable boundary identifier (e.g., {@code "kafka"}, {@code "outbox"})
- * @param carrier the durable row-carrier binding for the F5 replay defense of PRD identity-002;
+ * @param carrier the durable row-carrier binding for the replay defense;
  *     empty when the boundary carries no carrier identity. Never {@code null}.
  */
 public record DurableDecodeContext(String boundary, Optional<DurableCarrierDescriptor> carrier) {

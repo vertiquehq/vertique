@@ -98,6 +98,12 @@ final class PlanCacheFixture implements AutoCloseable {
     /** How long a test waits for the executor to settle recorded work. */
     static final Duration IDLE = Duration.ofSeconds(60);
 
+    /**
+     * How long a test waits for the execution probe's answer: past {@link #IDLE}, so that the probe's own bound decides
+     * and a busy machine is given the time {@code IDLE} grants, not the ten seconds of a plain {@code await}.
+     */
+    private static final Duration PROBE_WAIT = IDLE.plusSeconds(5);
+
     private static final Instant LOADED_AT = Instant.parse("2026-10-27T12:00:00Z");
 
     /** The contract and wiring of the graph: everything of the shared graph plus the cache module and the schema module. */
@@ -448,12 +454,12 @@ final class PlanCacheFixture implements AutoCloseable {
 
     /** Waits until the executor has nothing left to run for any instance. */
     void awaitAllIdle() {
-        await(app.executionProbe().awaitAllIdle(IDLE));
+        await(app.executionProbe().awaitAllIdle(IDLE), PROBE_WAIT);
     }
 
     /** Waits until the executor has nothing left to run for the instance. */
     void awaitIdle(WorkflowInstanceId id) {
-        await(app.executionProbe().awaitIdle(id, IDLE));
+        await(app.executionProbe().awaitIdle(id, IDLE), PROBE_WAIT);
     }
 
     /** Polls the condition until it holds or the timeout passes, and fails with the description then. */

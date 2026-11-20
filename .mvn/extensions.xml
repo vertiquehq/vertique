@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+
+  Takari Smart Builder replaces Maven's multithreaded builder (selected with
+  `-b smart` in maven.config). Of the modules ready to build, it starts the one
+  with the longest chain of dependent work first, instead of the first one ready.
+-->
+<extensions>
+    <extension>
+        <groupId>io.takari.maven</groupId>
+        <artifactId>takari-smart-builder</artifactId>
+        <version>1.2.0</version>
+    </extension>
+</extensions>

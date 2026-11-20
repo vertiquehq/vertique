@@ -102,6 +102,45 @@ class InterfaceTriggerMethodWeaveTest {
                 .assertGeneratedSourceDoesNotContain("com.example.BoundedMethodTypeParamBean$AopProxy", "extends T");
     }
 
+    @Test
+    @DisplayName("a final implementor of an interface trigger fails compilation with the non-proxyable diagnostic")
+    void rejectsAFinalImplementorOfAnInterfaceTrigger() {
+        ProcessorTestHarness.run(new AopProcessor(), interfaceTrigger(), crudAbstract(), finalImplementor())
+                .assertFailed()
+                .assertErrorMessage("is final");
+    }
+
+    @Test
+    @DisplayName("an implementor that overrides an interface trigger method as final fails with the AOP diagnostic")
+    void rejectsAFinalOverrideOfAnInterfaceTriggerMethod() {
+        var result = ProcessorTestHarness.run(
+                        new AopProcessor(), interfaceTrigger(), crudAbstract(), finalOverrideImplementor())
+                .assertFailed()
+                .assertErrorMessage("com.example.FinalOverrideResource.delete cannot be proxied for method AOP")
+                .assertErrorMessage("is a final method and cannot be overridden");
+        assertNoCompilerOverrideError(result);
+    }
+
+    @Test
+    @DisplayName("a final method inherited from a superclass that implements an interface trigger fails with the AOP"
+            + " diagnostic")
+    void rejectsAnInheritedFinalImplementationOfAnInterfaceTriggerMethod() {
+        var result = ProcessorTestHarness.run(
+                        new AopProcessor(), interfaceTrigger(), crudAbstract(), inheritedFinalImplementor())
+                .assertFailed()
+                .assertErrorMessage("com.example.InheritingResource.delete cannot be proxied for method AOP")
+                .assertErrorMessage("is a final method and cannot be overridden");
+        assertNoCompilerOverrideError(result);
+    }
+
+    private static void assertNoCompilerOverrideError(ProcessorTestHarness.Result result) {
+        assertFalse(
+                result.compilation().diagnostics().stream()
+                        .anyMatch(d -> d.getKind() == javax.tools.Diagnostic.Kind.ERROR
+                                && d.getMessage(null).contains("cannot override")),
+                "the compiler's own override error must not be what reports the shape");
+    }
+
     private static javax.tools.JavaFileObject interfaceTrigger() {
         return SourceFiles.inline("com.example.InterfaceTrigger", """
                 package com.example;
@@ -159,6 +198,55 @@ class InterfaceTriggerMethodWeaveTest {
                 public class UserResource implements Crud {
                     @Inject
                     public UserResource() {}
+                }
+                """);
+    }
+
+    private static javax.tools.JavaFileObject finalImplementor() {
+        return SourceFiles.inline("com.example.FinalResource", """
+                package com.example;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+                public final class FinalResource implements Crud {
+                    @Inject
+                    public FinalResource() {}
+                    @Override
+                    public Future<String> delete(String id) {
+                        return Future.succeededFuture(id);
+                    }
+                }
+                """);
+    }
+
+    private static javax.tools.JavaFileObject finalOverrideImplementor() {
+        return SourceFiles.inline("com.example.FinalOverrideResource", """
+                package com.example;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+                public class FinalOverrideResource implements Crud {
+                    @Inject
+                    public FinalOverrideResource() {}
+                    @Override
+                    public final Future<String> delete(String id) {
+                        return Future.succeededFuture(id);
+                    }
+                }
+                """);
+    }
+
+    private static javax.tools.JavaFileObject inheritedFinalImplementor() {
+        return SourceFiles.inline("com.example.InheritingResource", """
+                package com.example;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+                public class InheritingResource extends FinalBase implements Crud {
+                    @Inject
+                    public InheritingResource() {}
+                }
+                class FinalBase {
+                    public final Future<String> delete(String id) {
+                        return Future.succeededFuture(id);
+                    }
                 }
                 """);
     }

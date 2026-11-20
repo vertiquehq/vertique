@@ -15,7 +15,7 @@ import java.util.Map;
  * {@link CompiledExpression} / {@link ExpressionEnv} value types.
  *
  * <p>Replacing the EL engine requires only a new implementation class and a single Dagger
- * {@code @Binds} change in {@code WorkflowDefinitionModule} — no other class changes (NFR-WF-DEF-007).
+ * {@code @Binds} change in {@code WorkflowDefinitionModule} — no other class changes.
  *
  * <h2>Evaluation environment contract</h2>
  * The {@code evalEnv} map passed to {@link #evaluate} and {@link #evaluateBoolean} must contain:
@@ -59,7 +59,7 @@ public interface ExpressionProfile {
      *
      * <p>The fingerprint is derived from {@link CompiledExpression#canonicalForm()} via
      * {@link ExpressionFingerprint#of(CompiledExpression)}, ensuring whitespace-only differences
-     * between two source strings produce the same fingerprint (AC #8).
+     * between two source strings produce the same fingerprint.
      *
      * @param expr the compiled expression; non-null
      * @return a 64-character lower-case SHA-256 hex string; never {@code null}

@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Repository SPI for {@link JoinState} rows (PRD-WF-002 fork/join).
+ * Repository SPI for {@link JoinState} rows (fork/join).
  *
  * <p>Generic over the transaction-handle type {@code TX} so the workflow engine can depend on this
  * interface without binding to a specific database client.

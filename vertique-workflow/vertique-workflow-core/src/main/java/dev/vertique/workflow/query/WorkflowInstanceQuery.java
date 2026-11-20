@@ -37,7 +37,7 @@ import java.util.Set;
  * @param subjectId optional subject id component of a subject-reference filter;
  *     {@code null} means no filter
  * @param subjectVersion optional subject version to filter by; {@code null} means no filter.
- *     Supports version-aware queries ({@code FR-WF-123}) — only instances whose
+ *     Supports version-aware queries — only instances whose
  *     {@code subject_version} column equals this value are returned.
  * @param definitionId optional definition id to filter by; {@code null} means no filter
  * @param includeArchived when {@code true}, archived instances (with a non-null {@code archived_at})
@@ -229,7 +229,7 @@ public record WorkflowInstanceQuery(
      * Returns a copy of this query with the {@code subjectVersion} field replaced.
      *
      * <p>Setting a non-null version restricts results to instances whose {@code subject_version}
-     * column equals this value (version-aware query, {@code FR-WF-123}). Pass {@code null} to
+     * column equals this value (version-aware query). Pass {@code null} to
      * remove the version filter.
      *
      * <p><b>Performance note:</b> a {@code subjectVersion} predicate is only efficient when

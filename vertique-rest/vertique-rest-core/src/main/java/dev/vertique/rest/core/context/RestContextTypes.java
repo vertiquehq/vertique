@@ -65,7 +65,7 @@ public final class RestContextTypes {
 
     /**
      * JAX-RS {@code @Context} types that are syntactically valid JAX-RS but are <em>not</em>
-     * supported in Vertique V1 (FR-REST-188).
+     * supported in Vertique V1.
      *
      * <p>The framework detects parameters whose declared type appears in this set and rejects them
      * at startup with a clear error, rather than silently ignoring them or producing a runtime
@@ -84,7 +84,7 @@ public final class RestContextTypes {
 
     /**
      * Returns {@code true} if a JAX-RS resource method parameter of the given {@code type} should
-     * be resolved from the framework context rather than from a JAX-RS binding (FR-REST-168).
+     * be resolved from the framework context rather than from a JAX-RS binding.
      *
      * <p>A type is considered injectable when it satisfies any of the following:
      * <ul>

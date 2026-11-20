@@ -41,7 +41,7 @@ import java.util.UUID;
  * <p>Before constructing the outgoing {@link DispatchEnvelope} the handler decodes the outbox
  * headers into an FQCN-keyed dispatch-context map via
  * {@link DurableContextPropagator#decodeToDispatchContext} with the {@code "outbox-service"}
- * boundary (FR-CTX-176) and merges the decoded values directly into the caller-override map. The
+ * boundary and merges the decoded values directly into the caller-override map. The
  * holder is not written: the relay runs on the verticle's deployment context (not a duplicated
  * Vert.x context), so a holder write would fail the substrate's duplicated-context guard. The
  * decoded values — including any {@code DurablePropagationMetadata} — ride alongside the
@@ -49,14 +49,14 @@ import java.util.UUID;
  * into the holder via the standard {@code InboundDispatchScope} path, where the event-bus
  * consumer dispatch is already on a duplicated context.
  *
- * <p><strong>Per-row carrier reproduction (PRD identity-002 §14.6/A9, F3b).</strong> The decode
+ * <p><strong>Per-row carrier reproduction.</strong> The decode
  * above threads a {@link DurableCarrierDescriptor} reproduced from the row's first-class
  * {@code carrier_id} column — never from the app-writable {@link OutboxEnvelope#metadata()} —
  * projected onto the envelope as {@link OutboxRelayControl#carrierId()}. A durable identity snapshot
  * decodes verified only when its signed carrier matches this reproduced carrier for the SAME row; a
  * snapshot signed for a different row's carrier fails closed. The target kind
  * {@value #OUTBOX_RELAY_TARGET_KIND} matches the kind {@code DefaultOutboxService} signs on the
- * produce side and the {@link DeferredExecutionOrigin#kind()} bound below (F7a).
+ * produce side and the {@link DeferredExecutionOrigin#kind()} bound below.
  *
  * <p>A {@link TransactionalMessageContext} is also added to the caller-override map so service
  * handlers can inspect message metadata (entry id, event type, aggregate identity, headers)
@@ -86,7 +86,7 @@ public class ServiceOutboxDestinationHandler implements OutboxDestinationHandler
     private static final String BOUNDARY = dev.vertique.core.context.DispatchBoundary.OUTBOX_SERVICE;
 
     /**
-     * Canonical durable-target kind for the outbox row-carrier (F7a) — matches the target kind
+     * Canonical durable-target kind for the outbox row-carrier — matches the target kind
      * {@code DefaultOutboxService} signs on the produce side and the {@code "outbox-relay"} kind
      * bound into {@link DeferredExecutionOrigin} below, so the produce/consume carrier and the
      * origin kind — and any operator {@code identity.snapshot.carriageRequirements} entry keyed on
@@ -203,9 +203,9 @@ public class ServiceOutboxDestinationHandler implements OutboxDestinationHandler
         // holder write would fail the substrate's duplicated-context guard. The decoded values ride
         // along inside the outgoing dispatch envelope; the receiving ServiceMethodInvoker installs
         // them into the holder there, where the event-bus consumer dispatch is already on a
-        // duplicated context (FR-CTX-176).
+        // duplicated context.
         //
-        // F3b per-row carrier reproduction: the expected carrier is rebuilt from the row's
+        // Per-row carrier reproduction: the expected carrier is rebuilt from the row's
         // first-class carrier_id column (via OutboxRelayControl, never from the app-writable
         // metadata JSONB) so a durable identity snapshot only verifies when decoded for the SAME
         // row it was signed for.
@@ -227,7 +227,7 @@ public class ServiceOutboxDestinationHandler implements OutboxDestinationHandler
         callerOverrides.putAll(decodedDurable);
         callerOverrides.put(TransactionalMessageContext.class.getName(), txCtx);
         // Provenance proving this is deferred (outbox relay) execution so the receive-side identity
-        // reconstruction initializer may mint a bounded SYSTEM context (W2/A6). Keyed by FQCN like
+        // reconstruction initializer may mint a bounded SYSTEM context. Keyed by FQCN like
         // the TransactionalMessageContext entry; reinstated before InboundContextInitializers run.
         // The .of factory sanitizes (blank -> OUTBOX_RELAY_TARGET_KIND, length, control chars), so
         // the strict ctor cannot throw synchronously out of this async-contract path.
@@ -246,7 +246,7 @@ public class ServiceOutboxDestinationHandler implements OutboxDestinationHandler
 
     /**
      * Reproduces the expected durable row-carrier for the receiving dispatch from the row's
-     * first-class {@code carrier_id} column (PRD identity-002 §14.6/A9, F3b).
+     * first-class {@code carrier_id} column.
      *
      * <p>The carrier id is read from {@link OutboxRelayControl#carrierId()} — projected by
      * {@code OutboxRelay} from the outbox row's {@code carrier_id} column, never from the
@@ -259,7 +259,7 @@ public class ServiceOutboxDestinationHandler implements OutboxDestinationHandler
      * <p>Returns {@link Optional#empty()} only when the envelope carries no {@link OutboxRelayControl}
      * at all — a shape that cannot occur for a real relay-built envelope (the relay always projects
      * one), but which a hand-built test fixture may omit; the caller falls back to the carrier-less
-     * decode overload in that case, preserving the F3a fail-closed sentinel behavior rather than
+     * decode overload in that case, preserving the fail-closed sentinel behavior rather than
      * throwing.
      *
      * @param outboxEnvelope the outbox entry being delivered

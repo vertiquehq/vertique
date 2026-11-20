@@ -121,6 +121,12 @@ public interface MethodMetadata {
      * guarantee and is never called by generated proxy code. Callers that invoke it accept the
      * reflection it entails.
      *
+     * <p>Generated implementations resolve the method lazily on the first call via
+     * {@code declaringType().getDeclaredMethod(name(), parameterTypes())} and cache it: every call returns
+     * an equal {@link Method}, and once published the same instance; a declaring class that no longer
+     * declares the method yields an {@link IllegalStateException} naming the expected signature.
+     * Scan-path implementations return the {@link Method} they wrap.
+     *
      * @return the reflective {@link Method}
      */
     Method asMethod();

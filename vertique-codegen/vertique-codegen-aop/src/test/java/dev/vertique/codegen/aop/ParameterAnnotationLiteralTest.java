@@ -138,8 +138,9 @@ class ParameterAnnotationLiteralTest {
                 "The reflection-free parameter-level findAnnotation must not call getParameterAnnotations(...); "
                         + "generated source:\n" + proxy);
         assertFalse(
-                proxy.contains("getDeclaredMethod"),
-                "The reflection-free parameter-level findAnnotation must not call getDeclaredMethod(...); "
+                GeneratedSources.withoutAsMethodBodies(proxy).contains("getDeclaredMethod"),
+                "The reflection-free parameter-level findAnnotation must not call getDeclaredMethod(...); only the "
+                        + "opt-in asMethod() body may; "
                         + "generated source:\n" + proxy);
     }
 

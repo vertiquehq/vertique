@@ -157,7 +157,7 @@ public abstract class ContextRuntimeModule {
 
     /**
      * Provides the built-in {@link DurablePropagationMetadata} service-dispatch encoder into the
-     * encoder multibinding set (FR-CTX-143).
+     * encoder multibinding set.
      *
      * @return the encoder instance
      */
@@ -169,7 +169,7 @@ public abstract class ContextRuntimeModule {
 
     /**
      * Provides the built-in {@link DurablePropagationMetadata} service-dispatch decoder into the
-     * decoder multibinding set (FR-CTX-143).
+     * decoder multibinding set.
      *
      * @return the decoder instance
      */

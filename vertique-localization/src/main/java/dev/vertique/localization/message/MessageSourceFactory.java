@@ -9,7 +9,7 @@ package dev.vertique.localization.message;
  * <p>Implementations are application-scoped and are injected via constructor injection where
  * needed. The framework does not provide a default {@code MessageSourceFactory} binding;
  * the application (or a higher-level {@code vertique-rest-localization} integration) registers
- * a concrete implementation (FR-LOC-011).
+ * a concrete implementation.
  *
  * <h2>Usage patterns</h2>
  * <pre>{@code

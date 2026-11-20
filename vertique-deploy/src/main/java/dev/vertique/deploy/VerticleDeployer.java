@@ -3,18 +3,15 @@
 
 package dev.vertique.deploy;
 
+import dev.vertique.core.lifecycle.LifecycleOrdered;
 import dev.vertique.core.lifecycle.LifecyclePhase;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -31,7 +28,7 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>All deployment IDs are tracked for clean shutdown via {@link #undeployAll()}, which reverses
  * the startup order (EDGE → SERVICES → INFRA → BOOTSTRAP, high priority before low within each
- * phase).
+ * phase, then names descending).
  */
 @Slf4j
 @Singleton
@@ -46,8 +43,10 @@ public class VerticleDeployer {
      *     still in flight
      * @param phase the deployment phase; retained for ordered undeploy
      * @param priority the priority within the phase; retained for ordered undeploy
+     * @param orderKey the deployment name, retained for deterministic tie-breaking
      */
-    private record TrackedDeployment(String vertxId, LifecyclePhase phase, int priority) {}
+    private record TrackedDeployment(String vertxId, LifecyclePhase phase, int priority, String orderKey)
+            implements LifecycleOrdered {}
 
     /** Sentinel vertxId used while a deployment is in flight. */
     private static final String DEPLOYING_ID = "";
@@ -76,14 +75,17 @@ public class VerticleDeployer {
      * @return a future of the Vert.x deployment ID
      */
     public Future<String> deploy(VerticleDeployment deployment) {
-        TrackedDeployment sentinel = new TrackedDeployment(DEPLOYING_ID, deployment.phase(), deployment.priority());
+        TrackedDeployment sentinel =
+                new TrackedDeployment(DEPLOYING_ID, deployment.phase(), deployment.priority(), deployment.orderKey());
         if (tracked.putIfAbsent(deployment.name(), sentinel) != null) {
             return Future.failedFuture("Deployment name already in use: " + deployment.name());
         }
         return vertx.deployVerticle(deployment.supplier(), deployment.options())
                 .onSuccess(id -> {
                     tracked.put(
-                            deployment.name(), new TrackedDeployment(id, deployment.phase(), deployment.priority()));
+                            deployment.name(),
+                            new TrackedDeployment(
+                                    id, deployment.phase(), deployment.priority(), deployment.orderKey()));
                     log.info(
                             "Deployed verticle: {} instances={}",
                             deployment.name(),
@@ -121,39 +123,24 @@ public class VerticleDeployer {
      * Undeploys all tracked verticles in reverse startup order.
      *
      * <p>Undeploys in reverse phase order (EDGE → SERVICES → INFRA → BOOTSTRAP), and within each
-     * phase in descending priority order. Each group undeploys in parallel ({@link Future#join}),
-     * groups are chained sequentially. Verticles currently in-flight (still deploying) are skipped.
+     * phase in descending priority and name order. Each undeployment completes before the next
+     * begins. Individual failures are logged and swallowed. In-flight deployments are skipped.
      * Verticles that fail to undeploy remain tracked so that callers can inspect or retry them.
      *
      * @return a future that succeeds when all undeploy attempts have settled
      */
     public Future<Void> undeployAll() {
-        // Build reverse-ordered groups: phases in reverse enum order, within each phase
-        // priorities descending. This ensures EDGE undeploys before INFRA, and high-priority
-        // verticles within a phase undeploy before low-priority ones. Non-verticle phases never
-        // match a tracked deployment (construction enforces verticle-only phases), so they yield
-        // empty groups and are harmless.
-        LifecyclePhase[] phases = LifecyclePhase.values();
-        List<List<String>> orderedGroups = new ArrayList<>();
-        for (int i = phases.length - 1; i >= 0; i--) {
-            LifecyclePhase phase = phases[i];
-            TreeMap<Integer, List<String>> phaseGroups = new TreeMap<>(Comparator.reverseOrder());
-            for (Map.Entry<String, TrackedDeployment> entry : tracked.entrySet()) {
-                TrackedDeployment td = entry.getValue();
-                if (td.phase() == phase && !DEPLOYING_ID.equals(td.vertxId())) {
-                    phaseGroups
-                            .computeIfAbsent(td.priority(), k -> new ArrayList<>())
-                            .add(entry.getKey());
-                }
-            }
-            orderedGroups.addAll(phaseGroups.values());
-        }
-
-        // Chain groups sequentially. Each undeployGroup always succeeds (failures are logged
-        // and collected internally), so the chain runs through all groups regardless of errors.
+        List<String> ordered = tracked.values().stream()
+                .filter(td -> !DEPLOYING_ID.equals(td.vertxId()))
+                .sorted(LifecycleOrdered.comparator().reversed())
+                .map(TrackedDeployment::orderKey)
+                .toList();
         Future<Void> chain = Future.succeededFuture();
-        for (List<String> group : orderedGroups) {
-            chain = chain.compose(v -> undeployGroup(group));
+        for (String name : ordered) {
+            chain = chain.compose(v -> undeployTracked(name)).recover(cause -> {
+                log.warn("Failed to undeploy verticle: {}", name, cause);
+                return Future.succeededFuture();
+            });
         }
         return chain;
     }
@@ -208,34 +195,12 @@ public class VerticleDeployer {
 
     // --- Private helpers ---
 
-    /**
-     * Undeploys a group of verticles in parallel (best-effort). Individual failures are logged but
-     * do not prevent other undeploys in the group from completing. Successfully undeployed verticles
-     * are removed from tracking.
-     *
-     * @param names the deployment names to undeploy in this group
-     * @return a future that always succeeds after all undeploy attempts in the group have settled
-     */
-    private Future<Void> undeployGroup(List<String> names) {
-        List<Future<Void>> undeploys = names.stream()
-                .map(name -> {
-                    TrackedDeployment td = tracked.get(name);
-                    if (td == null || DEPLOYING_ID.equals(td.vertxId())) {
-                        return Future.<Void>succeededFuture();
-                    }
-                    return vertx.undeploy(td.vertxId())
-                            .onSuccess(v -> {
-                                tracked.remove(name);
-                                log.info("Undeployed verticle: {}", name);
-                            })
-                            .recover(cause -> {
-                                log.warn("Failed to undeploy verticle: {}", name, cause);
-                                return Future.succeededFuture();
-                            });
-                })
-                .collect(Collectors.toList());
-        return undeploys.isEmpty()
-                ? Future.succeededFuture()
-                : Future.join(undeploys).mapEmpty();
+    /** Rechecks tracking after earlier asynchronous stops, skipping absent or in-flight entries. */
+    private Future<Void> undeployTracked(String name) {
+        TrackedDeployment td = tracked.get(name);
+        if (td == null || DEPLOYING_ID.equals(td.vertxId())) {
+            return Future.succeededFuture();
+        }
+        return undeploy(name);
     }
 }

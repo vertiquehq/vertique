@@ -41,14 +41,19 @@ final class StuckReporter {
         this.events = Objects.requireNonNull(events, "events");
     }
 
-    /** Reads and reports a sample when an observer is registered and the last sample is old enough. */
-    void sampleIfDue() {
+    /**
+     * Reads and reports a sample when an observer is registered and the last sample is old enough.
+     *
+     * @return a future that completes when the read this call started has ended, at once when it started none; it
+     *     never fails
+     */
+    Future<Void> sampleIfDue() {
         if (!events.any() || reading) {
-            return;
+            return Future.succeededFuture();
         }
         long now = System.nanoTime();
         if (now - lastSampleNanos < TimeUnit.MILLISECONDS.toNanos(MIN_INTERVAL_MS)) {
-            return;
+            return Future.succeededFuture();
         }
         lastSampleNanos = now;
         reading = true;
@@ -59,15 +64,16 @@ final class StuckReporter {
         } catch (Exception | LinkageError | AssertionError e) {
             counts = Future.failedFuture(e);
         }
-        counts.onComplete(result -> {
+        return counts.transform(result -> {
             reading = false;
             if (result.failed()) {
                 log.debug("The queue snapshot could not be read", result.cause());
-                return;
+                return Future.succeededFuture();
             }
             QueueCounts sample = result.result();
             events.emit(
                     new QueueSnapshot(sample.available(), sample.stuck(), sample.parked(), sample.deadLettered(), 0));
+            return Future.succeededFuture();
         });
     }
 }

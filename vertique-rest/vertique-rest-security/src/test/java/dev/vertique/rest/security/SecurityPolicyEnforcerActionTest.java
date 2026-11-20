@@ -122,6 +122,8 @@ class SecurityPolicyEnforcerActionTest {
         SecurityContext ctx = mock(SecurityContext.class);
         when(ctx.authorization()).thenReturn(AuthorizationClaims.empty());
         when(ctx.origin()).thenReturn(Optional.empty());
+        when(ctx.identity())
+                .thenReturn(SecurityIdentity.user(new PrincipalRef(PrincipalType.USER, "stub-user", Map.of())));
         return ctx;
     }
 
@@ -411,7 +413,7 @@ class SecurityPolicyEnforcerActionTest {
         }
 
         @Test
-        @DisplayName("action-only route denies an anonymous identity (action gate is the real constraint)")
+        @DisplayName("action-only route denies an anonymous identity with 401 (action gate is the real constraint)")
         void actionOnly_anonymousIdentity_deniedByActionGate() {
             // The action gate denies an anonymous caller; this proves the action gate — not a missing
             // context short-circuit — is the constraint and that anonymous does not slip through.
@@ -424,7 +426,7 @@ class SecurityPolicyEnforcerActionTest {
             enforcer.createHandler(new SecurityPolicy.None(), Optional.of(CONTENT_READ))
                     .handle(rc);
 
-            verify(rc).fail(403);
+            verify(rc).fail(401);
             verify(rc, never()).next();
             assertEquals(1, events.size(), "anonymous action-only deny must emit exactly one event");
             assertFalse(events.get(0).decision().permitted());

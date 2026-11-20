@@ -24,7 +24,7 @@ import java.util.Objects;
  * produced by registered {@link ServiceDispatchContextEncoder}s, and constructing a
  * {@link DispatchEnvelope}. Framework dispatchers (service client factory, Kafka consumer
  * dispatcher, outbox-service destination handler) MUST use this builder rather than calling
- * {@link DispatchEnvelope#of(Object, DispatchMetadata)} directly (see PRD FR-CTX-015).
+ * {@link DispatchEnvelope#of(Object, DispatchMetadata)} directly.
  *
  * <p>MDC propagation flows through the same encoder/decoder pipeline as other typed context
  * values. The MDC service-dispatch encoder registered by {@code LoggingContextModule}
@@ -83,9 +83,9 @@ public final class DispatchEnvelopeBuilder {
      *                               {@code "outbox-service"}); must not be {@code null}
      * @param <T>                    the payload type
      * @return the constructed envelope; never {@code null}
-     * @throws IllegalStateException if any registered encoder returns {@code null} (FR-CTX-050)
+     * @throws IllegalStateException if any registered encoder returns {@code null}
      *                               or if a caller key collides with an encoder-produced key
-     *                               (FR-CTX-063)
+     *
      * @throws NullPointerException  if {@code callerContextOverrides} or {@code boundary} is
      *                               {@code null}
      */
@@ -102,7 +102,7 @@ public final class DispatchEnvelopeBuilder {
      * address.
      *
      * <p>Identical to {@link #build(Object, Map, String)} but additionally sets the reply address
-     * on the envelope so that the service invoker publishes the result to that event bus address
+     * on the envelope so that the service invoker sends the result to that event bus address
      * instead of calling {@code message.reply()}.
      *
      * @param payload                the request payload; may be {@code null} for void operations
@@ -111,13 +111,13 @@ public final class DispatchEnvelopeBuilder {
      *                               {@code null}.
      * @param boundary               the boundary identifier passed into the encode context;
      *                               must not be {@code null}
-     * @param replyAddress           the event bus address to publish the result to;
+     * @param replyAddress           the event bus address to send the result to;
      *                               must not be {@code null}
      * @param <T>                    the payload type
      * @return the constructed envelope with the reply address set; never {@code null}
-     * @throws IllegalStateException if any registered encoder returns {@code null} (FR-CTX-050)
+     * @throws IllegalStateException if any registered encoder returns {@code null}
      *                               or if a caller key collides with an encoder-produced key
-     *                               (FR-CTX-063)
+     *
      * @throws NullPointerException  if any required argument is {@code null}
      */
     public <T> DispatchEnvelope<T> build(

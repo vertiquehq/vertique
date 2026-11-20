@@ -7,8 +7,7 @@ import io.vertx.core.Future;
 
 /**
  * Framework-private engine seam. Public visibility only so Dagger can compose the LOCAL and
- * CLUSTERED implementations across modules; never a supported application extension point
- * (contracts/rate-limit-runtime.md, "Boundary" and "Backend seam").
+ * CLUSTERED implementations across modules; never a supported application extension point.
  */
 public interface RateLimitBackend {
 

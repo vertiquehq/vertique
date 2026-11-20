@@ -13,7 +13,7 @@ import java.util.List;
 import javax.lang.model.element.ExecutableElement;
 
 /**
- * Validates HTTP verb annotations on JAX-RS resource methods at compile time (CG-009).
+ * Validates HTTP verb annotations on JAX-RS resource methods at compile time.
  *
  * <p>Covers the seven JAX-RS HTTP verb annotations: {@code @GET}, {@code @POST}, {@code @PUT},
  * {@code @DELETE}, {@code @PATCH}, {@code @HEAD}, and {@code @OPTIONS} — the same set as
@@ -28,8 +28,8 @@ import javax.lang.model.element.ExecutableElement;
  * is an error. Runtime silently picks the first match in declaration order; the extra verb is
  * always a typo.
  *
- * <p>Two APIs are provided: the original element-based API (used by CG-009 tests) and an
- * {@link EffectiveMethodContract}-based API used by the {@code JaxRsPipelineProcessor} (CG-010).
+ * <p>Two APIs are provided: the original element-based API (used by existing tests) and an
+ * {@link EffectiveMethodContract}-based API used by the {@code JaxRsPipelineProcessor}.
  */
 public final class HttpVerbValidator {
 
@@ -44,7 +44,7 @@ public final class HttpVerbValidator {
         this.ctx = ctx;
     }
 
-    // --- Element-based API (CG-009, preserved for existing tests) ---
+    // --- Element-based API (preserved for existing tests) ---
 
     /**
      * Returns the list of HTTP verb annotation FQNs present on the given method, in the same
@@ -91,7 +91,7 @@ public final class HttpVerbValidator {
                         Diagnostics.multipleHttpVerbs(method.getSimpleName().toString(), simpleNames));
     }
 
-    // --- Contract-based API (CG-010) ---
+    // --- Contract-based API ---
 
     /**
      * Returns the effective HTTP verb annotation FQN from the resolved method contract as a
@@ -117,8 +117,8 @@ public final class HttpVerbValidator {
      *
      * <p>The effective contract already has at most one verb (the resolver picks the first-found
      * win). This overload is provided for structural parity — it only emits an error when
-     * the underlying concrete method element itself carries multiple verbs directly (CG-010
-     * still flags this as a programmer mistake even when the resolver resolved to one).
+     * the underlying concrete method element itself carries multiple verbs directly (this is
+     * still flagged as a programmer mistake even when the resolver resolved to one).
      *
      * <p>Emits an {@code ERROR} diagnostic on the concrete method element when multiple verbs are
      * present directly on that element.

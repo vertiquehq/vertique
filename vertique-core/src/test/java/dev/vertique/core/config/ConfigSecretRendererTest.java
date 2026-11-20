@@ -53,11 +53,82 @@ class ConfigSecretRendererTest {
         }
 
         @Test
+        @DisplayName("matches privateKeyPem/private-key/private_key through the normalized path")
+        void privateKeyVariantsMatch() {
+            assertTrue(ConfigSecretRenderer.isSensitivePath("privateKeyPem"));
+            assertTrue(ConfigSecretRenderer.isSensitivePath("blob.cdn.cloudfront.privateKeyPem"));
+            assertTrue(ConfigSecretRenderer.isSensitivePath("private-key"));
+            assertTrue(ConfigSecretRenderer.isSensitivePath("private_key"));
+            assertTrue(ConfigSecretRenderer.isSensitivePath("PRIVATE_KEY_PEM"));
+        }
+
+        @Test
+        @DisplayName("matches camel-case and hyphenated jaasConfig and userInfo through the normalized path")
+        void jaasConfigAndUserInfoVariantsMatch() {
+            assertTrue(ConfigSecretRenderer.isSensitivePath("jaasConfig"));
+            assertTrue(ConfigSecretRenderer.isSensitivePath("sasl.jaas-config"));
+            assertTrue(ConfigSecretRenderer.isSensitivePath("kafka.JAAS_CONFIG"));
+            assertTrue(ConfigSecretRenderer.isSensitivePath("userInfo"));
+            assertTrue(ConfigSecretRenderer.isSensitivePath("user_info"));
+            assertTrue(ConfigSecretRenderer.isSensitivePath("basic.auth.user-info"));
+            // the dotted forms keep matching
+            assertTrue(ConfigSecretRenderer.isSensitivePath("sasl.jaas.config"));
+            assertTrue(ConfigSecretRenderer.isSensitivePath("basic.auth.user.info"));
+        }
+
+        @Test
+        @DisplayName("near misses of jaasconfig and userinfo stay non-secret")
+        void jaasConfigAndUserInfoNearMissesDoNotMatch() {
+            assertFalse(ConfigSecretRenderer.isSensitivePath("jaas"));
+            assertFalse(ConfigSecretRenderer.isSensitivePath("jaasMode"));
+            assertFalse(ConfigSecretRenderer.isSensitivePath("user"));
+            assertFalse(ConfigSecretRenderer.isSensitivePath("userId"));
+            assertFalse(ConfigSecretRenderer.isSensitivePath("jaas.mode"));
+        }
+
+        @Test
         @DisplayName("returns false for a non-secret path")
         void nonSecretPath() {
             assertFalse(ConfigSecretRenderer.isSensitivePath("bootstrap.servers"));
             assertFalse(ConfigSecretRenderer.isSensitivePath("max.poll.records"));
             assertFalse(ConfigSecretRenderer.isSensitivePath("url"));
+        }
+    }
+
+    // --- isUriPath: the URL-key predicate ---
+
+    @Nested
+    @DisplayName("isUriPath")
+    class UriPath {
+
+        @Test
+        @DisplayName("matches url, uri, endpoint and connection-string names through the normalized path")
+        void matchesUrlNames() {
+            assertTrue(ConfigSecretRenderer.isUriPath("jdbcUrl"));
+            assertTrue(ConfigSecretRenderer.isUriPath("restClient.orders.baseUrl"));
+            assertTrue(ConfigSecretRenderer.isUriPath("redis.endpoints"));
+            assertTrue(ConfigSecretRenderer.isUriPath("camel.uri"));
+            assertTrue(ConfigSecretRenderer.isUriPath("sql.connection-string"));
+            assertTrue(ConfigSecretRenderer.isUriPath("sql.connection_string"));
+            assertTrue(ConfigSecretRenderer.isUriPath("s3.endpoint"));
+            assertTrue(ConfigSecretRenderer.isUriPath("JDBC_URL"));
+        }
+
+        @Test
+        @DisplayName(
+                "matches a look-alike such as security (contains uri) by design: redactUri leaves a plain string equal")
+        void lookAlikeMatches() {
+            assertTrue(ConfigSecretRenderer.isUriPath("security.audience"));
+            assertEquals("orders-api", ConfigSecretRenderer.redactUri("orders-api"));
+        }
+
+        @Test
+        @DisplayName("returns false for a path without a URL-naming token")
+        void nonUrlPath() {
+            assertFalse(ConfigSecretRenderer.isUriPath("host"));
+            assertFalse(ConfigSecretRenderer.isUriPath("bootstrap.servers"));
+            assertFalse(ConfigSecretRenderer.isUriPath("vault.address"));
+            assertFalse(ConfigSecretRenderer.isUriPath("password"));
         }
     }
 
@@ -124,6 +195,22 @@ class ConfigSecretRendererTest {
             assertFalse(rendered.contains("ACC2"), "access-key value must be masked");
             assertFalse(rendered.contains("ACC3"), "access.key value must be masked");
             assertTrue(rendered.contains("broker:9092"), "non-secret value stays visible");
+            assertTrue(rendered.contains(ConfigSecretRenderer.MASK), "mask token present");
+        }
+
+        @Test
+        @DisplayName("masks a privateKeyPem leaf in a bag")
+        void privateKeyPemScrubbed() {
+            JsonObject bag = new JsonObject()
+                    .put("privateKeyPem", "-----BEGIN PRIVATE KEY-----PEM1")
+                    .put("private-key", "PEM2")
+                    .put("keyPairId", "K123");
+
+            String rendered = ConfigSecretRenderer.redactBag(bag);
+
+            assertFalse(rendered.contains("PEM1"), "privateKeyPem value must be masked");
+            assertFalse(rendered.contains("PEM2"), "private-key value must be masked");
+            assertTrue(rendered.contains("K123"), "non-secret value stays visible");
             assertTrue(rendered.contains(ConfigSecretRenderer.MASK), "mask token present");
         }
 
