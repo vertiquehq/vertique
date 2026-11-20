@@ -246,6 +246,20 @@ class MetadataEmitterParameterStandaloneTest {
         return element;
     }
 
+    @Test
+    @DisplayName("loads a type that has no class literal by name once, with the generated class's own loader")
+    void emitParameterMetadataLoadingType_loadsTheTypeByName() {
+        JavaFile file = MetadataEmitter.emitParameterMetadataLoadingType(
+                GENERATED_NAME, 1, "x", "com.example.Outer$Hidden", 2, List.of(), null);
+        String source = file.toString();
+
+        assertTrue(source.contains("TYPE = loadType(\"com.example.Outer$Hidden\", 2)"), source);
+        assertTrue(source.contains("Class.forName(binaryName, false, Greeter_greet_0_P0Meta.class.getClassLoader())"));
+        assertTrue(source.contains("type = type.arrayType()"));
+        assertTrue(source.contains("return TYPE;"), "type() returns the loaded constant");
+        assertFalse(source.contains("Hidden.class"), "the private type is never written as a class literal");
+    }
+
     /**
      * Creates a mock {@link DeclaredType} backed by a {@link TypeElement} carrying the given names.
      *

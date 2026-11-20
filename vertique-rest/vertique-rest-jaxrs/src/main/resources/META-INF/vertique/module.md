@@ -126,7 +126,7 @@ the erasure of its bound after the hierarchy's bindings are applied (`<M extends
 bound to `Integer` reports `Integer`, `<M extends Number>` reports `Number`), an unbounded one
 reports `Object`, and an array of a bound variable reports the array of its raw type (`T[]` with
 `T` bound to `List<String>` is `List[]`). A variable no class in the hierarchy
-binds (a raw supertype, or `Base` used without arguments) keeps its erasure, so a scalar parameter
+binds (a raw supertype, `Base` used without arguments, or a generic intermediate class named without arguments, whose own supertypes a raw type erases) keeps its erasure, so a scalar parameter
 of that type still fails startup with `UNRESOLVABLE_PARAM_CONVERTER`, and a body or return type
 bound by it is the erasure of the variable's bound (`Object` when it is unbounded); override such a
 method with concrete parameter types. Reflective
@@ -407,9 +407,11 @@ of a context an interceptor rebuilt stays as that interceptor returned it, so re
 
 ### `ResourceMethodMeta`
 
-The immutable per-method descriptor built at startup and consumed on every request. It is the object
-an `OperationHandlerContributor` receives through `OperationRegistrationContext`, so `operationId()`
-and `securityPolicy()` in particular are read at extension-point call sites.
+The immutable per-method descriptor built at startup and consumed on every request. It belongs to
+this module: the registrar, the scanner and generated code build and read it. An
+`OperationHandlerContributor` does not receive it; the contributor's `OperationRegistrationContext`
+carries `operationId()` and `securityPolicy()` itself and a transport-neutral `RestOperationDescriptor`
+(from `vertique-rest-core`) as `operation()`.
 
 ```java
 public record ResourceMethodMeta(

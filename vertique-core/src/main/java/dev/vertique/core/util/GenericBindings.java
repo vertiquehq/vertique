@@ -6,6 +6,7 @@ package dev.vertique.core.util;
 import java.lang.reflect.Array;
 import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
@@ -29,6 +30,11 @@ import java.util.Set;
  * serves a whole hierarchy and a chain of forwarding declarations
  * ({@code Crud.ID -> Base.T -> String}) resolves by following it. The first binding found for a
  * variable wins. Arguments of an owner type ({@code Outer<String>.Inner}) are bound too.
+ *
+ * <p>A raw reference to a generic class ({@code class Leaf extends Mid} for a generic {@code Mid<T>})
+ * binds nothing from that class upward: the supertypes of a raw type are the erasures of the
+ * supertypes of its parameterizations (JLS 4.8), so {@code class Mid<T> implements Api<String>}
+ * reached through the raw {@code Mid} leaves {@code Api}'s variable unbound, as javac does.
  */
 final class GenericBindings {
 
@@ -264,9 +270,28 @@ final class GenericBindings {
             if (parameterized.getRawType() instanceof Class<?> raw) {
                 walk(raw, bindings, seen);
             }
-        } else if (supertype instanceof Class<?> raw) {
-            walk(raw, bindings, seen);
+        } else if (supertype instanceof Class<?> plain && !isRaw(plain)) {
+            walk(plain, bindings, seen);
         }
+        // A class named without type arguments that is generic, or an inner class of a generic class
+        // named without them, is a raw type: its supertypes are erased.
+    }
+
+    /**
+     * Whether a class that a {@code extends} or {@code implements} clause names as a plain {@link Class}
+     * is a raw type: it declares type parameters, or it is a non-static member class of a class that does
+     * (JLS 4.8). A parameterized reference to either arrives as a {@link ParameterizedType} instead.
+     */
+    private static boolean isRaw(Class<?> type) {
+        for (Class<?> current = type; current != null; ) {
+            if (current.getTypeParameters().length > 0) {
+                return true;
+            }
+            current = current.isMemberClass() && !Modifier.isStatic(current.getModifiers())
+                    ? current.getEnclosingClass()
+                    : null;
+        }
+        return false;
     }
 
     private static void bind(ParameterizedType parameterized, Map<TypeVariable<?>, Type> bindings) {
