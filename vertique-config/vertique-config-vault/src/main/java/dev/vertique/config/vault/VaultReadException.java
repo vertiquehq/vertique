@@ -29,8 +29,8 @@ import dev.vertique.core.exception.ConfigurationException;
  * non-2xx reads and failed logins (format: {@code "...\nResponse body: <body>"}). An untrusted
  * proxy 502 HTML page or a Vault error body can therefore flow up the cause chain and reach
  * startup logs as unbounded, untrusted text. To match the severed-cause discipline applied by
- * {@code vertique-config-azure-keyvault} and {@code vertique-config-aws-secrets}, this exception
- * intentionally does NOT attach a driver throwable as a cause. The message contains only the
+ * {@code vertique-config-azure-keyvault} (the AWS Secrets source keeps the SDK exception as the
+ * cause instead), this exception intentionally does NOT attach a driver throwable as a cause. The message contains only the
  * exception class simple name and, when available, the HTTP status code — both constructed by
  * this module, never from the driver message.
  *

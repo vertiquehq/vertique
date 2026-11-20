@@ -248,7 +248,7 @@ The value-redaction rule applies throughout this module:
 
 The jopenlibs driver embeds raw HTTP response bodies in `VaultException` messages for non-2xx reads and failed logins (format: `"...\nResponse body: <body>"`). An untrusted proxy 502 HTML page or a Vault error body can flow up the exception cause chain and reach startup logs as unbounded, untrusted text.
 
-To match the severed-cause discipline of `vertique-config-azure-keyvault` and `vertique-config-aws-secrets`:
+To match the severed-cause discipline of `vertique-config-azure-keyvault` (the AWS Secrets source differs: it keeps the SDK exception as the cause of its failure, see its module reference):
 
 - Every caught `VaultException` is sanitized by `JOpenLibsVaultGateway.sanitizeDriverFailure(path, e)` before being rethrown as a `VaultReadException`.
 - The sanitized detail contains only: `VaultException` class simple name + `"HTTP <code>"` when the driver set a non-zero status. The driver message is discarded.
