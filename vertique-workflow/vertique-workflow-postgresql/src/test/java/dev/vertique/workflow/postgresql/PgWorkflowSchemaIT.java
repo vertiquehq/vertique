@@ -1014,11 +1014,12 @@ public class PgWorkflowSchemaIT {
         assertEquals(winner, resolved.workflowId());
         assertEquals("fp-start", resolved.existingFingerprint());
 
-        // signal: absent, inserted, then found
+        // signal: absent, claimed, then found
         String signalKey = unique("signal");
         assertTrue(inTransaction(runtime, tx -> dedup.findSignal(winner, signalKey, tx))
                 .isEmpty());
-        inTransaction(runtime, tx -> dedup.insertSignal(winner, signalKey, tx));
+        inTransaction(
+                runtime, tx -> dedup.claimOrResolveSignalScoped(winner.value().toString(), signalKey, winner, tx));
         assertEquals(
                 Optional.of(winner.value()), inTransaction(runtime, tx -> dedup.findSignal(winner, signalKey, tx)));
 
@@ -1053,8 +1054,9 @@ public class PgWorkflowSchemaIT {
         String scope = unique("branch-scope");
         String scopedKey = unique("scoped");
         String dispatchKey = unique("dispatch");
-        assertTrue(claimed(runtime, tx -> dedup.claimOrResolveSignal(winner, claimKey, tx)));
-        assertFalse(claimed(runtime, tx -> dedup.claimOrResolveSignal(winner, claimKey, tx)));
+        String claimScope = winner.value().toString();
+        assertTrue(claimed(runtime, tx -> dedup.claimOrResolveSignalScoped(claimScope, claimKey, winner, tx)));
+        assertFalse(claimed(runtime, tx -> dedup.claimOrResolveSignalScoped(claimScope, claimKey, winner, tx)));
         assertTrue(claimed(runtime, tx -> dedup.claimOrResolveSignalScoped(scope, scopedKey, winner, tx)));
         assertFalse(claimed(runtime, tx -> dedup.claimOrResolveSignalScoped(scope, scopedKey, winner, tx)));
         String dispatchScope = winner.value().toString();

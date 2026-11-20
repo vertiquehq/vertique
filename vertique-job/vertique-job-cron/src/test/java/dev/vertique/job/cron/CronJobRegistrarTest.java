@@ -37,8 +37,8 @@ import org.junit.jupiter.api.Test;
  * Tests for {@link CronJobRegistrar} — annotation-based and config-only job registration off the
  * typed {@link CronConfig}, target reference derivation ({@link CronTargetReference.ServiceTarget}
  * vs {@link CronTargetReference.EventBusTarget}), the annotation-override vs config-only distinction,
- * {@code maxAttempts} sourcing (config for config-only jobs; annotation for annotated jobs), removal
- * of the deprecated {@code handler} field, and validation error collection.
+ * the single attempt every registered job records (cron never retries), removal of the deprecated
+ * {@code handler} field, and validation error collection.
  */
 @DisplayName("CronJobRegistrar")
 class CronJobRegistrarTest {
@@ -73,10 +73,7 @@ class CronJobRegistrarTest {
         }
     }
 
-    /**
-     * Annotated impl whose {@code @CronJob.maxAttempts} is a non-default value so a test can prove
-     * the registrar takes maxAttempts from the annotation, not from config.
-     */
+    /** Annotated impl whose job a test registers next to a config entry that still carries {@code maxAttempts}. */
     @ServiceContract(value = "retry-report-service", namespace = "reporting")
     interface RetryReportService {
         @ServiceOperation("generate")
@@ -84,7 +81,7 @@ class CronJobRegistrarTest {
     }
 
     static class RetryReportServiceImpl implements RetryReportService {
-        @CronJob(id = "retry-report", cron = "0 0 8 * * *", timezone = "UTC", maxAttempts = 9)
+        @CronJob(id = "retry-report", cron = "0 0 8 * * *", timezone = "UTC")
         @Override
         public Future<Void> generate() {
             return Future.succeededFuture();
@@ -250,10 +247,10 @@ class CronJobRegistrarTest {
         }
 
         @Test
-        @DisplayName("annotated job's maxAttempts comes from the annotation, not overridable by config")
-        void annotatedMaxAttemptsFromAnnotation() {
-            // RetryReportServiceImpl annotation declares maxAttempts=9. A config override entry
-            // setting maxAttempts=2 must be ignored for an annotated job.
+        @DisplayName("an annotated job records one attempt; a leftover maxAttempts config entry is ignored")
+        void annotatedJobRecordsOneAttempt() {
+            // Cron never retries. A config override entry that still sets the removed maxAttempts key
+            // changes nothing.
             JsonObject root = new JsonObject()
                     .put(
                             "cron",
@@ -271,7 +268,7 @@ class CronJobRegistrarTest {
             new CronJobRegistrar(scheduler, registry, resolver, cronConfig(root), null).scan();
 
             assertEquals(1, scheduler.registered.size());
-            assertEquals(9, scheduler.registered.get(0).maxAttempts(), "maxAttempts must come from the annotation");
+            assertEquals(1, scheduler.registered.get(0).maxAttempts(), "cron records one attempt");
         }
     }
 
@@ -350,8 +347,8 @@ class CronJobRegistrarTest {
         }
 
         @Test
-        @DisplayName("config-only job reads maxAttempts from config")
-        void configOnlyMaxAttemptsFromConfig() {
+        @DisplayName("a config-only job records one attempt; a leftover maxAttempts entry is ignored")
+        void configOnlyJobRecordsOneAttempt() {
             JsonObject root = new JsonObject()
                     .put(
                             "cron",
@@ -373,7 +370,7 @@ class CronJobRegistrarTest {
             new CronJobRegistrar(scheduler, registry, resolver, cronConfig(root), null).scan();
 
             assertEquals(1, scheduler.registered.size());
-            assertEquals(5, scheduler.registered.get(0).maxAttempts());
+            assertEquals(1, scheduler.registered.get(0).maxAttempts());
         }
 
         @Test

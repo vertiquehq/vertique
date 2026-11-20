@@ -30,6 +30,10 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-db-core</artifactId>
         </dependency>
         <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-security-core</artifactId>
+        </dependency>
+        <dependency>
             <groupId>io.vertx</groupId>
             <artifactId>vertx-core</artifactId>
         </dependency>

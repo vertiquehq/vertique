@@ -25,7 +25,6 @@ class CronJobProcessorPositiveTest {
                                 cron = "0 0 0 * * *", \
                                 mode = dev.vertique.job.cron.ExecutionMode.SINGLE_INSTANCE, \
                                 timezone = "America/New_York", \
-                                maxAttempts = 5, \
                                 overlapPolicy = dev.vertique.job.cron.OverlapPolicy.SKIP, \
                                 misfirePolicy = dev.vertique.job.cron.MisfirePolicy.FIRE_NOW\
                                 """,

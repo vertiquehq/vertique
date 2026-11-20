@@ -22,6 +22,11 @@
  *       {@link dev.vertique.inboxoutbox.OutboxDestinationHandler}s, and handles retry/dead-letter
  *       lifecycle; supports both {@link dev.vertique.inboxoutbox.RelayStrategy#POLLING} and
  *       {@link dev.vertique.inboxoutbox.RelayStrategy#LISTEN_NOTIFY}</li>
+ *   <li>{@link dev.vertique.inboxoutbox.postgresql.PgOutboxQueryService} and
+ *       {@link dev.vertique.inboxoutbox.postgresql.PgOutboxOperations} — implement
+ *       {@link dev.vertique.inboxoutbox.query.OutboxQueryService} and
+ *       {@link dev.vertique.inboxoutbox.ops.OutboxOperations}: listing and reading outbox entries, and
+ *       retrying or discarding them under a row lock</li>
  *   <li>{@link dev.vertique.inboxoutbox.postgresql.TransactionalMessagingPostgresqlModule} — Dagger
  *       module that binds repositories, services, and deploys the relay verticle</li>
  *   <li>{@link dev.vertique.inboxoutbox.postgresql.InboxOutboxMigrationsModule} — Dagger module

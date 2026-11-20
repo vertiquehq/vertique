@@ -16,7 +16,6 @@ import javax.lang.model.element.VariableElement;
  * <p>Validates:
  * <ul>
  *   <li>{@code id} — must not be blank</li>
- *   <li>{@code maxAttempts} — must be {@code >= 1}</li>
  *   <li>{@code overlapPolicy} / {@code mode} — {@code QUEUE_ONE} requires {@code EVERY_INSTANCE}</li>
  *   <li>{@code timezone} — emits a {@code WARNING} (not error) when the value cannot be resolved
  *       via {@link ZoneId#of(String)} (external config may override)</li>
@@ -45,7 +44,6 @@ public final class PolicyValueValidator {
      */
     public void validate(ExecutableElement method, AnnotationMirror mirror) {
         validateId(method, mirror);
-        validateMaxAttempts(method, mirror);
         validateOverlapPolicy(method, mirror);
         validateTimezone(method, mirror);
     }
@@ -54,14 +52,6 @@ public final class PolicyValueValidator {
         ctx.annotations().attribute(mirror, "id", String.class).ifPresent(id -> {
             if (id.isBlank()) {
                 ctx.diagnostics().error(method, "@CronJob.id must not be blank");
-            }
-        });
-    }
-
-    private void validateMaxAttempts(ExecutableElement method, AnnotationMirror mirror) {
-        ctx.annotations().attribute(mirror, "maxAttempts", Integer.class).ifPresent(v -> {
-            if (v < 1) {
-                ctx.diagnostics().error(method, "@CronJob.maxAttempts must be >= 1, got %d", v);
             }
         });
     }

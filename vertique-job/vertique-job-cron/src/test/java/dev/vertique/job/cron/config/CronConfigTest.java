@@ -171,7 +171,7 @@ class CronConfigTest {
         }
 
         @Test
-        @DisplayName("enabled defaults to true; maxAttempts defaults to 3")
+        @DisplayName("enabled defaults to true")
         void scalarDefaults() {
             JsonObject root = new JsonObject()
                     .put("cron", new JsonObject().put("jobs", new JsonObject().put("id", new JsonObject())));
@@ -180,11 +180,10 @@ class CronConfigTest {
                     CronConfig.fromConfig(root, configParser()).jobIndex().get("id");
 
             assertTrue(job.enabled(), "enabled defaults to true");
-            assertEquals(3, job.maxAttempts(), "maxAttempts defaults to 3");
         }
 
         @Test
-        @DisplayName("explicit enabled=false and maxAttempts are read")
+        @DisplayName("explicit enabled=false is read; the removed maxAttempts key is ignored")
         void explicitScalars() {
             JsonObject root = new JsonObject()
                     .put(
@@ -203,7 +202,10 @@ class CronConfigTest {
                     CronConfig.fromConfig(root, configParser()).jobIndex().get("id");
 
             assertFalse(job.enabled());
-            assertEquals(7, job.maxAttempts());
+            assertTrue(
+                    java.util.Arrays.stream(CronJobConfig.class.getRecordComponents())
+                            .noneMatch(component -> component.getName().equals("maxAttempts")),
+                    "cron never retries, so the job config carries no attempt limit");
         }
     }
 

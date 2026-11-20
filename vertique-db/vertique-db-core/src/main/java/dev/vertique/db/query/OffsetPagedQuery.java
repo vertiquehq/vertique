@@ -227,41 +227,10 @@ public abstract class OffsetPagedQuery<T> {
      * @param <T> the domain type
      * @param <B> the concrete builder type (self-type)
      */
-    public abstract static class Builder<T, B extends Builder<T, B>> {
-
-        /** The base SQL query. */
-        protected String sql;
-
-        /** The SQL client to execute queries against. */
-        protected SqlClient client;
-
-        /** The base query parameters. */
-        protected Tuple params;
-
-        /** The row mapper. */
-        protected RowMapper<T> mapper;
-
-        /** The exception mapper for exception translation. */
-        protected DbExceptionMapper exceptionMapper;
-
-        /** The order keys for the ORDER BY clause. */
-        protected List<OrderKey> orderKeys;
-
-        /** The default page size. */
-        protected int defaultPageSize = 20;
-
-        /** The optional query clause (e.g., FOR UPDATE). */
-        protected QueryClause queryClause;
+    public abstract static class Builder<T, B extends Builder<T, B>> extends AbstractPagedQueryBuilder<T, B> {
 
         /** Creates a new builder with default values. */
         protected Builder() {}
-
-        /**
-         * Returns this builder cast to the concrete type.
-         *
-         * @return this builder
-         */
-        protected abstract B self();
 
         /**
          * Builds and returns the OffsetPagedQuery. Terminal methods call this internally.
@@ -269,165 +238,6 @@ public abstract class OffsetPagedQuery<T> {
          * @return the built OffsetPagedQuery
          */
         protected abstract OffsetPagedQuery<T> build();
-
-        // --- Configuration methods ---
-
-        /**
-         * Sets the base SQL query. Must not contain ORDER BY, LIMIT, or OFFSET — the framework
-         * appends these automatically.
-         *
-         * @param sql the SQL string
-         * @return this builder
-         */
-        public B sql(String sql) {
-            this.sql = sql;
-            return self();
-        }
-
-        /**
-         * Sets the SQL client to use for execution. Overrides the default pool. Pass a
-         * {@code SqlConnection} for transactional execution.
-         *
-         * @param client the SQL client (pool or connection)
-         * @return this builder
-         */
-        public B on(SqlClient client) {
-            this.client = client;
-            return self();
-        }
-
-        /**
-         * Sets the base parameters for the prepared query.
-         *
-         * @param params the query parameters
-         * @return this builder
-         */
-        public B params(Tuple params) {
-            this.params = params;
-            return self();
-        }
-
-        /**
-         * Sets the row mapper for converting database rows to domain objects.
-         *
-         * @param mapper the row mapper
-         * @return this builder
-         */
-        public B mapping(RowMapper<T> mapper) {
-            this.mapper = mapper;
-            return self();
-        }
-
-        /**
-         * Sets the exception mapper for exception translation. Typically set automatically by the
-         * repository's {@code offsetPagedQuery()} factory method.
-         *
-         * @param exceptionMapper the exception mapper
-         * @return this builder
-         */
-        public B exceptionMapper(DbExceptionMapper exceptionMapper) {
-            this.exceptionMapper = exceptionMapper;
-            return self();
-        }
-
-        /**
-         * Sets the default page size. Used when no page size is specified in the
-         * {@link #page(int)} call. Defaults to 20 if not set.
-         *
-         * @param pageSize the default page size
-         * @return this builder
-         */
-        public B pageSize(int pageSize) {
-            this.defaultPageSize = pageSize;
-            return self();
-        }
-
-        /**
-         * Sets the column ordering using the given column names. All columns use
-         * {@link OrderDirection#ASC} and {@link NullHandling#DISALLOW}. At least one column is
-         * required.
-         *
-         * @param columns the column names in sort priority order
-         * @return this builder
-         * @throws IllegalArgumentException if columns is empty, contains null/blank names, or duplicates
-         */
-        public B orderBy(String... columns) {
-            return orderBy(OrderDirection.ASC, NullHandling.DISALLOW, columns);
-        }
-
-        /**
-         * Sets the column ordering with a uniform direction. All columns use
-         * {@link NullHandling#DISALLOW}. At least one column is required.
-         *
-         * @param direction the sort direction for all columns
-         * @param columns   the column names in sort priority order
-         * @return this builder
-         * @throws IllegalArgumentException if columns is empty, contains null/blank names, or duplicates
-         */
-        public B orderBy(OrderDirection direction, String... columns) {
-            return orderBy(direction, NullHandling.DISALLOW, columns);
-        }
-
-        /**
-         * Sets the column ordering with a uniform direction and null handling policy. At least
-         * one column is required.
-         *
-         * @param direction    the sort direction for all columns
-         * @param nullHandling the null handling policy for all columns
-         * @param columns      the column names in sort priority order
-         * @return this builder
-         * @throws IllegalArgumentException if columns is empty, contains null/blank names, or duplicates
-         */
-        public B orderBy(OrderDirection direction, NullHandling nullHandling, String... columns) {
-            Objects.requireNonNull(direction, "direction must not be null");
-            Objects.requireNonNull(nullHandling, "nullHandling must not be null");
-            Objects.requireNonNull(columns, "columns must not be null");
-            if (columns.length == 0) {
-                throw new IllegalArgumentException("At least one column is required");
-            }
-            validateColumnNames(columns);
-            List<OrderKey> keys = new ArrayList<>(columns.length);
-            for (String col : columns) {
-                keys.add(new OrderKey(col, direction, nullHandling));
-            }
-            this.orderKeys = List.copyOf(keys);
-            return self();
-        }
-
-        /**
-         * Sets the column ordering with per-column control over direction and null handling.
-         * At least one order key is required.
-         *
-         * @param first the first order key
-         * @param rest  additional order keys
-         * @return this builder
-         * @throws IllegalArgumentException if duplicate column names are found
-         */
-        public B orderBy(OrderKey first, OrderKey... rest) {
-            Objects.requireNonNull(first, "first order key must not be null");
-            List<OrderKey> keys = new ArrayList<>(1 + rest.length);
-            keys.add(first);
-            for (OrderKey key : rest) {
-                Objects.requireNonNull(key, "order key must not be null");
-                keys.add(key);
-            }
-            String[] columnNames = keys.stream().map(OrderKey::column).toArray(String[]::new);
-            validateColumnNames(columnNames);
-            this.orderKeys = List.copyOf(keys);
-            return self();
-        }
-
-        /**
-         * Sets the vendor-specific query clause appended after the OFFSET clause. Use vendor-specific
-         * enums (e.g., {@code PgLockMode}).
-         *
-         * @param queryClause the query clause to append
-         * @return this builder
-         */
-        public B queryClause(QueryClause queryClause) {
-            this.queryClause = queryClause;
-            return self();
-        }
 
         // --- Terminal methods (delegate to built OffsetPagedQuery) ---
 
@@ -450,11 +260,6 @@ public abstract class OffsetPagedQuery<T> {
          */
         public Future<OffsetPagedResult<T>> page(int page, int pageSize) {
             return build().page(page, pageSize);
-        }
-
-        /** Validates that column names are non-null, non-blank, safe SQL identifiers, and unique. */
-        private static void validateColumnNames(String[] columns) {
-            SqlIdentifier.validateColumnNames(columns);
         }
     }
 }

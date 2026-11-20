@@ -21,7 +21,7 @@ import java.util.Map;
  *                       record is written)
  * @param mode           execution mode controlling every-instance vs single-instance firing
  * @param timezone       timezone for evaluating the cron expression
- * @param maxAttempts    maximum number of attempts per execution
+ * @param maxAttempts    the attempt limit recorded on each execution; cron never retries, so registered jobs record {@code 1}
  * @param payload        optional static payload to include in the dispatch body, or {@code null}
  * @param overlapPolicy  policy for handling fires that overlap with a still-running execution
  * @param tracked        whether to persist execution records for dashboard visibility;

@@ -87,12 +87,11 @@ Uses `ctx.typeResolver().allSupertypes(...)` and `resolveTypeArgument(...)` — 
 
 ### `PolicyValueValidator`
 
-Validates four attributes from the pre-resolved `@CronJob` mirror:
+Validates three attributes from the pre-resolved `@CronJob` mirror:
 
 | Attribute | Check | Severity |
 |-----------|-------|----------|
 | `id` | must not be blank | ERROR |
-| `maxAttempts` | must be `>= 1` | ERROR |
 | `overlapPolicy` + `mode` | `QUEUE_ONE` requires `EVERY_INSTANCE`; `SINGLE_INSTANCE` requires `SKIP` | ERROR |
 | `timezone` | `ZoneId.of(tz)` must not throw | WARNING |
 
@@ -126,7 +125,6 @@ All error messages are worded to match the runtime violation strings where appli
 | Contract method missing `@ServiceOperation` | ERROR | `@CronJob on {FQN}.{method}() requires the corresponding service contract method to have @ServiceOperation — cron jobs must have a stable service target` |
 | `@ServiceOperation("")` blank value | ERROR | `Method '{method}' on {Contract} has @ServiceOperation with a blank value — the operation id must be non-blank` |
 | `id` blank | ERROR | `@CronJob.id must not be blank` |
-| `maxAttempts < 1` | ERROR | `@CronJob.maxAttempts must be >= 1, got {value}` |
 | `overlapPolicy=QUEUE_ONE` + `mode=SINGLE_INSTANCE` | ERROR | `@CronJob.overlapPolicy=QUEUE_ONE is only valid with mode=EVERY_INSTANCE; SINGLE_INSTANCE requires SKIP` |
 | Unresolvable `timezone` string | WARNING | `@CronJob.timezone '{tz}' did not resolve as a Java ZoneId; will be validated at runtime (config override may apply)` |
 | Duplicate `id` within same class | ERROR | `@CronJob.id '{id}' is duplicated; a previous declaration on {FQN}.{method}() already uses this id` |

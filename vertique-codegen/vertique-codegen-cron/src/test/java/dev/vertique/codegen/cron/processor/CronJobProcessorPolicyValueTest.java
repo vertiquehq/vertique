@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.opentest4j.AssertionFailedError;
 
 /**
- * Verifies policy-bound validation (blank id, maxAttempts, overlap/mode contradiction, timezone
+ * Verifies policy-bound validation (blank id, overlap/mode contradiction, timezone
  * resolution) and the timezone-warning behaviour required by FR-CG004-007.
  */
 class CronJobProcessorPolicyValueTest {
@@ -30,16 +30,16 @@ class CronJobProcessorPolicyValueTest {
     }
 
     @Test
-    @DisplayName("maxAttempts = 0 -> error")
-    void maxAttemptsZero_isError() {
+    @DisplayName("the removed maxAttempts attribute does not compile")
+    void removedMaxAttemptsAttribute_isError() {
         ProcessorTestHarness.run(
                         new CronJobProcessor(),
                         CronJobProcessorFixtures.contractWithServiceOperation(),
                         CronJobProcessorFixtures.implWithCronJobBody(
-                                "id = \"x\", cron = \"0 0 * * * *\", maxAttempts = 0",
+                                "id = \"x\", cron = \"0 0 * * * *\", maxAttempts = 3",
                                 "@Override public io.vertx.core.Future<Void> closeStaleOrders() { return io.vertx.core.Future.succeededFuture(); }"))
                 .assertFailed()
-                .assertErrorMessage("maxAttempts must be >= 1");
+                .assertErrorMessage("maxAttempts");
     }
 
     @Test

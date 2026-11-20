@@ -27,8 +27,8 @@ import jakarta.annotation.Nullable;
  * "not configured" so it can fall through to the annotation value (override path) or the config-only
  * default (config-only path). Eagerly defaulting these here would erase the distinction between
  * "operator set this value" and "operator omitted it", breaking the override precedence rules. Only
- * {@code enabled} (default {@code true}) and {@code maxAttempts} (default {@code 3}) carry concrete
- * defaults, since both paths apply the same default for those two.
+ * {@code enabled} (default {@code true}) carries a concrete default, since both paths apply the same
+ * default for it.
  *
  * <p>{@code parameters} is an intentionally-open user payload: its values are a
  * domain-defined dictionary passed verbatim to the handler via
@@ -50,8 +50,6 @@ import jakarta.annotation.Nullable;
  *     or {@code null} to use the mode-based default
  * @param tracked the per-job tracked override, or {@code null} to inherit the global
  *     {@code cron.tracked} setting (precedence: per-job &gt; annotation &gt; global)
- * @param maxAttempts the maximum attempts for a config-only job; defaults to {@code 3} (annotated
- *     jobs use the annotation's {@code maxAttempts} instead — this field is not consulted for them)
  * @param target the target reference ({@code "service:..."} or {@code "eventbus:..."}); presence of
  *     a non-{@code null} {@code target} on an entry without a matching annotation marks a config-only
  *     job, or {@code null} for an annotation-override-only entry
@@ -67,7 +65,6 @@ public record CronJobConfig(
         String overlapPolicy,
         String misfirePolicy,
         Boolean tracked,
-        int maxAttempts,
         String target,
         JsonObject parameters) {
 
@@ -85,9 +82,8 @@ public record CronJobConfig(
     }
 
     /**
-     * Jackson factory filling the two defaulted scalars ({@code enabled=true}, {@code maxAttempts=3})
-     * for omitted properties and passing every override-capable field through unchanged (so absent
-     * means {@code null}). {@code parameters} defaults to an empty object when absent.
+     * Jackson factory filling the defaulted scalar ({@code enabled=true}) for an omitted property and
+     * passing every override-capable field through unchanged (so absent means {@code null}). {@code parameters} defaults to an empty object when absent.
      *
      * @param id the job id injected from the keyed-object key (validated in the compact constructor)
      * @param enabled the enabled flag; defaults to {@code true} when {@code null}
@@ -97,10 +93,9 @@ public record CronJobConfig(
      * @param overlapPolicy the overlap-policy override; passed through (nullable)
      * @param misfirePolicy the misfire-policy override; passed through (nullable)
      * @param tracked the per-job tracked override; passed through (nullable — inherits global)
-     * @param maxAttempts the config-only max attempts; defaults to {@code 3} when {@code null}
      * @param target the target reference; passed through (nullable)
      * @param parameters the open user payload; defaults to an empty object when {@code null}
-     * @return the deserialized config with the two scalar defaults applied
+     * @return the deserialized config with the scalar default applied
      */
     @JsonCreator
     static CronJobConfig fromJson(
@@ -112,7 +107,6 @@ public record CronJobConfig(
             @JsonProperty("overlapPolicy") @Nullable String overlapPolicy,
             @JsonProperty("misfirePolicy") @Nullable String misfirePolicy,
             @JsonProperty("tracked") @Nullable Boolean tracked,
-            @JsonProperty("maxAttempts") @Nullable Integer maxAttempts,
             @JsonProperty("target") @Nullable String target,
             @JsonProperty("parameters") @Nullable JsonObject parameters) {
         return new CronJobConfig(
@@ -124,7 +118,6 @@ public record CronJobConfig(
                 overlapPolicy,
                 misfirePolicy,
                 tracked,
-                maxAttempts != null ? maxAttempts : 3,
                 target,
                 parameters != null ? parameters : new JsonObject());
     }
@@ -147,7 +140,7 @@ public record CronJobConfig(
     public String toString() {
         return "CronJobConfig[id=" + id + ", enabled=" + enabled + ", cron=" + cron + ", timezone=" + timezone
                 + ", mode=" + mode + ", overlapPolicy=" + overlapPolicy + ", misfirePolicy=" + misfirePolicy
-                + ", tracked=" + tracked + ", maxAttempts=" + maxAttempts + ", target=" + target + ", parameters="
+                + ", tracked=" + tracked + ", target=" + target + ", parameters="
                 + ConfigSecretRenderer.redactBag(parameters) + "]";
     }
 }
