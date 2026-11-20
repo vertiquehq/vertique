@@ -39,7 +39,7 @@ import javax.lang.model.element.TypeElement;
  *       ({@code ServiceHandler<C>}) first, then the direct-implementation pattern; requires a
  *       unique {@code @ServiceContract} and a {@code @ServiceOperation} on the matched contract
  *       method (unconditional).</li>
- *   <li>Policy bounds — {@link PolicyValueValidator} checks blank id, maxAttempts range,
+ *   <li>Policy bounds — {@link PolicyValueValidator} checks blank id,
  *       overlap/mode contradiction, and unresolvable timezone (warning).</li>
  *   <li>Duplicate ids — {@link DuplicateIdValidator} checks for duplicate {@code id} values within
  *       the same enclosing class.</li>

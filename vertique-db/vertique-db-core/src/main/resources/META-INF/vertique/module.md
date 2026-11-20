@@ -251,6 +251,8 @@ Future<PagedResult<Item>> second = this.<Item>pagedQuery(
         .page(next);
 ```
 
+**`orderBy` rejects bad input when it is called**, the same way on keyset and offset queries: a null argument or column name fails with `NullPointerException`, an empty column list or a duplicate column with `IllegalArgumentException`, and, on the `String...` overloads, a blank or unsafe column name with `InvalidDataAccessUsageException` (an `OrderKey` rejects its own column when it is built).
+
 **At least one order key is required** — building without `orderBy(...)` throws
 `NullPointerException`, and `orderBy(...)` with no columns throws `IllegalArgumentException`. The
 framework emits row-value comparison syntax such as

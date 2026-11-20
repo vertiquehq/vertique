@@ -7,12 +7,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.fail;
 
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.workflow.dedup.WorkflowDedupScopes;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.engine.WorkflowTestTables;
 import dev.vertique.workflow.state.WorkflowInstance;
@@ -41,8 +41,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>Verifies: claimOrResolveStart with a new key returns the proposed id with {@code
  * didInsert=true}; claimOrResolveStart with an existing key returns the existing id with {@code
- * didInsert=false}; findSignal + insertSignal round-trip; second insertSignal for the same
- * {@code (workflowId, signalDedupKey)} fails with a unique-constraint violation (the PK); dedup
+ * didInsert=false}; findSignal after a signal claim round-trip; a second claim for the same
+ * {@code (workflowId, signalDedupKey)} resolves the existing row instead of inserting; dedup
  * scoping between two different workflow instance ids using the same signal dedup key.
  *
  * <p>All repository method bodies are stubs in this commit boundary; every test is expected to
@@ -96,6 +96,10 @@ public class PgWorkflowDedupRepositoryIT {
     }
 
     // --- Helpers ---
+
+    private Future<Boolean> claimSignal(WorkflowInstanceId id, String dedupKey, io.vertx.sqlclient.SqlClient tx) {
+        return dedupRepository.claimOrResolveSignalScoped(WorkflowDedupScopes.signalScope(id), dedupKey, id, tx);
+    }
 
     /**
      * Creates and inserts a minimal workflow instance with the given id so foreign-key constraints
@@ -202,20 +206,20 @@ public class PgWorkflowDedupRepositoryIT {
     }
 
     // =========================================================================
-    // findSignal + insertSignal
+    // findSignal + signal claim
     // =========================================================================
 
     @Test
-    @DisplayName("insertSignal + findSignal round-trip returns the workflow id UUID")
-    void insertSignalAndFindSignalRoundTrip(VertxTestContext ctx) {
+    @DisplayName("a signal claim + findSignal round-trip returns the workflow id UUID")
+    void signalClaimAndFindSignalRoundTrip(VertxTestContext ctx) {
         WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
         String dedupKey = "sig-dedup-" + UUID.randomUUID();
 
         insertInstance(workflowId)
-                .compose(v -> pool.withTransaction(tx -> dedupRepository.insertSignal(workflowId, dedupKey, tx)))
+                .compose(v -> pool.withTransaction(tx -> claimSignal(workflowId, dedupKey, tx)))
                 .compose(v -> pool.withTransaction(tx -> dedupRepository.findSignal(workflowId, dedupKey, tx)))
                 .onSuccess(found -> ctx.verify(() -> {
-                    assertTrue(found.isPresent(), "findSignal must return a UUID after insertSignal");
+                    assertTrue(found.isPresent(), "findSignal must return a UUID after a signal claim");
                     assertEquals(workflowId.value(), found.get(), "findSignal must return the workflow instance UUID");
                     ctx.completeNow();
                 }))
@@ -238,25 +242,21 @@ public class PgWorkflowDedupRepositoryIT {
     }
 
     @Test
-    @DisplayName("second insertSignal for same (workflowId, dedupKey) fails with unique-constraint violation")
-    void secondInsertSignalForSameKeyFailsWithConstraintViolation(VertxTestContext ctx) {
+    @DisplayName("a second signal claim for the same (workflowId, dedupKey) resolves the existing row")
+    void secondSignalClaimForSameKeyResolvesTheExistingRow(VertxTestContext ctx) {
         WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
         String dedupKey = "dup-sig-" + UUID.randomUUID();
 
         insertInstance(workflowId)
-                .compose(v -> pool.withTransaction(tx -> dedupRepository.insertSignal(workflowId, dedupKey, tx)))
-                .compose(v -> pool.withTransaction(tx -> dedupRepository.insertSignal(workflowId, dedupKey, tx)))
-                .onSuccess(v -> ctx.verify(() -> {
-                    fail(
-                            "second insertSignal for the same (workflowId, dedupKey) must fail with a constraint violation");
+                .compose(v -> pool.withTransaction(tx -> claimSignal(workflowId, dedupKey, tx)))
+                .compose(first -> pool.withTransaction(tx -> claimSignal(workflowId, dedupKey, tx))
+                        .map(second -> new boolean[] {first, second}))
+                .onSuccess(claims -> ctx.verify(() -> {
+                    assertTrue(claims[0], "the first claim must win");
+                    assertFalse(claims[1], "the second claim must find the existing row");
                     ctx.completeNow();
                 }))
-                .onFailure(t -> ctx.verify(() -> {
-                    // The failure is expected — any exception (UniqueConstraintViolation or UnsupportedOperation
-                    // in stub mode) completes the test as red
-                    assertNotNull(t, "second insertSignal must fail");
-                    ctx.completeNow();
-                }));
+                .onFailure(ctx::failNow);
     }
 
     @Test
@@ -268,8 +268,8 @@ public class PgWorkflowDedupRepositoryIT {
 
         insertInstance(idA)
                 .compose(v -> insertInstance(idB))
-                .compose(v -> pool.withTransaction(tx -> dedupRepository.insertSignal(idA, sharedDedupKey, tx)))
-                .compose(v -> pool.withTransaction(tx -> dedupRepository.insertSignal(idB, sharedDedupKey, tx)))
+                .compose(v -> pool.withTransaction(tx -> claimSignal(idA, sharedDedupKey, tx)))
+                .compose(v -> pool.withTransaction(tx -> claimSignal(idB, sharedDedupKey, tx)))
                 .compose(v -> Future.all(
                         pool.withTransaction(tx -> dedupRepository.findSignal(idA, sharedDedupKey, tx)),
                         pool.withTransaction(tx -> dedupRepository.findSignal(idB, sharedDedupKey, tx))))

@@ -388,22 +388,13 @@ public abstract class PagedQuery<T> {
      * @param <T> the domain type
      * @param <B> the concrete builder type (self-type)
      */
-    public abstract static class Builder<T, B extends Builder<T, B>> {
+    public abstract static class Builder<T, B extends Builder<T, B>> extends AbstractPagedQueryBuilder<T, B> {
 
-        protected String sql;
-        protected SqlClient client;
-        protected Tuple params;
-        protected RowMapper<T> mapper;
-        protected DbExceptionMapper exceptionMapper;
-        protected List<OrderKey> orderKeys;
-        protected int defaultPageSize = 20;
-        protected QueryClause queryClause;
+        /** The columns that form a unique key of the result set, or {@code null} when none is declared. */
         protected Set<String> uniqueKeyColumns;
 
+        /** Creates a new builder with default values. */
         protected Builder() {}
-
-        /** Returns this builder cast to the concrete type. */
-        protected abstract B self();
 
         /**
          * Builds and returns the PagedQuery. Terminal methods call this internally.
@@ -411,171 +402,6 @@ public abstract class PagedQuery<T> {
          * @return the built PagedQuery
          */
         protected abstract PagedQuery<T> build();
-
-        // -- Configuration methods --
-
-        /**
-         * Sets the base SQL query. Must not contain ORDER BY, LIMIT, or OFFSET — the framework
-         * appends these automatically.
-         *
-         * @param sql the SQL string
-         * @return this builder
-         */
-        public B sql(String sql) {
-            this.sql = sql;
-            return self();
-        }
-
-        /**
-         * Sets the SQL client to use for execution. Overrides the default pool. Pass a {@code
-         * SqlConnection} for transactional execution.
-         *
-         * @param client the SQL client (pool or connection)
-         * @return this builder
-         */
-        public B on(SqlClient client) {
-            this.client = client;
-            return self();
-        }
-
-        /**
-         * Sets the base parameters for the prepared query. These are the parameters for the
-         * user-provided WHERE clause; keyset parameters are appended automatically.
-         *
-         * @param params the query parameters
-         * @return this builder
-         */
-        public B params(Tuple params) {
-            this.params = params;
-            return self();
-        }
-
-        /**
-         * Sets the row mapper for converting database rows to domain objects. Required for paged
-         * queries.
-         *
-         * @param mapper the row mapper
-         * @return this builder
-         */
-        public B mapping(RowMapper<T> mapper) {
-            this.mapper = mapper;
-            return self();
-        }
-
-        /**
-         * Sets the exception mapper for exception translation. Typically set automatically by the
-         * repository's {@code pagedQuery()} factory method.
-         *
-         * @param exceptionMapper the exception mapper
-         * @return this builder
-         */
-        public B exceptionMapper(DbExceptionMapper exceptionMapper) {
-            this.exceptionMapper = exceptionMapper;
-            return self();
-        }
-
-        /**
-         * Sets the default page size. Used when no page size is specified in the cursor. Defaults to
-         * 20 if not set.
-         *
-         * @param pageSize the default page size
-         * @return this builder
-         */
-        public B pageSize(int pageSize) {
-            this.defaultPageSize = pageSize;
-            return self();
-        }
-
-        /**
-         * Sets the keyset column ordering using the given column names. All columns use
-         * {@link OrderDirection#ASC} and {@link NullHandling#DISALLOW}. At least one column is
-         * required.
-         *
-         * @param columns the column names in sort priority order
-         * @return this builder
-         * @throws IllegalArgumentException if columns is empty, contains null/blank names, or duplicates
-         */
-        public B orderBy(String... columns) {
-            return orderBy(OrderDirection.ASC, NullHandling.DISALLOW, columns);
-        }
-
-        /**
-         * Sets the keyset column ordering with a uniform direction. All columns use
-         * {@link NullHandling#DISALLOW}. At least one column is required.
-         *
-         * @param direction the sort direction for all columns
-         * @param columns   the column names in sort priority order
-         * @return this builder
-         * @throws IllegalArgumentException if columns is empty, contains null/blank names, or duplicates
-         */
-        public B orderBy(OrderDirection direction, String... columns) {
-            return orderBy(direction, NullHandling.DISALLOW, columns);
-        }
-
-        /**
-         * Sets the keyset column ordering with a uniform direction and null handling policy. At least
-         * one column is required.
-         *
-         * @param direction    the sort direction for all columns
-         * @param nullHandling the null handling policy for all columns
-         * @param columns      the column names in sort priority order
-         * @return this builder
-         * @throws IllegalArgumentException if columns is empty, contains null/blank names, or duplicates
-         */
-        public B orderBy(OrderDirection direction, NullHandling nullHandling, String... columns) {
-            Objects.requireNonNull(direction, "direction must not be null");
-            Objects.requireNonNull(nullHandling, "nullHandling must not be null");
-            Objects.requireNonNull(columns, "columns must not be null");
-            if (columns.length == 0) {
-                throw new IllegalArgumentException("At least one column is required");
-            }
-            validateColumnNames(columns);
-            List<OrderKey> keys = new ArrayList<>(columns.length);
-            for (String col : columns) {
-                keys.add(new OrderKey(col, direction, nullHandling));
-            }
-            this.orderKeys = List.copyOf(keys);
-            return self();
-        }
-
-        /**
-         * Sets the keyset column ordering with per-column control over direction and null handling.
-         * At least one order key is required.
-         *
-         * @param first the first order key
-         * @param rest  additional order keys
-         * @return this builder
-         * @throws IllegalArgumentException if duplicate column names are found
-         */
-        public B orderBy(OrderKey first, OrderKey... rest) {
-            Objects.requireNonNull(first, "first order key must not be null");
-            List<OrderKey> keys = new ArrayList<>(1 + rest.length);
-            keys.add(first);
-            for (OrderKey key : rest) {
-                Objects.requireNonNull(key, "order key must not be null");
-                keys.add(key);
-            }
-            String[] columnNames = keys.stream().map(OrderKey::column).toArray(String[]::new);
-            validateColumnNames(columnNames);
-            this.orderKeys = List.copyOf(keys);
-            return self();
-        }
-
-        private static void validateColumnNames(String[] columns) {
-            SqlIdentifier.validateColumnNames(columns);
-        }
-
-        /**
-         * Sets the vendor-specific query clause appended after the LIMIT clause. Use vendor-specific
-         * enums (e.g., {@code PgLockMode}).
-         *
-         * @param queryClause the query clause to append
-         * @return this builder
-         */
-        public B queryClause(QueryClause queryClause) {
-            this.queryClause = queryClause;
-            return self();
-        }
 
         /**
          * Declares the column(s) that form a unique key in the result set, serving as tiebreakers

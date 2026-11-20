@@ -92,13 +92,14 @@ import lombok.extern.slf4j.Slf4j;
  *   <li>{@code overlapPolicy} — override the overlap policy ({@code "SKIP"} or {@code "QUEUE_ONE"})
  *   <li>{@code tracked} — override whether executions are persisted (default: global
  *       {@code cron.tracked} setting)
- *   <li>{@code maxAttempts} — maximum attempts per execution (config-only jobs only; annotated jobs
- *       use the annotation's {@code maxAttempts})
  *   <li>{@code parameters} — key-value metadata passed to the handler (config-only jobs)
  * </ul>
  */
 @Slf4j
 public class CronJobRegistrar {
+
+    /** Cron never retries, so every job it registers records a single attempt. */
+    private static final int SINGLE_ATTEMPT = 1;
 
     private final CronScheduler scheduler;
     private final ServiceContractRegistry registry;
@@ -332,7 +333,7 @@ public class CronJobRegistrar {
                         handlerAddress,
                         mode,
                         timezone,
-                        annotation.maxAttempts(),
+                        SINGLE_ATTEMPT,
                         null,
                         overlapPolicy,
                         tracked,
@@ -451,8 +452,6 @@ public class CronJobRegistrar {
                 }
             }
 
-            int maxAttempts = jobConfig.maxAttempts();
-
             // Resolve tracked flag
             boolean tracked;
             if (mode == ExecutionMode.SINGLE_INSTANCE) {
@@ -476,7 +475,7 @@ public class CronJobRegistrar {
                     handlerAddress,
                     mode,
                     timezone,
-                    maxAttempts,
+                    SINGLE_ATTEMPT,
                     null,
                     overlapPolicy,
                     tracked,

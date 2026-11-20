@@ -471,8 +471,8 @@ final class SignalHandler {
                                 new WorkflowConflictException("Optimistic concurrency conflict for instance '"
                                         + inst.id().value() + "' at version " + prevVersion));
                     }
-                    // Dedup row was already inserted by claimOrResolveSignal at the top of signal();
-                    // no follow-up insertSignal call needed.
+                    // The dedup row was claimed (claimOrResolveSignalScoped) when the signal was recorded;
+                    // applying it inserts nothing.
                     return decisions.record(inst, updated, inst.currentStepId(), "signal-applied", tx);
                 })
                 .compose(v -> history.nextSequence(inst.id(), tx))
