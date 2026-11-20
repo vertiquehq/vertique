@@ -16,11 +16,11 @@ import java.util.Optional;
  * {@link Optional#empty()} and the {@link RestContextResolution} coordinator tries the next
  * resolver in the chain.
  *
- * <p><b>Contract (FR-REST-172):</b> implementations MUST NOT create, mutate, enrich, replace, or
+ * <p><b>Contract:</b> implementations MUST NOT create, mutate, enrich, replace, or
  * propagate context as a side effect of {@code resolve}. The method is a pure read — it observes
  * the request state and reports back.
  *
- * <p><b>Ordering (FR-REST-194):</b> resolvers participate in the {@link OrderedExtension} contract
+ * <p><b>Ordering:</b> resolvers participate in the {@link OrderedExtension} contract
  * and are sorted by phase, then {@link #priority()} ascending, then {@link #orderKey()} (defaults
  * to the fully-qualified class name) before the first call. Application resolvers use the default
  * phase ({@link dev.vertique.core.extension.ExtensionPhase#APPLICATION}) and priority ({@code 0}),
@@ -73,8 +73,8 @@ public interface RestContextResolver extends OrderedExtension {
      * {@link Optional#empty()} if this resolver does not handle the type or the value is not bound
      * to the current request.
      *
-     * <p>Implementations MUST NOT create, mutate, enrich, replace, or propagate context
-     * (FR-REST-172). This method is invoked on the Vert.x event loop; it must not block.
+     * <p>Implementations MUST NOT create, mutate, enrich, replace, or propagate context.
+     * This method is invoked on the Vert.x event loop; it must not block.
      *
      * @param <T>  the context value type
      * @param type the class of the requested context value; never {@code null}

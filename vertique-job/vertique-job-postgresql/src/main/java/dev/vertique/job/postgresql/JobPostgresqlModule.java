@@ -9,6 +9,7 @@ import dev.vertique.db.DbSchemas;
 import dev.vertique.db.DbSchemasModule;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.job.JobExecutionStateTransitionListener;
+import dev.vertique.job.JobNodeId;
 import dev.vertique.job.JobRepository;
 import dev.vertique.job.dagger.JobModule;
 import io.vertx.sqlclient.Pool;
@@ -55,7 +56,9 @@ public abstract class JobPostgresqlModule {
 
     /**
      * Provides the {@link PgJobRepository}, applying the schema mapping for the {@code job}
-     * instance when a {@link DbSchemas} binding exists.
+     * instance when a {@link DbSchemas} binding exists. Claims are stamped with the
+     * {@link JobNodeId} value, the identity the {@link dev.vertique.job.JobCoordinator} heartbeats
+     * under.
      *
      * <p>Both the {@link RawJobRepository}-qualified alias and, through it, the decorated
      * {@link JobRepository} resolve to this single scoped instance.
@@ -63,12 +66,14 @@ public abstract class JobPostgresqlModule {
      * @param pool    the PostgreSQL connection pool
      * @param mapper  the PostgreSQL failure mapper
      * @param schemas the optional schema placement; absent means unqualified table names
+     * @param nodeId  this node's job-scheduling identity
      * @return the scoped PostgreSQL job repository
      */
     @Provides
     @Singleton
-    static PgJobRepository pgJobRepository(Pool pool, PgDbExceptionMapper mapper, Optional<DbSchemas> schemas) {
-        return new PgJobRepository(pool, mapper, schemas.orElseGet(DbSchemas::empty));
+    static PgJobRepository pgJobRepository(
+            Pool pool, PgDbExceptionMapper mapper, Optional<DbSchemas> schemas, @JobNodeId String nodeId) {
+        return new PgJobRepository(pool, mapper, schemas.orElseGet(DbSchemas::empty), nodeId);
     }
 
     /**

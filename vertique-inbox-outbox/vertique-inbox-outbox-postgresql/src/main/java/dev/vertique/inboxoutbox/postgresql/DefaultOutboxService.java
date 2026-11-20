@@ -13,6 +13,7 @@ import dev.vertique.inboxoutbox.DelayedJobControl;
 import dev.vertique.inboxoutbox.OutboxDeliveryMetadata;
 import dev.vertique.inboxoutbox.OutboxEntry;
 import dev.vertique.inboxoutbox.OutboxMetadata;
+import dev.vertique.inboxoutbox.OutboxRelayConfig;
 import dev.vertique.inboxoutbox.OutboxRepository;
 import dev.vertique.inboxoutbox.OutboxService;
 import io.vertx.core.Future;
@@ -31,12 +32,12 @@ import java.util.UUID;
  *
  * <p>Before insert, the service captures the currently bound durable context values (e.g.
  * {@code LocalizationContext}, {@code CorrelationContext}) into a {@link DurableMetadata} document
- * via {@link DurableContextPropagator#mergeCaptured} with the {@code "outbox"} boundary (FR-CTX-175).
+ * via {@link DurableContextPropagator#mergeCaptured} with the {@code "outbox"} boundary.
  * The captured context is stored in the {@code metadata} JSONB column as
  * {@link OutboxMetadata#context()}, not in the entry's {@code headers} map. Caller-supplied headers
  * are written to the {@code headers} column unchanged.
  *
- * <p><strong>Per-row carrier binding (PRD identity-002 §14.6/A9, F3b).</strong> A fresh
+ * <p><strong>Per-row carrier binding.</strong> A fresh
  * {@code carrierId} {@link UUID} is allocated <em>before</em> {@code mergeCaptured} and threaded into
  * the encode context as a {@link DurableCarrierDescriptor} — {@code carrierId} = this row's carrier
  * id; target {@code (}{@value #OUTBOX_RELAY_TARGET_KIND}{@code , carrierId)}. A durable identity
@@ -45,7 +46,7 @@ import java.util.UUID;
  * {@code carrier_id} column ({@link OutboxRepository#insert}) — never into the app-writable
  * {@code metadata} JSONB — so the relay can reproduce it from a column it controls rather than from
  * attacker-writable input. The target kind {@value #OUTBOX_RELAY_TARGET_KIND} is the canonical
- * durable-target kind string for the outbox boundary (F7a): it matches the
+ * durable-target kind string for the outbox boundary: it matches the
  * {@link dev.vertique.core.context.DeferredExecutionOrigin#kind()} the receive-side relay dispatch
  * binds, so an operator-configured {@code identity.snapshot.carriageRequirements} entry for the
  * outbox uses this one string.
@@ -62,7 +63,7 @@ class DefaultOutboxService implements OutboxService {
     private static final String BOUNDARY = dev.vertique.core.context.DispatchBoundary.OUTBOX;
 
     /**
-     * Canonical durable-target kind for the outbox row-carrier (F7a) — matches the
+     * Canonical durable-target kind for the outbox row-carrier — matches the
      * {@code "outbox-relay"} kind {@code ServiceOutboxDestinationHandler} binds into
      * {@link dev.vertique.core.context.DeferredExecutionOrigin} on the receive side, so the produce-
      * and consume-side carrier target kinds — and any operator {@code carriageRequirements}
@@ -73,6 +74,7 @@ class DefaultOutboxService implements OutboxService {
     private final OutboxRepository repository;
     private final DurableContextPropagator propagator;
     private final PgInboxOutboxExceptionMapper exceptionMapper;
+    private final OutboxRelayConfig relayConfig;
 
     /**
      * Creates a new outbox service.
@@ -82,15 +84,19 @@ class DefaultOutboxService implements OutboxService {
      *                        {@code metadata} document at publish time
      * @param exceptionMapper the exception mapper that translates data-access failures into
      *                        inbox/outbox-domain exceptions at the service boundary
+     * @param relayConfig     the relay configuration; its {@code maxAttempts} is the attempt limit
+     *                        stored for an entry that sets none
      */
     @Inject
     DefaultOutboxService(
             OutboxRepository repository,
             DurableContextPropagator propagator,
-            PgInboxOutboxExceptionMapper exceptionMapper) {
+            PgInboxOutboxExceptionMapper exceptionMapper,
+            OutboxRelayConfig relayConfig) {
         this.repository = repository;
         this.propagator = propagator;
         this.exceptionMapper = exceptionMapper;
+        this.relayConfig = relayConfig;
     }
 
     /**
@@ -108,7 +114,10 @@ class DefaultOutboxService implements OutboxService {
      * {@link IllegalArgumentException} that does not repeat the key, and nothing is inserted; the
      * scope is stored as given and the ambient {@code ScopeContext} does not select it. When the entry carries a {@link DelayedJobControl}
      * snapshot, it is persisted in {@code metadata.delivery.delayedJob}; all other entries receive
-     * an empty delivery section (FR-CTX-175, FR-TM-039).
+     * an empty delivery section.
+     *
+     * <p><b>Attempt limit:</b> an entry that set its own {@code maxAttempts} keeps it; an entry that
+     * set none is stored with {@code inboxOutbox.relay.maxAttempts}.
      *
      * <p><b>Durable-context contract:</b> the propagated context is ALWAYS the ambient context bound
      * in the holder at publish time — there is intentionally no caller-supplied context field on
@@ -118,7 +127,7 @@ class DefaultOutboxService implements OutboxService {
      * execution — the outbox relay instead re-reads {@code metadata.context} from the persisted row,
      * so no pre-merge is needed here.
      *
-     * <p><b>Per-row carrier binding (F3b, see class javadoc):</b> a fresh {@code carrierId} is
+     * <p><b>Per-row carrier binding (see class javadoc):</b> a fresh {@code carrierId} is
      * allocated before {@code mergeCaptured} so any durable identity snapshot captured here is signed
      * for this exact row, and is persisted into the first-class {@code carrier_id} column via
      * {@link OutboxRepository#insert}.
@@ -141,7 +150,7 @@ class DefaultOutboxService implements OutboxService {
         } catch (IllegalArgumentException e) {
             return Future.failedFuture(e);
         }
-        // F3b row binding: allocate the carrier id up front so the durable snapshot this call
+        // Row binding: allocate the carrier id up front so the durable snapshot this call
         // captures is signed for THIS row, then persist the same id into the first-class column.
         UUID carrierId = UUID.randomUUID();
         DurableCarrierDescriptor carrier = new DurableCarrierDescriptor(
@@ -151,8 +160,9 @@ class DefaultOutboxService implements OutboxService {
         OutboxDeliveryMetadata delivery = new OutboxDeliveryMetadata(
                 Optional.empty(), Optional.ofNullable(entry.delayedJob()), Optional.ofNullable(entry.reply()));
         OutboxMetadata metadata = new OutboxMetadata(context, delivery);
+        OutboxEntry stored = entry.withDefaultMaxAttempts(relayConfig.maxAttempts());
         return repository
-                .insert(entry, metadata, carrierId, tx)
+                .insert(stored, metadata, carrierId, tx)
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "outbox publish")));
     }
 

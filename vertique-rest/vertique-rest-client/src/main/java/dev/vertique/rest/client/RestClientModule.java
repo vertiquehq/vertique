@@ -46,7 +46,7 @@ import java.util.Set;
  * }
  * }</pre>
  *
- * <p>This module includes {@link JsonRuntimeModule} (FR-JSON-007B), which makes the
+ * <p>This module includes {@link JsonRuntimeModule}, which makes the
  * {@link JsonMapperProfileRegistry} binding available so that every builder produced by
  * {@link RestClientFactory#builder()} can resolve named JSON mapper profiles.
  *
@@ -156,7 +156,7 @@ public abstract class RestClientModule {
     /**
      * Provides the singleton {@link RestClientFactory} for creating REST client proxies.
      *
-     * @param vertx the Vert.x instance for WebClient creation
+     * @param vertx the Vert.x instance for the governed WebClient clients
      * @param interceptors the global interceptors from multibinding
      * @param contextCapturers the system-owned context capturers from multibinding
      * @param configIndex the typed {@code name -> RestClientConfig} index seeded into every builder
@@ -209,7 +209,7 @@ public abstract class RestClientModule {
     /**
      * Parses the {@code restClient.defaults} reserved sub-object from the root config into a typed
      * {@link RestClientDefaults} record at the Dagger provider boundary via the canonical
-     * {@link ConfigParser} (config rule R10).
+     * {@link ConfigParser}.
      *
      * <p>The reserved key is excluded from the keyed client map by
      * {@link RestClientConfig#indexFromConfig} and parsed separately here, so that a client
@@ -231,8 +231,7 @@ public abstract class RestClientModule {
     /**
      * Contributes the {@link RestClientDefaultProfileValidator} as a {@link ComposeValidator} so
      * that the {@code VALIDATE} phase (via {@code ComposeValidationStep}) forces it unconditionally
-     * at startup — even when zero rest clients are configured (closing the inert-boundary gap,
-     * {@code FR-JSON-050}).
+     * at startup — even when zero rest clients are configured (closing the inert-boundary gap).
      *
      * @param validator the validator singleton
      * @return the validator, added to the compose-validator set

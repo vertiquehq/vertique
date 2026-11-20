@@ -6,6 +6,8 @@ package dev.vertique.rest.client;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
+import dev.vertique.http.client.HttpClient;
+import dev.vertique.http.client.HttpClientBuilder;
 import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.client.meta.ClientInterfaceScanner;
 import dev.vertique.rest.client.meta.ClientMethodMeta;
@@ -15,9 +17,7 @@ import dev.vertique.rest.core.convert.ParamConverterBinding;
 import dev.vertique.rest.core.convert.ParamConverterRegistry;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
 import io.vertx.core.json.jackson.DatabindCodec;
-import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
 import jakarta.ws.rs.DefaultValue;
 import jakarta.ws.rs.GET;
@@ -115,33 +115,33 @@ class RestClientRequestFactoryDefaultValueTest {
     private static Vertx vertx;
 
     /**
-     * One {@link WebClient} for the whole class instead of one per {@code newDispatcher(...)} call.
+     * One governed client for the whole class instead of one per {@code newDispatcher(...)} call.
      * The dispatcher only reads from it (it never closes it), and the client used to be left
      * unclosed, so {@link Vertx#close()} reclaimed its netty pools out from under it.
      */
-    private static WebClient webClient;
-
-    /** Awaitable close handle; {@link WebClient#close()} discards the underlying future. */
-    private static HttpClient transport;
+    private static HttpClient httpClient;
 
     @BeforeAll
     static void startVertx() {
         vertx = Vertx.vertx();
         // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
-        transport = vertx.createHttpClient();
-        webClient = WebClient.wrap(transport, new WebClientOptions().setFollowRedirects(false));
+        HttpClientBuilder governed = HttpClientBuilder.create(vertx)
+                .webClientOptions(new WebClientOptions().setFollowRedirects(false))
+                .readTimeout(0, TimeUnit.MILLISECONDS)
+                .maxResponseBytes(0)
+                .maxRequestBytes(0);
+        httpClient = governed.build();
     }
 
     /**
-     * Awaits the raw {@link HttpClient} close before awaiting {@link Vertx#close()}, so the client
+     * Awaits the governed client close before awaiting {@link Vertx#close()}, so the client
      * finishes shutting down on a still-alive event loop.
      */
     @AfterAll
     static void stopVertx() throws Exception {
-        if (transport != null) {
-            transport.close().toCompletionStage().toCompletableFuture().get(AWAIT_SECONDS, TimeUnit.SECONDS);
-            transport = null;
-            webClient = null;
+        if (httpClient != null) {
+            httpClient.close().toCompletionStage().toCompletableFuture().get(AWAIT_SECONDS, TimeUnit.SECONDS);
+            httpClient = null;
         }
         if (vertx != null) {
             vertx.close().toCompletionStage().toCompletableFuture().get(AWAIT_SECONDS, TimeUnit.SECONDS);
@@ -150,7 +150,7 @@ class RestClientRequestFactoryDefaultValueTest {
 
     private static DefaultRestClientDispatcher newDispatcher(ParamConversionResolver resolver) {
         return new DefaultRestClientDispatcher(
-                webClient,
+                httpClient,
                 "http://localhost",
                 io.vertx.core.MultiMap.caseInsensitiveMultiMap(),
                 new RestClientInterceptorChain("test-client", List.of()),

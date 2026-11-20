@@ -3,6 +3,7 @@
 
 package dev.vertique.deploy;
 
+import dev.vertique.core.lifecycle.LifecycleOrdered;
 import dev.vertique.core.lifecycle.LifecyclePhase;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Verticle;
@@ -31,14 +32,15 @@ import java.util.function.Supplier;
  * @param phase deployment phase for coarse-grained startup/shutdown ordering; must be a
  *     {@link LifecyclePhase#isVerticlePhase() verticle phase}
  * @param priority deployment priority within the phase; lower values deploy first, same-priority
- *     deploys in parallel
+ *     deployments start sequentially by name
  */
 public record VerticleDeployment(
         String name,
         Supplier<? extends Verticle> supplier,
         DeploymentOptions options,
         LifecyclePhase phase,
-        int priority) {
+        int priority)
+        implements LifecycleOrdered {
 
     /**
      * Validates that required fields are non-null, that {@code phase} is a verticle phase, and
@@ -58,6 +60,16 @@ public record VerticleDeployment(
         if (options == null) {
             options = new DeploymentOptions();
         }
+    }
+
+    /**
+     * Uses the deployment name as the stable tie-break within a phase and priority.
+     *
+     * @return the non-null deployment name
+     */
+    @Override
+    public String orderKey() {
+        return name;
     }
 
     /**

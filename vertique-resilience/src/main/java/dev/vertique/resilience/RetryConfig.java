@@ -17,19 +17,23 @@ public final class RetryConfig {
     private final Set<Class<? extends Throwable>> retryOn;
     private final Set<Class<? extends Throwable>> abortOn;
     private final RetryPolicy fallbackPolicy;
+    private final long retryAfterMaxMs;
 
     private RetryConfig(
             int maxRetries,
             RetryBackoff backoff,
             Set<Class<? extends Throwable>> retryOn,
             Set<Class<? extends Throwable>> abortOn,
-            RetryPolicy fallbackPolicy) {
+            RetryPolicy fallbackPolicy,
+            long retryAfterMaxMs) {
         validateMaxRetries(maxRetries);
+        validateRetryAfterMaxMs(retryAfterMaxMs);
         this.maxRetries = maxRetries;
         this.backoff = Objects.requireNonNull(backoff, "backoff");
         this.retryOn = immutableThrowableSet(retryOn, "retryOn");
         this.abortOn = immutableThrowableSet(abortOn, "abortOn");
         this.fallbackPolicy = Objects.requireNonNull(fallbackPolicy, "fallbackPolicy");
+        this.retryAfterMaxMs = retryAfterMaxMs;
     }
 
     /** Starts a builder with the canonical annotation defaults. */
@@ -57,13 +61,23 @@ public final class RetryConfig {
         return fallbackPolicy;
     }
 
+    /**
+     * Returns the longest delay hint the retry honors.
+     *
+     * @return the maximum in milliseconds, or 0 when a failure's {@link RetryDelayHint} is ignored
+     */
+    public long retryAfterMaxMs() {
+        return retryAfterMaxMs;
+    }
+
     static RetryConfig from(
             int maxRetries,
             RetryBackoff backoff,
             Set<Class<? extends Throwable>> retryOn,
             Set<Class<? extends Throwable>> abortOn,
-            RetryPolicy fallbackPolicy) {
-        return new RetryConfig(maxRetries, backoff, retryOn, abortOn, fallbackPolicy);
+            RetryPolicy fallbackPolicy,
+            long retryAfterMaxMs) {
+        return new RetryConfig(maxRetries, backoff, retryOn, abortOn, fallbackPolicy, retryAfterMaxMs);
     }
 
     private static Set<Class<? extends Throwable>> immutableThrowableSet(
@@ -78,6 +92,12 @@ public final class RetryConfig {
         }
     }
 
+    private static void validateRetryAfterMaxMs(long value) {
+        if (value < 0L) {
+            throw new IllegalArgumentException("retryAfterMaxMs must be >= 0");
+        }
+    }
+
     /** Single-use builder for a complete retry configuration. */
     public static final class Builder {
         private int maxRetries = DEFAULT_MAX_RETRIES;
@@ -85,6 +105,7 @@ public final class RetryConfig {
         private Set<Class<? extends Throwable>> retryOn = Set.of();
         private Set<Class<? extends Throwable>> abortOn = Set.of();
         private RetryPolicy fallbackPolicy = (failure, retryCount) -> true;
+        private long retryAfterMaxMs;
         private boolean built;
 
         private Builder() {}
@@ -120,10 +141,23 @@ public final class RetryConfig {
             return this;
         }
 
+        /**
+         * Sets the longest delay hint to honor.
+         *
+         * @param value the maximum in milliseconds, {@code >= 0}; 0 ignores every hint
+         * @return this builder
+         */
+        public Builder retryAfterMaxMs(long value) {
+            ensureMutable();
+            validateRetryAfterMaxMs(value);
+            retryAfterMaxMs = value;
+            return this;
+        }
+
         public RetryConfig build() {
             ensureMutable();
             built = true;
-            return new RetryConfig(maxRetries, backoff, retryOn, abortOn, fallbackPolicy);
+            return new RetryConfig(maxRetries, backoff, retryOn, abortOn, fallbackPolicy, retryAfterMaxMs);
         }
 
         private static Set<Class<? extends Throwable>> copySet(Set<Class<? extends Throwable>> values, String name) {

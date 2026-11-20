@@ -83,9 +83,11 @@ public interface SseChannel {
     void complete();
 
     /**
-     * Signals that the event stream has ended with an error. The framework will attempt to flush
-     * any remaining buffered events, then close the HTTP response. Calling this method on an
-     * already-closed channel has no effect.
+     * Signals that the event stream has ended with an error. Unlike {@link #complete()}, this does
+     * not flush the buffer: events still buffered at the time of the call are not delivered by
+     * it. The channel is marked closed, the cause is signalled to the consuming stream, and the
+     * {@link #onClose(Runnable) close callbacks} run. Calling this method on an already-closed
+     * channel has no effect.
      *
      * @param cause the error that caused the stream to terminate
      */

@@ -157,17 +157,27 @@ resolved. Resolution runs once, eagerly, before `Vertx` is created.
 Multiple placeholders in one value concatenate as strings:
 `jdbc:postgresql://${db.host}:${db.port}/app`.
 
+An escape inside a default text stays literal: `${a:\${b}}` yields the text `${b}` when `a` is
+missing, and `a`'s value when it is present — `b` is never resolved. The escaped `${` still opens a
+brace level, so its closing `}` belongs to the default text and does not close the enclosing
+reference. An escaped `${` with no closing brace, as in `${a:x\${}`, leaves the enclosing reference
+unterminated (a malformed reference).
+
 ### Resolution Chain
 
 For each key the engine consults, in order:
 
 1. **Tree probe** — flat-key probe first (finds `DB_PASSWORD` as stored flat by the env store), then a
    dot-path walk descending nested `JsonObject`s for a key like `db.host`. A JSON `null` counts as
-   not-found. The tree already reflects the full env / system-property / `--conf` hierarchy.
+   not-found. The tree already reflects the full env / system-property / `--conf` hierarchy. A string
+   found by the probe is resolved like a walked value — its references resolved and its escapes
+   expanded — so `a: "\${b}"` reads as the text `${b}` both in place and through `${a}`.
 2. **Declared property sources**, in list order; the first non-empty hit wins. Source values are
    **literal** — a `${...}` inside a secret value passes through unchanged.
 3. **Default** — if every chain step missed and a default was declared, the default text is itself
-   resolved and may contain placeholders, bounded by a maximum nesting depth of 5.
+   resolved and may contain placeholders, bounded by a maximum nesting depth of 5. An escape in the
+   default text is expanded by this step only, so `\${` inside a default emits the text `${` and is
+   not resolved.
 4. **Failure** — the reference is recorded and the walk continues, so all failures are reported
    together.
 
@@ -202,7 +212,15 @@ stringified. Property-source values are always strings.
 - **Fail-closed.** A reference with no default that exhausts the chain aborts startup. The engine
   collects every failure across the whole tree walk and throws a single
   `PlaceholderResolutionException` carrying a sorted, de-duplicated list of unresolved renderings —
-  key names and chain strings only, never resolved values.
+  key names, chain strings, and malformed-reference locations only, never resolved values.
+- **A malformed reference is reported by position, not by text.** An unterminated `${` or a blank-key
+  `${}` / `${:default}` is recorded as `<location> (malformed placeholder at index N)`, where
+  `<location>` is the dotted path of the containing value (relative to the resolved subtree during
+  bootstrap, so `[0].endpoint` for a store declaration), the referenced key for a value reached
+  through a reference, or the referenced key plus ` default` for a default text, and `N` is the
+  zero-based index of the `${` in that text as written (for a default text, counted from the start
+  of the default text, escapes included). The text after `${` runs to the end of the value and may
+  be a secret, so it never appears in the exception or the startup log.
 - **A source error is not a miss.** An auth failure, network error, or malformed response aborts
   startup immediately. Source errors are never degraded into not-found and are never masked by a
   default.
@@ -301,10 +319,11 @@ its dedicated `ObjectMapper`, and the Dagger binding.
 
 ### ConfigParsingModule
 
-Abstract Dagger `@Module` providing the single `ConfigParser` binding. **It must be listed in every
-application `@Component`**, alongside `VertxModule`. There is no transitive auto-include: the only
-universally installed framework modules live in `dev.vertique:vertique-core`, which cannot depend on
-this artifact. Omitting it yields a Dagger missing-binding compile error.
+Abstract Dagger `@Module` providing the single `ConfigParser` binding. **Every application
+`@Component` must install it**, either directly, alongside `VertxModule`, or through a module that
+includes it, such as `CoreApplicationModule` in `dev.vertique:vertique-starter-core`. Feature modules
+do not include it: the only universally installed framework modules live in `dev.vertique:vertique-core`,
+which cannot depend on this artifact. Omitting it yields a Dagger missing-binding compile error.
 
 ```java
 @Component(modules = {VertxModule.class, ConfigParsingModule.class, /* … */})
@@ -344,8 +363,43 @@ Absent any `@ConfigMapper` binding, the framework uses its own lenient default m
 
 - **The config mapper is isolated** from Vert.x's `DatabindCodec.mapper()` and from any REST or JSON
   profile mapper. It registers `Jdk8Module`, `JavaTimeModule`, `KeyedCollectionModule` (from
-  `dev.vertique:vertique-json`), and Vert.x's Jackson module; it coerces scalars leniently and
-  tolerates unknown properties, independent of any strictness the REST-input mapper is given.
+  `dev.vertique:vertique-json`), the secret-masking module, and Vert.x's Jackson module; it coerces
+  scalars leniently and tolerates unknown properties, independent of any strictness the REST-input
+  mapper is given.
+- **Serialization through the config mapper masks secrets.** Every field whose dotted path within
+  the record `ConfigSecretRenderer.isSensitivePath` (in `dev.vertique:vertique-core`) deems sensitive
+  — `ssl.keyStorePassword`, `credentials`, `apiKey`, a `jaas` record's `config` — renders as `"***"`
+  when it has a value and is omitted when it is `null` or an empty `Optional`; a secret-named record
+  or list masks as one `"***"`, and so does a non-empty property marked `@ConfigSecret` (in
+  `dev.vertique:vertique-core`) whatever its path — an open bag whose keys cannot be named in advance;
+  an empty one is written as given. The path uses the serialized property names, so a
+  `@JsonProperty("pwd")` renames a field out of the rule. An open bag (`Map`, `JsonObject`,
+  collection, also held through an `Optional`) under a non-secret key is written with its sensitive
+  entries masked at every depth, the walk `redactBag` applies to `toString()`, with `null` secret
+  entries dropped. A string at a path `ConfigSecretRenderer.isUriPath` recognises (`jdbcUrl`,
+  `baseUrl`, `endpoints`, `uri`, `connectionString`; a field, an `Optional`, a list element or a bag
+  entry) is written as `ConfigSecretRenderer.redactUri` renders it: `user:pass@` and credential-named
+  query-parameter values become `***`, scheme, host, port and path stay visible, and a URL without
+  credentials serializes as given. Secret wins over URL (`tokenUrl` renders as `"***"`). The URL rule
+  covers `scheme://user:pass@host` and `?name=value` forms only, with the userinfo percent-encoded — a
+  raw `/`, `?` or `#` inside a password ends the authority early, only the first authority of a
+  comma-joined value is masked, and a scheme-less or semicolon-style connection string, a
+  `java.net.URI`, `URL` or array-typed value, or a URL under a name without one of the tokens
+  (`address`) serializes as given — and it is one difference from `toString()`: `redactBag` leaves a
+  URL inside a bag as given. The
+  live value is untouched, deserialization is untouched, and so is any other
+  `ObjectMapper`: a record dumped through a REST or process mapper is not masked. A `@ConfigMapper`
+  override gets the module too, provided it has not serialized anything before it is finalized; a
+  custom serializer registered for a record type and `@JsonAnyGetter` entries bypass it, and the
+  members of a `@JsonUnwrapped` property mask by their own names only (the enclosing property's name
+  is not part of their path). The substring rule also masks look-alikes (`keyStorePath`,
+  `maxTokens`).
+- **`ConfigParser` rejects the mask placeholder.** A secret-path leaf whose value is the literal
+  `"***"` fails the parse with a `ConfigurationException` naming the dotted path (relative to the
+  record, or to the entry for keyed collections), so a masked dump cannot be fed back as the secret.
+  The same literal under a non-secret key is an ordinary value, and a masked URL (`//***@host`,
+  `password=***`) is not recognised by the parser: fed back, the owning record's validation or the
+  connection decides when it fails.
 - **An `@ConfigMapper` override is finalized in place**, not copied — the framework layers its
   mandatory modules and lenient policy onto the very instance supplied and then owns it. Do not share
   that instance concurrently for another purpose.
@@ -483,10 +537,10 @@ instance before first use — see [Config Parsing](#config-parsing) above.
 
 | Artifact | Scope | Purpose |
 |---|---|---|
-| `dev.vertique:vertique-core` | compile | `ConfigParser` interface, `@ConfigMapper` qualifier, `JsonConfigPaths`, `ConfigurationException` |
+| `dev.vertique:vertique-core` | compile | `ConfigParser` interface, `@ConfigMapper` qualifier, `ConfigSecretRenderer` (the secret rule the mapper masks by), `JsonConfigPaths`, `ConfigurationException` |
 | `dev.vertique:vertique-json` | compile | `KeyedCollectionModule` — keyed-collection deserialization on the config mapper |
 | `io.vertx:vertx-config` | compile | `ConfigRetriever`, the built-in store types, and the `ConfigStoreFactory` SPI |
-| `com.fasterxml.jackson.core:jackson-databind` | compile | `ObjectMapper` behind the config parser |
+| `com.fasterxml.jackson.core:jackson-databind` | compile | `ObjectMapper` behind the config parser; the secret-masking bean-serializer modifier |
 | `com.fasterxml.jackson.datatype:jackson-datatype-jdk8` | compile | `Jdk8Module` — mandatory config-mapper module |
 | `com.fasterxml.jackson.datatype:jackson-datatype-jsr310` | compile | `JavaTimeModule` — mandatory config-mapper module |
 | `com.google.dagger:dagger` | compile | `@Module`, `@Provides`, `@BindsOptionalOf` |

@@ -10,9 +10,9 @@ import java.util.Objects;
  * Branch-level retry policy attached to a {@link ForkNode}.
  *
  * <p>The policy applies to all branches in the fork group; per-branch retry overrides are not
- * supported in the first PRD-WF-002 release. The policy controls retry of branch <em>orchestration
+ * supported. The policy controls retry of branch <em>orchestration
  * failures</em> only — outbox delivery retry and service-client transient retry remain owned by
- * the outbox relay and the service-client resilience layer respectively (PRD-WF-002 §A.4.3).
+ * the outbox relay and the service-client resilience layer respectively.
  *
  * @param maxAttempts maximum number of attempts (≥ 1); {@code 1} disables retry. The branch is
  *     marked {@code FAILED} after exhausting the budget.

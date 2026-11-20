@@ -15,8 +15,23 @@ import java.util.OptionalLong;
  * @param delayMs the optional initial delay in milliseconds
  * @param backoffMultiplier the optional exponential multiplier
  * @param maxDelayMs the optional maximum delay in milliseconds
+ * @param retryAfterMaxMs the optional longest failure delay hint to honor in milliseconds, {@code >= 0};
+ *     absent or 0 ignores hints
  */
-public record RetryPolicyConfig(Integer maxRetries, Long delayMs, Double backoffMultiplier, Long maxDelayMs) {
+public record RetryPolicyConfig(
+        Integer maxRetries, Long delayMs, Double backoffMultiplier, Long maxDelayMs, Long retryAfterMaxMs) {
+
+    /**
+     * Creates a configuration without a delay hint maximum.
+     *
+     * @param maxRetries the retry count
+     * @param delayMs the optional initial delay in milliseconds
+     * @param backoffMultiplier the optional exponential multiplier
+     * @param maxDelayMs the optional maximum delay in milliseconds
+     */
+    public RetryPolicyConfig(Integer maxRetries, Long delayMs, Double backoffMultiplier, Long maxDelayMs) {
+        this(maxRetries, delayMs, backoffMultiplier, maxDelayMs, null);
+    }
 
     /**
      * Converts this configuration to raw, partial operation overrides without filling defaults.
@@ -38,7 +53,8 @@ public record RetryPolicyConfig(Integer maxRetries, Long delayMs, Double backoff
                 backoff,
                 Optional.empty(),
                 Optional.empty(),
-                Optional.empty());
+                Optional.empty(),
+                retryAfterMaxMs);
     }
 
     private static OptionalInt optionalInt(Integer value) {

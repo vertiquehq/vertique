@@ -5,7 +5,7 @@ package dev.vertique.db.flyway;
 
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.annotation.JsonProperty;
+import dev.vertique.core.config.ConfigSecret;
 import dev.vertique.core.json.KeyedBy;
 import java.util.List;
 import java.util.Map;
@@ -63,9 +63,13 @@ import lombok.extern.jackson.Jacksonized;
  * }
  * }</pre>
  *
- * <p><strong>Secret hygiene.</strong> {@code password} and {@code placeholders} are read from
- * configuration but are {@link JsonProperty.Access#WRITE_ONLY}: Jackson never serializes them back
- * out, and the same holds for every nested {@link FlywayInstanceConfig}. {@link #toString()} renders
+ * <p><strong>Secret hygiene.</strong> {@code password} is read from configuration and stays readable;
+ * the config mapper behind {@code ConfigParser} serializes it as {@code "***"} when set and omits it
+ * when absent (its name matches the shared secret rule, {@code ConfigSecretRenderer}). The
+ * {@code placeholders} bag may hold a secret under any key, so it is marked
+ * {@link ConfigSecret} and the config mapper serializes it whole as {@code "***"} when non-empty
+ * ({@code {}} when empty). The same holds for every nested {@link FlywayInstanceConfig}. Only the config mapper masks: another {@code ObjectMapper}
+ * prints the password. {@link #toString()} renders
  * the password redacted, the placeholder keys without values, a {@code password=} parameter in
  * {@code jdbcUrl} masked and every instance in its redacted form, on the class and on its builder.
  */
@@ -94,9 +98,9 @@ public class FlywayConfig {
 
     /**
      * DDL password for migrations. If {@code null}, falls back to {@link
-     * dev.vertique.db.DbPoolConfig#password()}.
+     * dev.vertique.db.DbPoolConfig#password()}. Masked as {@code "***"} when the config mapper
+     * serializes the record.
      */
-    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     private final String password;
 
     // --- Migration locations ---
@@ -129,9 +133,10 @@ public class FlywayConfig {
     /**
      * Placeholder key-value pairs for template substitution in migration scripts. Flyway replaces
      * {@code ${key}} occurrences in SQL scripts with the corresponding value. Defaults to an empty
-     * map (no substitutions).
+     * map (no substitutions). A placeholder value may be a secret under any key, so the config mapper
+     * serializes the bag whole as {@code "***"} when non-empty.
      */
-    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
+    @ConfigSecret
     @Builder.Default
     private final Map<String, String> placeholders = Map.of();
 

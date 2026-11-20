@@ -3,6 +3,7 @@
 
 package dev.vertique.core.codegen;
 
+import jakarta.annotation.Nullable;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.lang.reflect.Type;
@@ -27,6 +28,9 @@ public final class ReflectiveMethodMetadata implements MethodMetadata {
     private final Method method;
     private final List<ParameterMetadata> parameters;
 
+    @Nullable
+    private final List<Annotation> annotations;
+
     /**
      * Creates a reflective method-metadata view.
      *
@@ -35,8 +39,26 @@ public final class ReflectiveMethodMetadata implements MethodMetadata {
      *                   {@code null} (an empty list is permitted)
      */
     public ReflectiveMethodMetadata(Method method, List<ParameterMetadata> parameters) {
+        this(method, parameters, null);
+    }
+
+    /**
+     * Creates a reflective method-metadata view whose annotation lookups see {@code annotations}
+     * instead of the annotations declared on {@code method} alone, for a method that inherits the
+     * annotations of the declarations it overrides. The first annotation of a type wins, so the
+     * list should run from the method's own annotations to the most distant declaration.
+     *
+     * @param method      the reflective method to wrap; must not be {@code null}
+     * @param parameters  the pre-resolved parameter metadata, in declaration order; must not be
+     *                    {@code null}
+     * @param annotations the merged annotations lookups resolve against, or {@code null} to use
+     *                    the annotations declared on {@code method}
+     */
+    public ReflectiveMethodMetadata(
+            Method method, List<ParameterMetadata> parameters, @Nullable List<Annotation> annotations) {
         this.method = method;
         this.parameters = List.copyOf(parameters);
+        this.annotations = annotations == null ? null : List.copyOf(annotations);
     }
 
     @Override
@@ -66,12 +88,22 @@ public final class ReflectiveMethodMetadata implements MethodMetadata {
 
     @Override
     public <A extends Annotation> Optional<A> findAnnotation(Class<A> type) {
-        return Optional.ofNullable(method.getAnnotation(type));
+        if (annotations == null) {
+            return Optional.ofNullable(method.getAnnotation(type));
+        }
+        for (Annotation annotation : annotations) {
+            if (annotation.annotationType() == type) {
+                return Optional.of(type.cast(annotation));
+            }
+        }
+        return Optional.empty();
     }
 
     @Override
     public boolean hasAnnotation(Class<? extends Annotation> type) {
-        return method.isAnnotationPresent(type);
+        return annotations == null
+                ? method.isAnnotationPresent(type)
+                : annotations.stream().anyMatch(annotation -> annotation.annotationType() == type);
     }
 
     @Override

@@ -112,8 +112,8 @@ public abstract class McpServerModule {
     }
 
     /**
-     * Contributes the mandatory input-processing binding guard to the compose-validation phase
-     * (contract §4.7). Merely constructing {@link McpInputProcessingCompositionValidator}
+     * Contributes the mandatory input-processing binding guard to the compose-validation phase.
+     * Merely constructing {@link McpInputProcessingCompositionValidator}
      * requires a direct {@link dev.vertique.input.processing.InputObjectProcessor} binding, so a
      * composition that omits one fails Dagger compilation before any route mounts — regardless of
      * how many tools are registered.

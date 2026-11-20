@@ -54,7 +54,7 @@
  * is fail-closed. A store that fails to reach AWS (network error, auth failure) returns a failed
  * {@link io.vertx.core.Future} and aborts bootstrap.
  *
- * <h2>NFR-CONF-002 — Value Redaction</h2>
+ * <h2>Value Redaction</h2>
  * <p>Parameter values MUST NOT appear in log messages, exception messages, or any other
  * observable output. Only parameter names (which are operator-declared paths, not secrets),
  * counts, and structural diagnostics are safe to include. This module logs only counts at INFO

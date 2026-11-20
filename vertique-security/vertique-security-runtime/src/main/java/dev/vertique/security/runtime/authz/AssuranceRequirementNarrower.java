@@ -23,12 +23,12 @@ import java.util.Optional;
 /**
  * {@link AuthorizationNarrower} that denies an assurance-gated action with
  * {@link AuthzReasonCodes#STEP_UP_REQUIRED} when the context's authentication does not meet the
- * action's configured {@link AssuranceRequirement} (PRD identity-002 FR-ID-CA-005).
+ * action's configured {@link AssuranceRequirement}.
  *
  * <p><strong>Ungated actions pass through unchanged.</strong> {@link #narrow} parses
  * {@link AuthorizationRequest#action()} to an {@link ActionRef} and looks it up via
  * {@link AssuranceRequirementConfig#requirementFor(ActionRef)}, which matches against every
- * configured action <em>pattern</em> (FR-ID-AR-003) rather than an exact-string key; when no
+ * configured action <em>pattern</em> rather than an exact-string key; when no
  * configured pattern matches the action, the base decision is returned untouched — this narrower
  * only acts on actions an operator has explicitly assurance-gated.
  *
@@ -173,7 +173,7 @@ public final class AssuranceRequirementNarrower implements AuthorizationNarrower
         SecurityContext ctx = request.securityContext();
         if (ctx.reconstruction().isPresent()) {
             // A reconstructed context carries no fresh, live authentication event of its own — it
-            // structurally cannot satisfy a fresh-verification requirement (FR-ID-CA-005).
+            // structurally cannot satisfy a fresh-verification requirement.
             return Future.succeededFuture(stepUpDenied(requirement, REASON_RECONSTRUCTED_NEEDS_STEP_UP));
         }
         Optional<AuthenticationAssurance> assuranceOpt = ctx.authentication().assurance();

@@ -29,7 +29,6 @@ import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
@@ -55,6 +54,16 @@ class GenericInheritanceParityTest {
     private static final String PKG = "dev.vertique.test.gip";
 
     // --- Reflective fixtures ---
+
+    interface BoundedFutureApi<T> {
+        @GET
+        default io.vertx.core.Future<? extends T> bounded() {
+            return io.vertx.core.Future.succeededFuture();
+        }
+    }
+
+    @Path("/bounded-future")
+    static class BoundedFutureLeaf implements BoundedFutureApi<String> {}
 
     interface SecuredCrud<I> {
         @DELETE
@@ -125,6 +134,81 @@ class GenericInheritanceParityTest {
             return "derived " + id;
         }
     }
+
+    @Path("/inherited")
+    static class InheritedGeneric extends GenericBase<String> {}
+
+    interface DefaultApi<T> {
+        @GET
+        @Path("/{id}")
+        default String find(@PathParam("id") T id) {
+            return "default " + id;
+        }
+    }
+
+    interface DefaultMiddle<T> extends DefaultApi<T> {}
+
+    @Path("/default-chain")
+    static class DefaultLeaf implements DefaultMiddle<String> {}
+
+    static class BaseMiddle<T> extends GenericBase<T> {}
+
+    @Path("/base-chain")
+    static class BaseLeaf extends BaseMiddle<String> {}
+
+    interface BodyApi<T> {
+        @jakarta.ws.rs.POST
+        default io.vertx.core.Future<T> submit(List<List<T>> body) {
+            return io.vertx.core.Future.succeededFuture(body.getFirst().getFirst());
+        }
+    }
+
+    public static class Payload {
+        public String value;
+    }
+
+    @Path("/body-chain")
+    static class BodyLeaf implements BodyApi<Payload> {}
+
+    interface NestedReturnApi<T> {
+        @GET
+        default io.vertx.core.Future<List<List<T>>> nested() {
+            return io.vertx.core.Future.succeededFuture(List.of());
+        }
+    }
+
+    @Path("/nested-return")
+    static class NestedReturnLeaf implements NestedReturnApi<Payload> {}
+
+    interface ScalarApi<T> {
+        @jakarta.ws.rs.POST
+        default String values(
+                @PathParam("p") T p,
+                @QueryParam("q") T q,
+                @jakarta.ws.rs.HeaderParam("h") T h,
+                @jakarta.ws.rs.CookieParam("c") T c,
+                @jakarta.ws.rs.FormParam("f") T f) {
+            return "ok";
+        }
+    }
+
+    @Path("/scalars/{p}")
+    static class ScalarLeaf implements ScalarApi<Integer> {}
+
+    public static class InputBean {
+        @QueryParam("q")
+        public Integer q;
+    }
+
+    interface BeanApi<T> {
+        @jakarta.ws.rs.POST
+        default String bean(@jakarta.ws.rs.BeanParam T value) {
+            return "ok";
+        }
+    }
+
+    @Path("/bean")
+    static class BeanLeaf implements BeanApi<InputBean> {}
 
     static class PlainBase {
         @GET
@@ -481,6 +565,35 @@ class GenericInheritanceParityTest {
     static Stream<Arguments> shapes() {
         return Stream.of(
                         new Shape(
+                                "an inherited default method resolves through multiple interfaces",
+                                new DefaultLeaf(),
+                                "DefaultLeaf",
+                                List.of(src("DefaultApi", """
+                                        public interface DefaultApi<T> {
+                                            @GET @Path("/{id}")
+                                            default String find(@PathParam("id") T id) { return "default " + id; }
+                                        }
+                                        """), src("DefaultMiddle", """
+                                        public interface DefaultMiddle<T> extends DefaultApi<T> {}
+                                        """), src("DefaultLeaf", """
+                                        @Path("/default-chain")
+                                        public class DefaultLeaf implements DefaultMiddle<String> {}
+                                        """)),
+                                List.of(
+                                        "GET /default-chain/{id} DefaultApi id|PATH|java.lang.String None -> default 7")),
+                        new Shape(
+                                "an inherited superclass method resolves through multiple classes",
+                                new BaseLeaf(),
+                                "BaseLeaf",
+                                List.of(genericBase(), src("BaseMiddle", """
+                                        public class BaseMiddle<T> extends GenericBase<T> {}
+                                        """), src("BaseLeaf", """
+                                        @Path("/base-chain")
+                                        public class BaseLeaf extends BaseMiddle<String> {}
+                                        """)),
+                                List.of(
+                                        "GET /base-chain/{id} GenericBase id|PATH|java.lang.String roles=[editor] -> base 7")),
+                        new Shape(
                                 "an override with its own verb inherits the interface's security (the fail-open case)",
                                 new SecuredOverride(),
                                 "SecuredOverride",
@@ -569,6 +682,16 @@ class GenericInheritanceParityTest {
                                         """)),
                                 List.of(
                                         "GET /derived/{id} GenericDerived id|PATH|java.lang.String roles=[editor] -> derived 7")),
+                        new Shape(
+                                "an inherited generic superclass method binds its parameter",
+                                new InheritedGeneric(),
+                                "InheritedGeneric",
+                                List.of(genericBase(), src("InheritedGeneric", """
+                                        @Path("/inherited")
+                                        public class InheritedGeneric extends GenericBase<String> {}
+                                        """)),
+                                List.of(
+                                        "GET /inherited/{id} GenericBase id|PATH|java.lang.String roles=[editor] -> base 7")),
                         new Shape(
                                 "a non-generic annotated superclass method overridden without annotations",
                                 new PlainDerived(),
@@ -688,7 +811,7 @@ class GenericInheritanceParityTest {
                                         """)),
                                 List.of(
                                         "GET /overload-base/{id} OverloadDerived id|PATH|java.lang.String None -> derived 7",
-                                        "GET /overload-base/{id}/times OverloadBase id|PATH|java.lang.Object,times|QUERY|java.lang.String None -> b 7")),
+                                        "GET /overload-base/{id}/times OverloadBase id|PATH|java.lang.String,times|QUERY|java.lang.String None -> b 7")),
                         new Shape(
                                 "a same-erasure overload with another type argument displaces nothing",
                                 new PurgeOverload(),
@@ -711,7 +834,7 @@ class GenericInheritanceParityTest {
                                         }
                                         """)),
                                 List.of(
-                                        "GET /purge-overload/{id} PurgeBase id|PATH|java.lang.Object roles=[admin] -> base 7")),
+                                        "GET /purge-overload/{id} PurgeBase id|PATH|java.util.List roles=[admin] -> base [7]")),
                         new Shape(
                                 "a private helper with the same erasure displaces nothing",
                                 new PurgeHelper(),
@@ -735,7 +858,7 @@ class GenericInheritanceParityTest {
                                         }
                                         """)),
                                 List.of(
-                                        "GET /purge-helper/{id} PurgeBase id|PATH|java.lang.Object roles=[admin] -> base 7")),
+                                        "GET /purge-helper/{id} PurgeBase id|PATH|java.util.List roles=[admin] -> base [7]")),
                         new Shape(
                                 "a protected generic override inherits the declaration's route and security",
                                 new ProtectedDerived(),
@@ -778,7 +901,7 @@ class GenericInheritanceParityTest {
                                         public class ProtectedInherited extends ProtectedBase<String> {}
                                         """)),
                                 List.of(
-                                        "GET /prot-inherited/{id} ProtectedBase id|PATH|java.lang.Object roles=[admin] -> base 7")),
+                                        "GET /prot-inherited/{id} ProtectedBase id|PATH|java.lang.String roles=[admin] -> base 7")),
                         new Shape(
                                 "an unrelated overload is not a route and takes nothing from the interface",
                                 new Overloads(),
@@ -857,7 +980,7 @@ class GenericInheritanceParityTest {
                                             }
                                         }
                                         """)),
-                                List.of("GET /relay/{id} RelayBase id|PATH|java.lang.Object roles=[admin] -> base 7")),
+                                List.of("GET /relay/{id} RelayBase id|PATH|java.lang.String roles=[admin] -> base 7")),
                         new Shape(
                                 "a private method with the erased signature of an interface route overrides nothing",
                                 new PrivateKeyResource(),
@@ -1134,6 +1257,219 @@ class GenericInheritanceParityTest {
         }
     }
 
+    @org.junit.jupiter.api.Test
+    @DisplayName("Generated and reflective inherited nested bodies decode concrete values")
+    void nestedBodyAndFutureReturnMatch() throws Exception {
+        var result = ProcessorTestHarness.run(
+                new JaxRsPipelineProcessor(), src("Payload", """
+                        public class Payload { public String value; }
+                        """), src("BodyApi", """
+                        public interface BodyApi<T> {
+                            @jakarta.ws.rs.POST
+                            default io.vertx.core.Future<T> submit(java.util.List<java.util.List<T>> body) {
+                                return io.vertx.core.Future.succeededFuture(body.getFirst().getFirst());
+                            }
+                        }
+                        """), src("BodyLeaf", """
+                        @Path("/body-chain")
+                        public class BodyLeaf implements BodyApi<Payload> {}
+                        """));
+        result.assertSuccess();
+        String name = fqn("BodyLeaf");
+        Object instance = result.generatedClassLoader()
+                .loadClass(name)
+                .getDeclaredConstructor()
+                .newInstance();
+        var generated =
+                callDescribe(result, instance, name + "_JaxRsDescriptor").getFirst();
+        var reflective = new JaxRsRouteRegistrar().scanResource(new BodyLeaf()).getFirst();
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        for (var meta : List.of(reflective, generated)) {
+            List<?> decoded = mapper.readValue(
+                    "[[{\"value\":\"ok\"}]]",
+                    mapper.constructType(meta.params().getFirst().genericType()));
+            Object payload = ((List<?>) decoded.getFirst()).getFirst();
+            assertEquals(meta.responseBodyType(), payload.getClass());
+            assertEquals("ok", payload.getClass().getField("value").get(payload));
+            assertEquals(true, meta.returnsFuture());
+        }
+    }
+
+    @org.junit.jupiter.api.Test
+    @DisplayName("inherited bounded future return metadata agrees")
+    void boundedFutureReturnMetadataParity() throws Exception {
+        var result = ProcessorTestHarness.run(
+                new JaxRsPipelineProcessor(), src("BoundedFutureApi", """
+                        public interface BoundedFutureApi<T> {
+                            @GET
+                            default io.vertx.core.Future<? extends T> bounded() {
+                                return io.vertx.core.Future.succeededFuture();
+                            }
+                        }
+                        """), src("BoundedFutureLeaf", """
+                        @Path("/bounded-future")
+                        public class BoundedFutureLeaf implements BoundedFutureApi<String> {}
+                        """));
+        result.assertSuccess();
+        String name = fqn("BoundedFutureLeaf");
+        Object instance = result.generatedClassLoader()
+                .loadClass(name)
+                .getDeclaredConstructor()
+                .newInstance();
+        var generated =
+                callDescribe(result, instance, name + "_JaxRsDescriptor").getFirst();
+        var reflective =
+                new JaxRsRouteRegistrar().scanResource(new BoundedFutureLeaf()).getFirst();
+        for (var meta : List.of(reflective, generated)) {
+            assertEquals(String.class, meta.responseBodyType());
+            assertEquals(true, meta.returnsFuture());
+        }
+    }
+
+    @org.junit.jupiter.api.Test
+    @DisplayName("inherited nested future return metadata agrees at raw body type precision")
+    void nestedReturnMetadataParity() throws Exception {
+        var result = ProcessorTestHarness.run(
+                new JaxRsPipelineProcessor(),
+                src("Payload", "public class Payload {}"),
+                src("NestedReturnApi", """
+                        public interface NestedReturnApi<T> {
+                            @GET
+                            default io.vertx.core.Future<java.util.List<java.util.List<T>>> nested() {
+                                return io.vertx.core.Future.succeededFuture(java.util.List.of());
+                            }
+                        }
+                        """),
+                src("NestedReturnLeaf", """
+                        @Path("/nested-return")
+                        public class NestedReturnLeaf implements NestedReturnApi<Payload> {}
+                        """));
+        result.assertSuccess();
+        String name = fqn("NestedReturnLeaf");
+        Object instance = result.generatedClassLoader()
+                .loadClass(name)
+                .getDeclaredConstructor()
+                .newInstance();
+        var generated =
+                callDescribe(result, instance, name + "_JaxRsDescriptor").getFirst();
+        var reflective =
+                new JaxRsRouteRegistrar().scanResource(new NestedReturnLeaf()).getFirst();
+        for (var meta : List.of(reflective, generated)) {
+            assertEquals(List.class, meta.responseBodyType());
+            assertEquals(true, meta.returnsFuture());
+            assertEquals(false, meta.returnsVoid());
+        }
+    }
+
+    @org.junit.jupiter.api.Test
+    void inheritedScalarAndBeanExtractionParity() throws Exception {
+        var result = ProcessorTestHarness.run(
+                new JaxRsPipelineProcessor(),
+                src("ScalarApi", """
+                        public interface ScalarApi<T> {
+                            @jakarta.ws.rs.POST
+                            default String values(@PathParam("p") T p, @QueryParam("q") T q,
+                                @jakarta.ws.rs.HeaderParam("h") T h, @jakarta.ws.rs.CookieParam("c") T c,
+                                @jakarta.ws.rs.FormParam("f") T f) { return "ok"; }
+                        }
+                        """),
+                src("ScalarLeaf", """
+                        @Path("/scalars/{p}") public class ScalarLeaf implements ScalarApi<Integer> {}
+                        """),
+                src("InputBean", """
+                        public class InputBean { @QueryParam("q") public Integer q; }
+                        """),
+                src("BeanApi", """
+                        public interface BeanApi<T> {
+                            @jakarta.ws.rs.POST default String bean(@jakarta.ws.rs.BeanParam T value) { return "ok"; }
+                        }
+                        """),
+                src("BeanLeaf", """
+                        @Path("/bean") public class BeanLeaf implements BeanApi<InputBean> {}
+                        """));
+        result.assertSuccess();
+        var request = new dev.vertique.rest.jaxrs.request.BoundRequest() {
+            public java.util.Map<String, dev.vertique.rest.core.request.RequestValue> pathParameters() {
+                return java.util.Map.of("p", dev.vertique.rest.core.request.RequestValue.of("11"));
+            }
+
+            public java.util.Map<String, dev.vertique.rest.core.request.RequestValue> query() {
+                return java.util.Map.of("q", dev.vertique.rest.core.request.RequestValue.of("12"));
+            }
+
+            public java.util.Map<String, dev.vertique.rest.core.request.RequestValue> headers() {
+                return java.util.Map.of("h", dev.vertique.rest.core.request.RequestValue.of("13"));
+            }
+
+            public java.util.Map<String, dev.vertique.rest.core.request.RequestValue> cookies() {
+                return java.util.Map.of("c", dev.vertique.rest.core.request.RequestValue.of("14"));
+            }
+
+            public dev.vertique.rest.core.request.RequestValue body() {
+                return dev.vertique.rest.core.request.RequestValue.of(null);
+            }
+
+            public io.vertx.core.http.HttpServerRequest raw() {
+                return null;
+            }
+        };
+        var http = (io.vertx.core.http.HttpServerRequest) java.lang.reflect.Proxy.newProxyInstance(
+                getClass().getClassLoader(),
+                new Class<?>[] {io.vertx.core.http.HttpServerRequest.class},
+                (proxy, method, args) -> method.getName().equals("getFormAttribute") ? "15" : null);
+        var ctx = (io.vertx.ext.web.RoutingContext) java.lang.reflect.Proxy.newProxyInstance(
+                getClass().getClassLoader(),
+                new Class<?>[] {io.vertx.ext.web.RoutingContext.class},
+                (proxy, method, args) -> method.getName().equals("request") ? http : null);
+        for (String leaf : List.of("ScalarLeaf", "BeanLeaf")) {
+            Object local = leaf.equals("ScalarLeaf") ? new ScalarLeaf() : new BeanLeaf();
+            var reflective = new JaxRsRouteRegistrar().scanResource(local).getFirst();
+            String name = fqn(leaf);
+            Object instance = result.generatedClassLoader()
+                    .loadClass(name)
+                    .getDeclaredConstructor()
+                    .newInstance();
+            var generated =
+                    callDescribe(result, instance, name + "_JaxRsDescriptor").getFirst();
+            for (var meta : List.of(reflective, generated)) {
+                Object[] args = extract(meta, ctx, request, meta == generated);
+                if (leaf.equals("ScalarLeaf")) {
+                    org.junit.jupiter.api.Assertions.assertArrayEquals(new Object[] {11, 12, 13, 14, 15}, args);
+                } else {
+                    assertEquals(meta.params().getFirst().type(), args[0].getClass());
+                    assertEquals(12, args[0].getClass().getField("q").get(args[0]));
+                }
+            }
+        }
+    }
+
+    private static Object[] extract(
+            ResourceMethodMeta meta,
+            io.vertx.ext.web.RoutingContext ctx,
+            dev.vertique.rest.jaxrs.request.BoundRequest request,
+            boolean generated)
+            throws Exception {
+        Class<?> extractorType = Class.forName("dev.vertique.rest.jaxrs.ParameterExtractor");
+        var constructor = extractorType.getDeclaredConstructor(
+                ResourceMethodMeta.class, List.class, dev.vertique.rest.core.context.RestContextResolution.class);
+        constructor.setAccessible(true);
+        Object extractor = constructor.newInstance(
+                meta, List.of(), new dev.vertique.rest.core.context.RestContextResolution(java.util.Set.of()));
+        if (!generated) {
+            var method = extractorType.getDeclaredMethod(
+                    "extractArguments",
+                    io.vertx.ext.web.RoutingContext.class,
+                    dev.vertique.rest.jaxrs.request.BoundRequest.class);
+            method.setAccessible(true);
+            return (Object[]) method.invoke(extractor, ctx, request);
+        }
+        Class<?> supportType = Class.forName("dev.vertique.rest.jaxrs.ParameterExtractorBackedSupport");
+        var supportConstructor = supportType.getDeclaredConstructor(extractorType);
+        supportConstructor.setAccessible(true);
+        var support = (dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsSupport) supportConstructor.newInstance(extractor);
+        return meta.executionPlan().extractArguments(ctx, request, support);
+    }
+
     // --- Normalization ---
 
     private static List<String> render(List<ResourceMethodMeta> metas) throws Throwable {
@@ -1145,8 +1481,9 @@ class GenericInheritanceParityTest {
                             .map(p ->
                                     p.name() + "|" + p.source() + "|" + p.type().getName())
                             .toList());
-            Object[] args =
-                    Collections.nCopies(meta.params().size(), (Object) "7").toArray();
+            Object[] args = meta.params().stream()
+                    .map(p -> p.type() == List.class ? List.of("7") : "7")
+                    .toArray();
             Object invoked = meta.executionPlan() != null
                     ? meta.executionPlan().invoke(meta.resourceInstance(), args)
                     : meta.method().invoke(meta.resourceInstance(), args);

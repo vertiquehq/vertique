@@ -12,8 +12,8 @@ import java.lang.annotation.Target;
 
 /**
  * The Dagger map key a {@link RateLimitBackend} provider uses to contribute its binding for one
- * {@link RateLimitMode} (contracts/rate-limit-runtime.md, "Backend seam — framework-private,
- * provider map"). Public visibility only so framework modules can compose LOCAL and CLUSTERED
+ * {@link RateLimitMode} (the framework-private provider map).
+ * Public visibility only so framework modules can compose LOCAL and CLUSTERED
  * backends; not a supported application extension point.
  */
 @MapKey

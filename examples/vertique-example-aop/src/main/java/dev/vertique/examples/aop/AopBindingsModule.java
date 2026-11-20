@@ -19,8 +19,8 @@ import dev.vertique.micrometer.TimedAspect;
  * {@code TimedAspect}'s {@code Optional<MetricsConfig>} constructor parameter resolves. The present
  * {@code @Provides MetricsConfig} in {@link AopRegistryModule} satisfies that optional.
  *
- * <p>This mirrors the framework's {@code MicrometerModule}, including the {@code @BindsOptionalOf}
- * that the F3 fix added there — without it Dagger cannot synthesize {@code Optional<MetricsConfig>}
+ * <p>This mirrors the framework's {@code MicrometerModule}, including its {@code @BindsOptionalOf}
+ * — without it Dagger cannot synthesize {@code Optional<MetricsConfig>}
  * from a plain {@code @Provides MetricsConfig}.
  */
 @Module
@@ -42,7 +42,7 @@ public abstract class AopBindingsModule {
      * Binds {@link DeferringAspect} as the {@link AspectProvider} for the custom {@link Deferring}
      * trigger, resolving the {@code AspectProvider<Deferring>} dependency the generated
      * {@code DeferringBean$AopProxy} injects. This custom aspect deliberately defers completion, so it
-     * proves the FR-013-05 sync-defer guard at runtime.
+     * proves the sync-defer guard at runtime.
      *
      * @param aspect the deferring aspect provider; supplied by Dagger via its {@code @Inject} ctor
      * @return the aspect bound to the {@code AspectProvider<Deferring>} interface type

@@ -41,7 +41,7 @@ See "Runtime SPI Types" below for the interfaces and helpers this generated clas
 
 For a `@BODY` resource-method parameter typed `Collection<E>` or `E[]`, the element type `E` — not the collection/array type itself — is the discovery root for generation.
 
-**Which nested DTOs get a generated processor.** A nested DTO type is included in the generated set only if **it** carries at least one of `@Canonicalize`, `@Sanitize`, `@SkipCanonicalization`, or `@SkipSanitization` — on the type itself, on one of its own fields/components, or via a meta-annotation on either. A discovery-root DTO is always included regardless of local annotations, so route- and parameter-level policies still flow through the generated path. Field classification walks the superclass chain (stopping at `Object`) to collect inherited fields, mirroring `FR-CG008-005`, so they participate alongside a DTO's own fields.
+**Which nested DTOs get a generated processor.** A nested DTO type is included in the generated set only if **it** carries at least one of `@Canonicalize`, `@Sanitize`, `@SkipCanonicalization`, or `@SkipSanitization` — on the type itself, on one of its own fields/components, or via a meta-annotation on either. A discovery-root DTO is always included regardless of local annotations, so route- and parameter-level policies still flow through the generated path. Field classification walks the superclass chain (stopping at `Object`) to collect inherited fields, so they participate alongside a DTO's own fields.
 
 The condition is the type's **own** annotations, not its subtree's. An un-annotated mid-tier DTO on the path to an annotated leaf gets **no** generated processor — the leaf still does, because discovery traverses through a non-participating type rather than pruning at it, and the mid-tier's own fragment is handled by the reflective continuation at runtime. Reading the rule as a subtree condition over-states which types are generated.
 
@@ -100,7 +100,7 @@ Without this normalization `Optional` would classify as a nested DTO and emit `d
 
 ## Runtime SPI Types (in `vertique-input-processing`)
 
-The following types live in `dev.vertique.input.processing` (artifact `vertique-input-processing`) as the stable public SPI. They are available at runtime regardless of whether `vertique-codegen-sanitization` is on the processor path.
+The following types live in `dev.vertique.input.processing` (artifact `vertique-input-processing`). All of them except `GeneratedInputProcessorDispatcher`, which is INTERNAL (see its section), are the stable public SPI. They are available at runtime regardless of whether `vertique-codegen-sanitization` is on the processor path.
 
 One type the emitted source references is **not** in that package: `InputFieldNameResolver` — the wire → Java property-name projection — is declared in `dev.vertique.core.sanitization` (artifact `vertique-core`) beside `InputLocation`, `Canonicalizer` and `Sanitizer`, and the emitter imports it from there.
 
@@ -180,7 +180,9 @@ public final class InputTraversalContext {
 }
 ```
 
-### `GeneratedInputProcessorDispatcher`
+### `GeneratedInputProcessorDispatcher` (INTERNAL)
+
+INTERNAL: this class is the handoff between generated code and the framework. Applications neither call nor implement it, and it is outside this module's compatibility promise. The generated `GeneratedInputProcessor.process(...)` receives it as a parameter, and the listing below shows how the handoff works, not a surface to depend on.
 
 Owns lookup and the reflective continuation. The default engine created by `InputObjectProcessor.createDefault(...)` constructs one dispatcher and self-bootstraps it with a `ReflectiveContinuation` that calls back into the reflective walker, preserving `InputTraversalContext` across the codegen↔reflection boundary.
 
@@ -233,13 +235,16 @@ Public class with public static helpers imported via `import static` in generate
 
 The following types are excluded from the discovery root set and never receive a generated processor:
 
-- `String`, `CharSequence`
+- `String`
 - `boolean`, `byte`, `short`, `int`, `long`, `float`, `double`, `char` (and their boxed wrappers)
 - `Number`, `BigDecimal`, `BigInteger`
-- `Character`
-- Any `java.time.*` type
+- Five `java.time` types: `LocalDate`, `LocalDateTime`, `OffsetDateTime`, `ZonedDateTime`, `Instant`
 - `UUID`
+- `OptionalInt`, `OptionalLong`, `OptionalDouble`
+- `Object`
 - Any `Enum` subtype
+
+The filter is exactly this list, not a package or a supertype test: `LocalTime`, `Duration`, the other `java.time` types and `CharSequence` are not in it.
 
 If a `@BODY` method parameter is one of the above types (or a `Collection<E>` / `E[]` whose element type resolves to one of the above), no processor is emitted for it. The scalar-type processing that happens at the route level (via `EffectiveInputPolicies`) is unaffected.
 
@@ -262,8 +267,10 @@ The processor emits `ERROR` when mutually exclusive annotations appear on the sa
 
 | Conflict | Diagnostic |
 |----------|------------|
-| `@Canonicalize` + `@SkipCanonicalization` on same field/type | `Conflicting canonicalization annotations on {element}: @Canonicalize and @SkipCanonicalization cannot be combined` |
-| `@Sanitize` + `@SkipSanitization` on same field/type | `Conflicting sanitization annotations on {element}: @Sanitize and @SkipSanitization cannot be combined` |
+| `@Canonicalize` + `@SkipCanonicalization` on same field/type | `{location} has both @Canonicalize and @SkipCanonicalization — these annotations are mutually exclusive` |
+| `@Sanitize` + `@SkipSanitization` on same field/type | `{location} has both @Sanitize and @SkipSanitization — these annotations are mutually exclusive` |
+
+`{location}` is the type's qualified name for a type-level conflict, and `{qualified type}#{name}` for a field or record component.
 
 ---
 
@@ -290,7 +297,7 @@ None. `vertique-codegen-sanitization` is a compile-time annotation processor wit
 | Artifact | Scope | Purpose |
 |----------|-------|---------|
 | `vertique-codegen-core` | compile | `CodegenContext`, `TypeResolver`, `AnnotationMirrors`, `Diagnostics`, `Identifiers` |
-| `vertique-input-processing` | compile | Runtime SPI the emitted source references (`GeneratedInputProcessor`, `GeneratedSupport`, `GeneratedInputProcessorDispatcher`, `ChainResolver`, `EffectiveInputPolicies`, `InputTraversalContext`) |
+| `vertique-input-processing` | compile | Runtime types the emitted source references (`GeneratedInputProcessor`, `GeneratedSupport`, `GeneratedInputProcessorDispatcher` (INTERNAL), `ChainResolver`, `EffectiveInputPolicies`, `InputTraversalContext`) |
 | `vertique-core` | compile (transitive) | `InputLocation`, `Canonicalizer`, `Sanitizer`, and `InputFieldNameResolver` — the sanitization vocabulary the emitted source imports |
 | `vertique-rest-core` | compile | REST-rooted discovery: `RestBodyDiscovery` uses `RestContextTypes` and the `RequestPreconditions`/`RequestParams` FQNs to classify resource-method parameters |
 | `com.palantir.javapoet:javapoet` | compile | Source generation (not on runtime classpath) |
@@ -301,4 +308,4 @@ Test-only dependencies: `vertique-codegen-test` (compilation harness), `vertique
 
 ## Known Gaps
 
-- **Latency-reduction target not yet met.** NFR-CG008-001 targets a ≥3× latency reduction versus the reflective path; current benchmarks show roughly a 5% improvement. The per-field and per-type chain constants are resolved once at class-load time (see "Generated `{DTO}_InputProcessor`" above), but they are not yet composed into a single chain function — `GeneratedSupport.applyString(...)` still receives the raw `List<Class<...>>` on every call.
+- **Latency-reduction target not yet met.** The target is a ≥3× latency reduction versus the reflective path; current benchmarks show roughly a 5% improvement. The per-field and per-type chain constants are resolved once at class-load time (see "Generated `{DTO}_InputProcessor`" above), but they are not yet composed into a single chain function — `GeneratedSupport.applyString(...)` still receives the raw `List<Class<...>>` on every call.

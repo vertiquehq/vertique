@@ -24,7 +24,7 @@ import java.util.Optional;
 
 /**
  * Default {@link IdentitySnapshotFactory} implementation providing credential-free identity
- * snapshot capture outside any REST middleware (identity-002 §14.3).
+ * snapshot capture outside any REST middleware.
  *
  * <p>{@link #capture(SecurityContext)} returns {@link IdentitySnapshotContent} only — the captured
  * identity dimension, with no carrier binding, no temporal bounds, and no integrity envelope. The
@@ -54,21 +54,20 @@ import java.util.Optional;
  * {@code resumeAsPrincipal(...)} reconstruction round-trips the captured delegation summary
  * unchanged, so it is unaffected); and {@link #originSummary()} resolves to {@code "unknown"}
  * because no {@link InvocationOrigin} is ambient on the reconstruction/dispatch boundary — only the
- * REST ingress boundary ({@code IdentityResolutionMiddleware}) installs one as of identity-002
- * P2.S5b-i; installing an ambient {@code InvocationOrigin} on the services/camel/deferred-dispatch
- * boundaries is a separate, later slice. No Phase-1 production path re-captures a reconstructed
+ * REST ingress boundary ({@code IdentityResolutionMiddleware}) installs one today; installing an
+ * ambient {@code InvocationOrigin} on the services/camel/deferred-dispatch boundaries is
+ * deferred. No production path re-captures a reconstructed
  * context — the sole production {@link #capture(SecurityContext)} caller is
  * {@code IdentityResolutionMiddleware} on REST ingress — so this narrowing is presently latent;
- * carrying the remaining fields across a chained re-capture is tracked as a deferred item in the
- * identity-002 PRD (§13).
+ * carrying the remaining fields across a chained re-capture is a known, deferred gap.
  *
  * <p>Capture is credential-free <strong>by enforcement</strong>, not merely by the snapshot's
  * record shape: the free-form {@code attributes} map on the actor {@link PrincipalRef}, the
  * optional subject {@link PrincipalRef}, the optional {@link ClientRef}, and every
  * {@link AuthorityClaim} in the captured claims list is application-controlled and the snapshot
  * persists to an unencrypted durable store, so {@link #capture(SecurityContext)} projects each of
- * those attribute maps down to {@link #SYSTEM_REASON_ATTRIBUTE_KEY} before returning the snapshot
- * (PRD-ID-002 FR-ID-CA-003 / NFR-ID2-003, amendment A7). The V1 allowlist is dimension-aware and
+ * those attribute maps down to {@link #SYSTEM_REASON_ATTRIBUTE_KEY} before returning the snapshot.
+ * The V1 allowlist is dimension-aware and
  * narrow: it retains the {@code system.reason} key — the literal
  * {@link dev.vertique.security.SystemIdentities} sets on {@code SYSTEM} actors — only on the
  * captured <strong>actor</strong>, only when that actor's {@link PrincipalRef#type()} is
@@ -90,8 +89,7 @@ public final class DefaultIdentitySnapshotFactory implements IdentitySnapshotFac
 
     /**
      * Constructs a factory that sources {@link #originSummary()} from the ambient
-     * {@link InvocationOrigin} bound on the given {@link ContextHolder} at capture time
-     * (identity-002 P2.S5b-i).
+     * {@link InvocationOrigin} bound on the given {@link ContextHolder} at capture time.
      *
      * @param contextHolder the context holder read for the ambient {@link InvocationOrigin} at
      *                      capture time; must not be {@code null}
@@ -104,8 +102,7 @@ public final class DefaultIdentitySnapshotFactory implements IdentitySnapshotFac
      * The only attribute key a captured snapshot may retain, and only on the actor dimension under
      * the type/value gate enforced by {@link #projectActorAttributes(PrincipalRef)}. Every other
      * key — on the actor or on any other dimension — is dropped at capture time, because those maps
-     * are application-controlled and the snapshot persists to an unencrypted durable store
-     * (FR-ID-CA-003 / NFR-ID2-003).
+     * are application-controlled and the snapshot persists to an unencrypted durable store.
      *
      * <p>This is the literal key {@link dev.vertique.security.SystemIdentities} sets on a
      * {@code SYSTEM} actor's attributes (private to that class, so duplicated here as a literal
@@ -210,8 +207,8 @@ public final class DefaultIdentitySnapshotFactory implements IdentitySnapshotFac
 
     /**
      * Derives a short, policy-bounded summary of the ingress kind from the ambient
-     * {@link InvocationOrigin} bound on {@link #contextHolder} at capture time (identity-002
-     * P2.S5b-i) — e.g. {@code "rest"} when the REST ingress boundary installed one, {@code "camel"}
+     * {@link InvocationOrigin} bound on {@link #contextHolder} at capture time — e.g.
+     * {@code "rest"} when the REST ingress boundary installed one, {@code "camel"}
      * when a Camel-scoped boundary did, or {@code "unknown"} when no {@link InvocationOrigin} is
      * ambient at all.
      *
@@ -224,7 +221,7 @@ public final class DefaultIdentitySnapshotFactory implements IdentitySnapshotFac
                 .orElse("unknown");
     }
 
-    // --- attribute projection (FR-ID-CA-003 / NFR-ID2-003, dimension-aware — amendment A7) ---
+    // --- attribute projection (credential-free, dimension-aware) ---
 
     /**
      * Projects a captured actor {@link PrincipalRef}'s free-form attributes down to the

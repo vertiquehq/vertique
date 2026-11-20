@@ -135,7 +135,7 @@ public final class LocalizationContextDurableDecoder implements DurableContextMe
         Optional<String> calendar = readOptionalString(body, LocalizationDurableNamespace.CALENDAR, optionalWarnings);
         Optional<String> numbering = readOptionalString(body, LocalizationDurableNamespace.NUMBERING, optionalWarnings);
 
-        // FR-LOC-223: a rehydrated context's provenance is the durable metadata itself, regardless
+        // A rehydrated context's provenance is the durable metadata itself, regardless
         // of the original source the producer recorded in the body (which is retained on the wire
         // for forensics only). Both sources are therefore always "persisted-metadata" on decode.
         LocalizationContext ctx = new LocalizationContext(

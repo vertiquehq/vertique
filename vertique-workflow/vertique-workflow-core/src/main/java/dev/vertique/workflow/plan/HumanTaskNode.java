@@ -34,8 +34,7 @@ import java.util.Objects;
  * regardless of this flag</b> (see {@link dev.vertique.workflow.ops.TaskCompletionCommand}), so
  * retries with different reviewed-version values surface as
  * {@link dev.vertique.workflow.exception.WorkflowIdempotencyConflictException} on every task —
- * stability-required or not. ADR-0055 covers the validation contract; ADR-0057 covers the
- * fingerprint contract.
+ * stability-required or not.
  *
  * @param stepId unique step identifier within the plan
  * @param assignment how the initial assignee is determined at task-creation time; may be a literal
@@ -50,6 +49,9 @@ import java.util.Objects;
  * @param requireVersionStability when {@code true}, completion requires a matching
  *     {@code reviewedSubjectVersion}; when {@code false} (default), the version field is ignored
  *     for validation but still participates in idempotency fingerprinting
+ * @param taskType optional logical type of the task (for example {@code "approval"}), stamped on every task the
+ *     step creates and usable as a task-query filter; null means the tasks carry no type. It labels the task and
+ *     changes no flow, so it is not part of the plan hash
  */
 public record HumanTaskNode(
         String stepId,
@@ -59,22 +61,51 @@ public record HumanTaskNode(
         @Nullable CallbackId onDueMutatorCallbackId,
         @Nullable String dueNextStepId,
         @Nullable ReminderSpec reminders,
-        boolean requireVersionStability)
+        boolean requireVersionStability,
+        @Nullable String taskType)
         implements WorkflowNode {
+
+    /**
+     * Creates a node whose tasks carry no task type. Retained so existing callers keep compiling; equivalent to the
+     * canonical constructor with a {@code null} {@code taskType}.
+     */
+    public HumanTaskNode(
+            String stepId,
+            AssignmentSpec assignment,
+            List<TaskDecision> decisions,
+            @Nullable TimerSpec dueDate,
+            @Nullable CallbackId onDueMutatorCallbackId,
+            @Nullable String dueNextStepId,
+            @Nullable ReminderSpec reminders,
+            boolean requireVersionStability) {
+        this(
+                stepId,
+                assignment,
+                decisions,
+                dueDate,
+                onDueMutatorCallbackId,
+                dueNextStepId,
+                reminders,
+                requireVersionStability,
+                null);
+    }
 
     /**
      * Validates required fields and enforces the all-or-nothing due-date triplet rule.
      *
      * @throws NullPointerException if {@code stepId}, {@code assignment}, or {@code decisions} is
      *     null
-     * @throws IllegalArgumentException if {@code decisions} is empty, or if the due-date triplet
-     *     is partially set
+     * @throws IllegalArgumentException if {@code decisions} is empty, if the due-date triplet
+     *     is partially set, or if {@code taskType} is blank
      */
     public HumanTaskNode {
         Objects.requireNonNull(stepId, "stepId");
         Objects.requireNonNull(assignment, "assignment");
         Objects.requireNonNull(decisions, "decisions");
         decisions = List.copyOf(decisions);
+        if (taskType != null && taskType.isBlank()) {
+            throw new IllegalArgumentException("taskType must not be blank; use null for no task type");
+        }
         if (decisions.isEmpty()) {
             throw new IllegalArgumentException("HumanTaskNode requires at least one decision");
         }

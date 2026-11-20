@@ -18,9 +18,9 @@ import java.util.Objects;
  * construction time.
  *
  * @param destinationType the outbox destination type — must have a registered
- *                        {@link dev.vertique.inboxoutbox.OutboxDestinationHandler}
- * @param destination     the destination identifier (Kafka topic, service target id, delayed-job
- *                        handler name, etc.)
+ *                        {@link dev.vertique.inboxoutbox.OutboxDestinationHandler}; a delayed-job
+ *                        destination is refused at startup
+ * @param destination     the destination identifier (Kafka topic or service target id)
  */
 public record WorkflowEventOutboxBinding(DestinationType destinationType, String destination) {
 

@@ -21,8 +21,8 @@ import io.vertx.core.json.JsonObject;
  * {@link JacksonKafkaDeserializer}. The backing Jackson {@code ObjectMapper} is resolved per endpoint
  * with a two-tier precedence (see {@link #resolveMapper}): a <strong>non-blank</strong>
  * {@code jsonProfile} bag key wins outright and stops resolution — every bag id, including
- * {@code "system"}, is looked up in the injected {@link JsonMapperProfileRegistry}
- * (FR-JSON-034/035); when the bag carries no explicit id, the pre-resolved global default —
+ * {@code "system"}, is looked up in the injected {@link JsonMapperProfileRegistry};
+ * when the bag carries no explicit id, the pre-resolved global default —
  * {@code registry.mapper(jsonConfig.effectiveProfile())}, the {@code vertique} floor unless the
  * application configures {@code json.jsonProfile} otherwise — applies. Profiles resolved through
  * the registry are the only mapper source in this class; the shared Vert.x codec mapper is never

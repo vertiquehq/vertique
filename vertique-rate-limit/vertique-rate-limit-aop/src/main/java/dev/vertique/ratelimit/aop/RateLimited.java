@@ -14,7 +14,7 @@ import java.lang.annotation.Target;
 
 /**
  * Transport-neutral per-operation admission annotation, usable identically on services, JAX-RS
- * resources, and future MCP tools (contracts/rate-limit-aop.md).
+ * resources, and future MCP tools.
  *
  * <p>{@link #policy()} names a policy declared in {@code rateLimit.policies.<name>} and/or a
  * {@code RateLimitPolicy} Dagger contribution; no inline numeric policy definition is permitted on

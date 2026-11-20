@@ -32,7 +32,7 @@
  * pass 2: instantiate sources; pass 3: resolve whole tree against the full chain) is
  * orchestrated by {@link dev.vertique.config.bootstrap.BootstrapConfigLoader}.
  *
- * <h2>NFR-CONF-002 — value redaction</h2>
+ * <h2>Value redaction</h2>
  * <p>Resolved values are secrets. No implementation in this package or its consumers may
  * include a resolved value in a log message, exception message, {@code toString()}, or any
  * other observable output. Log placeholder <em>references</em> (keys) and key counts only.

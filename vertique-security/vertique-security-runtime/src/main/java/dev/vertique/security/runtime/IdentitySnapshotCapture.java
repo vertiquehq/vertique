@@ -15,8 +15,7 @@ import java.util.Objects;
 /**
  * Producer-side gate that captures the currently authenticated identity as an
  * {@link IdentitySnapshotContext} and binds it into the {@link ContextHolder}, honored only when
- * the global {@code identity.snapshot.captureEnabled} kill-switch is on (PRD-ID-002 §14.3
- * "Durable carriage", §15 A3 ingress capture seam).
+ * the global {@code identity.snapshot.captureEnabled} kill-switch is on.
  *
  * <p>{@link #captureFrom(SecurityContext)} is the ingress seam the REST identity middleware calls:
  * it captures the credential-free {@link IdentitySnapshotContent} from the live context via the
@@ -27,7 +26,7 @@ import java.util.Objects;
  * {@link IdentitySnapshotDurableEncoder}) ever sees a snapshot to carry.
  *
  * <p>An eligibility gate also skips capture for an unauthenticated live context — see
- * {@link #captureFrom(SecurityContext)} (PRD-ID-002 Phase-1 review W3).
+ * {@link #captureFrom(SecurityContext)}.
  *
  * <p>Provided as a {@code @Provides @Singleton} binding by {@link IdentitySnapshotCarriageModule}
  * (not an {@code @Inject} constructor), so {@code rest-security}'s

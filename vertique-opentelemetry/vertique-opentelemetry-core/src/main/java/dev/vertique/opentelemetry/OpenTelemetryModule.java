@@ -36,9 +36,10 @@ import jakarta.inject.Singleton;
  * consulting the global.
  *
  * <h2>Security span events</h2>
- * <p>The {@link SecurityEventObserver} contribution flows into the rest-security module's
- * {@code AuthModule} multibound set when both modules are installed in the same Dagger component.
- * Security lifecycle events are then recorded as span events on the current active span.
+ * <p>The {@link SecurityEventObserver} contribution joins the single
+ * {@code Set<SecurityEventObserver>} multibinding that {@code SecurityEventsModule} (in
+ * {@code vertique-security-runtime}) declares, when that module is part of the same Dagger
+ * component. Security lifecycle events are then recorded as span events on the current active span.
  *
  * @see OpenTelemetryBootstrapContributor
  * @see TracingConfig

@@ -14,12 +14,12 @@
  * {@code AspectProvider<Timed>} binding) so a test can read recorded timers directly rather than via
  * the global {@code MeterRegistryHolder}.
  *
- * <p>It also proves PRD-CODEGEN-013 slice 2.3 runtime behavior: {@link dev.vertique.examples.aop.Greeter}
+ * <p>It also proves the sync-return proxy behavior: {@link dev.vertique.examples.aop.Greeter}
  * carries a synchronous-returning method intercepted by the built-in {@code @Timed} (the sync-unwrap
- * path, which never trips the FR-013-05 guard), while {@link dev.vertique.examples.aop.DeferringBean}
+ * path, which never trips the sync-defer guard), while {@link dev.vertique.examples.aop.DeferringBean}
  * carries a sync method annotated with the custom {@link dev.vertique.examples.aop.Deferring @Deferring}
  * aspect whose {@link dev.vertique.examples.aop.DeferringAspect} deliberately defers completion — so
- * calling it through the generated proxy trips the FR-013-05 guard and throws
+ * calling it through the generated proxy trips the sync-defer guard and throws
  * {@link java.lang.IllegalStateException}.
  */
 package dev.vertique.examples.aop;

@@ -175,7 +175,7 @@ describe('PublicPublicationInventoryTest', () => {
 
     // The derived allowlist is exactly the declared inventory.
     assert.equal(inventory.published.length, policy.expectedPublishableGavCount);
-    assert.equal(inventory.published.length, 123);
+    assert.equal(inventory.published.length, 125);
     for (const fixed of ['vertique-parent', 'vertique-app-parent', 'vertique-bom']) {
       assert.ok(publishedIds.includes(fixed), `${fixed} must be published`);
     }
@@ -636,7 +636,13 @@ describe('PublicCiContractTest', () => {
     assert.match(yaml, /push:/, 'ci.yml must run on push');
     const bodies = runStepBodies(yaml).join('\n');
     assert.match(bodies, /bash scripts\/ci-build\.sh/, 'ci.yml must run the Maven verification entry point');
-    assert.match(bodies, /spotless:check/, 'ci.yml must run the formatting check');
+    assert.match(bodies, /^bash scripts\/check-formatting\.sh$/m, 'ci.yml must run the formatting check');
+    // Fail fast: formatting is checked before the Maven build starts.
+    assert.ok(
+      yaml.indexOf('      - name: Check formatting\n') < yaml.indexOf('      - name: Build and test\n'),
+      'the formatting check must run before the build'
+    );
+    assert.match(yaml, /FORMAT_BASE_REF: \$\{\{ github\.base_ref \}\}\n\s+run: bash scripts\/check-formatting\.sh/);
     // A glob, never an enumeration: a hand-maintained list silently drops
     // every release-contract test nobody remembers to add.
     assert.match(
@@ -681,6 +687,16 @@ describe('PublicCiContractTest', () => {
       // tested locally, which is exactly what NFR-REL-006 forbids.
       assert.doesNotMatch(body, /\b(if|for|while|case)\b\s|&&|\|\||;\s*\w/, `ci.yml step contains inline control flow:\n${body}`);
     }
+  });
+
+  it('cancelsSupersededPullRequestRunsButNeverAMainPush', () => {
+    // A cancelled main push would leave its commit without a SNAPSHOT payload, so only
+    // pull request runs share a cancellable group; a push's group is its own commit.
+    const yaml = ci();
+    assert.match(
+      yaml,
+      /^concurrency:\n {2}group: ci-\$\{\{ github\.event_name \}\}-\$\{\{ github\.event\.pull_request\.number \|\| github\.sha \}\}\n {2}cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}$/m
+    );
   });
 
   it('retainsSurefireAndFailsafeReportsAfterFailureOrCancellation', () => {

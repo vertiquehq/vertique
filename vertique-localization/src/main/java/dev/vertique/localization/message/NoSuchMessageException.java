@@ -5,7 +5,7 @@ package dev.vertique.localization.message;
 
 /**
  * Thrown by {@link MessageSource} implementations when a message code cannot be resolved in any
- * configured bundle and no default message has been supplied (FR-LOC-026).
+ * configured bundle and no default message has been supplied.
  *
  * <p>The accessors mirror the convention of {@link java.util.MissingResourceException}:
  * <ul>
@@ -16,7 +16,7 @@ package dev.vertique.localization.message;
  * <p>This exception extends {@link MessageSourceException} which in turn extends
  * {@link dev.vertique.localization.LocalizationException}. It does <em>not</em> directly extend
  * {@link dev.vertique.core.exception.TechnicalException}; HTTP-status mapping is applied by
- * the REST layer (see PRD §"Framework exception alignment").
+ * the REST layer.
  *
  * @see MessageSourceException
  * @see MessageSource

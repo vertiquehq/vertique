@@ -14,10 +14,10 @@ package dev.vertique.json.schema.validation;
  * index — with no recursion and no quantified group:
  *
  * <ul>
- *   <li>A literal character (§2.1) is a {@code pct-encoded} triplet checked in place, a combined
+ * <li>A literal character is a {@code pct-encoded} triplet checked in place, a combined
  *       supplementary code point in the {@code ucschar} or {@code iprivate} ranges, or any other code
  *       point outside the control characters, the space, DEL, and {@code " % < > \ ^ ` { | }}.
- *   <li>An expression (§2.2–§2.4) is {@code {}, an optional operator drawn from op-level2 ({@code + #}),
+ *   <li>An expression (RFC 6570 §2.2–§2.4) is {@code {}, an optional operator drawn from op-level2 ({@code + #}),
  *       op-level3 ({@code . / ; ? &}), or op-reserve ({@code = , ! @ |}), a comma-separated list of one
  *       or more varspecs, then {@code }}.
  *   <li>A varspec is a varname, {@code varchar *(["."] varchar)} with varchar {@code ALPHA / DIGIT / "_"
@@ -76,7 +76,7 @@ final class UriTemplateSyntax {
     }
 
     /**
-     * Scans one literal character (§2.1) at {@code index}: a {@code pct-encoded} triplet, a combined
+     * Scans one literal character at {@code index}: a {@code pct-encoded} triplet, a combined
      * surrogate pair in the ucschar or iprivate ranges, or any other allowed code point.
      *
      * @param value the instance
@@ -163,7 +163,7 @@ final class UriTemplateSyntax {
     }
 
     /**
-     * Scans one expression (§2.2–§2.4) starting at {@code index}: {@code {}, an optional operator, a
+     * Scans one expression (RFC 6570 §2.2–§2.4) starting at {@code index}: {@code {}, an optional operator, a
      * comma-separated variable list of one or more varspecs, and {@code }}.
      *
      * @param value the instance

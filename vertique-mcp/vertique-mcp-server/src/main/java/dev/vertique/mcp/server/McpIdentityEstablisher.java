@@ -45,7 +45,7 @@ final class McpIdentityEstablisher {
     /**
      * Admits the request into identity establishment.
      *
-     * <p>When a scheme is configured (§4.7 stage 3), only clean routing authentication state is
+     * <p>When a scheme is configured, only clean routing authentication state is
      * admitted: a pre-existing {@code RoutingContext.user()} or authentication evidence fails closed
      * before the selected scheme runs. When no scheme is configured, the mount binds an MCP-owned
      * canonical anonymous context <em>without consulting</em> ambient Router user/evidence: it

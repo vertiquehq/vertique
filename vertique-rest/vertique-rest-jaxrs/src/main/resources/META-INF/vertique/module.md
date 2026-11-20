@@ -114,18 +114,30 @@ nearest declaration (the override's own wins over a declaration it overrides); d
 `@RolesAllowed` or `@Authorized` values across declarations fail startup (a compile error with the
 processor). A method-level security annotation on an inherited declaration beats class-level
 security, as it does on the method itself: an interface `@PermitAll` makes an unannotated override
-public even under a class-level `@RolesAllowed`. What is not
-resolved is the *type* of a method no class overrides: a non-overridden generic default (or generic
-superclass method) binds a type-variable parameter as its erasure, so a path, query, header, cookie,
-or form parameter typed `ID` fails startup with `UNRESOLVABLE_PARAM_CONVERTER`, and a body or return
-type bound by a variable is `Object`. Override such a method with concrete parameter types. A
+public even under a class-level `@RolesAllowed`. The *types* of a method no class
+overrides are resolved against the concrete resource class: a non-overridden generic default (or
+generic superclass method) whose type variable the resource binds through its class or interface
+hierarchy (`class Things extends Base<String>`, including variables forwarded through intermediate
+supertypes) gets that concrete type for its parameter, body and return metadata — a path, query,
+header, cookie, or form parameter typed `ID` converts as `String`, a body `T` decodes as the bound
+type (nested arguments such as `List<Dto>` are kept for JSON decoding), and a `Future<? extends T>`
+return records the erased upper bound of the resolved `T`. A method's own type variable reports
+the erasure of its bound after the hierarchy's bindings are applied (`<M extends T>` with `T`
+bound to `Integer` reports `Integer`, `<M extends Number>` reports `Number`), an unbounded one
+reports `Object`, and an array of a bound variable reports the array of its raw type (`T[]` with
+`T` bound to `List<String>` is `List[]`). A variable no class in the hierarchy
+binds (a raw supertype, `Base` used without arguments, or a generic intermediate class named without arguments, whose own supertypes a raw type erases) keeps its erasure, so a scalar parameter
+of that type still fails startup with `UNRESOLVABLE_PARAM_CONVERTER`, and a body or return type
+bound by it is the erasure of the variable's bound (`Object` when it is unbounded); override such a
+method with concrete parameter types. Reflective
+invocation still uses the declaration's erased signature. A
 default route's `operationId` is the same in every class that inherits
 it, and operationIds are unique per mount, so only one resource per mount can inherit a given
 default route; give the others their own route by overriding it with a distinct
-`@Operation(operationId = "…")`. Once any `@RestApplication` is registered (active or not) or an
-application mount is present, operationIds are unique across mounts too (the same-owner
-exemption kept; see [Startup failures](#startup-failures)), so only one resource class across all
-JAX-RS mounts can inherit it.
+`@Operation(operationId = "…")`. Across mounts the id may repeat; once any `@RestApplication` is
+registered or an application mount is present, it may not repeat across two hand-built mounts or
+across mounts that share one contract location under a contract-driven strategy (see [Startup
+failures](#startup-failures)).
 
 `OperationHandlerContributor`s are sorted by the framework `OrderedExtension` comparator (phase →
 priority → `orderKey`); the invoker is always appended last. Every declaration problem found during
@@ -160,7 +172,7 @@ carve-out documented on `RestRequestCompletedEvent`.
 2. Decode        RequestBodyDecoder chain → intermediate Map/List
 3. Canonicalize  InputObjectProcessor (dev.vertique.input.processing): route-level → object-level
    + Sanitize    → field-level canonicalizers, then route-level → object-level → field-level sanitizers
-4. Validate      BeanValidator.validateParameters()   (only when ValidationModule is present)
+4. Validate      BeanValidator.checkParameters()      (only when ValidationModule is present)
 5. Invoke        the resource method, with processed and validated arguments
 ```
 
@@ -395,9 +407,11 @@ of a context an interceptor rebuilt stays as that interceptor returned it, so re
 
 ### `ResourceMethodMeta`
 
-The immutable per-method descriptor built at startup and consumed on every request. It is the object
-an `OperationHandlerContributor` receives through `OperationRegistrationContext`, so `operationId()`
-and `securityPolicy()` in particular are read at extension-point call sites.
+The immutable per-method descriptor built at startup and consumed on every request. It belongs to
+this module: the registrar, the scanner and generated code build and read it. An
+`OperationHandlerContributor` does not receive it; the contributor's `OperationRegistrationContext`
+carries `operationId()` and `securityPolicy()` itself and a transport-neutral `RestOperationDescriptor`
+(from `vertique-rest-core`) as `operation()`.
 
 ```java
 public record ResourceMethodMeta(
@@ -443,7 +457,7 @@ public record ParamMeta(
         ParamSource source,                     // ResourceMethodMeta.ParamSource — see the note below
         Class<?> type,
         @Nullable Class<?> componentType,       // element type for collection/array parameters
-        @Nullable Type genericType,             // full generic type for body parameters
+        @Nullable Type genericType,             // declared type for body, query, header and cookie parameters
         @Nullable String defaultValue,          // from @DefaultValue
         ParameterMetadata parameterMetadata) { … }
 ```
@@ -534,6 +548,7 @@ The framework's `ExceptionMapper<Throwable>`, pre-configured by `RestModule`:
 | `ForbiddenException` (core.exception) | 403 | `ProblemDetail` |
 | `ConflictException` (core.exception) | 409 | `ProblemDetail` |
 | `NotFoundException` (core.exception) | 404 | `ProblemDetail` |
+| `TooManyRequestsException` (core.exception) | 429 | `ProblemDetail`; when the exception carries a retry hint, a `Retry-After` header in whole seconds, rounded up and at least `1` |
 | `UnavailableException` (core.exception) | 503 | `ProblemDetail` |
 | `Throwable` (catch-all) | 500 | `ProblemDetail` with the fixed detail `"Internal Server Error"` — the exception message is never echoed. Logging is deferred to `ErrorPipeline` (see below) so a Vert.x 4xx fallback is not recorded as an unhandled server fault |
 
@@ -566,6 +581,7 @@ ambiguity with `jakarta.ws.rs.NotAuthorizedException` and `jakarta.ws.rs.Forbidd
 
 ### `RestExceptionMapper`
 
+Declared in `dev.vertique:vertique-rest-core` (`dev.vertique.rest.core`); this module wires it.
 The REST-layer `Throwable → Throwable` pre-translator that runs before the registry. It extends
 `dev.vertique.core.failure.FailureMapper` with covariant overrides so registrations chain:
 
@@ -725,9 +741,13 @@ the already-written headers. When nothing matches it logs a warning and switches
 / `application/problem+json`. A `StreamingBody` is piped with `endOnFailure(false)` and is never
 buffered, so a failed pipe leaves termination to the caller observing the returned future.
 
-Override it with a custom `@Provides ResponseSerializer` to emit CBOR, XML, or any other format; a
-replacement must honor the same dual-channel contract, documented under `ResponseSerializer` in
-`dev.vertique:vertique-rest-core`.
+To emit CBOR, XML, or any other format, contribute a `ResponseBodyEncoder` with
+`@Provides @IntoSet`; the serializer selects it by `OrderedExtension` order, and an application
+encoder at the default priority `0` is tried before the framework encoders. `RestModule` binds
+`ResponseSerializer` with an unconditional `@Provides`, so the binding is not a replacement point:
+a second `@Provides ResponseSerializer` in the same component is a duplicate binding that Dagger
+rejects. The dual-channel contract the serializer honors is documented under `ResponseSerializer`
+in `dev.vertique:vertique-rest-core`.
 
 ### `RouteRegistrationException`
 
@@ -747,9 +767,9 @@ Most REST extension points — `RouterMount`, `MountCustomizer`, `Middleware`, `
 `OperationHandlerContributor`, the three interceptor SPIs, `RequestBodyDecoder`,
 `ResponseBodyEncoder`, `ResponseProducer`, `ResponseSerializer`, `RestContextResolver`, and the
 parameter converters — are declared in `dev.vertique:vertique-rest-core` and documented there. The
-ones this module owns are below. `RequestValidationStrategy`, `OperationSchemaSource`, and
-`FileContentVerifier` are declared here but documented with their reference implementations in
-`dev.vertique:vertique-rest-validation`.
+ones this module owns are below. `RequestValidationStrategy` and `OperationSchemaSource` are declared
+here; `FileContentVerifier` is declared in `dev.vertique:vertique-rest-core`. Their reference
+implementations are documented in `dev.vertique:vertique-rest-validation`.
 
 `RequestValidationStrategy` gains a mount-aware `gateFor(op, schemas, MountMeta mount)` default
 overload alongside the original 2-arg form. `JaxRsRouteRegistrar` calls only the 3-arg form —
@@ -778,6 +798,7 @@ provenance: it stores the object as given and returns it by reference.
 
 ### `RestExceptionMapperCustomizer`
 
+Declared in `dev.vertique:vertique-rest-core` (`dev.vertique.rest.core`).
 Contributes `Throwable → Throwable` translations to the REST error pipeline.
 
 ```java
@@ -1090,12 +1111,13 @@ Each event is written as lines terminated by `\n`, followed by a blank line:
 ```
 id: <id>          (omitted when null)
 event: <event>    (omitted when null)
-data: <data>      (omitted when null)
 retry: <ms>       (omitted when null)
 : <comment>       (omitted when null)
+data: <data>      (omitted when null)
 ```
 
-Keepalive comments (`:\n\n`) are emitted at `jaxrs.sse.keepAliveIntervalMs` while no data events flow.
+Keepalive comments (`: keep-alive`, then a blank line) are emitted at a fixed `jaxrs.sse.keepAliveIntervalMs`
+cadence for as long as the response streams, whether or not data events are flowing.
 
 Startup validation pairs the two halves of the contract: a method returning `ReadStream<SseEvent>`
 must declare `@Produces("text/event-stream")`, and a method declaring that media type must return
@@ -1121,12 +1143,11 @@ parameter, a `Content-Disposition` name or filename) escape `\` and `"`, and wri
 character other than a horizontal tab as `_` rather than deleting it, so a value can never carry a
 line break into a header and `evil.php` with U+0001 before the final `p` is not written as `evil.php`.
 
-Two adapters are visible to resource code:
-
-| Class | Purpose |
-|-------|---------|
-| `VertxFileUploadEntityPart` | `EntityPart` over a Vert.x `FileUpload`, reading the spooled temp file. `getContent()` is single-use. |
-| `FormFieldEntityPart` | `EntityPart` over a text form field value. `getContent()` is single-use. |
+Resource code receives `jakarta.ws.rs.core.EntityPart`. Every instance also implements `VertxEntityPart`
+(`dev.vertique:vertique-rest-core`), whose `getContentAsync()` reads the content without blocking the event
+loop. The two implementations behind it, `VertxFileUploadEntityPart` (over a spooled `FileUpload`) and
+`FormFieldEntityPart` (over a text field value), are INTERNAL: do not name them. `getContent()` and
+`getContentAsync()` are single-use.
 
 ### Example resources
 
@@ -1476,6 +1497,10 @@ the same rule before it is mounted, so a Dagger-substituted instance that adds r
 fails startup the same way. Resources within one mount are ordered by fully qualified class name,
 regardless of `resources()`'s own order.
 
+A generated resource whose provider throws, returns `null`, or resolves to a disallowed instance fails startup
+with a `RestConfigurationException` that names the application (its name and declaring interface) and the
+resource class; the provider's own exception is kept as the cause.
+
 ### Lifecycle and evaluation
 
 The declaring interface is never constructed: the composer reads the view for identity, activity,
@@ -1574,7 +1599,7 @@ route installs:
   warning-only overlap detection `HttpVerticle` already performs for every mount.
 
 Only the Dagger-built `HttpVerticle` hosts application mounts. Its composition validators run the
-checks above, the cross-mount operationId refusal and, where it applies, the contract-location parse
+checks above, the cross-mount operationId rule and, where it applies, the contract-location parse
 below (see [Startup failures](#startup-failures)), and mark each application mount instance validated
 only once every check passes for the whole composition; an `HttpVerticle` built with the public
 five-argument constructor, or a subclass that runs no composition validator, refuses to create an
@@ -1590,7 +1615,9 @@ normalizes every JAX-RS mount's non-null contract location (`Path.of(value).norm
 one it cannot parse as a violation, naming the mount — an application by its name and the setting its
 location came from (`jaxrs.applications.<name>.openapiPath`, the `@RestApplication` annotation's
 `openapiPath`, or `jaxrs.openapiPath`), a hand-built mount by its path — and never the raw,
-unparseable value. This parse runs under the same gate as the operationId refusal below, and never
+unparseable value. The same flag makes mounts whose normalized locations are equal share one
+operationId namespace (see [Startup failures](#startup-failures)). This parse runs under the same
+gate as the operationId rule below, and never
 when no registered strategy carries the configured `jaxrs.validationStrategy` id (`createRouter`'s own
 fail-fast selection reports that separately).
 
@@ -1847,6 +1874,7 @@ remains (see [Startup failures](#startup-failures)).
 | `INVALID_FILE_PART_DECLARATION` | `@FilePart` on an unsupported type, invalid `allowedTypes`/`maxSizeBytes`, or overlapping constrained declarations |
 | `UNSUPPORTED_MULTIPART_COLLECTION_SHAPE` | a `@FormParam` collection parameter's element type is a native multipart target (`FileUpload`/`EntityPart`) declared in a shape other than `List` |
 | `DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT` | two parameters bind the same name from the same source but cannot share one declaration — incompatible multiplicities (one collection-shaped, one scalar), different scalar types, different collection element types, or different binding-affecting annotations (including `@DefaultValue`); scoped to `@PathParam`/`@QueryParam`/`@HeaderParam`/`@CookieParam` |
+| `INVALID_SSE_DECLARATION` | a method declaring `@Produces("text/event-stream")` does not return `ReadStream<SseEvent>` or `Future<ReadStream<SseEvent>>`, or a method returning such a stream does not declare `text/event-stream` |
 | `SECURITY_ANNOTATIONS_WITHOUT_AUTH_MODULE` | restrictive security annotations present but `AuthModule` absent |
 | `CONTEXT_PARAM_CONFLICT` | a `@Context` parameter also carries a JAX-RS value-binding annotation — the two are mutually exclusive |
 | `UNSUPPORTED_JAXRS_CONTEXT_TYPE` | a `@Context` parameter declares a reserved JAX-RS type that is not supported (e.g. `UriInfo`, `HttpHeaders`); fails fast instead of injecting `null` |
@@ -1872,11 +1900,18 @@ reports these as violation strings, surfaced through `HttpVerticle`'s own aggreg
 `IllegalStateException("Invalid mount configuration: …")` rather than thrown directly by the
 validator:
 
-- a duplicate operationId **across** mounts: two operations on different `JaxRsRouterMount`s that
-  share an operationId fail startup unless they are the same operation — the same resource class (an
-  annotation-free AOP proxy counts as its base class), method name, and parameter types — naming both
-  operations and both mounts; this global, cross-mount refusal is kept until a later change
-  scopes it per mount;
+- a duplicate operationId **across** mounts, where operationIds are otherwise scoped per mount: two
+  operations on different `JaxRsRouterMount`s that share an operationId, and are not the same
+  operation (the same resource class, an annotation-free AOP proxy counting as its base class, method
+  name, and parameter types), fail startup naming both operations and both mounts when
+  - both mounts are hand-built (neither carries an application name), under every strategy; or
+  - the strategy selected by `jaxrs.validationStrategy` reports `resolvesOperationsFromMountContract()`
+    (as `openapi-contract` does) and both mounts' contract locations are equal after
+    `Path.of(value).normalize()`, so `a.yaml` and `./a.yaml` are one location while an absolute
+    path and a relative one naming the same file stay distinct; the message says the mounts resolve
+    to the same OpenAPI contract location and never echoes it;
+
+  any other pair, which includes an application mount, composes;
 - a non-null application name carried by more than one application mount in a `Set<RouterMount>`
   merged from more than one composition, naming the name and both mount paths;
 - under a strategy reporting `resolvesOperationsFromMountContract()`, a JAX-RS mount whose contract
@@ -1887,6 +1922,20 @@ The per-mount `DUPLICATE_OPERATION_ID` row above is unaffected — it keeps comp
 mount, and with no application declared it remains the only operationId check that runs. An
 `HttpVerticle` built with the public five-argument constructor runs none of this validator's checks
 and refuses to create any application mount's router.
+
+**Shared operationId warning.** When its own checks pass, the same validator logs one WARN for
+each operationId used by more than one JAX-RS mount of which at least one is an application mount,
+the same operation listed by several applications included:
+
+```
+OperationId 'list' is used by more than one JAX-RS mount: application 'partner', application 'public', hand-built JAX-RS mount '/manual/*'. Controls keyed on the operationId alone (audit capture bindings, custom validation strategies, interceptors) must also key on the application.
+```
+
+Applications are named by name and hand-built mounts by path, each group sorted. The validator runs
+once per composition, so each WARN appears once per `HttpVerticle` start. The WARN is logged only
+when this validator's own checks pass, so a composition it refuses logs none; another composition
+validator, such as the documentation module's, may still refuse the start afterwards. Key
+per-operation state on `operation().applicationName()` as well as the operationId.
 
 Parsing `jaxrs.applications` (see [Per-application configuration](#per-application-configuration))
 raises `ConfigurationException`. The section-name, shape, key, and blank-value checks use the four
@@ -1954,21 +2003,25 @@ Any exception a resource method throws or fails its `Future` with enters the err
 mapped by `ExceptionMapperRegistry`. Unmapped exceptions become a 500 problem detail whose detail is
 the fixed string `"Internal Server Error"` — never the exception message.
 
-A failure that surfaces **after** the response head is on the wire cannot change the status. When a
-streamed or buffered body is truncated, the pipeline closes the response in the way that frames the
-truncation honestly: a chunked response is ended normally, while a non-chunked response whose declared
-`Content-Length` does not match the bytes written is **reset** (RST_STREAM on HTTP/2, connection close
-on HTTP/1.1) rather than ended, so a peer observes an incomplete transfer instead of a well-framed
-lie. Clients must therefore be prepared for a reset mid-response and must not treat a 200 status line
-as proof of a complete body.
+A failure after the response head is on the wire cannot change the status. The pipeline resets an
+open response when its body fails, instead of ending it normally: this closes an HTTP/1 connection or
+resets the affected HTTP/2 stream. Clients must handle incomplete responses and must not treat a 200
+status line as proof of a complete body. A close-delimited HTTP/1.0 response cannot reliably distinguish
+a failed stream from a normal end; an application-level completion marker or known length is needed
+when that distinction matters. A client may also have already consumed all declared bytes before a
+late failure is observed.
 
 ### Common mistakes
 
 - **Expecting `openapi.json` to affect routing.** On the default path it is documentation only.
   Runtime contract validation requires the opt-in `openapi-contract` strategy from
   `dev.vertique:vertique-rest-openapi-validation`.
-- **Omitting `RestValidationModule` and expecting validation.** Without a module contributing a
-  strategy, only the built-in `none` strategy exists and no request gate is installed.
+- **Omitting `RestValidationModule` and expecting validation.** `jaxrs.validationStrategy` defaults to
+  `web-validation`. Without a module contributing a strategy with that id, only the built-in `none`
+  strategy is registered and router build fails with a `RestConfigurationException` that names the
+  configured id and lists the available ids; there is no fallback to `none` (a mount with no resources
+  selects no strategy). Add the module, or set `jaxrs.validationStrategy` to `none` to run without a
+  request gate.
 - **Assuming an application decoder or encoder is a fallback.** Application implementations default to
   priority `0`, ahead of every framework default at 999–1100. Raise the priority above 1100 to sit
   behind them.
@@ -2033,13 +2086,14 @@ Beyond what `RestCoreModule` and `JsonRuntimeModule` contribute:
 | `RestApplications` | `@Provides @Singleton`; INTERNAL; built once per component from `Set<GeneratedRestApplicationRegistration>`, the parsed `jaxrs.applications`, and `Optional<ApiDocsModuleInstalled>` — see [The `RestApplications` view](#the-restapplications-view) |
 | `Set<GeneratedJaxRsResourceEntry>` | `@Multibinds`; INTERNAL generated-code contract, populated by the annotation processor with one entry per DI-eligible JAX-RS resource; empty by default |
 | `Set<RouterMount>` | `@ElementsIntoSet`: with no `@RestApplication` declared, the default `JaxRsRouterMount` at `jaxrs.basePath`, empty when `@JaxRsResources` is empty; once one or more are declared, one mount per active application instead — see [`@RestApplication`](#restapplication) |
-| `MountCompositionValidator` (`JaxRsApplicationMountValidator`) | `@IntoSet`; INTERNAL; takes the `RestApplications` view, `JaxRsConfig`, and `Set<RequestValidationStrategy>`; validates application mounts against hand-built JAX-RS mounts and against each other, the cross-mount operationId refusal, and, under a contract-driven strategy, the contract-location parse — see [Mount conflicts](#mount-conflicts) |
+| `MountCompositionValidator` (`JaxRsApplicationMountValidator`) | `@IntoSet`; INTERNAL; takes the `RestApplications` view, `JaxRsConfig`, and `Set<RequestValidationStrategy>`; validates application mounts against hand-built JAX-RS mounts and against each other, the cross-mount operationId rule and its shared-id WARN, and, under a contract-driven strategy, the contract-location parse — see [Mount conflicts](#mount-conflicts) |
 | `ComposeValidator` (`JaxRsDefaultProfileValidator`) | `@IntoSet`; fails the `VALIDATE` phase on an unknown `jaxrs.jsonProfile` (`json.systemProfile` is validated earlier, by the `CONFIGURE`-phase install step) |
 | `OperationSchemaSource`, `BeanValidator`, `InputObjectProcessor` (`dev.vertique.input.processing.InputObjectProcessor`), `ActionRegistry`, `Authorizer` | `@BindsOptionalOf`; satisfied by `rest-validation`, `validation`, `sanitization`, and `rest-security` respectively |
 | `SyntheticOperationInstaller` | `@Binds` to a package-private implementation; INTERNAL; framework documentation module only; enforces a `SyntheticOperation` typed policy in the supported `AuthModule` and `SecurityModule` composition and refuses a restrictive one without it |
 | `Set<MountPublicationHook>` | `@Multibinds`; INTERNAL; empty by default; sibling framework modules contribute: the documentation module through `@ElementsIntoSet`, the `openapi-contract` validation module's contract-load check through `@IntoSet` |
 
-`dev.vertique.rest.jaxrs.runtime.MagicBytesVerifierModule` is a separate opt-in `@Module` that
+`dev.vertique.rest.validation.MagicBytesVerifierModule` (`dev.vertique:vertique-rest-validation`)
+is a separate opt-in `@Module` that
 contributes the built-in magic-byte `FileContentVerifier`. It fails closed on a declared content
 type that is present but unparsable, such as a wildcard type with a concrete subtype like `*/png`
 (rejection type `fileContentTypeMalformed`), reads a `q` or
@@ -2111,6 +2165,22 @@ composition view and the docs-module marker described under [`@RestApplication`]
 above, public only so the JAX-RS application composer, the mount composition validator, the OpenAPI
 documentation module, and the `openapi-contract` validation module's contract-load check can read or
 bind them.
+
+---
+
+## Moved types
+
+These types left this module and have no forwarding type here. Change the import:
+
+| Type | Now in |
+|---|---|
+| `FileContentVerifier`, `FileVerificationResult` | `dev.vertique.rest.core.request` (`vertique-rest-core`) |
+| `VertxEntityPart` | `dev.vertique.rest.core.request` (`vertique-rest-core`) |
+| `RestExceptionMapper`, `RestExceptionMapperCustomizer` | `dev.vertique.rest.core` (`vertique-rest-core`) |
+| `MagicBytesVerifierModule` | `dev.vertique.rest.validation` (`vertique-rest-validation`) |
+
+`RestModule` and `JaxRsRouterMount` stay here. `RestModule` still declares the empty multibindings
+`Set<FileContentVerifier>` and `Set<RestExceptionMapperCustomizer>` and assembles the `RestExceptionMapper`.
 
 ---
 

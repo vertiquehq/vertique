@@ -31,7 +31,7 @@ import io.vertx.ext.web.RoutingContext;
  * <ul>
  *   <li>Bean Validation — applied after {@code extractArguments} returns using
  *       {@code meta.method()} (the {@link java.lang.reflect.Method} object is always retained in
- *       {@link dev.vertique.rest.jaxrs.ResourceMethodMeta} per FR-CG010-008).</li>
+ *       {@link dev.vertique.rest.jaxrs.ResourceMethodMeta}).</li>
  *   <li>Operation interceptors ({@code beforeOperation}, {@code afterOperation},
  *       {@code recoverOperation}).</li>
  *   <li>Response and error pipelines.</li>

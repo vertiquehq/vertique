@@ -4,7 +4,7 @@
 /**
  * Shared integration-test support for the {@code vertique-kafka} family: a reachability-verified,
  * shared Testcontainers Kafka broker ({@link dev.vertique.kafka.test.KafkaTestContainers})
- * reused across all Kafka IT classes in a Surefire/Failsafe fork. Consumed in test scope by
- * {@code vertique-kafka-core} and {@code vertique-kafka-avro}.
+ * reused across all Kafka IT classes in a Surefire/Failsafe fork. Intended for test scope in
+ * framework modules and example applications.
  */
 package dev.vertique.kafka.test;

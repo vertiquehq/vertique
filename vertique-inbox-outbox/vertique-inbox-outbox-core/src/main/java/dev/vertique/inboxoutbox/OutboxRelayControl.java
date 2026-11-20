@@ -20,7 +20,7 @@ import java.util.UUID;
  *
  * @param messageId     surrogate primary key of the originating outbox entry
  * @param carrierId     the first-class {@code carrier_id} column value, projected verbatim from the
- *                      row (PRD identity-002 F3b); consuming destination handlers use this — never a
+ *                      row; consuming destination handlers use this — never a
  *                      value read from the app-writable {@link OutboxEnvelope#metadata()} — to
  *                      reproduce the exact durable row-carrier the entry was signed for at publish
  *                      time; never {@code null}

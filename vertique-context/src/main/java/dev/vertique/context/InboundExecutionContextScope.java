@@ -121,7 +121,7 @@ public final class InboundExecutionContextScope {
      * {@link DurableContextPropagator#bindFrom(DurableMetadata, String, DurableCarrierDescriptor)}
      * so a boundary that owns a persisted row (e.g. a workflow-timer row being re-enqueued by
      * recovery) can verify the decoded durable envelope was signed for that exact row before
-     * installing it (F5 row binding, PRD identity-002).
+     * installing it (row binding).
      *
      * @param metadata the full durable metadata document from the boundary's native carrier; must
      *                 not be {@code null}
@@ -148,9 +148,8 @@ public final class InboundExecutionContextScope {
      * {@link Future#eventually(Supplier)} so the binding survives the async chain. {@code action} is
      * called synchronously, inside the {@code try} — a synchronous {@link RuntimeException} thrown by
      * {@code action} itself (as opposed to a returned failed {@link Future}) is caught here, the
-     * scope is closed, and the exception is surfaced as a failed {@link Future}, never rethrown (the
-     * CORE-001 sync-throw lesson: an uncaught synchronous throw would leak the installed durable
-     * binding into the caller's context).
+     * scope is closed, and the exception is surfaced as a failed {@link Future}, never rethrown (an
+     * uncaught synchronous throw would leak the installed durable binding into the caller's context).
      *
      * <p>Only {@link RuntimeException} is caught here — matching the posture of both call sites
      * this method replaces ({@code WorkflowContextBinder.withBound},

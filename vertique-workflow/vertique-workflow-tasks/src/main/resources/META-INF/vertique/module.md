@@ -77,7 +77,7 @@ wf.task("review")
   .build();
 ```
 
-Assignment can be literal or resolved from workflow state. Decisions carry typed payloads and update workflow state before moving to their next step. Use `void.class` as the payload type to declare a decision that carries no payload. Due dates and reminders require the delayed workflow module.
+Assignment can be literal or resolved from workflow state. Decisions carry typed payloads and update workflow state before moving to their next step. Use `void.class` as the payload type to declare a decision that carries no payload.
 
 Version-stable tasks compare the reviewed subject version supplied by the caller with the version snapshotted when the task was created. This is useful for approval flows over mutable domain objects.
 
@@ -127,7 +127,7 @@ Application code should use `TaskService` or `TransactionalTaskService<TX>`. It 
 
 - Human task completion and reassignment are idempotent when callers reuse the same idempotency key for the same logical command.
 - A task with a due date depends on workflow timer infrastructure.
-- Transactions that touch timers, tasks, and workflow instances must follow the lock order enforced by the engine and persistence module.
+- Transactions that change a workflow instance or its tasks and timers must hold the instance's execution lock first; the persistence module's lock-order section states the rule.
 - Authorization is application-defined. The workflow engine records the actor supplied on the task command but does not decide whether that actor may act.
 
 ---
@@ -136,7 +136,7 @@ Application code should use `TaskService` or `TransactionalTaskService<TX>`. It 
 
 - **All-or-nothing due-date triplet.** A task step's optional due-date sub-chain (`.dueDate(...)`, `.onDueMutator(...)`, `.dueNextStepId(...)`) must specify all three or none. Partial triplets are rejected at construction by the `HumanTaskNode` compact constructor.
 - **Non-empty unique decisions.** Each task step must declare at least one decision, and decision names within one step must be unique.
-- **`TaskFilter` single-assignee-kind guard.** At most one of `assigneeUser` / `assigneeRole` / `assigneeQueue` may be set. Use `TaskFilter.empty()` plus the `with*` copies to compose filters. `withScopeKey(...)` adds an exact-match start-scope filter (`null` matches every scope; it is a filter, not an authorization boundary: see the core module reference).
+- **`TaskFilter` single-assignee-kind guard.** At most one of `assigneeUser` / `assigneeRole` / `assigneeQueue` may be set. Use `TaskFilter.empty()` plus the `with*` copies to compose filters. `withScopeKey(...)` adds an exact-match start-scope filter (`null` matches every scope; it is a filter, not an authorization boundary: see the core module reference). `withTaskType(...)` adds an exact-match filter on the task type the step declared (`TaskRecord.taskType()`); a task created without a type matches no task type.
 - **Required actor.** `TaskCompletionCommand` and `TaskReassignmentCommand` reject null / blank `WorkflowActor` via their compact constructors. Authorization is the application's job; the actor recorded here is for audit and idempotency.
 - **Blank `reason` normalization.** Blank `reason` strings on commands are normalized to `null` before idempotency fingerprinting, so callers who omit a reason do not get treated as different commands.
 - **Return contract.** `complete` / `reassign` return `Future<Void>`. There is no result enum on the application-facing API: a succeeded future means the command's effect is persisted (for `complete`, that the completion is *recorded* and the task reserved; the executor applies it afterwards), and every other outcome is a failed future carrying a typed exception — `WorkflowTaskNotWaitingException`, `WorkflowConflictException`, `WorkflowIdempotencyConflictException`, `WorkflowTaskNotFoundException`, `WorkflowStaleSubjectVersionException`, `WorkflowStaleAssignmentException`, or `WorkflowInvalidPayloadException` (400 semantics: unknown decision, payload missing or unexpected for the decision, or a payload that does not bind to the declared type). These operations never report a problem by returning a "nothing happened" value.

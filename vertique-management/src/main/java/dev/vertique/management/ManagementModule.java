@@ -9,6 +9,7 @@ import dagger.multibindings.Multibinds;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.health.HealthCheckModule;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
@@ -52,6 +53,7 @@ public abstract class ManagementModule {
      * @param config the application configuration
      * @param parser the injected config parser
      * @return the management configuration with defaults applied for any missing fields
+     * @throws ConfigurationException if {@code healthCheckTimeoutSeconds} is not positive
      */
     @Provides
     @Singleton
@@ -59,8 +61,7 @@ public abstract class ManagementModule {
         ManagementConfig managementConfig =
                 parser.parse(JsonConfigPaths.navigateObject(config, "management"), ManagementConfig.class);
         if (managementConfig.healthCheckTimeoutSeconds() <= 0) {
-            throw new IllegalArgumentException("management.healthCheckTimeoutSeconds must be positive, got: "
-                    + managementConfig.healthCheckTimeoutSeconds());
+            throw new ConfigurationException("management.healthCheckTimeoutSeconds must be positive");
         }
         return managementConfig;
     }

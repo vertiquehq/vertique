@@ -24,6 +24,7 @@ import dev.vertique.core.context.DurableDecodeContext;
 import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.core.context.DurableMetadataHeaderCodec;
 import dev.vertique.kafka.config.KafkaConfig;
+import dev.vertique.logging.MDC;
 import dev.vertique.services.ServiceContractRegistry;
 import dev.vertique.services.ServiceTargetResolver;
 import io.vertx.core.Future;
@@ -150,6 +151,33 @@ class KafkaNoHeaderContextTest {
                 }));
     }
 
+    @Test
+    @DisplayName("a handler runs with the record's consumer, topic, partition and offset bound to MDC")
+    void handlerRunsWithTheRecordCoordinatesBoundToMdc(Vertx vertx, VertxTestContext ctx) {
+        // Given: a dispatcher over a handler-kind entry whose handler reads the MDC keys
+        HeaderContextGraph graph = DaggerKafkaNoHeaderContextTest_HeaderContextGraph.create();
+        AtomicReference<Map<String, String>> seen = new AtomicReference<>();
+        KafkaRecordDispatcher dispatcher = dispatcher(graph, false, message -> {
+            seen.set(MDC.getCopyOfContextMap());
+            return Future.succeededFuture();
+        });
+
+        // When: the dispatcher's dispatchToHandler runs on a duplicated context
+        onDuplicateAsync(vertx, ctx, () -> dispatch(dispatcher, DurableMetadata.of("unrelated", new JsonObject()))
+                .compose(ignored -> checked(() -> {
+                    // Then: the handler saw the record's coordinates under the kafka.* MDC keys
+                    Map<String, String> mdc = seen.get();
+                    assertEquals("header-context", mdc.get("kafka.consumer"), "kafka.consumer, MDC: " + mdc);
+                    assertEquals("header-context.events", mdc.get("kafka.topic"), "kafka.topic, MDC: " + mdc);
+                    assertEquals("0", mdc.get("kafka.partition"), "kafka.partition, MDC: " + mdc);
+                    assertEquals("0", mdc.get("kafka.offset"), "kafka.offset, MDC: " + mdc);
+                }))
+                .eventually(() -> {
+                    dispatcher.close();
+                    return Future.succeededFuture();
+                }));
+    }
+
     // --- Helpers ---
 
     /**
@@ -197,7 +225,7 @@ class KafkaNoHeaderContextTest {
         when(record.topic()).thenReturn("header-context.events");
         when(record.key()).thenReturn("key");
         Map<String, String> headers = DurableMetadataHeaderCodec.toHeaders(metadata);
-        return dispatcher.dispatchToHandler("payload", record, KafkaRecordHeaders.of(headers), headers);
+        return dispatcher.dispatchToHandler("payload", record, KafkaRecordHeaders.of(headers), headers, "corr-1");
     }
 
     private static Future<Void> checked(Runnable assertions) {

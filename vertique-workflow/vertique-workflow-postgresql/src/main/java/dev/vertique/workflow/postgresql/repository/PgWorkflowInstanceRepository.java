@@ -658,7 +658,7 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
      * <p>When {@link WorkflowInstanceQuery#subjectVersion()} is non-null, the query adds a
      * {@code subject_version = $N} predicate and the partial composite index
      * {@code idx_workflow_instances_subject_versioned} will be used by the planner for
-     * version-aware queries ({@code FR-WF-123}).
+     * version-aware queries.
      *
      * @param query  the query criteria to apply; fields set to {@code null} are ignored
      * @param cursor the page cursor; pass {@link PageCursor#first(int)} for the first page and
@@ -675,10 +675,17 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
         // --- Dynamic WHERE clause ---
         boolean hasWhere = false;
 
-        if (query.status() != null) {
+        if (query.statuses().size() == 1) {
+            // A single status keeps the plain equality predicate, whose selectivity the planner estimates exactly.
             sql.append(hasWhere ? " AND" : " WHERE");
-            paramValues.add(query.status().name());
+            paramValues.add(query.statuses().iterator().next().name());
             sql.append(" status = $").append(paramValues.size());
+            hasWhere = true;
+        } else if (!query.statuses().isEmpty()) {
+            // Several statuses go in one array parameter, so the statement text is the same for any number of them.
+            sql.append(hasWhere ? " AND" : " WHERE");
+            paramValues.add(query.statuses().stream().map(Enum::name).toArray(String[]::new));
+            sql.append(" status = ANY($").append(paramValues.size()).append("::varchar[])");
             hasWhere = true;
         }
         if (query.definitionId() != null) {

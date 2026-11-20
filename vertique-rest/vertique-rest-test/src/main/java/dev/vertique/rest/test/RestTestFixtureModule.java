@@ -10,10 +10,10 @@ import dev.vertique.config.parser.ConfigParsingModule;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import dev.vertique.rest.core.middleware.Middleware;
+import dev.vertique.rest.core.request.FileContentVerifier;
 import dev.vertique.rest.core.response.ResponseBodyEncoder;
 import dev.vertique.rest.core.security.SecurityPolicyValidator;
 import dev.vertique.rest.jaxrs.RestModule;
-import dev.vertique.rest.jaxrs.validation.FileContentVerifier;
 import jakarta.ws.rs.ext.ExceptionMapper;
 import java.util.Set;
 

@@ -27,12 +27,9 @@ import java.util.UUID;
  * Package-private collaborator responsible for appending generic workflow lifecycle history entries
  * and delegating event emission to {@link WorkflowEventEmitter}.
  *
- * <p>This class is extracted from {@link WorkflowEngine} as part of the Phase-1 decomposition
- * (PRD-WF-006, Slice C1). It holds the {@code appendStartHistory} method — the only
- * non-cluster-specific append helper assigned to this collaborator in C1. All other
- * {@code append*History} methods that are tightly coupled to specific clusters (task, timer,
- * fork/join) remain on {@link WorkflowEngine} until their respective extraction slices
- * (C4, C7, C8).
+ * <p>This class is extracted from {@link WorkflowEngine}. It holds the {@code appendStartHistory}
+ * method — the only non-cluster-specific append helper. The {@code append*History} methods that
+ * are tightly coupled to specific clusters (task, timer, fork/join) live with those clusters.
  *
  * <p>This class is a leaf in the dependency graph: it depends on the history repository SPI,
  * the clock, and {@link WorkflowEventEmitter}. It has no reference to the transition driver

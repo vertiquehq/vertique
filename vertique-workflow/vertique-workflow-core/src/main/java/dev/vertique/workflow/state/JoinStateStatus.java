@@ -8,7 +8,7 @@ package dev.vertique.workflow.state;
  *
  * <p>Stored as the enum's {@link #name()} in {@code workflow_join_states.status}. Once a join
  * leaves {@link #OPEN}, its decision is irreversible: late branch results are recorded as ignored
- * and never reopen the join (PRD-WF-002 FR-WF-PAR-052/055).
+ * and never reopen the join.
  */
 public enum JoinStateStatus {
 

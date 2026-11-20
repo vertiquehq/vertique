@@ -9,14 +9,13 @@ import dev.vertique.core.exception.ConfigurationException;
 import java.util.regex.Pattern;
 
 /**
- * One declared rate-limit policy — the exact contract-final public record
- * (contracts/rate-limit-runtime.md, "Policy model"). Resolves from typed
+ * One declared rate-limit policy. Resolves from typed
  * {@code rateLimit.policies.<name>} configuration and/or Dagger {@code @IntoSet RateLimitPolicy}
  * contributions; {@code dev.vertique.ratelimit.dagger.RateLimitCoreModule} merges the two tiers
  * (config replaces a same-name programmatic policy wholesale — fields never merge across tiers).
  *
  * <p>Every component is required with no default anywhere — including {@code failureMode} on a
- * disabled policy (FR-006, {@code spec.md} §5.5) — enforced by this record's compact constructor
+ * disabled policy — enforced by this record's compact constructor
  * (for reference-typed components) and {@link #fromJson} (for the two primitive components,
  * {@code enabled}/{@code defaultCost}, whose omission would otherwise silently bind to {@code
  * false}/{@code 0}).

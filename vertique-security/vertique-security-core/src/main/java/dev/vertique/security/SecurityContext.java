@@ -66,8 +66,8 @@ public interface SecurityContext extends ContextValue {
 
     /**
      * Returns the network-envelope snapshot captured before authentication ran, or
-     * {@link Optional#empty()} when origin capture is not configured (e.g., before
-     * {@code OriginCaptureMiddleware} is wired in slice 13).
+     * {@link Optional#empty()} when origin capture is not configured (e.g., when
+     * {@code OriginCaptureMiddleware} is not installed).
      *
      * @return an optional {@link RequestOrigin}; never {@code null} as an {@code Optional}
      */

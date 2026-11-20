@@ -11,7 +11,7 @@ package dev.vertique.workflow.plan;
  * reachable in a race branch must resolve to a registered target whose safety is
  * {@link RaceSafety#CANCEL_SAFE} or {@link RaceSafety#IGNORE_LATE_RESULT_SAFE}. Targets without a
  * registered classification default to {@link RaceSafety#NORMAL} — i.e., they are NOT allowed
- * inside race branches (PRD-WF-002 FR-WF-PAR-012).
+ * inside race branches.
  *
  * <p>Population: applications declare safe targets at startup by contributing one or more
  * {@link RaceSafetyTargetContributor}s into the {@code Set<RaceSafetyTargetContributor>} Dagger

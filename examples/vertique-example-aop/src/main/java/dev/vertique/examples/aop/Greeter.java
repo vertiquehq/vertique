@@ -76,7 +76,7 @@ public class Greeter {
      * Returns a greeting <em>synchronously</em> — a plain {@link String}, not a {@link Future}. This
      * exercises the proxy's sync-return path: the generated override runs the {@code @Timed} around
      * chain, asserts it settled synchronously (the built-in {@code @Timed} never defers, so the
-     * FR-013-05 guard is not tripped), then unwraps the completed chain's value. The
+     * sync-defer guard is not tripped), then unwraps the completed chain's value. The
      * {@code @Timed("vertique.example.greet.sync")} occurrence records a {@code Timer} on each call.
      *
      * @param name the name to greet; passed through unchanged into the result

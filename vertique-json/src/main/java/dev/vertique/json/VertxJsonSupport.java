@@ -13,7 +13,7 @@ import io.vertx.core.json.jackson.VertxModule;
  * gives that mapper the same Vert.x JSON type support that {@code DatabindCodec.mapper()} ships with
  * — most importantly serializers/deserializers for {@link io.vertx.core.json.JsonObject} and
  * {@link io.vertx.core.json.JsonArray}, so those types round-trip with their values intact rather
- * than binding to an empty object (FR-JSON-015B).
+ * than binding to an empty object.
  *
  * <p>Application-supplied profile mappers (see {@code dev.vertique.core.json.JsonMapperProfile})
  * are expected to register this module so that framework JSON boundaries handling

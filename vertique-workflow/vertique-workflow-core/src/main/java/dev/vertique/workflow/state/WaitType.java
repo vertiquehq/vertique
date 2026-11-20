@@ -23,7 +23,7 @@ public enum WaitType {
 
     /**
      * Instance is parked at a fan-in {@link dev.vertique.workflow.plan.JoinNode} while its branch
-     * tokens run (PRD-WF-002). {@code wait_key} carries the fork step id that owns the join;
+     * tokens run. {@code wait_key} carries the fork step id that owns the join;
      * {@code wait_aux_id} is unused.
      */
     JOIN

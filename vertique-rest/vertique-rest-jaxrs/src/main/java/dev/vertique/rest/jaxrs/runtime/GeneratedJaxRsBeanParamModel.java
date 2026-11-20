@@ -9,7 +9,7 @@ import java.util.List;
  * SPI interface implemented by generated bean-param model companion classes.
  *
  * <p>For each {@code @BeanParam} or {@code @RequestParams} type {@code Foo} discovered by the
- * CG-010 codegen pipeline, {@code vertique-codegen-jaxrs} emits a companion
+ * codegen pipeline, {@code vertique-codegen-jaxrs} emits a companion
  * {@code Foo_BeanParamModel} that implements this interface. The companion is loaded at runtime
  * by {@link GeneratedJaxRsBeanParamRegistry} and consumed by {@code ParameterExtractor} in
  * place of its reflective {@code computeBeanFields} path.
@@ -20,7 +20,7 @@ import java.util.List;
  *
  * <p>The {@link #fields()} list uses subclass-wins field-hiding dedup: when a subclass declares
  * a field with the same name as a superclass field, only the subclass field is included. This
- * matches JLS § 8.3 field-hiding semantics and the behaviour of the compile-time
+ * matches JLS section 8.3 field-hiding semantics and the behaviour of the compile-time
  * {@code JaxRsBeanScanner} in {@code vertique-codegen-jaxrs}.
  *
  * @param <T> the bean class type this model was generated for

@@ -96,7 +96,7 @@ final class McpRouterMount implements RouterMount {
         this.dispatcher = dispatcher;
         this.httpConfig = httpConfig;
         this.originCapturer = originCapturer;
-        // The three-argument (registry-visibility, §4.5), HttpConfig-liveness-gate, and
+        // The three-argument (registry-visibility), HttpConfig-liveness-gate, and
         // no-authorizer-for-@RequiresAction rules all matter only at the one real
         // production mount point: this constructor. Test fixtures that exercise a narrower slice of
         // McpServerConfigValidator call its narrower overloads directly.

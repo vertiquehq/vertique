@@ -13,7 +13,7 @@ import java.util.Set;
  *
  * <p>This module declares the <strong>single</strong> {@code Set<SecurityEventObserver>}
  * multibinding for the whole framework and makes the transport-neutral {@link SecurityEventEmitter}
- * available to any enforcement layer. Per ADR-0114 the emitter and this multibinding declaration
+ * available to any enforcement layer. The emitter and this multibinding declaration
  * live in {@code vertique-core} so REST, WebSocket, services, and jobs can all emit security events
  * through one shared emitter rather than each surface owning its own.
  *

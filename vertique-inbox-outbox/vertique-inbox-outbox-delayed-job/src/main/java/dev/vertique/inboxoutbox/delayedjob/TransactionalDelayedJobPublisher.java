@@ -24,7 +24,7 @@ import java.time.Instant;
  *
  * <p>Accepts typed delayed-job contract interfaces and serializes their payloads into the outbox
  * table alongside a snapshot of effective execution defaults (queue, priority, maxAttempts) captured
- * at write time (FR-TM-039). The relay later reads these snapshots when enqueueing the job, ensuring
+ * at write time. The relay later reads these snapshots when enqueueing the job, ensuring
  * that jobs are executed with the defaults that were in effect when the outbox entry was created,
  * even if the contract configuration changes between write and relay time.
  *
@@ -66,7 +66,7 @@ public class TransactionalDelayedJobPublisher {
      * Records a delayed-job side effect in the outbox table for immediate execution.
      *
      * <p>Execution defaults (queue, priority, maxAttempts) are resolved from the contract and
-     * snapshotted into {@link OutboxEntry#delayedJob()} at write time (FR-TM-039).
+     * snapshotted into {@link OutboxEntry#delayedJob()} at write time.
      *
      * @param <P>      the payload type; must be Jackson-serializable
      * @param contract the typed delayed-job contract interface class
@@ -84,7 +84,7 @@ public class TransactionalDelayedJobPublisher {
      *
      * <p>The relay will not claim the entry until the wall-clock time passes {@code scheduledAt}.
      * Execution defaults (queue, priority, maxAttempts) are resolved from the contract and
-     * snapshotted into {@link OutboxEntry#delayedJob()} at write time (FR-TM-039). They are
+     * snapshotted into {@link OutboxEntry#delayedJob()} at write time. They are
      * persisted in {@code metadata.delivery.delayedJob} and read back at relay time by
      * {@code DelayedJobOutboxDestinationHandler}. Application headers (if any) remain in
      * {@link OutboxEntry#headers()} unchanged.
@@ -141,7 +141,7 @@ public class TransactionalDelayedJobPublisher {
             return Future.failedFuture(e);
         }
 
-        // Snapshot effective defaults at write time (FR-TM-039) — stored in metadata, not headers
+        // Snapshot effective defaults at write time — stored in metadata, not headers
         DelayedJobControl delayedJob = new DelayedJobControl(target.queue(), target.priority(), target.maxAttempts());
 
         OutboxEntry entry = OutboxEntry.builder()

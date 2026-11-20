@@ -3,25 +3,23 @@
 
 package dev.vertique.kafka.config;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
-
 /**
  * Typed Kafka message-key hash configuration read from {@code kafka.messageKeyHash}.
  *
  * <p>Carries the optional HMAC secret used to hash Kafka message keys for safe downstream capture
  * (external path {@code kafka.messageKeyHash.hmacSecret}). The secret is read <em>from</em> config,
  * so its component must stay constructor-bound — it is <strong>not</strong> {@code @JsonIgnore} (which
- * would block deserialization and make the secret unreadable). Instead it is annotated {@link
- * JsonProperty.Access#WRITE_ONLY} (deserialized in, never serialized out) and {@link #toString()} is
- * overridden to redact it. Thus the secret can be read by the runtime but never leaks through
- * Jackson re-serialization, a log line, or an exception message.
+ * would block deserialization and make the secret unreadable). The config mapper behind
+ * {@code ConfigParser} serializes it as {@code "***"} when set and omits it when absent, because its
+ * name matches the shared secret rule ({@code ConfigSecretRenderer}), and {@link #toString()} is
+ * overridden to redact it. Thus the secret can be read by the runtime but never leaks through a
+ * config-mapper dump, a log line, or an exception message. Only the config mapper masks: another
+ * {@code ObjectMapper} prints the secret.
  *
  * @param hmacSecret the HMAC secret used to hash Kafka message keys, or {@code null} when not
- *     configured; never serialized out and redacted in {@link #toString()}
+ *     configured; masked as {@code "***"} by the config mapper and redacted in {@link #toString()}
  */
-public record KafkaMessageKeyHashConfig(
-        @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
-        String hmacSecret) {
+public record KafkaMessageKeyHashConfig(String hmacSecret) {
     /**
      * Redacted rendering: the HMAC secret is never included, so a log line or exception message can
      * never reveal it.

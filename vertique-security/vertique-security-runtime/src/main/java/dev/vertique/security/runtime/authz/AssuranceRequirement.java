@@ -11,8 +11,8 @@ import java.time.Duration;
 import java.util.Objects;
 
 /**
- * The minimum-assurance gate an assurance-gated action places on the caller's authentication
- * (PRD identity-002 FR-ID-CA-005), deserialized as the element type of
+ * The minimum-assurance gate an assurance-gated action places on the caller's authentication,
+ * deserialized as the element type of
  * {@link AssuranceRequirementConfig#patterns()}.
  *
  * <p>{@link AssuranceRequirementNarrower} evaluates both dimensions together: the caller's
@@ -84,7 +84,7 @@ public record AssuranceRequirement(int minProviderLevel, Duration maxAge) {
     }
 
     /**
-     * Combines two requirements into the strictest of the two (FR-ID-AR-003), used by
+     * Combines two requirements into the strictest of the two, used by
      * {@link AssuranceRequirementConfig#requirementFor(dev.vertique.security.authz.ActionRef)} when
      * more than one configured action pattern matches the same action.
      *

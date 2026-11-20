@@ -650,7 +650,7 @@ public final class EffectiveJaxRsContractResolver {
         // @DefaultValue
         String defaultValue = resolveDefaultValue(concreteParam, paramIndex, method, resourceClass);
 
-        // Merged annotation sources (GitHub issue #162): concreteParam plus the matching parameter
+        // Merged annotation sources: concreteParam plus the matching parameter
         // on each superclass/interface override that declares it, mirroring the runtime
         // AnnotationResolver.resolveParameterAnnotations merge so a converter-decision marker
         // annotation declared only on an interface method is not lost when the codegen path
@@ -658,7 +658,9 @@ public final class EffectiveJaxRsContractResolver {
         List<javax.lang.model.element.VariableElement> annotationSources =
                 resolveParamAnnotationSources(concreteParam, paramIndex, method, resourceClass);
 
-        TypeMirror type = concreteParam.asType();
+        TypeMirror type = JaxRsHierarchy.memberTypeOf(ctx, resourceClass, method)
+                .getParameterTypes()
+                .get(paramIndex);
 
         // Component type for a multi-value shape (List<T>, Set<T>, T[], ...) — SOURCE-GATED, exactly
         // like beanParamType and genericType below. Only the sources whose reflective counterpart
@@ -667,11 +669,13 @@ public final class EffectiveJaxRsContractResolver {
         TypeMirror componentType = resolvesComponentType(source) ? resolveComponentType(type) : null;
 
         // Bean param type
-        TypeMirror beanParamType = (source == JaxRsParamSource.BEAN_PARAM) ? type : null;
+        TypeMirror beanParamType =
+                (source == JaxRsParamSource.BEAN_PARAM) ? ctx.types().erasure(type) : null;
 
-        // Generic type for BODY params — capture the full parameterized type mirror so the emitter
-        // can emit a TypeReference-style token for generic bodies (e.g. List<Foo>)
-        TypeMirror genericType = (source == JaxRsParamSource.BODY) ? type : null;
+        // Generic type — the declared type as the resource class sees it, for the sources whose reflective
+        // counterpart records it (BODY, QUERY, HEADER and COOKIE); the emitters write it into ParamMeta
+        // so a generated descriptor reports what the runtime scanner reports.
+        TypeMirror genericType = reportsGenericType(source) ? type : null;
 
         // Per-parameter policies: start from the route-level chains, apply the parameter's own
         // hierarchy-merged overrides (an annotation declared only on an overridden method's
@@ -720,12 +724,23 @@ public final class EffectiveJaxRsContractResolver {
         // declarations it overrides, taking the first source in a fixed priority. The enum is
         // declared in that priority order (BODY last), so the effective source is the lowest
         // ordinal among the concrete parameter and the matching parameter of each declaration.
-        JaxRsParamSource effective = JaxRsParamClassifier.classify(concreteParam, ctx.types(), ctx.elements());
+        JaxRsParamSource effective = JaxRsParamClassifier.classify(
+                concreteParam,
+                JaxRsHierarchy.memberTypeOf(ctx, resourceClass, method)
+                        .getParameterTypes()
+                        .get(paramIndex),
+                ctx.types(),
+                ctx.elements());
         for (ExecutableElement declaration : JaxRsHierarchy.inheritedDeclarations(ctx, method, resourceClass)) {
             var declaredParams = declaration.getParameters();
             if (paramIndex >= declaredParams.size()) continue;
-            JaxRsParamSource declaredSource =
-                    JaxRsParamClassifier.classify(declaredParams.get(paramIndex), ctx.types(), ctx.elements());
+            JaxRsParamSource declaredSource = JaxRsParamClassifier.classify(
+                    declaredParams.get(paramIndex),
+                    JaxRsHierarchy.memberTypeOf(ctx, resourceClass, method)
+                            .getParameterTypes()
+                            .get(paramIndex),
+                    ctx.types(),
+                    ctx.elements());
             if (declaredSource.ordinal() < effective.ordinal()) {
                 effective = declaredSource;
             }
@@ -735,7 +750,7 @@ public final class EffectiveJaxRsContractResolver {
 
     /**
      * Resolves the full list of parameter elements whose annotation mirrors back the effective
-     * annotation set for a parameter (GitHub issue #162), mirroring the runtime
+     * annotation set for a parameter, mirroring the runtime
      * {@code AnnotationResolver.resolveParameterAnnotations} merge at compile time: the concrete
      * parameter, then the matching parameter on each superclass in the chain that declares the
      * method, then the matching parameter on each transitively implemented interface (BFS order via
@@ -907,6 +922,22 @@ public final class EffectiveJaxRsContractResolver {
         return switch (source) {
             case QUERY, HEADER, COOKIE, FORM, FILE_UPLOADS, ENTITY_PARTS -> true;
             case PATH, BODY, CONTEXT, PRECONDITIONS, BEAN_PARAM -> false;
+        };
+    }
+
+    /**
+     * Reports whether the reflective scanner records the declared type as a parameter's
+     * {@code genericType} for this source: {@code BODY}, {@code QUERY}, {@code HEADER} and
+     * {@code COOKIE}. Every other source passes {@code null} there, including {@code FORM}, whose
+     * {@code genericType} stays {@code null} on both paths.
+     *
+     * @param source the parameter's effective classification
+     * @return {@code true} when the contract carries the declared type as its generic type
+     */
+    private static boolean reportsGenericType(JaxRsParamSource source) {
+        return switch (source) {
+            case BODY, QUERY, HEADER, COOKIE -> true;
+            case PATH, FORM, FILE_UPLOADS, ENTITY_PARTS, CONTEXT, PRECONDITIONS, BEAN_PARAM -> false;
         };
     }
 

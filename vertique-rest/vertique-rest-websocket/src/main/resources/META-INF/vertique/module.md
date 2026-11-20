@@ -264,14 +264,15 @@ most one method per annotation per endpoint; a second one fails startup. All fou
 
 **Return type** must be `void` or `Future<Void>`; anything else fails startup. Only `@OnOpen` and
 `@OnClose` have their futures awaited — `@OnOpen`'s gates `resume()`, `@OnClose`'s gates resource
-release. A failed future from `@OnMessage` or `@OnError` is logged and dispatched to `@OnError`.
+release. A failed future from `@OnMessage` is logged and dispatched to `@OnError`. A failure of `@OnError`
+itself (a thrown exception or a failed future) is only logged, never dispatched back to `@OnError`.
 
 **Parameters** are resolved by type and annotation, in this order:
 
 | Parameter shape | Bound to |
 |---|---|
 | `WebSocketSession` (or a supertype) | The current session |
-| `Throwable` (or a subtype) | The error — only on `@OnError`; otherwise left `null` |
+| `Throwable` (or a subtype) | The error on `@OnError`; left `null` on `@OnOpen` and `@OnClose`. On `@OnMessage` it is not an error slot: it counts as the message parameter (see [Message typing](#message-typing)) |
 | `dev.vertique.security.SecurityContext` | `SecurityRuntime.current()` at invocation time; `null` when no security module is installed |
 | `@PathParam("name") T` | The extracted path segment, converted to `T` |
 | any other parameter | The deserialized message — only on `@OnMessage` |
@@ -286,9 +287,11 @@ placeholder in the endpoint's path template fails startup.
 ### Message typing
 
 The `@OnMessage` message parameter is the first parameter that is not a `WebSocketSession`, a
-`Throwable`, a `SecurityContext`, or `@PathParam`-annotated. Its declared type selects the wire
-handling. Exactly one such parameter is allowed: a second payload-eligible parameter is rejected at
-startup with a `ConfigurationException` naming the method. Put the sanitize/canonicalize chain on
+`SecurityContext`, or `@PathParam`-annotated. A `Throwable` parameter is not excluded here: on
+`@OnMessage` it is payload-eligible like any other type. Its declared type selects the wire
+handling. Exactly one such parameter is allowed: a second payload-eligible parameter (a `String`
+message plus a `Throwable`, for example) is rejected at startup with a `ConfigurationException`
+naming the method. Put the sanitize/canonicalize chain on
 the message parameter or on the method:
 
 | Declared type | Handling |
@@ -467,7 +470,7 @@ application declares security the same way on both transports:
 | `@RequiresAction("...")` | class | Authenticate, then evaluate the action gate — AND-composed with the above |
 | `@RequiresPolicy(Policy.class)` | class | Resolves to the policy's role/scope/public/deny predicates and optional action gate, then behaves as the matching rows above; not combinable with the inline annotations |
 | `@PathParam("name")` | lifecycle method parameter | Binds a path-template placeholder |
-| `@ValidateWith(groups = {...})` | `@OnMessage` method | Selects Bean Validation groups |
+| `@ValidateWith({...})` | `@OnMessage` method | Selects the Bean Validation groups for the decoded message; without it the default group applies |
 
 Method-level security annotations (including `@RequiresPolicy`) on lifecycle methods fail startup —
 the endpoint class is the only site for the security policy above. Input canonicalization and
@@ -492,8 +495,10 @@ message — report `InputLocation.PAYLOAD`, and `@PathParam` values report `Inpu
 Message values reported `BODY` before `PAYLOAD` existed: a custom processor that branches on
 `InputLocation.BODY` must also handle `PAYLOAD` to keep covering messages.
 
-Bean Validation runs after deserialization (and after sanitization when both are installed). A
-violation raises `BeanValidationException`, which is routed to `@OnError`; the message is discarded.
+Bean Validation runs after deserialization (and after sanitization when both are installed) on every
+decoded typed message; `@ValidateWith` only selects the groups and is not needed to turn validation
+on. A `String` or `Buffer` message is not validated. A violation raises `BeanValidationException`,
+which is routed to `@OnError`; the message is discarded.
 
 ```java
 public record CreateRoomMessage(
@@ -502,7 +507,7 @@ public record CreateRoomMessage(
 ) {}
 
 @OnMessage
-@ValidateWith(groups = {Default.class, StrictInput.class})
+@ValidateWith({Default.class, StrictInput.class})
 @Canonicalize(NfkcCanonicalize.class)
 @Sanitize(StripControlCharsSanitize.class)
 Future<Void> onMessage(WebSocketSession session, CreateRoomMessage msg) {

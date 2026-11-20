@@ -102,8 +102,7 @@ public final class Invocations {
      * invokes the {@code terminal} supplier (when {@code index} is past the last interceptor) or
      * constructs a brand-new {@code PositionInvocation} for {@code index + 1} and hands it to the
      * next interceptor. Because the continuation is rebuilt on the stack at each call, calling
-     * {@code proceed()} more than once re-enters the downstream chain independently each time
-     * (FR-013-05).
+     * {@code proceed()} more than once re-enters the downstream chain independently each time.
      */
     private static final class PositionInvocation implements Invocation {
 

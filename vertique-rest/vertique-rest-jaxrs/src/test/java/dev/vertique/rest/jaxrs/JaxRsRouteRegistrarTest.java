@@ -176,6 +176,16 @@ class JaxRsRouteRegistrarTest {
         }
     }
 
+    @Path("/bad-sse")
+    static class InvalidSseReturnTypeResource {
+        @GET
+        @Produces("text/event-stream")
+        @Operation(operationId = "badSse")
+        public String stream() {
+            return "not a stream";
+        }
+    }
+
     @Path("/dup-a")
     static class DuplicateOpIdResourceA {
         @GET
@@ -220,6 +230,11 @@ class JaxRsRouteRegistrarTest {
 
     @Path("/generic-default")
     static class GenericDefaultResource implements GenericDefaultApi<String> {}
+
+    /** The same contract used raw: no class in the hierarchy binds {@code I}. */
+    @Path("/generic-default-unbound")
+    @SuppressWarnings("rawtypes")
+    static class UnboundGenericDefaultResource implements GenericDefaultApi {}
 
     // --- Tests ---
 
@@ -522,6 +537,35 @@ class JaxRsRouteRegistrarTest {
     }
 
     @Test
+    @DisplayName("Should collect an SSE return type violation with the other route violations")
+    void shouldCollectSseReturnTypeViolationWithOtherViolations() {
+        RouteRegistrationException ex = assertThrows(
+                RouteRegistrationException.class,
+                () -> RegistrarTestSupport.registerAll(
+                        registrar,
+                        Set.of(new MultipleBodyParamsResource(), new InvalidSseReturnTypeResource()),
+                        router,
+                        RegistrarTestSupport.TEST_MOUNT_META,
+                        List.of(),
+                        List.of(),
+                        null,
+                        false,
+                        List.of(),
+                        List.of(),
+                        "OFF",
+                        null,
+                        null,
+                        null,
+                        false));
+
+        assertEquals(
+                Set.of("multiBody", "badSse"),
+                ex.violations().stream()
+                        .map(RouteRegistrationViolation::operationId)
+                        .collect(Collectors.toSet()));
+    }
+
+    @Test
     @DisplayName("Should reject duplicate operationIds")
     void shouldRejectDuplicateOperationIds() {
         RouteRegistrationException ex = assertThrows(
@@ -582,13 +626,34 @@ class JaxRsRouteRegistrarTest {
     }
 
     @Test
-    @DisplayName("A non-overridden generic default binds its type-variable parameter as Object and fails startup")
-    void genericDefaultRoute_typeVariableParameterFailsStartup() {
+    @DisplayName("A non-overridden generic default binds its concrete parameter at startup")
+    void genericDefaultRoute_concreteParameterRegisters() {
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> RegistrarTestSupport.registerAll(
+                registrar,
+                Set.of(new GenericDefaultResource()),
+                router,
+                RegistrarTestSupport.TEST_MOUNT_META,
+                List.of(),
+                List.of(),
+                null,
+                false,
+                List.of(),
+                List.of(),
+                "OFF",
+                null,
+                null,
+                null,
+                false));
+    }
+
+    @Test
+    @DisplayName("A generic default whose type variable no class binds still fails startup")
+    void genericDefaultRoute_unboundTypeVariableParameterFailsStartup() {
         RouteRegistrationException ex = assertThrows(
                 RouteRegistrationException.class,
                 () -> RegistrarTestSupport.registerAll(
                         registrar,
-                        Set.of(new GenericDefaultResource()),
+                        Set.of(new UnboundGenericDefaultResource()),
                         router,
                         RegistrarTestSupport.TEST_MOUNT_META,
                         List.of(),

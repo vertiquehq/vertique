@@ -163,7 +163,8 @@ public final class OpenTelemetryBootstrapContributor implements VertxBuilderCont
      *                never {@code null}
      * @return the (potentially mutated) {@link VertxBuilder}; never {@code null}
      * @throws ConfigurationException    if the {@code tracing} config section is present but not a
-     *                                   JSON object (value-free message, passes through untouched)
+     *                                   JSON object, or a {@code tracing} value cannot be bound
+     *                                   (value-free messages, no cause)
      * @throws TracingBootstrapException if SDK auto-configuration fails (no cause attached), or if
      *                                   this process previously owned and closed the global SDK
      *                                   (relaunching tracing in the same JVM is unsupported)
@@ -173,7 +174,13 @@ public final class OpenTelemetryBootstrapContributor implements VertxBuilderCont
         // --- Parse TracingConfig ---
         // navigateObject throws ConfigurationException when "tracing" is present but not a JsonObject
         JsonObject tracingJson = JsonConfigPaths.navigateObject(ctx.config(), "tracing");
-        TracingConfig config = tracingJson.mapTo(TracingConfig.class);
+        TracingConfig config;
+        try {
+            config = tracingJson.mapTo(TracingConfig.class);
+        } catch (IllegalArgumentException e) {
+            // The binding message echoes the offending value, so it is neither kept nor chained.
+            throw new ConfigurationException("Invalid value in the 'tracing' configuration section");
+        }
 
         // --- Disabled path ---
         if (!config.enabled()) {

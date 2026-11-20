@@ -11,8 +11,7 @@ import java.util.Objects;
  * Guarded-execution fail-closed backend failure. Exposes only the safe {@link RateLimitDecision};
  * internal causes never cross this boundary.
  *
- * <p>This task mints this type only — {@code execute(...)} throwing it is a later task's
- * behavior (contracts/rate-limit-runtime.md, "Exceptions").
+ * <p>Thrown by {@code execute(...)} for a {@code BACKEND_FAILURE_CLOSED} decision.
  */
 public final class RateLimitUnavailableException extends UnavailableException {
 

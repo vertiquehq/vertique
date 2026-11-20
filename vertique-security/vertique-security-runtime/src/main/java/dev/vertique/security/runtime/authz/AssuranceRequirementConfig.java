@@ -15,9 +15,9 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Root configuration record for the identity-002 minimum-assurance policy hooks, deserialized from
+ * Root configuration record for the minimum-assurance policy hooks, deserialized from
  * the {@code identity.assurance} section of the application config via
- * {@link dev.vertique.core.config.ConfigParser} (PRD identity-002 FR-ID-AR-003).
+ * {@link dev.vertique.core.config.ConfigParser}.
  *
  * <p>{@link #patterns()} maps an {@link ActionPattern} — the same action-PATTERN grammar
  * {@link dev.vertique.security.authz.PolicyStatement} authors policies with: exact
@@ -66,7 +66,7 @@ public record AssuranceRequirementConfig(Map<ActionPattern, AssuranceRequirement
 
     /**
      * Jackson-friendly factory. Parses each raw {@code identity.assurance.actions} key into an
-     * {@link ActionPattern} — the FR-ID-AR-003 authoring contract — failing fast at config-load time
+     * {@link ActionPattern} — the pattern authoring contract — failing fast at config-load time
      * (never silently ungating a malformed pattern) when a key is blank or does not parse as a valid
      * action pattern.
      *
@@ -122,7 +122,7 @@ public record AssuranceRequirementConfig(Map<ActionPattern, AssuranceRequirement
 
     /**
      * Resolves the effective {@link AssuranceRequirement} for a canonical action, matching against
-     * every configured {@link ActionPattern} (FR-ID-AR-003) rather than an exact-string lookup — a
+     * every configured {@link ActionPattern} rather than an exact-string lookup — a
      * wildcard pattern such as {@code "payments.refund.*"} gates every action it matches.
      *
      * <p>When more than one pattern matches {@code action}, the returned requirement is the

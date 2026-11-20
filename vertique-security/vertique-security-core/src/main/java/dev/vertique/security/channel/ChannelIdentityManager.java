@@ -8,7 +8,7 @@ import io.vertx.core.Future;
 import java.util.Optional;
 
 /**
- * Per-runtime channel registry SPI for long-lived connection identity management (PRD §7.12).
+ * Per-runtime channel registry SPI for long-lived connection identity management.
  *
  * <p>Tracks long-lived channels (WebSocket, future SSE, future bidi-stream transports) and supports
  * identity refresh and force-close. Transport adapters provide a {@link ChannelBinding} when

@@ -29,6 +29,7 @@ import javax.lang.model.element.TypeElement;
 import javax.tools.Diagnostic;
 import javax.tools.JavaFileObject;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -119,6 +120,82 @@ class McpToolProcessorCompileTest {
     @DisplayName("enforces the T002 contract matrix")
     void shouldEnforceT002ContractMatrix(MatrixRow row) throws Throwable {
         row.proof().execute();
+    }
+
+    @Test
+    @DisplayName("a @NotNull Optional<T> parameter is rejected at compile time, naming the parameter")
+    void shouldRejectNotNullOptionalParameter() {
+        JavaFileObject requiredOptional = SourceFiles.inline(TOOLS_PACKAGE + ".RequiredOptionalTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+                import jakarta.validation.constraints.NotNull;
+                import java.util.Optional;
+
+                public class RequiredOptionalTools {
+
+                    @Inject
+                    public RequiredOptionalTools() {}
+
+                    @McpTool(name = "weather.required_optional", description = "Look up the current weather.")
+                    public Future<WeatherReport> lookup(
+                            @McpToolParam(name = "city", description = "The city to look up.")
+                            @NotNull Optional<String> city) {
+                        return Future.succeededFuture(new WeatherReport(city.orElse(""), 21));
+                    }
+                }
+                """);
+        try (McpToolCompilation compilation = McpToolCompilation.of(weatherReport(), requiredOptional)) {
+            compilation.result().assertFailed();
+            assertEquals(
+                    1,
+                    compilation.errorsNaming("city"),
+                    "a required yet optional parameter must be rejected with one diagnostic naming it");
+        }
+    }
+
+    @Test
+    @DisplayName("a parameter description over 4,096 characters is rejected at compile time")
+    void shouldRejectParameterDescriptionOverBound() {
+        String atBound = "x".repeat(4096);
+        String overBound = "x".repeat(4097);
+        String template = """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+
+                public class LongDescriptionTools {
+
+                    @Inject
+                    public LongDescriptionTools() {}
+
+                    @McpTool(name = "weather.long_description", description = "Look up the current weather.")
+                    public Future<WeatherReport> lookup(
+                            @McpToolParam(name = "city", description = "%s") String city) {
+                        return Future.succeededFuture(new WeatherReport(city, 21));
+                    }
+                }
+                """;
+        try (McpToolCompilation control = McpToolCompilation.of(
+                weatherReport(),
+                SourceFiles.inline(TOOLS_PACKAGE + ".LongDescriptionTools", template.formatted(atBound)))) {
+            control.result().assertSuccess();
+        }
+        try (McpToolCompilation oversized = McpToolCompilation.of(
+                weatherReport(),
+                SourceFiles.inline(TOOLS_PACKAGE + ".LongDescriptionTools", template.formatted(overBound)))) {
+            oversized.result().assertFailed();
+            assertEquals(
+                    1,
+                    oversized.errorsNaming("city", "4096"),
+                    "an oversized parameter description must be rejected with one diagnostic naming the bound");
+        }
     }
 
     // ==================================================================================
@@ -2492,6 +2569,68 @@ class McpToolProcessorCompileTest {
                     }
                 }
                 """);
+    }
+
+    // ==================================================================================
+    // Per-type opt-out
+    // ==================================================================================
+
+    @Test
+    @DisplayName("a tool type annotated @NoAutoWire gets no invoker and no module binding")
+    void shouldSkipToolTypeAnnotatedNoAutoWire() {
+        JavaFileObject optedOut = SourceFiles.inline(TOOLS_PACKAGE + ".ManualWeatherTools", """
+                package com.example.tools;
+
+                import dev.vertique.codegen.NoAutoWire;
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+
+                @NoAutoWire
+                public class ManualWeatherTools {
+
+                    @McpTool(name = "weather.manual", description = "Look up the weather, bound by hand.")
+                    public Future<WeatherReport> lookup(
+                            @McpToolParam(name = "city", description = "The city to look up.") String city) {
+                        return Future.succeededFuture(new WeatherReport(city, 21));
+                    }
+                }
+                """);
+
+        // Alone: nothing is emitted, and the type's declarations are not even validated
+        // (it has no injectable constructor, which would otherwise be an error).
+        try (McpToolCompilation alone = McpToolCompilation.of(weatherReport(), optedOut)) {
+            alone.result().assertSuccess().assertNoWarnings();
+            assertNoGeneratedSource(alone, GENERATED_MODULE_FQN);
+            assertNoGeneratedSource(alone, TOOLS_PACKAGE + ".ManualWeatherTools_lookup_McpToolInvoker");
+        }
+
+        // Beside an un-annotated tool type: only that type is bound.
+        try (McpToolCompilation mixed = McpToolCompilation.of(weatherReport(), optedOut, validWeatherTools())) {
+            mixed.result()
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(GENERATED_MODULE_FQN, "WeatherTools_lookup_McpToolInvoker")
+                    .assertGeneratedSourceDoesNotContain(GENERATED_MODULE_FQN, "ManualWeatherTools")
+                    .assertGeneratedSourceContains(WEATHER_INVOKER_FQN, "weather.lookup");
+            assertNoGeneratedSource(mixed, TOOLS_PACKAGE + ".ManualWeatherTools_lookup_McpToolInvoker");
+        }
+    }
+
+    @Test
+    @DisplayName("an un-annotated tool type still generates an invoker and module binding")
+    void shouldStillGenerateForToolTypeWithoutNoAutoWire() {
+        try (McpToolCompilation valid = McpToolCompilation.of(weatherReport(), validWeatherTools())) {
+            valid.result()
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(GENERATED_MODULE_FQN, "WeatherTools_lookup_McpToolInvoker")
+                    .assertGeneratedSourceContains(WEATHER_INVOKER_FQN, "weather.lookup");
+        }
+    }
+
+    private static void assertNoGeneratedSource(McpToolCompilation compilation, String fqn) {
+        boolean present = compilation.result().compilation().generatedSourceFiles().stream()
+                .anyMatch(file -> file.getName().endsWith(fqn.replace('.', '/') + ".java"));
+        assertEquals(false, present, fqn + " must not be generated");
     }
 
     // --- Framework construction ---

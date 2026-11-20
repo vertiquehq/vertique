@@ -391,6 +391,65 @@ class CacheAnnotationProcessorTest {
     }
 
     @Test
+    @DisplayName("an explicit CLUSTERED mode on a synchronous method is rejected")
+    void clusteredSynchronousMethodIsRejected() {
+        ProcessorTestHarness.run(
+                        new CacheAnnotationProcessor(), SourceFiles.inline("com.example.ClusteredSyncBean", """
+                                package com.example;
+
+                                import dev.vertique.cache.CacheMode;
+                                import dev.vertique.cache.aop.Cacheable;
+                                import jakarta.inject.Inject;
+
+                                public class ClusteredSyncBean {
+                                    @Inject
+                                    public ClusteredSyncBean() {}
+
+                                    @Cacheable(name = "users", key = "0", mode = CacheMode.CLUSTERED)
+                                    public String byId(String id) {
+                                        return id;
+                                    }
+                                }
+                                """))
+                .assertFailed()
+                .assertErrorMessage("CLUSTERED requires a Future<T> return type");
+    }
+
+    @Test
+    @DisplayName("CLUSTERED on a Future method and LOCAL or DEFAULT on a synchronous method compile")
+    void clusteredFutureAndLocalSynchronousMethodsCompile() {
+        ProcessorTestHarness.run(new CacheAnnotationProcessor(), SourceFiles.inline("com.example.ModeBean", """
+                                package com.example;
+
+                                import dev.vertique.cache.CacheMode;
+                                import dev.vertique.cache.aop.Cacheable;
+                                import io.vertx.core.Future;
+                                import jakarta.inject.Inject;
+
+                                public class ModeBean {
+                                    @Inject
+                                    public ModeBean() {}
+
+                                    @Cacheable(name = "a", key = "0", mode = CacheMode.CLUSTERED)
+                                    public Future<String> clustered(String id) {
+                                        return Future.succeededFuture(id);
+                                    }
+
+                                    @Cacheable(name = "b", key = "0", mode = CacheMode.LOCAL)
+                                    public String local(String id) {
+                                        return id;
+                                    }
+
+                                    @Cacheable(name = "c", key = "0")
+                                    public String byDefault(String id) {
+                                        return id;
+                                    }
+                                }
+                                """))
+                .assertSuccess();
+    }
+
+    @Test
     @DisplayName("raw and wildcard futures are rejected")
     void ambiguousFutureResultsAreRejected() {
         ProcessorTestHarness.run(

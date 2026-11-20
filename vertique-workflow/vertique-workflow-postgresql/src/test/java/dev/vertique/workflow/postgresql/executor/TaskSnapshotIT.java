@@ -65,6 +65,7 @@ public class TaskSnapshotIT {
             // Then the snapshot of the task holds the schema of the decision and the row records the requirement
             Row task = taskOf(f, id);
             assertThat(task.getBoolean("require_version_stability")).isTrue();
+            assertThat(task.getString("task_type")).isEqualTo("approval");
             JsonArray decisions = task.getJsonArray("decisions_snapshot_json");
             assertThat(decisions).hasSize(1);
             assertThat(decisions.getJsonObject(0).getString("name")).isEqualTo("approve");
@@ -91,6 +92,23 @@ public class TaskSnapshotIT {
                             .getJsonObject(0)
                             .containsKey("payloadSchema"))
                     .isFalse();
+        }
+    }
+
+    @Test
+    @DisplayName("a task whose step declares no task type stores none")
+    void taskWithoutTypeStoresNone() {
+        try (SignalFixture f = new SignalFixture(db.toPoolConfig(), new UntypedReviewFixture(), List.of())) {
+            // Given a plan whose task step declares no task type
+            Node node = f.node("engine").build();
+
+            // When an instance reaches the task
+            WorkflowInstanceId id = startAtTask(f, node, f.definition, "untyped", null);
+
+            // Then the row carries no task type
+            Row task = taskOf(f, id);
+            assertThat(task.getString("status")).isEqualTo("OPEN");
+            assertThat(task.getString("task_type")).isNull();
         }
     }
 
@@ -142,6 +160,7 @@ public class TaskSnapshotIT {
             Row task = taskOf(f, id);
             assertThat(task.getUUID("branch_token_id")).isNotNull();
             assertThat(task.getBoolean("require_version_stability")).isTrue();
+            assertThat(task.getString("task_type")).isEqualTo("branch-approval");
             assertThat(task.getJsonArray("decisions_snapshot_json")
                             .getJsonObject(0)
                             .getJsonObject("payloadSchema"))
@@ -173,7 +192,7 @@ public class TaskSnapshotIT {
     private static Row taskOf(SignalFixture f, WorkflowInstanceId id) {
         return await(f.fixture
                         .observer()
-                        .preparedQuery("SELECT status, branch_token_id, require_version_stability,"
+                        .preparedQuery("SELECT status, branch_token_id, require_version_stability, task_type,"
                                 + " decisions_snapshot_json FROM workflow_tasks WHERE workflow_id=$1")
                         .execute(Tuple.of(id.value())))
                 .iterator()
@@ -204,6 +223,7 @@ public class TaskSnapshotIT {
                         .join("join")
                         .task("task-step")
                         .assignToRole("reviewers")
+                        .taskType("branch-approval")
                         .requireVersionStability()
                         .decision("approve", Decision.class)
                         .onDecision((state, decision) -> state)
@@ -218,6 +238,22 @@ public class TaskSnapshotIT {
                         .endJoin()
                         .complete("done");
                 wf.initialStep("fork");
+            });
+        }
+    }
+
+    /** A task step that declares no task type. */
+    static final class UntypedReviewFixture extends Definition {
+        UntypedReviewFixture() {
+            super("untyped-review", wf -> {
+                wf.initialStep("review");
+                wf.task("review")
+                        .assignToRole("compliance")
+                        .decision("approve", Decision.class)
+                        .onDecision((state, decision) -> state)
+                        .toStep("done")
+                        .build();
+                wf.complete("done");
             });
         }
     }

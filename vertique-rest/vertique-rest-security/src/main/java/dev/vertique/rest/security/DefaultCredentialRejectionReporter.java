@@ -140,7 +140,7 @@ public final class DefaultCredentialRejectionReporter implements CredentialRejec
         // that a later alternative already authenticated — has ctx.user() != null here and must emit
         // immediately: it is a real 401, not a superseded chain alternative. The flag is never
         // cleared, so this user-null guard (not the flag alone) is what scopes deferral to the chain
-        // attempts. (#154 review finding.)
+        // attempts.
         if (Boolean.TRUE.equals(ctx.get(DeferredCredentialRejectionAuthHandler.DEFER_CONTEXT_KEY))
                 && ctx.user() == null) {
             bufferForDeferredEmit(ctx, event);

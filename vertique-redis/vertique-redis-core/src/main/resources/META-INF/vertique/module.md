@@ -24,8 +24,8 @@ infrastructure and does not select or implement a feature-specific Redis use cas
 
 Connection profiles are named application configuration under `redis.connections.<name>`. Each
 profile validates a non-blank name, one or more credential-free `redis://` or `rediss://`
-endpoints, optional username and secret-reference fields, TLS mode, connect timeout, maximum pool
-size, and maximum waiting requests. Profile names must be unique. Feature modules reference a
+endpoints, an optional username and password (`passwordSecret`), TLS mode, connect timeout, maximum
+pool size, and maximum waiting requests. Profile names must be unique. Feature modules reference a
 profile and receive shared infrastructure through explicit Dagger composition.
 
 The typed profile configuration is built during application startup. The application-scoped
@@ -34,7 +34,9 @@ startup-resolved credentials. Changing credential configuration does not change 
 an existing client; credential rotation therefore requires an application restart.
 
 Validation is performed while typed configuration is constructed. Diagnostics contain stable
-field-level messages and never include endpoint credentials or password material.
+field-level messages and never include endpoint credentials or password material: an
+invalid-endpoint diagnostic names no part of the endpoint and carries no cause, because a mistyped
+credential can sit anywhere in the text and the JDK's URI parse failure would quote it whole.
 `RedisConnectionConfig.toString()` also redacts `passwordSecret`.
 
 ## Redis client lifecycle
@@ -146,11 +148,11 @@ Profiles live under `redis.connections` as a keyed object (key = profile name). 
 |---|---|---|---|
 | `endpoints` | string[] | yes | Non-empty; each entry credential-free `redis://` or `rediss://` (no user-info, query, or fragment) |
 | `username` | string | no | Blank treated as absent |
-| `passwordSecret` | string | no | Blank treated as absent; redacted in diagnostics/`toString()` |
-| `tlsEnabled` | boolean | yes | Mapped to Vert.x SSL |
+| `passwordSecret` | string | no | The password itself, passed unchanged to the client; the module resolves no reference, so supply it through a `${...}` config placeholder to keep it out of the config file. Blank treated as absent; redacted in diagnostics/`toString()` |
+| `tlsEnabled` | boolean | no | Default `false`; mapped to Vert.x SSL. Must be `true` when any endpoint uses `rediss://`: the combination of a `rediss://` endpoint with `tlsEnabled: false` fails startup with a `ConfigurationException` naming `redis.connections.<name>.tlsEnabled` and no endpoint text |
 | `connectTimeoutMs` | long | yes | 1–60000 |
 | `maxPoolSize` | int | yes | 1–256 |
-| `maxPoolWaiting` | int | yes | 0–10000 |
+| `maxPoolWaiting` | int | no | Default `0`; 0–10000 |
 
 ## Module Dagger Bindings
 

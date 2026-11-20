@@ -349,6 +349,9 @@ public final class WorkflowDefinitionCompiler {
     @SuppressWarnings({"rawtypes", "unchecked"})
     private void emitHumanTask(WorkflowBuilder builder, HumanTaskStep step) {
         var taskBuilder = builder.task(step.id());
+        if (step.taskType() != null && !step.taskType().isBlank()) {
+            taskBuilder.taskType(step.taskType());
+        }
 
         // --- Assignment ---
         HumanTaskStep.AssignmentBlock assignment = step.assignment();

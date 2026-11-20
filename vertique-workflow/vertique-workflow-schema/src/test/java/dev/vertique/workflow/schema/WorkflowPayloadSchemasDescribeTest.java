@@ -152,15 +152,12 @@ class WorkflowPayloadSchemasDescribeTest {
     }
 
     @Test
-    @DisplayName("reads never load a class through the registration class loader")
+    @DisplayName("reads never load a class")
     void readsNeverLoadClasses() {
-        // Given: a validator constructed through the class loader seam with a counting loader, and a registered
-        // definition whose registration loaded the decision payload class through that loader
+        // Given: a registered definition, and a counting loader that will be the thread's context loader
         CountingClassLoader loader = new CountingClassLoader(getClass().getClassLoader());
-        DefaultWorkflowRegistry registry = Registries.withSchemaValidator(cache, loader);
+        DefaultWorkflowRegistry registry = Registries.withSchemaValidator(cache);
         registry.register(Definitions.expense());
-        assertThat(loader.loads.get()).isPositive();
-        loader.loads.set(0);
         AwaitedSchemas schemas = AwaitedSchemas.of(registry, cache);
 
         // When: describe and decision run for the registered key and for unknown keys, with the counting loader as

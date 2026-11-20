@@ -117,6 +117,22 @@ public final class Retry {
             return this;
         }
 
+        /**
+         * Sets the longest failure delay hint the retry honors.
+         *
+         * <p>With the default of 0 every {@link RetryDelayHint} is ignored. Above 0, a retried failure
+         * that exposes a hint delays the next attempt by the larger of the backoff and the hint, and a
+         * hint above this maximum surfaces the failure instead of waiting.
+         *
+         * @param maxMs the maximum in milliseconds, {@code >= 0}
+         * @return this builder
+         */
+        public Builder retryAfterMaxMs(long maxMs) {
+            ensureMutable();
+            configuration.retryAfterMaxMs(maxMs);
+            return this;
+        }
+
         /** Builds the immutable retry component. */
         public Retry build() {
             ensureMutable();

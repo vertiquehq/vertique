@@ -5,9 +5,9 @@ package dev.vertique.db;
 
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonSetter;
 import com.fasterxml.jackson.annotation.Nulls;
+import dev.vertique.core.config.ConfigSecret;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -39,10 +39,16 @@ import lombok.extern.jackson.Jacksonized;
  * }
  * }</pre>
  *
- * <p><strong>Secret hygiene.</strong> {@code password}, {@code trustStorePassword}, and the vendor
- * {@code properties} bag are read from configuration but are {@link JsonProperty.Access#WRITE_ONLY}:
- * Jackson never serializes them back out, and {@link #toString()} renders them redacted, so a config
- * dump, diagnostics endpoint, or log line cannot reveal them.
+ * <p><strong>Secret hygiene.</strong> {@code password} and {@code trustStorePassword} are read from
+ * configuration and stay readable through their accessors; the config mapper behind
+ * {@code ConfigParser} serializes them as {@code "***"} when set and omits them when absent, because
+ * their names match the shared secret rule ({@code ConfigSecretRenderer}). The vendor
+ * {@code properties} bag may carry a secret under any key, so it is marked
+ * {@link ConfigSecret} and the config mapper serializes it whole as {@code "***"} when non-empty
+ * ({@code {}} when empty). {@link #toString()}
+ * renders all three redacted, so a config dump, diagnostics endpoint, or log line cannot reveal them.
+ * Only the config mapper masks: an application that serializes this record with another
+ * {@code ObjectMapper} prints the passwords.
  */
 @Getter
 @Builder
@@ -66,8 +72,7 @@ public class DbPoolConfig {
     /** The database user. */
     private final String user;
 
-    /** The database password. */
-    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
+    /** The database password. Masked as {@code "***"} when the config mapper serializes the record. */
     private final String password;
 
     // --- Pool sizing ---
@@ -98,6 +103,14 @@ public class DbPoolConfig {
      */
     @Builder.Default
     private final int connectionTimeoutMs = 30_000;
+
+    /**
+     * Maximum time in milliseconds to establish the TCP connection to the database. Defaults to
+     * {@code 60000}, the Vert.x client default. Bounds only the socket connect, not the wait for a
+     * pooled connection ({@link #connectionTimeoutMs}).
+     */
+    @Builder.Default
+    private final int connectTimeoutMs = 60_000;
 
     /**
      * Maximum time in milliseconds a connection may remain idle before being evicted. {@code 0}
@@ -151,9 +164,10 @@ public class DbPoolConfig {
 
     /**
      * Vendor-specific connection properties (e.g., {@code ApplicationName} for PostgreSQL). Defaults
-     * to an empty map.
+     * to an empty map. The bag may hold a secret under any key, so the config mapper serializes it
+     * whole as {@code "***"} when non-empty.
      */
-    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
+    @ConfigSecret
     @Builder.Default
     private final Map<String, String> properties = Map.of();
 
@@ -189,9 +203,9 @@ public class DbPoolConfig {
     private final String trustStorePath;
 
     /**
-     * Password for the trust store. Required for JKS and PKCS12 formats; ignored for PEM.
+     * Password for the trust store. Required for JKS and PKCS12 formats; ignored for PEM. Masked as
+     * {@code "***"} when the config mapper serializes the record.
      */
-    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     private final String trustStorePassword;
 
     /**
@@ -231,6 +245,7 @@ public class DbPoolConfig {
                 + ", maxWaitQueueSize=" + maxWaitQueueSize
                 + ", eventLoopSize=" + eventLoopSize
                 + ", connectionTimeoutMs=" + connectionTimeoutMs
+                + ", connectTimeoutMs=" + connectTimeoutMs
                 + ", idleTimeoutMs=" + idleTimeoutMs
                 + ", maxLifetimeMs=" + maxLifetimeMs
                 + ", poolCleanerPeriodMs=" + poolCleanerPeriodMs

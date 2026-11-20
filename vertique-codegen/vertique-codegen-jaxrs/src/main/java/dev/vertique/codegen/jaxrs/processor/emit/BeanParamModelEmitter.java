@@ -33,7 +33,7 @@ import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.TypeMirror;
 
 /**
- * Emitter for per-bean {@code {Bean}_BeanParamModel} companions (CG-010 step 4c).
+ * Emitter for per-bean {@code {Bean}_BeanParamModel} companions.
  *
  * <p>For each {@code @BeanParam} or {@code @RequestParams} type discovered across the validated
  * resource contracts, this emitter generates a {@code public final class {Bean}_BeanParamModel}
@@ -51,7 +51,7 @@ import javax.lang.model.type.TypeMirror;
  * <h2>Field traversal semantics</h2>
  *
  * <p>The field traversal mirrors the runtime {@code ParameterExtractor.computeBeanFields}
- * semantics exactly, including the adjacent-defect-ex-#30 subclass-wins field-hiding dedup:
+ * semantics exactly, including the subclass-wins field-hiding dedup:
  * <ul>
  *   <li><strong>Records</strong> — iterates {@code getRecordComponents()} in declaration order.
  *       JAX-RS annotations land on the synthetic accessor method; both component and accessor are
@@ -472,7 +472,7 @@ public final class BeanParamModelEmitter {
      * <p>{@code genericType} is {@code null} and {@code componentType} is {@code null}. Bean param
      * fields are not generic collections at this level; if needed, component type support can be
      * added later.
-     * TODO(CG-010-later): emit componentType for List-valued bean param fields.
+     * TODO: emit componentType for List-valued bean param fields.
      *
      * <p>{@code annotations} is populated from the compile-time {@code ANN_n} static constant,
      * which is loaded at class-load time by {@code loadFieldAnnotations} /
@@ -627,7 +627,7 @@ public final class BeanParamModelEmitter {
 
     /**
      * Returns the erased binary FQN of {@code type}. Delegates to {@link TypeMirrorFqn}
-     * so the three CG-010 emitters share one source of truth on nested-type form.
+     * so the three emitters share one source of truth on nested-type form.
      */
     private String erasedFqn(TypeMirror type) {
         return TypeMirrorFqn.erasedFqn(type, ctx);

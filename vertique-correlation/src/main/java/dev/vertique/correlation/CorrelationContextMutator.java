@@ -27,7 +27,7 @@ import java.util.Objects;
  * ingress, security/auth enrichers, and tracing contributors that need to extend the live
  * context as new ids become known mid-request.
  *
- * <p><b>Selective MDC mirroring (FR-COR-162/163/165).</b> Setters fall into two groups:
+ * <p><b>Selective MDC mirroring.</b> Setters fall into two groups:
  * <ul>
  *   <li><b>Mirroring</b> — {@link #setCausationId} and {@link #setTrace} update both the live
  *       {@link CorrelationContext} and the matching {@link CorrelationMdcKeys} MDC entry inline.
@@ -98,7 +98,7 @@ public final class CorrelationContextMutator {
         }
     }
 
-    // --- Non-mirroring setters (live context only; MDC intentionally untouched per FR-COR-163/165) ---
+    // --- Non-mirroring setters (live context only; MDC intentionally untouched) ---
 
     /**
      * Sets (or clears) the session reference on the live context. Does not touch MDC — session

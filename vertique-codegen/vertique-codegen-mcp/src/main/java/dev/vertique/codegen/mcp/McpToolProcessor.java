@@ -5,6 +5,7 @@ package dev.vertique.codegen.mcp;
 
 import dev.vertique.codegen.AnnotationMirrors;
 import dev.vertique.codegen.CodegenContext;
+import dev.vertique.codegen.NoAutoWire;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -35,6 +36,9 @@ import javax.lang.model.element.TypeElement;
  * fallback exist; a tool declaration that cannot be invoked directly is a compile error rather than
  * a degraded binding.
  *
+ * <p>A declaring type annotated {@code @NoAutoWire} is skipped entirely: its tool methods are
+ * neither validated nor emitted, and the application keeps its own manual binding.
+ *
  * <p>Processing is a single pass over the first non-empty round:
  *
  * <ol>
@@ -56,6 +60,9 @@ public final class McpToolProcessor extends AbstractProcessor {
 
     /** This processor's own fully-qualified name, stamped into every generated file. */
     static final String PROCESSOR_FQN = "dev.vertique.codegen.mcp.McpToolProcessor";
+
+    /** The per-type opt-out: a declaring type carrying it gets no invoker and no module binding. */
+    static final String NO_AUTO_WIRE = NoAutoWire.class.getName();
 
     /** The tool annotation this processor claims. */
     static final String MCP_TOOL = "dev.vertique.mcp.annotation.McpTool";
@@ -140,6 +147,9 @@ public final class McpToolProcessor extends AbstractProcessor {
                 ctx.diagnostics()
                         .error(method, "@McpTool method %s() must be declared by a type", method.getSimpleName());
                 valid = false;
+                continue;
+            }
+            if (AnnotationMirrors.isPresent(method.getEnclosingElement(), NO_AUTO_WIRE)) {
                 continue;
             }
             toolMethods.add(method);

@@ -101,7 +101,7 @@ public interface ParameterMetadata {
      *
      * <p>Part of the opt-in reflective-accessor group: this is not part of the reflection-free
      * guarantee and is never called by generated proxy code. It exists for the JAX-RS bridge, which
-     * consumes the full annotation array (wired in Phase 3); the default returns an empty array so
+     * consumes the full annotation array; the default returns an empty array so
      * existing implementations keep compiling without overriding it.
      *
      * @return a supplier of the parameter's annotations (an empty array by default)

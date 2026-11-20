@@ -18,11 +18,14 @@ import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
+import javax.lang.model.type.ArrayType;
+import javax.lang.model.type.TypeKind;
+import javax.lang.model.type.TypeMirror;
 
 /**
  * Shared logic for materializing a JAX-RS parameter's runtime-retained annotations into a
  * literal-backed {@code dev.vertique.core.codegen.ParameterMetadata} implementation, used identically
- * by {@link ExecutionPlanEmitter} and {@link JaxRsDescriptorEmitter} (ADR-0146).
+ * by {@link ExecutionPlanEmitter} and {@link JaxRsDescriptorEmitter}.
  *
  * <p><strong>Parity-first policy.</strong> Codegen is a performance optimization, not a feature gate:
  * adding or removing the annotation processor must not change runtime behavior. Each parameter's
@@ -55,6 +58,7 @@ final class ParameterAnnotationMaterializer {
             ClassName.get("dev.vertique.rest.jaxrs.runtime", "GeneratedJaxRsReflectiveAnnotations");
 
     private final CodegenContext ctx;
+    private final GenericTypeExpressions genericTypes;
 
     /**
      * Creates a materializer bound to the given codegen context.
@@ -63,6 +67,7 @@ final class ParameterAnnotationMaterializer {
      */
     ParameterAnnotationMaterializer(CodegenContext ctx) {
         this.ctx = ctx;
+        this.genericTypes = new GenericTypeExpressions(ctx);
     }
 
     /**
@@ -101,10 +106,41 @@ final class ParameterAnnotationMaterializer {
         // metadata stays purely literal-backed and never reflects.
         CodeBlock fallback = hasUnsupported[0] ? reflectiveFallbackSupplier(generatedName, method, paramIndex) : null;
 
-        writer.accept(MetadataEmitter.emitParameterMetadata(
-                generatedName, paramIndex, pc.name(), pc.type(), ctx.types(), refs, fallback));
+        writer.accept(emitMetadata(pc, paramIndex, generatedName, refs, fallback));
 
         return CodeBlock.of("new $T()", generatedName);
+    }
+
+    /**
+     * Emits the metadata class. A parameter type the generated class cannot write as a class literal (a
+     * private class, or one nested in a private class, possibly as an array element) is loaded by name
+     * when the class initializes; any other type is a class literal.
+     */
+    private com.palantir.javapoet.JavaFile emitMetadata(
+            EffectiveParamContract pc,
+            int paramIndex,
+            ClassName generatedName,
+            List<MetadataEmitter.AnnotationLiteralRef> refs,
+            CodeBlock fallback) {
+        TypeMirror erased = ctx.types().erasure(pc.type());
+        int dimensions = 0;
+        TypeMirror element = erased;
+        while (element instanceof ArrayType array) {
+            dimensions++;
+            element = array.getComponentType();
+        }
+        if (element.getKind() == TypeKind.DECLARED && !genericTypes.isNameable(element, generatedName.packageName())) {
+            return MetadataEmitter.emitParameterMetadataLoadingType(
+                    generatedName,
+                    paramIndex,
+                    pc.name(),
+                    TypeMirrorFqn.erasedFqn(element, ctx),
+                    dimensions,
+                    refs,
+                    fallback);
+        }
+        return MetadataEmitter.emitParameterMetadata(
+                generatedName, paramIndex, pc.name(), pc.type(), ctx.types(), refs, fallback);
     }
 
     /**

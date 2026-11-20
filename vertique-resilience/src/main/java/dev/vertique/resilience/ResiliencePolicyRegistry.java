@@ -118,7 +118,8 @@ public interface ResiliencePolicyRegistry {
                 Optional.of(completeBackoff(backoff)),
                 retry.retryOn(),
                 retry.abortOn(),
-                retry.fallbackPolicy()));
+                retry.fallbackPolicy(),
+                retry.retryAfterMaxMs()));
     }
 
     private static BackoffOverride completeBackoff(BackoffOverride configured) {

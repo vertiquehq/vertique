@@ -10,7 +10,7 @@ import java.util.Objects;
  * Thrown by {@link IdentityReconstruction} when a {@link IdentitySnapshot} cannot be safely
  * reconstructed into a {@link SecurityContext}.
  *
- * <p>Reconstruction is the trust boundary of FR-ID-CA-008: it re-verifies the snapshot's integrity
+ * <p>Reconstruction is a trust boundary: it re-verifies the snapshot's integrity
  * envelope before minting any context. This exception is thrown for a {@code null} snapshot, a
  * tampered or otherwise invalid integrity tag, an unknown signing key, or any other condition the
  * underlying codec rejects. Reconstruction is fail-closed — this exception is always thrown before

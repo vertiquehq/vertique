@@ -118,7 +118,7 @@ public final class LocaleResolutionException extends LocalizationException {
     // --- Static factories — one per (Reason, message wording) pair ---
 
     /**
-     * Builds a {@link Reason#MISSING_INPUT} exception for the language-range path (FR-LOC-103).
+     * Builds a {@link Reason#MISSING_INPUT} exception for the language-range path.
      *
      * @param value             the raw input string (preserved verbatim, including {@code null})
      * @param supportedLocales  the resolver's supported-locale snapshot
@@ -134,7 +134,7 @@ public final class LocaleResolutionException extends LocalizationException {
     }
 
     /**
-     * Builds a {@link Reason#MISSING_INPUT} exception for the language-tag path (FR-LOC-115).
+     * Builds a {@link Reason#MISSING_INPUT} exception for the language-tag path.
      */
     public static LocaleResolutionException missingLanguageTag(String value, List<Locale> supportedLocales) {
         return new LocaleResolutionException(
@@ -146,7 +146,7 @@ public final class LocaleResolutionException extends LocalizationException {
     }
 
     /**
-     * Builds a {@link Reason#MALFORMED_LANGUAGE_RANGE} exception (FR-LOC-105).
+     * Builds a {@link Reason#MALFORMED_LANGUAGE_RANGE} exception.
      */
     public static LocaleResolutionException malformedLanguageRange(
             String value, List<Locale> supportedLocales, Throwable cause) {
@@ -155,7 +155,7 @@ public final class LocaleResolutionException extends LocalizationException {
     }
 
     /**
-     * Builds a {@link Reason#MALFORMED_LANGUAGE_TAG} exception (FR-LOC-105 tag path).
+     * Builds a {@link Reason#MALFORMED_LANGUAGE_TAG} exception (language-tag path).
      */
     public static LocaleResolutionException malformedLanguageTag(
             String value, List<Locale> supportedLocales, Throwable cause) {
@@ -164,7 +164,7 @@ public final class LocaleResolutionException extends LocalizationException {
     }
 
     /**
-     * Builds a {@link Reason#UNSUPPORTED_LANGUAGE_RANGE} exception (FR-LOC-107).
+     * Builds a {@link Reason#UNSUPPORTED_LANGUAGE_RANGE} exception.
      */
     public static LocaleResolutionException unsupportedLanguageRange(String value, List<Locale> supportedLocales) {
         return new LocaleResolutionException(
@@ -176,7 +176,7 @@ public final class LocaleResolutionException extends LocalizationException {
     }
 
     /**
-     * Builds a {@link Reason#UNSUPPORTED_LANGUAGE_TAG} exception (FR-LOC-116).
+     * Builds a {@link Reason#UNSUPPORTED_LANGUAGE_TAG} exception.
      */
     public static LocaleResolutionException unsupportedLanguageTag(String value, List<Locale> supportedLocales) {
         return new LocaleResolutionException(

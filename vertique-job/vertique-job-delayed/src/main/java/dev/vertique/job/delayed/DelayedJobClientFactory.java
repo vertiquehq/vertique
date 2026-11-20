@@ -67,7 +67,8 @@ public class DelayedJobClientFactory {
     }
 
     /**
-     * Creates a JDK dynamic proxy for the given {@link DelayedJobClient} contract interface.
+     * Creates a proxy for the given {@link DelayedJobClient} contract interface: the generated static
+     * proxy when present, otherwise a JDK dynamic proxy.
      *
      * <p>The contract interface must:
      * <ul>
@@ -131,7 +132,7 @@ public class DelayedJobClientFactory {
         JsonObject contractConfig = resolveContractConfig(annotation);
 
         // Prefer the generated static proxy when present (zero reflection); fall back to the JDK
-        // dynamic proxy otherwise. A present-but-broken generated class fails loudly. See ADR-0070.
+        // dynamic proxy otherwise. A present-but-broken generated class fails loudly.
         return GeneratedCompanions.instantiate(
                         contractInterface,
                         PROXY_SUFFIX,

@@ -15,8 +15,7 @@ import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
 
 /**
- * Validates body/form parameter exclusivity on JAX-RS resource methods at compile time
- * (CG-009 Tier-A).
+ * Validates body/form parameter exclusivity on JAX-RS resource methods at compile time.
  *
  * <p>Mirrors {@code RouteValidator.validateMethodParams} (runtime rule):
  * <ul>
@@ -28,8 +27,8 @@ import javax.lang.model.element.VariableElement;
  * same ordered dispatch as the runtime {@code ResourceScanner.resolveParams}. Each classification
  * slot corresponds to a value of {@link JaxRsParamSource}.
  *
- * <p>Two APIs are provided: the original element-based API (used by CG-009 tests) and an
- * {@link EffectiveMethodContract}-based API used by {@code JaxRsPipelineProcessor} (CG-010).
+ * <p>Two APIs are provided: the original element-based API (used by existing tests) and an
+ * {@link EffectiveMethodContract}-based API used by {@code JaxRsPipelineProcessor}.
  */
 public final class BodyFormValidator {
 
@@ -44,7 +43,7 @@ public final class BodyFormValidator {
         this.ctx = ctx;
     }
 
-    // --- Element-based API (CG-009, preserved for existing tests) ---
+    // --- Element-based API (preserved for existing tests) ---
 
     /**
      * Validates the parameter list of the given resource method, checking that at most one body
@@ -84,7 +83,7 @@ public final class BodyFormValidator {
         }
     }
 
-    // --- Contract-based API (CG-010) ---
+    // --- Contract-based API ---
 
     /**
      * Validates the parameter list of the given method contract, checking that at most one body

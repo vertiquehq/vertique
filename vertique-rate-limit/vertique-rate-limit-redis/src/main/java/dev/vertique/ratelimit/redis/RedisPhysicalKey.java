@@ -13,19 +13,18 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
 /**
- * Pure-function {@code CLUSTERED} physical-key derivation (contracts/rate-limit-runtime.md,
- * "Storage identity", "Redis integration contract" — §6.1): {@code
+ * Pure-function {@code CLUSTERED} physical-key derivation: {@code
  * <namespace>:v1:<keyFingerprint>:HMAC-SHA-256(secret, canonicalInput)}.
  *
  * <p>{@code request.storageKey()} (from {@code RateLimitBackendRequest}) is already the shared
  * canonical input {@code policyName + ':' + policyRevision + ':' + canonicalKeyEncoding} that
- * {@code RateLimiter} computes once for both modes (contracts/rate-limit-runtime.md, "Storage
- * identity" — LOCAL uses it directly; CLUSTERED derives this physical key from it). T002's
+ * {@code RateLimiter} computes once for both modes (LOCAL uses it directly; CLUSTERED derives this
+ * physical key from it). The
  * equivalent derivation ({@code RateLimitStorageIdentity}) is package-private to {@code
  * vertique-rate-limit-core} and not reachable from this module, so this class re-derives the same
- * algorithm independently from JDK primitives — proven identical by shared golden vectors
- * (contracts/rate-limit-runtime.md, "Storage identity"). No method here logs, throws with, or
- * otherwise exposes a resolved secret, HMAC output, or raw key (NFR-CONF-002).
+ * algorithm independently from JDK primitives — proven identical by shared golden vectors.
+ * No method here logs, throws with, or
+ * otherwise exposes a resolved secret, HMAC output, or raw key.
  */
 final class RedisPhysicalKey {
 

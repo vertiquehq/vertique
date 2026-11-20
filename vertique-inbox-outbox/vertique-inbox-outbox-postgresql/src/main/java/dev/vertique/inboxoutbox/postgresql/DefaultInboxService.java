@@ -24,7 +24,7 @@ import java.util.function.Supplier;
  * {@link dev.vertique.inboxoutbox.exception.InboxOutboxPersistenceException} instead of raw
  * {@link dev.vertique.db.exception.DataAccessException} types. Failures from the
  * caller-supplied {@code work} supplier propagate UNWRAPPED — the mapper applies only to the
- * repository deduplication step, not to business logic (FR-IO-004).
+ * repository deduplication step, not to business logic.
  *
  * <p>Registered as a singleton by {@link TransactionalMessagingPostgresqlModule}.
  */
@@ -58,7 +58,7 @@ class DefaultInboxService implements InboxService {
      * <p>The {@code recover} that applies {@link PgInboxOutboxExceptionMapper#translate} is chained
      * on the {@code tryInsert} future BEFORE the {@code compose} that invokes {@code work}. This
      * ensures ONLY repository failures are wrapped; failures raised by {@code work.get()} inside
-     * the {@code compose} propagate unchanged (FR-IO-004).
+     * the {@code compose} propagate unchanged.
      */
     @Override
     public <T> Future<InboxResult<T>> processOnce(

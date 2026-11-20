@@ -284,7 +284,7 @@ public final class ServiceAuthorizationInterceptor implements ServiceInterceptor
         }
         // Capture correlation and the ambient invocation origin once up front: an async Authorizer
         // may complete on a foreign context where the holder no longer sees these request-scoped
-        // values (identity-002 P2.S5b-ii — see currentInvocationOrigin()). When no ambient
+        // values (see currentInvocationOrigin()). When no ambient
         // correlation is bound, mint a joinable UUID context rather than CorrelationContext.unbound()
         // — authorization audit adapters mint sourceEventId from requestId.
         CorrelationContext correlation = contextHolder
@@ -619,8 +619,7 @@ public final class ServiceAuthorizationInterceptor implements ServiceInterceptor
     /**
      * Returns the ambient {@link InvocationOrigin} bound on {@link #contextHolder} for the current
      * dispatch, defaulting to {@link InvocationOrigin#unspecified()} when none is bound — e.g. a
-     * legacy dispatch path that bypasses {@code ServiceMethodInvoker}'s inbound-scope install
-     * (identity-002 P2.S5b-ii).
+     * legacy dispatch path that bypasses {@code ServiceMethodInvoker}'s inbound-scope install.
      *
      * @return the ambient invocation origin, or {@link InvocationOrigin#unspecified()}; never
      *     {@code null}

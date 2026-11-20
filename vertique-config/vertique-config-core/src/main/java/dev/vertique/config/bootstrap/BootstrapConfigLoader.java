@@ -575,7 +575,7 @@ public final class BootstrapConfigLoader {
 
         /**
          * Redacted representation: the config tree may carry secrets and must never be
-         * stringified wholesale (NFR-CONF-002), so only the key count and source count appear.
+         * stringified wholesale, so only the key count and source count appear.
          *
          * @return a value-free summary of this result
          */

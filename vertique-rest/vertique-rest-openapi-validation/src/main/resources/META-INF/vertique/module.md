@@ -211,11 +211,12 @@ The strategy still passes the framework's `ParamConversionResolver` (`vertique-r
   then the global `jaxrs.openapiPath`); this strategy then caches and validates against one loaded
   contract per distinct `openapiPath` value, so two applications resolving to the same location share
   one contract and two resolving to different locations validate against different contracts. An
-  operationId therefore only has to exist in the contract of the mount that serves it — but two
-  operations that share an operationId across different JAX-RS mounts are still refused at startup by
-  `vertique-rest-jaxrs`'s mount composition validator (its global cross-mount operationId rule, same
-  owner exempted), even when both mounts resolve to the same contract location, until a later change
-  scopes that rule per mount.
+  operationId therefore only has to exist in the contract of the mount that serves it. Because this
+  strategy looks operations up by operationId in one contract, `vertique-rest-jaxrs`'s mount
+  composition validator refuses at startup two distinct operations that share an operationId across
+  mounts whose contract locations are equal after `Path.of(value).normalize()`; mounts at distinct
+  locations may reuse an operationId. An absolute path and a relative one naming the same file count
+  as distinct locations, so they load the same file twice and the refusal does not see them.
 - **This strategy reports `resolvesOperationsFromMountContract()` (`true`).** The rest-jaxrs mount
   composition validator reads that flag from the strategy selected by `jaxrs.validationStrategy`, but
   only once an application is declared (active or not) or an application mount is present; under that

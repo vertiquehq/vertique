@@ -24,7 +24,7 @@ import java.util.List;
  *
  * <p>Helpers that delegate to {@code ParameterExtractor}'s {@code EffectiveInputPolicies}-accepting
  * overloads bypass per-request annotation re-resolution; this is the load-bearing optimization on
- * the request hot path that justifies CG-010 slice 2.
+ * the request hot path.
  */
 final class ParameterExtractorBackedSupport implements GeneratedJaxRsSupport {
 
@@ -64,7 +64,7 @@ final class ParameterExtractorBackedSupport implements GeneratedJaxRsSupport {
             ResourceMethodMeta.ParamMeta meta, EffectiveInputPolicies policies, RoutingContext ctx) {
         // Read the already-bound request stashed by ResourceMethodInvoker before dispatch. The
         // generated path reuses the same BoundRequest body the reflective path binds, so the two
-        // paths share one body representation (FR-024). When absent (defensive), pass a null body.
+        // paths share one body representation. When absent (defensive), pass a null body.
         BoundRequest br = ctx.get(BoundRequest.KEY_META_DATA_BOUND_REQUEST);
         return parameterExtractor.deserializeBody(
                 br != null ? br.body() : RequestValue.of(null), meta.type(), meta.genericType(), ctx, policies);

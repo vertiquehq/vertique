@@ -17,9 +17,9 @@ import java.util.List;
  * <p>Contributes two stable actions into the {@link dev.vertique.security.authz.ActionRegistry}:
  * <ul>
  *   <li>{@code authz.action.list} — authorizes access to the action-registry introspection endpoint
- *       (Phase 5: lists all registered actions)</li>
+ *       (lists all registered actions)</li>
  *   <li>{@code authz.action.introspect} — authorizes access to the per-subject introspection
- *       endpoint (Phase 5: returns the set of actions allowed for the calling subject)</li>
+ *       endpoint (returns the set of actions allowed for the calling subject)</li>
  * </ul>
  *
  * <p>Both actions are in the {@code authz} subsystem, reserving that segment for the framework.

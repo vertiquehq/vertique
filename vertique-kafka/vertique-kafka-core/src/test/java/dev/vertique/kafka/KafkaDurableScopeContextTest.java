@@ -255,7 +255,7 @@ class KafkaDurableScopeContextTest {
         when(record.topic()).thenReturn("scope-topic");
         when(record.key()).thenReturn("key");
         Map<String, String> headers = DurableMetadataHeaderCodec.toHeaders(metadata);
-        return graph.receiver().dispatchToHandler("payload", record, KafkaRecordHeaders.of(headers), headers);
+        return graph.receiver().dispatchToHandler("payload", record, KafkaRecordHeaders.of(headers), headers, "corr-1");
     }
 
     private static JsonObject scopeBody() {

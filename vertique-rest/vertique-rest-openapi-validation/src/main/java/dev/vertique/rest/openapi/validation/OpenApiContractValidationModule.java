@@ -25,7 +25,7 @@ import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
  *
  * <p>This module is the only place the preview {@code vertx-openapi} artifact enters the
  * <em>production</em> graph — the default validation path ({@code web-validation} / {@code none})
- * never references it (FR-025). ({@code vertx-web-openapi-router} appears as a test-scope dependency
+ * never references it. ({@code vertx-web-openapi-router} appears as a test-scope dependency
  * in {@code vertique-rest-security} and {@code vertique-rest-auth-jwt} for legacy IT support.)
  */
 @Module

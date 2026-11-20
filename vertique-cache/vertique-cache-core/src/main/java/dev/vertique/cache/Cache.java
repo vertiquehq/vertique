@@ -37,7 +37,6 @@ public final class Cache<K, V> {
     private final CacheIdentity identity;
     private final AnonymousCachePolicy anonymousPolicy;
     private final Function<? super K, String> selector;
-    private final boolean asynchronousOnly;
 
     Cache(
             CacheStoreResolver stores,
@@ -51,8 +50,7 @@ public final class Cache<K, V> {
             long ttlSeconds,
             CacheIdentity identity,
             AnonymousCachePolicy anonymousPolicy,
-            Function<? super K, String> selector,
-            boolean asynchronousOnly) {
+            Function<? super K, String> selector) {
         this.stores = stores;
         this.config = config;
         this.observers = Set.copyOf(observers);
@@ -65,7 +63,6 @@ public final class Cache<K, V> {
         this.identity = identity;
         this.anonymousPolicy = anonymousPolicy;
         this.selector = selector;
-        this.asynchronousOnly = asynchronousOnly;
     }
 
     /** Loads a value on a miss and reuses it for subsequent calls. */
@@ -79,10 +76,6 @@ public final class Cache<K, V> {
         }
         if (!config.enabled()) {
             observe("none", CacheOperation.GET, CacheOutcome.DISABLED, System.nanoTime());
-            return invokeLoader(input, loader);
-        }
-        if (asynchronousOnly && mode == CacheMode.CLUSTERED) {
-            observe("none", CacheOperation.GET, CacheOutcome.BYPASS_SELECTOR, System.nanoTime());
             return invokeLoader(input, loader);
         }
         ResolvedCacheKey key;

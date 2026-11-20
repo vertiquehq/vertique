@@ -61,7 +61,7 @@ Meta-annotation that marks an annotation type as an aspect trigger. Placing `@As
 ```java
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
-@Aspect(ordering = 2000)
+@Aspect(ordering = 1000)
 public @interface Timed {
     String value() default "";
 }
@@ -85,7 +85,7 @@ public interface AspectProvider<A extends Annotation> {
 
 Both arguments are produced reflection-free by the processor: `target` is a generated `MethodMetadata` implementation (see `MethodMetadata` in `vertique-core`, `dev.vertique.core.codegen`), and `annotation` is a generated annotation-literal carrying the method's attribute values. `MethodMetadata`'s constant-only accessors (`name()`, `declaringType()`, `returnType()`, `parameterTypes()`, `parameters()`, `findAnnotation()`, `hasAnnotation()`) are the reflection-free core that generated proxies call. Generated metadata also returns `genericReturnType()` from a reflection-free `Type` graph for consumers that need the declared payload shape; `asMethod()` remains an opt-in reflective accessor.
 
-**Dagger wiring example:**
+**Dagger wiring example** (an illustrative provider; `MicrometerModule` already binds the `Timed` provider, so an application that installs it must not bind `AspectProvider<Timed>` again):
 
 ```java
 @Provides
@@ -199,7 +199,7 @@ AspectProvider<MyAnnotation> myAspectProvider() {
 ```java
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
-@Aspect(ordering = 1500)  // below Timed(2000) by default
+@Aspect(ordering = 1500)  // above Timed(1000), so it runs outside Timed
 public @interface MyAnnotation {
     String value() default "";
 }

@@ -1524,6 +1524,70 @@ public class PgInboxOutboxRepositoryIT {
     }
 
     // =========================================================================
+    // Outbox — queue sample
+    // =========================================================================
+
+    @Test
+    @DisplayName("sample of an empty outbox is all zero")
+    void sampleOfEmptyOutboxIsZero(VertxTestContext ctx) {
+        repository
+                .sample()
+                .onSuccess(sample -> ctx.verify(() -> {
+                    assertEquals(0, sample.due());
+                    assertEquals(Duration.ZERO, sample.oldestDueAge());
+                    assertEquals(0, sample.deadLetter());
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("sample counts due entries, ages the oldest, and leaves scheduled, retrying and published entries out")
+    void sampleCountsDueEntriesAndDeadLetters(VertxTestContext ctx) {
+        String nodeId = "node-sample-" + UUID.randomUUID().toString().substring(0, 8);
+        Future<Long> dueOld = pool.withTransaction(tx -> insert(kafkaEntry("topic-sample-old"), tx));
+        Future<Long> dueNew = pool.withTransaction(tx -> insert(kafkaEntry("topic-sample-new"), tx));
+        Future<Long> scheduled = pool.withTransaction(tx -> insert(
+                OutboxEntry.builder()
+                        .destinationType(DestinationType.KAFKA)
+                        .destination("topic-sample-later")
+                        .eventType("test.event")
+                        .payload(new JsonObject().put("key", "value"))
+                        .scheduledAt(Instant.now().plus(Duration.ofHours(1)))
+                        .build(),
+                tx));
+        Future<Long> retrying = pool.withTransaction(tx -> insert(kafkaEntry("topic-sample-retry"), tx));
+        Future<Long> deadLettered = pool.withTransaction(tx -> insert(kafkaEntry("topic-sample-dead"), tx));
+        Future<Long> published = pool.withTransaction(tx -> insert(kafkaEntry("topic-sample-published"), tx));
+        Future.all(dueOld, dueNew, scheduled, retrying, deadLettered, published)
+                .compose(all -> pool.preparedQuery(
+                                "UPDATE outbox SET available_at = NOW() - INTERVAL '2 minutes'" + " WHERE id = $1")
+                        .execute(Tuple.of(dueOld.result())))
+                // A row stored before available_at followed scheduled_at: only its scheduled_at keeps it out.
+                .compose(v -> pool.preparedQuery(
+                                "UPDATE outbox SET available_at = NOW() - INTERVAL '1 minute' WHERE id = $1")
+                        .execute(Tuple.of(scheduled.result())))
+                .compose(v -> pool.preparedQuery(
+                                "UPDATE outbox SET available_at = NOW() + INTERVAL '1 hour'" + " WHERE id = $1")
+                        .execute(Tuple.of(retrying.result())))
+                .compose(v -> pool.preparedQuery("UPDATE outbox SET state = 'DEAD_LETTER' WHERE id = $1")
+                        .execute(Tuple.of(deadLettered.result())))
+                .compose(v -> pool.preparedQuery("UPDATE outbox SET state = 'PUBLISHED' WHERE id = $1")
+                        .execute(Tuple.of(published.result())))
+                .compose(v -> repository.sample())
+                .onSuccess(sample -> ctx.verify(() -> {
+                    assertEquals(2, sample.due(), "only the two entries the relay may claim now are due");
+                    assertTrue(
+                            sample.oldestDueAge().compareTo(Duration.ofSeconds(110)) >= 0
+                                    && sample.oldestDueAge().compareTo(Duration.ofMinutes(5)) < 0,
+                            "the oldest due entry has been due for about two minutes, was " + sample.oldestDueAge());
+                    assertEquals(1, sample.deadLetter());
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    // =========================================================================
     // Outbox — scope
     // =========================================================================
 

@@ -25,9 +25,9 @@ import java.util.function.Supplier;
  * exactly once when this runtime closes, regardless of when its underlying action eventually
  * completes.
  *
- * <p>T021 W2: {@link #registerAndInvoke(Runnable, Supplier)} no longer holds this lifecycle's
- * monitor across {@code action}'s invocation — a third external deep review found that doing so
- * serialized every LOCAL backend admission across <em>every</em> policy this runtime resolves a
+ * <p>{@link #registerAndInvoke(Runnable, Supplier)} does not hold this lifecycle's
+ * monitor across {@code action}'s invocation — doing so would
+ * serialize every LOCAL backend admission across <em>every</em> policy this runtime resolves a
  * handle for (one shared {@link RateLimiterLifecycle} per runtime), since {@code
  * LocalBucket4jRateLimitBackend#consume} runs synchronously inside that critical section. Instead,
  * each call gets its own {@link Registration}: registration (closed-check + add) still happens
@@ -135,11 +135,11 @@ final class RateLimiterLifecycle {
      * <p>The operation is idempotent: every caller, concurrent or sequential, receives the exact
      * same terminal future.
      *
-     * <p>Every currently-registered {@link Registration} is fenced unconditionally, exactly as
-     * before: whether or not its action has started, {@link Registration#fenceAndBlockInvocation()}
-     * force-fails its guarded promise. The only behavior change from the pre-T021 W2 design is
-     * <em>when</em> a not-yet-started action is prevented from starting — via this registration's own
-     * CAS racing {@link #registerAndInvoke(Runnable, Supplier)}'s CAS, not via lock-hold.
+     * <p>Every currently-registered {@link Registration} is fenced unconditionally: whether or not
+     * its action has started, {@link Registration#fenceAndBlockInvocation()}
+     * force-fails its guarded promise. A not-yet-started action is prevented from starting via this
+     * registration's own CAS racing {@link #registerAndInvoke(Runnable, Supplier)}'s CAS, not via
+     * lock-hold.
      *
      * @return the shared close future, already completed by the time this method returns
      */

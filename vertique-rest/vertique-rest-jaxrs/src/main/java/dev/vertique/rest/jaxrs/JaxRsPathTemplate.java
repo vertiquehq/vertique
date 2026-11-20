@@ -20,7 +20,7 @@ import java.util.regex.Pattern;
  *       a single anchored regex in which each variable becomes a named capture group
  *       {@code (?<name>regex)} (an unconstrained variable in a regex template uses the default
  *       {@code [^/]+}). Vert.x populates {@code pathParams()} from the regex's named groups, so binding
- *       still happens by name (PRD-REST-017 slice-9 addendum item 5).</li>
+ *       still happens by name.</li>
  * </ul>
  *
  * <p>A template is treated as regex-constrained — and therefore compiled to the regex form — as soon as

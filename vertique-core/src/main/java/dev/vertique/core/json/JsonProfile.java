@@ -10,17 +10,16 @@ import java.lang.annotation.Target;
 
 /**
  * Selects a named JSON mapper {@link JsonProfileId profile} for a framework JSON boundary. This
- * is the single per-binding JSON profile selector across all framework JSON boundaries (ADR-0138):
+ * is the single per-binding JSON profile selector across all framework JSON boundaries:
  *
  * <ul>
  *   <li><strong>REST server resources</strong> — placed on a JAX-RS resource TYPE or METHOD;
  *       method-level overrides class-level. Controls request-body (de)serialization and response
  *       serialization.
  *   <li><strong>rest-client interfaces</strong> — placed on a {@code @RestClient}-annotated
- *       interface TYPE. Method-level placement is rejected at build time (FR-JSON-066).
+ * interface TYPE. Method-level placement is rejected at build time.
  *   <li><strong>{@code @KafkaListener} / {@code @KafkaProducer} types</strong> — placed on a
- *       Kafka listener or producer TYPE. Method-level placement is rejected at build time
- *       (FR-JSON-066).
+ *       Kafka listener or producer TYPE. Method-level placement is rejected at build time.
  *   <li><strong>MCP tools</strong> — placed on an {@code @McpTool} METHOD or on its declaring
  *       TYPE; method-level overrides type-level. It selects the profile used for tool argument
  *       materialization and structured-result serialization, and for the schemas generated from

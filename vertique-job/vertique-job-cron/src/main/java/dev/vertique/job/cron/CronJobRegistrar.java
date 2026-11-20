@@ -310,8 +310,8 @@ public class CronJobRegistrar {
                         jobId, jobConfig != null ? jobConfig.misfirePolicy() : null, annotation.misfirePolicy(), mode);
 
                 // --- Resolve target reference ---
-                // Annotated cron jobs must derive their target from service contract metadata
-                // (FR-TGT-081). This requires @ServiceOperation on the service method so a
+                // Annotated cron jobs must derive their target from service contract metadata.
+                // This requires @ServiceOperation on the service method so a
                 // stable target id exists. If absent, reject at registration time rather than
                 // silently degrading to an eventbus: target with a mutable address.
                 String stableTargetId = meta.stableTargetId();

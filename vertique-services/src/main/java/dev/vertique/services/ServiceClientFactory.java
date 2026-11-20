@@ -30,7 +30,7 @@ import lombok.extern.slf4j.Slf4j;
  * Creates clients for service contract interfaces, preferring the compile-time generated companion
  * proxy and falling back to a JDK dynamic proxy.
  *
- * <p><b>Selection (CG-015 §4.2 steps 3-4).</b> {@code vertique-codegen-services} emits a
+ * <p><b>Selection.</b> {@code vertique-codegen-services} emits a
  * {@code {Contract}_ServiceClientProxy} companion for every source-root {@code @ServiceContract}
  * interface. {@link #create(Class)} looks that companion up via
  * {@link GeneratedCompanions#instantiate(Class, String, Class[], Object[], java.util.function.BiFunction)}
@@ -40,7 +40,7 @@ import lombok.extern.slf4j.Slf4j;
  * {@code (ServiceRequestSender, DispatchEnvelopeBuilder, ServiceContractRegistry.ContractEntry)}.
  * An <em>absent</em> companion is the expected fallback and yields the reflective JDK dynamic proxy
  * described below; a <em>present but broken</em> companion fails loudly via
- * {@link #brokenCompanion(String, Throwable)} rather than silently degrading (ADR-0070/ADR-0073).
+ * {@link #brokenCompanion(String, Throwable)} rather than silently degrading.
  * Both paths honour the identical dispatch semantics documented here.
  *
  * <p>Proxies delegate all transport concerns to {@link ServiceRequestSender}, which handles
@@ -57,13 +57,13 @@ import lombok.extern.slf4j.Slf4j;
  * outgoing envelope automatically. If no ambient SC is bound and the contract method declares a
  * {@link SecurityContext} parameter, the caller's explicit argument is placed in
  * {@code callerOverrides} as a fallback. This gating prevents the encoder-vs-override key collision
- * that {@link ServiceDispatchContextCapturer#mergeCaptured} throws on (FR-CTX-063).
+ * that {@link ServiceDispatchContextCapturer#mergeCaptured} throws on.
  *
  * <p>The server-side {@link dev.vertique.services.dispatch.ServiceMethodInvoker} restores the
  * security context and other dispatch-context values via the
  * {@link dev.vertique.core.context.ContextHolder}.
  *
- * <p><b>{@code create()}-time completeness guarantee (CG-015 §4.2):</b> before constructing a
+ * <p><b>{@code create()}-time completeness guarantee:</b> before constructing a
  * proxy, every non-static, non-{@code Object}-declared method of the contract interface must have
  * a corresponding registered operation in the resolved {@link ServiceContractRegistry.ContractEntry}
  * — a registry superset (extra operations with no interface method) is allowed, but a missing
@@ -76,7 +76,7 @@ import lombok.extern.slf4j.Slf4j;
 public class ServiceClientFactory {
 
     /**
-     * The §4.2 pinned protocol prefix for contract↔registry mismatch messages.
+     * The pinned protocol prefix for contract↔registry mismatch messages.
      *
      * <p>Deliberately duplicated in the codegen emitter ({@code ClientProxyEmitter}, in
      * {@code vertique-codegen-services}) and sync-tested in both modules — do not change one
@@ -142,7 +142,7 @@ public class ServiceClientFactory {
      * @throws IllegalStateException    if any non-static, non-{@code Object}-declared contract
      *                                   method has no corresponding operation registered in the
      *                                   resolved {@link ServiceContractRegistry.ContractEntry}
-     *                                   (CG-015 §4.2 completeness check), or if a generated
+     *                                   (completeness check), or if a generated
      *                                   companion is present but cannot be instantiated (see
      *                                   {@link #brokenCompanion(String, Throwable)})
      */
@@ -215,8 +215,8 @@ public class ServiceClientFactory {
                     }
 
                     // Add explicit SecurityContext method-arg to callerOverrides ONLY when no
-                    // ambient SC is bound, to avoid the encoder-vs-override key collision
-                    // (FR-CTX-063). When an ambient SC is bound, the
+                    // ambient SC is bound, to avoid the encoder-vs-override key collision.
+                    // When an ambient SC is bound, the
                     // SecurityContextServiceDispatchEncoder captures it automatically.
                     Map<String, Object> callerOverrides = Map.of();
                     if (ContextValues.current(SecurityContext.class).isEmpty()) {
@@ -252,7 +252,7 @@ public class ServiceClientFactory {
 
     /**
      * Produces the exception thrown when a generated companion is present but cannot be
-     * instantiated (CG-015 §4.2, {@code onBroken} hook of {@link GeneratedCompanions#instantiate}).
+     * instantiated ({@code onBroken} hook of {@link GeneratedCompanions#instantiate}).
      *
      * <p><b>Narrow unwrap.</b> The generated constructor performs its own baked-id completeness
      * check and throws an {@link IllegalStateException} whose message starts with
@@ -262,7 +262,7 @@ public class ServiceClientFactory {
      * message prefix rather than on the exception type alone: a broad "any
      * {@code IllegalStateException} in the cause chain" unwrap would launder unrelated companion
      * defects — a failing static initializer, a bug in generated construction logic — into what
-     * reads as a clean fail-fast, defeating the loud-fail contract of ADR-0070/ADR-0073.
+     * reads as a clean fail-fast, defeating the loud-fail contract for generated companions.
      *
      * <p>Reachability: {@link #requireCompleteContract} already validates the <em>runtime</em>
      * method universe before selection, so the companion's <em>baked-id</em> check only fires
@@ -287,7 +287,7 @@ public class ServiceClientFactory {
 
     /**
      * Fails fast when the contract interface declares a client-dispatchable method with no
-     * corresponding operation in the resolved registry entry (CG-015 §4.2 step 2).
+     * corresponding operation in the resolved registry entry.
      *
      * <p>Enumerates {@code contract.getMethods()} minus {@code Object}-declared methods minus
      * static methods (statics are never client-dispatchable via a JDK dynamic proxy, and the

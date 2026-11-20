@@ -25,6 +25,8 @@ import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.core.validation.ViolationCarrier;
 import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.rest.core.ProblemDetail;
+import dev.vertique.rest.core.RestExceptionMapper;
+import dev.vertique.rest.core.RestExceptionMapperCustomizer;
 import dev.vertique.rest.core.RestValidationException;
 import dev.vertique.rest.core.ValidationErrorDetail;
 import dev.vertique.rest.core.ValidationProblemDetail;
@@ -34,6 +36,7 @@ import dev.vertique.rest.core.convert.ParamConverterNotFoundException;
 import dev.vertique.rest.core.dagger.JaxRsResources;
 import dev.vertique.rest.core.dagger.RestCoreModule;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
+import dev.vertique.rest.core.request.FileContentVerifier;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.response.ResponseBodyEncoder;
 import dev.vertique.rest.core.response.ResponseSerializer;
@@ -46,7 +49,6 @@ import dev.vertique.rest.jaxrs.publication.MountPublicationHook;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsResourceEntry;
 import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
 import dev.vertique.rest.jaxrs.synthetic.SyntheticOperationInstaller;
-import dev.vertique.rest.jaxrs.validation.FileContentVerifier;
 import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
@@ -196,9 +198,11 @@ public abstract class RestModule {
     /**
      * Contributes the rest-jaxrs {@link MountCompositionValidator}: it rejects an application mount
      * that conflicts with a hand-built JAX-RS mount or with another application mount in the same
-     * mount set (as when compositions are merged), and rejects two operations on any JAX-RS mounts
-     * that share an operationId without sharing the same owner, once one or more applications are
-     * declared or any application mount is present.
+     * mount set (as when compositions are merged), and, once one or more applications are declared
+     * or any application mount is present, rejects two operations on different JAX-RS mounts that
+     * share an operationId without sharing the same owner when both mounts are hand-built or, under a
+     * contract-driven strategy, resolve to the same contract location; it logs a WARN for each
+     * operationId shared across mounts where at least one is an application mount.
      *
      * @param view       this composition's application view
      * @param config     the JAX-RS routing configuration, carrying the configured
@@ -313,7 +317,7 @@ public abstract class RestModule {
      * {@link #actionRegistry()} binding are separate optional seams, a non-default graph can have the
      * registry present while the {@code Authorizer} is absent; the route registrar then fails startup
      * for any operation declaring {@code @RequiresAction} (fail-closed) rather than failing closed
-     * per-request when the gate evaluates (finding W2).
+     * per-request when the gate evaluates.
      *
      * @return the optional core {@link Authorizer} binding declaration
      */

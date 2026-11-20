@@ -13,10 +13,9 @@ import java.time.Duration;
 /**
  * Configuration record bounding every Mode-2 {@link PrincipalAuthorityResolver#resolve} call with
  * an operator-configured timeout, deserialized from the {@code identity.authz} section of the
- * application config via {@link dev.vertique.core.config.ConfigParser} (PRD identity-002 §14.3
- * Phase-2 Appendix, ADR-0169).
+ * application config via {@link dev.vertique.core.config.ConfigParser}.
  *
- * <p>ADR-0169 describes "a resolver failure, timeout, or ambiguous result" as denying with {@link
+ * <p>A resolver failure, timeout, or ambiguous result denies with {@link
  * dev.vertique.security.authz.AuthzReasonCodes#AUTHORITY_RESOLUTION_FAILED} — {@link
  * #resolutionTimeoutMs()} is the value that makes the "timeout" half of that guarantee real:
  * {@code SecurityAuthzModule} wraps every installed {@link PrincipalAuthorityResolver} in a {@link
@@ -47,7 +46,7 @@ public record PrincipalAuthorityResolutionConfig(long resolutionTimeoutMs) {
      * Default resolution timeout (milliseconds) applied when {@code resolutionTimeoutMs} is
      * omitted from config and no application binds an explicit {@link
      * PrincipalAuthorityResolutionConfig}. A {@link PrincipalAuthorityResolver} is expected to
-     * consult durable, principal-keyed authority storage (ADR-0169) — normally a fast lookup — so
+     * consult durable, principal-keyed authority storage — normally a fast lookup — so
      * this default gives headroom for a cold cache or a brief store hiccup without hanging
      * authorization indefinitely.
      */

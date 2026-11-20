@@ -593,7 +593,8 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                                     textHeaders,
                                     correlationId);
                         }
-                        case HANDLER -> dispatcher.dispatchToHandler(ctx.value(), record, headers, textHeaders);
+                        case HANDLER ->
+                            dispatcher.dispatchToHandler(ctx.value(), record, headers, textHeaders, correlationId);
                     };
 
             dispatchFuture.onComplete(dispatchResult -> {

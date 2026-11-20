@@ -11,14 +11,12 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Root config for the optional edge admission {@code Middleware} — the exact contract-final
- * public record (contracts/rest-adapter.md, "Edge limiter"). Deserialized from the
+ * Root config for the optional edge admission {@code Middleware}. Deserialized from the
  * {@code rateLimit.rest.edge} section of the application config.
  *
  * <p>{@code enabled} defaults to {@code false} when the whole {@code rateLimit.rest.edge} section
  * is absent: the edge limiter is an opt-in kill switch, and this module always contributes the
- * unconditional exception-to-HTTP mapping regardless of this flag (contracts/rest-adapter.md,
- * "HTTP mapping" — "always active regardless of this flag"). {@link
+ * unconditional exception-to-HTTP mapping regardless of this flag. {@link
  * dev.vertique.core.config.ConfigParser#parse} cannot distinguish "section entirely absent" from
  * "section present but {@code enabled} omitted", so both resolve to the same safe (off) default —
  * mirroring {@code CorsConfig#enabled()}'s own default-off kill-switch convention.
@@ -30,7 +28,7 @@ import java.util.Objects;
  */
 public record RateLimitEdgeConfig(boolean enabled, List<RateLimitEdgeRule> rules, String path) {
 
-    /** {@code rateLimit.rest.edge.path}'s default (contracts/rest-adapter.md). */
+    /** {@code rateLimit.rest.edge.path}'s default. */
     public static final String DEFAULT_PATH = "/*";
 
     /**

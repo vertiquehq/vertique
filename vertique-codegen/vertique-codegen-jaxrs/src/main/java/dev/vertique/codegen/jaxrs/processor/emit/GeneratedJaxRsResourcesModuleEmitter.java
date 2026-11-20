@@ -104,7 +104,7 @@ public final class GeneratedJaxRsResourcesModuleEmitter {
 
     // --- Constants ---
 
-    /** Simple class name of the generated module — must stay in sync with the CG-002 output. */
+    /** Simple class name of the generated module — must stay in sync with the {@code vertique-codegen-dagger} output. */
     static final String MODULE_SIMPLE_NAME = "GeneratedJaxRsResourcesModule";
 
     private static final String JAX_RS_RESOURCES_FQN = "dev.vertique.rest.core.dagger.JaxRsResources";

@@ -6,7 +6,7 @@
  *
  * <p>Records in this package are pure data containers deserialized from YAML or JSON sources. They
  * contain NO validation logic — that is the responsibility of the validator in the
- * {@code dev.vertique.workflow.definition.validator} package (Slice D). The records accept
+ * {@code dev.vertique.workflow.definition.validator} package. The records accept
  * anything that Jackson can map; semantic correctness is checked later.
  *
  * <p>Key types:

@@ -19,8 +19,8 @@ import java.util.UUID;
  * @param id              surrogate primary key assigned by the database on insert
  * @param carrierId       framework-generated durable row-carrier identity, allocated by the producer
  *                        before insert and stored in the first-class {@code carrier_id} column (never
- *                        the app-writable {@code metadata} JSONB); backs the F5/F3b per-row carrier
- *                        binding defense (PRD identity-002 §14.6 A9) so a durable identity snapshot
+ *                        the app-writable {@code metadata} JSONB); backs the per-row carrier
+ *                        binding defense so a durable identity snapshot
  *                        signed for this row cannot be transplanted onto another; never {@code null}
  * @param aggregateType   optional domain aggregate type that produced the event
  * @param aggregateId     optional identifier of the specific aggregate instance

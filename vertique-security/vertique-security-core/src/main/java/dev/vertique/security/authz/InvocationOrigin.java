@@ -26,7 +26,7 @@ import java.util.Objects;
  * {@code InvocationOrigin} as the ambient invocation origin on {@link dev.vertique.core.context.ContextHolder}
  * (e.g. {@code IdentityResolutionMiddleware} binds {@link #of(String)} {@code "rest"} at REST
  * ingress) and downstream authorization/snapshot-capture code reads it back via
- * {@code contextHolder.current(InvocationOrigin.class)} — identity-002 P2.S5b-i.
+ * {@code contextHolder.current(InvocationOrigin.class)}.
  *
  * <p><strong>{@code attributes} is advisory input, never a trust source</strong> — mirroring
  * {@link AuthorizationRequest#context()}. It carries caller-supplied ingress hints only; a policy

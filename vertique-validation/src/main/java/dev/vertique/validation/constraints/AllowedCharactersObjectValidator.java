@@ -12,11 +12,17 @@ import dev.vertique.core.validation.SkipAllowedCharacters;
 import jakarta.annotation.Nullable;
 import jakarta.validation.ConstraintValidator;
 import jakarta.validation.ConstraintValidatorContext;
+import jakarta.validation.ConstraintValidatorContext.ConstraintViolationBuilder;
+import jakarta.validation.ConstraintValidatorContext.ConstraintViolationBuilder.ContainerElementNodeBuilderCustomizableContext;
+import jakarta.validation.ConstraintValidatorContext.ConstraintViolationBuilder.ContainerElementNodeBuilderDefinedContext;
+import jakarta.validation.ConstraintValidatorContext.ConstraintViolationBuilder.NodeBuilderCustomizableContext;
 import jakarta.validation.ValidationException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.RecordComponent;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -45,6 +51,45 @@ import java.util.Map;
  * @see SkipAllowedCharacters
  */
 public class AllowedCharactersObjectValidator implements ConstraintValidator<AllowedCharacters, Object> {
+
+    private static final String LIST_ELEMENT_NODE = "<list element>";
+    private static final String MAP_VALUE_NODE = "<map value>";
+
+    /** One step of the traversal path: a property, a collection position or a map entry. */
+    private sealed interface Step {}
+
+    private record PropertyStep(String name) implements Step {}
+
+    private record IndexStep(int index) implements Step {}
+
+    private record EntryStep(Object key) implements Step {}
+
+    /**
+     * The traversal path to a value: the display text handed to the policy and the steps used to
+     * build the violation's property path.
+     */
+    private record Trail(String text, List<Step> steps) {
+        static final Trail ROOT = new Trail("", List.of());
+
+        Trail property(String name) {
+            return new Trail(text.isEmpty() ? name : text + "." + name, append(new PropertyStep(name)));
+        }
+
+        Trail index(int index) {
+            return new Trail(text + "[" + index + "]", append(new IndexStep(index)));
+        }
+
+        Trail entry(Object key) {
+            return new Trail(text + "[" + key + "]", append(new EntryStep(key)));
+        }
+
+        private List<Step> append(Step step) {
+            List<Step> next = new ArrayList<>(steps.size() + 1);
+            next.addAll(steps);
+            next.add(step);
+            return next;
+        }
+    }
 
     private final @Nullable CharacterPolicyResolver resolver;
     private Class<? extends CharacterPolicy> policyClass;
@@ -97,7 +142,7 @@ public class AllowedCharactersObjectValidator implements ConstraintValidator<All
         CharacterPolicy policy = resolvePolicy(policyClass);
         context.disableDefaultConstraintViolation();
         java.util.IdentityHashMap<Object, Boolean> visited = new java.util.IdentityHashMap<>();
-        return validateObject(value, policy, context, "", visited);
+        return validateObject(value, policy, context, Trail.ROOT, visited);
     }
 
     // --- Object traversal ---
@@ -109,7 +154,7 @@ public class AllowedCharactersObjectValidator implements ConstraintValidator<All
      * @param obj        the object whose fields are traversed
      * @param policy     the character policy to apply to each string
      * @param context    the constraint validator context
-     * @param pathPrefix dot-separated path prefix for nested nodes
+     * @param trail      the path to the object
      * @param visited    identity-based visited set to detect cycles
      * @return {@code true} if all fields pass; {@code false} if any violation is found
      */
@@ -117,7 +162,7 @@ public class AllowedCharactersObjectValidator implements ConstraintValidator<All
             Object obj,
             CharacterPolicy policy,
             ConstraintValidatorContext context,
-            String pathPrefix,
+            Trail trail,
             java.util.IdentityHashMap<Object, Boolean> visited) {
         if (visited.containsKey(obj)) {
             return true; // Cycle detected — skip
@@ -134,9 +179,7 @@ public class AllowedCharactersObjectValidator implements ConstraintValidator<All
                 }
                 try {
                     Object fieldValue = component.getAccessor().invoke(obj);
-                    String fieldPath =
-                            pathPrefix.isEmpty() ? component.getName() : pathPrefix + "." + component.getName();
-                    if (!validateValue(fieldValue, policy, context, fieldPath, visited)) {
+                    if (!validateValue(fieldValue, policy, context, trail.property(component.getName()), visited)) {
                         valid = false;
                     }
                 } catch (Exception e) {
@@ -157,8 +200,7 @@ public class AllowedCharactersObjectValidator implements ConstraintValidator<All
                     try {
                         field.setAccessible(true);
                         Object fieldValue = field.get(obj);
-                        String fieldPath = pathPrefix.isEmpty() ? field.getName() : pathPrefix + "." + field.getName();
-                        if (!validateValue(fieldValue, policy, context, fieldPath, visited)) {
+                        if (!validateValue(fieldValue, policy, context, trail.property(field.getName()), visited)) {
                             valid = false;
                         }
                     } catch (Exception e) {
@@ -184,7 +226,7 @@ public class AllowedCharactersObjectValidator implements ConstraintValidator<All
      * @param value   the field value to validate
      * @param policy  the character policy
      * @param context the constraint validator context
-     * @param path    the dot-separated path for this value
+     * @param trail   the path to this value
      * @param visited identity-based visited set to detect cycles
      * @return {@code true} if the value passes; {@code false} if any violation is found
      */
@@ -192,23 +234,23 @@ public class AllowedCharactersObjectValidator implements ConstraintValidator<All
             Object value,
             CharacterPolicy policy,
             ConstraintValidatorContext context,
-            String path,
+            Trail trail,
             java.util.IdentityHashMap<Object, Boolean> visited) {
         if (value == null) {
             return true;
         }
         if (value instanceof String s) {
-            return validateString(s, policy, context, path);
+            return validateString(s, policy, context, trail);
         }
         if (value instanceof Collection<?> collection) {
-            return validateCollection(collection, policy, context, path, visited);
+            return validateCollection(collection, policy, context, trail, visited);
         }
         if (value instanceof Map<?, ?> map) {
-            return validateMap(map, policy, context, path, visited);
+            return validateMap(map, policy, context, trail, visited);
         }
         // Recurse into application DTO types only
         if (isTraversableDto(value.getClass())) {
-            return validateObject(value, policy, context, path, visited);
+            return validateObject(value, policy, context, trail, visited);
         }
         return true;
     }
@@ -244,20 +286,20 @@ public class AllowedCharactersObjectValidator implements ConstraintValidator<All
      * @param collection the collection to traverse
      * @param policy     the character policy
      * @param context    the constraint validator context
-     * @param path       the path of the collection field
+     * @param trail      the path of the collection field
+     * @param visited    identity-based visited set to detect cycles
      * @return {@code true} if all elements pass; {@code false} otherwise
      */
     private boolean validateCollection(
             Collection<?> collection,
             CharacterPolicy policy,
             ConstraintValidatorContext context,
-            String path,
+            Trail trail,
             java.util.IdentityHashMap<Object, Boolean> visited) {
         boolean valid = true;
         int i = 0;
         for (Object element : collection) {
-            String elementPath = path + "[" + i + "]";
-            if (!validateValue(element, policy, context, elementPath, visited)) {
+            if (!validateValue(element, policy, context, trail.index(i), visited)) {
                 valid = false;
             }
             i++;
@@ -273,7 +315,7 @@ public class AllowedCharactersObjectValidator implements ConstraintValidator<All
      * @param map     the map to traverse
      * @param policy  the character policy
      * @param context the constraint validator context
-     * @param path    the path of the map field
+     * @param trail   the path of the map field
      * @param visited identity-based visited set to detect cycles
      * @return {@code true} if all values pass; {@code false} otherwise
      */
@@ -281,12 +323,11 @@ public class AllowedCharactersObjectValidator implements ConstraintValidator<All
             Map<?, ?> map,
             CharacterPolicy policy,
             ConstraintValidatorContext context,
-            String path,
+            Trail trail,
             java.util.IdentityHashMap<Object, Boolean> visited) {
         boolean valid = true;
         for (Map.Entry<?, ?> entry : map.entrySet()) {
-            String entryPath = path + "[" + entry.getKey() + "]";
-            if (!validateValue(entry.getValue(), policy, context, entryPath, visited)) {
+            if (!validateValue(entry.getValue(), policy, context, trail.entry(entry.getKey()), visited)) {
                 valid = false;
             }
         }
@@ -299,11 +340,12 @@ public class AllowedCharactersObjectValidator implements ConstraintValidator<All
      * @param value   the string to validate
      * @param policy  the character policy
      * @param context the constraint validator context
-     * @param path    the dot-separated path for this value
+     * @param trail   the path to this value
      * @return {@code true} if the value passes; {@code false} if a violation was added
      */
     private boolean validateString(
-            String value, CharacterPolicy policy, ConstraintValidatorContext context, String path) {
+            String value, CharacterPolicy policy, ConstraintValidatorContext context, Trail trail) {
+        String path = trail.text();
         // Synthetic location: the traversal path is real, but BODY is a placeholder — Bean
         // Validation has no accurate provenance for the value. See CharacterPolicy#validate.
         InputValueContext inputCtx = new InputValueContext(InputLocation.BODY, path, path, Object.class);
@@ -311,12 +353,65 @@ public class AllowedCharactersObjectValidator implements ConstraintValidator<All
         if (!result.valid()) {
             String message = "contains characters not allowed by " + policyClass.getSimpleName()
                     + (result.reason() != null ? ": " + result.reason() : "");
-            context.buildConstraintViolationWithTemplate(message)
-                    .addPropertyNode(path)
-                    .addConstraintViolation();
+            addViolation(context, message, trail);
             return false;
         }
         return true;
+    }
+
+    /**
+     * Adds a violation whose property path mirrors the traversal: a property node per field, and a
+     * container-element node (carrying the position) per collection element or map value. A map
+     * entry is positioned by key, which the framework's path conversion never reads.
+     */
+    private static void addViolation(ConstraintValidatorContext context, String message, Trail trail) {
+        ConstraintViolationBuilder builder = context.buildConstraintViolationWithTemplate(message);
+        NodeBuilderCustomizableContext property = null;
+        ContainerElementNodeBuilderDefinedContext element = null;
+        for (Step step : trail.steps()) {
+            switch (step) {
+                case PropertyStep p -> {
+                    property = element != null
+                            ? element.addPropertyNode(p.name())
+                            : property != null ? property.addPropertyNode(p.name()) : builder.addPropertyNode(p.name());
+                    element = null;
+                }
+                case IndexStep i -> {
+                    element = nextElement(property, element, LIST_ELEMENT_NODE, Collection.class)
+                            .inIterable()
+                            .atIndex(i.index());
+                    property = null;
+                }
+                case EntryStep e -> {
+                    element = nextElement(property, element, MAP_VALUE_NODE, Map.class)
+                            .inIterable()
+                            .atKey(e.key());
+                    property = null;
+                }
+            }
+        }
+        if (element != null) {
+            element.addConstraintViolation();
+        } else if (property != null) {
+            property.addConstraintViolation();
+        } else {
+            builder.addConstraintViolation();
+        }
+    }
+
+    private static ContainerElementNodeBuilderCustomizableContext nextElement(
+            @Nullable NodeBuilderCustomizableContext property,
+            @Nullable ContainerElementNodeBuilderDefinedContext element,
+            String name,
+            Class<?> containerType) {
+        int typeArgumentIndex = containerType == Map.class ? 1 : 0;
+        if (element != null) {
+            return element.addContainerElementNode(name, containerType, typeArgumentIndex);
+        }
+        if (property != null) {
+            return property.addContainerElementNode(name, containerType, typeArgumentIndex);
+        }
+        throw new IllegalStateException("a collection position needs an owning property");
     }
 
     // --- Skip detection ---

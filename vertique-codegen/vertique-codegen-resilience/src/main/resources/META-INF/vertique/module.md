@@ -56,8 +56,10 @@ The registered `ResilienceAnnotationProcessor` validates:
 - proxyability through the shared `ProxyabilityValidator`, including public,
   non-final, Dagger-managed classes with one `@Inject` constructor and
   overridable instance methods;
-- concrete `Future<T>` return types using the shared `CodegenContext.unwrapFuture`
-  classifier; and
+- concrete `Future<T>` return types on concrete-class methods using the shared
+  `CodegenContext.unwrapFuture` classifier (interface methods are not checked here; the
+  services and REST-client processors reject non-`Future<T>` methods on their own contract
+  kinds); and
 - duplicate resilience wrapping between a services contract and its concrete
   handler or implementor, with service types detected by fully qualified name.
 

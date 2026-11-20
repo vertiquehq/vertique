@@ -17,7 +17,7 @@ import java.util.Objects;
  *
  * <p>The factory validates that its arguments are non-null and pairs them into a profile that
  * exposes the given mapper instance <strong>directly</strong> — it never copies, wraps, or mutates
- * the supplied mapper (FR-JSON-009). Whatever configuration the caller installed on the mapper is
+ * the supplied mapper. Whatever configuration the caller installed on the mapper is
  * the configuration the profile exposes.
  */
 public final class JsonMapperProfiles {
@@ -30,8 +30,8 @@ public final class JsonMapperProfiles {
      *
      * <p>The returned profile's {@link JsonMapperProfile#mapper()} returns the exact
      * {@code ObjectMapper} instance passed in — no defensive copy is made, and the mapper is not
-     * mutated (FR-JSON-009). This is the pre-amendment factory shape; its behavior is unchanged by
-     * the addition of {@link #of(JsonProfileId, ObjectMapper, Collection)} (FR-JSON-088).
+     * mutated. This is the pre-amendment factory shape; its behavior is unchanged by
+     * the addition of {@link #of(JsonProfileId, ObjectMapper, Collection)}.
      *
      * @param id the non-null profile id the returned profile reports from {@link JsonMapperProfile#id()}
      * @param mapper the non-null, pre-configured mapper the returned profile exposes as-is
@@ -47,7 +47,7 @@ public final class JsonMapperProfiles {
 
     /**
      * Creates a {@link JsonMapperProfile} pairing {@code id} with {@code mapper}, additionally
-     * declaring {@code overrides} as the profile's JSON Schema type overrides (FR-JSON-088).
+     * declaring {@code overrides} as the profile's JSON Schema type overrides.
      *
      * <p>{@code overrides} is defensively copied into an immutable list: the caller's collection may
      * be freely mutated after this call returns without affecting the returned profile, and the

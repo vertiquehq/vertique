@@ -3,6 +3,7 @@
 
 package dev.vertique.codegen.cache;
 
+import dev.vertique.cache.CacheMode;
 import dev.vertique.cache.aop.CacheEvict;
 import dev.vertique.cache.aop.Cacheable;
 import dev.vertique.codegen.AnnotationMirrors;
@@ -68,7 +69,7 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
         for (Element element : roundEnvironment.getElementsAnnotatedWith(Cacheable.class)) {
             if (element.getKind() == ElementKind.METHOD) {
                 Cacheable annotation = element.getAnnotation(Cacheable.class);
-                validateMethod((ExecutableElement) element, annotation.key(), true);
+                validateMethod((ExecutableElement) element, annotation, true);
             }
         }
         for (Element element : roundEnvironment.getElementsAnnotatedWith(CacheEvict.class)) {
@@ -96,7 +97,7 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
         return false;
     }
 
-    private void validateMethod(ExecutableElement method, String[] paths, boolean resultRequired) {
+    private void validateMethod(ExecutableElement method, Cacheable annotation, boolean resultRequired) {
         validateCacheProxyability(method);
         if (resultRequired && method.getReturnType().getKind() == TypeKind.VOID) {
             error(method, "@Cacheable methods must return a value");
@@ -104,8 +105,18 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
         if (isRawOrWildcardFuture(method.getReturnType())) {
             error(method, "@Cacheable Future return types must be concrete Future<T>");
         }
+        if (annotation.mode() == CacheMode.CLUSTERED && !isFuture(method.getReturnType())) {
+            error(method, "@Cacheable mode CLUSTERED requires a Future<T> return type; synchronous methods use LOCAL");
+        }
         validateRestResult(method);
-        validateSelector(method, paths);
+        validateSelector(method, annotation.key());
+    }
+
+    private boolean isFuture(TypeMirror type) {
+        return type.getKind() == TypeKind.DECLARED
+                && ((TypeElement) ((DeclaredType) type).asElement())
+                        .getQualifiedName()
+                        .contentEquals(FUTURE_FQN);
     }
 
     /**

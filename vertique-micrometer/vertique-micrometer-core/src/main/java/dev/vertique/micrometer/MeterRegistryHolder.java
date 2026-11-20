@@ -21,8 +21,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * (via Dagger injection or a direct call) before bootstrap continues to work correctly after
  * bootstrap: Micrometer's composite late-wires pre-existing meters to newly added children.
  *
- * <p>Before bootstrap the outer composite has no children — recording to it is a no-op
- * (NFR-TEL-003). After {@link #bootstrap(MicrometerAssembly)} is called exactly once, the
+ * <p>Before bootstrap the outer composite has no children — recording to it is a no-op.
+ * After {@link #bootstrap(MicrometerAssembly)} is called exactly once, the
  * assembly's inner composite is added as a child of the stable outer composite. Filters (cardinality
  * guard, common tags) live on the inner composite and are applied when the inner composite
  * registers the forwarded meters; but because Micrometer's {@link CompositeMeterRegistry} flattens
@@ -169,7 +169,7 @@ final class MeterRegistryHolder {
     /**
      * Returns the application-wide composite meter registry.
      *
-     * <p>Before bootstrap this is an empty composite (recording is a no-op; NFR-TEL-003). After
+     * <p>Before bootstrap this is an empty composite (recording is a no-op). After
      * {@link #bootstrap(MicrometerAssembly)} the assembly's inner composite is a child, so all
      * meters recorded through this instance are forwarded to every registered backend. The returned
      * instance is always the same object — its identity is stable for the JVM lifetime.

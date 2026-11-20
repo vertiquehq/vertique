@@ -10,6 +10,7 @@ import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.eventbus.EventBusClient;
 import dev.vertique.job.JobCoordinatorConfig;
 import dev.vertique.job.JobInterceptor;
+import dev.vertique.job.JobNodeId;
 import dev.vertique.job.JobRepository;
 import dev.vertique.job.cron.CronJobRegistrar;
 import dev.vertique.job.cron.CronScheduler;
@@ -86,6 +87,8 @@ public abstract class CronPersistenceModule {
      * @param repository            the job repository for leader election and execution tracking
      * @param serviceTargetResolver resolver for stable service target ids to event bus addresses
      * @param config                the coordinator configuration supplying timeout and flush interval
+     * @param nodeId                this node's job-scheduling identity, stamped as {@code locked_by}
+     *                              on tracked executions so the coordinator can recover them
      * @return the singleton cron scheduler
      */
     @Provides
@@ -97,7 +100,8 @@ public abstract class CronPersistenceModule {
             ServiceTargetResolver serviceTargetResolver,
             EventBusClient eventBusClient,
             JobCoordinatorConfig config,
-            dev.vertique.context.DispatchEnvelopeBuilder envelopeBuilder) {
+            dev.vertique.context.DispatchEnvelopeBuilder envelopeBuilder,
+            @JobNodeId String nodeId) {
         return new CronScheduler(
                 vertx,
                 interceptors,
@@ -107,7 +111,8 @@ public abstract class CronPersistenceModule {
                 CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
                 config.executionTimeoutMs(),
                 config.progressFlushIntervalMs(),
-                envelopeBuilder);
+                envelopeBuilder,
+                nodeId);
     }
 
     /**

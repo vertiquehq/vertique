@@ -24,7 +24,7 @@ import jakarta.inject.Singleton;
  * <p>This validator is inert with respect to individual consumer/producer bindings — it validates the
  * kafka-boundary default id unconditionally, even when zero consumers or producers are configured and
  * even when a more-specific per-binding profile would shadow it at runtime. This closes the
- * lazy-resolution gap for inert or shadowed configured defaults (FR-JSON-050).
+ * lazy-resolution gap for inert or shadowed configured defaults.
  */
 @Singleton
 public final class KafkaDefaultProfileValidator implements ComposeValidator {

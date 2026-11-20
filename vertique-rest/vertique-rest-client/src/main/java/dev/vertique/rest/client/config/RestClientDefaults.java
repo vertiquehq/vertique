@@ -10,7 +10,7 @@ import jakarta.annotation.Nullable;
 /**
  * Typed model of the {@code restClient.defaults} reserved sub-object. Carries the boundary-wide
  * default JSON mapper profile id. Parsed at the Dagger provider boundary via
- * {@link dev.vertique.core.config.ConfigParser} (config rule R10).
+ * {@link dev.vertique.core.config.ConfigParser}.
  *
  * <p>Mirrors the {@link dev.vertique.json.JsonConfig} pattern: a record with a
  * {@code @JsonCreator} factory and a {@code defaults()} zero-config factory. The typed record

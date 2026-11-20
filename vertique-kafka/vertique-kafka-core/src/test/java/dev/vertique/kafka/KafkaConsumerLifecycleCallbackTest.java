@@ -82,7 +82,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
  *
  * <p>The verticle's collaborators ({@code consumer}, {@code errorHandler}, {@code dispatcher},
  * {@code interceptorChain}) are normally built in {@code start()}, which needs a broker. The fixture
- * wires them by reflection so every terminal path runs offline and synchronously.
+ * wires them by reflection so every terminal path runs offline and synchronously. A record that
+ * arms a timer (a retry backoff or a dead-letter publish retry) is run, with the assertions on its
+ * first run, as one task on the Vert.x context the timer fires on, so a later run cannot start
+ * before those assertions have read the record's state.
  *
  * <p>Covered: one completion with the expected outcome on every terminal path; the framework-owned
  * identity, key and headers cannot be changed by an interceptor or a filter; the view keeps
@@ -314,6 +317,41 @@ class KafkaConsumerLifecycleCallbackTest {
             Thread.currentThread().interrupt();
             throw new AssertionError(e);
         } catch (ExecutionException | TimeoutException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    /** A test body that may throw, run by {@link #onContext}. */
+    @FunctionalInterface
+    interface ContextBody {
+        void run() throws Exception;
+    }
+
+    /**
+     * Runs the body as one task on a duplicated Vert.x context and returns once it has finished,
+     * rethrowing what it threw. A timer the body arms, such as a retry backoff or a dead-letter
+     * publish retry, fires on that same context, so it cannot run the record again while the body
+     * is still asserting on the record's first run.
+     */
+    private static void onContext(Vertx vertx, ContextBody body) {
+        ContextInternal duplicate = ((ContextInternal) vertx.getOrCreateContext()).duplicate();
+        CompletableFuture<Void> done = new CompletableFuture<>();
+        duplicate.runOnContext(v -> {
+            try {
+                body.run();
+                done.complete(null);
+            } catch (Throwable t) {
+                done.completeExceptionally(t);
+            }
+        });
+        try {
+            done.get(10, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(e);
+        } catch (ExecutionException e) {
+            sneakyThrow(e.getCause());
+        } catch (TimeoutException e) {
             throw new AssertionError(e);
         }
     }
@@ -883,10 +921,13 @@ class KafkaConsumerLifecycleCallbackTest {
                     null,
                     null);
 
-            fixture.process(record(1L, null));
+            // The failed publish arms a publish retry; on its context it cannot run before the asserts.
+            onContext(vertx, () -> {
+                fixture.process(record(1L, null));
 
-            assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.DLQ_FAILED);
-            verify(fixture.consumer(), never()).commit(anyMap());
+                assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.DLQ_FAILED);
+                verify(fixture.consumer(), never()).commit(anyMap());
+            });
         }
 
         @Test
@@ -896,12 +937,15 @@ class KafkaConsumerLifecycleCallbackTest {
             CompletionRecorder recorder = new CompletionRecorder();
             Fixture fixture = wire(vertx, failingHandlerEntry(ErrorStrategy.RETRY, null), List.of(recorder));
 
-            fixture.process(record(5L, null));
+            // The retry timer fires on this context, so the retry cannot run before the asserts.
+            onContext(vertx, () -> {
+                fixture.process(record(5L, null));
 
-            assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.RETRY_SCHEDULED);
-            verify(fixture.consumer()).pause(any(TopicPartition.class));
-            verify(fixture.consumer(), never()).seek(any(TopicPartition.class), anyLong());
-            verify(fixture.consumer(), never()).commit(anyMap());
+                assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.RETRY_SCHEDULED);
+                verify(fixture.consumer()).pause(any(TopicPartition.class));
+                verify(fixture.consumer(), never()).seek(any(TopicPartition.class), anyLong());
+                verify(fixture.consumer(), never()).commit(anyMap());
+            });
         }
 
         @Test
@@ -1771,11 +1815,14 @@ class KafkaConsumerLifecycleCallbackTest {
             CompletionRecorder recorder = new CompletionRecorder();
             Fixture fixture = wire(vertx, bindingEntry(ErrorStrategy.RETRY, null), List.of(recorder));
 
-            fixture.process(record(5L, bytes("payload")));
+            // The retry timer fires on this context, so the retry cannot run before the asserts.
+            onContext(vertx, () -> {
+                fixture.process(record(5L, bytes("payload")));
 
-            CompletionRecorder.Completion completion =
-                    assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.RETRY_SCHEDULED);
-            assertEquals(0, completion.event().identity().retryCount());
+                CompletionRecorder.Completion completion =
+                        assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.RETRY_SCHEDULED);
+                assertEquals(0, completion.event().identity().retryCount());
+            });
         }
 
         @Test
@@ -1784,7 +1831,8 @@ class KafkaConsumerLifecycleCallbackTest {
             CompletionRecorder recorder = new CompletionRecorder();
             Fixture fixture = wire(vertx, failingHandlerEntry(ErrorStrategy.RETRY, null), List.of(recorder));
 
-            fixture.process(record(5L, null));
+            // On the context the retry timer fires on, so the first run and the retries never overlap.
+            onContext(vertx, () -> fixture.process(record(5L, null)));
             awaitCompletions(recorder, 2);
 
             // Each run completes once, and a later retry may already have run by now

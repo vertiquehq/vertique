@@ -39,7 +39,7 @@ import io.vertx.core.VertxBuilder;
  * </ul>
  *
  * <p>This SPI is the deliberate ServiceLoader seam in an otherwise Dagger-first codebase because
- * it must run before the Dagger graph exists. See ADR-0095 for the recorded rationale.
+ * it must run before the Dagger graph exists.
  */
 public interface VertxBuilderContributor extends OrderedExtension {
 

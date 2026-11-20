@@ -11,7 +11,7 @@ import java.util.Set;
  * <p>These keys are written into the MDC by {@code CorrelationIngressMiddleware} at request
  * ingress and (for the safe-by-default mirrored subset) by {@code CorrelationContextMutator}
  * during enrichment. Session refs and protocol-correlation refs are intentionally NOT mirrored
- * in V1 (FR-COR-163/165); a future opt-in {@code CorrelationMdcConfig} may broaden the set.
+ * in V1; a future opt-in {@code CorrelationMdcConfig} may broaden the set.
  *
  * <p>Lives in {@code vertique-correlation} (not {@code vertique-core}) because "MDC" is a
  * logging concept that should not leak into the framework's API module. The only consumers
@@ -26,7 +26,7 @@ public final class CorrelationMdcKeys {
     /** Correlation id propagated across causally related operations. */
     public static final String CORRELATION_ID = "correlationId";
 
-    /** Id of the upstream operation that caused this one (FR-COR-085). */
+    /** Id of the upstream operation that caused this one. */
     public static final String CAUSATION_ID = "causationId";
 
     /** W3C Trace Context trace id, when an external tracer is wired. */

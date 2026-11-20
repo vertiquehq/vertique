@@ -25,14 +25,11 @@ import dev.vertique.rest.jaxrs.application.ConflictDeploymentComponents.NestedHa
 import dev.vertique.rest.jaxrs.application.ConflictDeploymentComponents.Provisions;
 import dev.vertique.rest.jaxrs.application.conflict.handbuilt.LegacyOuterMountModule;
 import dev.vertique.rest.jaxrs.application.conflict.handbuilt.LegacyReportsMountModule;
-import dev.vertique.rest.jaxrs.application.conflict.opid.OpidAlphaListResource;
-import dev.vertique.rest.jaxrs.application.conflict.opid.OpidBetaListResource;
+import dev.vertique.rest.jaxrs.application.conflict.opid.OpidAopHandBuiltMountModule;
 import dev.vertique.rest.jaxrs.application.conflict.opid.OpidHandBuiltOneMountModule;
 import dev.vertique.rest.jaxrs.application.conflict.opid.OpidHandBuiltOneResource;
 import dev.vertique.rest.jaxrs.application.conflict.opid.OpidHandBuiltTwoMountModule;
 import dev.vertique.rest.jaxrs.application.conflict.opid.OpidHandBuiltTwoResource;
-import dev.vertique.rest.jaxrs.application.conflict.opid.OpidInheritedFirstResource;
-import dev.vertique.rest.jaxrs.application.conflict.opid.OpidInheritedSecondResource;
 import dev.vertique.rest.jaxrs.application.conflict.opid.crossmount.CrossMountSharedContractRegistrationModule;
 import dev.vertique.rest.jaxrs.application.conflict.opid.crossmount.PartnerListResource;
 import dev.vertique.rest.jaxrs.application.conflict.opid.crossmount.PublicListResource;
@@ -79,9 +76,10 @@ import org.slf4j.LoggerFactory;
  * Proves T004's rest-jaxrs {@code MountCompositionValidator} contribution under real,
  * loopback-bound {@link dev.vertique.rest.core.router.HttpVerticle HttpVerticle} deployments:
  * TP-004, naming a hand-built JAX-RS mount that conflicts with a declared application, or one
- * that does not, or no application at all; TP-005, the cross-mount operationId owner rule
- * (FR-014); and TP-006, {@code createRouter}'s refusal of an application mount no composition
- * validator marked valid.
+ * that does not, or no application at all; TP-005, the cross-mount operationId rule (operationIds
+ * scoped per mount, refused across two hand-built mounts or across mounts sharing one contract
+ * location under a contract-driven strategy) and its shared-id warning; and TP-006,
+ * {@code createRouter}'s refusal of an application mount no composition validator marked valid.
  *
  * <p>Every case is one named nested Dagger component: TP-004's from
  * {@link ConflictDeploymentComponents}, TP-005's from {@link OperationIdComponents}, TP-006's
@@ -103,9 +101,15 @@ public class JaxRsApplicationMountConflictIT {
     /** {@code HttpVerticle}'s fully qualified logger name, captured by name per R2. */
     private static final String HTTP_VERTICLE_LOGGER_NAME = "dev.vertique.rest.core.router.HttpVerticle";
 
+    /** The mount composition validator's fully qualified logger name; the class is package-private. */
+    private static final String VALIDATOR_LOGGER_NAME = "dev.vertique.rest.jaxrs.JaxRsApplicationMountValidator";
+
     private Logger httpVerticleLogger;
     private Level previousHttpVerticleLevel;
     private ListAppender<ILoggingEvent> httpVerticleAppender;
+    private Logger validatorLogger;
+    private Level previousValidatorLevel;
+    private ListAppender<ILoggingEvent> validatorAppender;
 
     @BeforeEach
     void resetFixtures() {
@@ -125,6 +129,13 @@ public class JaxRsApplicationMountConflictIT {
         httpVerticleAppender = new ListAppender<>();
         httpVerticleAppender.start();
         httpVerticleLogger.addAppender(httpVerticleAppender);
+
+        validatorLogger = (Logger) LoggerFactory.getLogger(VALIDATOR_LOGGER_NAME);
+        previousValidatorLevel = validatorLogger.getLevel();
+        validatorLogger.setLevel(Level.WARN);
+        validatorAppender = new ListAppender<>();
+        validatorAppender.start();
+        validatorLogger.addAppender(validatorAppender);
     }
 
     @AfterEach
@@ -132,6 +143,9 @@ public class JaxRsApplicationMountConflictIT {
         httpVerticleLogger.detachAppender(httpVerticleAppender);
         httpVerticleAppender.stop();
         httpVerticleLogger.setLevel(previousHttpVerticleLevel);
+        validatorLogger.detachAppender(validatorAppender);
+        validatorAppender.stop();
+        validatorLogger.setLevel(previousValidatorLevel);
     }
 
     // --- TP-004 ---
@@ -249,15 +263,17 @@ public class JaxRsApplicationMountConflictIT {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("operationIdCases")
-    @DisplayName("A cross-mount operationId collision fails deployment once any application is declared, unless "
-            + "both operations share the same owner; with no application declared, only the existing per-mount "
-            + "rule applies")
-    void duplicateOperationIdsAcrossMountsFail(OperationIdCase testCase, Vertx vertx) throws Exception {
+    @DisplayName("Once any application is declared, distinct owners may share an operationId across mounts when "
+            + "one is an application mount, with one WARN naming the mounts; two hand-built mounts, or two mounts "
+            + "sharing one contract location under a contract-driven strategy, still fail; with no application "
+            + "declared, only the per-mount rule applies")
+    void operationIdsAreScopedPerMount(OperationIdCase testCase, Vertx vertx) throws Exception {
         OperationIdComponents.Provisions provisions = testCase.component().get();
         DeployOutcome outcome = deploy(vertx, provisions::httpVerticle);
 
         if (testCase.expectConflict()) {
             assertOperationIdConflictFailure(testCase, vertx, outcome);
+            assertEquals(List.of(), sharedIdWarnings(), () -> testCase.name() + ": a refused composition logs no WARN");
             return;
         }
 
@@ -265,6 +281,34 @@ public class JaxRsApplicationMountConflictIT {
                 outcome.succeeded(),
                 () -> testCase.name() + ": deployment must succeed: " + describe(outcome.failure()));
         LOG.info("TP-005 {} deployed on port {}", testCase.name(), outcome.port());
+
+        List<String> warnings = sharedIdWarnings();
+        if (testCase.expectedWarningFragments().isEmpty()) {
+            assertEquals(List.of(), warnings, () -> testCase.name() + ": no shared-id WARN expected");
+            return;
+        }
+        assertEquals(1, warnings.size(), () -> testCase.name() + ": expected exactly one shared-id WARN: " + warnings);
+        for (String fragment : testCase.expectedWarningFragments()) {
+            assertTrue(
+                    warnings.get(0).contains(fragment),
+                    () -> testCase.name() + ": expected the WARN to name '" + fragment + "': " + warnings.get(0));
+        }
+        assertTrue(
+                warnings.get(0).contains("must also key on the application"),
+                () -> testCase.name() + ": the WARN must state the keying obligation: " + warnings.get(0));
+    }
+
+    /**
+     * Returns the validator's captured shared-operationId warnings.
+     *
+     * @return each captured WARN's formatted message
+     */
+    private List<String> sharedIdWarnings() {
+        return validatorAppender.list.stream()
+                .filter(event -> event.getLevel() == Level.WARN)
+                .map(ILoggingEvent::getFormattedMessage)
+                .filter(message -> message.startsWith("OperationId "))
+                .toList();
     }
 
     /**
@@ -322,17 +366,15 @@ public class JaxRsApplicationMountConflictIT {
                 () -> name + ": no http.port must be published after a rejected composition");
     }
 
-    // --- TP-005's six named cases, plus T023's TP-009 rows (a) to (c) ---
+    // --- The six lettered operationId cases, plus the public/partner strategy rows (a) to (c) ---
 
     /**
-     * TP-005's six cases, named (a) to (f) per the contract's case list, plus T023's TP-009 rows,
-     * named {@code "TP-009 (a)"} to {@code "TP-009 (c)"}: {@code public} and {@code partner}, whose
-     * distinct-owner {@code list()} operations collide under the {@code web-validation} strategy,
-     * the {@code openapi-contract} strategy with distinct contract locations, and the
-     * {@code openapi-contract} strategy with one shared global location — every row still conflicts,
-     * because FR-027's per-mount relaxation and shared-location clause remain staged to CO-4 (CX-007).
+     * The six operationId cases, named (a) to (f), plus three rows for {@code public} and {@code partner},
+     * whose distinct-owner {@code list()} operations deploy under the {@code web-validation}
+     * strategy and under the {@code openapi-contract} strategy with distinct contract locations, and
+     * fail under {@code openapi-contract} with one shared global location.
      *
-     * @return the nine cases, in contract order
+     * @return the nine cases
      */
     private static Stream<OperationIdCase> operationIdCases() {
         JsonObject configA = deploymentConfig("conflict.opid.alpha.active", true, "conflict.opid.beta.active", true);
@@ -346,40 +388,45 @@ public class JaxRsApplicationMountConflictIT {
 
         return Stream.of(
                 new OperationIdCase(
-                        "(a) two applications, each listing a different resource declaring 'list': no common owner, conflicts",
+                        "(a) two applications, each listing a different resource declaring 'list': distinct owners on"
+                                + " application mounts, deploys with one WARN",
                         () -> oneApplicationEachListResourceComponent(configA),
-                        true,
+                        false,
+                        List.of(),
                         List.of(
-                                OpidAlphaListResource.class.getName(),
-                                OpidBetaListResource.class.getName(),
-                                SHARED_OPERATION_ID,
-                                "'/opid/alpha/*'",
-                                "'/opid/beta/*'")),
+                                "'" + SHARED_OPERATION_ID + "'",
+                                "application 'opid-alpha'",
+                                "application 'opid-beta'")),
                 new OperationIdCase(
-                        "(b) control: one resource declaring 'list', listed by both applications: same owner, deploys",
+                        "(b) control: one resource declaring 'list', listed by both applications: same owner, deploys"
+                                + " with one WARN",
                         () -> sharedListResourceComponent(configB),
                         false,
-                        List.of()),
+                        List.of(),
+                        List.of(
+                                "'" + SHARED_OPERATION_ID + "'",
+                                "application 'opid-share-one'",
+                                "application 'opid-share-two'")),
                 new OperationIdCase(
                         "(c) control: zero declarations, default mount and hand-built /other/* each declare 'list':"
-                                + " only the per-mount rule applies, deploys",
+                                + " only the per-mount rule applies, deploys without a WARN",
                         () -> zeroDeclarationComponent(configC),
                         false,
+                        List.of(),
                         List.of()),
                 new OperationIdCase(
                         "(d) two applications, each listing its own subclass inheriting 'list': different normalized"
-                                + " owners, conflicts",
+                                + " owners on application mounts, deploys with one WARN",
                         () -> inheritedListMethodComponent(configD),
-                        true,
+                        false,
+                        List.of(),
                         List.of(
-                                OpidInheritedFirstResource.class.getName(),
-                                OpidInheritedSecondResource.class.getName(),
-                                SHARED_OPERATION_ID,
-                                "'/opid/inherited-first/*'",
-                                "'/opid/inherited-second/*'")),
+                                "'" + SHARED_OPERATION_ID + "'",
+                                "application 'opid-inherited-first'",
+                                "application 'opid-inherited-second'")),
                 new OperationIdCase(
-                        "(e) one inactive registration beside two hand-built mounts declaring 'list': an application"
-                                + " is declared though none is active, conflicts",
+                        "(e) one inactive registration beside two hand-built mounts declaring 'list': two hand-built"
+                                + " mounts may not share an id once an application is declared, conflicts",
                         () -> inactiveRegistrationComponent(configE),
                         true,
                         List.of(
@@ -387,42 +434,37 @@ public class JaxRsApplicationMountConflictIT {
                                 OpidHandBuiltTwoResource.class.getName(),
                                 SHARED_OPERATION_ID,
                                 "'" + OpidHandBuiltOneMountModule.MOUNT_PATH + "'",
-                                "'" + OpidHandBuiltTwoMountModule.MOUNT_PATH + "'")),
-                new OperationIdCase(
-                        "(f) control: an AOP-shaped subclass overriding 'list' beside an unproxied base instance:"
-                                + " same normalized owner, deploys",
-                        () -> aopProxyOverrideComponent(configF),
-                        false,
+                                "'" + OpidHandBuiltTwoMountModule.MOUNT_PATH + "'"),
                         List.of()),
                 new OperationIdCase(
-                        "TP-009 (a): 'public' and 'partner', distinct owners, under the web-validation strategy:"
-                                + " the global refusal still applies, conflicts",
+                        "(f) control: an AOP-shaped subclass overriding 'list' beside an unproxied base instance:"
+                                + " same normalized owner, deploys with one WARN naming the application and the"
+                                + " hand-built mount",
+                        () -> aopProxyOverrideComponent(configF),
+                        false,
+                        List.of(),
+                        List.of(
+                                "'" + SHARED_OPERATION_ID + "'",
+                                "application 'opid-aop'",
+                                "hand-built JAX-RS mount '" + OpidAopHandBuiltMountModule.MOUNT_PATH + "'")),
+                new OperationIdCase(
+                        "public/partner (a): distinct owners under the web-validation strategy: deploys with one WARN",
                         () -> publicPartnerWebValidationComponent(
                                 deploymentConfig("jaxrs.validationStrategy", "web-validation")),
-                        true,
-                        List.of(
-                                PublicListResource.class.getName(),
-                                PartnerListResource.class.getName(),
-                                SHARED_OPERATION_ID,
-                                "'/api/public/*'",
-                                "'/api/partner/*'")),
+                        false,
+                        List.of(),
+                        List.of("'" + SHARED_OPERATION_ID + "'", "application 'partner'", "application 'public'")),
                 new OperationIdCase(
-                        "TP-009 (b): 'public' and 'partner', distinct owners, each at its own"
-                                + " openapi-contract location: the per-mount relaxation is staged to CO-4, so"
-                                + " distinct locations do not exempt the collision, conflicts",
+                        "public/partner (b): distinct owners, each at its own openapi-contract location: deploys"
+                                + " with one WARN",
                         () -> publicPartnerDistinctContractLocationsComponent(
                                 deploymentConfig("jaxrs.validationStrategy", "openapi-contract")),
-                        true,
-                        List.of(
-                                PublicListResource.class.getName(),
-                                PartnerListResource.class.getName(),
-                                SHARED_OPERATION_ID,
-                                "'/api/public/*'",
-                                "'/api/partner/*'")),
+                        false,
+                        List.of(),
+                        List.of("'" + SHARED_OPERATION_ID + "'", "application 'partner'", "application 'public'")),
                 new OperationIdCase(
-                        "TP-009 (c): 'public' and 'partner', distinct owners, both falling back to one shared"
-                                + " global openapi-contract location: the shared-location clause is staged to"
-                                + " CO-4, so sharing one location does not exempt the collision, conflicts",
+                        "public/partner (c): distinct owners, both falling back to one shared global"
+                                + " openapi-contract location: conflicts",
                         () -> publicPartnerSharedContractLocationComponent(deploymentConfig(
                                 "jaxrs.validationStrategy",
                                 "openapi-contract",
@@ -433,15 +475,18 @@ public class JaxRsApplicationMountConflictIT {
                                 PublicListResource.class.getName(),
                                 PartnerListResource.class.getName(),
                                 SHARED_OPERATION_ID,
+                                "the same OpenAPI contract location",
                                 "'/api/public/*'",
-                                "'/api/partner/*'")));
+                                "'/api/partner/*'"),
+                        List.of()));
     }
 
     /**
      * One TP-005 case: its name (shown by {@code @ParameterizedTest(name = "{0}")} and so in
      * {@code TEST-*.xml}), the component supplier building this case's composition, whether it must
-     * fail with a cross-mount operationId collision, and (for a conflicting case) the message
-     * fragments the thrown {@link IllegalStateException} must contain.
+     * fail with a cross-mount operationId collision, (for a conflicting case) the message fragments
+     * the thrown {@link IllegalStateException} must contain, and (for a deploying case) the fragments
+     * its one shared-id WARN must contain.
      *
      * @param name              the case's display name
      * @param component         builds this case's {@link OperationIdComponents.Provisions}, fresh
@@ -449,12 +494,15 @@ public class JaxRsApplicationMountConflictIT {
      * @param expectConflict    {@code true} when this case must fail with an operationId collision
      * @param expectedFragments the message fragments the failure must contain (empty for a
      *                          non-conflict case)
+     * @param expectedWarningFragments the fragments the one shared-id WARN must contain (empty when
+     *                          no shared-id WARN may be logged)
      */
     private record OperationIdCase(
             String name,
             Supplier<OperationIdComponents.Provisions> component,
             boolean expectConflict,
-            List<String> expectedFragments) {
+            List<String> expectedFragments,
+            List<String> expectedWarningFragments) {
 
         @Override
         public String toString() {

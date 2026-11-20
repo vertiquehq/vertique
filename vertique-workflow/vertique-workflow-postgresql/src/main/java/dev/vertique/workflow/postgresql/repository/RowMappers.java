@@ -212,7 +212,7 @@ class RowMappers {
         }
     }
 
-    // --- BranchToken (PRD-WF-002) ---
+    // --- BranchToken ---
 
     /**
      * Returns a {@link RowMapper} that maps a row from {@code workflow_branch_tokens} to a
@@ -249,7 +249,7 @@ class RowMappers {
         };
     }
 
-    // --- JoinState (PRD-WF-002) ---
+    // --- JoinState ---
 
     /**
      * Returns a {@link RowMapper} that maps a row from {@code workflow_join_states} to a

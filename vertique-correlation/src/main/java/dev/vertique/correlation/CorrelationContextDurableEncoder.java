@@ -28,13 +28,13 @@ import java.util.Map;
  * helper because it must:
  * <ul>
  *   <li>Filter the nested {@link CorrelationSessionRef} when
- *       {@link CorrelationSessionRef#durableSafe()} is {@code false} (FR-COR-144).</li>
+ * {@link CorrelationSessionRef#durableSafe()} is {@code false}.</li>
  *   <li>Filter individual {@link ProtocolCorrelationRef} entries by
- *       {@link ProtocolCorrelationRef#durableSafe()} (FR-COR-148).</li>
+ * {@link ProtocolCorrelationRef#durableSafe()}.</li>
  *   <li>Stamp the current {@link CorrelationEnvelope#CURRENT_SCHEMA_VERSION schemaVersion} so the
  *       matching decoder can enforce schema compatibility.</li>
  *   <li>Use {@code @JsonInclude(NON_NULL)} (via the envelope DTO) so absent optional fields are
- *       omitted from the wire shape (FR-COR-143).</li>
+ * omitted from the wire shape.</li>
  * </ul>
  *
  * <p>The single key {@link CorrelationDurableKeys#CORRELATION} carries the whole envelope as a
@@ -78,7 +78,7 @@ public final class CorrelationContextDurableEncoder implements DurableContextMet
     static CorrelationEnvelope toEnvelope(CorrelationContextSnapshot snap) {
         CorrelationSessionRef session = snap.session();
         if (session != null && !session.durableSafe()) {
-            // FR-COR-144: omit the entire session block when the source flagged it not safe.
+            // Omit the entire session block when the source flagged it not safe.
             session = null;
         }
         List<CorrelationEnvelope.EnvelopeProtocolCorrelation> protocols = null;
@@ -88,7 +88,7 @@ public final class CorrelationContextDurableEncoder implements DurableContextMet
                     .map(CorrelationContextDurableEncoder::toEnvelopeRef)
                     .toList();
             // Omit the property entirely when the filtered list is empty so the JSON stays
-            // minimal under FR-COR-143.
+            // minimal.
             if (!filtered.isEmpty()) {
                 protocols = filtered;
             }

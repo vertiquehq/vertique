@@ -30,14 +30,13 @@ import java.util.UUID;
  * Package-private collaborator responsible for scheduling and cancelling {@link TimerPurpose#TASK_REMINDER}
  * timers and recording associated history entries.
  *
- * <p>This class is extracted from {@link WorkflowEngine} as part of the Phase-1 decomposition
- * (PRD-WF-006, Slice C2). It absorbs the reminder scheduling cluster defined in the plan §4:
+ * <p>This class is extracted from {@link WorkflowEngine}. It owns the reminder scheduling cluster:
  * {@code scheduleReminderTimers}, {@code scheduleReminderTimer}, {@code scheduleBranchReminderTimer},
  * {@code cancelPendingReminders}, and {@code appendReminderCancelHistoryIfApplied}.
  *
  * <p>The {@link ReminderEmission} record and reminder-kind constants are co-located here because
  * they originate in reminder scheduling logic, even though they are also referenced by the
- * {@link TaskLifecycleService#reminderFired} method (which remains on the facade until Slice C7).
+ * {@link TaskLifecycleService#reminderFired} method.
  * Both are package-private, so {@link WorkflowEngine} can still read them directly.
  *
  * <p>This class is a leaf in the dependency graph: it depends on the history repository SPI,
@@ -52,7 +51,7 @@ final class ReminderScheduler {
     // --- Reminder-kind constants (part of the v1 wire contract for TASK_REMINDER events;
     //     see vertique-workflow/vertique-workflow-events/src/main/resources/META-INF/vertique/module.md).
     // Package-private so TaskLifecycleService.reminderFired
-    //     can read them without duplication until that method moves in Slice C7. ---
+    //     can read them without duplication. ---
 
     /** Attribute value for {@code ONE_SHOT_OFFSET}-mode reminders in the {@code TASK_REMINDER} event. */
     static final String REMINDER_KIND_ONE_SHOT_OFFSET = "ONE_SHOT_OFFSET";
@@ -227,7 +226,7 @@ final class ReminderScheduler {
      * Cancels all {@link TimerPurpose#TASK_REMINDER} timers associated with {@code taskId},
      * appending a {@code TIMER_CANCELLED} history entry for each.
      *
-     * <p><b>Lock order (cycle-4 codex round-2 correction):</b> this method does NOT acquire the
+     * <p><b>Lock order:</b> this method does NOT acquire the
      * task row lock first. Both the cancel cascade and the reminder-fire executor follow the same
      * lock order — {@code workflow_timers} BEFORE {@code workflow_tasks}. Specifically:
      * <ul>

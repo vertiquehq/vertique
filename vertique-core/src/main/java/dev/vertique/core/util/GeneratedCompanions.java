@@ -20,8 +20,8 @@ import java.util.function.BiFunction;
  * handles both top-level and nested origin types by replacing the {@code $} separator with
  * {@code _} to match what the annotation processor emits.
  *
- * <p>See ADR-0070 (delayed-job proxy selection) and ADR-0073 (workflow proxy selection) for the
- * loud-fail rationale: silently degrading to the reflective fallback when a broken generated class
+ * <p>The loud-fail rationale, shared by delayed-job and workflow proxy selection: silently
+ * degrading to the reflective fallback when a broken generated class
  * is present would hide a build inconsistency and produce a proxy that may behave differently from
  * the one that was generated.
  *

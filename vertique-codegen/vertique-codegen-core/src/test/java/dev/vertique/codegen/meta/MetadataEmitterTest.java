@@ -3,6 +3,7 @@
 
 package dev.vertique.codegen.meta;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.doAnswer;
@@ -79,11 +80,19 @@ class MetadataEmitterTest {
         // The emitted impl implements the neutral SPI.
         assertTrue(source.contains("MethodMetadata"), "should implement the MethodMetadata SPI");
 
-        // Reflection-free: no reflective method/annotation lookups in the generated source.
-        assertFalse(source.contains("getDeclaredMethod"), "generated source must not call getDeclaredMethod");
-        assertFalse(source.contains("getMethod("), "generated source must not call getMethod");
-        assertFalse(source.contains("Method.invoke"), "generated source must not call Method.invoke");
-        assertFalse(source.contains(".getAnnotation("), "generated source must not call getAnnotation reflectively");
+        // Reflection-free: no reflective method/annotation lookups in the generated source outside the
+        // one opt-in reflective accessor, asMethod(), whose body is the only place getDeclaredMethod may appear.
+        String constantCore = withoutAsMethodBodies(source);
+        assertFalse(constantCore.contains("getDeclaredMethod"), "generated source must not call getDeclaredMethod");
+        assertFalse(constantCore.contains("getMethod("), "generated source must not call getMethod");
+        assertFalse(constantCore.contains("Method.invoke"), "generated source must not call Method.invoke");
+        assertFalse(
+                constantCore.contains(".getAnnotation("), "generated source must not call getAnnotation reflectively");
+        assertFalse(source.contains(".asMethod("), "generated accessors must never call asMethod()");
+        assertEquals(
+                source.indexOf("asMethod("),
+                source.lastIndexOf("asMethod("),
+                "asMethod( must appear exactly once: as its own declaration, never as a call");
     }
 
     @Test
@@ -191,6 +200,79 @@ class MetadataEmitterTest {
         assertFalse(
                 source.contains("genericReturnType is part of the reflective-accessor group"),
                 "generated cache metadata must not retain the old throwing stub");
+    }
+
+    @Test
+    @DisplayName("emits asMethod() as a lazy, cached getDeclaredMethod lookup that fails with the method signature")
+    void emitsLazyCachedAsMethodAccessor() {
+        Types types = mock(Types.class);
+
+        TypeElement greeter = mockTypeElement("com.example.Greeter", "Greeter");
+        TypeMirror stringMirror = mockDeclaredType("java.lang.String", "String");
+        lenient().when(types.erasure(stringMirror)).thenReturn(stringMirror);
+
+        VariableElement nameParam = mockParam("name", stringMirror);
+        ExecutableElement greet = mockMethod("greet", greeter, stringMirror, List.of(nameParam));
+
+        String source =
+                MetadataEmitter.emitMethodMetadata(greet, GENERATED_NAME, types).toString();
+
+        // The cache is a volatile instance field, read before and written after the lookup.
+        assertTrue(
+                source.contains("private volatile Method resolvedMethod;"),
+                "asMethod() must cache its result in a volatile field; generated source:\n" + source);
+        assertTrue(source.contains("Method method = resolvedMethod;"), "asMethod() must read the cache first");
+        assertTrue(source.contains("if (method == null)"), "asMethod() must resolve only when the cache is empty");
+        assertTrue(
+                source.contains("method = declaringType().getDeclaredMethod(name(), parameterTypes());"),
+                "asMethod() must resolve through the constant-only accessors");
+        assertTrue(source.contains("resolvedMethod = method;"), "asMethod() must publish the resolved method");
+
+        // A missing method is reported with the expected signature, not swallowed or rethrown raw.
+        assertTrue(source.contains("catch (NoSuchMethodException e)"), "asMethod() must handle NoSuchMethodException");
+        assertTrue(
+                source.contains("throw new IllegalStateException(\"Method com.example.Greeter.greet(java.lang.String)"),
+                "the failure message must name the method signature; generated source:\n" + source);
+
+        // The throwing stub is gone.
+        assertFalse(
+                source.contains("asMethod is part of the reflective-accessor group"),
+                "generated metadata must not retain the old throwing asMethod stub");
+    }
+
+    /**
+     * Returns {@code source} with the body of every {@code asMethod()} method elided, so a
+     * reflection-free assertion can cover the constant-only accessors while leaving the one
+     * deliberately reflective, opt-in accessor out of scope.
+     *
+     * <p>Brace matching is literal: it does not skip braces inside string literals or comments, which
+     * the emitted body does not contain, and it elides every {@code asMethod()} body in the source.
+     */
+    static String withoutAsMethodBodies(String source) {
+        StringBuilder out = new StringBuilder();
+        int from = 0;
+        while (true) {
+            int at = source.indexOf("public Method asMethod() {", from);
+            if (at < 0) {
+                return out.append(source, from, source.length()).toString();
+            }
+            int open = source.indexOf('{', at);
+            int depth = 0;
+            int close = open;
+            for (; close < source.length(); close++) {
+                char c = source.charAt(close);
+                if (c == '{') {
+                    depth++;
+                } else if (c == '}') {
+                    depth--;
+                    if (depth == 0) {
+                        break;
+                    }
+                }
+            }
+            out.append(source, from, open + 1).append(" /* asMethod body elided */ ");
+            from = close;
+        }
     }
 
     // --- helpers (Mockito-stubbed javax.lang.model elements) ---

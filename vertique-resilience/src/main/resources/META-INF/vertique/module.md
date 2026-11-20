@@ -171,6 +171,40 @@ are rejected after close: pipeline creation and component `build()` fail, while 
 `execute` returns a failed future. The closed state is also observed by the Dagger lifecycle shutdown
 step.
 
+### Cancelling an execution
+
+`pipeline.execute(operation, cancellation)` runs one execution that a caller can cancel. Create the
+handle with `ResilienceCancellation.create()` and call `cancel(Throwable reason)` from any thread; the
+first call wins and later calls do nothing. `cancel(null)`, `execute(null, cancellation)` and
+`execute(operation, null)` throw `NullPointerException` synchronously. `execute(operation)` behaves as
+the overload with a cancellation that is never cancelled.
+
+Cancelling ends the execution's own waiting states. A pending retry delay stops and no further
+attempt starts, a call queued in a bulkhead leaves the queue and frees its slot, and a bulkhead permit
+is released. The returned future fails once, on the execution context, with the given reason, and the
+execution is reported as `ExecutionCompleted` with outcome `APPLICATION_FAILURE`. An operation future
+already in flight is not cancelled: its late result is ignored, and the owner of the operation resets
+its own work. A cancelled execution never closes a circuit breaker. It counts as a failure when it was
+the half-open trial, so the breaker re-opens and waits `resetTimeout` again, and as a success when the
+breaker is closed, which like any success resets the consecutive-failure count.
+
+### Supplier-reported timeouts
+
+When an attempt's supplier throws, or its future fails with, a `ResilienceTimeoutException` whose
+`operationKey()` equals the pipeline's `operationKey()`, the runtime records that attempt as a timeout
+of this pipeline. It emits `TimeoutTriggered` carrying the exception's `timeoutMs()`, never the
+pipeline's configured timeout, then `AttemptCompleted` with outcome `TIMEOUT`. This applies on every
+attempt path, including pipelines without a timeout or retry concern and the half-open trial. The
+exception instance reaches retry eligibility, the breaker classifier and the caller unchanged. Exactly
+one `TimeoutTriggered` is emitted per attempt, whether the pipeline's own timer or the supplier ends
+it. A `ResilienceTimeoutException` with another key keeps today's behavior: `AttemptCompleted` with
+outcome `TIMEOUT` and no `TimeoutTriggered`.
+
+Operation keys identify operations, not pipeline instances, so nesting two pipelines that share an
+operation name, one executed inside the other's supplier, changes behavior: the inner timeout now also
+emits `TimeoutTriggered` on the outer pipeline, where the outer previously recorded only
+`AttemptCompleted` with outcome `TIMEOUT`. Give nested pipelines distinct names to count a timeout once.
+
 ### Retry contracts
 
 `RetryBackoff.delayMs(int)` computes the delay in milliseconds from a zero-based retry count. Fixed
@@ -187,6 +221,20 @@ a policy. Runtime integrations that own a validated random source may use
 is opt-in, starts at attempt zero, and performs at most `maxRetries + 1` attempts through the
 Vert.x CircuitBreaker retry engine. `abortOn` wins over `retryOn`; delays are scheduled between
 attempts and do not consume the per-attempt timeout.
+
+A failure can ask for a longer wait by implementing `RetryDelayHint` (`Optional<Duration> retryAfter()`),
+for example a server's `Retry-After` answer. The hint is opt-in: it is read only when the retry
+configuration's `retryAfterMaxMs` is above 0 (the default, 0, ignores every hint). After the normal
+eligibility decision, the retry waits `max(sampled backoff, hint)` when the hint is at most
+`retryAfterMaxMs`, and is refused when the hint is above it: the original failure is surfaced,
+`RetryExhausted` is emitted and no `RetryScheduled` is. `RetryScheduled` reports the delay actually
+chosen. The hint never makes a failure retryable and never overrides `abortOn`. The first
+`RetryDelayHint` in the failure's cause chain is used; an accessor that throws, or returns `null`, an
+empty value, or a negative or overflowing duration, counts as no hint. A negative backoff still stops the
+retry. Set the maximum with `RetryConfig.Builder.retryAfterMaxMs(long)` or the tier key
+`resilience.policies.<name>.retry.retryAfterMaxMs`. The public builders expose the same maximum as
+`Retry.Builder.retryAfterMaxMs(long)`, so a pipeline built with `resilience.pipeline(name).retry(r ->
+r.maxRetries(2).retryAfterMaxMs(5000))` honors a hint of up to five seconds; a negative value is rejected.
 Callback failures become cause-free `ResiliencePolicyException` values with only safe callback-kind
 and exception-class metadata. Fatal `Error` values are rethrown.
 
@@ -195,7 +243,9 @@ default, then disabled precedence independently for each concern. Annotation inh
  `RetryConfig`, `RetryBackoff`,
 `CircuitBreakerConfig`, and `BulkheadConfig` validate eagerly. `ResolvedResiliencePolicy.executionBudget()`
 reports conservative active, queue, and total bounds using saturating arithmetic; unknown or
-unbounded inputs remain explicit.
+unbounded inputs remain explicit. With `retryAfterMaxMs` above 0, each retry's upper bound for fixed and
+exponential backoff becomes the larger of its backoff bound and `retryAfterMaxMs`; custom backoff
+stays unknown, and a maximum of 0 leaves the budget unchanged.
 
 Framework adapters use `ResilienceAdapterSupport.pipeline(AdapterOperationIdentity,
 ResolvedResiliencePolicy)` for the stable structured entry point. It derives the opaque key internally,
@@ -204,7 +254,7 @@ timers, or suppliers are started. For breaker or bulkhead policies, create a `Re
 with `newContext()`. Its classifier overload maps only adapter-final failures into breaker
 accounting; classifier failures preserve the original failure and count conservatively. Contexts
 own breakers and bulkheads and fence active public futures on `close()`. Equal structured identities
-in separate contexts do not share state. No raw-key overload or standalone public identity derivation
+in separate contexts do not share state. A context's `pipeline(identity, policy)` also accepts a resolved policy that enables no concern and runs the supplier as one recorded attempt, including a supplier-reported timeout of its own key; every other construction path still rejects it. No raw-key overload or standalone public identity derivation
 is provided.
 
 ### Circuit breaker and adapter context
@@ -215,10 +265,27 @@ directly or a prebuilt breaker can be placed in a pipeline. Inline pipeline cons
 pipeline-local breaker. A pipeline uses its own operation key in `CircuitOpenException`, while the
 breaker contributes only its state key; direct breaker execution uses the state key for both.
 
+By default every final failure counts against the breaker. `CircuitBreaker.Builder.countsAsFailure(Predicate<?
+super Throwable>)` narrows that: a failure the predicate rejects still surfaces to the caller unchanged, but
+it is recorded as a success, so it neither opens the breaker nor extends a failure streak. A predicate that
+throws counts the failure, and fatal errors pass through before the predicate runs. A rejected failure on the
+half-open trial counts as a success and closes the circuit, because the dependency answered. The predicate must be
+non-blocking and thread-safe, since a breaker may be shared. A classifier supplied by a framework adapter takes
+precedence over the builder's predicate.
+
+```java
+ResiliencePipeline pipeline = resilience.pipeline("inventory")
+        .circuitBreaker(cb -> cb.maxFailures(5).countsAsFailure(f -> !(f instanceof IllegalArgumentException)))
+        .build();
+```
+
+A client library can classify its own failures the same way, for example by not counting a rejection whose
+status code signals a caller mistake.
+
 Framework adapters should obtain `ResilienceAdapterContext` from
 `ResilienceAdapterSupport.newContext()`. The context creates structured-identity breakers and
-explicitly tracks same-owner prebuilt reuse. Its classifier overload is the adapter-only failure
-classification seam; application builders do not expose it. `close()` is idempotent, closes owned
+explicitly tracks same-owner prebuilt reuse. Its classifier overload sets the failure classification for
+adapter-final failures and takes precedence over a breaker's `countsAsFailure` predicate. `close()` is idempotent, closes owned
 breakers, and fences active timeout/retry/breaker pipeline futures with `ResilienceClosedException`.
 
 ### Bulkhead execution
@@ -280,7 +347,7 @@ match `[A-Za-z0-9._~-]{1,128}`. For example:
     "policies": {
       "payments": {
         "timeout": {"valueMs": 2000},
-        "retry": {"maxRetries": 5, "delayMs": 100},
+        "retry": {"maxRetries": 5, "delayMs": 100, "retryAfterMaxMs": 5000},
         "circuitBreaker": {"maxFailures": 3, "resetTimeoutMs": 10000},
         "bulkhead": {"maxConcurrentCalls": 8, "mode": "QUEUE", "maxQueueSize": 16, "queueTimeoutMs": 250}
       }
@@ -288,6 +355,9 @@ match `[A-Za-z0-9._~-]{1,128}`. For example:
   }
 }
 ```
+
+`retry.retryAfterMaxMs` (long, default 0, must be `>= 0`) is the longest failure delay hint the retry
+honors; an invalid value fails with a path-qualified `ConfigurationException`.
 
 Install `ResiliencePoliciesModule` alongside `ResilienceModule` when named tiers are used. The
 provider requires the application's `@VertxConfig JsonObject` and canonical `ConfigParser`

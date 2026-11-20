@@ -48,9 +48,10 @@ public class SseConfig {
     private final long keepAliveIntervalMs = 15_000;
 
     /**
-     * Whether the framework automatically sends periodic keep-alive comment frames on idle SSE
+     * Whether the framework automatically sends periodic keep-alive comment frames on SSE
      * connections. When {@code true}, a {@code ": keep-alive"} comment is emitted every
-     * {@link #keepAliveIntervalMs()} milliseconds. Defaults to {@code true}.
+     * {@link #keepAliveIntervalMs()} milliseconds, whether or not events are flowing. Defaults to
+     * {@code true}.
      */
     @Builder.Default
     private final boolean keepAliveEnabled = true;

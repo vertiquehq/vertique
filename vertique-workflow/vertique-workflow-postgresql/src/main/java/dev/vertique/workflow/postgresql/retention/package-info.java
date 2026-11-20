@@ -5,7 +5,7 @@
  * PostgreSQL-backed implementation of the workflow retention SPI.
  *
  * <p>Provides {@link dev.vertique.workflow.postgresql.retention.PgWorkflowRetentionService},
- * which archives and purges workflow instances in configurable batches using
- * {@code FOR UPDATE SKIP LOCKED} for safe concurrent execution.
+ * which archives and purges workflow instances in configurable batches, claiming each instance
+ * with a per-instance advisory try-lock for safe concurrent execution.
  */
 package dev.vertique.workflow.postgresql.retention;

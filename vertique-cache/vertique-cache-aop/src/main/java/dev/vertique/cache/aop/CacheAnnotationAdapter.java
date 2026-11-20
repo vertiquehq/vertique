@@ -86,7 +86,7 @@ final class CacheAnnotationAdapter {
             throw new IllegalArgumentException("@Cacheable and @CacheEvict must be declared on different methods");
         }
         if (annotation.clear()) {
-            return PreparedEviction.immediate(eviction(target, annotation), annotation.clear());
+            return PreparedEviction.clearing(support, annotation.name(), eviction(target, annotation));
         }
         return PreparedEviction.lazy(
                 support, annotation.name(), selector(annotation.key(), target), List.of(annotation.key()));
@@ -130,6 +130,7 @@ final class CacheAnnotationAdapter {
         private final Function<Object, Object> selector;
         private final List<String> selectorPaths;
         private volatile Cache<Object, Object> resolved;
+        private volatile Cache<Object, Object> registeredClear;
 
         private PreparedEviction(
                 boolean clear,
@@ -146,8 +147,14 @@ final class CacheAnnotationAdapter {
             this.selectorPaths = selectorPaths;
         }
 
-        static PreparedEviction immediate(Cache<Object, Object> cache, boolean clear) {
-            return new PreparedEviction(clear, cache, null, null, null, null);
+        /**
+         * A clear of a whole logical cache. It addresses the mode of the definition an annotation
+         * registered under {@code name}, looked up when the clear first runs because the cacheable method's
+         * proxy may be built after this one; {@code fallback}, built with the declared and default mode,
+         * is used while no definition is registered.
+         */
+        static PreparedEviction clearing(CacheAdapterSupport support, String name, Cache<Object, Object> fallback) {
+            return new PreparedEviction(true, fallback, support, name, null, null);
         }
 
         static PreparedEviction lazy(
@@ -159,6 +166,14 @@ final class CacheAnnotationAdapter {
         }
 
         Future<Boolean> run(Object arguments) {
+            if (clear) {
+                Cache<Object, Object> registered = registeredClear;
+                if (registered == null) {
+                    registered = support.clearFor(name).orElse(null);
+                    registeredClear = registered;
+                }
+                return (registered != null ? registered : resolved).invalidateAll();
+            }
             Cache<Object, Object> cache = resolved;
             if (cache == null) {
                 cache = support.evictionFor(name, selector, selectorPaths).orElse(null);
@@ -168,7 +183,7 @@ final class CacheAnnotationAdapter {
                 }
                 resolved = cache;
             }
-            return clear ? cache.invalidateAll() : cache.invalidate(arguments);
+            return cache.invalidate(arguments);
         }
     }
 }

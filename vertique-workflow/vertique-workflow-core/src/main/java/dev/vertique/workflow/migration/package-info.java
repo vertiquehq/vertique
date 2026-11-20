@@ -15,7 +15,7 @@
  * over the full {@link dev.vertique.workflow.state.WorkflowHistoryEntry} that lives in
  * {@code dev.vertique.workflow.state}.
  *
- * <p>PRD-WF-003 §7.4 — migration is a per-instance, handler-driven operation. Batch runners are
+ * <p>Migration is a per-instance, handler-driven operation. Batch runners are
  * explicitly out of scope for v1.
  */
 package dev.vertique.workflow.migration;

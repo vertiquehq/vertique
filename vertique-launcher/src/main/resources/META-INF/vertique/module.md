@@ -18,10 +18,12 @@ instance to construct), so the bootstrap kernel (in `dev.vertique:vertique-boots
 `java.util.ServiceLoader`-based SPI — `VertxBuilderContributor` — that any classpath dependency can
 implement without the application touching its `main` method.
 
-When no contributors are present on the classpath and no `vertx.options` section is declared,
-`VertiqueApplication` behaves identically to `io.vertx.launcher.application.VertxApplication` with
-respect to CLI parsing, `--conf`/`Main-Verticle` manifest resolution, and exit codes
-(FR-LAUNCH-001 parity scope). The bootstrap config load still runs and the `vertx.options` overlay
+When no contributors are present on the classpath, no `vertx.options` section is declared, and
+`-Dvertique.bootstrap.verticle=false` is set, `VertiqueApplication` behaves identically to
+`io.vertx.launcher.application.VertxApplication` with respect to CLI parsing, `--conf`/`Main-Verticle`
+manifest resolution, and exit codes. By default it deploys the framework-owned bootstrap verticle
+instead and bypasses `Main-Verticle` and command-line verticle resolution (see Standalone entry).
+The bootstrap config load still runs and the `vertx.options` overlay
 hook is still installed — they are zero-cost no-ops in that case.
 
 ---
@@ -66,8 +68,8 @@ Two consequences an application can rely on:
 - **The deployed verticle's `config()` is the canonical, fully-merged tree.** The Dagger
   `AppComponent` receives this tree; no separate `ConfigBootstrap.load()` call is needed.
 - **Contributors observe the *pre-overlay* `VertxOptions`.** The `vertx.options` tree section is
-  applied after the contributor chain, so a contributor's mutations survive the overlay — but a
-  contributor cannot read the final effective options.
+  applied after the contributor chain, so a contributor's mutations survive the overlay when they
+  have a JSON representation (see below) — but a contributor cannot read the final effective options.
 
 ### Standalone entry
 

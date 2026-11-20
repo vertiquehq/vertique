@@ -5,7 +5,7 @@ package dev.vertique.rest.ratelimit;
 
 /**
  * One composable key dimension an edge {@link RateLimitEdgeRule} draws on when building its
- * {@code RateLimitKey} (contracts/rest-adapter.md, "Edge limiter").
+ * {@code RateLimitKey}.
  *
  * <p>{@link #GLOBAL} is the empty dimension and is valid only alone in a rule's {@code key} list.
  * {@link #IP} and {@link #HEADER} compose, in declared order, into one key.

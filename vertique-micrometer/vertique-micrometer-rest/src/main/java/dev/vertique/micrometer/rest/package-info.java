@@ -9,7 +9,7 @@
  * but never modifies the request or response, and never submits audit records.
  *
  * <p>Zero-overhead when metrics are unconfigured: before {@code VertiqueApplication} bootstrap the
- * backing registry is an empty composite whose recording is a no-op (NFR-TEL-003). When
+ * backing registry is an empty composite whose recording is a no-op. When
  * {@code metrics.enabled=false} is supplied (via {@link dev.vertique.micrometer.MicrometerModule}
  * or an application-level binding), both the listener and interceptor skip all meter work
  * immediately.
@@ -17,7 +17,7 @@
  * <p>Key classes:
  * <ul>
  *   <li>{@link dev.vertique.micrometer.rest.MicrometerRestModule} — Dagger module contributing all
- *       components via multibinding; install alongside {@code RestCoreModule} (or {@code RestModule})
+ *       components via multibinding; install alongside {@code RestModule} (the JAX-RS mount)
  *       and {@link dev.vertique.micrometer.MicrometerModule}</li>
  *   <li>{@link dev.vertique.micrometer.rest.RestServerRequestMetricsListener} — records a per-request
  *       timer ({@value dev.vertique.micrometer.rest.RestServerRequestMetricsListener#METER_NAME})

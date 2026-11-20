@@ -109,6 +109,31 @@ public final class CacheAdapterSupport {
     }
 
     /**
+     * Resolves a clear handle for a logical cache whose definition was registered by an annotation
+     * declaration, so the clear addresses the store the cache's entries live in: the registered
+     * definition's mode, which can differ from {@code cache.defaultMode} (a synchronous method
+     * resolves to {@code LOCAL} under a clustered default). A clear carries no selector, so any
+     * registered definition of the name matches.
+     *
+     * @param name the logical cache name declared by the clear
+     * @return the unregistered handle carrying the registered mode, or empty when nothing registered
+     *         a definition with that name
+     */
+    public java.util.Optional<Cache<Object, Object>> clearFor(String name) {
+        return builder.registered(name)
+                .map(definition -> builder.buildUnregistered(
+                        name,
+                        definition.valueType(),
+                        definition.mode(),
+                        definition.ttlSeconds(),
+                        definition.identity(),
+                        definition.anonymous(),
+                        compose(null),
+                        false,
+                        null));
+    }
+
+    /**
      * Emits the terminal {@code EVICT}/{@code UNRESOLVED_TARGET} observation for an
      * exact eviction whose name and ordered selector paths have no matching registered
      * annotation definition.

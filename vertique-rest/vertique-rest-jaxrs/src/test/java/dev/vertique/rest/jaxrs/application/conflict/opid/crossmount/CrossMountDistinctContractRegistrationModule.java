@@ -12,10 +12,10 @@ import io.vertx.core.json.JsonObject;
 import java.util.List;
 
 /**
- * TP-009 row (b): registers {@code public} and {@code partner}, unconditionally active, at their
+ * Row (b): registers {@code public} and {@code partner}, unconditionally active, at their
  * own distinct {@code openapiPath} locations ({@code public.yaml} and {@code partner.yaml}), under
- * the {@code openapi-contract} pass-through strategy. FR-027's per-mount relaxation is staged to
- * CO-4 (CX-007): distinct locations do not exempt the collision from the still-global refusal.
+ * the {@code openapi-contract} pass-through strategy: at distinct locations, two distinct owners
+ * may share an operationId.
  */
 @Module
 public final class CrossMountDistinctContractRegistrationModule {

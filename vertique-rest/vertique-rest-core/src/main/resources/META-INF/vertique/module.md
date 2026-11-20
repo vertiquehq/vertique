@@ -360,6 +360,8 @@ Extends `dev.vertique.core.exception.ValidationException` with a structured, unm
 Conditional-request evaluation (`If-Match`, `If-None-Match`, `If-Modified-Since`,
 `If-Unmodified-Since`) per RFC 9110. Inject it as a resource-method parameter, or build it from a
 routing context with `RequestPreconditions.from(ctx)` — the instance is cached per request.
+`If-Match` uses strong comparison, so a weak entry (`W/"v1"`) in the header never matches and the
+request fails with 412; `If-None-Match` uses weak comparison.
 
 ```java
 @GET
@@ -376,7 +378,8 @@ public Response getItem(@PathParam("id") String id, RequestPreconditions precond
 
 `evaluate(...)` returns `null` when the request should proceed, a 304 for a satisfied
 `If-None-Match`/`If-Modified-Since` on GET or HEAD, and a 412 otherwise. `evaluate(Response)` reads
-the `ETag` and `Last-Modified` off an already-built response.
+the `ETag` and `Last-Modified` off an already-built response. When `If-None-Match` is present,
+`If-Modified-Since` is ignored (RFC 9110 §13.2.2), so a changed ETag is never overridden by an unchanged date.
 
 ### `@RequestParams`
 
@@ -420,6 +423,21 @@ tighter of the two; exceeding it returns 413, and when `Content-Length` is prese
 before creating upload files). `maxSizeBytes` is checked after Vert.x has written the part under
 `http.uploadsDirectory`. Part *count* is bounded separately at ingress by `http.maxFormFields`, so a
 request with more parts than that is rejected during decoding whatever their individual sizes.
+
+### `VertxEntityPart`
+
+A resource method that takes `jakarta.ws.rs.core.EntityPart` (or `List<EntityPart>`) receives instances that
+also implement `VertxEntityPart`, which adds a non-blocking accessor:
+
+```java
+public interface VertxEntityPart extends EntityPart {
+    Future<Buffer> getContentAsync();
+}
+```
+
+Prefer `getContentAsync()` on the event loop: `getContent()` blocks. Content is single-use, so a second call to
+either accessor throws `IllegalStateException`. The implementations behind the interface are framework-internal
+(`dev.vertique:vertique-rest-jaxrs`); cast to `VertxEntityPart`, never to an implementation class.
 
 ### Pagination
 
@@ -541,6 +559,15 @@ arbitrary object serialized by the SSE encoder, not a pre-rendered string.
 `bufferSize >= 1` and a non-null policy, and `SseChannelOptions.defaults()` returns `(256, FAIL)`.
 `BufferOverflowPolicy.FAIL` fails the `send(...)` future when the buffer is full;
 `DROP_OLDEST` evicts the oldest buffered event instead.
+
+An `SseChannel` is not required to be thread-safe: all calls should be made from the Vert.x event-loop
+context that owns the channel. A producer running on another thread should hand each `send`, `complete`
+or `fail` call over to that context (for example with `Context#runOnContext`) instead of calling the
+channel directly.
+
+`complete()` drains buffered events to the consumer, then ends the stream and runs the `onClose`
+callbacks. `fail(cause)` is the abort path: it does not flush the buffer, signals `cause` to the
+consumer's exception handler and runs the `onClose` callbacks.
 
 ### `HeaderElement`, `MediaType` and `AcceptNegotiator`
 
@@ -985,8 +1012,8 @@ without a descriptor, such as one constructed with the five-argument constructor
 should handle `null` when the interceptor can see such contexts. An interceptor that keys state per
 operation includes the application name, so operations of different applications never share an
 entry. On a mount that belongs to no declared application the application name is `null`, so the
-key reads `null:<operationId>`, and the cross-mount operation-id uniqueness check runs only when
-applications are declared:
+key reads `null:<operationId>`. Operation ids are unique only within a mount, so two applications
+may each route an operation with the same id, and only the application name tells them apart:
 
 ```java
 public Future<Object> recoverOperation(OperationContext ctx, Throwable cause) {
@@ -1117,8 +1144,9 @@ public interface ResponseSerializer {
 }
 ```
 
-The terminal wire-completion contract. The implementation ships in `vertique-rest-jaxrs`; replace it
-only to take over serialization orchestration entirely. It is called on the request's event-loop
+The terminal wire-completion contract. The implementation ships in `vertique-rest-jaxrs`, which
+binds it unconditionally, so it is not a replacement point: add a body format with a
+`ResponseBodyEncoder` instead. It is called on the request's event-loop
 context after the status and headers are written and after `transformResponse` hooks have run —
 empty-body and bare fallback paths bypass it. An implementation must not block the calling thread.
 
@@ -1477,6 +1505,60 @@ Bind `HmacCursorCodec` (or your own) as a `@Singleton` and pass it to `CursorPag
 
 ---
 
+### `FileContentVerifier` and `FileVerificationResult`
+
+Optional deep check of an uploaded file part's content, beyond its declared content type. Contribute
+implementations through the empty `Set<FileContentVerifier>` multibinding that `RestModule` declares; the
+`web-validation` gate in `dev.vertique:vertique-rest-validation` runs them, which is also where the reference
+verifiers and the opt-in magic-byte module are documented.
+
+```java
+public interface FileContentVerifier extends OrderedExtension {
+    Future<FileVerificationResult> verify(FileUpload part);
+}
+
+public sealed interface FileVerificationResult {
+    static FileVerificationResult accepted();
+    static FileVerificationResult rejected(String detail, String type);
+    static FileVerificationResult rejected(String detail, String type, Map<String, Object> args);
+}
+```
+
+- **All must accept.** Every bound verifier runs for each applicable file part in `OrderedExtension` order. A
+  verifier that does not apply returns an already-completed `accepted()`.
+- **Event loop.** `verify` is called on the event loop and must not block it; use asynchronous file I/O or offload.
+- **Fail closed.** A synchronous throw, a `null` future or result, or exceeding `jaxrs.fileContentVerifierDeadlineMs`
+  maps to 500; a `rejected` result maps to 400. The deadline bounds the wait, not the verifier's own work, so a
+  scanner client needs its own deadline at or below it.
+- **Stateless and thread-safe.** The framework makes no instance-identity guarantee. Do not retain the `FileUpload`:
+  its temporary file is deleted when the response ends.
+- **Trusted extension.** Rejection text and arguments are not sanitized; keep secrets, filenames, temporary paths and
+  submitted content out of them.
+
+### `RestExceptionMapper` and `RestExceptionMapperCustomizer`
+
+`RestExceptionMapper` is the REST-layer `Throwable` to `Throwable` pre-translator that runs before the exception
+mapper registry; it extends `dev.vertique.core.failure.FailureMapper` with covariant `on(...)` overloads so
+registrations chain. No translation is pre-registered. Contribute translations with a
+`RestExceptionMapperCustomizer` in the `Set<RestExceptionMapperCustomizer>` multibinding:
+
+```java
+@FunctionalInterface
+public interface RestExceptionMapperCustomizer extends OrderedExtension {
+    void customize(RestExceptionMapper mapper);
+}
+
+@Provides @IntoSet
+static RestExceptionMapperCustomizer myTranslator() {
+    return mapper -> mapper.on(MyInfrastructureException.class,
+            ex -> new WebApplicationException("Upstream error", 502, ex));
+}
+```
+
+Customizers are applied as an ordered fold, so the one that sorts later wins for the same exception type. The
+Dagger wiring, the assembled instance and the error pipeline that consumes it are in
+`dev.vertique:vertique-rest-jaxrs`.
+
 ### Framework seams
 
 Eleven public types are named nowhere above because no application uses one — `RestContextMessages`,
@@ -1550,11 +1632,11 @@ When `enabled` is `false`, every other key in this section is ignored.
 |---|---:|---|
 | `http.ssl.enabled` | `false` | |
 | `http.ssl.keyStorePath` | *(none)* | keystore file, or the PEM private key |
-| `http.ssl.keyStorePassword` | *(none)* | |
+| `http.ssl.keyStorePassword` | *(none)* | serialized as `"***"` by the config mapper; a literal `"***"` is rejected |
 | `http.ssl.keyStoreType` | `"JKS"` | `JKS`, `PKCS12`, or `PEM`; any other value falls back to JKS handling |
 | `http.ssl.certPath` | *(none)* | PEM certificate; defaults to `keyStorePath` for a combined file |
 | `http.ssl.trustStorePath` | *(none)* | client-certificate validation (mTLS) |
-| `http.ssl.trustStorePassword` | *(none)* | |
+| `http.ssl.trustStorePassword` | *(none)* | serialized as `"***"` by the config mapper; a literal `"***"` is rejected |
 | `http.ssl.trustStoreType` | `"JKS"` | `JKS`, `PKCS12`, or `PEM` |
 | `http.ssl.clientAuth` | `"NONE"` | `NONE`, `REQUEST`, or `REQUIRED`; anything else fails startup |
 | `http.ssl.enabledProtocols` | `["TLSv1.2","TLSv1.3"]` | |
@@ -1582,15 +1664,18 @@ When `enabled` is `false` (the default) no CORS handler is installed and every o
 | `jaxrs.basePath` | `"/*"` | mount path of the JAX-RS sub-router; not applied when one or more `@RestApplication` declarations are present — each is mounted at its own `@RestApplication.path` instead |
 | `jaxrs.openapiPath` | `"openapi.json"` | classpath spec; used by the opt-in `openapi-contract` strategy, and the shared global contract location for every application that sets neither `@RestApplication.openapiPath` nor `jaxrs.applications.<name>.openapiPath`; `vertique-rest-openapi-docs` refuses to document an application whose strategy resolves operations from that shared global contract |
 | `jaxrs.applications` | *(none)* | per-application settings, keyed by application name; parsed strictly by `vertique-rest-jaxrs`; unknown keys fail startup — see that module's reference |
-| `jaxrs.mediaTypeValidation` | `"WARN"` | `WARN`, `STRICT` (fails startup on the first mismatch), or `OFF` |
+| `jaxrs.mediaTypeValidation` | `"WARN"` | `WARN`, `STRICT` (fails startup listing all mismatches), or `OFF` |
 | `jaxrs.validationStrategy` | `"web-validation"` | must match a registered strategy id — built-ins are `web-validation`, `none`, `openapi-contract`; an unknown id fails startup when any JAX-RS mount has resources; a mount with no resources never selects a strategy |
 | `jaxrs.validationMode` | `"aggregate"` | `aggregate` or `failFast` |
 | `jaxrs.validationPatternMaxChars` | `4096` | at least `1`, else startup fails; the most UTF-16 code units one string value or object key may have when it reaches a `pattern`, `patternProperties`, or pattern-bearing `propertyNames` position, or an `idn-hostname`, `idn-email`, or `regex` format, under the `web-validation` strategy — a longer one is rejected with 400 before that check runs |
 | `jaxrs.validationPatternMaxTotalChars` | `262144` | at least `1` and no smaller than `jaxrs.validationPatternMaxChars`, else startup fails; the most UTF-16 code units the strings and keys reaching those positions may add up to in one request — the request is rejected with 400 once the total exceeds it |
 | `jaxrs.fileContentVerifierDeadlineMs` | `5000` | must be `> 0`, else startup fails; per-invocation wait deadline for each bound `FileContentVerifier` future under `web-validation` — timeout fails closed (500) and stops the sequential chain; does not cancel verifier-owned work (see `vertique-rest-validation`) |
-| `jaxrs.autoEtag` | `false` | attach a weak ETag derived from the serialized body when none is set |
 | `jaxrs.jsonProfile` | *(none)* | must name a registered JSON mapper profile; resolution is method `@JsonProfile` → class `@JsonProfile` → this key → `json.jsonProfile` → the `vertique` floor |
 | `jaxrs.security.requireExplicitPolicy` | `false` | boolean; when `true`, every JAX-RS operation must declare an explicit security policy, else startup fails — details in the `vertique-rest-jaxrs` reference |
+
+`jaxrs.autoEtag` no longer exists: it never had an effect, so the key was removed. A configuration that
+still sets it starts normally and the value is ignored like any other unknown `jaxrs` key; no ETag is
+computed. Set an `ETag` header on the response where one is wanted.
 
 When `jaxrs.security.requireExplicitPolicy` is `true`, `RestCoreModule` logs one INFO line:
 `jaxrs.security.requireExplicitPolicy is enabled: explicit security policies are required for
@@ -1647,7 +1732,7 @@ covers protected documents).
 
 | Key | Default | Constraint / notes |
 |---|---:|---|
-| `jaxrs.sse.keepAliveEnabled` | `true` | emit a periodic keep-alive comment on idle connections |
+| `jaxrs.sse.keepAliveEnabled` | `true` | emit a keep-alive comment at every `keepAliveIntervalMs` while the response streams, whether or not events are flowing |
 | `jaxrs.sse.keepAliveIntervalMs` | `15000` | |
 | `jaxrs.sse.defaultBufferSize` | `256` | per-channel buffer when no `SseChannelOptions` are supplied |
 | `jaxrs.sse.defaultOverflowPolicy` | `"FAIL"` | `FAIL` or `DROP_OLDEST` |

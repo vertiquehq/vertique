@@ -13,14 +13,14 @@
  *       {@link javax.annotation.processing.RoundEnvironment#getElementsAnnotatedWith} for their
  *       respective marker annotation. The former {@code @Path}-resource collector,
  *       {@code PathResourceCollector}, was removed when JAX-RS binding moved to
- *       {@code vertique-codegen-jaxrs}'s {@code JaxRsPipelineProcessor} (CG-010).</li>
+ *       {@code vertique-codegen-jaxrs}'s {@code JaxRsPipelineProcessor}.</li>
  *   <li><b>Root-element scan</b> —
  *       {@link dev.vertique.codegen.dagger.processor.collect.DelayedJobExecutorScanner} walks
  *       {@link javax.annotation.processing.RoundEnvironment#getRootElements()} to find concrete
  *       implementations of interfaces or abstract types.</li>
  * </ul>
  *
- * <p>Service-contract impl discovery is owned by {@code vertique-codegen-services} (CG-005),
+ * <p>Service-contract impl discovery is owned by {@code vertique-codegen-services},
  * not by this module.
  */
 package dev.vertique.codegen.dagger.processor.collect;

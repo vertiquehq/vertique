@@ -4,6 +4,7 @@
 package dev.vertique.rest.jaxrs.validation;
 
 import dev.vertique.core.extension.OrderedExtension;
+import dev.vertique.rest.core.request.FileContentVerifier;
 import dev.vertique.rest.core.router.MountMeta;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 import io.vertx.core.Handler;
@@ -12,7 +13,7 @@ import java.util.Optional;
 
 /**
  * Pluggable strategy that decides whether — and how — a REST operation's request is validated before
- * dispatch (FR-004/FR-005). A strategy is selected by its {@link #id()} (a string, not an enum, so
+ * dispatch. A strategy is selected by its {@link #id()} (a string, not an enum, so
  * applications can contribute their own strategies) and asked, at router-build time, to produce an
  * optional per-operation validation gate.
  *
@@ -61,7 +62,9 @@ public interface RequestValidationStrategy extends OrderedExtension {
      * strategy must opt in explicitly. {@code OpenApiContractValidationStrategy} ({@code
      * vertique-rest-openapi-validation}) overrides this to {@code true}. The rest-jaxrs mount
      * composition validator reads it, when a strategy id is selected, to decide whether a mount's
-     * OpenAPI contract location must parse.
+     * OpenAPI contract location must parse and whether two distinct operations sharing an
+     * operationId across mounts whose normalized contract locations are equal fail startup, since
+     * such a strategy would look both up in one contract.
      *
      * @return {@code true} when this strategy resolves operations from the mount's contract
      */

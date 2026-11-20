@@ -28,7 +28,7 @@ import lombok.extern.slf4j.Slf4j;
  *       {@code SecurityContext} (via {@code SecurityRuntime.current()}), not {@code ctx.user()}
  *   <li>{@link SecurityPolicy.Constrained} — role/scope enforcement delegated to the
  *       {@link AuthorizationDecisionPoint}, which evaluates the actor's {@code AuthorizationClaims};
- *       {@link SecurityPolicyEnforcer} emits one decision event per attempt (ADR-0114)
+ * {@link SecurityPolicyEnforcer} emits one decision event per attempt
  *   <li>{@link SecurityPolicy.None} — no handler added
  * </ul>
  *
@@ -62,7 +62,7 @@ public class AuthorizationContributor implements OperationHandlerContributor {
      * {@link SecurityPolicyEnforcer#createHandler(SecurityPolicy, java.util.Optional)}, passing the
      * resolved {@link OperationRegistrationContext#requiredAction()} so an action-only route
      * ({@link SecurityPolicy.None} with a present action) is enforced and a role/scope route composes
-     * the action gate into the same single decision event (ADR-0113 / ADR-0114). The handler is added
+     * the action gate into the same single decision event. The handler is added
      * only when the enforcer returns a non-{@code null} result.
      *
      * @param context the operation registration context carrying route, operation metadata, and the

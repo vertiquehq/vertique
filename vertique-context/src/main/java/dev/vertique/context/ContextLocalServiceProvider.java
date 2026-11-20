@@ -173,7 +173,7 @@ public class ContextLocalServiceProvider implements VertxServiceProvider {
         if (adapter == null) return value;
         // An adapter is registered for value.getClass() (its T extends ContextValue), so the value
         // is a ContextValue; the cast required by the bounded adapter signature is safe. This is the
-        // FR-CTX-206 duplicator path: it re-copies values that already passed a write-path check.
+        // duplicator path: it re-copies values that already passed a write-path check.
         @SuppressWarnings("unchecked")
         Object duplicated = adapter.duplicate((ContextValue) value);
         return duplicated;

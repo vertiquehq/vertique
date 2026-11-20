@@ -101,8 +101,8 @@ public interface KafkaSerdeProvider {
      * the concrete record from the wire schema-id with no caller-supplied {@code Class<V>}. It is
      * built once per router consumer from the consumer's already-merged {@code endpointConfig}
      * ({@code serdeProperties} + {@code schemaRegistry}), so endpoint registry/auth/id-handler
-     * settings apply during route selection exactly as they do for payload deserialization
-     * (FR-AVRO-007/009). The default throws — only formats that support property-based routing
+     * settings apply during route selection exactly as they do for payload deserialization.
+     * The default throws — only formats that support property-based routing
      * override this.
      *
      * @param endpointConfig the merged serde configuration view for this consumer

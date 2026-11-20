@@ -14,8 +14,8 @@ import java.util.Optional;
 
 /**
  * Framework-default {@link RateLimitSubjectResolver}, backed by the current {@code SecurityContext}
- * bound in the framework {@link ContextHolder} (contracts/rate-limit-runtime.md, "Subject
- * resolution SPI"). Mirrors {@code dev.vertique.cache.DefaultCacheIdentityResolver}.
+ * bound in the framework {@link ContextHolder}.
+ * Mirrors {@code dev.vertique.cache.DefaultCacheIdentityResolver}.
  *
  * <p>Public (unlike its cache-module precedent) so {@code RateLimitCoreModule}
  * ({@code dev.vertique.ratelimit.dagger}) can inject it across the package boundary between the

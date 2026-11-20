@@ -13,7 +13,7 @@ import java.util.Objects;
  *
  * <p>Carries ONLY static data. Runtime target resolution (event-bus address, stable target id, one-way
  * flag) is intentionally NOT here — it is derived at boot by {@code ServiceTargetResolver}, the same source
- * of truth used by the reflective {@code KafkaConsumerScanner}. See ADR-0072.
+ * of truth used by the reflective {@code KafkaConsumerScanner}.
  *
  * <p>One origin consumer class can produce several bindings (a {@code @KafkaSource} service-impl class may
  * carry several {@code @KafkaSource} methods), so a generated companion exposes a {@code List} of these.

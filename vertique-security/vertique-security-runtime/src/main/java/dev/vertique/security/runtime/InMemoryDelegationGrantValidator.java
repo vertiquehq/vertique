@@ -17,21 +17,20 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
- * Framework-shipped, in-memory {@link DelegationGrantValidator} default (PRD identity-002
- * FR-ID-DG-003).
+ * Framework-shipped, in-memory {@link DelegationGrantValidator} default.
  *
  * <p>Holds a fixed, immutable set of {@link DelegationGrant}s supplied at construction time — the same
  * dependency-clean-default shape as {@code InMemoryPolicyDefinitionSource} /
- * {@code InMemoryRolePolicyResolver} — and ships the expiry and scope checks the FR requires of the
+ * {@code InMemoryRolePolicyResolver} — and ships the expiry and scope checks required of the
  * framework default. Durable storage and revocation lookup are consumer-owned implementations of the
  * same {@link DelegationGrantValidator} seam.
  *
  * <p>{@link #validate(PrincipalRef, PrincipalRef, String, String, String)} maps {@code actor} to the
  * grant's {@link DelegationGrant#grantee()} — the principal exercising the grant — and {@code subject}
  * to the grant's {@link DelegationGrant#grantor()} — the principal on whose behalf the action is taken.
- * This is the same actor/subject direction {@code IdentityReconstruction.deferredExecution} and
- * FR-ID-DG-004 use (actor = the one acting, subject = the one on whose behalf). Principal matching
- * compares only {@code (type, id)}, never {@code attributes} (FR-ID-CA-012 — attributes are
+ * This is the same actor/subject direction {@code IdentityReconstruction.deferredExecution}
+ * uses (actor = the one acting, subject = the one on whose behalf). Principal matching
+ * compares only {@code (type, id)}, never {@code attributes} (attributes are
  * non-authoritative, request-scoped provenance).
  *
  * <p><strong>Fail-closed:</strong> any exception raised while evaluating a request (a malformed input,
@@ -138,7 +137,7 @@ public final class InMemoryDelegationGrantValidator implements DelegationGrantVa
 
     /**
      * Compares two principal refs by their durable identity tuple {@code (type, id)} only, never
-     * consulting {@code attributes} (FR-ID-CA-012).
+     * consulting {@code attributes}.
      *
      * @param a the first principal ref
      * @param b the second principal ref

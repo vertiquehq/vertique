@@ -8,13 +8,15 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.security.runtime` (identity-snapshot durable carriage + reconstruction), `dev.vertique.security.runtime.authz`, `dev.vertique.security.runtime.events`
 > **Artifact:** `vertique-security-runtime`
-> **Depends on:** security-core, core, context, config-core, resilience
+> **Depends on:** security-core, core, context, resilience
 
 Default in-process authorization engine, event fan-out wiring, and identity-snapshot durable-carriage/reconstruction pipeline for the Vertique security model. This module implements the API and SPI contracts declared in `dev.vertique:vertique-security-core` and supplies the Dagger modules that wire them. It carries no dependency on any transport module or Vert.x Web.
 
 It also provides the opt-in authorization-narrowing composition and the reconstructed-context authority modes — each behind its own opt-in Dagger module, degrading to a passthrough of the base engine when not installed.
 
 Config-backed policy and role-resolver contributions live in `dev.vertique:vertique-security-config`.
+
+This module does not put `vertique-config-core` on its consumers' classpath: it uses none of it in main code. An application that reached `vertique-config-core` only through this module declares it directly.
 
 This engine is Stable, and so are the SPIs it implements or wires for contributors, which
 `dev.vertique:vertique-security-core` owns. What is promised here is the wiring and the documented
@@ -63,14 +65,14 @@ Application subsystems contribute `ActionContributor`, `PolicyDefinitionSource`,
 
 ## Core Concepts
 
-### Startup Ordering (FR-008)
+### Startup Ordering
 
 `SecurityAuthzModule` guarantees the following construction order through the Dagger dependency graph:
 
 1. **`ActionRegistry`** is built first from all contributed `ActionContributor`s. Duplicate actions (same canonical value from two contributors) fail fast with an `IllegalStateException` naming both sources.
 2. The **policy catalogue** is built next. This is the single place it is merged and validated:
    - Every contributed `PolicyDefinitionSource` is validated against the registry polymorphically via `PolicyDefinitionSource.validateAgainst(ActionRegistry)` — no `instanceof` on concrete subtypes.
-   - Duplicate policy names across sources fail fast, naming both offenders (FR-018).
+   - Duplicate policy names across sources fail fast, naming both offenders.
    - All contributed `RolePolicyResolver`s are merged into a single composite resolver (union of results).
 3. **`Authorizer`** and **`AuthorizationIntrospector`** are built last from that same shared resolved state.
 
@@ -186,7 +188,7 @@ emitter.emit(new AuthorizationDecisionEvent(
     Instant.now(), correlationCtx, originOpt, request, decision));
 ```
 
-The returned `Future<Void>` **always succeeds** — per-observer failures are caught and logged (AC-SE-6 isolation). The caller does not need to compose on it to protect the auth flow; composing on it only means "every observer has settled".
+The returned `Future<Void>` **always succeeds** — per-observer failures are caught and logged (observer isolation). The caller does not need to compose on it to protect the auth flow; composing on it only means "every observer has settled".
 
 **Observer invocation ordering is not guaranteed.** Observers must be idempotent and self-ordered if ordering within a downstream pipeline matters.
 
@@ -211,7 +213,7 @@ Framework-shipped `AuthorizationNarrower` (priority 100, requirement kind `"dele
 
 **Non-delegated contexts pass through unchanged** — both `SecurityIdentity.subject()` and `SecurityIdentity.delegation()` must be present for this narrower to act.
 
-**Framework-scheduled deferred work is not grant-backed delegation.** A context whose `DelegationContext#kind()` is `DelegationContext#DEFERRED_EXECUTION_KIND` **and** whose `SecurityContext#reconstruction()` is present records a framework-mediated scheduling relationship, not a grant a principal requested — its authority is the executing service's own, already resolved live by Mode 2. `narrow` recognizes that pair and passes `base` through unchanged, **without ever consulting `DelegationGrantValidator`**: validating the synthetic scheduling id as a grant would deny every reconstructed deferred action, which FR-ID-DG-006 explicitly excludes from grant-scope intersection. `requirementFor` reports `Optional.empty()` for the same contexts, keeping the narrow-deny/requirement-present agreement consistent. Both conditions are required — a live-authored context carrying a `deferred-execution` kind is still grant-validated, so the bypass cannot be induced by populating a delegation kind alone.
+**Framework-scheduled deferred work is not grant-backed delegation.** A context whose `DelegationContext#kind()` is `DelegationContext#DEFERRED_EXECUTION_KIND` **and** whose `SecurityContext#reconstruction()` is present records a framework-mediated scheduling relationship, not a grant a principal requested — its authority is the executing service's own, already resolved live by Mode 2. `narrow` recognizes that pair and passes `base` through unchanged, **without ever consulting `DelegationGrantValidator`**: validating the synthetic scheduling id as a grant would deny every reconstructed deferred action, which the delegation-enforcement contract explicitly excludes from grant-scope intersection. `requirementFor` reports `Optional.empty()` for the same contexts, keeping the narrow-deny/requirement-present agreement consistent. Both conditions are required — a live-authored context carrying a `deferred-execution` kind is still grant-validated, so the bypass cannot be induced by populating a delegation kind alone.
 
 For a genuinely grant-backed delegated context:
 
@@ -249,7 +251,7 @@ public InMemoryDelegationGrantValidator(Collection<DelegationGrant> grants);
 public InMemoryDelegationGrantValidator(Collection<DelegationGrant> grants, Clock clock); // deterministic under test
 ```
 
-`validate(actor, subject, scopeKind, scopeRef, grantId)` maps `actor` to the grant's `grantee()` and `subject` to the grant's `grantor()` — mirroring `IdentityReconstruction.deferredExecution`'s actor/subject direction. Principal matching compares only `(type, id)`, never `attributes` (FR-ID-CA-012).
+`validate(actor, subject, scopeKind, scopeRef, grantId)` maps `actor` to the grant's `grantee()` and `subject` to the grant's `grantor()` — mirroring `IdentityReconstruction.deferredExecution`'s actor/subject direction. Principal matching compares only `(type, id)`, never `attributes`.
 
 Evaluation order, first match wins: unknown id → `GRANT_NOT_FOUND`; direction or scope mismatch → `GRANT_OUT_OF_SCOPE`; `expiresAt` reached or passed → `GRANT_EXPIRED`; otherwise `GRANT_VALID`. Any exception during evaluation is caught and mapped to `GRANT_LOOKUP_FAILED`; `validate` never returns a failed `Future`.
 
@@ -267,7 +269,7 @@ public record AssuranceRequirementConfig(Map<ActionPattern, AssuranceRequirement
 }
 ```
 
-`patterns()` maps a parsed `ActionPattern` — the same action-pattern grammar `PolicyStatement` authors policies with: exact (`"cms.content.delete"`) or trailing-suffix wildcard (`"payments.refund.*"`, `"payments.*"`) — to the `AssuranceRequirement` gating a matching action, via `requirementFor(ActionRef)` (FR-ID-AR-003; not an exact-string lookup). An action matching no configured pattern is not assurance-gated at all.
+`patterns()` maps a parsed `ActionPattern` — the same action-pattern grammar `PolicyStatement` authors policies with: exact (`"cms.content.delete"`) or trailing-suffix wildcard (`"payments.refund.*"`, `"payments.*"`) — to the `AssuranceRequirement` gating a matching action, via `requirementFor(ActionRef)` (a pattern match, not an exact-string lookup). An action matching no configured pattern is not assurance-gated at all.
 
 **Overlapping patterns combine strictest-wins**: when more than one configured pattern matches the same action, the effective requirement takes the higher `minProviderLevel` and the shorter `maxAge` of every match — a wildcard can never weaken a more-specific sibling rule, or vice versa.
 
@@ -313,7 +315,7 @@ When an application binds a `PrincipalAuthorityResolver`, `SecurityAuthzModule` 
 | Present, mode `CAPTURED` | The context's own captured claims are trusted as current authority as-is; the resolver is never consulted and the context is never rebuilt |
 | Present, mode `ATTRIBUTION_ONLY` | The context's own **actor**'s (`SecurityContext#identity()#actor()`) `PrincipalKey` — **never** `identity().subject()` — is resolved **exactly once** per `authorize(...)` call (never cached across dispatches); the resolved claims replace the authorization dimension in an **evaluation-only** rebuild; the original context and its holder are never mutated |
 
-Per FR-ID-DG-006, v1 delegation resolves the intersection of the acting principal's own authority and any grant scope — subject-authority evaluation (impersonation) is out of v1 scope, so both `resumeAsPrincipal` (actor == the resumed principal) and `deferredExecution` (actor == the executing service) resolve the *acting* principal's own current authority, never the subject-of-record's.
+In v1, delegation resolves the intersection of the acting principal's own authority and any grant scope — subject-authority evaluation (impersonation) is out of v1 scope, so both `resumeAsPrincipal` (actor == the resumed principal) and `deferredExecution` (actor == the executing service) resolve the *acting* principal's own current authority, never the subject-of-record's.
 
 **Fails closed, and bounded.** A resolver failure, timeout, or ambiguous result denies with `AuthzReasonCodes#AUTHORITY_RESOLUTION_FAILED` rather than falling back to the snapshot's captured claims or propagating the failure; the frozen snapshot's own `authorization()` is never a trust source in the live re-resolution path. On a resolver failure or timeout the inner narrowing chain (and every narrower folded into it) is never invoked at all — the deny is produced entirely at the outer layer.
 
@@ -385,10 +387,10 @@ public record IdentitySnapshotConfig(
 | `identity.snapshot.onDegradation` | `FAIL` | `FAIL` or `CONTINUE_WITHOUT_IDENTITY` |
 | `identity.snapshot.hmacKeys` | — | **Required**; signing/verification cannot proceed without at least an active key |
 | `identity.snapshot.hmacKeys.active.keyId` | — | Required, non-blank |
-| `identity.snapshot.hmacKeys.active.secretRef` | — | Required, ≥ 32 UTF-8 bytes; never logged or re-serialized |
+| `identity.snapshot.hmacKeys.active.secretRef` | — | Required, ≥ 32 UTF-8 bytes; never logged; the config mapper serializes it as `"***"` and `ConfigParser` rejects a literal `"***"` |
 | `identity.snapshot.hmacKeys.previous[]` | empty | Each `keyId` must be distinct from the active key's and from every other `previous` key; each `secretRef` ≥ 32 UTF-8 bytes |
-| `identity.snapshot.maxCarrierLifetimeMs` | unset (unbounded) | Required when any `carriageRequirements` entry is `REQUIRED` |
-| `identity.snapshot.maxSnapshotLifetimeMs` | unset (unbounded) | Required when any `carriageRequirements` entry is `REQUIRED` |
+| `identity.snapshot.maxCarrierLifetimeMs` | unset (no carrier-lifetime budget; the signed expiry still applies) | Required when any `carriageRequirements` entry is `REQUIRED` |
+| `identity.snapshot.maxSnapshotLifetimeMs` | unset (no configured budget; the encoder still signs `expiresAt` as the capture instant plus 24 hours) | Required when any `carriageRequirements` entry is `REQUIRED` |
 | `identity.snapshot.clockSkewMs` | `30000` | — |
 | `identity.snapshot.carriageRequirements.<targetKind>` | `OPTIONAL` for an unlisted kind | `REQUIRED`, `OPTIONAL`, or `FORBIDDEN` |
 | `identity.snapshot.capturedAuthority.allowedTargetKinds[]` | empty | Each entry non-blank; each must resolve to `REQUIRED` in `carriageRequirements` |
@@ -439,7 +441,7 @@ public final class IdentitySnapshotCapture {
 
 `captureFrom(SecurityContext live)` is the ingress seam and the type's sole public method. It evaluates the `captureEnabled` kill-switch **first** — when disabled it returns a shared no-op scope *without* consulting the factory, so the no-capture hot path pays nothing. An eligibility gate then checks the live context: an anonymous actor (`PrincipalType.ANONYMOUS`) or a `NONE`-kind primary authentication method also short-circuits to the no-op scope without consulting the factory, since an unauthenticated identity carries no attribution worth persisting. Otherwise it captures the credential-free content, binds it, and returns the bind `ContextHolder.Scope` so the caller unwinds it with the request lifecycle.
 
-**Capture is credential-free by enforcement** (FR-ID-CA-003 / NFR-ID2-003), and the projection is **dimension-aware**: subject, client, and claim `attributes` maps are projected to empty unconditionally; the actor map retains only `system.reason`, and only when the actor is `SYSTEM`-typed and the value is a bounded (≤ 256 chars) `String`. The bound *limits* — it does not *prevent* — what trusted in-process code can place under that key; `SystemIdentities` is the sanctioned source. Structural fields (`type`, `id`, claim components, delegation kind and authority id) are unaffected. Durable principal identity is the trust-domain-unique `(PrincipalType, id)` tuple, never attributes (FR-ID-CA-012).
+**Capture is credential-free by enforcement**, and the projection is **dimension-aware**: subject, client, and claim `attributes` maps are projected to empty unconditionally; the actor map retains only `system.reason`, and only when the actor is `SYSTEM`-typed and the value is a bounded (≤ 256 chars) `String`. The bound *limits* — it does not *prevent* — what trusted in-process code can place under that key; `SystemIdentities` is the sanctioned source. Structural fields (`type`, `id`, claim components, delegation kind and authority id) are unaffected. Durable principal identity is the trust-domain-unique `(PrincipalType, id)` tuple, never attributes.
 
 `authenticatedAt` derivation precedence: the assurance `authTime` when present; else the first (decisive) `AuthenticationEvidence`'s `verifiedAt`; else — for a reconstructed live context — the `identity.reconstructed.authenticatedAt` marker attribute (so a chained re-capture preserves the original authentication instant); else the capture instant (synthetic system/unauthenticated/anonymous contexts only).
 
@@ -457,9 +459,9 @@ Must always be installed alongside `IdentitySnapshotCarriageModule` — it wires
 
 ---
 
-### IdentitySnapshotReconstructionModule, ServiceIdentityResolver
+### IdentitySnapshotReconstructionModule
 
-`IdentitySnapshotReconstructionModule` is the receive-side wiring that reconstructs a `SecurityContext` from a durably-carried snapshot at every service-dispatch receive (delayed-job execution, inbox handler dispatch, and any other event-bus service dispatch). It includes `IdentitySnapshotCarriageModule`, `PrivilegedIdentityModule`, and the context runtime module, contributes an `InboundContextInitializer` into the framework's multibinding set, and declares `ServiceIdentityResolver` as an overridable `@BindsOptionalOf` seam.
+`IdentitySnapshotReconstructionModule` is the receive-side wiring that reconstructs a `SecurityContext` from a durably-carried snapshot at every service-dispatch receive (delayed-job execution, inbox handler dispatch, and any other event-bus service dispatch). It includes `IdentitySnapshotCarriageModule`, `PrivilegedIdentityModule`, and the context runtime module, contributes an `InboundContextInitializer` into the framework's multibinding set, and declares `ServiceIdentityResolver` (`dev.vertique:vertique-security-core`) as an overridable `@BindsOptionalOf` seam.
 
 Applications wiring identity-snapshot durable carriage into deferred execution must include this module (and supply the required `identity.snapshot.hmacKeys` config) alongside their delayed-job/inbox-outbox module and dispatch module.
 
@@ -477,16 +479,9 @@ Applications wiring identity-snapshot durable carriage into deferred execution m
 
 The deferred-execution-origin provenance gate is the security boundary that keeps the bounded mint from privileging an ordinary context-empty (or unproven-deferred) dispatch: an attacker who writes a garbage, unverifiable durable row with no origin marker must not end up better off under `CONTINUE_WITHOUT_IDENTITY` than by writing nothing at all. When nothing is bound, `@RequiresAction`-gated service operations are treated as `AUTHENTICATION_REQUIRED`; **ungated operations run without a bound context, exactly as if the reconstruction module were not installed.**
 
-`ServiceIdentityResolver` is the functional seam that resolves the executing identity used as the actor when a service-only or reconstructed context is minted:
+`ServiceIdentityResolver` is the SPI, owned by `dev.vertique:vertique-security-core`, that names the executing identity used as the actor when a service-only or reconstructed context is minted.
 
-```java
-@FunctionalInterface
-public interface ServiceIdentityResolver {
-    SecurityIdentity resolve(DeferredExecutionOrigin origin);
-}
-```
-
-The `DeferredExecutionOrigin` carries the provenance `kind` (`delayed-job` / `cron` / `outbox-relay`) and a `reference` — the specific job-type / cron-name / event-type — that becomes the resolved identity's audit reason. The seam is bound via `@BindsOptionalOf` with **no** concrete framework binding: absent an application resolver the built-in default maps `origin.reference()` to `SystemIdentities.scheduledJob(...)`; an application overrides by binding its own `@Provides ServiceIdentityResolver` (present ⇒ used, no duplicate-binding collision). The mint honors the resolved actor's `PrincipalType` — a `SYSTEM` actor via `SecurityContexts.system(...)`, a `SERVICE` actor via `SecurityContexts.unauthenticated(...)` (stamping `custom("system")` on a `SERVICE` actor would misattribute it as system-acting), any other actor type rejected.
+The resolver receives the `DeferredExecutionOrigin`, whose `reference` (the job type, cron name or event type) the built-in default turns into the identity's audit reason. The seam is bound via `@BindsOptionalOf` with **no** concrete framework binding: absent an application resolver the built-in default maps `origin.reference()` to `SystemIdentities.scheduledJob(...)`; an application overrides by binding its own `@Provides ServiceIdentityResolver` (present ⇒ used, no duplicate-binding collision). The mint honors the resolved actor's `PrincipalType` — a `SYSTEM` actor via `SecurityContexts.system(...)`, a `SERVICE` actor via `SecurityContexts.unauthenticated(...)` (stamping `custom("system")` on a `SERVICE` actor would misattribute it as system-acting), any other actor type rejected.
 
 ---
 
@@ -605,6 +600,5 @@ static ServiceIdentityResolver serviceIdentityResolver() {
 - `dev.vertique:vertique-security-core` — all SPI interfaces and value types
 - `dev.vertique:vertique-core` — `OrderedExtension`, `ContextHolder`, durable-context types, the `ConfigParser` seam, exception roots
 - `dev.vertique:vertique-context` — the durable-context encoder/decoder multibinding sets the carriage module contributes into
-- `dev.vertique:vertique-config-core` — config parsing for the `identity.*` sections
 - `io.vertx:vertx-core` — `Future`, and the timer backing the Mode-2 resolution timeout
 - `com.google.dagger:dagger` — the `@Module`/`@Multibinds`/`@BindsOptionalOf` wiring this module ships

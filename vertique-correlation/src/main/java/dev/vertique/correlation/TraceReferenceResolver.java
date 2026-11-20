@@ -31,8 +31,8 @@ import java.util.Optional;
  *       trace is not visible in the trace store (the ids may not resolve there).</li>
  * </ul>
  *
- * <p><b>Singleton by design.</b> Tracing is OpenTelemetry-only in this framework (see ADR-0098 /
- * PRD D3). The binding is resolved via {@code Optional<TraceReferenceResolver>} (a
+ * <p><b>Singleton by design.</b> Tracing is OpenTelemetry-only in this framework.
+ * The binding is resolved via {@code Optional<TraceReferenceResolver>} (a
  * {@code @BindsOptionalOf} declaration in {@link CorrelationContextModule}) — exactly one
  * implementation may be on the graph. Applications that do not wire a tracer see an empty
  * {@code Optional} and no trace ids flow into the correlation context.

@@ -11,7 +11,7 @@ import dev.vertique.resilience.RetryBackoff;
  * <p>Controls how many times a failing record is retried before falling back to
  * the exhausted strategy (typically {@link ErrorStrategy#DEAD_LETTER}).
  *
- * @param maxRetries maximum number of retry attempts per record
+ * @param maxRetries maximum number of retry attempts per record; {@code 0} sends the first failure straight to the exhausted strategy
  * @param backoffMs initial backoff delay in milliseconds
  * @param backoffMultiplier multiplier applied to backoff on each subsequent retry
  * @param exhaustedStrategy fallback strategy when retries are exhausted (must not be {@link ErrorStrategy#RETRY})
@@ -33,21 +33,20 @@ public record RetryConfig(
      * @param maxBackoffMs maximum backoff delay cap in milliseconds
      */
     public RetryConfig {
-        if (maxRetries < 1) {
-            throw new IllegalArgumentException("maxRetries must be >= 1, got " + maxRetries);
+        if (maxRetries < 0) {
+            throw new IllegalArgumentException("maxRetries must be >= 0");
         }
         if (backoffMs < 0) {
-            throw new IllegalArgumentException("backoffMs must be >= 0, got " + backoffMs);
+            throw new IllegalArgumentException("backoffMs must be >= 0");
         }
         if (!Double.isFinite(backoffMultiplier) || backoffMultiplier < 1.0) {
-            throw new IllegalArgumentException("backoffMultiplier must be finite and >= 1.0, got " + backoffMultiplier);
+            throw new IllegalArgumentException("backoffMultiplier must be finite and >= 1.0");
         }
         if (exhaustedStrategy == ErrorStrategy.RETRY) {
             throw new IllegalArgumentException("exhaustedStrategy must not be RETRY (would cause infinite recursion)");
         }
         if (maxBackoffMs < backoffMs) {
-            throw new IllegalArgumentException(
-                    "maxBackoffMs must be >= backoffMs, got maxBackoffMs=" + maxBackoffMs + " backoffMs=" + backoffMs);
+            throw new IllegalArgumentException("maxBackoffMs must be >= backoffMs");
         }
     }
 

@@ -22,7 +22,7 @@ import java.util.Set;
  *
  * <p><strong>Duplicate guard.</strong> Mirrors the pattern used by
  * {@code dev.vertique.rest.security.IdentityResolutionMiddleware} for
- * {@code dev.vertique.security.resolver.SecurityIdentityResolver} (NFR-ID-003): two narrowers
+ * {@code dev.vertique.security.resolver.SecurityIdentityResolver}: two narrowers
  * sharing the same {@code (priority, orderKey)} pair are a configuration error and fail startup
  * with an {@link IllegalStateException} naming both conflicting classes. {@link AuthorizationNarrower}
  * has no independent {@code id()} distinct from {@link OrderedExtension#orderKey()}, so

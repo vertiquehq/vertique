@@ -15,8 +15,7 @@ import java.util.function.Supplier;
  * <p>Exposes the same {@code acquire}/{@code execute}/{@code policyName} shape as {@link
  * RateLimiter} and applies its selector function to derive the {@link RateLimitKey} before
  * dispatching through the same underlying decision path {@link RateLimiter#acquire(RateLimitKey,
- * long)} exercises — not a separate or unimplemented code path (contracts/rate-limit-runtime.md,
- * "Exact API shape").
+ * long)} exercises — not a separate or unimplemented code path.
  *
  * @param <K> the caller-supplied input type
  */

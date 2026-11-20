@@ -223,7 +223,7 @@ page exists, without a `COUNT(*)`.
 | `.orderBy(OrderDirection, NullHandling, String...)` | Uniform direction and null policy |
 | `.orderBy(OrderKey, OrderKey...)` | Per-column direction and null policy |
 | `.uniqueKey(String...)` | Declares which order columns form a unique key |
-| `.pageSize(int)` | Default page size when the cursor carries none (default `20`) |
+| `.pageSize(int)` | Page size for `page()`, the first page (default `20`); a cursor passed to `page(PageCursor)` always carries its own size, which is the one used |
 | `.queryClause(QueryClause)` | Vendor clause appended after `LIMIT` |
 
 | Terminal method | Returns |
@@ -252,13 +252,14 @@ Future<PagedResult<Item>> second = this.<Item>pagedQuery(
 ```
 
 **At least one order key is required** — building without `orderBy(...)` throws
-`IllegalArgumentException`. The framework emits row-value comparison syntax such as
+`NullPointerException`, and `orderBy(...)` with no columns throws `IllegalArgumentException`. The
+framework emits row-value comparison syntax such as
 `(created_at, id) > ($2, $3)`, so every order column must appear in the `SELECT` list and be
 readable by name from the returned `Row`.
 
 **Declare a unique tiebreaker.** When the leading order column is not unique, append a unique column
 (typically `id`) and name it with `.uniqueKey(...)`. Without `.uniqueKey(...)` the query logs a
-one-time WARN that pagination may skip or duplicate rows. A `uniqueKey` column that is not among the
+WARN, once per process, that pagination may skip or duplicate rows. A `uniqueKey` column that is not among the
 `orderBy` columns fails construction with `IllegalArgumentException`.
 
 **Backward navigation** uses `PagedResult.previousCursorToken()`: each order key's direction is
@@ -266,7 +267,8 @@ reversed for the fetch and the results are reversed back in memory, so display o
 
 **Null keyset values** are rejected unless the corresponding `OrderKey` allows them. A cursor
 carrying a null for a `DISALLOW` column fails the future with `IllegalArgumentException`; a *result
-row* with a null in such a column fails with `IllegalStateException`. Use `.nullsFirst()` or
+row* with a null in such a column fails the future with a `DataAccessException` whose cause is an
+`IllegalStateException`. Use `.nullsFirst()` or
 `.nullsLast()` on the `OrderKey` when nulls are expected.
 
 **Cardinality** is checked at execution: a cursor whose keyset value count differs from the order-key
@@ -393,8 +395,11 @@ name is validated through `SqlIdentifier` in the compact constructor.
 
 ### Transactions
 
-`transaction()` returns a single-use `TransactionBuilder`. It auto-commits on success, auto-rolls
-back on failure, and translates the failure through the repository's exception mapper.
+`transaction()` returns a `TransactionBuilder` that is meant to be executed once. It auto-commits on
+success, auto-rolls back on failure, and translates the failure through the repository's exception
+mapper. The builder holds only the isolation level, read-only flag and deadline, so a second
+`execute` on the same builder runs an independent transaction with the same settings (a deadline is
+measured from that call); build a fresh builder per transaction.
 
 ```java
 // Database-default isolation, read-write
@@ -448,15 +453,21 @@ repository.transaction().deadline(Duration.ofSeconds(5)).execute(conn -> doWork(
 Every statement inside the lambda must be bound to the transactional connection with `.on(conn)`;
 a builder left on the pool silently runs outside the transaction.
 
-`Savepoint.execute(conn, name, fn)` gives partial rollback inside an open transaction: on success the
-savepoint is released, on failure it is rolled back to and the original error propagates, and the
-surrounding transaction stays open either way. The name must be a valid SQL identifier.
+`Savepoint.execute(conn, name, fn)` gives partial rollback inside an open transaction for work that
+fails with something other than a failed SQL statement: on success the savepoint is released, on
+failure it is rolled back to and the original error propagates, and the surrounding transaction stays
+open. A failed SQL statement inside the savepoint, such as a unique-key violation, fails the whole
+transaction even when the work recovers from it and the savepoint is rolled back: the transaction
+does not commit and the future returned by `execute` fails (see
+[Transaction completion](#transaction-completion)). The name must be a valid SQL identifier.
 
 ```java
 repository.transaction().serializable().execute(conn ->
         doPartOne(conn)
-                .compose(v -> Savepoint.execute(conn, "sp1", c -> doRiskyWork(c)))
-                .recover(err -> doFallback(conn)));
+                // doRiskyWork fails with a non-SQL failure, such as a business-rule check
+                .compose(v -> Savepoint.execute(conn, "sp1", c -> doRiskyWork(c))
+                        .recover(err -> Future.succeededFuture())) // writes made inside sp1 are undone
+                .compose(v -> doPartTwo(conn)));
 ```
 
 `TransactionOptions` is the record the builder hands to the vendor base class: `isolationLevel`
@@ -557,8 +568,8 @@ columns; vendor builders quote every column during composition.
 The typed `db` config section — see [Configuration](#configuration) for every key.
 `DbPoolConfig.validate()` returns a list of warning strings for likely misconfigurations — an unset
 host, a non-positive `maxPoolSize`, a trust store configured while `sslMode` is `DISABLE`. It never
-throws and nothing calls it automatically; invoke it yourself and log the result if you want that
-diagnostic at startup.
+throws. `DbModule` calls it when it creates the `DbPoolConfig` binding and logs each warning at
+WARN (see [`DbModule`](#dbmodule)); a warning never fails startup.
 
 ### `DbSchemas`
 
@@ -623,8 +634,11 @@ public record MigrationResult(int migrationsApplied, String targetVersion) {}
 ```
 
 `targetVersion` is `null` when nothing was applied. Implementations wrap vendor failures in
-`MigrationException` (extends `dev.vertique.core.exception.VertiqueException`), which may carry a
-partial `MigrationResult` via `partialResult()` when the engine reported progress before failing.
+`MigrationException` (extends `dev.vertique.core.exception.VertiqueException`). A runner may attach a
+partial `MigrationResult`, readable through `partialResult()`, and `partialResult()` is `null`
+otherwise. The Flyway runner attaches none: a failed single-history run carries no progress, and a
+failed named run reports its progress through `MigrationRunException.report()`, which is `null` when
+the failure came before any report existed.
 
 Run migrations before deploying verticles:
 
@@ -681,8 +695,8 @@ database failure reaching the REST layer renders as HTTP 500.
 TechnicalException (core.exception)
 └── DataAccessException
     ├── TransientDataAccessException            — may succeed on retry
-    │   ├── ConnectionException                 — pool exhaustion, network, SQL state class 08
-    │   ├── QueryTimeoutException               — statement exceeded its time limit
+    │   ├── ConnectionException                 — database unreachable or connection lost: network failure, SQL state class 08 and 57P01–57P04
+    │   ├── QueryTimeoutException               — statement exceeded its time limit, or the wait for a pooled connection timed out
     │   └── DeadlockException                   — deadlock detected
     ├── TransactionDeadlineExceededException    — transaction deadline passed; non-transient
     ├── DataIntegrityViolationException         — constraint violation
@@ -787,7 +801,8 @@ produced.
 | `maxPoolSize` | int | `5` | Maximum pooled connections |
 | `maxWaitQueueSize` | int | `-1` | Requests allowed to wait for a connection; `-1` is unbounded |
 | `eventLoopSize` | int | `0` | Event-loop threads for the pool; `0` uses the Vert.x default |
-| `connectionTimeoutMs` | int | `30000` | Maximum wait for a pooled connection |
+| `connectionTimeoutMs` | int | `30000` | Maximum wait for a pooled connection; the wait that times out surfaces as `QueryTimeoutException` |
+| `connectTimeoutMs` | int | `60000` | Maximum time to establish the TCP connection to the database; the timeout surfaces as `ConnectionException` |
 | `idleTimeoutMs` | int | `0` | Idle time before eviction; `0` disables |
 | `maxLifetimeMs` | int | `0` | Maximum connection lifetime; `0` is unlimited |
 | `poolCleanerPeriodMs` | int | `1000` | Pool cleaner interval |
@@ -807,8 +822,14 @@ produced.
 
 Unknown keys are ignored. `keyPath` and `certPath` are a pair — mutual TLS needs both.
 
-`password`, `trustStorePassword`, and `properties` are write-only: they are read from configuration
-but never serialized back out by Jackson, and `toString()` renders them as `<redacted>`.
+`password` and `trustStorePassword` are read from configuration and stay readable through their
+accessors. The config mapper behind `ConfigParser` serializes each as `"***"` when set and omits it
+when absent, because the names match the shared secret rule (`ConfigSecretRenderer` in
+`dev.vertique:vertique-core`); `ConfigParser` rejects a literal `"***"` as their value, so a masked
+dump cannot be fed back as the password. `properties` carries `@ConfigSecret`: the bag may carry a secret
+under any key, so the config mapper serializes it whole as `"***"` when non-empty (`{}` when empty). `toString()` renders all three as `<redacted>`.
+Only the config mapper masks — serializing the record with another `ObjectMapper` prints the
+passwords.
 
 ### Schema placement (`db.schemas`)
 
@@ -872,18 +893,31 @@ from `DbExceptionMapper`.
 
 ### `PoolConnectHandler`
 
-`PoolConnectHandler extends Handler<SqlConnection>` runs once per newly established physical
-connection, before the connection is admitted to the pool. **The handler must call `conn.close()`
-when it finishes** — that call is the admission signal, and omitting it stalls pool growth.
+`PoolConnectHandler` runs once per newly established physical connection, before the connection is
+admitted to the pool. It returns a `Future<Void>`, and **the framework closes the connection (the
+admission signal) when that future completes** — the handler must not call `conn.close()` itself.
 
 ```java
 @Provides
 static PoolConnectHandler connectHandler() {
     return conn -> conn.query("SET TIME ZONE 'UTC'").execute()
             .compose(v -> conn.query("SET application_name = 'my-service'").execute())
-            .onComplete(ar -> conn.close());
+            .mapEmpty();
 }
 ```
+
+The handler must complete its future. The pool applies no time limit to it:
+
+- **A completed future admits the connection**, whether it succeeded or failed. A failed handler
+  does not reject the connection and does not fail the connect attempt, so a handler that must
+  guarantee its session settings has to make that failure visible itself (for example by failing
+  the application's startup check).
+- **A future that never completes keeps the connection out of the pool.** The connection holds one
+  of the pool's `maxPoolSize` slots, callers waiting for a connection fail with
+  `QueryTimeoutException` after `connectionTimeoutMs`, and the pool serves callers again only once
+  the future finally completes. Give a handler that talks to the database or to another service
+  its own timeout, for example `future.timeout(...)`, instead of relying on the pool; a timeout fails the
+  future, so the connection is then admitted as described above.
 
 ### `MigrationRunner`
 
@@ -945,11 +979,12 @@ compile-time constant or a developer-controlled string, never anything derived f
 
 | Symptom | Cause |
 |---|---|
-| `IllegalArgumentException: At least one order key is required` | `PagedQuery` built without `orderBy(...)` |
+| `NullPointerException: orderKeys must not be null (call orderBy() on the builder)` | `PagedQuery` built without `orderBy(...)` |
+| `IllegalArgumentException: At least one column is required` | `orderBy(...)` called with no columns |
 | `IllegalArgumentException: uniqueKey column '…' does not appear in the orderBy columns` | `.uniqueKey(...)` names a column not in `orderBy` |
-| WARN "no declared unique tiebreaker column" | `PagedQuery` executed without `.uniqueKey(...)`; pagination may skip or duplicate rows |
+| WARN "no declared unique tiebreaker column" (once per process) | `PagedQuery` executed without `.uniqueKey(...)`; pagination may skip or duplicate rows |
 | `IllegalArgumentException: Cursor keyset values count (…) does not match order keys count (…)` | Cursor reused against a query whose `orderBy` changed |
-| `IllegalStateException: Null value in column '…' … null handling is DISALLOW` | A result row has a null order-key value; use `.nullsFirst()` / `.nullsLast()` |
+| `DataAccessException` caused by `IllegalStateException: Null value in column '…' … null handling is DISALLOW` | A result row has a null order-key value; use `.nullsFirst()` / `.nullsLast()` |
 | `IllegalArgumentException: Invalid cursor token` | Malformed, truncated, or foreign token from the client |
 | `IllegalArgumentException: Unsupported keyset value type prefix: …` | Cursor produced with a codec set the decoder does not have |
 | `PageSizeConstraintViolationException` (→ HTTP 400) | Client page size outside `[min, max]` at a `validatePageSize` / `withPageSize` call |
@@ -962,14 +997,16 @@ compile-time constant or a developer-controlled string, never anything derived f
 | `InvalidDataAccessUsageException` from `prepare()`, `begin()`, `close()` or `.stream(...)` | Called on the connection of a deadline-bounded transaction, which refuses them |
 | `IllegalArgumentException: deadline must be positive` | `.deadline(...)` given a zero or negative duration |
 | Statement runs outside its transaction | A builder inside `transaction().execute(...)` missing `.on(conn)` |
-| Pool never grows past the first connection | A `PoolConnectHandler` that does not call `conn.close()` |
+| `ConnectionException` whose cause is `ConnectException`, `SocketException`, `ClosedChannelException` or `ClosedConnectionException` | The database refused, reset or dropped the connection, or `connectTimeoutMs` elapsed; check host, port and the server |
+| `QueryTimeoutException` caused by `Timeout waiting for connection` | Every pooled connection is busy for longer than `connectionTimeoutMs`; raise `maxPoolSize` or shorten the statements |
+| `QueryTimeoutException` caused by `Timeout waiting for connection` while no query is running | A `PoolConnectHandler` whose future never completes holds the pool's connection out of service; give the handler its own timeout |
 | `ConfigurationException` naming `db.schemas` or `db.schemas.<key>` | `db.schemas` has a blank key, or a value that is null, not a string, or blank |
 | Generic parse failure for the `db` section | `db` or `db.schemas` is not an object |
 | Tables land in the default schema although `db.schemas` is set | The key is misspelled or does not match the instance name; `DbSchemas.mappings()` shows what was read |
 | Dagger duplicate-binding error for `DbSchemas` | The application provides its own `DbSchemas` and also includes `DbModule`; pick one source |
 | Application queries miss the schema the migrations used | Hand-written SQL names the table without `PgTableNames.qualify(schemas, name, table)` |
 | Unique-violation surfaces as HTTP 500 | No boundary translation; catch `UniqueConstraintViolationException` and rethrow `ConflictException` |
-| Syntax error after `ORDER BY` | Base SQL for a paginated query already contained `ORDER BY`, `LIMIT`, or `OFFSET` |
+| `IllegalArgumentException: Base SQL for paged queries must not contain ORDER BY` (or `LIMIT`, `OFFSET`) | Base SQL for a paginated query already contained that clause; the PostgreSQL implementation refuses it when the query is built, before any statement is sent |
 
 ---
 

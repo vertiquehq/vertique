@@ -36,9 +36,9 @@ import java.util.Map;
  * @param headers the Kafka headers as received, in wire order, with repeated keys, {@code null}
  *     values and binary values; immutable; never {@code null}
  * @param timestamp the message timestamp (epoch milliseconds)
- * @param retryCount the number of times this record has been retried (0-based; 0 means first
- *     attempt). Populated from the Kafka-native retry tracking map when
- *     {@link dev.vertique.kafka.ErrorStrategy#RETRY} is active.
+ * @param retryCount the number of in-memory retries started for this record in this consumer
+ *     (0-based; 0 means first attempt). It counts only {@link dev.vertique.kafka.ErrorStrategy#RETRY}
+ *     reruns and restarts at 0 after a partition revocation or a restart.
  * @param filtered if {@code true}, the record will be skipped (not dispatched)
  * @param attributes mutable attribute map for interceptor communication
  * @param <V> the value type

@@ -113,7 +113,7 @@ import javax.lang.model.type.TypeMirror;
  * {@code @JsonProfile} id — resolved method-over-type — is emitted as a typed {@code JsonProfileId}
  * literal.
  *
- * <p><strong>Runtime binding and the mandatory input pipeline (contract §4.7).</strong> The
+ * <p><strong>Runtime binding and the mandatory input pipeline.</strong> The
  * descriptor — including the hardened input schema and, when the tool declares structured content, the
  * output schema — is built once during composition by {@code McpToolRuntimeFactory#create}, never by
  * this invoker. Every {@code prepare()} then runs the full fixed stage order before the application
@@ -338,7 +338,7 @@ final class McpToolInvokerEmitter {
             ClassName optionalProbeType) {
         MethodSpec.Builder constructor = MethodSpec.constructorBuilder()
                 .addJavadoc(
-                        "Constructs the invoker, wiring the mandatory input-processing pipeline (contract §4.7)\n"
+                        "Constructs the invoker, wiring the mandatory input-processing pipeline\n"
                                 + "and obtaining its immutable runtime binding once, during composition.\n\n"
                                 + "@param $L the Dagger-managed type declaring the tool method\n"
                                 + "@param $L builds this tool's schema-and-mapper runtime binding once, during\n"
@@ -361,7 +361,7 @@ final class McpToolInvokerEmitter {
                 .addStatement("this.$N = $L", RUNTIME_FIELD, runtimeCreation(model, inputType));
 
         if (optionalReaching) {
-            // Contract §4.1: this tool has at least one Optional<T> parameter, so composition proves
+            // This tool has at least one Optional<T> parameter, so composition proves
             // this profile's mapper materializes Optional correctly — omitted, explicit-null, and
             // present — through the real generated OptionalProbe canary before this constructor
             // returns, i.e. before the tool can ever mount. A profile that fails this throws
@@ -459,9 +459,9 @@ final class McpToolInvokerEmitter {
                 .addParameter(ARGUMENT_MAP, ARGUMENTS_PARAM)
                 .addParameter(MCP_CANCELLATION_SIGNAL, CANCELLATION_PARAM);
 
-        // Stage 2 — INP-001 canonicalization/sanitization at InputLocation.PAYLOAD (contract §4.7
-        // point 2). The generated invocation-level literal is always EffectiveInputPolicies.NONE
-        // (§4.1); declared per-field policies are discovered reflectively from the carrier's own
+        // Stage 2 — canonicalization/sanitization at InputLocation.PAYLOAD. The generated invocation-level literal is
+        // always EffectiveInputPolicies.NONE;
+        // declared per-field policies are discovered reflectively from the carrier's own
         // annotations, not passed as invocation-level policies.
         prepare.addStatement("$T $N", ClassName.OBJECT, PROCESSED_VAR);
         prepare.beginControlFlow("try");
@@ -479,7 +479,7 @@ final class McpToolInvokerEmitter {
                 "throw new $T($S, $N)", MCP_INPUT_REJECTION_EXCEPTION, SANITIZATION_MESSAGE, SANITIZATION_FAILURE_VAR);
         prepare.endControlFlow();
 
-        // Stage 3 — materialization through the effective mapper (contract §4.7 point 3). The cast is
+        // Stage 3 — materialization through the effective mapper. The cast is
         // guarded here too: a wrong-typed processed tree must settle as the bounded rejection below,
         // never propagate as an uncaught ClassCastException the dispatcher would misclassify as an
         // internal server fault.
@@ -494,7 +494,7 @@ final class McpToolInvokerEmitter {
                 "throw new $T($S, $N)", MCP_INPUT_REJECTION_EXCEPTION, MATERIALIZATION_MESSAGE, MALFORMED_VAR);
         prepare.endControlFlow();
 
-        // Stage 4 — Bean Validation on the materialized carrier (contract §4.7 point 4), routed through
+        // Stage 4 — Bean Validation on the materialized carrier, routed through
         // the constructor-injected Optional<Validator> when the application's Dagger graph binds one,
         // falling back to McpBeanValidation's zero-config default otherwise. The rejection
         // message is a fixed literal, never a ConstraintViolation#getMessage(): Hibernate Validator
@@ -504,7 +504,7 @@ final class McpToolInvokerEmitter {
         prepare.addStatement("throw new $T($S)", MCP_INPUT_REJECTION_EXCEPTION, BEAN_VALIDATION_MESSAGE);
         prepare.endControlFlow();
 
-        // McpValueTrees.deepUnmodifiableMap, not Map.copyOf: INP-001 deliberately preserves an
+        // McpValueTrees.deepUnmodifiableMap, not Map.copyOf: the input-processing pipeline deliberately preserves an
         // explicit-null Optional<T> argument all the way through materialization, and Map.copyOf
         // throws NPE on a null value; it also only freezes the root map, leaving nested Map/List
         // values mutable, which violates McpPreparedToolCall#normalizedArguments()'s deeply-immutable
@@ -710,7 +710,7 @@ final class McpToolInvokerEmitter {
                                 + "collision-safe positional Java identifier ({@code argument0}, {@code argument1}, ...)\n"
                                 + "while {@code @JsonProperty} preserves the declared protocol name on the wire, and any\n"
                                 + "Jakarta Bean Validation metadata declared on the source parameter is carried through\n"
-                                + "for stage 4 of the fixed request-time input pipeline (contract §4.7).\n",
+                                + "for stage 4 of the fixed request-time input pipeline.\n",
                         model.toolName())
                 .addModifiers(Modifier.PRIVATE)
                 .recordConstructor(components.build())
@@ -754,7 +754,7 @@ final class McpToolInvokerEmitter {
         }
     }
 
-    // --- OptionalProbe canary (contract §4.1) ---
+    // --- OptionalProbe canary ---
 
     /**
      * Returns {@code true} when {@code model} declares at least one schema parameter whose erasure is
@@ -771,7 +771,7 @@ final class McpToolInvokerEmitter {
     }
 
     /**
-     * Builds the generated {@code OptionalProbe} canary record (contract §4.1, frozen inventory row):
+     * Builds the generated {@code OptionalProbe} canary record:
      * a private, same-package record whose sole component is an {@code Optional<String>}, materialized
      * by {@code McpToolRuntime#verifyOptionalMaterialization} once during composition with omitted,
      * explicit-null, and present cases — before this tool can mount. Its shape is fixed and
@@ -783,7 +783,7 @@ final class McpToolInvokerEmitter {
     private TypeSpec optionalProbe(ClassName optionalProbeType) {
         return TypeSpec.recordBuilder(optionalProbeType)
                 .addJavadoc(
-                        "Generated per-profile {@code Optional} materialization canary (contract §4.1). Composition\n"
+                        "Generated per-profile {@code Optional} materialization canary. Composition\n"
                                 + "materializes this record with omitted, explicit-null, and present {@code $L} cases\n"
                                 + "through the same effective profile mapper that materializes this tool's real {@code $L}\n"
                                 + "carrier, and fails startup if any case does not resolve the way an {@code Optional<T>}\n"

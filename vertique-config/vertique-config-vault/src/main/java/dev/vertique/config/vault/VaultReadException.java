@@ -24,13 +24,13 @@ import dev.vertique.core.exception.ConfigurationException;
  *       {@link #VaultReadException(String, String)}.</li>
  * </ul>
  *
- * <h2>Cause-chain severing (NFR-CONF-002)</h2>
+ * <h2>Cause-chain severing</h2>
  * <p>The jopenlibs driver embeds raw HTTP response bodies in {@code VaultException} messages for
  * non-2xx reads and failed logins (format: {@code "...\nResponse body: <body>"}). An untrusted
  * proxy 502 HTML page or a Vault error body can therefore flow up the cause chain and reach
  * startup logs as unbounded, untrusted text. To match the severed-cause discipline applied by
- * {@code vertique-config-azure-keyvault} and {@code vertique-config-aws-secrets}, this exception
- * intentionally does NOT attach a driver throwable as a cause. The message contains only the
+ * {@code vertique-config-azure-keyvault} (the AWS Secrets source keeps the SDK exception as the
+ * cause instead), this exception intentionally does NOT attach a driver throwable as a cause. The message contains only the
  * exception class simple name and, when available, the HTTP status code — both constructed by
  * this module, never from the driver message.
  *
@@ -46,11 +46,11 @@ class VaultReadException extends ConfigurationException {
      * detail is sanitized externally by
      * {@link JOpenLibsVaultGateway#sanitizeDriverFailure(String, io.github.jopenlibs.vault.VaultException)}),
      * HTTP status failures (404, 403, other non-2xx), and JWT file read errors. The cause is
-     * intentionally NOT attached — see class-level javadoc for NFR-CONF-002 rationale.
+     * intentionally NOT attached — see class-level javadoc for the rationale.
      *
      * @param path   the Vault path that was being read; used for diagnostics only
      * @param detail a safe, non-secret description of the failure (e.g. "HTTP 403",
-     *               "VaultException HTTP 500", "IOException reading JWT from '/path/jwt'")
+     *               "VaultException HTTP 500", "the JWT file cannot be read (IOException)")
      */
     VaultReadException(String path, String detail) {
         super("Vault read failed for path '" + path + "': " + detail);

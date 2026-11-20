@@ -18,7 +18,7 @@ import javax.lang.model.type.TypeMirror;
  *
  * @param concreteParameter    the concrete parameter element; never {@code null}
  * @param annotationSources    the parameter elements whose annotation mirrors back the effective
- *                             annotation set for literal materialization (GitHub issue #162):
+ *                             annotation set for literal materialization:
  *                             {@code concreteParameter} first, followed by the matching parameter on
  *                             each superclass/interface override that declares it (BFS order),
  *                             mirroring the runtime {@code AnnotationResolver.resolveParameterAnnotations}
@@ -29,7 +29,7 @@ import javax.lang.model.type.TypeMirror;
  *                             {@code null}
  * @param name                 the param name value (e.g. from {@code @PathParam("id")}), may be
  *                             {@code null} if the annotation is absent, or blank if the annotation
- *                             declares an empty name (CG-009 blank-name parity)
+ *                             declares an empty name (blank-name parity with the runtime)
  * @param defaultValue         the value from {@code @DefaultValue}, or {@code null} if absent
  * @param type                 the parameter type mirror; never {@code null}
  * @param componentType        the element type if the parameter is a multi-value shape — a generic
@@ -40,9 +40,11 @@ import javax.lang.model.type.TypeMirror;
  * @param beanParamType        the declared type if the parameter is a composite bean parameter
  *                             ({@code @BeanParam} or {@code @RequestParams}), or {@code null}
  *                             otherwise
- * @param genericType          the fully-parameterized type mirror for {@link JaxRsParamSource#BODY}
- *                             parameters (e.g. {@code List<Foo>}), or {@code null} for non-body
- *                             parameters and body parameters that are not parameterized
+ * @param genericType          the declared type as the resource class sees it (e.g. {@code List<Foo>}) for
+ *                             a {@link JaxRsParamSource#BODY}, {@link JaxRsParamSource#QUERY},
+ *                             {@link JaxRsParamSource#HEADER} or {@link JaxRsParamSource#COOKIE}
+ *                             parameter, matching the reflective scanner, or {@code null} for any other
+ *                             source
  * @param canonicalizers       ordered list of canonicalizer class type mirrors resolved for this
  *                             parameter (route-level chain overridden by any parameter-level
  *                             {@code @Canonicalize}/{@code @SkipCanonicalization}); never

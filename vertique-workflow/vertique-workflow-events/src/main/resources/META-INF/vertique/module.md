@@ -22,7 +22,7 @@ The event stream is separate from workflow history. History is the engine's inte
 |---|---|
 | Event side-effect recorder | Persists workflow event envelopes to the outbox inside the workflow transaction |
 | Event outbox binding | Application-provided destination for event delivery |
-| Compose validator | Ensures the selected destination has a registered outbox handler |
+| Compose validator | Ensures the selected destination has a registered outbox handler, and refuses a `DELAYED_JOB` destination |
 
 When the module is absent, workflow event emission is optional and the engine continues to function. Task reminders are the exception: workflows with reminders require event delivery because reminders are event-only side effects.
 
@@ -59,6 +59,34 @@ The outbox row is written in the scope the instance was started in: `scope_key` 
 
 The two scope fields were added without changing `schemaVersion`. Adding fields or event types is intended to be non-breaking. Removing or renaming existing fields requires a new schema version.
 
+### Event Types
+
+`eventType` is currently one of the following strings. Each is the name of a constant of `WorkflowEventType`, which the engine uses to label what it emits; the envelope itself carries the string.
+
+| `eventType` | Emitted when |
+|---|---|
+| `WORKFLOW_STARTED` | The instance is created and its first step is reached |
+| `WORKFLOW_COMPLETED` | The instance reaches a complete node |
+| `WORKFLOW_FAILED` | The instance reaches a fail node, or fails |
+| `WORKFLOW_CANCELLED` | The instance is cancelled by an operator or an API call |
+| `WORKFLOW_COMPENSATING` | Compensation starts and the instance becomes `COMPENSATING` |
+| `WORKFLOW_COMPENSATED` | Every compensation step is recorded and the instance becomes `COMPENSATED` |
+| `TASK_CREATED` | A human task is created and the workflow waits for an actor's decision |
+| `TASK_COMPLETED` | An actor's decision completes the task |
+| `TASK_CANCELLED` | A task is cancelled; `attributes.cause` is `WORKFLOW_CANCELLED` or `BRANCH_CANCELLED` |
+| `TASK_EXPIRED` | A task's due-date timer fires before the task is completed |
+| `TASK_REASSIGNED` | A task's assignment changes to another user, role or queue |
+| `TASK_REMINDER` | A task reminder timer fires; no workflow state changes |
+
+`WORKFLOW_EXPIRED` is a reserved name that the engine does not emit.
+
+`TASK_REMINDER` carries `reminderIndex`, `isLast`, and `kind` in `attributes`. `kind` is one of two reminder kinds:
+
+| `attributes.kind` | Reminder mode | Further attribute |
+|---|---|---|
+| `ONE_SHOT_OFFSET` | One timer per declared offset from task creation | `offsetFromCreation`, an ISO-8601 duration |
+| `RECURRING` | One timer per interval, the next scheduled as each fires | `interval`, an ISO-8601 duration |
+
 ---
 
 ## Required App Wiring
@@ -91,7 +119,6 @@ public abstract class AppModule {
 })
 public interface AppComponent {
     WorkflowOperations workflowOperations();
-    WorkflowEventsComposeValidator workflowEventsComposeValidator();
 }
 ```
 
@@ -109,7 +136,7 @@ static WorkflowEventOutboxBinding workflowEventBinding() {
 
 For a service destination, install the module that provides the `SERVICE` outbox destination handler.
 
-Expose and call `workflowEventsComposeValidator()` during startup if you want fail-fast validation before the first workflow operation constructs the engine graph.
+The `VALIDATE` startup phase runs `WorkflowEventsComposeValidator` with every other compose validator, so the component needs no accessor for it. A destination with no registered handler fails startup there, and so does a `DELAYED_JOB` destination: a delayed job needs a handler name and schedule per delivery that the binding does not carry. Use `SERVICE` or `KAFKA`.
 
 ---
 
@@ -139,6 +166,15 @@ Applications normally only provide the binding and destination handler.
 - **Reminder-using workflows require this module.** If any registered workflow plan declares task reminders, the per-plan `WorkflowReminderComposeValidator` (package `dev.vertique.workflow.engine`, module `vertique-workflow-engine`) refuses that plan, aborting startup for a code plan, when `WorkflowEventsModule` is not installed. There is no silent reminder drop.
 - **Optional intent kind.** When no application installs an event recorder and no plan requires it, `WORKFLOW_EVENT` is treated as an optional intent kind that no-ops cleanly rather than failing transitions.
 - **History stays the engine's ledger.** Events are derived from history but are not a substitute for it. Recovery, retries, and engine decisions read history rows; consumers read the outbox-delivered event stream.
+- **Correlation and cause.** Every event carries `correlationId`, the correlation id the instance captured when it started (absent
+  when it captured none), and `causationId`, the row id of the command whose segment emitted the event, as text. An event written
+  outside a command's segment, such as the events of `cancel`, has no `causationId`. A signal applied from the parked state is the
+  cause of its own events.
+- **Branch-owned tasks are reported like the tasks of a single path.** A task created by a fork branch emits `TASK_CREATED`,
+  completing it emits `TASK_COMPLETED`, its due date passing emits `TASK_EXPIRED`, and cancelling it (with its branch, or when
+  the branch loses a race) emits `TASK_CANCELLED` with cause `BRANCH_CANCELLED`. Each event carries the sequence of the history
+  entry written with it; the cancellation of a branch's task writes a `TASK_CANCELLED` history entry, which it did not before.
+  **Behaviour change:** consumers that counted the task events of an instance with a fork now see these four for branch tasks.
 - **Attribution headers.** The outbox entry of an event a workflow segment emits carries only the attribution headers `x-workflow-actor-kind` and `x-workflow-attribution` (`VERIFIED`, `ABSENT` or `DEGRADED`), taken from the command the segment executes; the actor id, reason and party acted for are not sent to event consumers. They are for audit and logs. They are unauthenticated: anyone who can write an outbox record or publish to the broker can forge them, so a consumer must never treat them as the identity of the caller. The envelope is unchanged.
 - **Envelope contract is versioned.** External consumers depend on the v1 event envelope contract; breaking changes require a new envelope version, not field-shape changes in place.
 

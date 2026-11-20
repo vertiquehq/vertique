@@ -89,7 +89,7 @@ public final class RestAuthenticationEvidence {
      * list until a subsequent {@link #append(RoutingContext, AuthenticationEvidence)}.
      *
      * <p>This is used at a trust boundary that must bind an identity <em>without consulting ambient
-     * evidence</em> — specifically the MCP mount's no-scheme canonical-anonymous path (§4.7 stage 3),
+     * evidence</em> — specifically the MCP mount's no-scheme canonical-anonymous path,
      * where any evidence appended by ambient Router handlers ahead of the mount must not bleed into
      * the resolved anonymous identity or its primary authentication method. It is a no-op when no
      * evidence has been appended.

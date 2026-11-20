@@ -13,7 +13,7 @@ package dev.vertique.codegen.jaxrs;
  * be kept in sync with the runtime implementation to guarantee compile-time/runtime parity.
  *
  * <p>Promoted from the package-private nested {@code BodyFormValidator.ParamSource} enum
- * (CG-010) so that both the compile-time validator pipeline and the
+ * so that both the compile-time validator pipeline and the
  * {@link EffectiveParamContract} record can reference it without coupling to a specific
  * validator class.
  */

@@ -409,7 +409,7 @@ public abstract class DispatchModule {
                 resiliencePipelineFactory);
     }
 
-    // --- Paired SERVICES-phase lifecycle steps (FR-APP-028) ---
+    // --- Paired SERVICES-phase lifecycle steps ---
 
     /**
      * Contributes the {@link ServiceDeploymentStartupStep} into the
@@ -417,9 +417,9 @@ public abstract class DispatchModule {
      *
      * <p>The step deploys all service verticles via {@link ServiceDeploymentManager#deployAll()} in
      * the {@link dev.vertique.core.lifecycle.LifecyclePhase#SERVICES SERVICES} phase, at a very low
-     * priority so it runs before any {@code SERVICES}-phase verticle (FR-APP-022 / AC-11). It is
+     * priority so it runs before any {@code SERVICES}-phase verticle. It is
      * paired with {@link #serviceDeploymentShutdownStep(ServiceDeploymentShutdownStep)} for
-     * owner-managed, deregister-first teardown (FR-APP-028 / AC-14).
+     * owner-managed, deregister-first teardown.
      *
      * <p><strong>{@code deployAll()} is NOT idempotent:</strong> a second invocation fails on
      * duplicate verticle names and rolls back, undeploying the already-live services. The runner's
@@ -427,7 +427,7 @@ public abstract class DispatchModule {
      * migration window these contributions are inert until the lifecycle runner consumes them, so an
      * application that still calls {@code serviceDeploymentManager().deployAll()} by hand and does not
      * yet use the runner is unaffected — but the manual call <strong>must be removed</strong> when the
-     * example {@code MainVerticle}(s) migrate to the runner (Phase 5), or the runner's deploy and the
+     * example {@code MainVerticle}(s) migrate to the runner, or the runner's deploy and the
      * leftover manual deploy will collide and roll back the live services.
      *
      * @param step the service deployment startup step
@@ -445,7 +445,7 @@ public abstract class DispatchModule {
      *
      * <p>The step undeploys all service verticles via {@link ServiceDeploymentManager#undeployAll()}
      * (deregistering supervision first) during reverse-order teardown, before any generic verticle
-     * undeploy (FR-APP-028 / AC-14). It is paired with
+     * undeploy. It is paired with
      * {@link #serviceDeploymentStartupStep(ServiceDeploymentStartupStep)}.
      *
      * @param step the service deployment shutdown step

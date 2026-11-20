@@ -373,4 +373,17 @@ class RestClientConfigTest {
         assertFalse(rendered.contains("SEKRIT"), "baseUrl userinfo password must not appear in toString");
         assertTrue(rendered.contains("/path"), "baseUrl path stays visible for debuggability");
     }
+
+    @Test
+    @DisplayName("the config mapper masks baseUrl userinfo in a dump and keeps the host and path")
+    void baseUrlUserinfoMaskedByConfigMapper() throws Exception {
+        JsonObject section = new JsonObject().put("svc", new JsonObject().put("baseUrl", "https://u:SEKRIT@h/path"));
+        RestClientConfig cfg = client(section, "svc");
+
+        String serialized = DefaultConfigMapper.lenient().writeValueAsString(cfg);
+
+        assertFalse(serialized.contains("SEKRIT"), "baseUrl userinfo password must not serialize");
+        assertEquals("https://***@h/path", new JsonObject(serialized).getString("baseUrl"));
+        assertEquals("https://u:SEKRIT@h/path", cfg.baseUrl(), "live baseUrl() must return the real value");
+    }
 }

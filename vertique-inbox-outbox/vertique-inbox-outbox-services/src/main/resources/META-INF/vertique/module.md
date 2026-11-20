@@ -99,7 +99,10 @@ At relay time:
    opt-in identity-snapshot reconstruction initializer.
 5. Sends via event bus request/reply with the service's configured timeout.
 6. On a successful reply: returns `OutboxPublishResult.success()`.
-7. On a failed reply from the service: returns `OutboxPublishResult.retryable(message, cause)`.
+7. On a failed reply from the service: returns `OutboxPublishResult.retryable(message, cause)`. A
+   failed reply whose cause carries the framework's permanent-failure marker returns
+   `OutboxPublishResult.permanent(message, cause)` instead, so the entry moves to `DEAD_LETTER`
+   immediately rather than being retried.
 8. Rejects `@OneWay` service targets — any operation resolving to a `@OneWay` method returns
    `OutboxPublishResult.permanent(...)`.
 9. A stored payload that cannot be decoded to the target's payload type, or a durable propagation

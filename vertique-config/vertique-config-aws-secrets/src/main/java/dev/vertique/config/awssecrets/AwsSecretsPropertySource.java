@@ -169,7 +169,7 @@ class AwsSecretsPropertySource implements ConfigPropertySource {
         } catch (DecodeException | ClassCastException e) {
             // Deliberately NO cause: Jackson decode failures embed fragments of the parsed input
             // in their messages (verbatim for string scalars), and the SecretString is secret
-            // material (NFR-CONF-002). The exception class name is the only safe diagnostic kept.
+            // material. The exception class name is the only safe diagnostic kept.
             throw new ConfigPropertySourceException(
                     sourceName,
                     "secret '"

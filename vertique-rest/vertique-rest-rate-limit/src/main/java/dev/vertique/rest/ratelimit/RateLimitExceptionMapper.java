@@ -12,8 +12,8 @@ import jakarta.ws.rs.ext.ExceptionMapper;
 import java.time.Duration;
 
 /**
- * Maps {@link RateLimitExceededException}/{@link RateLimitUnavailableException} to the frozen HTTP
- * responses contracts/rest-adapter.md's "HTTP mapping" table declares. Registered via Dagger
+ * Maps {@link RateLimitExceededException}/{@link RateLimitUnavailableException} to their fixed HTTP
+ * responses. Registered via Dagger
  * multibinding into {@code Set<ExceptionMapper<?>>} (the same seam
  * {@code GreetingLimitExceptionMapper} uses in {@code vertique-example-hello}), where {@code
  * ErrorPipeline}/{@code ExceptionMapperRegistry} preserve every header this mapper writes —
@@ -23,7 +23,7 @@ import java.time.Duration;
  * types are handled by the two nested mapper classes below; both delegate to this class's shared,
  * directly-testable {@code toResponse} overloads. Neither response body carries {@code
  * policyName}, key material, identity, backend detail, or the exception's message — only a fixed,
- * generic {@link ProblemDetail} per status (contracts/rest-adapter.md, "HTTP mapping").
+ * generic {@link ProblemDetail} per status.
  */
 public final class RateLimitExceptionMapper {
 

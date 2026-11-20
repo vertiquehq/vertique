@@ -16,6 +16,7 @@ import io.vertx.circuitbreaker.CircuitBreakerOptions;
 import io.vertx.core.Future;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.concurrent.ConcurrentHashMap;
 
 /** Builds one common-runtime pipeline per method for one REST client instance. */
@@ -26,7 +27,9 @@ final class RestClientResiliencePipelineFactory {
     private final RestClientResilienceConfigAdapter configAdapter;
     private final ResilienceAdapterContext context;
     private final CircuitBreaker interfaceBreaker;
+    private volatile boolean closed;
     private final Map<ClientMethodMeta, ResiliencePipeline> pipelines = new ConcurrentHashMap<>();
+    private final Map<ClientMethodMeta, OptionalLong> timeouts = new ConcurrentHashMap<>();
 
     RestClientResiliencePipelineFactory(
             Resilience resilience,
@@ -96,15 +99,32 @@ final class RestClientResiliencePipelineFactory {
         return pipelines.computeIfAbsent(meta, this::build);
     }
 
+    /** Returns the method's resolved timeout in milliseconds; empty when the timeout is disabled. */
+    OptionalLong timeoutMs(ClientMethodMeta meta) {
+        pipeline(meta);
+        return timeouts.get(meta);
+    }
+
     /** Closes this client instance's breaker context and fences its active executions. */
     Future<Void> close() {
+        closed = true;
         return context.close();
+    }
+
+    /** Whether {@link #close()} has been called; the pipelines then refuse every execution. */
+    boolean isClosed() {
+        return closed;
     }
 
     private ResiliencePipeline build(ClientMethodMeta meta) {
         boolean usesInterfaceBreaker = interfaceBreaker != null
                 && !meta.methodMetadata().hasAnnotation(dev.vertique.resilience.annotation.CircuitBreaker.class);
         ResolvedResiliencePolicy policy = configAdapter.resolve(meta, usesInterfaceBreaker);
+        timeouts.put(
+                meta,
+                policy.timeout()
+                        .map(timeout -> OptionalLong.of(timeout.timeoutMs()))
+                        .orElseGet(OptionalLong::empty));
         AdapterOperationIdentity identity = new AdapterOperationIdentity(
                 "rest-client.method",
                 java.util.stream.Stream.concat(

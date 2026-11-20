@@ -83,6 +83,19 @@ class WorkflowEventsComposeValidatorTest {
     }
 
     @Test
+    @DisplayName("DELAYED_JOB binding with a registered DELAYED_JOB handler — refused at startup")
+    void constructor_delayedJobBinding_throws() {
+        WorkflowEventOutboxBinding delayedBinding =
+                new WorkflowEventOutboxBinding(DestinationType.DELAYED_JOB, "workflow-event-handler");
+        OutboxDestinationHandler delayedJobHandler = handlerFor(DestinationType.DELAYED_JOB);
+
+        assertThatThrownBy(() -> new WorkflowEventsComposeValidator(Set.of(delayedJobHandler), delayedBinding))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("DELAYED_JOB")
+                .hasMessageContaining("Use SERVICE or KAFKA");
+    }
+
+    @Test
     @DisplayName("handler with wrong type — error message lists all registered types")
     void constructor_wrongHandlerType_errorListsRegisteredTypes() {
         OutboxDestinationHandler serviceHandler = handlerFor(DestinationType.SERVICE);

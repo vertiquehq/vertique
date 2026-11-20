@@ -5,7 +5,12 @@ package dev.vertique.rest.client;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.validation.BeanValidator;
+import dev.vertique.http.client.CallOptions;
+import dev.vertique.http.client.HttpClient;
+import dev.vertique.http.client.exception.HttpClientClosedException;
 import dev.vertique.resilience.ResiliencePipeline;
+import dev.vertique.resilience.exception.BulkheadQueueTimeoutException;
+import dev.vertique.resilience.exception.BulkheadRejectedException;
 import dev.vertique.resilience.exception.CircuitOpenException;
 import dev.vertique.resilience.exception.ResilienceClosedException;
 import dev.vertique.resilience.exception.ResiliencePolicyException;
@@ -29,6 +34,7 @@ import io.vertx.core.AsyncResult;
 import io.vertx.core.Expectation;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.http.HttpResponseExpectation;
 import io.vertx.core.http.HttpResponseHead;
 import io.vertx.ext.web.client.HttpRequest;
 import io.vertx.ext.web.client.HttpResponse;
@@ -40,7 +46,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import lombok.extern.slf4j.Slf4j;
@@ -62,7 +70,7 @@ import lombok.extern.slf4j.Slf4j;
  *   <li>Fire sync {@code onRequest} observers.</li>
  *   <li>Run async {@code beforeRequest} interceptors (may mutate headers/URI).</li>
  *   <li>Build Vert.x {@link HttpRequest} from final URI.</li>
- *   <li>Apply per-method timeout.</li>
+ *   <li>Apply per-method timeout; at the deadline the governed client resets the exchange and releases the connection.</li>
  *   <li>Send inside circuit breaker if configured.</li>
  *   <li>Apply {@link Expectation} on the response.</li>
  *   <li>Capture response context; fire sync {@code onResponse} observers.</li>
@@ -80,7 +88,7 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
 
     // --- Pipeline state ---
 
-    private final WebClient webClient;
+    private final HttpClient httpClient;
     private final String baseUrl;
     private final io.vertx.core.MultiMap cachedDefaultHeaders;
     private final RestClientExceptionMapper exceptionMapper;
@@ -110,7 +118,7 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
     /**
      * Creates a new dispatcher with all pipeline dependencies resolved.
      *
-     * @param webClient the Vert.x web client used to send requests
+     * @param httpClient the governed HTTP client every physical attempt is sent through
      * @param baseUrl the base URL prepended to all path templates
      * @param cachedDefaultHeaders pre-built case-insensitive MultiMap of default headers;
      *     copied into each request's header map at dispatch time
@@ -128,7 +136,7 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
      *     the JDK reflective proxy path
      */
     DefaultRestClientDispatcher(
-            WebClient webClient,
+            HttpClient httpClient,
             String baseUrl,
             io.vertx.core.MultiMap cachedDefaultHeaders,
             RestClientInterceptorChain interceptorChain,
@@ -141,13 +149,15 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
             Class<?> clientType,
             List<RestClientContextCapturer<?>> contextCapturers,
             ParamConversionResolver resolver) {
-        this.webClient = webClient;
+        this.httpClient = httpClient;
         this.baseUrl = baseUrl;
         this.cachedDefaultHeaders = cachedDefaultHeaders;
         this.interceptorChain = interceptorChain;
         this.exceptionMapper = exceptionMapper;
         this.objectMapper = objectMapper;
-        this.defaultExpectation = defaultExpectation;
+        // The builder default adds to the 2xx rule; only a method-level @ExpectedStatus replaces it.
+        this.defaultExpectation =
+                defaultExpectation == null ? null : HttpResponseExpectation.SC_SUCCESS.and(defaultExpectation);
         this.resilienceFactory = resilienceFactory;
         this.beanValidator = beanValidator;
         this.clientName = clientName;
@@ -753,8 +763,9 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
      * Sends the request applying the expectation, capturing response context, and running
      * after-response interceptors. The circuit breaker (if configured) wraps the send.
      *
-     * <p>Fires {@link RestClientInterceptor#onAttemptCompleted} once per physical HTTP attempt,
-     * before the retry/recovery decision. The {@code callId} and {@code attemptOrdinal} are shared
+     * <p>Fires {@link RestClientInterceptor#onAttemptCompleted} once per physical HTTP attempt when it
+     * completes; an attempt that times out is notified once with a {@link java.util.concurrent.TimeoutException},
+     * possibly after the retry or recovery decision. The {@code callId} and {@code attemptOrdinal} are shared
      * across retries and the one recovery re-dispatch so all attempts of a single logical call
      * carry the same {@code callId} with monotonically increasing ordinals.
      *
@@ -780,13 +791,31 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
             AtomicInteger attemptOrdinal,
             List<CapturerCapture> captures) {
         ResiliencePipeline pipeline = resilienceFactory.pipeline(meta);
-        Future<HttpResponse<Buffer>> resultFuture = pipeline.execute(
-                        () -> sendPhysicalAttempt(reqCtx, meta, capturedResCtx, callId, attemptOrdinal, captures))
-                .compose(response -> {
-                    RestClientResponseContext resCtx = capturedResCtx.get();
-                    interceptorChain.fireOnResponse(reqCtx, resCtx);
-                    return interceptorChain.runAfterInterceptors(reqCtx, resCtx).map(v -> response);
-                });
+        OptionalLong timeoutMs = resilienceFactory.timeoutMs(meta);
+        CallOptions governed = CallOptions.defaults().resilience(pipeline);
+        // The client's attempt timer and the pipeline's timeout share this deadline; the runtime
+        // normalizes the client's raw TimeoutException.
+        CallOptions options = timeoutMs.isPresent()
+                ? governed.readTimeout(timeoutMs.getAsLong(), TimeUnit.MILLISECONDS)
+                : governed.noReadTimeout();
+        // A call made after, or caught by, the builder's close keeps the identity the closed pipeline gives
+        // it, not the governed client's own closed failure: the builder marks itself closed before it closes
+        // the governed client.
+        Future<HttpResponse<Buffer>> sent = resilienceFactory.isClosed()
+                ? Future.failedFuture(new ResilienceClosedException(pipeline.operationKey()))
+                : httpClient
+                        .execute(
+                                options,
+                                web -> sendPhysicalAttempt(
+                                        web, reqCtx, meta, capturedResCtx, callId, attemptOrdinal, captures))
+                        .recover(failure -> failure instanceof HttpClientClosedException && resilienceFactory.isClosed()
+                                ? Future.failedFuture(new ResilienceClosedException(pipeline.operationKey()))
+                                : Future.failedFuture(failure));
+        Future<HttpResponse<Buffer>> resultFuture = sent.compose(response -> {
+            RestClientResponseContext resCtx = capturedResCtx.get();
+            interceptorChain.fireOnResponse(reqCtx, resCtx);
+            return interceptorChain.runAfterInterceptors(reqCtx, resCtx).map(v -> response);
+        });
 
         // Recovery: try recoverRequest interceptors exactly once on failure
         if (!recoveryAttempted) {
@@ -821,7 +850,7 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
                                     clientName,
                                     meta.methodMetadata().name(),
                                     recoveryErr);
-                            return Future.failedFuture(recoveryErr);
+                            return Future.failedFuture(mapFailureForRest(recoveryErr));
                         });
             });
         }
@@ -830,13 +859,14 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
     }
 
     private Future<HttpResponse<Buffer>> sendPhysicalAttempt(
+            WebClient web,
             RestClientRequestContext reqCtx,
             ClientMethodMeta meta,
             AtomicReference<RestClientResponseContext> capturedResCtx,
             String callId,
             AtomicInteger attemptOrdinal,
             List<CapturerCapture> captures) {
-        HttpRequest<Buffer> httpRequest = buildHttpRequest(reqCtx.requestUri(), meta.httpMethod());
+        HttpRequest<Buffer> httpRequest = buildHttpRequest(web, reqCtx.requestUri(), meta.httpMethod());
         reqCtx.headers().forEach(e -> httpRequest.putHeader(e.getKey(), e.getValue()));
         Buffer bodyToSend = reqCtx.body();
         int ordinal = attemptOrdinal.incrementAndGet();
@@ -867,16 +897,14 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
                             reqCtx,
                             responseContext != null ? responseContext : RestClientResponseContext.from(response)));
         }
+        // A response the effective expectation accepts is a success; one it rejects, a 2xx included, is
+        // always a RestClientResponseException, with the expectation's failure as its cause.
         return Future.succeededFuture(response)
                 .expecting(expectation)
-                .recover(error -> Future.failedFuture(
-                        response.statusCode() >= 200 && response.statusCode() < 300
-                                ? error
-                                : new RestClientResponseException(
-                                        reqCtx,
-                                        responseContext != null
-                                                ? responseContext
-                                                : RestClientResponseContext.from(response))));
+                .recover(error -> Future.failedFuture(new RestClientResponseException(
+                        reqCtx,
+                        responseContext != null ? responseContext : RestClientResponseContext.from(response),
+                        error)));
     }
 
     private Expectation<HttpResponseHead> defaultExpectation(ClientMethodMeta meta) {
@@ -889,6 +917,12 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
         }
         if (failure instanceof CircuitOpenException) {
             return new RestClientUnavailableException("REST client circuit is open", failure);
+        }
+        if (failure instanceof BulkheadRejectedException) {
+            return new RestClientUnavailableException("REST client concurrency limit reached", failure);
+        }
+        if (failure instanceof BulkheadQueueTimeoutException) {
+            return new RestClientUnavailableException("REST client queue wait timed out", failure);
         }
         if (failure instanceof ResilienceClosedException) {
             return new RestClientUnavailableException("REST client runtime is closed", failure);
@@ -958,19 +992,14 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
             ClientMethodMeta meta,
             RestClientRequestContext reqCtx,
             @Nullable RestClientResponseContext resCtx) {
-        int status = response.statusCode();
-        RestClientResponseContext effectiveResCtx = resCtx != null ? resCtx : RestClientResponseContext.from(response);
-
         // Handle Optional<T> with 404 → Optional.empty()
-        if (meta.returnsOptional() && status == 404) {
+        if (meta.returnsOptional() && response.statusCode() == 404) {
             return Future.succeededFuture(Optional.empty());
         }
 
-        // Non-2xx without expectation become RestClientResponseException
-        if (status < 200 || status >= 300) {
-            return Future.failedFuture(new RestClientResponseException(reqCtx, effectiveResCtx));
-        }
-
+        // The response reaching this point was accepted by the effective expectation (2xx when none is
+        // set, the builder default in addition to 2xx, or the method's @ExpectedStatus statuses), so it
+        // is decoded as the declared type.
         // Deserialize and validate
         try {
             Object result = deserializeSuccess(response, meta);
@@ -1038,19 +1067,20 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
     /**
      * Builds a Vert.x {@link HttpRequest} from the given absolute URI and HTTP method string.
      *
+     * @param web the governed web client of the current attempt
      * @param uri the absolute URI
      * @param httpMethod the HTTP verb string
      * @return the configured HttpRequest
      * @throws RestClientException if the HTTP method is not supported
      */
-    private HttpRequest<Buffer> buildHttpRequest(String uri, String httpMethod) {
+    private HttpRequest<Buffer> buildHttpRequest(WebClient web, String uri, String httpMethod) {
         return switch (httpMethod) {
-            case "GET" -> webClient.getAbs(uri);
-            case "POST" -> webClient.postAbs(uri);
-            case "PUT" -> webClient.putAbs(uri);
-            case "DELETE" -> webClient.deleteAbs(uri);
-            case "PATCH" -> webClient.patchAbs(uri);
-            case "HEAD" -> webClient.headAbs(uri);
+            case "GET" -> web.getAbs(uri);
+            case "POST" -> web.postAbs(uri);
+            case "PUT" -> web.putAbs(uri);
+            case "DELETE" -> web.deleteAbs(uri);
+            case "PATCH" -> web.patchAbs(uri);
+            case "HEAD" -> web.headAbs(uri);
             default -> throw new RestClientException("Unsupported HTTP method: " + httpMethod);
         };
     }

@@ -12,7 +12,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 Provides inbound REST locale negotiation. At the start of every request the module walks an ordered set of `LocaleSource` implementations, picks the first that returns a resolved locale, and binds a `LocalizationContext` into `ContextHolder`. Handler code reads the result via `ContextHolder`; there is no parallel RoutingContext-data accessor.
 
-The module is server-only. It has no dependency on `vertique-rest-jaxrs` or `vertique-rest-client` — that boundary is enforced by a Maven Enforcer `bannedDependencies` rule (FR-RLOC-004). Outbound Accept-Language propagation to downstream REST clients is deferred to a future `vertique-rest-client-localization` module using the `RestClientOutboundContextContributor` seam.
+The module is server-only. It has no dependency on `vertique-rest-jaxrs` or `vertique-rest-client` — that boundary is enforced by a Maven Enforcer `bannedDependencies` rule. Outbound Accept-Language propagation to downstream REST clients is deferred to a future `vertique-rest-client-localization` module using the `RestClientOutboundContextContributor` seam.
 
 ---
 
@@ -244,4 +244,4 @@ The `examples/vertique-example-localization` example shows this pattern end-to-e
 - `jakarta.inject:jakarta.inject-api`
 - `io.vertx:vertx-web` (RoutingContext)
 
-Maven Enforcer `bannedDependencies` excludes `vertique-rest-jaxrs` and `vertique-rest-client` from the compile classpath (FR-RLOC-004). The module is server-side only and carries no JAX-RS runtime or HTTP-client dependency.
+Maven Enforcer `bannedDependencies` excludes `vertique-rest-jaxrs` and `vertique-rest-client` from the compile classpath. The module is server-side only and carries no JAX-RS runtime or HTTP-client dependency.

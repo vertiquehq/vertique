@@ -44,7 +44,7 @@ public class SnapshotHmac {
      * Minimum secret length, in UTF-8 bytes, required for adequate HMAC key strength. Mirrors
      * {@code SnapshotHmacKeyConfig.MIN_SECRET_BYTES} (kept as a separate local constant because that
      * one is private to its own config-validation boundary) — this HMAC is the sole forgery defense
-     * over the app-writable durable snapshot store (ADR-0162), so every key in the keyset must be at
+     * over the app-writable durable snapshot store, so every key in the keyset must be at
      * least as long as the HMAC-SHA256 output size (32 bytes).
      */
     private static final int MIN_SECRET_BYTES = 32;

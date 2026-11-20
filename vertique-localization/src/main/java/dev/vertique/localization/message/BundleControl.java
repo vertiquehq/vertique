@@ -46,7 +46,7 @@ final class BundleControl extends ResourceBundle.Control {
      * <p>The framework controls the candidate-locale chain explicitly in
      * {@link DefaultMessageSource}. Delegating fallback to the JDK would introduce a second,
      * hidden fallback path that bypasses the configured {@code defaultLocale} and
-     * {@code fallbackToSystemLocale} settings (FR-LOC-067).
+     * {@code fallbackToSystemLocale} settings.
      *
      * @param baseName the resource bundle base name
      * @param locale   the locale for which no bundle was found
@@ -61,9 +61,9 @@ final class BundleControl extends ResourceBundle.Control {
      * Maps the configured {@code cacheTtlSeconds} to the appropriate JDK cache-lifetime value.
      *
      * <ul>
-     *   <li>{@code -1} → {@link ResourceBundle.Control#TTL_NO_EXPIRATION_CONTROL} (FR-LOC-049)</li>
-     *   <li>{@code 0}  → {@link ResourceBundle.Control#TTL_DONT_CACHE} (FR-LOC-050)</li>
-     *   <li>{@code > 0} → {@code Duration.ofSeconds(cacheTtlSeconds).toMillis()} (FR-LOC-051)</li>
+     * <li>{@code -1} → {@link ResourceBundle.Control#TTL_NO_EXPIRATION_CONTROL}</li>
+     * <li>{@code 0} → {@link ResourceBundle.Control#TTL_DONT_CACHE}</li>
+     * <li>{@code > 0} → {@code Duration.ofSeconds(cacheTtlSeconds).toMillis()}</li>
      * </ul>
      *
      * @param baseName the resource bundle base name

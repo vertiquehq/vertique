@@ -16,8 +16,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Encapsulates the conditional request headers from an HTTP request and provides RFC 9110
- * §13.2.2 compliant precondition evaluation.
+ * Encapsulates the conditional request headers from an HTTP request and provides
+ * RFC 9110 §13.2.2 compliant precondition evaluation.
  *
  * <p>Developers may inject a {@code RequestPreconditions} as a JAX-RS resource method parameter
  * to perform early evaluation of conditional headers before executing expensive operations:
@@ -147,8 +147,8 @@ public final class RequestPreconditions {
     // --- Evaluate overloads ---
 
     /**
-     * Evaluates conditional request headers against the given ETag, following RFC 9110
-     * §13.2.2 evaluation order.
+     * Evaluates conditional request headers against the given ETag, following
+     * RFC 9110 §13.2.2 evaluation order.
      *
      * <p>Returns a {@link Response} with status {@code 304 Not Modified} or
      * {@code 412 Precondition Failed} when the conditions match, or {@code null} when
@@ -203,8 +203,8 @@ public final class RequestPreconditions {
             }
         }
 
-        // RFC 9110 §13.2.2 — Step 4: If-Modified-Since (GET/HEAD only)
-        if (ifModifiedSince != null && lastModified != null && isGetOrHead()) {
+        // RFC 9110 §13.2.2 — Step 4: If-Modified-Since (GET/HEAD only, only if no If-None-Match)
+        if (ifNoneMatch == null && ifModifiedSince != null && lastModified != null && isGetOrHead()) {
             Instant threshold = parseHttpDate(ifModifiedSince);
             if (threshold != null && !lastModified.isAfter(threshold)) {
                 return buildNotModified(etag);
@@ -256,7 +256,7 @@ public final class RequestPreconditions {
             // Strong comparison requires a strong ETag on the resource side
             return false;
         }
-        List<String> etagValues = parseETagList(ifMatch);
+        List<String> etagValues = parseETagList(ifMatch, true);
         String resourceValue = etag.getValue();
         for (String candidateValue : etagValues) {
             if (resourceValue.equals(candidateValue)) {
@@ -284,7 +284,7 @@ public final class RequestPreconditions {
         if (etag == null) {
             return false;
         }
-        List<String> etagValues = parseETagList(ifNoneMatch);
+        List<String> etagValues = parseETagList(ifNoneMatch, false);
         String resourceValue = etag.getValue();
         for (String candidateValue : etagValues) {
             if (resourceValue.equals(candidateValue)) {
@@ -307,9 +307,11 @@ public final class RequestPreconditions {
      * </ul>
      *
      * @param headerValue the raw header value (e.g. {@code "abc", W/"def", "ghi"})
+     * @param strongOnly  {@code true} to leave weak entries out (strong comparison); {@code false} to
+     *                    include them (weak comparison)
      * @return list of extracted opaque-tag values; never {@code null}
      */
-    private static List<String> parseETagList(String headerValue) {
+    private static List<String> parseETagList(String headerValue, boolean strongOnly) {
         List<String> result = new ArrayList<>();
         int len = headerValue.length();
         int i = 0;
@@ -322,7 +324,9 @@ public final class RequestPreconditions {
                 break;
             }
             // Skip optional W/ prefix
+            boolean weak = false;
             if (i + 2 < len && headerValue.charAt(i) == 'W' && headerValue.charAt(i + 1) == '/') {
+                weak = true;
                 i += 2;
             }
             // Expect opening quote
@@ -334,10 +338,10 @@ public final class RequestPreconditions {
                     i++;
                 }
                 if (i < len) {
-                    result.add(headerValue.substring(start, i));
-                    if (i < len) {
-                        i++; // skip closing quote
+                    if (!(weak && strongOnly)) {
+                        result.add(headerValue.substring(start, i));
                     }
+                    i++; // skip closing quote
                 }
             } else {
                 // Malformed token — skip to next comma

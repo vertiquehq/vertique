@@ -42,7 +42,7 @@ makes rollback and test isolation correct without a second construction path.
 **Scrape endpoint on the management port only.** `PrometheusScrapeEndpoint` implements
 `ManagementEndpointContributor` and mounts the scrape route on the management router at
 `#contribute(Router)` time, never on the application HTTP router. The management port is protected
-by network policy (NFR-TEL-005) — metric names, label values, and (when enabled) exemplar trace
+by network policy — metric names, label values, and (when enabled) exemplar trace
 and span IDs are visible to anyone with access to that port. Never expose the management port on a
 public network interface.
 
@@ -93,8 +93,7 @@ currently unused. `metrics.backends.prometheus.*` keys are reserved for future b
 
 - `close()` clears `PrometheusBackend` atomically via `AtomicBoolean`. This is called on both
   normal shutdown (reverse-order by `MicrometerMetricsContributor.onShutdown()`) and bootstrap
-  rollback when a later provider fails. Test suites must call `MeterRegistryHolder.resetForTests()`
-  from `@AfterEach` to clear both the composite holder and the `PrometheusBackend` state.
+  rollback when a later provider fails.
 - There is no Dagger `PrometheusMeterRegistry` binding. Code that needs the concrete type for
   testing may access it via `PrometheusBackend.registry()`, which is package-private to
   `dev.vertique.micrometer.prometheus`.
@@ -114,6 +113,9 @@ by `MicrometerPrometheusModule`.
 
 Per-request handling:
 
+- Re-reads `PrometheusBackend.registry()` on every request. If it is empty (the backend was cleared by
+  shutdown or bootstrap rollback), responds 503 with the constant body `"metrics unavailable"` rather
+  than scraping a stale or closed registry.
 - Inspects the `Accept` header. If it contains `application/openmetrics-text`, renders in
   OpenMetrics 1.0.0 format (`application/openmetrics-text; version=1.0.0; charset=utf-8`).
   Otherwise renders in Prometheus text 0.0.4 format (`text/plain; version=0.0.4; charset=utf-8`).
@@ -169,7 +171,7 @@ Bindings provided:
 
 | Type | Qualifier | Description |
 |------|-----------|-------------|
-| `PrometheusScrapeConfig` | `@Singleton` | Deserialized and validated from `metrics` config section |
+| `PrometheusScrapeConfig` | `@Singleton` | Built by hand from `metrics.scrape.path` and `metrics.prometheus.exemplars.enabled` and validated; not deserialized |
 | `ManagementEndpointContributor` | `@IntoSet` | `PrometheusScrapeEndpoint` contributed to the multibinding set |
 | `SpanContext` | `@BindsOptionalOf` | Optional tracing integration; provided by `vertique-opentelemetry-prometheus` when installed |
 
@@ -181,7 +183,7 @@ Keys live under the `metrics` section, alongside `vertique-micrometer-core` keys
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `metrics.scrape.path` | string | `"/metrics"` | Path on the management router where Prometheus scrapes. Must match `^/[A-Za-z0-9._/-]*$`, must not contain `*` or `:`, must not equal or start with `/health`. |
+| `metrics.scrape.path` | string | `"/metrics"` | Path on the management router where Prometheus scrapes. Must match `^/[A-Za-z0-9._/-]*$`, must not contain `*` or `:`, must not equal `/health` or start with `/health/`. |
 | `metrics.prometheus.exemplars.enabled` | boolean | `false` | Opt-in exemplar support. When `true` AND a `SpanContext` binding is present, trace and span IDs are attached to histogram and summary samples. Exemplars render only in OpenMetrics format. |
 | `metrics.backends.prometheus.*` | object | `{}` | Reserved for future Prometheus backend options. Currently unused — `PrometheusConfig.DEFAULT` is always applied. |
 
@@ -203,7 +205,7 @@ Example config:
 }
 ```
 
-### Exposure Guidance (NFR-TEL-005)
+### Exposure Guidance
 
 The `/metrics` endpoint exists **only on the management port**. The management port is protected by
 network policy, not authentication. Metric names, label values, and — when exemplars are enabled —
@@ -281,8 +283,7 @@ only this type adaptation; configuration, registry, and optional bindings remain
 
 ## Dependencies
 
-- `dev.vertique:vertique-micrometer-core` — `MeterRegistryProvider`, `MeterRegistryBackend`,
-  `MicrometerModule`, `MeterRegistryHolder`
+- `dev.vertique:vertique-micrometer-core` — `MeterRegistryProvider`, `MeterRegistryBackend`
 - `dev.vertique:vertique-management` — `ManagementEndpointContributor`, `ManagementModule`,
   `ManagementVerticle`
 - `io.micrometer:micrometer-registry-prometheus` — `PrometheusMeterRegistry`, `PrometheusConfig`

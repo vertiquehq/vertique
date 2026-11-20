@@ -43,8 +43,7 @@ import java.util.UUID;
  * </ol>
  *
  * <p>{@code null} is always legal at the API boundary; blank strings are rejected (use {@code null}
- * instead). See ADR-0055 (version-aware approvals) and ADR-0057 (fingerprint v2) for the full
- * contract.
+ * instead).
  *
  * <p>{@code expectedAssignment} is an optional precondition: the assignment the caller observed
  * when it decided that {@code completedBy} was eligible to act. The engine compares it against the

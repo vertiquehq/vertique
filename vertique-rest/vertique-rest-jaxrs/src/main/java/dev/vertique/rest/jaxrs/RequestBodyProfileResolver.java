@@ -17,8 +17,7 @@ import java.lang.annotation.Annotation;
 import java.util.List;
 
 /**
- * Resolves the effective request-body {@link ObjectMapper} for a single JAX-RS resource method
- * (FR-JSON-020).
+ * Resolves the effective request-body {@link ObjectMapper} for a single JAX-RS resource method.
  *
  * <p>The effective profile id is selected by precedence, highest first. A blank annotation value
  * ({@code ""} or whitespace) is treated as <em>absent</em> and falls through to the next tier
@@ -36,7 +35,7 @@ import java.util.List;
  * <p><strong>Every</strong> effective id, {@code system} included, is resolved to its
  * {@link ObjectMapper} through the registry, which throws a
  * {@link dev.vertique.core.json.JsonProfileConfigurationException} at router-build time when the id
- * is unknown (the desired fail-fast, FR-JSON-008).
+ * is unknown (the desired fail-fast).
  *
  * <p><strong>The {@code null} sentinel is an identity rule.</strong> The resolver returns
  * {@code null} — "no override: the Vert.x fast paths through the process JSON codec are already

@@ -45,9 +45,10 @@ import org.slf4j.LoggerFactory;
  * <p>When the instance has ended, its parked and dead-lettered commands are settled together, in one bulk write that
  * frees the open-signal slot of each parked signal: rejected, or cancelled when the instance was cancelled.
  *
- * <p>A signal delivered by key carries the id of the wait entry it matched. It drains only at the wait that holds that
- * entry, and never while the instance is {@code FAILED}: it applies only when the entry resumes. A signal that carries
- * no entry id drains as it always has.
+ * <p>No parked signal drains while the instance is {@code FAILED}, whatever its address: a failed instance holds its
+ * waits, its branches included, and a signal waits for the retry that resumes it. A drain that finds the instance
+ * {@code FAILED} leaves every parked signal as it is, so a retry that fails the instance again applies none. A signal
+ * delivered by key carries the id of the wait entry it matched and drains only at the wait that holds that entry.
  *
  * <p>Writes that settle a command, and the history entries of its outcome, are made at the level of the segment's
  * transaction, never inside a savepoint, so that they belong to the segment's transaction and survive the rollback of a
@@ -80,8 +81,7 @@ public final class ParkedSignals {
      * The state of an instance after a drive.
      *
      * @param endedStatus the status of the instance when it has ended, or {@code null}
-     * @param failed      whether the instance is {@code FAILED}, which holds its waits but takes no signal that matched
-     *                    an entry
+     * @param failed      whether the instance is {@code FAILED}, which holds its waits but takes no signal
      * @param open        the signal waits the instance and its branches are in, the instance's first
      */
     public record Waits(@Nullable String endedStatus, boolean failed, List<WaitAddress> open) {}
@@ -234,12 +234,11 @@ public final class ParkedSignals {
             return host.waits(instance, tx)
                     .compose(waits -> waits.endedStatus() != null
                             ? commands.settleEnded(instance, tx).<Void>mapEmpty()
-                            : atWaits(instance, waits.open(), waits.failed(), 0, tx));
+                            : waits.failed() ? Future.<Void>succeededFuture() : atWaits(instance, waits.open(), 0, tx));
         });
     }
 
-    private Future<Void> atWaits(
-            WorkflowInstanceId instance, List<WaitAddress> open, boolean failed, int index, SqlClient tx) {
+    private Future<Void> atWaits(WorkflowInstanceId instance, List<WaitAddress> open, int index, SqlClient tx) {
         if (index >= open.size()) {
             return Future.succeededFuture();
         }
@@ -260,22 +259,20 @@ public final class ParkedSignals {
                         return both;
                     }));
         }
-        return selected.compose(parked ->
-                        guard.unblocked(instance, wait.stepId(), wait.branchId(), accepted(parked, wait, failed), tx))
+        return selected.compose(
+                        parked -> guard.unblocked(instance, wait.stepId(), wait.branchId(), accepted(parked, wait), tx))
                 .compose(candidates -> candidates.isEmpty()
-                        ? atWaits(instance, open, failed, index + 1, tx)
-                        : candidates(
-                                instance, candidates, 0, () -> atWaits(instance, open, failed, index + 1, tx), tx));
+                        ? atWaits(instance, open, index + 1, tx)
+                        : candidates(instance, candidates, 0, () -> atWaits(instance, open, index + 1, tx), tx));
     }
 
     /**
      * The parked signals a wait accepts. A signal that matched a wait entry is accepted only at the wait that holds the
-     * entry, and not while the instance is {@code FAILED}; a signal that matched none is always accepted.
+     * entry; a signal that matched none is accepted at any wait of its address.
      */
-    private static List<ParkedSignal> accepted(List<ParkedSignal> parked, WaitAddress wait, boolean failed) {
+    private static List<ParkedSignal> accepted(List<ParkedSignal> parked, WaitAddress wait) {
         return parked.stream()
-                .filter(signal ->
-                        signal.waitId() == null || (!failed && signal.waitId().equals(wait.waitId())))
+                .filter(signal -> signal.waitId() == null || signal.waitId().equals(wait.waitId()))
                 .toList();
     }
 

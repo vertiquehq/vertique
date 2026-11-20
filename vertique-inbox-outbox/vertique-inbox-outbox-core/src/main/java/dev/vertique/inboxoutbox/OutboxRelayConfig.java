@@ -4,6 +4,7 @@
 package dev.vertique.inboxoutbox;
 
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
+import dev.vertique.inboxoutbox.exception.InboxOutboxConfigurationException;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.experimental.Accessors;
@@ -62,8 +63,11 @@ public class OutboxRelayConfig {
     private final long leaseTimeoutMs = 30_000L;
 
     /**
-     * Maximum number of delivery attempts before an entry is moved to dead-letter state.
-     * Default: 20.
+     * Maximum number of delivery attempts before an entry is moved to dead-letter state, for
+     * entries that set no {@link OutboxEntry#maxAttempts() maxAttempts} of their own. The limit is
+     * stored with the row when the entry is published, so a change applies to entries published
+     * afterwards. An entry's own limit wins. Must be at least 1; {@link #validated()} rejects a lower
+     * value at startup. Default: 20.
      */
     @Builder.Default
     private final int maxAttempts = 20;
@@ -94,4 +98,17 @@ public class OutboxRelayConfig {
      */
     @Builder.Default
     private final int instances = 1;
+
+    /**
+     * Checks the settings that cannot be repaired later and returns this configuration.
+     *
+     * @return this configuration
+     * @throws InboxOutboxConfigurationException when {@code inboxOutbox.relay.maxAttempts} is below 1
+     */
+    public OutboxRelayConfig validated() {
+        if (maxAttempts < 1) {
+            throw new InboxOutboxConfigurationException("inboxOutbox.relay.maxAttempts must be at least 1");
+        }
+        return this;
+    }
 }

@@ -46,7 +46,7 @@ import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.TypeElement;
 
 /**
- * Annotation processor (CG-005, extended in CG-011 W4) that generates
+ * Annotation processor that generates
  * {@code ServiceContractContributor} implementations and a Dagger {@code @Module} for
  * {@code @ServiceContract}-annotated interfaces.
  *
@@ -109,7 +109,7 @@ public final class ServiceContractProcessor extends AbstractProcessor {
     private HandlerContractValidator handlerContractValidator;
     private HandlerMatchValidator handlerMatchValidator;
 
-    // --- Group-level validators (CG-011 W4) ---
+    // --- Group-level validators ---
     private MultipleUnconditionalImplValidator multipleUnconditionalImplValidator;
     private ConditionalRequiredOnNonDefaultValidator conditionalRequiredOnNonDefaultValidator;
 
@@ -291,7 +291,7 @@ public final class ServiceContractProcessor extends AbstractProcessor {
         return false;
     }
 
-    // --- Contract-only client proxy emission (CG-015 Track D) ---
+    // --- Contract-only client proxy emission ---
 
     /**
      * Emits one {@code {Contract}_ServiceClientProxy} per {@code @ServiceContract} interface in this

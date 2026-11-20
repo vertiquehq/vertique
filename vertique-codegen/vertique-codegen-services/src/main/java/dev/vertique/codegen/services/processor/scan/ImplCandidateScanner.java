@@ -78,7 +78,7 @@ public final class ImplCandidateScanner {
                 continue;
             }
             // Respect @NoAutoWire opt-out, but warn first if the user also added
-            // @ConditionalOnProperty — that combination is a no-op (CG-011 W4) since the
+            // @ConditionalOnProperty — that combination is a no-op since the
             // codegen path is bypassed for @NoAutoWire types.
             if (AnnotationMirrors.isPresent(te, ServiceAnnotations.NO_AUTO_WIRE)) {
                 if (AnnotationMirrors.isPresent(te, ServiceAnnotations.CONDITIONAL_ON_PROPERTY)

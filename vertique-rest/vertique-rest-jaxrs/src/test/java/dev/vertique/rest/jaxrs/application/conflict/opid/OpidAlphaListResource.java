@@ -11,9 +11,9 @@ import jakarta.ws.rs.core.MediaType;
 
 /**
  * TP-005 (T004) case (a) fixture: {@link OpidApis.OpidAlphaApi}'s sole listed resource, at its own
- * {@code @Path}. Its {@link #list()} method's default operationId ({@code "list"}) collides with
+ * {@code @Path}. Its {@link #list()} method's default operationId ({@code "list"}) is shared with
  * {@link OpidBetaListResource#list()}'s, but the two resource classes are unrelated (neither is
- * the other's superclass), so they have no common owner — the collision must fail deployment.
+ * the other's superclass), so they have no common owner; on two application mounts they deploy.
  */
 @Path("/opid-alpha")
 public class OpidAlphaListResource {

@@ -9,6 +9,7 @@ import io.github.jopenlibs.vault.VaultException;
 import io.github.jopenlibs.vault.response.AuthResponse;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Map;
@@ -50,7 +51,7 @@ import java.util.Map;
  * {@link io.github.jopenlibs.vault.VaultException} on non-200 responses — no additional
  * status inspection is needed for authentication.
  *
- * <h2>Driver exception sanitization (NFR-CONF-002)</h2>
+ * <h2>Driver exception sanitization</h2>
  * <p>The jopenlibs driver embeds raw HTTP response bodies in {@link VaultException} messages for
  * non-2xx reads and failed logins (format: {@code "...\nResponse body: <body>"}). Propagating the
  * driver message verbatim would expose unbounded, untrusted content (e.g. a proxy 502 HTML page)
@@ -231,9 +232,9 @@ class JOpenLibsVaultGateway implements VaultGateway {
     /**
      * Reads the contents of a JWT file from the filesystem.
      *
-     * <p>The {@link IOException} message contains only the file path and the OS-level error
-     * description — no secret content. It is safe to include directly in a
-     * {@link VaultReadException} detail string.
+     * <p>The failure names the configuration key and the I/O exception class only: neither the
+     * configured path nor the OS-level error text is echoed, because a mistyped value can be a
+     * secret. The cause is not attached.
      *
      * @param jwtPath path to the JWT token file
      * @return the JWT token string (trimmed)
@@ -242,11 +243,11 @@ class JOpenLibsVaultGateway implements VaultGateway {
     private static String readJwtFile(String jwtPath) {
         try {
             return Files.readString(Paths.get(jwtPath)).trim();
-        } catch (IOException e) {
-            // IOException message is path + OS error description — safe to include.
-            // Cause is not attached per NFR-CONF-002 cause-severing discipline.
+        } catch (IOException | InvalidPathException e) {
             throw new VaultReadException(
-                    "<config>", "IOException reading Kubernetes JWT from '" + jwtPath + "': " + e.getMessage());
+                    "<config>",
+                    "the Kubernetes JWT file named by auth.jwtPath cannot be read ("
+                            + e.getClass().getSimpleName() + ")");
         }
     }
 
@@ -258,7 +259,7 @@ class JOpenLibsVaultGateway implements VaultGateway {
      * <p>The driver message is intentionally discarded. It may contain raw HTTP response bodies
      * (format: {@code "...\nResponse body: <body>"}) for non-2xx reads and failed logins — an
      * untrusted proxy 502 HTML page or a Vault error body in the cause chain would reach startup
-     * logs as unbounded text. The driver cause is NOT attached per NFR-CONF-002.
+     * logs as unbounded text. The driver cause is NOT attached.
      *
      * <p>This method is package-private to allow direct unit testing of the sanitization logic
      * without constructing a real {@link Vault} instance.

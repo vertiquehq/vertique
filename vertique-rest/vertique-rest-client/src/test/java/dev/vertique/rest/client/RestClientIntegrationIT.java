@@ -20,7 +20,6 @@ import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
 import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
 import dev.vertique.core.config.ConfigParser;
-import dev.vertique.rest.client.exception.RestClientException;
 import dev.vertique.rest.client.exception.RestClientResponseException;
 import dev.vertique.rest.client.interceptor.RestClientInterceptor;
 import dev.vertique.rest.client.interceptor.RestClientRequestContext;
@@ -675,7 +674,8 @@ public class RestClientIntegrationIT {
                 .build(ExpectedStatusClient.class)
                 .getItem("missing")
                 .onComplete(ctx.failing(err -> ctx.verify(() -> {
-                    assertThat(err).isInstanceOf(RestClientException.class);
+                    assertThat(err).isInstanceOf(RestClientResponseException.class);
+                    assertThat(((RestClientResponseException) err).statusCode()).isEqualTo(404);
                     ctx.completeNow();
                 })));
     }

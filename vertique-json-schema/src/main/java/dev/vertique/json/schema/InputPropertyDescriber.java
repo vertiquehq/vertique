@@ -161,7 +161,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
 
     /**
      * The validated, direction-filtered profile view this generator was built for, consulted only by
-     * the member-level case-insensitive inline path (F4, security review round 1): that path builds a
+     * the member-level case-insensitive inline path: that path builds a
      * schema by hand instead of asking Victools for the member's type, so it must consult the same
      * profile override a normal type-level lookup would have reached through {@link
      * ProfileOverrideDefinitionProvider}. {@code null} only for the legacy two-argument constructor,
@@ -309,14 +309,14 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     }
 
     private CustomDefinition describe(JavaType javaType, ResolvedType resolved, SchemaGenerationContext context) {
-        // W2 (spike/deserializer-driven-schema round 4 ruling): unwrapped through getDelegatee() before
+        // Unwrapped through getDelegatee() before
         // this method decides whether the type's deserializer was replaced — mirroring the existing
         // TypeWrappedDeserializer unwrap rootDeserializer itself performs. A mapper-wide
         // BeanDeserializerModifier that wraps every bean deserializer in a forwarding
         // DelegatingDeserializer subclass still ends up calling the wrapped bean deserializer at bind
         // time through getDelegatee(), so the wrapped bean is described from its own delegate rather
-        // than misclassified as an opaque type-level override the way F1's own refusal treats a genuine
-        // custom deserializer. Bounded to a pure forwarder (W-1, round 5 review finding): a
+        // than misclassified as an opaque type-level override the way the refusal below treats a genuine
+        // custom deserializer. Bounded to a pure forwarder: a
         // DelegatingDeserializer subclass that overrides deserialize(...)/deserializeWithType(...) itself
         // is left un-unwrapped by unwrapDelegating and falls through to the same bean-like refusal below,
         // since such an override may read a wire shape the delegate's own bean description does not
@@ -330,7 +330,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             return describeMapLike(javaType, context);
         }
         if (!(deserializer instanceof BeanDeserializerBase bean)) {
-            // F1 (security review round 1, HIGH): declaresOwnDeserializerOverride alone only catches a
+            // declaresOwnDeserializerOverride alone only catches a
             // class-level @JsonDeserialize(using = ...); a deserializer a profile module registers
             // (SimpleModule.addDeserializer, or a BeanDeserializerModifier wrapper) carries no such
             // annotation, so an application DTO the mapper's own reflective introspection still reports
@@ -403,7 +403,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     }
 
     /**
-     * The shared diagnostic for a delegating creator (W1: both the object- and the array-delegating
+     * The shared diagnostic for a delegating creator (both the object- and the array-delegating
      * shape) — neither reads a named property of its own, so a document describing either delegate's
      * shape honestly would open the boundary to keys {@code main} never accepted and leave any
      * constraint on this type's own fields dead on input.
@@ -424,11 +424,11 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     }
 
     /**
-     * Refuses a delegating or array-delegating creator (W1), shared between the root/nested-reference
+     * Refuses a delegating or array-delegating creator, shared between the root/nested-reference
      * path in {@link #describe} and the member-level case-insensitive inline path in {@link
-     * #propertySchema} (F4, security review round 1): the inline path builds its schema by hand
-     * instead of asking Victools for the member's type, so before this fix it never ran this check at
-     * all, silently describing a delegating creator's own fields instead of refusing generation.
+     * #propertySchema}: the inline path builds its schema by hand
+     * instead of asking Victools for the member's type, so it must run this check itself rather than
+     * silently describing a delegating creator's own fields instead of refusing generation.
      *
      * @param javaType     the type being described
      * @param instantiator the type's value instantiator
@@ -444,7 +444,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             throw refuseDelegatingCreator(javaType, "a delegating @JsonCreator");
         }
         if (instantiator.canCreateUsingArrayDelegate()) {
-            // Same shape, same remedy, an array-shaped delegate instead of an object-shaped one (W1): a
+            // Same shape, same remedy, an array-shaped delegate instead of an object-shaped one: a
             // single-argument delegating creator whose declared parameter type is array-like (a
             // Collection or an array) reads no named property of its own either — its wire shape is a
             // JSON array, which a schema's properties cannot describe any more than the object-delegate
@@ -457,7 +457,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * The shared diagnostic for a deserializer that does not resolve to a bean deserializer — a
      * type-level custom deserializer refused at the root ({@link #describe}), or an {@code
      * @JsonUnwrapped} child whose own {@code unwrappingDeserializer(...)} resolved to a genuinely
-     * different, non-bean instance (the unwrapped-child loop in {@link #populateObjectSchema}, C-1):
+     * different, non-bean instance (the unwrapped-child loop in {@link #populateObjectSchema}):
      * both name a type whose wire shape a schema cannot describe, refused with the same remedy rather
      * than silently skipped.
      *
@@ -472,8 +472,8 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     }
 
     /**
-     * The unwrapped-child variant of {@link #refuseCustomDeserializer(JavaType, JsonDeserializer)}
-     * (C-1): names the unwrapped member alongside its type, the same posture {@link
+     * The unwrapped-child variant of {@link #refuseCustomDeserializer(JavaType, JsonDeserializer)}:
+     * names the unwrapped member alongside its type, the same posture {@link
      * #requireCaseSensitive} already takes for a case-insensitive unwrapped member, so a caller with
      * several unwrapped members on the same parent can tell which one was refused.
      *
@@ -508,9 +508,9 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     }
 
     /**
-     * One {@code @JsonUnwrapped} sibling's own resolution, captured up front (C1, spike round 4
-     * CRITICAL) so whether extras will be described can be computed over every sibling before any one
-     * of them is processed — see the C1 comment in {@link #populateObjectSchema}.
+     * One {@code @JsonUnwrapped} sibling's own resolution, captured up front
+     * so whether extras will be described can be computed over every sibling before any one
+     * of them is processed — see the extras-will-be-described comment in {@link #populateObjectSchema}.
      *
      * @param memberName    the parent's own member name carrying this unwrapped child, named in a
      *                      nested-unwrap diagnostic
@@ -640,7 +640,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             anySetters.add(anySetter);
         }
         ObjectNode[] patternProperties = new ObjectNode[1];
-        // F2 (security review round 1, HIGH): every unwrapped child's alias spellings and hidden/ignored
+        // Every unwrapped child's alias spellings and hidden/ignored
         // names, folded into the parent's own alias plan and reserved-name seed below, keyed by the
         // child's wire names with any unwrapped prefix or suffix applied — see the unwrapped loop.
         Map<String, List<String>> unwrappedAliasPlan = new TreeMap<>();
@@ -682,7 +682,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 if (transformer == null) {
                     continue;
                 }
-                // C-1 (security review round 6 finding): routed through unwrapDelegating, the same bound
+                // Routed through unwrapDelegating, the same bound
                 // applied at the root (describe()) and inline (propertySchema()) seams — otherwise a
                 // mapper-wide BeanDeserializerModifier that wraps every bean deserializer in a forwarding
                 // DelegatingDeserializer subclass leaves this child's own root deserializer un-unwrapped,
@@ -692,7 +692,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 JsonDeserializer<?> child = unwrapDelegating(rootDeserializer(property.getType()));
                 JsonDeserializer<?> renamed = child == null ? null : child.unwrappingDeserializer(transformer);
                 if (renamed == child) {
-                    // C-1 (security review round 7 finding): Jackson's own bound —
+                    // Jackson's own bound —
                     // unwrappingDeserializer(...) returning the very same instance back is its documented
                     // signal that the deserializer does not support unwrapping at all (MapDeserializer, the
                     // abstract-type-id-resolving deserializer, the untyped-Object/JsonNode deserializers,
@@ -722,13 +722,13 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 recordHiddenProperty(property, builtClass, false);
             }
 
-            // C1 (spike/deserializer-driven-schema round 4, CRITICAL): whether extras will be described
+            // Whether extras will be described
             // is computed once, over the parent's own any-setter and EVERY unwrapped sibling's own
             // builder, before any sibling is processed — not incrementally discovered while looping
-            // sibling by sibling. Before this fix, a sibling processed before the one that actually
-            // declares @JsonAnySetter saw the loop's own "so far" signal still false and skipped its own
+            // sibling by sibling. Otherwise a sibling processed before the one that actually
+            // declares @JsonAnySetter would see the loop's own "so far" signal still false and skip its own
             // fold entirely: {@code Parent { @JsonUnwrapped A a; @JsonUnwrapped B b }} with the
-            // any-setter on B alone still left A's own alias and hidden member unfolded when A was
+            // any-setter on B alone would leave A's own alias and hidden member unfolded when A is
             // processed first, regardless of the fact that the type as a whole is any-setter-shaped.
             // Computed through the shared #wouldDescribeExtras(BeanDeserializerBuilder) helper
             // so this "own or unwrapped sibling any-setter" question never diverges from propertySchema's
@@ -740,14 +740,14 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             for (UnwrappedChild sibling : unwrappedChildren) {
                 recordHiddenType(sibling.childClass());
                 if (extrasWillBeDescribed) {
-                    // F2 (security review round 1, HIGH): a nested @JsonUnwrapped chain (this unwrapped
+                    // A nested @JsonUnwrapped chain (this unwrapped
                     // child itself declares another unwrapped member) is refused rather than folded
                     // unsoundly on an any-setter type — the same posture #{@link #requireCaseSensitive}
                     // already takes for a case-insensitive unwrapped member. Folding is bounded to one
                     // level: the reserved-name and alias-spelling sweep below reads the child's own
                     // introspection and bound-property list directly, which does not itself descend into
                     // a grandchild's own unwrapped member, so a grandchild's alias or hidden member could
-                    // otherwise bind through the extras bucket unconstrained exactly like F2's own probe.
+                    // otherwise bind through the extras bucket unconstrained exactly like a direct child's.
                     requireNoNestedUnwrapping(sibling.childBuilder(), sibling.childClass(), sibling.memberName());
                 }
                 for (SettableBeanProperty childProperty : sibling.childBound()) {
@@ -779,7 +779,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 if (extrasWillBeDescribed) {
                     // Fold this child's own alias spellings and hidden/ignored names into the parent's
                     // plan and reservation, keyed by the child's wire names with the unwrapping prefix or
-                    // suffix applied — see the F2 comment above and this method's own class Javadoc. Runs
+                    // suffix applied — see the alias-plan comment above and this method's own class Javadoc. Runs
                     // for every sibling once extrasWillBeDescribed is known, regardless of which sibling
                     // this one is processed relative to the one that actually declares the any-setter.
                     foldUnwrappedChildIntoParentPlan(
@@ -847,7 +847,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         if (extrasDescribed) {
             reserved = reservedNames(javaType, bean, bound, published, aliasPlan);
             reserved.removeAll(excludedFromReservation);
-            // F2: every unwrapped child's own hidden/ignored name and bound-but-unpublished name, folded
+            // Every unwrapped child's own hidden/ignored name and bound-but-unpublished name, folded
             // in beside the parent's own reservation — see foldUnwrappedChildIntoParentPlan.
             reserved.addAll(unwrappedReservedSeed);
             reserved.removeAll(published);
@@ -855,14 +855,14 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             reserved = Set.of();
         }
         if (caseInsensitive) {
-            // F3 (security review round 1, HIGH): emitted unconditionally, not only where extras are
-            // described (C1's own premise). Jackson folds a case-insensitively bound property name with
+            // Emitted unconditionally, not only where extras are
+            // described. Jackson folds a case-insensitively bound property name with
             // String#toLowerCase() (no explicit Locale), and a non-ASCII code point can fold to an ASCII
             // letter regardless of locale (U+212A KELVIN SIGN folds to ASCII 'k'). Such a key binds to
             // the real, constrained member at the binder. A *closed* CI type (no any-setter) at REST has
             // no other closure at all — no additionalProperties: false, since REST has no hardener — so
-            // without this rule the key is simply accepted and bound, exactly the bypass C1 was measured
-            // against; where extras are also described, the ASCII-only patternProperties fold and the
+            // without this rule the key is simply accepted and bound, exactly the bypass the extras
+            // rule was measured against; where extras are also described, the ASCII-only patternProperties fold and the
             // reserved-name pattern both miss it, so the key falls through to additionalProperties (the
             // extras bucket) instead of the member's own constraint. Refusing any key carrying a
             // non-ASCII code unit outright, always, closes both gaps the same way.
@@ -1041,11 +1041,11 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             List<String> required) {
         AnnotatedMember member = property.getMember();
         Member raw = member == null ? null : member.getMember();
-        // S-1 (round 5 review finding): unwrap() alone strips only a TypeWrappedDeserializer; under a
+        // unwrap() alone strips only a TypeWrappedDeserializer; under a
         // mapper-wide BeanDeserializerModifier that wraps every bean deserializer in a forwarding
         // DelegatingDeserializer, the member's own contextual deserializer is still that wrapper, so the
-        // instanceof BeanDeserializerBase check below missed a case-insensitive member entirely before
-        // this fix. unwrapDelegating applies the same W-1 bound here as at the root seam: it unwraps a
+        // instanceof BeanDeserializerBase check below would miss a case-insensitive member entirely
+        // without it. unwrapDelegating applies the same bound here as at the root seam: it unwraps a
         // pure forwarder, and leaves a shape-changing DelegatingDeserializer subclass un-unwrapped (which
         // then simply fails the instanceof check below, exactly as an unrelated non-bean deserializer
         // already does).
@@ -1309,8 +1309,8 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     /**
      * When a Bean Validation {@link #supplement} is active, merges its constraints and required-ness
      * onto a field or getter that a schema-library member scope — and therefore the always-active
-     * Jakarta Validation module — already described (C2, design correction): an addition only fills a
-     * keyword the module left unset, and a correction (#606: {@code @Range}, {@code @Length}, {@code
+     * Jakarta Validation module — already described: an addition only fills a
+     * keyword the module left unset, and a correction ({@code @Range}, {@code @Length}, {@code
      * @URL}, a {@code @Pattern} flag) replaces the module's own rendering unconditionally. A no-op when
      * no supplement is active, leaving the module's own rendering exactly as it stood before this
      * class existed.
@@ -1319,14 +1319,14 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      *                   always-active Jakarta Validation module rendered
      * @param builtClass the type the property is described on
      * @param javaName   the field's or getter's Java bean name
-     * @param javaType   the member's Java type, which selects the size/range keyword family (C2: derived
+     * @param javaType   the member's Java type, which selects the size/range keyword family (derived
      *                   from the Java type, never from the schema's own {@code type}, which is absent
      *                   for a map, a bean, or an {@code Optional} at this point). Resolved as Jackson
      *                   sees it for the built type's own parameterization — the raw {@link Field} or
      *                   {@link java.lang.reflect.Method}'s reflected type erases a type variable to its
      *                   bound (e.g. {@code Object} for an unbounded {@code T}) regardless of what the
      *                   holder actually binds it to; {@code SettableBeanProperty#getType()}'s {@link
-     *                   JavaType} does not (D4).
+     *                   JavaType} does not.
      * @param wireName   the published property name, added to {@code required} when applicable
      * @param required   the object schema's required-property list
      */
@@ -1409,7 +1409,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * Applies one encoded keyword set onto a finished schema node; see
      * {@link #applyDeferredScopedConstraints}.
      *
-     * <p>F7 (security review round 1, LOW): for a correction ({@code overwrite == true}), a bound
+     * <p>For a correction ({@code overwrite == true}), a bound
      * keyword ({@link #MIN_BOUND_KEYWORDS}/{@link #MAX_BOUND_KEYWORDS}) the schema already carries a
      * numeric value for is only overwritten by a value at least as strict as the existing one — see
      * {@link #applyCorrection}, the unscoped-member counterpart this mirrors — and a differing {@code
@@ -1417,7 +1417,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * addition ({@code overwrite == false}) is unaffected: it is still applied only where the schema
      * does not already carry that keyword.
      *
-     * <p>S2 (CO-001, the rest-021 package's carried obligation): an {@code "allOf"} correction — the
+     * <p>An {@code "allOf"} correction — the
      * encoded form of a scoped member's own two-{@code @Pattern} rendering, see {@link
      * MetadataConstraintSource}'s {@code render} — is appended onto the schema's existing {@code allOf}
      * array through {@link #appendAllOfPatterns}, the same helper {@link #putKeyword}'s own {@code
@@ -1549,15 +1549,15 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * The built type's <em>Jackson-introspected</em> field for the given wire name, whose attributes a
      * setter borrows — a raw field-name scan by declaration order, over the setter's own implied Java
      * name or the wire name, joined the shape a coincidental match could misattribute a constraint from
-     * an unrelated field of the same name (the exact join class D002/D003 rejected as unsound for a
-     * creator parameter's own field join, review INFO item). Joining through {@code
+     * an unrelated field of the same name (the exact join class rejected as unsound for a
+     * creator parameter's own field join). Joining through {@code
      * BeanPropertyDefinition#getField()} instead uses Jackson's own merge: the field it associates with
      * the same wire-named property is guaranteed to be the one this setter's own value corresponds to,
      * mirroring {@link #borrowBuilderFieldAttributes}'s own join exactly. Transient, private, or renamed
      * on the wire, the field's constraints still carry the constraints the developer wrote for the
      * value.
      *
-     * <p>W1 (spike/deserializer-driven-schema round 4 ruling): {@code getField()} is {@code null} when
+     * <p>{@code getField()} is {@code null} when
      * the only accessor Jackson associates with the property is the setter itself — a private field with
      * a setter and no getter, no public field either — so there is nothing to join through Jackson's own
      * merge. Bounded to exactly that shape (no getter either — never overriding Jackson's own {@code
@@ -1566,7 +1566,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * setLevel} implies {@code level}), the same implied-name convention {@link #impliedFieldName}
      * already names for this purpose.
      *
-     * <p>Reopened (round 6 finding): {@code getField()} is {@code null} for exactly the same reason for a
+     * <p>{@code getField()} is {@code null} for exactly the same reason for a
      * {@code transient} field — Jackson's property definition carries no field member for it either, not
      * only when the field is otherwise inaccessible — regardless of whether a getter is also present. The
      * implied-name fallback above was wrongly bounded to "no field member <em>and</em> no getter"; it now
@@ -1604,11 +1604,11 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * The built type's <em>Jackson-introspected</em> property of the given wire name, whose attributes
      * a builder method borrows — never a raw field-name scan, unlike {@link #borrowFieldAttributes}.
      *
-     * <p>Round 2 (this task's owner ruling): when the property has a getter and a backing field, the
-     * borrow is published unconditionally, for any builder — exactly what {@code main}'s field walk did, since a
-     * getter-backed field's constraints were always published there regardless of what any builder
-     * method's body did with the value before assigning it. Only when the property has no getter (the
-     * private, getter-less case {@code main}'s field walk never published either) does the borrow stay
+     * <p>When the property has a getter and a backing field, the
+     * borrow is published unconditionally, for any builder — exactly what the plain field walk does, since a
+     * getter-backed field's constraints are always published there regardless of what any builder
+     * method's body does with the value before assigning it. Only when the property has no getter (the
+     * private, getter-less case the plain field walk never publishes either) does the borrow stay
      * bounded to the shapes {@link BuilderBorrowDetector} can vouch for: a Lombok {@code @Builder}
      * setter is guaranteed by construction to set the built field of that same property, so borrowing
      * through Jackson's own introspected wire name renders identically to the raw scan this replaces
@@ -1844,7 +1844,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     /**
      * The declared, non-static, non-synthetic field of the given Java name, found by walking
      * {@code builtClass} and its superclasses in declaration order — shared by {@link #backingField}'s
-     * own non-record lookup and, for W1 (spike/deserializer-driven-schema round 4 ruling), {@link
+     * own non-record lookup and {@link
      * #borrowFieldAttributes}'s fallback join when Jackson's own {@code BeanPropertyDefinition#getField()}
      * has nothing to join through.
      */
@@ -1868,11 +1868,11 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * builder method. {@link WalkConstraintSource} — the floor, reading Jackson's merged annotation
      * map directly — always runs first, whether or not a Bean Validation {@link #supplement} is also
      * active: this is what keeps a static-factory creator parameter's own constraint from being
-     * silently dropped when a validator is supplied (C3), since Bean Validation itself can join a
+     * silently dropped when a validator is supplied, since Bean Validation itself can join a
      * creator parameter only through a constructor. The supplement, when active, is merged on top —
      * see {@link #mergeConstraints}. The Swagger translation is source-independent and always applied.
      *
-     * @param propertyType the property's own Jackson-resolved value type (D4, unscoped-member
+     * @param propertyType the property's own Jackson-resolved value type (the unscoped-member
      *                      counterpart): a builder or setter {@code member}'s {@link
      *                      AnnotatedMember#getRawType()} is that <em>method's</em> raw type, which for
      *                      Jackson's own {@link com.fasterxml.jackson.databind.introspect.AnnotatedMethod}
@@ -1957,17 +1957,11 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         }
     }
 
-    /**
-     * The bound keywords whose "min" half a stricter (larger) value replaces (F7, security review
-     * round 1, LOW).
-     */
+    /** The bound keywords whose "min" half a stricter (larger) value replaces. */
     private static final Set<String> MIN_BOUND_KEYWORDS =
             Set.of("minimum", "exclusiveMinimum", "minLength", "minItems", "minProperties");
 
-    /**
-     * The bound keywords whose "max" half a stricter (smaller) value replaces (F7, security review
-     * round 1, LOW).
-     */
+    /** The bound keywords whose "max" half a stricter (smaller) value replaces. */
     private static final Set<String> MAX_BOUND_KEYWORDS =
             Set.of("maximum", "exclusiveMaximum", "maxLength", "maxItems", "maxProperties");
 
@@ -2085,7 +2079,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     /**
      * Appends every pattern in {@code patterns} as a new single-{@code pattern} {@code allOf} branch,
      * skipping one whose text a branch already present in the schema's own {@code allOf} array carries
-     * (FR-009: a constraint keyword is never removed, and a composition never duplicates a branch) — the
+     * (a constraint keyword is never removed, and a composition never duplicates a branch) — the
      * shared merge both {@link #putKeyword}'s {@code "allOf"} branch and {@link #applyEncodedKeywords}'s
      * scoped-member {@code "allOf"} correction call, so an {@code allOf} the schema already carries is
      * always appended to, never replaced whole.
@@ -2225,7 +2219,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      *
      * <p>{@code pattern}, {@code minLength}, {@code maxLength}, {@code minimum}/{@code exclusiveMinimum},
      * and {@code maximum}/{@code exclusiveMaximum} go through {@link #applyCorrection} — the same rule
-     * the supplement's corrections follow (FR-009 of the rest-021 package: a constraint keyword is never
+     * the supplement's corrections follow (a constraint keyword is never
      * removed) — so {@code @Schema} metadata on an unscoped member never
      * loosens or drops a bound the always-active {@link WalkConstraintSource} floor already wrote from a
      * Bean Validation annotation on the same member: a differing pattern composes as an {@code allOf}
@@ -2518,7 +2512,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             requireNotDelegating(memberType, instantiator);
             recordHiddenType(memberType.getRawClass());
             ObjectNode inline = context.getGeneratorConfig().createObjectNode();
-            // S2 (spike/deserializer-driven-schema round 4 ruling): describe()'s own root path checks
+            // describe()'s own root path checks
             // scalarCreator(instantiator) before ever building an object schema, so a from-string
             // scalar-creator type is described as {"type":"string"} (or "number"/"integer") wherever it
             // is referenced by $ref. This inline path applies the same check before populating an object
@@ -2538,7 +2532,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                     context,
                     nestedBean.isCaseInsensitive(),
                     extrasSuppressed);
-            // Issue #624: the hand-built inline node never takes the standard CustomDefinition/
+            // The hand-built inline node never takes the standard CustomDefinition/
             // AttributeInclusion.YES path that applies a class-level @Schema(additionalProperties =
             // FALSE). describeExtras also returns false without writing the keyword when the type has
             // no any-setter (or when a class-level FALSE suppresses describing one), so without this
@@ -2862,7 +2856,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
 
     /**
      * Refuses an unwrapped member on an any-setter type whose own value type declares a nested
-     * {@code @JsonUnwrapped} member of its own (F2, security review round 1, HIGH).
+     * {@code @JsonUnwrapped} member of its own.
      *
      * <p>{@link #foldUnwrappedChildIntoParentPlan} folds one unwrapped child's alias spellings and
      * hidden/ignored names into the parent's own alias plan and reserved-name set, so a key that would
@@ -2904,7 +2898,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
 
     /**
      * Folds one unwrapped child's alias spellings and hidden/ignored names into the parent's own alias
-     * plan and reserved-name seed (F2, security review round 1, HIGH): before this fold, {@code
+     * plan and reserved-name seed: without this fold, {@code
      * aliasPlan} and {@code reservedNames} read only the parent's own {@link #boundProperties} list,
      * which {@link #boundProperties(BeanDeserializerBase, BeanDeserializerBuilder)} builds
      * <em>excluding</em> unwrapped members, and the parent's own introspection, which never reaches a
@@ -2934,7 +2928,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             Set<String> published,
             Map<String, List<String>> aliasPlanTarget,
             Set<String> reservedSeedTarget) {
-        // S1 (spike/deserializer-driven-schema round 4 ruling): alias folding is skipped outright for a
+        // Alias folding is skipped outright for a
         // non-no-op unwrap transformer (a declared @JsonUnwrapped prefix or suffix) — measured: neither
         // the alias's own plain local spelling nor the hand-transformed one actually binds through
         // Jackson's own unwrapping deserializer once a real prefix or suffix is in play, so folding
@@ -3335,8 +3329,8 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     }
 
     /**
-     * Unwraps a {@link DelegatingDeserializer} chain down to its ultimate delegate (W2,
-     * spike/deserializer-driven-schema round 4 ruling), the root-level counterpart of {@link
+     * Unwraps a {@link DelegatingDeserializer} chain down to its ultimate delegate,
+     * the root-level counterpart of {@link
      * #unwrap(JsonDeserializer)}'s own {@code TypeWrappedDeserializer} unwrap: a mapper-wide {@code
      * BeanDeserializerModifier} that wraps every bean deserializer in a forwarding {@code
      * DelegatingDeserializer} subclass still ends up calling the wrapped bean deserializer at bind time
@@ -3344,7 +3338,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * rather than from the forwarding wrapper itself. {@code null} or self-referential is treated the
      * same as "nothing further to unwrap", never looping.
      *
-     * <p>Bounded to a <em>pure</em> forwarder (W-1, round 5 review finding): unwrapping stops at the
+     * <p>Bounded to a <em>pure</em> forwarder: unwrapping stops at the
      * first {@code DelegatingDeserializer} whose own class overrides any of {@code
      * deserialize(JsonParser, DeserializationContext)}, {@code deserialize(JsonParser,
      * DeserializationContext, Object)}, or {@code deserializeWithType(...)} — see {@link
@@ -3352,7 +3346,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * or instead of, ever reaching the delegate, so the wire shape it actually accepts is not provably
      * the delegate's own; unwrapping straight through it would silently describe a shape the type does
      * not accept. The un-unwrapped wrapper is then classified — and, for a bean-like type, refused — by
-     * the same rule a genuine type-level deserializer override is refused by (F1's posture), since a
+     * the same rule a genuine type-level deserializer override is refused by, since a
      * subclass overriding one of these methods is a replaced deserializer in every sense that matters
      * here. Every call site that needs this bound gets it from this one method.
      */
@@ -3374,8 +3368,8 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * its own override of at least one of the three methods {@link DelegatingDeserializer} itself
      * implements as pure forwarding to its delegate: {@code deserialize(JsonParser,
      * DeserializationContext)}, {@code deserialize(JsonParser, DeserializationContext, Object)}, and
-     * {@code deserializeWithType(JsonParser, DeserializationContext, TypeDeserializer)} (W-1, round 5
-     * review finding). {@code DelegatingDeserializer} remains every one of the three methods' declaring
+     * {@code deserializeWithType(JsonParser, DeserializationContext, TypeDeserializer)}.
+     * {@code DelegatingDeserializer} remains every one of the three methods' declaring
      * class exactly when the subclass changes none of them, which is the only shape {@link
      * #unwrapDelegating} may safely unwrap straight through.
      *
@@ -3420,9 +3414,9 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         BeanDeserializerBuilder builder = builders.get(key);
         if (builder == null) {
             try {
-                // S1: mapper.copy() (and the capturing module's own setup) now runs inside this guarded
+                // mapper.copy() (and the capturing module's own setup) runs inside this guarded
                 // block too, alongside the deserializer resolution that follows it — a mapper subclass
-                // that refuses to copy itself (overrides copy() to throw) previously escaped as a raw
+                // that refuses to copy itself (overrides copy() to throw) would otherwise escape as a raw
                 // exception straight out of this method instead of the bounded generation diagnostic
                 // every other failure here produces.
                 ObjectMapper copy = capturing;

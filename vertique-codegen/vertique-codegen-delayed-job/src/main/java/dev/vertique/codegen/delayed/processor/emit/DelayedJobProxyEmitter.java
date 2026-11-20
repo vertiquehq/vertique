@@ -37,7 +37,7 @@ import javax.lang.model.element.TypeElement;
  * </ul>
  *
  * <p>The class lands in the contract's own package (never the {@code -Avertique.codegen.package}
- * override) so {@code DelayedJobClientFactory} can resolve it by name; see ADR-0070/ADR-0071.
+ * override) so {@code DelayedJobClientFactory} can resolve it by name.
  */
 public final class DelayedJobProxyEmitter {
 
@@ -201,6 +201,7 @@ public final class DelayedJobProxyEmitter {
                 .addStatement("int priority = effectivePriority")
                 .addStatement("int maxAttempts = effectiveMaxAttempts")
                 .addStatement("$T jobId = null", String.class)
+                .addStatement("$T idempotencyKey = null", String.class)
                 .addStatement("$T premergedMetadata = null", DURABLE_METADATA)
                 .beginControlFlow("if (options != null)")
                 .beginControlFlow("if (options.runAt() != null)")
@@ -216,11 +217,12 @@ public final class DelayedJobProxyEmitter {
                 .addStatement("maxAttempts = options.maxAttempts()")
                 .endControlFlow()
                 .addStatement("jobId = options.jobId()")
+                .addStatement("idempotencyKey = options.idempotencyKey()")
                 .addStatement("premergedMetadata = options.premergedMetadata()")
                 .endControlFlow()
                 .addStatement(
                         "var jobBuilder = $T.builder().handler(handlerName).payload(payload).runAt(runAt)"
-                                + ".queue(queue).priority(priority).maxAttempts(maxAttempts).jobId(jobId)",
+                                + ".queue(queue).priority(priority).maxAttempts(maxAttempts).jobId(jobId).idempotencyKey(idempotencyKey)",
                         DELAYED_JOB)
                 .beginControlFlow("if (premergedMetadata != null)")
                 .addStatement("$T job = jobBuilder.metadata(premergedMetadata).build()", DELAYED_JOB)

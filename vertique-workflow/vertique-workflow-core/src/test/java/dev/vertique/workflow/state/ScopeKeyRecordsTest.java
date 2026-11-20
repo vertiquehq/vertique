@@ -160,7 +160,7 @@ class ScopeKeyRecordsTest {
         assertThat(scopedQuery.scopeKey()).isEqualTo("acme");
         assertThat(scopedQuery)
                 .isEqualTo(new WorkflowInstanceQuery(
-                        WorkflowStatus.RUNNING, "bk", "order", "o-1", "v1", "orders", true, "acme"));
+                        Set.of(WorkflowStatus.RUNNING), "bk", "order", "o-1", "v1", "orders", true, "acme"));
         assertThat(scopedQuery).isNotEqualTo(previousQuery);
         assertThat(scopedQuery.withScopeKey(null)).isEqualTo(previousQuery);
         assertThat(scopedQuery.withScopeKey("globex").scopeKey()).isEqualTo("globex");
@@ -169,25 +169,25 @@ class ScopeKeyRecordsTest {
         // Then the scope is preserved and the changed field is the only difference
         assertThat(scopedQuery.withStatus(WorkflowStatus.WAITING))
                 .isEqualTo(new WorkflowInstanceQuery(
-                        WorkflowStatus.WAITING, "bk", "order", "o-1", "v1", "orders", true, "acme"));
+                        Set.of(WorkflowStatus.WAITING), "bk", "order", "o-1", "v1", "orders", true, "acme"));
         assertThat(scopedQuery.withBusinessKey("bk2"))
                 .isEqualTo(new WorkflowInstanceQuery(
-                        WorkflowStatus.RUNNING, "bk2", "order", "o-1", "v1", "orders", true, "acme"));
+                        Set.of(WorkflowStatus.RUNNING), "bk2", "order", "o-1", "v1", "orders", true, "acme"));
         assertThat(scopedQuery.withSubjectType("invoice"))
                 .isEqualTo(new WorkflowInstanceQuery(
-                        WorkflowStatus.RUNNING, "bk", "invoice", "o-1", "v1", "orders", true, "acme"));
+                        Set.of(WorkflowStatus.RUNNING), "bk", "invoice", "o-1", "v1", "orders", true, "acme"));
         assertThat(scopedQuery.withSubjectId("o-2"))
                 .isEqualTo(new WorkflowInstanceQuery(
-                        WorkflowStatus.RUNNING, "bk", "order", "o-2", "v1", "orders", true, "acme"));
+                        Set.of(WorkflowStatus.RUNNING), "bk", "order", "o-2", "v1", "orders", true, "acme"));
         assertThat(scopedQuery.withSubjectVersion("v2"))
                 .isEqualTo(new WorkflowInstanceQuery(
-                        WorkflowStatus.RUNNING, "bk", "order", "o-1", "v2", "orders", true, "acme"));
+                        Set.of(WorkflowStatus.RUNNING), "bk", "order", "o-1", "v2", "orders", true, "acme"));
         assertThat(scopedQuery.withDefinitionId("other"))
                 .isEqualTo(new WorkflowInstanceQuery(
-                        WorkflowStatus.RUNNING, "bk", "order", "o-1", "v1", "other", true, "acme"));
+                        Set.of(WorkflowStatus.RUNNING), "bk", "order", "o-1", "v1", "other", true, "acme"));
         assertThat(scopedQuery.withIncludeArchived(false))
                 .isEqualTo(new WorkflowInstanceQuery(
-                        WorkflowStatus.RUNNING, "bk", "order", "o-1", "v1", "orders", false, "acme"));
+                        Set.of(WorkflowStatus.RUNNING), "bk", "order", "o-1", "v1", "orders", false, "acme"));
 
         // Given task filters built with the previous 9-argument constructor and with a scope
         TaskFilter previousFilter =

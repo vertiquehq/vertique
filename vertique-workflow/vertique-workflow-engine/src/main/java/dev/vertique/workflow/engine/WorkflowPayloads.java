@@ -16,7 +16,6 @@ import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
 import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import dev.vertique.workflow.state.WorkflowInstance;
-import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.Future;
@@ -35,8 +34,7 @@ import java.util.List;
  * a leaf in the dependency graph: it references only domain model types and the Vert.x JSON codec;
  * it has no dependency on repositories, recorders, or the transition driver.
  *
- * <p>Extracted from {@code WorkflowEngine} as part of the Phase-1 decomposition
- * (PRD-WF-006, Slice C1). Call sites in the engine and recovery service are updated to use the
+ * <p>Extracted from {@code WorkflowEngine}. Call sites in the engine and recovery service use the
  * {@code WorkflowPayloads.} prefix.
  */
 final class WorkflowPayloads {
@@ -69,8 +67,12 @@ final class WorkflowPayloads {
     }
 
     /**
-     * Validates the payload against the decision's declared {@code payloadTypeName} and coerces it
-     * if necessary.
+     * Validates and coerces a decision payload, resolving the plan's type name through the type-name
+     * index first.
+     *
+     * <p>The name comes from a registered plan, so it is either a logical name or the binary class
+     * name of a class the index holds. The index is the only lookup: a name it does not know never
+     * falls back to loading a class by that name, and fails with a {@link WorkflowDefinitionException}.
      *
      * <p>Payload-nullability rule:
      * <ul>
@@ -84,30 +86,6 @@ final class WorkflowPayloads {
      * details never carry a payload value, a payload type name, or a binder message. A payload
      * that cannot bind to the declared class retains the {@link DecodeException} as the cause.
      *
-     * <p>This overload resolves the type name by class-loader lookup only, without initializing the
-     * class.
-     *
-     * @param payload the raw payload from the command
-     * @param payloadTypeName the type name declared in the plan decision
-     * @return the coerced payload (may be {@code null} for Void decisions)
-     * @throws WorkflowInvalidPayloadException if the payload violates the nullability rule or does
-     *     not bind to the declared class
-     * @throws WorkflowDefinitionException if the declared class cannot be resolved
-     */
-    static Object validateAndCoerceTaskPayload(Object payload, String payloadTypeName) {
-        return validateAndCoerceTaskPayload(payload, payloadTypeName, new DefaultWorkflowTypeNames());
-    }
-
-    /**
-     * Validates and coerces a decision payload, resolving the plan's type name through the type-name
-     * index first.
-     *
-     * <p>The name comes from a registered plan, so it is either a logical name or the binary class
-     * name of a row written before the class was named. When the index does not know it, the name is
-     * resolved as a binary class name, exactly as before logical names existed, without initializing the
-     * class; a name that resolves nowhere fails with a {@link WorkflowDefinitionException}. The nullability rules
-     * and error reporting are those of {@link #validateAndCoerceTaskPayload(Object, String)}.
-     *
      * @param payload the raw payload from the command
      * @param payloadTypeName the type name declared in the plan decision
      * @param typeNames the type-name index to resolve through
@@ -117,12 +95,11 @@ final class WorkflowPayloads {
      * @throws WorkflowDefinitionException if the declared class cannot be resolved
      */
     static Object validateAndCoerceTaskPayload(Object payload, String payloadTypeName, WorkflowTypeNames typeNames) {
-        // Special-case the Void / void markers BEFORE Class.forName: the primitive `void.class`
-        // returns the literal name "void", which Class.forName rejects with ClassNotFoundException.
-        // Without this short-circuit, a developer-declared `decision("approve", void.class)` would
-        // build, register, and dispatch — but every completion attempt would fail trying to
-        // resolve "void" as a class name. Both `void.class` ("void") and `Void.class`
-        // ("java.lang.Void") are accepted as no-payload decisions.
+        // Special-case the Void / void markers BEFORE the index lookup: the primitive `void.class`
+        // has the literal name "void", which no index holds. Without this short-circuit, a
+        // developer-declared `decision("approve", void.class)` would build, register, and dispatch
+        // — but every completion attempt would fail trying to resolve "void". Both `void.class`
+        // ("void") and `Void.class` ("java.lang.Void") are accepted as no-payload decisions.
         if ("void".equals(payloadTypeName) || "java.lang.Void".equals(payloadTypeName)) {
             if (payload != null) {
                 throw invalidPayload(
@@ -134,16 +111,10 @@ final class WorkflowPayloads {
             return null;
         }
 
-        Class<?> payloadClass = typeNames.find(payloadTypeName).orElse(null);
-        if (payloadClass == null) {
-            // Lookup only: the class is resolved without running its static initializer.
-            try {
-                payloadClass = Class.forName(payloadTypeName, false, WorkflowPayloads.class.getClassLoader());
-            } catch (ClassNotFoundException | LinkageError e) {
-                throw new WorkflowDefinitionException(
-                        "Decision payloadTypeName '" + EchoedNames.bounded(payloadTypeName) + "' cannot be resolved");
-            }
-        }
+        Class<?> payloadClass = typeNames
+                .find(payloadTypeName)
+                .orElseThrow(() -> new WorkflowDefinitionException(
+                        "Decision payloadTypeName '" + EchoedNames.bounded(payloadTypeName) + "' cannot be resolved"));
 
         if (payload == null) {
             throw invalidPayload(DECISION_REJECTION, "payload is required", "payload", null);
@@ -343,7 +314,7 @@ final class WorkflowPayloads {
         requirePlanHashMatches(inst, rw);
     }
 
-    // --- Command history correlation stitching (Contract Appendix C5) ---
+    // --- Command history correlation stitching ---
 
     /**
      * Resolves the {@code commandCorrelationId} to stitch onto a command history payload
@@ -353,8 +324,7 @@ final class WorkflowPayloads {
      * context at the call site — the same value the binder ({@link WorkflowContextBinder}) or the
      * branch-transition carrier seam installed for this drive. There is no special-casing between
      * instance-path binder drives and branch/engine-internal construction sites: whichever
-     * correlation is bound at the point of construction is the truthful value (PRD
-     * FR-WF-CTX-050/051).
+     * correlation is bound at the point of construction is the truthful value.
      *
      * @return the bound correlation id value, or {@code null} when no {@link CorrelationContext} is
      *     bound to the current execution context
@@ -373,7 +343,7 @@ final class WorkflowPayloads {
      *
      * <p>Branch-owned task completion (unlike the instance-path binder drives {@link
      * #commandCorrelationId()} serves) does not bind a {@link CorrelationContext} for the duration
-     * of the drive — the C2 bind-once rule keeps binding exclusive to the instance path. Without a
+     * of the drive — the bind-once rule keeps binding exclusive to the instance path. Without a
      * fallback, a branch-owned completion recorded with no ambient correlation would always record
      * {@code null} even when the instance was started with a durable correlation context. This
      * overload closes that gap: it first tries the ambient value (identical to
@@ -402,6 +372,21 @@ final class WorkflowPayloads {
         if (ambient != null) {
             return ambient;
         }
+        return capturedCorrelationId(inst);
+    }
+
+    /**
+     * Reads the correlation id the instance captured when it started, from the {@code correlation} namespace of its
+     * durable metadata.
+     *
+     * <p>The nested read is type-checked before use: a malformed shape returns {@code null} rather than throwing.
+     *
+     * @param inst the workflow instance
+     * @return the captured correlation id value, or {@code null} when the instance captured none or the shape is
+     *     malformed
+     */
+    @Nullable
+    static String capturedCorrelationId(WorkflowInstance inst) {
         DurableMetadata metadata = inst.metadata();
         if (metadata == null) {
             return null;

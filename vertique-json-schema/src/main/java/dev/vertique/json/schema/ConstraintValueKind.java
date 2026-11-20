@@ -21,7 +21,7 @@ enum ConstraintValueKind {
     /**
      * Derives the kind from a member's declared Java type.
      *
-     * <p>Deriving from the generated schema's own {@code type} keyword was tried and abandoned (C2):
+     * <p>Deriving from the generated schema's own {@code type} keyword was tried and abandoned:
      * that keyword is absent at the point constraints are applied for a map, a bean, or an {@code
      * Optional} value position (the schema is still a bare {@code $ref} wrapper, or the member has no
      * schema-library member scope at all), so a {@code @Size} on a {@code Map} rendered {@code

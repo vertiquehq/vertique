@@ -211,11 +211,11 @@ final class ValidatedProfile {
                 null);
     }
 
-    /** The composition keywords {@link #isFullyConstrainedShape} descends into (W3, round 4 ruling). */
+    /** The composition keywords {@link #isFullyConstrainedShape} descends into. */
     private static final List<String> COMPOSITION_KEYWORDS = List.of("oneOf", "anyOf", "allOf");
 
     /**
-     * W3 (spike/deserializer-driven-schema round 4 ruling): whether an override fragment fully
+     * Whether an override fragment fully
      * constrains its own wire shape, leaving no property-level position an unconstrained extra key
      * could hide in — the same open-object risk {@link #requireClosedOrDeclaredForBeanLikeType} exists
      * to catch. Exempted, beside declaring {@code properties} or {@code additionalProperties}: a

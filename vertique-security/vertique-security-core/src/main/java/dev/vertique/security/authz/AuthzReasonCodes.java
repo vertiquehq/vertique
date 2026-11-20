@@ -48,8 +48,8 @@ public final class AuthzReasonCodes {
      * {@link dev.vertique.security.SecurityContext} holds — e.g. a minimum IdP-reported
      * {@link dev.vertique.security.AuthenticationAssurance#providerLevel() provider level}, a fresh
      * {@link dev.vertique.security.AuthenticationAssurance#authTime() authTime} within a configured
-     * freshness window, or a live re-verification the caller must complete before retrying (PRD
-     * identity-002 FR-ID-CA-005). Reserved for the enforcement layer's minimum-assurance narrower;
+     * freshness window, or a live re-verification the caller must complete before retrying.
+     * Reserved for the enforcement layer's minimum-assurance narrower;
      * the default action engine does not produce this code.
      */
     public static final String STEP_UP_REQUIRED = "STEP_UP_REQUIRED";

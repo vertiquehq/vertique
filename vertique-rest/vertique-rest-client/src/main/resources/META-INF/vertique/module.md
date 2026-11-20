@@ -8,14 +8,14 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.rest.client`
 > **Artifact:** `vertique-rest-client`
-> **Depends on:** core, rest-core, json
+> **Depends on:** core, rest-core, json, http-client
 
 Declarative HTTP client for Vert.x. Annotate a Java interface with standard JAX-RS annotations
 (`@GET`, `@Path`, `@QueryParam`, …) plus `@RestClient`, then ask `RestClientBuilder` or the
 Dagger-provided `RestClientFactory` for a proxy: every method invocation becomes an asynchronous
 HTTP call returning `Future<T>`. The role is the same one Spring's `@HttpExchange` and MicroProfile's
 `@RegisterRestClient` play — a typed, annotation-driven front end over a connection-pooled HTTP
-client, here Vert.x `WebClient`.
+client, here Vert.x `WebClient` sent through the governed transport of `vertique-http-client`.
 
 It is not a server-side routing runtime and shares no dispatch code with one; `dev.vertique:vertique-rest-jaxrs`
 handles inbound requests. The two do share the parameter-conversion stack from
@@ -51,6 +51,27 @@ inherits the annotations of a generic super-interface declaration whose type var
 binds (`delete(String)` of a `Crud<String>` client inherits those of `Crud<ID>.delete(ID)`), under the
 Java override rules.
 
+An operation the interface inherits from a super-interface, with or without a redeclaration, is an
+operation of the client:
+
+- **Types** are the ones the interface binds: for `UserClient extends Crud<User, String>`, the
+  inherited `Future<T> get(ID id)` returns `User` and binds `id` as a `String`. A type variable of the
+  hierarchy that the interface leaves unbound resolves to its erasure.
+- **Nearest declaration wins.** A redeclaration's own verb, `@Path`, `@Consumes`, `@Produces`,
+  `@ExpectedStatus` and parameter bindings take precedence over the overridden declaration's; what it
+  leaves out it inherits.
+- **Type-level annotations** (`@Path`, `@Consumes`, `@Produces` and the resilience annotations) are read
+  from the client interface, so an inherited operation is sent under the client's `@Path`.
+- **One operation per override chain.** The redeclaration, the declaration it overrides and the bridge
+  the compiler adds are the same operation, so a call through the super-interface type reaches the
+  client. Override-equivalent declarations of unrelated interfaces are separate operations that share a
+  signature. A `default` method is not an operation.
+- **Method metadata reads the same annotations.** `MethodMetadata#findAnnotation` and `hasAnnotation` on an
+  operation (as seen by a capturer or the resilience pipeline) include the annotations of the declarations it
+  overrides. The generated static proxy and the reflective proxy treat inherited operations alike; a client
+  whose inherited operation is declared by an interface the generated proxy cannot name gets the reflective
+  proxy.
+
 ```java
 @RestClient(name = "user-service", value = "http://user-service:8080")
 @Path("/users")
@@ -80,7 +101,8 @@ by annotations, or by external configuration, in that precedence order.
 ### Everything resolves at `build()`, nothing at first call
 
 `RestClientBuilder.build(Class)` scans the interface, resolves the effective `ObjectMapper`, resolves
-the parameter converters, creates a fresh `WebClient`, and returns the proxy. Any misconfiguration —
+the parameter converters, creates a fresh governed client (`vertique-http-client`) over its own
+`WebClient`, and returns the proxy. Any misconfiguration —
 an unknown JSON profile id, a parameter type with no converter, a missing base URL — throws there
 rather than on the first request. Builder state is never mutated by `build()`, so one builder can
 produce several proxies.
@@ -99,23 +121,27 @@ callbacks described under [Extension Points](#extension-points).
  5. Build the Vert.x HttpRequest from the (possibly rewritten) URI
  6. Apply the effective timeout
  7. Send inside the circuit breaker when configured; the retry loop lives here
- 8. Apply the Expectation (@ExpectedStatus, or the builder default)
+ 8. Apply the Expectation (@ExpectedStatus, or the builder default; 2xx when neither is set).
+    A response it accepts continues, whatever its status; one it rejects fails with
+    RestClientResponseException. A 404 for Future<Optional<T>> is accepted before this check.
  9. [sync]  onResponse observers
 10. [async] afterResponse handlers — a failed future turns success into error
 11. Future<Optional<T>>: a 404 short-circuits to Optional.empty()
 12. Deserialize the body with the resolved per-client ObjectMapper
 13. Validate the deserialized object with BeanValidator when one is bound
 
-On failure anywhere in 7–13:
+On failure in 7–10:
 14. [async] recoverRequest handlers — the first success triggers exactly one recovery retry
+
+On failure anywhere in 7–13:
 15. [sync]  onError observers
 16. [async] transformError handlers — may replace the propagated error
 17. RestClientExceptionMapper translates transport failures into the typed hierarchy
 ```
 
 `onAttemptCompleted` is the exception to this outline: it fires once per *physical* HTTP attempt from
-inside the send, before the retry/recovery decision, so it sees attempts that steps 9/15 never
-report.
+inside the send, so it sees attempts that steps 9/15 never report. For an attempt that reaches its
+timeout it can fire after the retry or recovery decision.
 
 ### Proxy flavors are interchangeable
 
@@ -161,17 +187,17 @@ and the optional `BeanValidator`.
 | `registerCapturer(RestClientContextCapturer<?>)` | Adds a per-client system-owned context capturer |
 | `exceptionMapper(RestClientExceptionMapper)` | Replaces the whole mapper, discarding prior `onFailure` registrations |
 | `onFailure(Class<T>, FailureTranslator<T>)` | Registers one translator on the current mapper; last registration wins per type |
-| `expecting(Expectation<HttpResponseHead>)` | Default response expectation; overridden per method by `@ExpectedStatus` |
+| `expecting(Expectation<HttpResponseHead>)` | Default response expectation, checked in addition to the 2xx rule (`expecting(HttpResponseExpectation.JSON)` still fails a 500); replaced per method by `@ExpectedStatus`, the only way to accept a non-2xx status |
 | `circuitBreaker(CircuitBreakerOptions)` | Builder-level baseline breaker (lowest priority) |
 | `retryPolicy(RestClientRetryPolicy)` | Policy consulted when `@Retry#retryOn` is empty; defaults to `DefaultRestClientRetryPolicy` |
-| `backoffStrategy(BackoffStrategy)` | Strategy used when `@Retry#backoff` is `BackoffStrategy.Default`; defaults to exponential (500 ms, ×2, cap 30 s) |
+| `backoffStrategy(BackoffStrategy)` | Backoff of the client-level retry that a `restClient.{name}.retry` config block enables; defaults to exponential (500 ms, ×2, cap 30 s). It does not replace the inline values of a method that carries `@Retry`; see the `@Retry` table |
 | `paramConversionResolver(ParamConversionResolver)` | Explicit outbound resolver; bypasses binding/provider accumulation |
 | `paramConverterBinding(ParamConverterBinding<T>)` | Adds a typed converter binding (standalone use; ignored once a resolver override is set) |
 | `paramConverterProvider(ParamConverterProvider)` | Adds a JAX-RS provider (standalone use; ignored once a resolver override is set) |
 | `beanParamAccessorRegistry(BeanParamAccessorRegistry)` | Overrides the process-wide generated-accessor cache; intended for tests |
 | `config(RestClientConfig)` | Typed per-client overrides; an explicit call wins over the name lookup in the seeded index |
 | `build(Class<T>)` | Scans, validates, and returns the typed proxy |
-| `close()` | Closes builder-created client contexts and WebClients, then the builder-owned runtime; idempotent |
+| `close()` | Closes builder-created client contexts and governed clients, then the builder-owned runtime; idempotent |
 
 ```java
 // Standalone
@@ -192,7 +218,7 @@ UserClient client = factory.builder()
 Standalone builders own the resilience runtime they create and should be closed when the client
 lifetime ends. Builders created with `create(Vertx, Resilience)` and builders returned by
 `RestClientFactory` do not own the supplied/application runtime; closing them releases only their
-client contexts and WebClients. `close()` is deterministic and idempotent.
+client contexts and governed clients. `close()` is deterministic and idempotent.
 
 ### `RestClientFactory`
 
@@ -253,7 +279,10 @@ public interface PaymentClient {
 | Attribute | Default | Description |
 |-----------|---------|-------------|
 | `maxRetries` | `3` | Retries after the initial failure; `3` means up to 4 total attempts |
-| `backoff` | `BackoffStrategy.Default.class` | Strategy class needing a public no-arg constructor; `Default` inherits the builder-level strategy |
+| `delayMs` | `500` | Initial delay before the first retry, in milliseconds; used when `backoff` is `Default` |
+| `backoffMultiplier` | `2.0` | Exponential growth factor of the delay; used when `backoff` is `Default` |
+| `maxDelayMs` | `30000` | Delay cap before jitter is added, in milliseconds; used when `backoff` is `Default` |
+| `backoff` | `BackoffStrategy.Default.class` | Strategy class needing a public no-arg constructor. `Default` means the inline `delayMs`, `backoffMultiplier` and `maxDelayMs` above (exponential backoff); the builder's `backoffStrategy(...)` is not consulted for a method with `@Retry` |
 | `retryOn` | `{}` | When non-empty, only these exception types are retried |
 | `abortOn` | `{}` | Exception types that abort retrying immediately, outranking everything else |
 
@@ -278,7 +307,9 @@ retryCount)` receives a 0-based count, so `0` is the delay before the first retr
 | `BackoffStrategy.exponential(delayMs, multiplier, maxDelayMs)` | `min(delayMs × multiplier^retryCount, maxDelayMs) + jitter`, jitter ∈ `[0, min(delay, 1000))` |
 | `BackoffStrategy.fixed(delayMs)` | Constant delay |
 | `BackoffStrategy.none()` | Retry immediately |
-| `BackoffStrategy.Default` | Sentinel meaning "use the builder-level strategy"; never instantiated — `delay()` throws `UnsupportedOperationException` |
+| `BackoffStrategy.Default` | Sentinel for `@Retry#backoff` meaning "use the annotation's inline `delayMs`, `backoffMultiplier` and `maxDelayMs`"; never instantiated — `delay()` throws `UnsupportedOperationException` |
+
+A `restClient.{name}.retry.backoffStrategy` class takes precedence over the annotation's backoff, custom or inline. The builder's `backoffStrategy(...)` applies only to a method with no `@Retry` on it or on its interface, and only when the client has a `restClient.{name}.retry` config block: that block turns on a client-level retry whose backoff is the builder strategy. Without the block, a method with neither `@Retry` nor a named resilience policy is not retried.
 
 ```java
 public class AggressiveBackoff implements BackoffStrategy {
@@ -311,8 +342,10 @@ RestClientBuilder.create(vertx)
 
 ### `@ExpectedStatus`
 
-Per-method status validation, outranking any builder-level `expecting(...)`. The two forms are
-mutually exclusive.
+Per-method status validation. It replaces any builder-level `expecting(...)`, and the 2xx rule with it:
+the listed statuses alone decide. The two forms are
+mutually exclusive: declaring both `value` and a range fails at `build()` with a
+`RestClientConfigurationException`.
 
 | Attribute | Default | Description |
 |-----------|---------|-------------|
@@ -422,7 +455,55 @@ Future<Optional<Product>> findProduct(@PathParam("id") String id);
 ```
 
 `Future<Optional<T>>` is first class: a 404 becomes `Optional.empty()` without entering the failure
-pipeline or the expectation check.
+pipeline or the expectation check, whatever the expectation says.
+
+### Accepted and rejected statuses
+
+The effective expectation is the method's `@ExpectedStatus` when it names codes or a range (its statuses
+alone decide), otherwise "status 200 to 299" together with the builder's `expecting(...)` when one is set.
+It runs once per attempt, inside the retry loop and the circuit breaker.
+
+- **Accepted means success, whatever the status.** A response the effective expectation passes is decoded
+  as the declared type, a 404 included when `@ExpectedStatus({200, 404})` lists it. A builder
+  `expecting(...)` never widens the accepted statuses.
+- **Rejected means `RestClientResponseException`, whatever the status.** A 2xx the expectation rejects
+  (a 200 when only 201 is declared) fails the same way as a 404 does when only 200 is declared. The
+  exception carries the status and the raw response body, and the expectation's failure as its cause.
+  The error body is never decoded as the declared type; read it with `bodyAs(...)` or `problemDetail(...)`.
+
+| Declared return | Accepted response | Rejected response |
+|---|---|---|
+| `Future<Void>` | `null`, body ignored | `RestClientResponseException` |
+| `Future<HttpClientResponse>` | the raw response, any status | `RestClientResponseException` |
+| `Future<Optional<T>>` | 404: empty. Other status: decoded, empty body gives empty | `RestClientResponseException` (never for a 404) |
+| `Future<T>` | decoded as `T`; empty body gives `null` | `RestClientResponseException` |
+
+The declared type is the contract for every accepted status. A body that does not fit it (an HTML 404
+from a gateway when `T` is a record) fails with `RestClientException` ("Failed to deserialize
+response"), which carries no status; a client that accepts 404 with a different body shape declares
+`Optional<T>`, `Void` or `HttpClientResponse`, or a type that fits both.
+
+```java
+@GET
+@Path("/{id}")
+@ExpectedStatus({200, 404})            // a missing item is an answer, not an error
+Future<HttpClientResponse> probe(@PathParam("id") String id);
+```
+
+Consequences to know:
+
+- **An accepted status is a success for the resilience pipeline.** An accepted 5xx is not retried,
+  is not counted by the circuit breaker, does not reach `recoverRequest` or `transformError`, and fires
+  `onResponse` rather than `onError` (unless decoding or validation then fails). A rejected response fires
+  `onError` and never `onResponse`. A 401 accepted by a
+  wide range never reaches a token-refresh `recoverRequest` interceptor.
+- **A builder expectation does not replace the 2xx rule.** `expecting(HttpResponseExpectation.JSON)`
+  fails a 500 with `RestClientResponseException(500)` and fails a 200 that is not JSON; the expectation is
+  checked in addition to the status. Accept a non-2xx status only through `@ExpectedStatus`.
+- **Ranges are half-open.** `@ExpectedStatus(min = 200, max = 400)` accepts 200 to 399.
+- **A rejected 2xx is a `RestClientResponseException`**, not a plain `RestClientException`; an
+  expectation that throws its own exception type has that type as the cause. A custom retry policy
+  written against `RestClientResponseException` sees these too.
 
 ### Outbound parameter conversion
 
@@ -479,6 +560,7 @@ and pre-registers:
 | `java.net.SocketException` | `RestClientConnectionException` |
 | `io.vertx.core.http.HttpClosedException` | `RestClientConnectionException` |
 | `java.util.concurrent.TimeoutException` (covers Vert.x `NoStackTraceTimeoutException`) | `RestClientTimeoutException` |
+| `dev.vertique.http.client.exception.HttpEgressDeniedException` (a refused redirect hop, see Redirects) | `RestClientException` with a constant message that carries no target details; the refusal is the cause |
 | `io.vertx.core.VertxException` | `RestClientException` (safety net) |
 
 ---
@@ -533,10 +615,13 @@ On failure:
       → RestClientExceptionMapper
 ```
 
-**`onAttemptCompleted`** fires from inside the circuit-breaker send, before the retry/recovery
-decision, for every physical attempt that completes — retried failures and recovery re-dispatches
-included. Exactly one of `completion.response()` / `completion.error()` is non-null. Implementations
-must not block.
+**`onAttemptCompleted`** fires from inside the circuit-breaker send for every physical attempt that
+completes — retried failures and recovery re-dispatches included. When an attempt reaches its resolved
+timeout, the exchange is reset and the connection released, and `onAttemptCompleted` is then notified
+once with a `java.util.concurrent.TimeoutException`, possibly after the retry or recovery decision. The
+caller still gets `RestClientTimeoutException` with the same retry eligibility. A method whose timeout
+is disabled is never reset. Exactly one of `completion.response()` / `completion.error()` is non-null.
+Implementations must not block.
 
 `RestClientAttemptCompletion` carries the attempt facts:
 
@@ -841,7 +926,7 @@ can be overridden without discarding the baseline.
 | `writeIdleTimeoutSeconds` | int | 0 | Write idle timeout; 0 disables |
 | `http2KeepAliveTimeoutSeconds` | int | 60 | HTTP/2 keep-alive timeout |
 | `sslHandshakeTimeoutSeconds` | long | 10 | TLS handshake timeout |
-| `maxRedirects` | int | 16 | Maximum redirects followed |
+| `maxRedirects` | int | 16 | Maximum redirects followed (see Redirects below for the headers a hop forwards) |
 | `followRedirects` | boolean | true | Follow HTTP redirects |
 | `pemKeyCertOptions.keyPath` / `.certPath` | String | — | PEM client key and certificate for mTLS |
 | `keyStoreOptions.path` / `.password` | String | — | JKS client keystore for mTLS |
@@ -856,6 +941,24 @@ can be overridden without discarding the baseline.
 A raw Vert.x duration key is **rejected**, not silently accepted: writing `connectTimeout` instead of
 `connectTimeoutMs` (or any of the other six pairs) fails startup with
 `RestClientConfigurationException`.
+
+Because every proxy sends through the governed client, building a client whose options trust all
+certificates, skip host verification or enable TLS below 1.2 logs one warning; the option still applies.
+
+#### Redirects
+
+REST clients follow redirects by the governed client's rules; Vert.x's method handling and
+`maxRedirects` are unchanged, and a same-origin hop forwards the request headers as before. On a hop
+that changes origin (scheme, host or port) only `Accept`, `Accept-Language`, `Accept-Encoding`,
+`User-Agent`, `Cache-Control`, `Pragma`, `If-None-Match` and `If-Modified-Since` are forwarded, so a
+custom header such as an API key stays with the original origin. A hop from `https` to `http` and a
+redirect `Location` that carries user information are refused: the call fails with a
+`RestClientException` (see the mapper table), which the default retry policy does not retry and which
+counts as a failure for the circuit breaker. A redirect whose `Location` host cannot be read, or whose
+authority carries userinfo even percent-encoded, is refused with the same constant `RestClientException`.
+This includes every redirect, same-origin ones too, of a client whose base URL host is not a valid DNS
+name, such as a container service name with an underscore (`http://my_service:8080`); use a
+hyphenated name or an IP address for such a target.
 
 ```json
 {
@@ -970,7 +1073,8 @@ Generated static proxies inherit the resolved mapper; no extra wiring is require
 ```
 core.TechnicalException (→ 500)
 └── RestClientException
-    └── RestClientResponseException   — HTTP 4xx/5xx, or a failed @ExpectedStatus check
+    └── RestClientResponseException   — a response the expectation rejected: HTTP 4xx/5xx, or any status
+                                        the method's expectation does not accept
 
 core.UnavailableException (→ 503)
 └── RestClientUnavailableException
@@ -981,9 +1085,27 @@ core.ConfigurationException
 └── RestClientConfigurationException  — wiring, config, or build-time failure
 ```
 
-`catch (RestClientException)` therefore catches **only** `RestClientResponseException`. Transport
+Resilience failures reach the caller as these types, including when they come from the re-dispatch
+that follows an accepted `recoverRequest`: an open circuit, a bulkhead rejection or queue timeout,
+and a closed runtime surface as `RestClientUnavailableException`; a timeout surfaces as
+`RestClientTimeoutException`. The original resilience exception is kept as the cause.
+
+`catch (RestClientException)` therefore does not catch transport or resilience failures. It catches
+`RestClientResponseException`, and also the plain `RestClientException` the client raises for a request
+it could not build or serialize, a response body it could not decode ("Failed to deserialize
+response"), a failed resilience policy and a Vert.x failure the mapper has no translator for. Transport
 failures are caught at `RestClientUnavailableException` (or `core.UnavailableException`); wiring
-failures at `RestClientConfigurationException` (or `core.ConfigurationException`).
+failures at `RestClientConfigurationException` (or `core.ConfigurationException`). A bean-validation
+failure on the decoded response, and an exception an interceptor throws, reach the caller as themselves.
+
+| Situation | Exception |
+|---|---|
+| response received and rejected by the expectation (2xx when none is set) | `RestClientResponseException` |
+| response accepted, body cannot be decoded as the declared type | `RestClientException` |
+| connection refused, unknown host, reset | `RestClientConnectionException` |
+| request timeout | `RestClientTimeoutException` |
+| open circuit, bulkhead rejection or queue timeout, closed runtime | `RestClientUnavailableException` |
+| wiring or configuration | `RestClientConfigurationException` |
 
 `RestClientResponseException` carries the full request and response contexts:
 
@@ -1012,11 +1134,14 @@ client.getProduct("123")
 | Failure | Cause |
 |---|---|
 | `IllegalArgumentException` | not an interface; a method that does not return `Future<T>`; no base URL resolvable; any `@Url` placement rule violated |
-| `RestClientConfigurationException` | a parameter type with no resolvable converter; a JSON profile other than the reserved `system`, `vertique`, or `vertique-strict` selected on a standalone builder with no registry; a method-level `@JsonProfile` on a `@RestClient` interface; a `retry.backoffStrategy` FQCN that cannot be loaded or instantiated; a raw Vert.x duration key in the `webClient` bag; a second interface whose client name another interface on the same factory already holds, when at least one of them derived it from its simple class name |
+| `RestClientConfigurationException` | a parameter type with no resolvable converter; a JSON profile other than the reserved `system`, `vertique`, or `vertique-strict` selected on a standalone builder with no registry; a method-level `@JsonProfile` on a `@RestClient` interface; an `@ExpectedStatus` that declares both exact codes and a range; a raw Vert.x duration key in the `webClient` bag; a second interface whose client name another interface on the same factory already holds, when at least one of them derived it from its simple class name |
 | `JsonProfileConfigurationException` | the selected profile id is unknown to the registry |
-| `ConfigurationException` | a blank `restClient.{name}` key, or `readTimeoutMs <= 0` |
+| `ConfigurationException` | a blank `restClient.{name}` key, or `readTimeoutMs <= 0`; a `retry.backoffStrategy` class that cannot be loaded or does not implement `BackoffStrategy`, which fails when the configuration is parsed, before any client is built |
+| `RestClientException` | a configured `retry.backoffStrategy` class that loads but cannot be instantiated at `build()` (no public no-arg constructor, or the constructor throws) |
 
 None of these defer to the first request.
+
+A bad `retry.backoffStrategy` class does not surface as `RestClientConfigurationException`: a handler that catches only that type misses it. Catch `core.ConfigurationException` for the parse-time failure and `RestClientException` for the instantiation failure.
 
 `RestClientDefaultProfileValidator` additionally validates `restClient.defaults.jsonProfile` during
 the startup `VALIDATE` phase, so an unknown boundary default fails even when zero clients are
@@ -1024,15 +1149,18 @@ configured or every client overrides it.
 
 ### Common mistakes
 
-- **Catching `RestClientException` and expecting transport errors.** It covers response failures only;
-  see the hierarchy above.
+- **Catching `RestClientException` and expecting transport errors.** It covers response, decoding and
+  build failures, not transport or resilience failures; see the hierarchy above.
+- **Setting a builder `expecting(...)` and expecting it to accept a 404.** It is checked in addition to the
+  2xx rule, so it never accepts a non-2xx status; list the status with `@ExpectedStatus` on the method.
 - **Reading system context inside `beforeRequest`.** By then the dispatch may have hopped contexts.
   Framework modules capture at dispatch entry with `RestClientContextCapturer`.
 - **Expecting `onResponse` or `onError` to count attempts.** `onResponse` never fires on a transport
   failure and `onError` fires once after every retry; only `onAttemptCompleted` sees each wire attempt.
 - **Expecting `onAttemptCompleted` on an open circuit.** A short-circuited call performs no send, so
-  the hook never fires. When the breaker's own timeout is shorter than the HTTP timeout, the hook can
-  also fire *after* the caller already saw the breaker failure.
+  the hook never fires. When an attempt times out, the hook fires once with a
+  `java.util.concurrent.TimeoutException`, possibly after the caller already saw the failure or the
+  retry decision was made.
 - **Returning a failed future from `transformError`.** It must return a succeeded future carrying the
   throwable to propagate.
 - **Setting `objectMapper(...)` and expecting a `jsonProfile` to still apply.** An explicit mapper
@@ -1051,9 +1179,11 @@ configured or every client overrides it.
 
 ## Module Dagger Bindings
 
-`RestClientModule` is declared `@Module(includes = {JsonRuntimeModule.class, RestCoreModule.class})`.
+`RestClientModule` is declared `@Module(includes = {JsonRuntimeModule.class, RestCoreModule.class, ResilienceModule.class})`.
 `JsonRuntimeModule` supplies the `JsonMapperProfileRegistry`; `RestCoreModule` supplies the
-`ParamConversionResolver` and its converter multibindings, shared with `dev.vertique:vertique-rest-jaxrs`.
+`ParamConversionResolver` and its converter multibindings, shared with `dev.vertique:vertique-rest-jaxrs`;
+`ResilienceModule` supplies the application-scoped resilience runtime, with its shutdown step, that the
+per-method pipelines run on.
 
 | Type | Scope | Description |
 |------|-------|-------------|
@@ -1088,6 +1218,7 @@ interface AppComponent {
 | `dev.vertique:vertique-resilience` | Canonical timeout, retry, circuit-breaker, and bulkhead annotations plus backoff and retry contracts |
 | `dev.vertique:vertique-rest-core` | `ParamConversionResolver`, `ParamConverterRegistry`, `ConversionContext`, `ParamSource`, and `RestCoreModule` — the outbound half of the conversion stack `rest-jaxrs` uses inbound |
 | `dev.vertique:vertique-json` | `JsonMapperProfileRegistry`, `JsonConfig`, and `JsonRuntimeModule` for named mapper profiles |
+| `dev.vertique:vertique-http-client` | The governed transport: `HttpClient` sends every physical attempt through the method's resilience pipeline, and its normalizer translates the `webClient` option keys |
 | `io.vertx:vertx-web-client` | `WebClient`, `WebClientOptions`, `PoolOptions` |
 | `jakarta.ws.rs:jakarta.ws.rs-api` | The JAX-RS annotations that describe each interface |
 | `jakarta.annotation:jakarta.annotation-api` | `@Nullable` on API signatures |

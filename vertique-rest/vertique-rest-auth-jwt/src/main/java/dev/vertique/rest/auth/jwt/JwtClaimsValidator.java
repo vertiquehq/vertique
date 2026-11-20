@@ -16,8 +16,9 @@ import java.util.Map;
  *   <li>Token revocation checks against an external store</li>
  * </ul>
  *
- * <p>The validator is invoked by {@link JwtBearerSecuritySchemeHandler} after the standard JWT
- * authentication succeeds. If the validator throws a {@link SecurityException}, the request is
+ * <p>The validator is invoked by {@link JwtClaimsValidatorContributor}, which adds a per-operation
+ * handler at priority 50, after the standard JWT authentication succeeds and before identity
+ * resolution and authorization. If the validator throws a {@link SecurityException}, the request is
  * rejected with {@code 401 Unauthorized}.
  *
  * <p>Example — require a {@code tenant_id} claim:

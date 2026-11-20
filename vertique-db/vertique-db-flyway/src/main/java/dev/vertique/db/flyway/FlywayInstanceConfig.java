@@ -4,7 +4,7 @@
 package dev.vertique.db.flyway;
 
 import com.fasterxml.jackson.annotation.JsonAnySetter;
-import com.fasterxml.jackson.annotation.JsonProperty;
+import dev.vertique.core.config.ConfigSecret;
 import dev.vertique.core.exception.ConfigurationException;
 import java.lang.reflect.RecordComponent;
 import java.util.Arrays;
@@ -24,9 +24,10 @@ import java.util.Objects;
  * only the override fields below: any other key, such as a misspelled field name, is rejected while
  * the configuration is bound, with a message that names the instance and the key but never a value.
  *
- * <p><strong>Secret hygiene.</strong> {@code password} and {@code placeholders} are accepted on input
- * but Jackson never serializes them, and {@link #toString()} renders the password redacted and the
- * placeholder keys without values.
+ * <p><strong>Secret hygiene.</strong> {@code password} and {@code placeholders} are accepted on input;
+ * the config mapper serializes the password as {@code "***"} and a non-empty {@code placeholders} map
+ * whole as {@code "***"} (it is marked {@link ConfigSecret}), and {@link #toString()} renders the
+ * password redacted and the placeholder keys without values.
  *
  * @param name the instance name; must match a wired migration declaration
  * @param mode the instance mode; may not be more permissive than the root mode
@@ -56,12 +57,10 @@ public record FlywayInstanceConfig(
         String baselineVersion,
         Boolean validateOnMigrate,
 
-        @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
-        Map<String, String> placeholders,
+        @ConfigSecret Map<String, String> placeholders,
 
         String user,
 
-        @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
         String password,
 
         Integer lockRetryCount) {

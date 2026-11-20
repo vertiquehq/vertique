@@ -23,8 +23,7 @@ import java.util.Objects;
  * <p>This is a <strong>pure evaluator</strong>: {@link #decide(AuthorizationRequest)} returns the
  * {@link AuthorizationDecision} and emits nothing. The enforcement layer
  * ({@link SecurityPolicyEnforcer}) emits exactly one
- * {@link dev.vertique.security.events.AuthorizationDecisionEvent} per authorization attempt
- * (ADR-0114).
+ * {@link dev.vertique.security.events.AuthorizationDecisionEvent} per authorization attempt.
  *
  * @see AuthorizationDecisionPoint
  * @see VertxProviderDecisionPoint
@@ -50,7 +49,7 @@ public final class SyncPolicyDecisionPoint implements AuthorizationDecisionPoint
      *
      * <p>If the policy throws a {@link RuntimeException} the future fails with that exception.
      * Pure evaluator: this method emits no event — the enforcement layer
-     * ({@link SecurityPolicyEnforcer}) owns emission (ADR-0114).
+     * ({@link SecurityPolicyEnforcer}) owns emission.
      *
      * @param request the authorization request; must not be {@code null}
      * @return a {@link Future} completing with the authorization decision, or a failed future if the

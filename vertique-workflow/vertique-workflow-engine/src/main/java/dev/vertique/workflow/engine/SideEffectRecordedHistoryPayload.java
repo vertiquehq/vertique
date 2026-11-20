@@ -15,13 +15,13 @@ import java.util.UUID;
  * is used to look up whether a {@link dev.vertique.workflow.plan.ServiceDispatchNode} has a
  * compensation step registered.
  *
- * <p>PRD-WF-002 (D8): the optional {@code branchTokenId} / {@code forkStepId} / {@code branchId}
+ * <p>The optional {@code branchTokenId} / {@code forkStepId} / {@code branchId}
  * fields scope the entry to a specific fork-group branch when the dispatch originates from a
  * branch. Single-path workflows leave them null. The compensation orchestrator filters history by
- * these fields so a branch's compensation never crosses into a sibling branch (FR-WF-PAR-064/065).
+ * these fields so a branch's compensation never crosses into a sibling branch.
  *
- * <p>{@link JsonInclude.Include#NON_NULL} keeps the wire format identical to the cycle-3 payload
- * for entries that don't carry branch identity, so existing history rows decode unchanged.
+ * <p>{@link JsonInclude.Include#NON_NULL} keeps the wire format identical to the payload without
+ * branch fields for entries that don't carry branch identity, so existing history rows decode unchanged.
  *
  * @param stepId the id of the {@link dev.vertique.workflow.plan.ServiceDispatchNode} that produced
  *     this side effect

@@ -82,9 +82,19 @@ public final class CacheMetricsObserver implements CacheObserver {
                             late.elapsed());
                 case CacheCleanupCompleted cleanup -> cleanup(cleanup);
             }
-        } catch (Throwable ignored) {
+        } catch (Throwable failure) {
+            if (isFatal(failure)) {
+                throw (Error) failure;
+            }
             // Telemetry must never alter cache behavior.
         }
+    }
+
+    @SuppressWarnings("removal")
+    private static boolean isFatal(Throwable failure) {
+        return failure instanceof VirtualMachineError
+                || failure instanceof ThreadDeath
+                || failure instanceof LinkageError;
     }
 
     private void operation(String operation, String provider, String cacheName, String outcome, Duration elapsed) {

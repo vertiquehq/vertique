@@ -20,7 +20,7 @@ import jakarta.inject.Singleton;
  * service execution graph from the aggregate alone. The fixture also verifies the starter's bounded
  * dependency closure.
  *
- * <p>{@link #serviceClientFactory()} is the provision method the plan's services component contract
+ * <p>{@link #serviceClientFactory()} is the provision method the services component contract
  * mandates: application code obtains typed event-bus clients through it. The remaining methods
  * request one representative binding per composed concern so a missing member of the aggregate
  * fails at annotation-processing time rather than at first dispatch: {@link ServiceContractRegistry}

@@ -694,6 +694,15 @@ final class ExecutionLockTestSupport {
             return held;
         }
 
+        /**
+         * The transaction-id locks the backend holds. A backend holds one once its transaction has written a row or
+         * locked one with {@code FOR UPDATE}, so none means the transaction has taken no row lock yet.
+         */
+        long transactionIdLocksHeldBy(int backendPid) {
+            return query("SELECT 1 FROM pg_locks WHERE pid = $1 AND locktype = 'transactionid' AND granted", backendPid)
+                    .size();
+        }
+
         /** The one-bigint advisory locks the backend holds. */
         long bigintLocksHeldBy(int backendPid) {
             return query(

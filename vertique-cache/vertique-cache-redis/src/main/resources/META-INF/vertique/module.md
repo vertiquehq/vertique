@@ -44,9 +44,11 @@ start afterward use a new logical keyspace without scanning Redis in the request
 
 Values are serialized with the per-cache `jsonProfile` when one is configured, or the global cache
 JSON profile otherwise. Reads deserialize with the declared result `Type`, which preserves generic
-value shapes. A missing value, JSON `null`, or a JSON codec failure is a cache miss. Write-side
-serialization and size failures are reported by the provider and remain subject to the cache
-core's fail-open behavior.
+value shapes. A missing value or JSON `null` is a cache miss. A value the codec cannot decode
+fails the provider's read; the cache core's fail-open behavior turns that into a miss for the
+application, so the caller loads the value as for any miss, while observers see the outcome
+`ERROR` instead of `MISS`. Write-side serialization and size failures are reported by the
+provider and remain subject to the same fail-open behavior.
 
 The `CacheStore` duration passed to a write is interpreted explicitly: `Duration.ZERO` writes with
 `SET` and no expiration; a positive duration writes with a millisecond `PX` expiration. A negative
@@ -71,7 +73,8 @@ reserved for maintenance.
 The cleanup definition has the stable id `cache-redis-old-generation-cleanup` and the six-field
 cron expression `0 */15 * * * *` (every 15 minutes, UTC). It runs with `EVERY_INSTANCE`, skips
 overlap, skips misfires, and is untracked (`tracked=false`). Each instance selects a first-run
-jitter in the bounded range `[0, 60 seconds)`. Registration is idempotent, so repeated
+jitter in the bounded range `[0, 60 seconds)`, and the first cron tick the instance receives
+waits for that jitter before its sweep starts. Registration is idempotent, so repeated
 registration leaves one job with the stable id.
 
 Each sweep is bounded to at most 10,000 inspected keys or five seconds of monotonic elapsed time.
@@ -83,7 +86,8 @@ generation marker itself is never a candidate; unreadable markers are protected 
 failed/backlogged outcome instead of deletion.
 
 Failures are retained for the next run and use capped exponential retry backoff: 15 minutes,
-30 minutes, then up to a one-hour ceiling. Each sweep sends a bounded cleanup observation through
+30 minutes, then up to a one-hour ceiling. A cron tick that arrives before the retry delay has
+elapsed is skipped without a sweep or an observation. Each sweep sends a bounded cleanup observation through
 the provider-neutral `CacheObserver` seam as sealed `CacheCleanupCompleted` events. The event
 contains the connection profile, namespace, success/error outcome, scanned count, deleted count,
 backlog indicator, and failure flag. An observer failure does not fail the maintenance operation.

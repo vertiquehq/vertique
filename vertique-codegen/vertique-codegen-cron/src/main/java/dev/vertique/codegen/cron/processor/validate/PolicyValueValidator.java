@@ -19,7 +19,7 @@ import javax.lang.model.element.VariableElement;
  *   <li>{@code maxAttempts} — must be {@code >= 1}</li>
  *   <li>{@code overlapPolicy} / {@code mode} — {@code QUEUE_ONE} requires {@code EVERY_INSTANCE}</li>
  *   <li>{@code timezone} — emits a {@code WARNING} (not error) when the value cannot be resolved
- *       via {@link ZoneId#of(String)}, per FR-CG004-007 (external config may override)</li>
+ *       via {@link ZoneId#of(String)} (external config may override)</li>
  * </ul>
  */
 public final class PolicyValueValidator {

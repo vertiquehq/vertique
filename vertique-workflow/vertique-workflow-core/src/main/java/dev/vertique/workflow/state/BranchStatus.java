@@ -6,7 +6,7 @@ package dev.vertique.workflow.state;
 /**
  * Persisted execution status of a fork-group branch.
  *
- * <p>Defined per PRD-WF-002 §A.4.2. Mapped to the {@code workflow_branch_tokens.status} column as
+ * <p>Mapped to the {@code workflow_branch_tokens.status} column as
  * the enum's {@link #name() name}. The instance-level {@link WorkflowStatus} is unrelated:
  * branches and instances each own their own concurrency token.
  */

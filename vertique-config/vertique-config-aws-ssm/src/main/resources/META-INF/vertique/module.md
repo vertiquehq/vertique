@@ -157,7 +157,7 @@ Multiple parameters at the same nesting level are merged. For example, `/myapp/p
 
 ## Security Notes
 
-NFR-CONF-002 applies throughout this module:
+The value-redaction rule applies throughout this module:
 
 - Parameter values **never** appear in log output at any level, in exception messages, or in `toString()` of any internal type.
 - Exception messages contain only: the configured `path` (an operator-declared config key, safe to log), parameter counts, field names, and structural descriptions. AWS SDK error messages are passed through as-is; SSM error bodies describe operational failures (permission denied, network timeout) and do not carry parameter values.

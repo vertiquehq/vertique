@@ -34,8 +34,8 @@ import org.slf4j.LoggerFactory;
 /**
  * ROOT-scoped middleware that builds the live {@link CorrelationContext} for the request,
  * binds it via the substrate, mirrors the safe-by-default MDC keys, optionally mirrors the
- * active distributed-trace identity, and emits the configured response headers
- * (FR-COR-080..090, FR-COR-094, FR-COR-125 for REST ingress only).
+ * active distributed-trace identity, and emits the configured response headers (for REST ingress
+ * only).
  *
  * <p>Execution order: {@link RequestContextLifecycle#ORDER} + 10 so it runs after the lifecycle
  * middleware (which provides the {@link RequestContextLifecycle.Handle handle} this middleware
@@ -47,8 +47,8 @@ import org.slf4j.LoggerFactory;
  *   <li>Resolve the request id from the configured inbound header (or generate when absent /
  *       invalid per policy). Source is recorded on the resulting {@link CorrelationIdentifier}.</li>
  *   <li>Resolve the correlation id from its inbound header; falls back to the request id with
- *       {@code source="generated-from-request-id"} when absent (FR-COR-084).</li>
- *   <li>Optionally resolve the causation id from its inbound header (FR-COR-085 MAY).</li>
+ * {@code source="generated-from-request-id"} when absent.</li>
+ *   <li>Optionally resolve the causation id from its inbound header.</li>
  *   <li>Build a {@link CorrelationContext} via {@link CorrelationContextFactory#create} and bind
  *       it on the holder; register the scope close with the request lifecycle handle.</li>
  *   <li>Snapshot the framework-mirrored MDC keys via
@@ -231,7 +231,7 @@ public final class CorrelationIngressMiddleware implements Middleware {
             HttpServerRequest request, CorrelationIdentifier requestId, List<String> invalidHeaders) {
         String inbound = request.getHeader(config.correlationIdHeader());
         if (inbound == null) {
-            // FR-COR-084: header absent — fall back to request id with provenance recorded.
+            // Header absent — fall back to request id with provenance recorded.
             return new CorrelationIdentifier(requestId.value(), "generated-from-request-id");
         }
         if (CorrelationHeaderValidator.isValidHeaderValue(inbound)) {

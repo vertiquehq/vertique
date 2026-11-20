@@ -229,12 +229,18 @@ final class JsonSystemProfileInstallStep implements ApplicationStartupStep {
         if (!mapper.isEnabled(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)) {
             deltas.add("FAIL_ON_UNKNOWN_PROPERTIES is off (unknown JSON properties are silently dropped)");
         }
+        if (!mapper.isEnabled(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)) {
+            deltas.add("FAIL_ON_TRAILING_TOKENS is off (text after the JSON value is silently ignored)");
+        }
         if (mapper.isEnabled(DeserializationFeature.READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE)) {
             deltas.add("READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE is on (an unrecognized enum string binds to the"
                     + " declared default constant)");
         }
         if (mapper.isEnabled(MapperFeature.ACCEPT_CASE_INSENSITIVE_ENUMS)) {
             deltas.add("ACCEPT_CASE_INSENSITIVE_ENUMS is on");
+        }
+        if (mapper.isEnabled(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)) {
+            deltas.add("ACCEPT_CASE_INSENSITIVE_PROPERTIES is on (a property name binds regardless of letter case)");
         }
         LENIENT_PARSER_FEATURES.stream()
                 .filter(mapper::isEnabled)

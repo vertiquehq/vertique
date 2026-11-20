@@ -16,11 +16,10 @@ import java.util.function.ToLongFunction;
  * <p><b>Framework-private, documented internal.</b> This class is {@code public} only because
  * {@code dev.vertique.ratelimit.dagger.RateLimitCoreModule} (a different package within this same
  * module) must reach it; it is not part of this module's application-facing public API and carries
- * no compatibility guarantee toward application code. An external deep review flagged this
- * public/internal tension (reviewer proportionality disposition, T018): the narrower fix —
- * relocating this factory or {@code RateLimitCoreModule} so the construction seam could be
- * package-private — was judged disproportionate to the actual risk for this task, so the class
- * stays public, with this javadoc note as the recorded, deliberate disposition instead.
+ * no compatibility guarantee toward application code. Relocating this factory or
+ * {@code RateLimitCoreModule} so the construction seam could be package-private was judged
+ * disproportionate to the actual risk, so the class stays public, with this javadoc note as the
+ * recorded, deliberate disposition instead.
  */
 public final class LocalRateLimitBackendFactory {
 

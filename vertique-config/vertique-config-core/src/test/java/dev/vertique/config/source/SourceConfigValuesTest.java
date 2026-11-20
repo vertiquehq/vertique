@@ -4,6 +4,7 @@
 package dev.vertique.config.source;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -94,6 +95,26 @@ class SourceConfigValuesTest {
                     ConfigPropertySourceException.class,
                     () -> SourceConfigValues.positiveInt("src", config, "timeoutMs", 5000));
             assertTrue(ex.getMessage().contains("timeoutMs"), "error must name the field");
+        }
+
+        @Test
+        @DisplayName("no rejection echoes the configured value")
+        void rejectionsDoNotEchoTheValue() {
+            record Case(Object value, String marker) {}
+            for (Case c : java.util.List.of(
+                    new Case(-987654, "987654"),
+                    new Case(0, "got"),
+                    new Case(5000.7531, "7531"),
+                    new Case(3_000_000_000L, "3000000000"),
+                    new Case(java.math.BigInteger.TWO.pow(40), "1099511627776"),
+                    new Case("hunter2-secret", "hunter2"))) {
+                JsonObject config = new JsonObject().put("timeoutMs", c.value());
+                var ex = assertThrows(
+                        ConfigPropertySourceException.class,
+                        () -> SourceConfigValues.positiveInt("src", config, "timeoutMs", 5000));
+                assertTrue(ex.getMessage().contains("timeoutMs"), "error must name the field");
+                assertFalse(ex.getMessage().contains(c.marker()), "error must not echo the value: " + ex.getMessage());
+            }
         }
 
         @Test

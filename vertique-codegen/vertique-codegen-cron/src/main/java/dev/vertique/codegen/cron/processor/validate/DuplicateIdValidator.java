@@ -20,7 +20,7 @@ import javax.lang.model.element.TypeElement;
  * duplicate (second and subsequent occurrences). Methods with blank or missing ids are skipped
  * here because they are already caught by {@link PolicyValueValidator}.
  *
- * <p>Cross-class duplicate detection is out of scope (PRD non-goal — would require Maven plugin
+ * <p>Cross-class duplicate detection is out of scope (it would require Maven plugin
  * territory visibility across compilation units).
  */
 public final class DuplicateIdValidator {

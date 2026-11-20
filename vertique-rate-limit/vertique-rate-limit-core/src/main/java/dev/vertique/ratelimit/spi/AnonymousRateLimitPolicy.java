@@ -6,8 +6,7 @@ package dev.vertique.ratelimit.spi;
 /**
  * Governs an anonymous caller (an empty resolver result or the canonical {@code
  * SecurityIdentity.anonymous()}) when
- * {@link RateLimitAdapterSupport#subjectKey} is asked to frame an identity dimension
- * (contracts/rate-limit-runtime.md, "Framework adapter seam"; {@code spec.md} §5.2).
+ * {@link RateLimitAdapterSupport#subjectKey} is asked to frame an identity dimension.
  */
 public enum AnonymousRateLimitPolicy {
 

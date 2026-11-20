@@ -195,7 +195,7 @@ public final class ParamConversionResolver {
      * provider — throws a raw {@link RuntimeException} on a parse failure (a {@link NumberFormatException},
      * a {@link java.time.format.DateTimeParseException}, an {@link IllegalArgumentException}, or a
      * provider's {@link jakarta.ws.rs.WebApplicationException}), and that raw failure becomes the cause
-     * here, yielding the uniform conversion-failure contract (FR-015-08a). A converter that returns
+     * here, yielding the uniform conversion-failure contract. A converter that returns
      * {@code null} for a present value is rejected by {@link #requirePresent} with no cause. The raw
      * value is never included in the message. {@link ParamConverterNotFoundException} is raised
      * separately (via {@link #notFound}) and is never routed through this method, so it is never wrapped.

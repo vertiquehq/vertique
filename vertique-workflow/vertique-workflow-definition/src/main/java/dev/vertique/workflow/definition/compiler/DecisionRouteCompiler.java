@@ -38,7 +38,7 @@ import java.util.function.Function;
  * — a condition id cannot collide with an expression fingerprint, and the route type is always
  * explicit. Any semantic change to the route table produces a different fingerprint, which in turn
  * produces a different {@link CallbackId}, which in turn propagates to the plan hash via
- * {@link dev.vertique.workflow.dsl.WorkflowBuilder#decideWithCallbackId} (FR-WF-DEF-055, AC #8).
+ * {@link dev.vertique.workflow.dsl.WorkflowBuilder#decideWithCallbackId}.
  *
  * <p>The synthesized {@code Function<Object, String>} resolver:
  * <ol>
@@ -51,7 +51,7 @@ import java.util.function.Function;
  * </ol>
  *
  * <p>This class never imports any third-party expression-language types; all EL interaction is
- * through the {@link ExpressionProfile} abstraction (NFR-WF-DEF-007).
+ * through the {@link ExpressionProfile} abstraction.
  */
 @Singleton
 public final class DecisionRouteCompiler {

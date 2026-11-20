@@ -35,7 +35,7 @@ import software.amazon.awssdk.services.ssm.model.Parameter;
  * <p>All pages are collected before returning, using the {@code nextToken} field returned by
  * each response. The caller receives the full list in one call.
  *
- * <h2>NFR-CONF-002</h2>
+ * <h2>Value redaction</h2>
  * <p>Exception messages name the path (an operator-declared config key, safe to log) but
  * never include parameter values or credentials.
  *

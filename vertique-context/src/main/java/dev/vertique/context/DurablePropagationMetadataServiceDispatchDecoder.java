@@ -19,7 +19,7 @@ import java.util.List;
  *
  * <p>Accepts an in-process dispatch-context map value as {@link DurablePropagationMetadata} if it
  * is already of that type (the matching encoder passes it through unchanged). Returns a failure
- * result with a warning if the raw value is of an unexpected type (FR-CTX-143).
+ * result with a warning if the raw value is of an unexpected type.
  */
 public final class DurablePropagationMetadataServiceDispatchDecoder
         implements ServiceDispatchContextDecoder<DurablePropagationMetadata> {

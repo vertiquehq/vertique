@@ -139,7 +139,7 @@ Consumed by:
 
 - **`vertique-rest-core`** — `CorrelationIngressMiddleware` and the protocol-correlation SPIs; `RestCoreModule` includes `CorrelationContextModule`, so correlation is active by default for REST.
 - `vertique-services` — transitively via `DispatchModule`, which now includes `CorrelationContextModule`. This means every dispatch-using graph (Kafka consumers, scheduled jobs, workflow workers, outbox relays) gets correlation by default without any per-app wiring.
-- `vertique-kafka`, `vertique-inbox-outbox-*`, `vertique-job-*`, `vertique-workflow-*` — consume the runtime indirectly through `DispatchModule` and the substrate's `InboundExecutionContextScope`, which invokes the registered `CorrelationContextSeeder` on durable boundaries that arrive without an encoded context (FR-COR-125).
+- `vertique-kafka`, `vertique-inbox-outbox-*`, `vertique-job-*`, `vertique-workflow-*` — consume the runtime indirectly through `DispatchModule` and the substrate's `InboundExecutionContextScope`, which invokes the registered `CorrelationContextSeeder` on durable boundaries that arrive without an encoded context.
 
 ## Cross-dispatch Propagation
 

@@ -28,8 +28,7 @@ import java.util.Optional;
  * read through {@link dev.vertique.workflow.history.WorkflowInstanceHistoryService}; the external durable event stream
  * published via the outbox relay is a separate surface.
  *
- * <p>REST/management endpoints ({@code FR-WF-180}–{@code FR-WF-185}) remain deferred; cycle 5
- * ships the programmatic API only.
+ * <p>REST/management endpoints remain deferred; only the programmatic API ships.
  *
  * <p>Implementations are expected to be {@code @Singleton} and must not block the Vert.x event
  * loop. All operations return {@link Future} values.
@@ -41,8 +40,10 @@ public interface WorkflowInstanceQueryService {
      *
      * <p>An empty {@link WorkflowInstanceQuery#none()} returns all live (non-archived) instances
      * in the default cursor order. Multiple non-null filter fields are combined as a conjunction
-     * (AND). Set {@link WorkflowInstanceQuery#includeArchived()} to {@code true} to include
-     * soft-deleted instances.
+     * (AND); the members of {@link WorkflowInstanceQuery#statuses()} are alternatives (OR) within
+     * that conjunction, and an empty set applies no status filter. Set
+     * {@link WorkflowInstanceQuery#includeArchived()} to {@code true} to include soft-deleted
+     * instances.
      *
      * @param query filter criteria; use {@link WorkflowInstanceQuery#none()} for an unfiltered list
      * @param cursor pagination cursor; use {@link PageCursor#first(int)} for the initial page
