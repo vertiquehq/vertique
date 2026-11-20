@@ -51,7 +51,8 @@ public sealed interface TaskAssignment permits TaskAssignment.User, TaskAssignme
      *
      * <p>Only a {@link dev.vertique.security.PrincipalType#USER} principal matches; for any other
      * principal type this returns {@code false}. {@code TaskService#listAssignedTo} applies the same
-     * rule, so a task this method matches is a task that query returns, and the reverse.
+     * rule to the assignment: among the tasks that pass the query's other filter fields and its
+     * archived-instance rule, it returns exactly those this method matches.
      *
      * <p>This is a helper for the application's own authorization. Nothing in the framework calls it:
      * {@code complete} and {@code reassign} do not compare the actor with the assignment.

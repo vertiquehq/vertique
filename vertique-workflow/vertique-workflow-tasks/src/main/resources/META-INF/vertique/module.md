@@ -56,8 +56,9 @@ TaskPrincipals me = TaskPrincipalsMapper.orDefault(mapper).toTaskPrincipals(secu
 tasks.listAssignedTo(me, TaskFilter.empty().withStatus(TaskStatus.OPEN), PageCursor.first(20));
 ```
 
-- It returns exactly the tasks whose assignment `TaskAssignment.matches(me)` accepts (see the core
-  module reference for the rule and the default mapper). A principal that is not a `USER` gets an empty
+- Among the tasks that pass the filter's other fields (and, unless `includeArchived` is set, belong to
+  an instance that is not archived), it returns exactly those whose assignment `TaskAssignment.matches(me)`
+  accepts (see the core module reference for the rule and the default mapper). A principal that is not a `USER` gets an empty
   page, never every task.
 - The filter must not set `assigneeUser`, `assigneeRole` or `assigneeQueue`; the call refuses it with
   `IllegalArgumentException`. Null arguments fail with `NullPointerException`.
