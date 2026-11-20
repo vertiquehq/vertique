@@ -476,8 +476,9 @@ public abstract class PagedQuery<T> {
         }
 
         /**
-         * Sets the default page size. Used when no page size is specified in the cursor. Defaults to
-         * 20 if not set.
+         * Sets the page size used by {@link #page()}, the first page. Defaults to 20 if not set. A
+         * cursor passed to {@link #page(PageCursor)} always carries its own page size, which is the
+         * one used.
          *
          * @param pageSize the default page size
          * @return this builder
@@ -494,7 +495,10 @@ public abstract class PagedQuery<T> {
          *
          * @param columns the column names in sort priority order
          * @return this builder
-         * @throws IllegalArgumentException if columns is empty, contains null/blank names, or duplicates
+         * @throws NullPointerException if an argument or a column name is null
+         * @throws dev.vertique.db.exception.InvalidDataAccessUsageException if a column name is blank or not a
+         *     safe SQL identifier
+         * @throws IllegalArgumentException if columns is empty or contains duplicates
          */
         public B orderBy(String... columns) {
             return orderBy(OrderDirection.ASC, NullHandling.DISALLOW, columns);
@@ -507,7 +511,10 @@ public abstract class PagedQuery<T> {
          * @param direction the sort direction for all columns
          * @param columns   the column names in sort priority order
          * @return this builder
-         * @throws IllegalArgumentException if columns is empty, contains null/blank names, or duplicates
+         * @throws NullPointerException if an argument or a column name is null
+         * @throws dev.vertique.db.exception.InvalidDataAccessUsageException if a column name is blank or not a
+         *     safe SQL identifier
+         * @throws IllegalArgumentException if columns is empty or contains duplicates
          */
         public B orderBy(OrderDirection direction, String... columns) {
             return orderBy(direction, NullHandling.DISALLOW, columns);
@@ -521,7 +528,10 @@ public abstract class PagedQuery<T> {
          * @param nullHandling the null handling policy for all columns
          * @param columns      the column names in sort priority order
          * @return this builder
-         * @throws IllegalArgumentException if columns is empty, contains null/blank names, or duplicates
+         * @throws NullPointerException if an argument or a column name is null
+         * @throws dev.vertique.db.exception.InvalidDataAccessUsageException if a column name is blank or not a
+         *     safe SQL identifier
+         * @throws IllegalArgumentException if columns is empty or contains duplicates
          */
         public B orderBy(OrderDirection direction, NullHandling nullHandling, String... columns) {
             Objects.requireNonNull(direction, "direction must not be null");
