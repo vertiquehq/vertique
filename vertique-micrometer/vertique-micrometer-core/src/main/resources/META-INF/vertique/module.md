@@ -180,6 +180,8 @@ normal stop and subsequent-contributor failures — but never after a failed act
 - The `vertx.options` overlay in the launcher replaces the `VertxOptions` JSON, but the metrics
   **factory** (`withMetrics(...)`) is builder state, not options state, and survives the overlay.
   `MetricsOptions` retains its source JSON across the overlay-triggered rebuild. No action needed.
+- A `metrics` value that cannot be bound (for example a non-boolean `metrics.enabled`) fails startup with a
+  `ConfigurationException` that names the `metrics` section and carries no value or cause.
 - `ConfigurationException` from tag validation is re-thrown as-is. All other exceptions are wrapped
   in `MetricsBootstrapException` (cause severed) to prevent backend SDK messages from reaching the
   launcher log.
