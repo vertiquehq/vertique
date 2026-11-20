@@ -11,6 +11,7 @@ import io.vertx.circuitbreaker.CircuitBreakerOptions;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
+import java.time.Duration;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.TimeoutException;
@@ -43,7 +44,9 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
     private final AtomicInteger lastAttemptOrdinal = new AtomicInteger();
     private final AtomicReference<RetryDecision> retryDecision = new AtomicReference<>();
     private final AtomicReference<Attempt> currentAttempt = new AtomicReference<>();
+    private final ResilienceCancellation cancellation;
     private Runnable deregistration = () -> {};
+    private Runnable cancellationRegistration = () -> {};
 
     private CircuitBreakerPolicyExecution(
             Resilience resilience,
@@ -62,6 +65,7 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
         this.retryConfiguration = retryConfiguration;
         this.operation = Objects.requireNonNull(operation, "operation");
         this.observation = observation;
+        this.cancellation = observation == null ? null : observation.cancellation();
         this.contextOpen = Objects.requireNonNull(contextOpen, "contextOpen");
         this.executionRegistrar = executionRegistrar == null ? ignored -> () -> {} : executionRegistrar;
         this.retryEngine = io.vertx.circuitbreaker.CircuitBreaker.create(
@@ -128,6 +132,15 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
             settleClosed();
             return;
         }
+        if (cancellation != null) {
+            Throwable cancelled = cancellation.reason();
+            if (cancelled != null) {
+                settleFailure(cancelled);
+                return;
+            }
+            cancellationRegistration =
+                    cancellation.onCancel(reason -> context.runOnContext(ignored -> settleFailure(reason)));
+        }
         Future<AttemptResult<T>> outcome;
         try {
             outcome = resilience.startIfOpen(this, () -> retryEngine.execute(this::invokeAttempt));
@@ -143,6 +156,9 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
     }
 
     private Future<AttemptResult<T>> invokeAttempt() {
+        if (cancellation != null && cancellation.isCancelled()) {
+            return Future.succeededFuture(AttemptResult.failure(cancellation.reason()));
+        }
         int ordinal = observation == null ? lastAttemptOrdinal.incrementAndGet() : observation.attemptStarted();
         lastAttemptOrdinal.set(ordinal);
         Attempt attempt = new Attempt(ordinal);
@@ -174,6 +190,9 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
     }
 
     private Future<AttemptResult<T>> resolveFailure(Throwable failure, int ordinal) {
+        if (cancellation != null && cancellation.isCancelled()) {
+            return Future.succeededFuture(AttemptResult.failure(failure));
+        }
         Throwable normalized = normalizeTimeout(failure);
         if (isFatal(normalized)) {
             return Future.succeededFuture(AttemptResult.failure(normalized));
@@ -197,6 +216,13 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
             if (delay < 0L) {
                 return Future.succeededFuture(AttemptResult.failure(normalized));
             }
+            if (retryConfiguration.retryAfterMaxMs() > 0L) {
+                long hintMs = retryDelayHintMs(normalized);
+                if (hintMs > retryConfiguration.retryAfterMaxMs()) {
+                    return Future.succeededFuture(AttemptResult.failure(normalized));
+                }
+                delay = Math.max(delay, hintMs);
+            }
             retryDecision.set(new RetryDecision(delay));
             if (observation != null) {
                 observation.retryScheduled(ordinal, ordinal + 1, delay, normalized);
@@ -217,6 +243,34 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
             }
             return Future.succeededFuture(AttemptResult.failure(new ResiliencePolicyException(
                     operationKey, callbackKind, metadataFailure.getClass(), Optional.of(normalized.getClass()))));
+        }
+    }
+
+    /** Returns the first usable hint in the cause chain in milliseconds, or -1 when there is none. */
+    private static long retryDelayHintMs(Throwable failure) {
+        Throwable current = failure;
+        for (int depth = 0; current != null && depth < 32; depth++) {
+            if (current instanceof RetryDelayHint hint) {
+                return usableHintMs(hint);
+            }
+            Throwable cause = current.getCause();
+            current = cause == current ? null : cause;
+        }
+        return -1L;
+    }
+
+    private static long usableHintMs(RetryDelayHint hint) {
+        try {
+            // A hint implementation that returns null is treated as having no hint
+            Optional<Duration> value = Optional.ofNullable(hint.retryAfter()).orElse(Optional.empty());
+            if (value.isEmpty() || value.orElseThrow().isNegative()) {
+                return -1L;
+            }
+            Duration duration = value.orElseThrow();
+            long millis = duration.toMillis();
+            return duration.getNano() % 1_000_000 == 0 ? millis : Math.addExact(millis, 1L);
+        } catch (Exception unusable) {
+            return -1L;
         }
     }
 
@@ -282,6 +336,7 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
 
     private void settleSuccess(T value) {
         if (settled.compareAndSet(false, true)) {
+            cancellationRegistration.run();
             closeEngines();
             result.tryComplete(value);
             resilience.remove(this);
@@ -291,6 +346,7 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
 
     private void settleFailure(Throwable failure) {
         if (settled.compareAndSet(false, true)) {
+            cancellationRegistration.run();
             closeEngines();
             result.tryFail(Objects.requireNonNull(failure, "failure"));
             resilience.remove(this);
@@ -360,7 +416,7 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
 
         private void complete(Throwable failure) {
             if (completed.compareAndSet(false, true) && observation != null) {
-                observation.attemptCompleted(ordinal, failure);
+                observation.attemptEnded(ordinal, failure);
             }
         }
 

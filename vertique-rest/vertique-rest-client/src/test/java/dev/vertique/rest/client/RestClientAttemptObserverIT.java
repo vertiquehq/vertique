@@ -16,6 +16,7 @@ import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
 import dev.vertique.core.extension.ExtensionPhase;
 import dev.vertique.resilience.BackoffStrategy;
 import dev.vertique.resilience.annotation.Retry;
+import dev.vertique.rest.client.exception.RestClientConnectionException;
 import dev.vertique.rest.client.exception.RestClientResponseException;
 import dev.vertique.rest.client.interceptor.RestClientAttemptCompletion;
 import dev.vertique.rest.client.interceptor.RestClientAttemptTarget;
@@ -621,6 +622,38 @@ public class RestClientAttemptObserverIT {
                     // Capturer still received the token; the wiper could not reach it
                     assertThat(ev.capturedToken()).isEqualTo(capturer.lastIssuedToken);
                     assertThat(ev.capturedToken()).isNotNull();
+                    ctx.completeNow();
+                })));
+    }
+
+    /**
+     * A refused connection delivers one specific raw transport failure class to
+     * {@code onAttemptCompleted}. Supports AC-046.
+     */
+    @Test
+    @DisplayName("refused connection: the attempt carries the raw transport failure class")
+    void refusedConnectionAttemptCarriesTheRawTransportFailureClass(Vertx vertx, VertxTestContext ctx)
+            throws Exception {
+        // Given a local port with no listener
+        int closedPort;
+        try (java.net.ServerSocket socket =
+                new java.net.ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress())) {
+            closedPort = socket.getLocalPort();
+        }
+        CapturingObserver obs = new CapturingObserver();
+        ObserverClient client = new RestClientBuilder(vertx)
+                .baseUrl("http://127.0.0.1:" + closedPort)
+                .register(obs)
+                .build(ObserverClient.class);
+
+        // When the call is refused
+        client.single()
+                .onComplete(ctx.failing(err -> ctx.verify(() -> {
+                    // Then the attempt observer saw the raw transport class and the caller the mapped type
+                    assertThat(obs.attempts).hasSize(1);
+                    assertThat(obs.attempts.get(0).status()).isNull();
+                    assertThat(obs.attempts.get(0).errorType()).isEqualTo("AnnotatedConnectException");
+                    assertThat(err).isExactlyInstanceOf(RestClientConnectionException.class);
                     ctx.completeNow();
                 })));
     }

@@ -10,6 +10,8 @@ import dev.vertique.core.json.JsonProfile;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.util.GeneratedCompanions;
 import dev.vertique.core.validation.BeanValidator;
+import dev.vertique.http.client.HttpClient;
+import dev.vertique.http.client.HttpClientBuilder;
 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.resilience.BackoffStrategy;
@@ -80,7 +82,7 @@ import lombok.extern.slf4j.Slf4j;
  *     .build(UserClient.class);
  * }</pre>
  *
- * <p>Each call to {@link #build(Class)} creates a fresh {@link WebClient} instance. Pool sharing
+ * <p>Each call to {@link #build(Class)} creates a fresh governed {@link WebClient} instance. Pool sharing
  * is explicit via passing the same {@link WebClientOptions} instance to multiple builders.
  *
  * <p>Circuit breaker priority (highest to lowest):
@@ -108,9 +110,13 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public final class RestClientBuilder {
 
+    /**
+     * Creates the unconfigured governed client builder for one built proxy. The REST builder applies
+     * its settings and builds the client itself.
+     */
     @FunctionalInterface
-    interface WebClientFactory {
-        WebClient create(Vertx vertx, @Nullable WebClientOptions webClientOptions, @Nullable PoolOptions poolOptions);
+    interface HttpTransportFactory {
+        HttpClientBuilder create(Vertx vertx);
     }
 
     // --- Static meta cache shared across all builder instances ---
@@ -121,7 +127,7 @@ public final class RestClientBuilder {
 
     private final Vertx vertx;
     private final ResiliencePolicyRegistry resiliencePolicyRegistry;
-    private final WebClientFactory webClientFactory;
+    private final HttpTransportFactory transportFactory;
 
     @Nullable
     private Resilience suppliedResilience;
@@ -239,21 +245,21 @@ public final class RestClientBuilder {
      * <p>For Dagger-managed applications, prefer {@link RestClientFactory#builder()} which
      * pre-seeds global interceptors and configuration from the DI container.
      *
-     * @param vertx the Vert.x instance used to create the underlying WebClient
+     * @param vertx the Vert.x instance used to create the underlying governed WebClient
      */
     public RestClientBuilder(Vertx vertx) {
-        this(vertx, ResiliencePolicyRegistry.empty(), RestClientBuilder::buildWebClient);
+        this(vertx, ResiliencePolicyRegistry.empty(), HttpClientBuilder::create);
     }
 
     RestClientBuilder(Vertx vertx, ResiliencePolicyRegistry resiliencePolicyRegistry) {
-        this(vertx, resiliencePolicyRegistry, RestClientBuilder::buildWebClient);
+        this(vertx, resiliencePolicyRegistry, HttpClientBuilder::create);
     }
 
     RestClientBuilder(
-            Vertx vertx, ResiliencePolicyRegistry resiliencePolicyRegistry, WebClientFactory webClientFactory) {
+            Vertx vertx, ResiliencePolicyRegistry resiliencePolicyRegistry, HttpTransportFactory transportFactory) {
         this.vertx = vertx;
         this.resiliencePolicyRegistry = java.util.Objects.requireNonNull(resiliencePolicyRegistry, "registry");
-        this.webClientFactory = java.util.Objects.requireNonNull(webClientFactory, "webClientFactory");
+        this.transportFactory = java.util.Objects.requireNonNull(transportFactory, "transportFactory");
     }
 
     RestClientBuilder suppliedResilience(@Nullable Resilience resilience) {
@@ -270,7 +276,7 @@ public final class RestClientBuilder {
      * <p>For Dagger-managed applications, prefer {@link RestClientFactory#builder()} which
      * pre-seeds global interceptors and configuration from the DI container.
      *
-     * @param vertx the Vert.x instance used to create the underlying WebClient
+     * @param vertx the Vert.x instance used to create the underlying governed WebClient
      * @return a new builder instance
      */
     public static RestClientBuilder create(Vertx vertx) {
@@ -340,7 +346,7 @@ public final class RestClientBuilder {
 
     /**
      * Sets the Vert.x {@link WebClientOptions} for connection configuration (TLS, connect
-     * timeout, keep-alive, etc.). A fresh {@link WebClient} is created per {@link #build(Class)}
+     * timeout, keep-alive, etc.). A fresh governed {@link WebClient} is created per {@link #build(Class)}
      * call using these options.
      *
      * @param options the WebClientOptions to use
@@ -353,7 +359,7 @@ public final class RestClientBuilder {
 
     /**
      * Sets the {@link PoolOptions} for HTTP connection pool sizing. Applied on top of the
-     * {@link WebClientOptions} when building the WebClient.
+     * {@link WebClientOptions} when building the governed WebClient.
      *
      * @param options the PoolOptions to use
      * @return this builder
@@ -705,7 +711,7 @@ public final class RestClientBuilder {
      *   <li>Resolve base URL from effective value or {@link RestClient#value()} annotation;
      *       fail fast if still blank</li>
      *   <li>Scan interface metadata (cached per JVM lifetime)</li>
-     *   <li>Create a fresh {@link WebClient}</li>
+     *   <li>Create a fresh governed {@link WebClient}</li>
      *   <li>Resolve circuit breaker: builder-level → annotation override → external config
      *       override</li>
      *   <li>Return the generated {@code {Client}_RestClientProxy} static proxy when one is present on
@@ -930,9 +936,6 @@ public final class RestClientBuilder {
         // explicit objectMapper > config jsonProfile > builder jsonProfile > @JsonProfile > vertique.
         ObjectMapper effectiveMapper = resolveEffectiveMapper(effectiveConfig, clientInterface, clientName);
 
-        // Build WebClient
-        WebClient webClient = webClientFactory.create(vertx, effectiveWebClientOptions, effectivePoolOptions);
-
         log.debug(
                 "Building REST client proxy for {} with baseUrl={}", clientInterface.getSimpleName(), resolvedBaseUrl);
 
@@ -940,12 +943,18 @@ public final class RestClientBuilder {
         io.vertx.core.MultiMap cachedDefaultHeaders = io.vertx.core.MultiMap.caseInsensitiveMultiMap();
         defaultHeaders.forEach(cachedDefaultHeaders::set);
 
-        RestClientInterceptorChain interceptorChain =
-                new RestClientInterceptorChain(clientName, sortedByPriority(List.copyOf(interceptors)));
+        HttpClient httpClient = null;
         Resilience runtime = null;
         RestClientResiliencePipelineFactory resilienceFactory = null;
         T builtProxy;
         try {
+            // Build the governed client: one per built proxy, from the effective options. The client adds
+            // no timer, body bound, header validation, egress policy or credentials of its own; the
+            // per-method pipeline and the REST interceptors own those concerns. It is created inside the
+            // try so that a failure of anything built after it closes it.
+            httpClient = buildHttpClient(effectiveWebClientOptions, effectivePoolOptions);
+            RestClientInterceptorChain interceptorChain =
+                    new RestClientInterceptorChain(clientName, sortedByPriority(List.copyOf(interceptors)));
             runtime = resilienceRuntime();
             resilienceFactory = new RestClientResiliencePipelineFactory(
                     runtime,
@@ -960,7 +969,7 @@ public final class RestClientBuilder {
                     resiliencePolicyRegistry);
 
             RestClientDispatcher dispatcher = new DefaultRestClientDispatcher(
-                    webClient,
+                    httpClient,
                     resolvedBaseUrl,
                     cachedDefaultHeaders,
                     interceptorChain,
@@ -1008,13 +1017,15 @@ public final class RestClientBuilder {
             if (resilienceFactory != null) {
                 resilienceFactory.close();
             }
-            webClient.close();
+            if (httpClient != null) {
+                httpClient.close();
+            }
             if (runtime != null && suppliedResilience == null) {
                 runtime.close();
             }
             throw failure;
         }
-        builtClients.add(new BuiltClientResources(resilienceFactory, webClient));
+        builtClients.add(new BuiltClientResources(resilienceFactory, httpClient));
         return builtProxy;
     }
 
@@ -1036,10 +1047,16 @@ public final class RestClientBuilder {
             io.vertx.core.Future<Void> contexts = contextClosures.isEmpty()
                     ? io.vertx.core.Future.succeededFuture()
                     : io.vertx.core.Future.all(contextClosures).mapEmpty();
-            io.vertx.core.Future<Void> result = contexts.compose(ignored -> {
-                builtClients.forEach(BuiltClientResources::closeWebClient);
+            // Release the clients and the owned runtime however the contexts close, then report the
+            // contexts' result.
+            io.vertx.core.Future<Void> result = contexts.<Void>transform(contextsResult -> {
+                builtClients.forEach(BuiltClientResources::closeHttpClient);
                 Resilience owned = ownedResilience();
-                return owned == null ? io.vertx.core.Future.succeededFuture() : owned.close();
+                io.vertx.core.Future<Void> runtimeClosed =
+                        owned == null ? io.vertx.core.Future.succeededFuture() : owned.close();
+                return runtimeClosed.transform(ignored -> contextsResult.succeeded()
+                        ? io.vertx.core.Future.<Void>succeededFuture()
+                        : io.vertx.core.Future.<Void>failedFuture(contextsResult.cause()));
             });
             closeFuture.set(result);
             return result;
@@ -1065,13 +1082,13 @@ public final class RestClientBuilder {
         return suppliedResilience == null ? ownedResilience : null;
     }
 
-    private record BuiltClientResources(RestClientResiliencePipelineFactory resilienceFactory, WebClient webClient) {
+    private record BuiltClientResources(RestClientResiliencePipelineFactory resilienceFactory, HttpClient httpClient) {
         io.vertx.core.Future<Void> closeContext() {
             return resilienceFactory.close();
         }
 
-        void closeWebClient() {
-            webClient.close();
+        void closeHttpClient() {
+            httpClient.close();
         }
     }
 
@@ -1408,27 +1425,24 @@ public final class RestClientBuilder {
     }
 
     /**
-     * Creates a fresh {@link WebClient} using the effective {@link WebClientOptions} and
-     * {@link PoolOptions}. If no options were provided, defaults are used.
+     * Creates a fresh governed client using the effective {@link WebClientOptions} and
+     * {@link PoolOptions}. If no options were provided, defaults are used; the options always reach
+     * the governed builder so that redirects are followed as Vert.x's default does.
      *
-     * <p>The effective options are already fully resolved at the call site (builder state
-     * overridden by external config), so this method simply creates the client without
-     * any further resolution.
-     *
-     * @param vertx the Vert.x instance that owns the client
      * @param effectiveWebClientOptions the effective WebClient options to apply; {@code null} for defaults
      * @param effectivePoolOptions the pool options to apply; {@code null} for defaults
-     * @return a new WebClient instance
+     * @return a new governed client
      */
-    private static WebClient buildWebClient(
-            Vertx vertx,
-            @Nullable WebClientOptions effectiveWebClientOptions,
-            @Nullable PoolOptions effectivePoolOptions) {
-        WebClientOptions opts = effectiveWebClientOptions != null ? effectiveWebClientOptions : new WebClientOptions();
+    private HttpClient buildHttpClient(
+            @Nullable WebClientOptions effectiveWebClientOptions, @Nullable PoolOptions effectivePoolOptions) {
+        HttpClientBuilder governed = transportFactory.create(vertx);
+        governed.webClientOptions(
+                effectiveWebClientOptions != null ? effectiveWebClientOptions : new WebClientOptions());
         if (effectivePoolOptions != null) {
-            return WebClient.create(vertx, opts, effectivePoolOptions);
+            governed.poolOptions(effectivePoolOptions);
         }
-        return WebClient.create(vertx, opts);
+        governed.readTimeout(0, TimeUnit.MILLISECONDS).maxResponseBytes(0).maxRequestBytes(0);
+        return governed.build();
     }
 
     /**

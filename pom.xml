@@ -68,6 +68,7 @@ SPDX-License-Identifier: EUPL-1.2
         <module>vertique-kafka</module>
         <module>vertique-db</module>
         <module>vertique-redis</module>
+        <module>vertique-http-client</module>
         <module>vertique-cache</module>
         <module>vertique-rate-limit</module>
         <module>vertique-job</module>
@@ -681,6 +682,11 @@ SPDX-License-Identifier: EUPL-1.2
             <dependency>
                 <groupId>dev.vertique</groupId>
                 <artifactId>vertique-events</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-http-client</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

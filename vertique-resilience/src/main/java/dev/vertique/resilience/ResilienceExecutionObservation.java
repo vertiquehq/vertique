@@ -42,13 +42,28 @@ final class ResilienceExecutionObservation {
     private final Set<ResilienceConcern> concerns;
     private final long startedNanos = System.nanoTime();
     private final AtomicInteger nextAttempt = new AtomicInteger();
+    private final ResilienceCancellation cancellation;
 
     ResilienceExecutionObservation(Resilience resilience, String operationKey, Set<ResilienceConcern> concerns) {
+        this(resilience, operationKey, concerns, null);
+    }
+
+    ResilienceExecutionObservation(
+            Resilience resilience,
+            String operationKey,
+            Set<ResilienceConcern> concerns,
+            ResilienceCancellation cancellation) {
         this.resilience = Objects.requireNonNull(resilience, "resilience");
         this.operationKey = Objects.requireNonNull(operationKey, "operationKey");
         this.executionId = resilience.nextExecutionId();
         this.concerns = Set.copyOf(Objects.requireNonNull(concerns, "concerns"));
+        this.cancellation = cancellation;
         resilience.emit(new ExecutionStarted(operationKey, executionId, this.concerns));
+    }
+
+    /** Returns the execution's cancellation, or null when it cannot be cancelled. */
+    ResilienceCancellation cancellation() {
+        return cancellation;
     }
 
     long executionId() {
@@ -65,15 +80,27 @@ final class ResilienceExecutionObservation {
         int ordinal = attemptStarted();
         try {
             Future<T> supplied = Objects.requireNonNull(operation.get(), "operation returned null future");
-            supplied.onComplete(outcome -> attemptCompleted(ordinal, outcome.succeeded() ? null : outcome.cause()));
+            supplied.onComplete(outcome -> attemptEnded(ordinal, outcome.succeeded() ? null : outcome.cause()));
             return supplied;
         } catch (Exception failure) {
-            attemptCompleted(ordinal, failure);
+            attemptEnded(ordinal, failure);
             return Future.failedFuture(failure);
         } catch (Error fatal) {
-            attemptCompleted(ordinal, fatal);
+            attemptEnded(ordinal, fatal);
             throw fatal;
         }
+    }
+
+    /**
+     * Records the end of an attempt that the supplier ended. A failure that is a timeout carrying this
+     * pipeline's own operation key is reported as a timeout trigger first, using the timeout value the
+     * exception carries.
+     */
+    void attemptEnded(int ordinal, Throwable failure) {
+        if (failure instanceof ResilienceTimeoutException timeout && operationKey.equals(timeout.operationKey())) {
+            timeoutTriggered(ordinal, timeout.timeoutMs());
+        }
+        attemptCompleted(ordinal, failure);
     }
 
     void attemptCompleted(int ordinal, Throwable failure) {
@@ -123,7 +150,10 @@ final class ResilienceExecutionObservation {
     }
 
     void completed(Throwable failure) {
-        resilience.emit(new ExecutionCompleted(operationKey, executionId, outcome(failure), elapsedMs()));
+        boolean cancelled = failure != null && cancellation != null && failure == cancellation.reason();
+        ResilienceOutcomeCategory outcome =
+                cancelled ? ResilienceOutcomeCategory.APPLICATION_FAILURE : outcome(failure);
+        resilience.emit(new ExecutionCompleted(operationKey, executionId, outcome, elapsedMs()));
     }
 
     private long elapsedMs() {

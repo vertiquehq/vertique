@@ -127,12 +127,16 @@ public final class ResiliencePolicyResolver {
                         ? operation.fallbackPolicy().orElseThrow()
                         : defaultRetry != null ? defaultRetry.fallbackPolicy() : (failure, retryCount) -> true;
 
+        long retryAfterMaxMs = operation != null && operation.retryAfterMaxMs() != null
+                ? operation.retryAfterMaxMs()
+                : defaultRetry != null ? defaultRetry.retryAfterMaxMs() : 0L;
+
         RetryBackoff backoff =
                 resolveBackoff(operation == null ? null : operation.backoff().orElse(null), annotation, defaultRetry);
         if (maxRetries == null || backoff == null) {
             throw incomplete();
         }
-        return Optional.of(RetryConfig.from(maxRetries, backoff, retryOn, abortOn, fallbackPolicy));
+        return Optional.of(RetryConfig.from(maxRetries, backoff, retryOn, abortOn, fallbackPolicy, retryAfterMaxMs));
     }
 
     private Optional<CircuitBreakerConfig> resolveCircuitBreaker(
@@ -296,6 +300,7 @@ public final class ResiliencePolicyResolver {
 
     private static boolean hasRetrySiblingValue(RetryOverride value) {
         return value.maxRetries().isPresent()
+                || value.retryAfterMaxMs() != null
                 || value.backoff().isPresent()
                 || value.retryOn().isPresent()
                 || value.abortOn().isPresent()

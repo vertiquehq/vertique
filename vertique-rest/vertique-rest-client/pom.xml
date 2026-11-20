@@ -38,6 +38,10 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-json</artifactId>
         </dependency>
         <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-http-client</artifactId>
+        </dependency>
+        <dependency>
             <groupId>io.vertx</groupId>
             <artifactId>vertx-web-client</artifactId>
         </dependency>

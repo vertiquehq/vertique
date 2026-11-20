@@ -4,10 +4,15 @@
 package dev.vertique.rest.client;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.RETURNS_SELF;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
+import dev.vertique.http.client.HttpClient;
+import dev.vertique.http.client.HttpClientBuilder;
 import dev.vertique.resilience.ResiliencePolicyRegistry;
 import dev.vertique.resilience.annotation.CircuitBreaker;
 import dev.vertique.rest.client.config.RestClientConfig;
@@ -16,7 +21,6 @@ import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.PoolOptions;
 import io.vertx.core.json.JsonObject;
-import io.vertx.ext.web.client.WebClient;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 import java.util.ArrayList;
@@ -95,10 +99,16 @@ class RestClientBuilderOptionsIsolationTest {
 
         List<Integer> http1MaxSizeSeenByFactory = new ArrayList<>();
         List<Integer> waitQueueSeenByFactory = new ArrayList<>();
-        RestClientBuilder.WebClientFactory factory = (v, webClientOptions, pool) -> {
-            http1MaxSizeSeenByFactory.add(pool.getHttp1MaxSize());
-            waitQueueSeenByFactory.add(pool.getMaxWaitQueueSize());
-            return mock(WebClient.class);
+        RestClientBuilder.HttpTransportFactory factory = v -> {
+            HttpClientBuilder governed = mock(HttpClientBuilder.class, RETURNS_SELF);
+            when(governed.poolOptions(any())).thenAnswer(invocation -> {
+                PoolOptions pool = invocation.getArgument(0);
+                http1MaxSizeSeenByFactory.add(pool.getHttp1MaxSize());
+                waitQueueSeenByFactory.add(pool.getMaxWaitQueueSize());
+                return governed;
+            });
+            when(governed.build()).thenReturn(mock(HttpClient.class));
+            return governed;
         };
 
         RestClientBuilder alphaBuilder = new RestClientBuilder(vertx, ResiliencePolicyRegistry.empty(), factory)

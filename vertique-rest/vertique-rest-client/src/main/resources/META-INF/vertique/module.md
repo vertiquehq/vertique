@@ -8,14 +8,14 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.rest.client`
 > **Artifact:** `vertique-rest-client`
-> **Depends on:** core, rest-core, json
+> **Depends on:** core, rest-core, json, http-client
 
 Declarative HTTP client for Vert.x. Annotate a Java interface with standard JAX-RS annotations
 (`@GET`, `@Path`, `@QueryParam`, …) plus `@RestClient`, then ask `RestClientBuilder` or the
 Dagger-provided `RestClientFactory` for a proxy: every method invocation becomes an asynchronous
 HTTP call returning `Future<T>`. The role is the same one Spring's `@HttpExchange` and MicroProfile's
 `@RegisterRestClient` play — a typed, annotation-driven front end over a connection-pooled HTTP
-client, here Vert.x `WebClient`.
+client, here Vert.x `WebClient` sent through the governed transport of `vertique-http-client`.
 
 It is not a server-side routing runtime and shares no dispatch code with one; `dev.vertique:vertique-rest-jaxrs`
 handles inbound requests. The two do share the parameter-conversion stack from
@@ -101,7 +101,8 @@ by annotations, or by external configuration, in that precedence order.
 ### Everything resolves at `build()`, nothing at first call
 
 `RestClientBuilder.build(Class)` scans the interface, resolves the effective `ObjectMapper`, resolves
-the parameter converters, creates a fresh `WebClient`, and returns the proxy. Any misconfiguration —
+the parameter converters, creates a fresh governed client (`vertique-http-client`) over its own
+`WebClient`, and returns the proxy. Any misconfiguration —
 an unknown JSON profile id, a parameter type with no converter, a missing base URL — throws there
 rather than on the first request. Builder state is never mutated by `build()`, so one builder can
 produce several proxies.
@@ -139,8 +140,8 @@ On failure anywhere in 7–13:
 ```
 
 `onAttemptCompleted` is the exception to this outline: it fires once per *physical* HTTP attempt from
-inside the send, before the retry/recovery decision, so it sees attempts that steps 9/15 never
-report.
+inside the send, so it sees attempts that steps 9/15 never report. For an attempt that reaches its
+timeout it can fire after the retry or recovery decision.
 
 ### Proxy flavors are interchangeable
 
@@ -196,7 +197,7 @@ and the optional `BeanValidator`.
 | `beanParamAccessorRegistry(BeanParamAccessorRegistry)` | Overrides the process-wide generated-accessor cache; intended for tests |
 | `config(RestClientConfig)` | Typed per-client overrides; an explicit call wins over the name lookup in the seeded index |
 | `build(Class<T>)` | Scans, validates, and returns the typed proxy |
-| `close()` | Closes builder-created client contexts and WebClients, then the builder-owned runtime; idempotent |
+| `close()` | Closes builder-created client contexts and governed clients, then the builder-owned runtime; idempotent |
 
 ```java
 // Standalone
@@ -217,7 +218,7 @@ UserClient client = factory.builder()
 Standalone builders own the resilience runtime they create and should be closed when the client
 lifetime ends. Builders created with `create(Vertx, Resilience)` and builders returned by
 `RestClientFactory` do not own the supplied/application runtime; closing them releases only their
-client contexts and WebClients. `close()` is deterministic and idempotent.
+client contexts and governed clients. `close()` is deterministic and idempotent.
 
 ### `RestClientFactory`
 
@@ -551,6 +552,7 @@ and pre-registers:
 | `java.net.SocketException` | `RestClientConnectionException` |
 | `io.vertx.core.http.HttpClosedException` | `RestClientConnectionException` |
 | `java.util.concurrent.TimeoutException` (covers Vert.x `NoStackTraceTimeoutException`) | `RestClientTimeoutException` |
+| `dev.vertique.http.client.exception.HttpEgressDeniedException` (a refused redirect hop, see Redirects) | `RestClientException` with a constant message that carries no target details; the refusal is the cause |
 | `io.vertx.core.VertxException` | `RestClientException` (safety net) |
 
 ---
@@ -605,10 +607,13 @@ On failure:
       → RestClientExceptionMapper
 ```
 
-**`onAttemptCompleted`** fires from inside the circuit-breaker send, before the retry/recovery
-decision, for every physical attempt that completes — retried failures and recovery re-dispatches
-included. Exactly one of `completion.response()` / `completion.error()` is non-null. Implementations
-must not block.
+**`onAttemptCompleted`** fires from inside the circuit-breaker send for every physical attempt that
+completes — retried failures and recovery re-dispatches included. When an attempt reaches its resolved
+timeout, the exchange is reset and the connection released, and `onAttemptCompleted` is then notified
+once with a `java.util.concurrent.TimeoutException`, possibly after the retry or recovery decision. The
+caller still gets `RestClientTimeoutException` with the same retry eligibility. A method whose timeout
+is disabled is never reset. Exactly one of `completion.response()` / `completion.error()` is non-null.
+Implementations must not block.
 
 `RestClientAttemptCompletion` carries the attempt facts:
 
@@ -913,7 +918,7 @@ can be overridden without discarding the baseline.
 | `writeIdleTimeoutSeconds` | int | 0 | Write idle timeout; 0 disables |
 | `http2KeepAliveTimeoutSeconds` | int | 60 | HTTP/2 keep-alive timeout |
 | `sslHandshakeTimeoutSeconds` | long | 10 | TLS handshake timeout |
-| `maxRedirects` | int | 16 | Maximum redirects followed |
+| `maxRedirects` | int | 16 | Maximum redirects followed (see Redirects below for the headers a hop forwards) |
 | `followRedirects` | boolean | true | Follow HTTP redirects |
 | `pemKeyCertOptions.keyPath` / `.certPath` | String | — | PEM client key and certificate for mTLS |
 | `keyStoreOptions.path` / `.password` | String | — | JKS client keystore for mTLS |
@@ -928,6 +933,24 @@ can be overridden without discarding the baseline.
 A raw Vert.x duration key is **rejected**, not silently accepted: writing `connectTimeout` instead of
 `connectTimeoutMs` (or any of the other six pairs) fails startup with
 `RestClientConfigurationException`.
+
+Because every proxy sends through the governed client, building a client whose options trust all
+certificates, skip host verification or enable TLS below 1.2 logs one warning; the option still applies.
+
+#### Redirects
+
+REST clients follow redirects by the governed client's rules; Vert.x's method handling and
+`maxRedirects` are unchanged, and a same-origin hop forwards the request headers as before. On a hop
+that changes origin (scheme, host or port) only `Accept`, `Accept-Language`, `Accept-Encoding`,
+`User-Agent`, `Cache-Control`, `Pragma`, `If-None-Match` and `If-Modified-Since` are forwarded, so a
+custom header such as an API key stays with the original origin. A hop from `https` to `http` and a
+redirect `Location` that carries user information are refused: the call fails with a
+`RestClientException` (see the mapper table), which the default retry policy does not retry and which
+counts as a failure for the circuit breaker. A redirect whose `Location` host cannot be read, or whose
+authority carries userinfo even percent-encoded, is refused with the same constant `RestClientException`.
+This includes every redirect, same-origin ones too, of a client whose base URL host is not a valid DNS
+name, such as a container service name with an underscore (`http://my_service:8080`); use a
+hyphenated name or an IP address for such a target.
 
 ```json
 {
@@ -1124,8 +1147,9 @@ configured or every client overrides it.
 - **Expecting `onResponse` or `onError` to count attempts.** `onResponse` never fires on a transport
   failure and `onError` fires once after every retry; only `onAttemptCompleted` sees each wire attempt.
 - **Expecting `onAttemptCompleted` on an open circuit.** A short-circuited call performs no send, so
-  the hook never fires. When the breaker's own timeout is shorter than the HTTP timeout, the hook can
-  also fire *after* the caller already saw the breaker failure.
+  the hook never fires. When an attempt times out, the hook fires once with a
+  `java.util.concurrent.TimeoutException`, possibly after the caller already saw the failure or the
+  retry decision was made.
 - **Returning a failed future from `transformError`.** It must return a succeeded future carrying the
   throwable to propagate.
 - **Setting `objectMapper(...)` and expecting a `jsonProfile` to still apply.** An explicit mapper
@@ -1181,6 +1205,7 @@ interface AppComponent {
 | `dev.vertique:vertique-resilience` | Canonical timeout, retry, circuit-breaker, and bulkhead annotations plus backoff and retry contracts |
 | `dev.vertique:vertique-rest-core` | `ParamConversionResolver`, `ParamConverterRegistry`, `ConversionContext`, `ParamSource`, and `RestCoreModule` — the outbound half of the conversion stack `rest-jaxrs` uses inbound |
 | `dev.vertique:vertique-json` | `JsonMapperProfileRegistry`, `JsonConfig`, and `JsonRuntimeModule` for named mapper profiles |
+| `dev.vertique:vertique-http-client` | The governed transport: `HttpClient` sends every physical attempt through the method's resilience pipeline, and its normalizer translates the `webClient` option keys |
 | `io.vertx:vertx-web-client` | `WebClient`, `WebClientOptions`, `PoolOptions` |
 | `jakarta.ws.rs:jakarta.ws.rs-api` | The JAX-RS annotations that describe each interface |
 | `jakarta.annotation:jakarta.annotation-api` | `@Nullable` on API signatures |
