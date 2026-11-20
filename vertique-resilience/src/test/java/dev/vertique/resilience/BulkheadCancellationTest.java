@@ -306,6 +306,44 @@ class BulkheadCancellationTest {
         assertEquals("next", await(bulkhead.execute(() -> Future.succeededFuture("next"))));
     }
 
+    /**
+     * Supporting FR-030: an execution that settles normally unregisters its cancellation listener, so a long-lived
+     * cancellation shared by many calls holds nothing for the calls that already finished.
+     */
+    @Test
+    @DisplayName("settled calls leave no listener on a long-lived cancellation")
+    void settledCallsLeaveNoListenerOnALongLivedCancellation(Vertx vertx) throws Exception {
+        // Given a queueing bulkhead of 1 and one cancellation shared by every call
+        resilience = Resilience.create(vertx, Set.of(recorder));
+        ResiliencePipeline pipeline = resilience
+                .pipeline("cancel-listener-retention")
+                .bulkhead(bulkhead -> bulkhead.maxConcurrentCalls(1).queue(1, Duration.ofSeconds(30)))
+                .build();
+        ResilienceCancellation cancellation = ResilienceCancellation.create();
+
+        // When a call succeeds, a call fails, and a queued call runs after a held one is released
+        assertEquals("ok", await(pipeline.execute(() -> Future.succeededFuture("ok"), cancellation)));
+        IllegalStateException boom = new IllegalStateException("boom");
+        assertSame(boom, awaitFailure(pipeline.execute(() -> Future.failedFuture(boom), cancellation)));
+        Promise<String> gate = Promise.promise();
+        Future<String> held = pipeline.execute(gate::future, cancellation);
+        Future<String> queued = pipeline.execute(() -> Future.succeededFuture("queued"), cancellation);
+        gate.complete("held");
+        assertEquals("held", await(held));
+        assertEquals("queued", await(queued));
+
+        // Then the cancellation holds no listener, and is still not cancelled
+        assertTrue(listeners(cancellation).isEmpty());
+        assertFalse(cancellation.isCancelled());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Consumer<Throwable>> listeners(ResilienceCancellation cancellation) throws Exception {
+        Field field = ResilienceCancellation.class.getDeclaredField("listeners");
+        field.setAccessible(true);
+        return (List<Consumer<Throwable>>) field.get(cancellation);
+    }
+
     /** Returns the one listener registered on the cancellation, the way a racing cancel would hold it. */
     @SuppressWarnings("unchecked")
     private static Consumer<Throwable> onlyListener(ResilienceCancellation cancellation) throws Exception {
