@@ -19,6 +19,7 @@ import dev.vertique.services.ResolvedServiceTarget;
 import dev.vertique.services.ServiceRequestSender;
 import dev.vertique.services.ServiceTargetResolver;
 import io.vertx.core.Future;
+import io.vertx.core.Vertx;
 import io.vertx.kafka.client.consumer.KafkaConsumerRecord;
 import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
@@ -389,12 +390,8 @@ final class KafkaRecordDispatcher {
             // state. The MDC service-dispatch encoder registered by LoggingContextModule (via
             // ServiceDispatchCodecs.snapshotEncoder) picks the bound MDCContext up into the
             // outgoing envelope via the standard encoder pipeline.
-            mdcScope = MDCContexts.bindAll(Map.of(
-                    MDC_CONSUMER, entry.name(),
-                    MDC_TOPIC, recordContext.topic(),
-                    MDC_PARTITION, String.valueOf(recordContext.partition()),
-                    MDC_OFFSET, String.valueOf(recordContext.offset()),
-                    MDC_CORRELATION_ID, correlationId));
+            mdcScope = bindRecordMdc(
+                    recordContext.topic(), recordContext.partition(), recordContext.offset(), correlationId);
             Map<String, Object> callerOverrides = Map.of(KafkaRecordContext.class.getName(), recordContext);
             DispatchEnvelope<?> body = envelopeBuilder.build(value, callerOverrides, DispatchBoundary.KAFKA);
 
@@ -454,6 +451,7 @@ final class KafkaRecordDispatcher {
      * @param headers the record's headers as received; the handler's message holds this instance
      * @param textHeaders the text projection of {@code headers}, computed once per record; the
      *     durable context is decoded from it, unless the entry installs no header context
+     * @param correlationId the record's correlation id, bound to MDC for the handler invocation
      * @return a future that completes when the handler has processed the record
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
@@ -461,7 +459,8 @@ final class KafkaRecordDispatcher {
             Object value,
             KafkaConsumerRecord<String, byte[]> record,
             KafkaRecordHeaders headers,
-            Map<String, String> textHeaders) {
+            Map<String, String> textHeaders,
+            String correlationId) {
         KafkaRecordHandler handler = entry.handler();
         if (handler == null) {
             return Future.failedFuture("No handler configured for HANDLER-kind consumer: " + entry.name());
@@ -479,34 +478,58 @@ final class KafkaRecordDispatcher {
         // any synchronous failure — including a duplicated-context invariant violation —
         // converts to a failed future instead of escaping the async callback.
         ContextHolder.Scope scope = null;
+        ContextHolder.Scope mdcScope = null;
         Future<Void> handlerFuture;
         try {
             if (!entry.noHeaderContext()) {
                 scope = inboundExecutionContextScope.installDurable(
                         DurableMetadataHeaderCodec.fromHeaders(textHeaders), DispatchBoundary.KAFKA);
             }
+            // Like the durable bind above, the MDC bind needs a Vert.x context; without one (a plain
+            // thread, as in unit tests) there is nothing to scope the keys to and none is bound.
+            if (Vertx.currentContext() != null) {
+                mdcScope = bindRecordMdc(record.topic(), record.partition(), record.offset(), correlationId);
+            }
             handlerFuture = handler.handle(message);
             if (handlerFuture == null) {
-                if (scope != null) {
-                    scope.close();
-                }
+                closeScopes(mdcScope, scope);
                 return Future.failedFuture(new NullPointerException(
                         "KafkaRecordHandler " + handler.getClass().getName() + " returned null for consumer "
                                 + entry.name() + "; handler contract requires a Future"));
             }
         } catch (RuntimeException e) {
-            if (scope != null) {
-                scope.close();
-            }
+            closeScopes(mdcScope, scope);
             return Future.failedFuture(e);
         }
         final ContextHolder.Scope finalScope = scope;
+        final ContextHolder.Scope finalMdcScope = mdcScope;
         return handlerFuture.eventually(() -> {
-            if (finalScope != null) {
-                finalScope.close();
-            }
+            closeScopes(finalMdcScope, finalScope);
             return Future.succeededFuture();
         });
+    }
+
+    /**
+     * Binds the record's coordinates and correlation id to the MDC for one dispatch, restoring the
+     * prior MDC state when the returned scope closes.
+     */
+    private ContextHolder.Scope bindRecordMdc(String topic, int partition, long offset, String correlationId) {
+        return MDCContexts.bindAll(Map.of(
+                MDC_CONSUMER, entry.name(),
+                MDC_TOPIC, topic,
+                MDC_PARTITION, String.valueOf(partition),
+                MDC_OFFSET, String.valueOf(offset),
+                MDC_CORRELATION_ID, correlationId));
+    }
+
+    /** Closes the MDC scope first, then the durable scope, skipping a scope that was never opened. */
+    private static void closeScopes(ContextHolder.Scope mdcScope, ContextHolder.Scope durableScope) {
+        if (mdcScope != null) {
+            mdcScope.close();
+        }
+        if (durableScope != null) {
+            durableScope.close();
+        }
     }
 
     // --- Inner types ---
