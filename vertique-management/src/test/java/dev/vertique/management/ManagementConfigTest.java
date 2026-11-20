@@ -61,6 +61,33 @@ class ManagementConfigTest {
         }
 
         @Test
+        @DisplayName("a blank, whitespace or explicit null host counts as absent and takes the default")
+        void blankHostTakesDefault() {
+            assertEquals(
+                    "0.0.0.0",
+                    new JsonObject()
+                            .put("host", "")
+                            .mapTo(ManagementConfig.class)
+                            .host());
+            assertEquals(
+                    "0.0.0.0",
+                    new JsonObject()
+                            .put("host", "   ")
+                            .mapTo(ManagementConfig.class)
+                            .host());
+            assertEquals(
+                    "0.0.0.0",
+                    new JsonObject()
+                            .putNull("host")
+                            .mapTo(ManagementConfig.class)
+                            .host());
+            assertEquals(
+                    "0.0.0.0", ManagementConfig.builder().host("  ").build().host());
+            assertEquals(
+                    "0.0.0.0", ManagementConfig.builder().host(null).build().host());
+        }
+
+        @Test
         @DisplayName("partial override of only port keeps other fields at their defaults")
         void partialOverridePortKeepsDefaults() {
             JsonObject json = new JsonObject().put("port", 8080);
