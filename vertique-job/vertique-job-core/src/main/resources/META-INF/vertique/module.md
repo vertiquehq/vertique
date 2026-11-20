@@ -408,7 +408,7 @@ component order is part of this contract:
   Copy-on-write helpers (each carries both): `withState`, `withProgress`, `withPayload`,
   `withLockedBy`, `withError`, `withStarted(Instant, String)`, `withCompleted(Instant)`.
 - `CronJobSchedule(jobId, cronExpression, handler, target, executionMode, timezone, enabled,
-  overlapPolicy, maxAttempts, tracked, lastFiredAt, nextFireAt)` — 12 components, persisted for
+  overlapPolicy, tracked, lastFiredAt, nextFireAt)` — 11 components, persisted for
   dashboard visibility. `executionMode` is `"EVERY_INSTANCE"` or `"SINGLE_INSTANCE"`;
   `overlapPolicy` is `"SKIP"` or `"QUEUE_ONE"`. `handler` may be `null` for `service:` targets, and
   `target` is `null` on rows written before that component existed — derive it as

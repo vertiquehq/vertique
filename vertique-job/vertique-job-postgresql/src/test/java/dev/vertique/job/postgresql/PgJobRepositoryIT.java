@@ -190,7 +190,6 @@ public class PgJobRepositoryIT {
                 "UTC",
                 true,
                 "SKIP",
-                3,
                 true,
                 null,
                 null);
@@ -807,7 +806,7 @@ public class PgJobRepositoryIT {
         Instant next = later.plusSeconds(60);
         repository
                 .saveSchedule(new CronJobSchedule(
-                        jobId, "0 * * * * *", "h", null, "SINGLE_INSTANCE", "UTC", true, "SKIP", 3, true, null, null))
+                        jobId, "0 * * * * *", "h", null, "SINGLE_INSTANCE", "UTC", true, "SKIP", true, null, null))
                 .compose(v -> repository.updateScheduleFireTimes(jobId, later, next))
                 .compose(v -> repository.updateScheduleFireTimes(jobId, earlier, next))
                 .compose(v -> repository.findSchedule(jobId))
@@ -953,16 +952,14 @@ public class PgJobRepositoryIT {
                 "Europe/Helsinki",
                 true,
                 "SKIP",
-                5,
                 false,
                 null,
                 null);
 
         repository
                 .saveSchedule(original)
-                .compose(v -> pool.preparedQuery(
-                                "SELECT cron_expression, execution_mode, timezone, max_attempts, tracked"
-                                        + " FROM job_schedules WHERE job_id = $1")
+                .compose(v -> pool.preparedQuery("SELECT cron_expression, execution_mode, timezone, tracked"
+                                + " FROM job_schedules WHERE job_id = $1")
                         .execute(Tuple.of(jobId))
                         .map(rows -> rows.iterator().next()))
                 .compose(row -> {
@@ -970,14 +967,12 @@ public class PgJobRepositoryIT {
                         assertEquals("0 0 8 * * *", row.getString("cron_expression"));
                         assertEquals("EVERY_INSTANCE", row.getString("execution_mode"));
                         assertEquals("UTC", row.getString("timezone"));
-                        assertEquals(3, row.getInteger("max_attempts"));
                         assertTrue(row.getBoolean("tracked"));
                     });
                     return repository.saveSchedule(updated);
                 })
-                .compose(v -> pool.preparedQuery(
-                                "SELECT cron_expression, execution_mode, timezone, max_attempts, tracked"
-                                        + " FROM job_schedules WHERE job_id = $1")
+                .compose(v -> pool.preparedQuery("SELECT cron_expression, execution_mode, timezone, tracked"
+                                + " FROM job_schedules WHERE job_id = $1")
                         .execute(Tuple.of(jobId))
                         .map(rows -> rows.iterator().next()))
                 .onSuccess(row -> ctx.verify(() -> {
@@ -985,7 +980,6 @@ public class PgJobRepositoryIT {
                     assertEquals(
                             "SINGLE_INSTANCE", row.getString("execution_mode"), "execution_mode should be updated");
                     assertEquals("Europe/Helsinki", row.getString("timezone"), "timezone should be updated");
-                    assertEquals(5, row.getInteger("max_attempts"), "max_attempts should be updated");
                     assertFalse(row.getBoolean("tracked"), "tracked should be updated to false");
                     ctx.completeNow();
                 }))
@@ -1006,7 +1000,6 @@ public class PgJobRepositoryIT {
                 "UTC",
                 true,
                 "SKIP",
-                3,
                 false,
                 null,
                 nextFireAt);
@@ -1036,7 +1029,6 @@ public class PgJobRepositoryIT {
                 "UTC",
                 true,
                 "SKIP",
-                3,
                 false,
                 null,
                 first);
@@ -1049,7 +1041,6 @@ public class PgJobRepositoryIT {
                 base.timezone(),
                 true,
                 "SKIP",
-                3,
                 false,
                 null,
                 second);
@@ -1062,7 +1053,6 @@ public class PgJobRepositoryIT {
                 base.timezone(),
                 true,
                 "SKIP",
-                3,
                 false,
                 null,
                 null);
@@ -1124,14 +1114,13 @@ public class PgJobRepositoryIT {
                 "Europe/Helsinki",
                 true,
                 "SKIP",
-                5,
                 true,
                 null,
                 null);
 
         repository
                 .saveSchedule(schedule)
-                .compose(v -> pool.preparedQuery("SELECT handler, target, execution_mode, timezone, max_attempts"
+                .compose(v -> pool.preparedQuery("SELECT handler, target, execution_mode, timezone"
                                 + " FROM job_schedules WHERE job_id = $1")
                         .execute(Tuple.of(jobId))
                         .map(rows -> rows.iterator().next()))
@@ -1140,7 +1129,6 @@ public class PgJobRepositoryIT {
                     assertEquals("service:reporting.report-service.generate", row.getString("target"));
                     assertEquals("SINGLE_INSTANCE", row.getString("execution_mode"));
                     assertEquals("Europe/Helsinki", row.getString("timezone"));
-                    assertEquals(5, row.getInteger("max_attempts"));
                     ctx.completeNow();
                 }))
                 .onFailure(ctx::failNow);
@@ -1159,7 +1147,6 @@ public class PgJobRepositoryIT {
                 "UTC",
                 true,
                 "SKIP",
-                3,
                 true,
                 null,
                 null);

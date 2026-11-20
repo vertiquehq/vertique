@@ -48,7 +48,6 @@ class CompressedCronTickPlannerTest {
                 "test.address",
                 ExecutionMode.EVERY_INSTANCE,
                 UTC,
-                3,
                 null,
                 OverlapPolicy.SKIP,
                 true,

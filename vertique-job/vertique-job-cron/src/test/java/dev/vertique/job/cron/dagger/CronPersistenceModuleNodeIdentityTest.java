@@ -76,7 +76,6 @@ class CronPersistenceModuleNodeIdentityTest {
                     null,
                     ExecutionMode.SINGLE_INSTANCE,
                     ZoneId.of("UTC"),
-                    3,
                     null,
                     OverlapPolicy.SKIP,
                     true,

@@ -173,7 +173,6 @@ final class RedisCleanupJob {
                     HANDLER_ADDRESS,
                     ExecutionMode.EVERY_INSTANCE,
                     ZoneOffset.UTC,
-                    1,
                     null,
                     OverlapPolicy.SKIP,
                     false,

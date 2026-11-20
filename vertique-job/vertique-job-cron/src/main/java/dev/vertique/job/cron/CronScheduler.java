@@ -885,7 +885,7 @@ public class CronScheduler {
                 "cron",
                 JobState.PROCESSING,
                 0,
-                job.maxAttempts(),
+                CronJobDefinition.SINGLE_ATTEMPT,
                 null,
                 0,
                 nodeId,

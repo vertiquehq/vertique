@@ -139,7 +139,6 @@ class CronMisfireRecoveryTest {
                 "UTC",
                 true,
                 "SKIP",
-                3,
                 true,
                 lastFiredAt,
                 null);
@@ -155,7 +154,6 @@ class CronMisfireRecoveryTest {
                 "test." + jobId + ".address",
                 ExecutionMode.SINGLE_INSTANCE,
                 ZoneId.of("UTC"),
-                3,
                 null,
                 OverlapPolicy.SKIP,
                 true,
