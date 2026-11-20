@@ -32,7 +32,8 @@ import java.util.Optional;
  *                    use {@link Optional#empty()} when no origin could be recovered
  * @param reasonCode  machine-readable degradation reason; never null, never blank. One of
  *                    {@code BAD_HMAC}, {@code UNKNOWN_KEY}, {@code DECODE_FAILED},
- *                    {@code KEY_UNAVAILABLE}, {@code SCHEMA_INCOMPATIBLE}
+ *                    {@code KEY_UNAVAILABLE}, {@code SCHEMA_INCOMPATIBLE}, {@code EXPIRED},
+ *                    {@code MALFORMED_TEMPORAL}, {@code EXPECTED_ABSENT}
  */
 public record IdentitySnapshotDegradationEvent(
         Instant occurredAt, CorrelationContext correlation, Optional<RequestOrigin> origin, String reasonCode) {

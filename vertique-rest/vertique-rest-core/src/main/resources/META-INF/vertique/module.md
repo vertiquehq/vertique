@@ -360,6 +360,8 @@ Extends `dev.vertique.core.exception.ValidationException` with a structured, unm
 Conditional-request evaluation (`If-Match`, `If-None-Match`, `If-Modified-Since`,
 `If-Unmodified-Since`) per RFC 9110. Inject it as a resource-method parameter, or build it from a
 routing context with `RequestPreconditions.from(ctx)` — the instance is cached per request.
+`If-Match` uses strong comparison, so a weak entry (`W/"v1"`) in the header never matches and the
+request fails with 412; `If-None-Match` uses weak comparison.
 
 ```java
 @GET

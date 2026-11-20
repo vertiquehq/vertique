@@ -19,8 +19,8 @@ SPDX-License-Identifier: EUPL-1.2
     <artifactId>vertique-kafka-test</artifactId>
     <name>Vertique Kafka Test</name>
     <description>Shared integration-test support for vertique-kafka: a reachability-verified, shared
-        Testcontainers Kafka broker reused across all Kafka IT classes. Consumed in test scope by
-        vertique-kafka-core and vertique-kafka-avro.</description>
+        Testcontainers Kafka broker reused across all Kafka IT classes. Intended for test scope in
+        framework modules and example applications.</description>
 
     <dependencies>
         <!-- Testcontainers apache/kafka container. Compile scope so consuming modules get it

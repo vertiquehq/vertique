@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.security.config`
 > **Artifact:** `vertique-security-config`
-> **Depends on:** security-core, config-core
+> **Depends on:** security-core (`vertique-config-core` is a test-scope dependency only)
 
 Config/YAML-backed authorization adapters for the Vertique security model. This module reads the `authorization` section of the application config and contributes, via Dagger `@IntoSet` multibinding, a `PolicyDefinitionSource` and a `RolePolicyResolver` into the sets declared by `dev.vertique:vertique-security-runtime`'s `SecurityAuthzModule`.
 
@@ -189,4 +189,5 @@ Config-backed and programmatic contributions are merged by `SecurityAuthzModule`
 ## Dependencies
 
 - `dev.vertique:vertique-security-core` — `PolicyDefinitionSource`, `RolePolicyResolver`, `ActionRegistry`, `PolicyDefinition`, `PolicyStatement`, `ActionPattern`, `Effect`
-- `dev.vertique:vertique-config-core` — `ConfigParser`, `JsonConfigPaths` (parse boundary), `@VertxConfig`
+- `dev.vertique:vertique-core` (transitive through security-core) — `ConfigParser`, `JsonConfigPaths` (parse boundary), `@VertxConfig`
+- `dev.vertique:vertique-config-core` — test scope only; not a production dependency

@@ -153,7 +153,9 @@ public final class MicrometerMetricsContributor implements VertxBuilderContribut
      * @return the (potentially mutated) {@link VertxBuilder}; never {@code null}
      * @throws MetricsBootstrapException if metrics are already bootstrapped, or if any assembly or
      *                                   builder-wiring step fails (no cause attached)
-     * @throws ConfigurationException    if tag policy validation fails (value-free message)
+     * @throws ConfigurationException    if a {@code metrics} value cannot be bound (for example a
+     *                                   non-boolean {@code enabled}) or tag policy validation fails
+     *                                   (value-free messages)
      */
     @Override
     public VertxBuilder contribute(VertxBuilder builder, BootstrapContext ctx) throws Exception {
@@ -166,7 +168,13 @@ public final class MicrometerMetricsContributor implements VertxBuilderContribut
         // --- Parse MetricsConfig from ctx.config() ---
         // navigateObject throws ConfigurationException when "metrics" is present but not a JsonObject
         JsonObject metricsJson = JsonConfigPaths.navigateObject(ctx.config(), "metrics");
-        MetricsConfig config = metricsJson.mapTo(MetricsConfig.class);
+        MetricsConfig config;
+        try {
+            config = metricsJson.mapTo(MetricsConfig.class);
+        } catch (IllegalArgumentException e) {
+            // The binding message echoes the offending value, so it is neither kept nor chained.
+            throw new ConfigurationException("Invalid value in the 'metrics' configuration section");
+        }
 
         // --- Inert path: disabled or no providers ---
         if (!config.enabled() || providers.isEmpty()) {

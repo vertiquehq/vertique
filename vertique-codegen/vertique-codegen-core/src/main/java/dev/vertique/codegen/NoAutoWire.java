@@ -10,11 +10,22 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Opt-out marker for the Vertique auto-wiring annotation processor ({@code AutoWireProcessor}).
+ * Opt-out marker for the Vertique annotation processors that generate dependency-injection wiring.
  *
- * <p>When placed on a type that would otherwise be discovered and auto-wired by
- * {@code AutoWireProcessor} (e.g., a {@code @Path} resource, a {@code @RestClient} interface,
- * a {@code @ServiceContract} implementation, etc.), the processor skips that type entirely.
+ * <p>When placed on a type that a processor would otherwise discover and wire, that processor
+ * generates no binding for the type. The processors that honor it are:
+ * <ul>
+ *   <li>{@code AutoWireProcessor} ({@code vertique-codegen-dagger}) for Kafka consumers,
+ *       delayed-job executors, {@code @RestClient} interfaces and {@code @RegisterAs} /
+ *       {@code @RegisterIntoSet} types;</li>
+ *   <li>the JAX-RS processor ({@code vertique-codegen-jaxrs}) for {@code @Path} resources;</li>
+ *   <li>the services processor ({@code vertique-codegen-services}) for {@code @ServiceContract}
+ *       implementations;</li>
+ *   <li>the MCP processor ({@code vertique-codegen-mcp}) for types that declare
+ *       {@code @McpTool} methods;</li>
+ *   <li>the REST client processor ({@code vertique-codegen-rest-client}) for {@code @RestClient}
+ *       interfaces.</li>
+ * </ul>
  * Any existing manual {@code @Provides} binding for that type remains authoritative.
  *
  * <p>This annotation has {@link RetentionPolicy#SOURCE} retention — it is consumed only during

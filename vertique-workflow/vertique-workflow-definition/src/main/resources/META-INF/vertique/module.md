@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.workflow.definition`
 > **Artifact:** `vertique-workflow-definition`
-> **Depends on:** workflow-core, vertique-core, jackson-databind, jackson-dataformat-yaml, dev.cel:cel-runtime
+> **Depends on:** workflow-core, vertique-core, jackson-databind, jackson-dataformat-yaml, dev.cel:cel
 
 `vertique-workflow-definition` adds YAML/JSON workflow authoring on top of `workflow-core`. A definition document is parsed, validated, compiled into the same `WorkflowPlan` used by code-first definitions, and stored as a row of the definition table; a node builds the plan from the row when it is first used.
 
@@ -294,9 +294,10 @@ All nodes sharing live documents must have the appropriate loader and applicatio
 are never fetched.
 
 `deprecate(DefinitionKey)` moves an AVAILABLE version to DEPRECATED durably and reports DEPRECATED in service metadata
-and lists. New starts of that version and migrations to it are refused with reason `DEPRECATED`, including a retry of an
-explicit start under an idempotency key used before the deprecation, on every node at once, because a start reads the
-status of the row in its own transaction; instances already pinned to it keep running. Deprecating a version leaves every
+and lists. New starts of that version and migrations to it are refused with reason `DEPRECATED` on every node at once, because a
+start reads the status of the row in its own transaction. A retry of an earlier start under the same idempotency key
+is not a new start: deprecation does not refuse it, and it returns the existing instance when it matches that start (same contract, and any version or scope it names). Instances already pinned to it
+keep running. Deprecating a version leaves every
 other version available. The default scope's current version, which an activation record selects, cannot be deprecated
 until another version is activated or `deactivateDefault` clears the record. It requires the durable registry:
 without one, the returned Future fails.
@@ -341,8 +342,9 @@ default-scope CODE row, and a document of another scope may publish the same id 
 A load into a scope writes only that scope's rows; it never touches the default scope's or another scope's rows. Documents
 packaged with the application are loaded into the default scope. The service does not check identity: the application decides who may load
 into which scope, so restrict `load`, `publish`, `deprecate`, `retire`, `reinstate`, `activate`, `deactivateDefault`, `follow` and `activations` to authorized callers. The
-public `currentStatus` of a version that is only persisted metadata (a candidate or retired row that startup did
-not compile) reports the persisted status instead of returning `null`; it returns `null` only when nothing is known about the version. An equal plan hash no longer proves equal text: a
+status of a version that is only persisted metadata (a candidate or retired row that startup did
+not compile) is read from the durable row: `list` returns its persisted status in `WorkflowDefinitionRecord#status`,
+and `sourceMetadata` returns its attribution, empty when no row exists for the key. An equal plan hash no longer proves equal text: a
 packaged document whose text differs (even by a comment, whitespace or line endings) from the stored text of the
 same id and version fails startup, so bump the version of a changed document; a retired row of that id and version blocks it too.
 
@@ -421,7 +423,7 @@ Applications must also contribute at least one `WorkflowDefinitionSource` for bo
 - **workflow-core** - builder DSL, registry, plan model, callback ids, and workflow errors.
 - **vertique-core** - common exception hierarchy.
 - **jackson-databind** and **jackson-dataformat-yaml** - strict JSON/YAML parsing.
-- **dev.cel:cel-runtime** - default expression engine, isolated behind `ExpressionProfile`.
+- **dev.cel:cel** - default expression engine, isolated behind `ExpressionProfile`.
 
 ---
 

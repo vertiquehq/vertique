@@ -32,10 +32,10 @@ import java.util.Set;
  * }</pre>
  *
  * <p>Named Flyway instances are contributed explicitly: a module or the application adds
- * {@code @Provides @IntoSet MigrationDefinition} bindings, and a {@code flyway.instances} object opts
- * into named mode. This module declares the possibly empty {@code Set<MigrationDefinition>} and the
- * optional {@link DbSchemas} binding, so a component without declarations or without
- * {@link dev.vertique.db.DbModule} still compiles.
+ * {@code @Provides @IntoSet MigrationDefinition} bindings, and {@code flyway.named} set to
+ * {@code true} selects named mode. This module declares the possibly empty
+ * {@code Set<MigrationDefinition>} and the optional {@link DbSchemas} binding, so a component without
+ * declarations or without {@link dev.vertique.db.DbModule} still compiles.
  */
 @Module(includes = DbSchemasModule.class)
 public abstract class DbFlywayModule {
@@ -43,11 +43,13 @@ public abstract class DbFlywayModule {
     /**
      * Provides the Flyway configuration from the {@code "flyway"} config section.
      *
-     * <p>The section is bound in one step. The {@code instances} value decides the mode: absent or JSON
-     * {@code null} keeps the single-Flyway configuration, and an object keyed by instance name, even an
-     * empty one, selects named mode; each key becomes the {@code name} of its entry. Root fields are read
-     * the same way in both modes and unknown root keys are ignored. A named instance object may contain
-     * only the documented override fields.
+     * <p>The section is bound in one step. The {@code named} flag decides the mode: {@code false} or
+     * absent keeps the single-Flyway configuration, and {@code true} selects named mode. The optional
+     * {@code instances} object, keyed by instance name, only overrides settings of individual
+     * instances; each key becomes the {@code name} of its entry. A non-empty {@code instances} without
+     * {@code named} is a configuration failure when the migration runs. Root fields are read the same
+     * way in both modes and unknown root keys are ignored. A named instance object may contain only
+     * the documented override fields.
      *
      * @param config the application config
      * @param parser the injected config parser

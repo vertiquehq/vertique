@@ -91,7 +91,7 @@ public class ItemRepository extends PgSqlRepository {
     public Future<PagedResult<Item>> findItems(PageCursor cursor) {
         return this.<Item>pagedQuery("SELECT id, name, description FROM items")
                 .mapping(Item::fromRow)
-                .keysetColumns("name", "id")
+                .orderBy("name", "id")
                 .page(cursor);
     }
 
@@ -104,7 +104,7 @@ public class ItemRepository extends PgSqlRepository {
 }
 ```
 
-`inTransaction` and `withConnection` (inherited from `AbstractSqlRepository`) automatically translate exceptions via the `PgDbExceptionMapper`.
+`transaction().execute(...)` and `withConnection` (inherited from `AbstractSqlRepository`) automatically translate exceptions via the `PgDbExceptionMapper`.
 
 ### `PgQuery<T>`
 
@@ -112,7 +112,7 @@ PostgreSQL implementation of `Query`. In addition to the base `Query` behavior, 
 
 ```java
 // Lock mode applied via queryClause in a transaction
-inTransaction(conn ->
+transaction().execute(conn ->
     this.<Item>query("SELECT id, name FROM items WHERE id = $1")
         .on(conn)
         .params(Tuple.of(id))
@@ -276,7 +276,7 @@ no message.
 
 ## Configuration
 
-Pool configuration comes from the `"db"` config section (see `DbPoolConfig` in `dev.vertique:vertique-db-core`). The PostgreSQL default port is 5432.
+Pool configuration comes from the `"db"` config section (see `DbPoolConfig` in `dev.vertique:vertique-db-core`). An omitted `port` uses the PostgreSQL default port, 5432; a port below 1 or above 65535 fails startup with a `ConfigurationException` naming `db.port`.
 
 ```json
 {

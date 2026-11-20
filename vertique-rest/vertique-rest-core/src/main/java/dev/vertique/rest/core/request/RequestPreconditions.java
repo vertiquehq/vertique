@@ -256,7 +256,7 @@ public final class RequestPreconditions {
             // Strong comparison requires a strong ETag on the resource side
             return false;
         }
-        List<String> etagValues = parseETagList(ifMatch);
+        List<String> etagValues = parseETagList(ifMatch, true);
         String resourceValue = etag.getValue();
         for (String candidateValue : etagValues) {
             if (resourceValue.equals(candidateValue)) {
@@ -284,7 +284,7 @@ public final class RequestPreconditions {
         if (etag == null) {
             return false;
         }
-        List<String> etagValues = parseETagList(ifNoneMatch);
+        List<String> etagValues = parseETagList(ifNoneMatch, false);
         String resourceValue = etag.getValue();
         for (String candidateValue : etagValues) {
             if (resourceValue.equals(candidateValue)) {
@@ -307,9 +307,11 @@ public final class RequestPreconditions {
      * </ul>
      *
      * @param headerValue the raw header value (e.g. {@code "abc", W/"def", "ghi"})
+     * @param strongOnly  {@code true} to leave weak entries out (strong comparison); {@code false} to
+     *                    include them (weak comparison)
      * @return list of extracted opaque-tag values; never {@code null}
      */
-    private static List<String> parseETagList(String headerValue) {
+    private static List<String> parseETagList(String headerValue, boolean strongOnly) {
         List<String> result = new ArrayList<>();
         int len = headerValue.length();
         int i = 0;
@@ -322,7 +324,9 @@ public final class RequestPreconditions {
                 break;
             }
             // Skip optional W/ prefix
+            boolean weak = false;
             if (i + 2 < len && headerValue.charAt(i) == 'W' && headerValue.charAt(i + 1) == '/') {
+                weak = true;
                 i += 2;
             }
             // Expect opening quote
@@ -334,10 +338,10 @@ public final class RequestPreconditions {
                     i++;
                 }
                 if (i < len) {
-                    result.add(headerValue.substring(start, i));
-                    if (i < len) {
-                        i++; // skip closing quote
+                    if (!(weak && strongOnly)) {
+                        result.add(headerValue.substring(start, i));
                     }
+                    i++; // skip closing quote
                 }
             } else {
                 // Malformed token — skip to next comma

@@ -32,7 +32,10 @@ final class RateLimitObservationSupport {
         }
     }
 
+    @SuppressWarnings("removal")
     private static boolean isFatal(Throwable failure) {
-        return failure instanceof VirtualMachineError || failure instanceof LinkageError;
+        return failure instanceof VirtualMachineError
+                || failure instanceof ThreadDeath
+                || failure instanceof LinkageError;
     }
 }

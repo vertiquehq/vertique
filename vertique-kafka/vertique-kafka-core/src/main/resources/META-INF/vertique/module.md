@@ -78,7 +78,7 @@ new group then reads all retained history. A binding that requires its strategie
 
 | Header | Direction | Meaning |
 |---|---|---|
-| `x-correlation-id` | read on consume | Seeds the record's correlation id. A record without it gets a generated UUID. Bound to MDC as `kafka.correlationId` for the dispatch |
+| `x-correlation-id` | read on consume | Seeds the record's correlation id. A record without it gets a generated UUID. Bound to MDC as `kafka.correlationId` for the dispatch, next to the framework's own `correlationId` key. The record's `kafka.consumer`, `kafka.topic`, `kafka.partition` and `kafka.offset` are bound for the same span, for handler and event-bus bindings alike |
 | the `matchHeader` of a route | read on consume | Selects a model-3 route |
 | `vertique-<namespace>` | read on consume | Decoded into the durable context that is bound for the dispatch. A value that is not a JSON object is skipped |
 | `x-dlq-source-topic` | written on DLQ publish | Original topic; kept when the record already carries all three source headers |
@@ -213,7 +213,7 @@ A binding names a `handler` or a `dispatchTo` target, not both: `build()` throws
 `ignoreUndecodable`, `noHeaderContext` or `requireBindingStrategies` is set and no `handler` is, and when
 `requireBindingStrategies` is set without `commitStrategy(CommitStrategy.MANUAL)`: the default `AUTO` could
 commit past an unsettled record when the consumer closes. A binding
-that names neither a handler nor a target builds, and the registrar refuses it at startup. A handler binding is registered as a handler-kind consumer
+that names neither a handler nor a target builds, and the registrar refuses it at startup with a violation naming the binding, collected with the other registration violations. A handler binding is registered as a handler-kind consumer
 (see Model 4): it receives the decoded `KafkaMessage<V>` with key, topic, partition, offset,
 timestamp and headers, runs with the record's durable context installed, and keeps the binding's
 filter, commit strategy, error and retry strategy, dead-letter topic, custom deserializer and
@@ -681,7 +681,7 @@ build time.
 | `jsonProfile` | unset | JSON mapper profile id for value deserialization |
 | `serdeProperties` | — | Serde and registry config; never passed to the Kafka client |
 | `properties` | — | Kafka-client property overrides for this consumer only |
-| `retry.maxRetries` | `3` | Must be `>= 0` |
+| `retry.maxRetries` | `3` | Must be `>= 0`; `0` sends the first failure straight to `exhaustedStrategy` with no retry |
 | `retry.backoffMs` | `1000` | Must be `>= 0` |
 | `retry.backoffMultiplier` | `2.0` | Must be `>= 1.0` |
 | `retry.maxBackoffMs` | `60000` | Must be `>= 0` |
@@ -698,8 +698,10 @@ Later entries win:
 2. global `kafka.properties`;
 3. per-consumer `kafka.consumers.{name}.properties`.
 
-`sasl.jaas.config` is constructed automatically when `sasl.username` and `sasl.password` are present
-and `sasl.jaas.config` is absent.
+`sasl.jaas.config` is constructed automatically when `security.protocol` contains `SASL`,
+`sasl.username` and `sasl.password` are present, and `sasl.jaas.config` is absent. In every other case
+`sasl.username` and `sasl.password` are dropped before the Kafka client is created, so credentials
+alone never trigger construction. Producers and consumers share this rule.
 
 Producers merge fixed serializers, then the root-level connection scalars, then `kafka.properties`,
 then `kafka.producer.properties`. The framework sets no `acks` or `enable.idempotence`, so producers
@@ -1011,12 +1013,13 @@ First match wins:
 
 1. the endpoint's own `format` — consumer or producer-method config;
 2. global `kafka.format`;
-3. auto-detection — each registered provider's `autoDetects(valueType)` in registration order;
+3. auto-detection — the one registered provider whose `autoDetects(valueType)` returns `true`; if two
+   providers claim the type, startup fails naming both, so set an explicit `format`;
 4. `"json"`, the terminal fallback key.
 
 `"json"` is an ordinary provider key, not a built-in. Resolving to it still requires a registered
-provider, so a format with no provider fails startup with an `IllegalArgumentException` naming the
-missing module.
+provider, so a format with no provider fails startup naming the missing module: as a violation in the
+`KafkaRegistrationException` for a consumer, as an `IllegalArgumentException` for a producer.
 
 ### Worker threading for blocking formats
 
@@ -1108,8 +1111,8 @@ later interceptors are not invoked.
 value, rawEvidence, headers, timestamp, retryCount, filtered, attributes)` — with copy-on-write
 `withFiltered(boolean)` and `withAttribute(String, Object)`. `headers` is the record's
 `KafkaRecordHeaders` as received; both `with…` methods carry the same instance over. `retryCount` is
-0-based and counts Kafka-native redeliveries, so a retry-topic routing decision in `recoverError`
-can read it.
+0-based and counts the in-memory retries started for the record in this consumer, so a retry-topic routing
+decision in `recoverError` can read it. It restarts at 0 after a partition revocation or a restart.
 
 ### Record completion: `onRecordCompleted`
 
@@ -1333,9 +1336,8 @@ default accepts every producer interface.
 | Failure | Cause |
 |---|---|
 | `ConfigurationException` | A consumer config bound is violated — an unknown `commitStrategy`, `errorStrategy`, or `retry.exhaustedStrategy`, `eventBusTimeoutMs <= 0`, `maxInFlight < 1`, `instances < 1`, `maxRetries < 0`, `backoffMs < 0`, `backoffMultiplier < 1.0`, `maxBackoffMs < 0`. Enum failures identify the invalid type and value; other validation messages name the exact config path |
-| `KafkaRegistrationException` | An invalid consumer declaration, or a generated binding companion that is present but malformed. A `ConfigurationException` subtype — broken generated code is never silently skipped |
-| `IllegalArgumentException` | The resolved format has no registered `KafkaSerdeProvider`; the message names the missing module |
-| `IllegalStateException` | `worker = false` on a consumer whose effective deserializer reports `mayBlock()` |
+| `KafkaRegistrationException` | An invalid consumer declaration, or a generated binding companion that is present but malformed. A `ConfigurationException` subtype — broken generated code is never silently skipped. All violations of one registration are collected into one exception, including a consumer's resolved format with no registered `KafkaSerdeProvider` (the message names the missing module), an ambiguous format auto-detection, and `worker = false` on a consumer whose effective deserializer reports `mayBlock()` |
+| `IllegalArgumentException` | A producer's resolved format has no registered `KafkaSerdeProvider`; the message names the missing module |
 | `IllegalStateException` | `bootstrap.servers` missing or blank when the producer factory is constructed |
 
 ### Runtime failures

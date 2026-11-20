@@ -9,13 +9,18 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.core.validation.CharacterPolicy;
+import dev.vertique.core.validation.CharacterPolicyResult;
 import dev.vertique.core.validation.ParameterViolation;
 import dev.vertique.core.validation.PropertyPath;
 import dev.vertique.core.validation.PropertyPath.Index;
 import dev.vertique.core.validation.PropertyPath.Opaque;
 import dev.vertique.core.validation.PropertyPath.Property;
+import dev.vertique.validation.constraints.AllowedCharacters;
 import jakarta.validation.Constraint;
 import jakarta.validation.ConstraintValidator;
 import jakarta.validation.ConstraintValidatorContext;
@@ -147,8 +152,37 @@ class DefaultBeanValidatorPropertyPathTest {
         public Map<String, List<@Valid Item>> grouped;
     }
 
+    public static class NoDigitsPolicy implements CharacterPolicy {
+        @Override
+        public CharacterPolicyResult validate(String value, InputValueContext context) {
+            for (int i = 0; i < value.length(); i++) {
+                if (Character.isDigit(value.charAt(i))) {
+                    return CharacterPolicyResult.failed(i, value.charAt(i), "digits not allowed");
+                }
+            }
+            return CharacterPolicyResult.passed();
+        }
+    }
+
+    public static class Label {
+        public String text;
+    }
+
+    @AllowedCharacters(policy = NoDigitsPolicy.class)
+    public static class CharacterBag {
+        public Map<String, String> attributes;
+
+        public List<String> tags;
+
+        public List<Label> labels;
+
+        public Map<String, Label> labelsByKey;
+    }
+
     public static class Resource {
         public void create(@Valid Order order) {}
+
+        public void createBag(@Valid CharacterBag bag) {}
 
         public void createCatalog(@Valid Catalog catalog) {}
 
@@ -264,6 +298,74 @@ class DefaultBeanValidatorPropertyPathTest {
                             .forEach(s -> assertFalse(
                                     s.toString().contains(KEY_SENTINEL), () -> "map key leaked into segment: " + s));
                 }));
+    }
+
+    @Test
+    @DisplayName("a map entry under a type-level character check becomes an opaque marker, not its key")
+    void mapEntryUnderTypeLevelCharacterCheckBecomesOpaqueMarker() throws Exception {
+        // Given
+        var bag = new CharacterBag();
+        bag.attributes = new HashMap<>(Map.of(KEY_SENTINEL, "1"));
+
+        // When
+        var violations =
+                beanValidator.checkParameters(RESOURCE, method("createBag", CharacterBag.class), new Object[] {bag});
+
+        // Then
+        assertEquals(1, violations.size(), () -> describe(violations));
+        var violation = violations.get(0);
+        assertAll(
+                () -> assertFalse(
+                        violation.detail().path().contains(KEY_SENTINEL),
+                        () -> "map key leaked into detail path: "
+                                + violation.detail().path()),
+                () -> assertEquals(
+                        path(new Property("attributes", CharacterBag.class), new Opaque()), violation.propertyPath()));
+    }
+
+    @Test
+    @DisplayName("a list element under a type-level character check becomes an index segment")
+    void listElementUnderTypeLevelCharacterCheckBecomesIndexSegment() throws Exception {
+        // Given
+        var bag = new CharacterBag();
+        bag.tags = new ArrayList<>(List.of("ok", "1"));
+
+        // When
+        var violations =
+                beanValidator.checkParameters(RESOURCE, method("createBag", CharacterBag.class), new Object[] {bag});
+
+        // Then
+        assertEquals(1, violations.size(), () -> describe(violations));
+        assertEquals(
+                path(new Property("tags", CharacterBag.class), new Index(1)),
+                violations.get(0).propertyPath());
+    }
+
+    @Test
+    @DisplayName("a string inside a list element under a type-level character check keeps property, index, property")
+    void nestedStringUnderTypeLevelCharacterCheckKeepsEachSegment() throws Exception {
+        // Given
+        var bag = new CharacterBag();
+        var ok = new Label();
+        ok.text = "ok";
+        var bad = new Label();
+        bad.text = "1";
+        bag.labels = new ArrayList<>(List.of(ok, bad));
+        var keyed = new Label();
+        keyed.text = "2";
+        bag.labelsByKey = new HashMap<>(Map.of(KEY_SENTINEL, keyed));
+
+        // When
+        var violations =
+                beanValidator.checkParameters(RESOURCE, method("createBag", CharacterBag.class), new Object[] {bag});
+
+        // Then
+        assertEquals(2, violations.size(), () -> describe(violations));
+        var paths = violations.stream().map(v -> v.detail().path()).toList();
+        assertAll(
+                () -> assertTrue(paths.contains("labels[1].text"), () -> "paths: " + paths),
+                () -> assertTrue(paths.contains("labelsByKey[].text"), () -> "paths: " + paths),
+                () -> assertFalse(paths.toString().contains(KEY_SENTINEL), () -> "map key leaked: " + paths));
     }
 
     @Test

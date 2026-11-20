@@ -176,6 +176,16 @@ class JaxRsRouteRegistrarTest {
         }
     }
 
+    @Path("/bad-sse")
+    static class InvalidSseReturnTypeResource {
+        @GET
+        @Produces("text/event-stream")
+        @Operation(operationId = "badSse")
+        public String stream() {
+            return "not a stream";
+        }
+    }
+
     @Path("/dup-a")
     static class DuplicateOpIdResourceA {
         @GET
@@ -524,6 +534,35 @@ class JaxRsRouteRegistrarTest {
                 RouteRegistrationViolation.ViolationType.MULTIPLE_BODY_PARAMS,
                 ex.violations().get(0).type());
         assertEquals("multiBody", ex.violations().get(0).operationId());
+    }
+
+    @Test
+    @DisplayName("Should collect an SSE return type violation with the other route violations")
+    void shouldCollectSseReturnTypeViolationWithOtherViolations() {
+        RouteRegistrationException ex = assertThrows(
+                RouteRegistrationException.class,
+                () -> RegistrarTestSupport.registerAll(
+                        registrar,
+                        Set.of(new MultipleBodyParamsResource(), new InvalidSseReturnTypeResource()),
+                        router,
+                        RegistrarTestSupport.TEST_MOUNT_META,
+                        List.of(),
+                        List.of(),
+                        null,
+                        false,
+                        List.of(),
+                        List.of(),
+                        "OFF",
+                        null,
+                        null,
+                        null,
+                        false));
+
+        assertEquals(
+                Set.of("multiBody", "badSse"),
+                ex.violations().stream()
+                        .map(RouteRegistrationViolation::operationId)
+                        .collect(Collectors.toSet()));
     }
 
     @Test

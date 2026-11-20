@@ -754,7 +754,7 @@ public class JaxRsRouteRegistrar {
         MediaTypeValidator.validate(allMethods, decoders, encoders, mediaTypeValidation);
 
         // Validate SSE endpoints return ReadStream<SseEvent>
-        validateSseReturnTypes(allMethods);
+        validateSseReturnTypes(allMethods, routeViolations);
 
         // After all operations: fail fast on any violations
         if (!securityViolations.isEmpty()) {
@@ -1688,20 +1688,22 @@ public class JaxRsRouteRegistrar {
     }
 
     /**
-     * Validates that all SSE endpoints (those declaring {@code @Produces("text/event-stream")})
-     * return {@code ReadStream<SseEvent>} or {@code Future<ReadStream<SseEvent>>}. This prevents
-     * endpoints from passing startup media-type validation but failing at runtime when the
-     * {@link SseBodyEncoder} encounters a non-stream entity.
+     * Validates that the two halves of the SSE contract agree: a method declaring
+     * {@code @Produces("text/event-stream")} returns {@code ReadStream<SseEvent>} or
+     * {@code Future<ReadStream<SseEvent>>}, and a method returning such a stream declares
+     * {@code text/event-stream}. This prevents endpoints from passing startup media-type validation
+     * but failing at runtime when the {@link SseBodyEncoder} meets a non-stream entity, or when a
+     * stream is negotiated to a media type that cannot encode it. Each fault is added to
+     * {@code routeViolations}, so it is reported with the other route violations.
      *
      * @param methods the list of discovered resource method metadata to validate
-     * @throws RestConfigurationException if any SSE endpoint has an invalid return type
+     * @param routeViolations the accumulator to which each SSE fault is added
      */
-    static void validateSseReturnTypes(List<ResourceMethodMeta> methods) {
-        List<String> violations = new ArrayList<>();
+    static void validateSseReturnTypes(
+            List<ResourceMethodMeta> methods, List<RouteRegistrationViolation> routeViolations) {
         for (ResourceMethodMeta meta : methods) {
             if (meta.mediaTypes() == null) continue;
             boolean isSse = meta.mediaTypes().produces().stream().anyMatch(t -> t.contains("text/event-stream"));
-            if (!isSse) continue;
 
             Class<?> context = meta.resourceInstance() != null
                     ? meta.resourceInstance().getClass()
@@ -1716,28 +1718,33 @@ public class JaxRsRouteRegistrar {
                 innerType = pt.getActualTypeArguments()[0];
             }
 
-            // Check: must be ReadStream<SseEvent>
-            boolean valid = false;
+            // Is it ReadStream<SseEvent>?
+            boolean sseStream = false;
             if (innerType instanceof ParameterizedType pt) {
                 Type rawType = pt.getRawType();
                 if (rawType instanceof Class<?> rawClass && ReadStream.class.isAssignableFrom(rawClass)) {
                     Type[] typeArgs = pt.getActualTypeArguments();
                     if (typeArgs.length == 1 && typeArgs[0] == SseEvent.class) {
-                        valid = true;
+                        sseStream = true;
                     }
                 }
             }
 
-            if (!valid) {
-                violations.add("Operation '" + meta.operationId()
-                        + "' declares @Produces(\"text/event-stream\") but returns "
-                        + meta.method().getGenericReturnType().getTypeName()
-                        + "; SSE endpoints must return ReadStream<SseEvent> or Future<ReadStream<SseEvent>>");
+            if (isSse && !sseStream) {
+                routeViolations.add(new RouteRegistrationViolation(
+                        meta.operationId(),
+                        RouteRegistrationViolation.ViolationType.INVALID_SSE_DECLARATION,
+                        "declares @Produces(\"text/event-stream\") but returns "
+                                + meta.method().getGenericReturnType().getTypeName()
+                                + "; SSE endpoints must return ReadStream<SseEvent> or Future<ReadStream<SseEvent>>"));
+            } else if (sseStream && !isSse) {
+                routeViolations.add(new RouteRegistrationViolation(
+                        meta.operationId(),
+                        RouteRegistrationViolation.ViolationType.INVALID_SSE_DECLARATION,
+                        "returns "
+                                + meta.method().getGenericReturnType().getTypeName()
+                                + " but does not declare @Produces(\"text/event-stream\")"));
             }
-        }
-        if (!violations.isEmpty()) {
-            throw new RestConfigurationException(
-                    "SSE return type validation failed:\n  " + String.join("\n  ", violations));
         }
     }
 

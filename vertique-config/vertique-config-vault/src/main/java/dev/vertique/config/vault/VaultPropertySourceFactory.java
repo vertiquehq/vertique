@@ -12,6 +12,7 @@ import io.vertx.core.json.JsonObject;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 
 /**
@@ -150,7 +151,12 @@ public class VaultPropertySourceFactory implements ConfigPropertySourceFactory {
     @Override
     public ConfigPropertySource create(String name, JsonObject sourceConfig) {
         VaultSourceSettings settings = parseSettings(name, sourceConfig);
-        VaultGateway gateway = gatewayFactory.apply(settings.connection());
+        VaultGateway gateway;
+        try {
+            gateway = gatewayFactory.apply(settings.connection());
+        } catch (VaultReadException e) {
+            throw new ConfigPropertySourceException(name, e.getMessage(), e);
+        }
         return new VaultPropertySource(name, gateway, settings.paths());
     }
 
@@ -166,21 +172,22 @@ public class VaultPropertySourceFactory implements ConfigPropertySourceFactory {
      */
     private VaultSourceSettings parseSettings(String name, JsonObject sourceConfig) {
         // --- address ---
-        String address = requireNonBlank(name, "address", sourceConfig.getString("address"));
+        String address =
+                requireNonBlank(name, "address", typed(name, "address", () -> sourceConfig.getString("address")));
 
         // --- namespace (optional) ---
-        String namespace = sourceConfig.getString("namespace");
+        String namespace = typed(name, "namespace", () -> sourceConfig.getString("namespace"));
 
         // --- timeouts ---
         int openTimeoutMs = SourceConfigValues.positiveInt(name, sourceConfig, "openTimeoutMs", DEFAULT_TIMEOUT_MS);
         int readTimeoutMs = SourceConfigValues.positiveInt(name, sourceConfig, "readTimeoutMs", DEFAULT_TIMEOUT_MS);
 
         // --- auth ---
-        JsonObject authObj = sourceConfig.getJsonObject("auth");
+        JsonObject authObj = typed(name, "auth", () -> sourceConfig.getJsonObject("auth"));
         VaultAuthSettings authSettings = parseAuth(name, authObj, envLookup);
 
         // --- paths ---
-        JsonArray pathsArray = sourceConfig.getJsonArray("paths");
+        JsonArray pathsArray = typed(name, "paths", () -> sourceConfig.getJsonArray("paths"));
         if (pathsArray == null || pathsArray.isEmpty()) {
             throw new ConfigPropertySourceException(name, "required field 'paths' is missing or empty");
         }
@@ -213,9 +220,10 @@ public class VaultPropertySourceFactory implements ConfigPropertySourceFactory {
             return resolveTokenAuth(name, null, envLookup);
         }
 
-        String method = authObj.getString("method", "token");
+        String method = typed(name, "auth.method", () -> authObj.getString("method", "token"));
         return switch (method) {
-            case "token" -> resolveTokenAuth(name, authObj.getString("token"), envLookup);
+            case "token" ->
+                resolveTokenAuth(name, typed(name, "auth.token", () -> authObj.getString("token")), envLookup);
             case "kubernetes" -> parseKubernetesAuth(name, authObj);
             case "approle" -> parseAppRoleAuth(name, authObj);
             default ->
@@ -264,8 +272,8 @@ public class VaultPropertySourceFactory implements ConfigPropertySourceFactory {
      * @throws ConfigPropertySourceException if {@code role} is missing or blank
      */
     private static VaultAuthSettings.Kubernetes parseKubernetesAuth(String name, JsonObject authObj) {
-        String role = requireNonBlank(name, "auth.role", authObj.getString("role"));
-        String jwtPath = authObj.getString("jwtPath", DEFAULT_KUBERNETES_JWT_PATH);
+        String role = requireNonBlank(name, "auth.role", typed(name, "auth.role", () -> authObj.getString("role")));
+        String jwtPath = typed(name, "auth.jwtPath", () -> authObj.getString("jwtPath", DEFAULT_KUBERNETES_JWT_PATH));
         return new VaultAuthSettings.Kubernetes(role, jwtPath);
     }
 
@@ -278,8 +286,10 @@ public class VaultPropertySourceFactory implements ConfigPropertySourceFactory {
      * @throws ConfigPropertySourceException if {@code roleId} or {@code secretId} is missing or blank
      */
     private static VaultAuthSettings.AppRole parseAppRoleAuth(String name, JsonObject authObj) {
-        String roleId = requireNonBlank(name, "auth.roleId", authObj.getString("roleId"));
-        String secretId = requireNonBlank(name, "auth.secretId", authObj.getString("secretId"));
+        String roleId =
+                requireNonBlank(name, "auth.roleId", typed(name, "auth.roleId", () -> authObj.getString("roleId")));
+        String secretId = requireNonBlank(
+                name, "auth.secretId", typed(name, "auth.secretId", () -> authObj.getString("secretId")));
         return new VaultAuthSettings.AppRole(roleId, secretId);
     }
 
@@ -295,19 +305,44 @@ public class VaultPropertySourceFactory implements ConfigPropertySourceFactory {
     private static List<VaultPathEntry> parsePaths(String name, JsonArray pathsArray) {
         List<VaultPathEntry> result = new ArrayList<>(pathsArray.size());
         for (int i = 0; i < pathsArray.size(); i++) {
-            JsonObject entry = pathsArray.getJsonObject(i);
-            String path = entry.getString("path");
+            int index = i;
+            String field = "paths[" + index + "]";
+            JsonObject entry = typed(name, field, () -> pathsArray.getJsonObject(index));
+            if (entry == null) {
+                throw new ConfigPropertySourceException(name, "path entry at index " + index + " is not an object");
+            }
+            String path = typed(name, field + ".path", () -> entry.getString("path"));
             if (path == null || path.isBlank()) {
                 throw new ConfigPropertySourceException(
                         name, "path entry at index " + i + " has missing or blank 'path' field");
             }
-            String prefix = entry.getString("prefix", "");
+            String prefix = typed(name, field + ".prefix", () -> entry.getString("prefix", ""));
             result.add(new VaultPathEntry(path, prefix));
         }
         return List.copyOf(result);
     }
 
     // --- Validation helpers ---
+
+    /**
+     * Reads a configuration value, converting a wrong-typed value (for example a string where an
+     * object is required) into a create-time {@link ConfigPropertySourceException} that names the
+     * field and never echoes the value.
+     *
+     * @param sourceName the source instance name for the exception message
+     * @param field      the config field name (used in the error message)
+     * @param read       the typed read of the field
+     * @param <T>        the field type
+     * @return the value read
+     * @throws ConfigPropertySourceException if the value does not have the expected type
+     */
+    private static <T> T typed(String sourceName, String field, Supplier<T> read) {
+        try {
+            return read.get();
+        } catch (ClassCastException e) {
+            throw new ConfigPropertySourceException(sourceName, "field '" + field + "' has the wrong type");
+        }
+    }
 
     /**
      * Asserts that a string field is non-null and non-blank, throwing a create-time

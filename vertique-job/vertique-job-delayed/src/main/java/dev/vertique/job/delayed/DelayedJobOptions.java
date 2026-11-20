@@ -81,7 +81,7 @@ public class DelayedJobOptions {
      *
      * <p>When non-{@code null}, this value bypasses {@code mergeCaptured}: the
      * {@link DelayedJobClientProxy} threads it directly onto {@code DelayedJob.builder().metadata(...)}
-     * and routes the downstream call to the package-private
+     * and routes the downstream call to the public
      * {@code DelayedJobService.enqueuePremerged(...)} variant, which persists the document as-is into
      * {@code job_executions.metadata} without re-running durable capture or collision detection.
      *

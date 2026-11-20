@@ -74,7 +74,8 @@ import lombok.extern.slf4j.Slf4j;
  * hook is logged and swallowed, so it affects neither the send result nor the hooks after it. An
  * {@link Exception} or {@link AssertionError} is logged at warn level each time. A
  * {@link LinkageError} means the hook cannot run at all and would repeat for every send, so it is
- * logged at error level once per hook class for the life of the factory.
+ * logged at error level the first time and after that at most once every five minutes per hook
+ * class and callback.
  */
 @Slf4j
 public class KafkaProducerFactory {

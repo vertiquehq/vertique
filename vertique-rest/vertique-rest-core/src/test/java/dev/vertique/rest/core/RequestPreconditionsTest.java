@@ -248,6 +248,18 @@ class RequestPreconditionsTest {
         assertEquals(412, result.getStatus());
     }
 
+    @Test
+    @DisplayName("Should return 412 when If-Match lists only a weak ETag even if the resource ETag is strong")
+    void shouldReturn412WhenIfMatchListsOnlyWeakEtag() {
+        RoutingContext ctx = mockContext(HttpMethod.PUT, null, "W/\"abc\"", null, null);
+        EntityTag etag = new EntityTag("abc"); // strong — a weak listed tag never matches under strong comparison
+
+        Response result = RequestPreconditions.from(ctx).evaluate(etag);
+
+        assertNotNull(result);
+        assertEquals(412, result.getStatus());
+    }
+
     // --- evaluate(EntityTag, Instant) — If-Modified-Since / If-Unmodified-Since ---
 
     @Test

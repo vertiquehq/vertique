@@ -25,13 +25,15 @@ import java.util.Optional;
  * @param hmacKeys           the HMAC keyset backing {@link IdentitySnapshotCodec}; required — snapshot
  *                           signing/verification cannot proceed without at least an active key
  * @param maxCarrierLifetimeMs the carrier-lifetime freshness budget in milliseconds (measured from a
- *                           snapshot's {@code issuedAt}); {@code null} = unbounded/absent until an
+ *                           snapshot's {@code issuedAt}); {@code null} = no configured budget until an
  *                           operator configures it (mandatory-finite once any target is
  *                           {@link CarriageRequirement#REQUIRED} — see the compact constructor)
  * @param maxSnapshotLifetimeMs the snapshot-lifetime freshness budget in milliseconds (measured from a
  *                           snapshot's immutable {@code capturedAt}, so a chained re-encode cannot renew
- *                           authority); {@code null} = unbounded/absent until an operator configures it
- *                           (same mandatory-finite rule as {@code maxCarrierLifetimeMs})
+ *                           authority); {@code null} = no configured budget until an operator configures it
+ *                           (same mandatory-finite rule as {@code maxCarrierLifetimeMs}); the signed
+ *                           {@code expiresAt} still bounds the snapshot, at the capture instant plus
+ *                           24 hours by default
  * @param clockSkewMs        the tolerated clock skew in milliseconds applied by the freshness policy;
  *                           defaults to {@code 30000} (30s) when omitted
  * @param carriageRequirements per-durable-target-kind {@link CarriageRequirement} (keyed on the
@@ -56,7 +58,8 @@ public record IdentitySnapshotConfig(
     /**
      * Compact constructor validating {@code hmacKeys} is present and, when any configured target-kind
      * is {@link CarriageRequirement#REQUIRED}, that both freshness budgets are finite — a
-     * never-expiring {@code REQUIRED} snapshot would otherwise be a standing bearer credential.
+     * {@code REQUIRED} snapshot without a budget would otherwise be bounded only by the default
+     * 24-hour signed expiry.
      *
      * @throws ConfigurationException if {@code hmacKeys} is {@code null}, or if any
      *                                {@code carriageRequirements} entry is {@code REQUIRED} while

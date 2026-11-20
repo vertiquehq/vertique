@@ -41,8 +41,9 @@ import org.opentest4j.AssertionFailedError;
  * }
  * }</pre>
  *
- * <p>All assertion failures include the full compilation diagnostics in the failure message so
- * downstream tests get actionable output.
+ * <p>Assertion failures include the full compilation diagnostics in the failure message so
+ * downstream tests get actionable output; the two generated-source assertions embed the generated
+ * source instead once it exists.
  */
 public final class ProcessorTestHarness {
 

@@ -786,6 +786,28 @@ class RequestOriginCapturerTest {
         }
 
         @Test
+        @DisplayName("a native IPv6 address is reported in lowercase compressed form")
+        void nativeIpv6AddressIsReportedInCanonicalForm() {
+            HttpServerRequest request =
+                    stubRequest("2001:DB8:0:0:0:0:0:1", 0, "http", "example.com", "2001:0db8:0:0:1:0:0:2");
+            RequestOrigin origin = defaultCapturer().capture(request);
+
+            assertEquals("2001:db8::1", origin.remoteIp());
+            assertEquals("2001:db8::1:0:0:2", origin.forwardedFor().get(0));
+        }
+
+        @Test
+        @DisplayName("IPv6 canonical form follows RFC 5952 for edge cases")
+        void ipv6CanonicalEdgeCases() {
+            assertEquals("::", RequestOriginCapturer.normalizeIp("0:0:0:0:0:0:0:0"));
+            assertEquals("::1", RequestOriginCapturer.normalizeIp("0:0:0:0:0:0:0:1"));
+            assertEquals("1::", RequestOriginCapturer.normalizeIp("1:0:0:0:0:0:0:0"));
+            assertEquals("2001:db8:0:1:1:1:1:1", RequestOriginCapturer.normalizeIp("2001:DB8:0:1:1:1:1:1"));
+            assertEquals("2001:0:0:1::1", RequestOriginCapturer.normalizeIp("2001:0:0:1:0:0:0:1"));
+            assertEquals("fe80::1%eth0", RequestOriginCapturer.normalizeIp("FE80:0:0:0:0:0:0:1%eth0"));
+        }
+
+        @Test
         @DisplayName("plain IPv4 address is not mangled")
         void plainIpv4NotMangled() {
             HttpServerRequest request = stubRequest("10.0.0.1", 0, "http", "example.com");

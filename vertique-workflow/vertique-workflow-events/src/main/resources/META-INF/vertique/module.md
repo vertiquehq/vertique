@@ -59,6 +59,34 @@ The outbox row is written in the scope the instance was started in: `scope_key` 
 
 The two scope fields were added without changing `schemaVersion`. Adding fields or event types is intended to be non-breaking. Removing or renaming existing fields requires a new schema version.
 
+### Event Types
+
+`eventType` is currently one of the following strings. Each is the name of a constant of `WorkflowEventType`, which the engine uses to label what it emits; the envelope itself carries the string.
+
+| `eventType` | Emitted when |
+|---|---|
+| `WORKFLOW_STARTED` | The instance is created and its first step is reached |
+| `WORKFLOW_COMPLETED` | The instance reaches a complete node |
+| `WORKFLOW_FAILED` | The instance reaches a fail node, or fails |
+| `WORKFLOW_CANCELLED` | The instance is cancelled by an operator or an API call |
+| `WORKFLOW_COMPENSATING` | Compensation starts and the instance becomes `COMPENSATING` |
+| `WORKFLOW_COMPENSATED` | Every compensation step is recorded and the instance becomes `COMPENSATED` |
+| `TASK_CREATED` | A human task is created and the workflow waits for an actor's decision |
+| `TASK_COMPLETED` | An actor's decision completes the task |
+| `TASK_CANCELLED` | A task is cancelled; `attributes.cause` is `WORKFLOW_CANCELLED` or `BRANCH_CANCELLED` |
+| `TASK_EXPIRED` | A task's due-date timer fires before the task is completed |
+| `TASK_REASSIGNED` | A task's assignment changes to another user, role or queue |
+| `TASK_REMINDER` | A task reminder timer fires; no workflow state changes |
+
+`WORKFLOW_EXPIRED` is a reserved name that the engine does not emit.
+
+`TASK_REMINDER` carries `reminderIndex`, `isLast`, and `kind` in `attributes`. `kind` is one of two reminder kinds:
+
+| `attributes.kind` | Reminder mode | Further attribute |
+|---|---|---|
+| `ONE_SHOT_OFFSET` | One timer per declared offset from task creation | `offsetFromCreation`, an ISO-8601 duration |
+| `RECURRING` | One timer per interval, the next scheduled as each fires | `interval`, an ISO-8601 duration |
+
 ---
 
 ## Required App Wiring
@@ -91,7 +119,6 @@ public abstract class AppModule {
 })
 public interface AppComponent {
     WorkflowOperations workflowOperations();
-    WorkflowEventsComposeValidator workflowEventsComposeValidator();
 }
 ```
 
@@ -109,7 +136,7 @@ static WorkflowEventOutboxBinding workflowEventBinding() {
 
 For a service destination, install the module that provides the `SERVICE` outbox destination handler.
 
-Expose and call `workflowEventsComposeValidator()` during startup if you want fail-fast validation before the first workflow operation constructs the engine graph.
+The `VALIDATE` startup phase runs `WorkflowEventsComposeValidator` with every other compose validator, so the component needs no accessor for it. A destination with no registered handler fails startup there.
 
 ---
 

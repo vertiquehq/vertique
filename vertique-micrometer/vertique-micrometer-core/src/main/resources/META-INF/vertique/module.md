@@ -128,8 +128,13 @@ shutdown and rollback.
 
 ### MeterRegistryHolder
 
-Package-private static holder. `registry()` is never null — it returns an empty composite before
-bootstrap and the fully assembled composite after.
+Package-private static holder. `registry()` is never null and always returns the same outer composite
+for the JVM lifetime — it is never replaced, not even by `resetForTests()`. The outer composite has no
+children before bootstrap, so recording is a no-op. `bootstrap(assembly)` adds the assembly's composite as a
+child of the outer, and Micrometer late-wires meters created through the outer earlier to that child. One
+permanent delegating `MeterFilter`, installed on the outer at class initialization, applies the assembly's
+filters (common tags, cardinality guards and, when enabled, the percentile-histogram filter) to meters created through the outer; without it they would register
+directly in the backends and bypass those filters.
 
 ```java
 static CompositeMeterRegistry registry();    // never null
@@ -143,8 +148,12 @@ static void resetForTests();                 // @AfterEach test isolation
 - `bootstrap()` throws `IllegalStateException` on the second call. `contribute()` preflights with
   `bootstrapped()` and throws `MetricsBootstrapException` before assembly begins, so embedded
   multi-launch fails loud rather than silently reusing stale backends.
-- `resetForTests()` closes any existing assembly and restores the pre-bootstrap state. Call it from
+- `resetForTests()` closes any existing assembly, removes its composite from the outer, clears the active
+  filters, and restores the pre-bootstrap state; the outer composite instance is kept. Call it from
   `@AfterEach` in any test that exercises the contributor or the holder directly.
+- A meter created through the outer before bootstrap keeps its unfiltered id (no common tags) after
+  bootstrap, because Micrometer caches each meter's id mapping. In the supported application flow no meter
+  exists before bootstrap.
 
 ### MicrometerMetricsContributor
 
@@ -171,6 +180,8 @@ normal stop and subsequent-contributor failures — but never after a failed act
 - The `vertx.options` overlay in the launcher replaces the `VertxOptions` JSON, but the metrics
   **factory** (`withMetrics(...)`) is builder state, not options state, and survives the overlay.
   `MetricsOptions` retains its source JSON across the overlay-triggered rebuild. No action needed.
+- A `metrics` value that cannot be bound (for example a non-boolean `metrics.enabled`) fails startup with a
+  `ConfigurationException` that names the `metrics` section and carries no value or cause.
 - `ConfigurationException` from tag validation is re-thrown as-is. All other exceptions are wrapped
   in `MetricsBootstrapException` (cause severed) to prevent backend SDK messages from reaching the
   launcher log.
@@ -202,6 +213,8 @@ Bindings provided:
 | `MeterRegistry` | — | `MeterRegistryHolder.registry()` |
 | `MetricsConfig` | — | Deserialized from `metrics` config section |
 | `SecurityEventObserver` | `@IntoSet` | `SecurityMetricsObserver` |
+| `Optional<MetricsConfig>` | — | `@BindsOptionalOf` declaration; resolves to the `MetricsConfig` above |
+| `AspectProvider<Timed>` | — | `TimedAspect` |
 
 Adapter modules gate their hot-path callbacks by declaring `@BindsOptionalOf MetricsConfig` and
 injecting `Optional<MetricsConfig>`. They read `.map(MetricsConfig::enabled).orElse(true)` — absent
@@ -273,8 +286,10 @@ extra tag (for example `workflow_kind`) before upgrading.
 ### `@Timed` and `TimedAspect`
 
 Times a method and records the sample on the application registry. `@Timed` is the annotation an
-application puts on its own beans; `TimedAspect` is the `AspectProvider<Timed>` that implements it,
-and an application binds it once in a Dagger module.
+application puts on its own beans; `TimedAspect` is the `AspectProvider<Timed>` that implements it.
+`MicrometerModule` binds `TimedAspect` as `AspectProvider<Timed>`, so an application that installs
+`MicrometerModule` binds nothing more; a second `AspectProvider<Timed>` binding would be a duplicate in
+the Dagger graph.
 
 ```java
 @Timed                                   // vertique.greeter.greet
@@ -284,12 +299,18 @@ String greet(String name) { ... }
 Future<Receipt> checkout(Cart cart) { ... }
 ```
 
+An application that does not install `MicrometerModule` binds it once in its own Dagger module,
+together with the optional `MetricsConfig` declaration `TimedAspect` injects:
+
 ```java
 @Module
 abstract class AopBindingsModule {
 
     @Binds
     abstract AspectProvider<Timed> bindTimedAspect(TimedAspect aspect);
+
+    @BindsOptionalOf
+    abstract MetricsConfig optionalMetricsConfig();
 }
 ```
 

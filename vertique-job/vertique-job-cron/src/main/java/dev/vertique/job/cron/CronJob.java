@@ -74,8 +74,11 @@ public @interface CronJob {
     String timezone() default "UTC";
 
     /**
-     * Maximum number of execution attempts before the job is moved to the dead-letter state.
-     * Defaults to {@code 3}.
+     * Maximum number of execution attempts, recorded on each execution record. Defaults to
+     * {@code 3}.
+     *
+     * <p>Cron does not retry: a failed execution is recorded as failed and the next scheduled fire
+     * produces a fresh execution, so this value is never used to dead-letter a cron job.
      *
      * @return the maximum attempt count (must be positive)
      */
