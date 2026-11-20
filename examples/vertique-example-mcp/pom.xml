@@ -73,6 +73,21 @@ SPDX-License-Identifier: EUPL-1.2
 
     <build>
         <plugins>
+            <plugin>
+                <groupId>com.google.cloud.tools</groupId>
+                <artifactId>jib-maven-plugin</artifactId>
+                <configuration>
+                    <from>
+                        <image>eclipse-temurin:25-jre</image>
+                    </from>
+                    <to>
+                        <image>vertique-example-mcp</image>
+                    </to>
+                    <container>
+                        <mainClass>dev.vertique.launcher.VertiqueApplication</mainClass>
+                    </container>
+                </configuration>
+            </plugin>
             <plugin><groupId>org.codehaus.mojo</groupId><artifactId>exec-maven-plugin</artifactId>
                 <configuration><mainClass>dev.vertique.launcher.VertiqueApplication</mainClass></configuration>
             </plugin>
