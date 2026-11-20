@@ -67,8 +67,12 @@ import java.util.function.UnaryOperator;
  *
  * <h2>Redaction</h2>
  * <p>Error messages include field names and structural descriptions. They MUST NOT include any
- * resolved secret value. The bad auth {@code method} string is safe to echo because it is a
- * structural identifier, not a secret.
+ * configured value: a mistyped secret can sit in any field, so a rejected value is never echoed,
+ * not even the auth {@code method} string or the Kubernetes JWT path.
+ *
+ * <h2>Blank values</h2>
+ * <p>A blank {@code namespace}, {@code auth.method} or {@code auth.jwtPath} counts as absent and
+ * takes the same default as an omitted key.
  *
  * @see VaultPropertySource
  */
@@ -176,7 +180,7 @@ public class VaultPropertySourceFactory implements ConfigPropertySourceFactory {
                 requireNonBlank(name, "address", typed(name, "address", () -> sourceConfig.getString("address")));
 
         // --- namespace (optional) ---
-        String namespace = typed(name, "namespace", () -> sourceConfig.getString("namespace"));
+        String namespace = blankToNull(typed(name, "namespace", () -> sourceConfig.getString("namespace")));
 
         // --- timeouts ---
         int openTimeoutMs = SourceConfigValues.positiveInt(name, sourceConfig, "openTimeoutMs", DEFAULT_TIMEOUT_MS);
@@ -220,7 +224,8 @@ public class VaultPropertySourceFactory implements ConfigPropertySourceFactory {
             return resolveTokenAuth(name, null, envLookup);
         }
 
-        String method = typed(name, "auth.method", () -> authObj.getString("method", "token"));
+        String configuredMethod = blankToNull(typed(name, "auth.method", () -> authObj.getString("method")));
+        String method = configuredMethod != null ? configuredMethod : "token";
         return switch (method) {
             case "token" ->
                 resolveTokenAuth(name, typed(name, "auth.token", () -> authObj.getString("token")), envLookup);
@@ -228,7 +233,7 @@ public class VaultPropertySourceFactory implements ConfigPropertySourceFactory {
             case "approle" -> parseAppRoleAuth(name, authObj);
             default ->
                 throw new ConfigPropertySourceException(
-                        name, "unknown auth method '" + method + "'; supported: token, kubernetes, approle");
+                        name, "field 'auth.method' must be one of: token, kubernetes, approle");
         };
     }
 
@@ -273,7 +278,8 @@ public class VaultPropertySourceFactory implements ConfigPropertySourceFactory {
      */
     private static VaultAuthSettings.Kubernetes parseKubernetesAuth(String name, JsonObject authObj) {
         String role = requireNonBlank(name, "auth.role", typed(name, "auth.role", () -> authObj.getString("role")));
-        String jwtPath = typed(name, "auth.jwtPath", () -> authObj.getString("jwtPath", DEFAULT_KUBERNETES_JWT_PATH));
+        String configuredJwtPath = blankToNull(typed(name, "auth.jwtPath", () -> authObj.getString("jwtPath")));
+        String jwtPath = configuredJwtPath != null ? configuredJwtPath : DEFAULT_KUBERNETES_JWT_PATH;
         return new VaultAuthSettings.Kubernetes(role, jwtPath);
     }
 
@@ -342,6 +348,16 @@ public class VaultPropertySourceFactory implements ConfigPropertySourceFactory {
         } catch (ClassCastException e) {
             throw new ConfigPropertySourceException(sourceName, "field '" + field + "' has the wrong type");
         }
+    }
+
+    /**
+     * Treats a blank string as absent.
+     *
+     * @param value the field value; may be {@code null}
+     * @return {@code value}, or {@code null} when it is {@code null} or blank
+     */
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 
     /**

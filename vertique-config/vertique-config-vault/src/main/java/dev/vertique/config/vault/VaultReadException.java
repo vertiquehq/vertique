@@ -50,7 +50,7 @@ class VaultReadException extends ConfigurationException {
      *
      * @param path   the Vault path that was being read; used for diagnostics only
      * @param detail a safe, non-secret description of the failure (e.g. "HTTP 403",
-     *               "VaultException HTTP 500", "IOException reading JWT from '/path/jwt'")
+     *               "VaultException HTTP 500", "the JWT file cannot be read (IOException)")
      */
     VaultReadException(String path, String detail) {
         super("Vault read failed for path '" + path + "': " + detail);
