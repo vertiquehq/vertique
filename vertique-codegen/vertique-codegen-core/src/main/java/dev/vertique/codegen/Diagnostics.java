@@ -269,11 +269,6 @@ public final class Diagnostics {
         return "resilience policy name must match [A-Za-z0-9._~-]{1,128}: %s".formatted(policy);
     }
 
-    /** Returns the diagnostic for an anchor on an unsupported interface. */
-    public static String resilientInterfaceNotAllowed() {
-        return "@Resilient on an interface is honored only on a @ServiceContract or REST-client interface";
-    }
-
     /** Returns the diagnostic for an invalid Future return shape. */
     public static String resilientMethodsMustReturnFuture() {
         return "resilient methods must return a concrete Future<T>";

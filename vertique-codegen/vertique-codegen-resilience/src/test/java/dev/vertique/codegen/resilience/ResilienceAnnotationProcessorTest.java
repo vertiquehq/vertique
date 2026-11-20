@@ -175,10 +175,26 @@ class ResilienceAnnotationProcessorTest {
                         interfaceDeclarationBounds(),
                         "@Retry.maxRetries must be between 0 and 100",
                         serviceContractStub()),
+                success("plain-interface-anchor-compiles", plainInterfaceAnchor()),
+                success("generic-interface-anchor-compiles", genericInterfaceAnchor()),
                 error(
-                        "plain-interface-anchor-rejected",
-                        plainInterfaceAnchor(),
-                        "@Resilient on an interface is honored only on a @ServiceContract or REST-client interface"),
+                        "generic-concrete-class-anchor-rejected",
+                        genericClassAnchor(),
+                        "resilient methods must return a concrete Future<T>"),
+                success("server-resource-interface-anchor-compiles", serverResourceInterfaceAnchor(), pathStub()),
+                error(
+                        "plain-interface-empty-anchor-rejected",
+                        plainInterfaceEmptyAnchor(),
+                        "@Resilient must name a policy or be accompanied by at least one resilience declaration"),
+                error(
+                        "plain-interface-sync-return-rejected",
+                        plainInterfaceSyncReturn(),
+                        "resilient methods must return a concrete Future<T>"),
+                error(
+                        "server-resource-interface-wildcard-future-rejected",
+                        serverResourceInterfaceWildcardFuture(),
+                        "resilient methods must return a concrete Future<T>",
+                        pathStub()),
                 success("rest-client-interface-anchor-compiles", restClientInterfaceAnchor(), pathStub()),
                 error(
                         "class-level-declaration-on-handler-rejected",
@@ -296,6 +312,30 @@ class ResilienceAnnotationProcessorTest {
 
     private static String plainInterfaceAnchor() {
         return "public interface Bean {\n    @Resilient(policy = \"payments\")\n    Future<String> call();\n}\n";
+    }
+
+    private static String genericInterfaceAnchor() {
+        return "public interface Bean<T> {\n    @Resilient(policy = \"payments\")\n    Future<T> call();\n}\n";
+    }
+
+    private static String genericClassAnchor() {
+        return "public class Bean<T> {\n    @Inject public Bean() {}\n\n    @Resilient(policy = \"payments\")\n    public Future<T> call() { return null; }\n}\n";
+    }
+
+    private static String plainInterfaceEmptyAnchor() {
+        return "public interface Bean {\n    @Resilient\n    Future<String> call();\n}\n";
+    }
+
+    private static String plainInterfaceSyncReturn() {
+        return "public interface Bean {\n    @Resilient(policy = \"payments\")\n    String call();\n}\n";
+    }
+
+    private static String serverResourceInterfaceAnchor() {
+        return "@jakarta.ws.rs.Path(\"/beans\")\npublic interface Bean {\n    @Resilient(policy = \"payments\")\n    Future<String> call();\n}\n";
+    }
+
+    private static String serverResourceInterfaceWildcardFuture() {
+        return "@jakarta.ws.rs.Path(\"/beans\")\npublic interface Bean {\n    @Resilient(policy = \"payments\")\n    Future<?> call();\n}\n";
     }
 
     private static String restClientInterfaceAnchor() {

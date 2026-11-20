@@ -73,6 +73,13 @@ reflection-free resilience pipeline. The aspect resolves the effective method de
 when an interceptor is built and memoizes the pipeline by the erased declaring type, method name,
 and parameter signature.
 
+An anchor on an interface method follows the method-AOP rule: it is woven onto the concrete
+implementors in the compilation, as on a class method, so a JAX-RS server resource interface or any
+other interface can carry `@Resilient` and its declarations for the resource that implements it. On a
+service-contract or REST-client interface the anchor also wraps the generated call, so a concrete class
+that implements such a contract in the same compilation would be wrapped twice; see the double-wrapping
+caveat below.
+
 The aspect does not intercept self-invocation or direct object construction. For a
 `ServiceHandler<C>` implementation, wire either the generated `ServiceContract` or the AOP
 provider, but do not apply both to the same method: doing so double-wraps one invocation and may

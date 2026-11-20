@@ -52,14 +52,20 @@ The registered `ResilienceAnnotationProcessor` validates:
   including interfaces;
 - method-level anchors and the rule that concrete-class declarations must be
   on the same method as `@Resilient`;
-- interface anchors only on `@ServiceContract` or REST-client interfaces;
+- interface anchors on any interface, because `@Resilient` follows the method-AOP rule every
+  aspect follows: a trigger on an interface method is woven onto the concrete implementors in
+  the compilation, as on a class method. On a service-contract or REST-client interface the
+  generated call also carries the anchor, so a concrete class that implements such a contract
+  in the same compilation would be wrapped twice (see the double-wrapping rule below). On an
+  interface method the processor checks only that the anchor names a policy or carries a
+  declaration and that the return type is a concrete `Future<T>`. An implementor the proxy
+  cannot subclass fails in `vertique-codegen-aop`, which owns the weaving;
 - proxyability through the shared `ProxyabilityValidator`, including public,
   non-final, Dagger-managed classes with one `@Inject` constructor and
   overridable instance methods;
-- concrete `Future<T>` return types on concrete-class methods using the shared
-  `CodegenContext.unwrapFuture` classifier (interface methods are not checked here; the
-  services and REST-client processors reject non-`Future<T>` methods on their own contract
-  kinds); and
+- concrete `Future<T>` return types on anchored methods, on concrete classes and on interfaces
+  alike, using the shared `CodegenContext.unwrapFuture` classifier (an interface method may
+  name a type variable as the payload, because each implementor specializes it); and
 - duplicate resilience wrapping between a services contract and its concrete
   handler or implementor, with service types detected by fully qualified name.
 

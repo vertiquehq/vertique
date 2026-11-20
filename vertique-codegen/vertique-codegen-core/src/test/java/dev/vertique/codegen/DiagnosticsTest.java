@@ -219,9 +219,6 @@ class DiagnosticsTest {
                 "resilience policy name must match [A-Za-z0-9._~-]{1,128}: invalid!",
                 Diagnostics.resiliencePolicyName("invalid!"));
         assertEquals(
-                "@Resilient on an interface is honored only on a @ServiceContract or REST-client interface",
-                Diagnostics.resilientInterfaceNotAllowed());
-        assertEquals(
                 "resilient methods must return a concrete Future<T>", Diagnostics.resilientMethodsMustReturnFuture());
         assertEquals("@Retry.maxRetries must be between 0 and 100", Diagnostics.retryMaxRetries());
         assertEquals("@Retry.delayMs must be >= 0", Diagnostics.retryDelayMs());
