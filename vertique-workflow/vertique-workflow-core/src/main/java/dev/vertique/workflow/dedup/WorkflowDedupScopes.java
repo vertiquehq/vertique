@@ -24,7 +24,8 @@ import java.security.NoSuchAlgorithmException;
  *   <li><b>dispatch</b> — kind {@code 'dispatch'} (8 chars; fits the existing
  *       {@code workflow_dedup.kind VARCHAR(16)} column). Scope is {@code workflowId.toString()}
  *       (36 chars). Key is a 64-char SHA-256 hex digest of
- *       {@code (forkStepId, branchId, stepId, targetId, operation)}. The engine inserts the
+ *       {@code (forkStepId, branchId, stepId, targetId, operation)}, where the operation component is
+ *       the constant {@code "dispatch"}. The engine inserts the
  *       dedup row in {@code BranchTransitionEngine} BEFORE invoking {@code RecorderRouter}; on
  *       conflict the dispatch is treated as already-recorded and not re-emitted.
  * </li>
@@ -138,13 +139,15 @@ public final class WorkflowDedupScopes {
     /**
      * Returns the {@code workflow_dedup.key} string for a branch service-dispatch claim. Always a
      * 64-char SHA-256 hex digest so the value fits {@code workflow_dedup.key VARCHAR(255)}
-     * regardless of input lengths.
+     * regardless of input lengths. A branch step has one target and no operation of its own, so the
+     * engine passes the constant {@link #DISPATCH_KIND} as the operation component; within the instance's {@link #dispatchScope} the key
+     * is unique per fork step, branch and step.
      *
      * @param forkStepId fork step id; non-null
      * @param branchId branch id; non-null
      * @param stepId branch step id; non-null
      * @param targetId service target id; non-null
-     * @param operation operation name; non-null
+     * @param operation operation component; the engine passes {@link #DISPATCH_KIND}
      * @return 64-char SHA-256 hex digest
      */
     public static String dispatchKey(
