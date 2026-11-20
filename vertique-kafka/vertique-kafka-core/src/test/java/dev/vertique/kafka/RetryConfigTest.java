@@ -124,11 +124,17 @@ class RetryConfigTest {
     class ConstructorValidation {
 
         @Test
-        @DisplayName("maxRetries < 1 throws IllegalArgumentException")
-        void maxRetriesLessThanOneFails() {
+        @DisplayName("maxRetries < 0 throws IllegalArgumentException")
+        void negativeMaxRetriesFails() {
             assertThrows(
                     IllegalArgumentException.class,
-                    () -> new RetryConfig(0, 1000L, 2.0, ErrorStrategy.DEAD_LETTER, 60_000L));
+                    () -> new RetryConfig(-1, 1000L, 2.0, ErrorStrategy.DEAD_LETTER, 60_000L));
+        }
+
+        @Test
+        @DisplayName("maxRetries = 0 is accepted")
+        void zeroMaxRetriesIsAccepted() {
+            assertDoesNotThrow(() -> new RetryConfig(0, 1000L, 2.0, ErrorStrategy.DEAD_LETTER, 60_000L));
         }
 
         @Test

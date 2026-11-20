@@ -573,6 +573,16 @@ class ResolvedKafkaConsumerConfigTest {
                     String.valueOf(ex.getMessage()).contains("kafka.consumers.consumer.retry"),
                     "message must name the retry config path, was: " + ex.getMessage());
         }
+
+        @Test
+        @DisplayName("retry.maxRetries of zero is accepted for a RETRY consumer")
+        void zeroMaxRetriesIsAccepted() {
+            ResolvedKafkaConsumerConfig config = assertDoesNotThrow(
+                    () -> resolveRetrying(new JsonObject().put("maxRetries", 0)),
+                    "retry.maxRetries is documented as >= 0");
+
+            assertEquals(0, config.retryConfig().maxRetries());
+        }
     }
 
     // --- Hierarchical config compatibility ---
