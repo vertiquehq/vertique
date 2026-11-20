@@ -201,7 +201,8 @@ public record RouteRegistrationViolation(String operationId, ViolationType type,
         /**
          * A server-sent-events declaration is inconsistent: a method that declares
          * {@code @Produces("text/event-stream")} does not return {@code ReadStream<SseEvent>} or
-         * {@code Future<ReadStream<SseEvent>>}.
+         * {@code Future<ReadStream<SseEvent>>}, or a method that returns such a stream does not
+         * declare {@code text/event-stream}.
          */
         INVALID_SSE_DECLARATION,
 
