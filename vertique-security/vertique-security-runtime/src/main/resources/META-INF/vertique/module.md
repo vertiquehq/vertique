@@ -387,8 +387,8 @@ public record IdentitySnapshotConfig(
 | `identity.snapshot.hmacKeys.active.keyId` | — | Required, non-blank |
 | `identity.snapshot.hmacKeys.active.secretRef` | — | Required, ≥ 32 UTF-8 bytes; never logged; the config mapper serializes it as `"***"` and `ConfigParser` rejects a literal `"***"` |
 | `identity.snapshot.hmacKeys.previous[]` | empty | Each `keyId` must be distinct from the active key's and from every other `previous` key; each `secretRef` ≥ 32 UTF-8 bytes |
-| `identity.snapshot.maxCarrierLifetimeMs` | unset (unbounded) | Required when any `carriageRequirements` entry is `REQUIRED` |
-| `identity.snapshot.maxSnapshotLifetimeMs` | unset (unbounded) | Required when any `carriageRequirements` entry is `REQUIRED` |
+| `identity.snapshot.maxCarrierLifetimeMs` | unset (no carrier-lifetime budget; the signed expiry still applies) | Required when any `carriageRequirements` entry is `REQUIRED` |
+| `identity.snapshot.maxSnapshotLifetimeMs` | unset (no configured budget; the encoder still signs `expiresAt` as the capture instant plus 24 hours) | Required when any `carriageRequirements` entry is `REQUIRED` |
 | `identity.snapshot.clockSkewMs` | `30000` | — |
 | `identity.snapshot.carriageRequirements.<targetKind>` | `OPTIONAL` for an unlisted kind | `REQUIRED`, `OPTIONAL`, or `FORBIDDEN` |
 | `identity.snapshot.capturedAuthority.allowedTargetKinds[]` | empty | Each entry non-blank; each must resolve to `REQUIRED` in `carriageRequirements` |

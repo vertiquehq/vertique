@@ -128,8 +128,13 @@ shutdown and rollback.
 
 ### MeterRegistryHolder
 
-Package-private static holder. `registry()` is never null — it returns an empty composite before
-bootstrap and the fully assembled composite after.
+Package-private static holder. `registry()` is never null and always returns the same outer composite
+for the JVM lifetime — it is never replaced, not even by `resetForTests()`. The outer composite has no
+children before bootstrap, so recording is a no-op. `bootstrap(assembly)` adds the assembly's composite as a
+child of the outer, and Micrometer late-wires meters created through the outer earlier to that child. One
+permanent delegating `MeterFilter`, installed on the outer at class initialization, applies the assembly's
+filters (common tags, cardinality guards and, when enabled, the percentile-histogram filter) to meters created through the outer; without it they would register
+directly in the backends and bypass those filters.
 
 ```java
 static CompositeMeterRegistry registry();    // never null
@@ -143,8 +148,12 @@ static void resetForTests();                 // @AfterEach test isolation
 - `bootstrap()` throws `IllegalStateException` on the second call. `contribute()` preflights with
   `bootstrapped()` and throws `MetricsBootstrapException` before assembly begins, so embedded
   multi-launch fails loud rather than silently reusing stale backends.
-- `resetForTests()` closes any existing assembly and restores the pre-bootstrap state. Call it from
+- `resetForTests()` closes any existing assembly, removes its composite from the outer, clears the active
+  filters, and restores the pre-bootstrap state; the outer composite instance is kept. Call it from
   `@AfterEach` in any test that exercises the contributor or the holder directly.
+- A meter created through the outer before bootstrap keeps its unfiltered id (no common tags) after
+  bootstrap, because Micrometer caches each meter's id mapping. In the supported application flow no meter
+  exists before bootstrap.
 
 ### MicrometerMetricsContributor
 

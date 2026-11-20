@@ -230,8 +230,8 @@ to the same JWT verifier as `createHandler()` and therefore rejects rather than 
 
 Both of those bindings run the same startup check before handing out a handler. When the bound
 `JWTAuth` was built by `JwtAuthFactory` (including a `RefreshableJwtAuth`) and the clock skew it
-applied differs from the effective config's `clockSkewSeconds`, component construction fails with a
-`ConfigurationException` naming both values. Clock skew is the only field compared, because it is
+applied differs from the effective config's `clockSkewSeconds`, the binding fails at startup, when it is
+first resolved, with a `ConfigurationException` naming both values. Clock skew is the only field compared, because it is
 the only one the handler cannot re-enforce — a mismatched issuer or audience is already fail-closed,
 since the handler independently rejects anything the configured values do not accept. Putting the
 check on both bindings means an application that authenticates only over WebSocket (and so never
@@ -456,9 +456,10 @@ public class JwtBearerSecuritySchemeHandler implements SecuritySchemeHandler, Ha
 
 `handle` is the single-scheme path: it sets the user, appends evidence, and calls `next()`, or
 reports the rejection and fails the context. `authenticate` is the composable path — it verifies and
-returns the `User` **without mutating the routing context**, so the scheme can be one alternative in
-a Vert.x `ChainAuthHandler.any()` OR chain when an operation declares two or more alternative bearer
-requirements. Exactly one of the two paths appends the evidence per request.
+returns the `User` **without setting the user, continuing the request or failing the routing context**;
+it stashes the built evidence under a private routing-context key until the caller appends it, so the
+scheme can be one alternative in a Vert.x `ChainAuthHandler.any()` OR chain when an operation declares
+two or more alternative bearer requirements. Exactly one of the two paths appends the evidence per request.
 
 `openApiDescription()` returns `Http.bearer("JWT")` — HTTP bearer authentication with bearer format
 `JWT` — whatever this handler's own scheme name; it publishes no issuer, audience, or JWKS location.
@@ -681,9 +682,9 @@ also makes it, not the `jwt` section, the value the startup clock-skew check com
 | No `JWTAuth` binding in the component | Dagger compilation error — the module never provides one |
 | Two `JwtClaimsValidator` bindings | Dagger duplicate-binding error |
 | `jwt.schemeName` does not match the `@SecurityScheme` name | Any operation declaring that requirement has no collected handler and route registration fails, fail-closed, rather than mounting the operation unauthenticated |
-| A JWKS location that cannot be read, or a document with no `keys` | `IllegalArgumentException` / `UncheckedIOException` from `JwtAuthFactory`, during component construction |
+| A JWKS location that cannot be read, or a document with no `keys` | `IllegalArgumentException` / `UncheckedIOException` from `JwtAuthFactory`, at startup, when the `JWTAuth` binding is first resolved |
 | `jwt.validation.clockSkewSeconds` outside `0`–`300` | `ConfigurationException` while the `jwt` section is parsed |
-| A `JwtAuthFactory`-built `JWTAuth` whose applied clock skew differs from `jwt.validation.clockSkewSeconds` | `ConfigurationException` naming both values, during component construction |
+| A `JwtAuthFactory`-built `JWTAuth` whose applied clock skew differs from `jwt.validation.clockSkewSeconds` | `ConfigurationException` naming both values, at startup, when the scheme handler or route handler binding is first resolved |
 
 ### Request-time outcomes
 
