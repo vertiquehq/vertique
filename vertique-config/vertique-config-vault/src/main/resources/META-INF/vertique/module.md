@@ -117,7 +117,7 @@ A plain `http://` address is accepted but sends the Vault token in cleartext. Us
 | `openTimeoutMs` | No | 5000 | Connection open timeout in milliseconds |
 | `readTimeoutMs` | No | 5000 | Read timeout in milliseconds |
 
-A blank `namespace`, `auth.method` or `auth.jwtPath` counts as absent and takes the same default as an omitted key (no namespace, token auth, and the service-account token path).
+A blank `namespace`, `auth.method`, `auth.jwtPath`, `openTimeoutMs` or `readTimeoutMs` counts as absent and takes the same default as an omitted key (no namespace, token auth, the service-account token path, and 5000 ms).
 
 **Timeout note:** The jopenlibs driver accepts timeouts in integer seconds. Both `openTimeoutMs` and `readTimeoutMs` are converted at build time via `Math.max(1, ceil(ms / 1000.0))`. Sub-1000 ms values map to 1 second (the driver treats zero as "no timeout").
 

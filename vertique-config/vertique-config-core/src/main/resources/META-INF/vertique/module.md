@@ -508,7 +508,7 @@ Two public helpers support a factory implementation:
 
 | Helper | Purpose |
 |---|---|
-| `SourceConfigValues` | Reads and validates a field from the source's `JsonObject` config, applying a default when absent and throwing `ConfigPropertySourceException` naming the source and field when the value is invalid |
+| `SourceConfigValues` | Reads and validates a field from the source's `JsonObject` config, applying a default when absent (or, for a numeric field, a blank string) and throwing `ConfigPropertySourceException` naming the source and field when the value is invalid |
 | `SecretDataFlattener` | Flattens a nested `Map<String, Object>` into dot-joined `Map<String, String>` keys under an optional prefix, skipping nulls and preserving insertion order |
 
 ### ConfigBootstrap.defaultOptions(List<ConfigStoreOptions>)

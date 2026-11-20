@@ -103,8 +103,8 @@ The full per-source configuration block under `config.propertySources[*]`:
 | `name` | No | `aws-secrets[{index}]` | Source instance name for diagnostics |
 | `region` | No | SDK default region chain | AWS region string (e.g. `"eu-west-1"`). When absent, the SDK resolves the region via `AWS_DEFAULT_REGION`, `aws.region`, instance metadata, etc. Passed to the SDK unvalidated (see below). |
 | `endpointOverride` | No | none | Override the Secrets Manager endpoint URL. Use for LocalStack (`http://localhost:4566`) or other test endpoints. Passed to the SDK unvalidated (see below). |
-| `connectTimeoutMs` | No | 5000 | Connection timeout in milliseconds, applied to `UrlConnectionHttpClient` |
-| `readTimeoutMs` | No | 5000 | Socket/read timeout in milliseconds, applied to `UrlConnectionHttpClient` |
+| `connectTimeoutMs` | No | 5000 | Connection timeout in milliseconds, applied to `UrlConnectionHttpClient`. A blank string counts as absent and takes the default. |
+| `readTimeoutMs` | No | 5000 | Socket/read timeout in milliseconds, applied to `UrlConnectionHttpClient`. A blank string counts as absent and takes the default. |
 | `secrets` | Yes | — | Non-empty array of secret entry objects |
 
 ### Secret Entry Fields

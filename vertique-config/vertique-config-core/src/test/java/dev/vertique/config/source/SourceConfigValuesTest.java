@@ -118,6 +118,15 @@ class SourceConfigValuesTest {
         }
 
         @Test
+        @DisplayName("blank string counts as absent and returns the default")
+        void blankStringReturnsDefault() {
+            for (String blank : java.util.List.of("", " ", "\t\n")) {
+                JsonObject config = new JsonObject().put("timeoutMs", blank);
+                assertEquals(5000, SourceConfigValues.positiveInt("src", config, "timeoutMs", 5000));
+            }
+        }
+
+        @Test
         @DisplayName("exact integral Double (5000.0) is accepted")
         void exactIntegralDoubleAccepted() {
             JsonObject config = new JsonObject().put("timeoutMs", 5000.0);

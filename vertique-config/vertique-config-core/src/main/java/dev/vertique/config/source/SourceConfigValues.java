@@ -36,7 +36,7 @@ public final class SourceConfigValues {
      * <p>Guards against {@link ClassCastException} when a non-integer JSON value is present.
      *
      * <ul>
-     *   <li>Field absent → return {@code defaultValue} unchanged.</li>
+     *   <li>Field absent, {@code null} or a blank string → return {@code defaultValue} unchanged.</li>
      *   <li>Field present but not numeric (e.g. {@code "not-a-number"}) →
      *       {@link ConfigPropertySourceException} whose message contains the field name and not the
      *       value or its type.</li>
@@ -48,13 +48,13 @@ public final class SourceConfigValues {
      * @param sourceName   the source instance name; included in error messages
      * @param config       the JSON object to read from
      * @param field        the config field name
-     * @param defaultValue the value to use when {@code field} is absent
-     * @return the validated positive integer, or {@code defaultValue} when the field is absent
+     * @param defaultValue the value to use when {@code field} is absent or blank
+     * @return the validated positive integer, or {@code defaultValue} when the field is absent or blank
      * @throws ConfigPropertySourceException if the field is non-integer or not positive
      */
     public static int positiveInt(String sourceName, JsonObject config, String field, int defaultValue) {
         Object raw = config.getValue(field);
-        if (raw == null) {
+        if (raw == null || raw instanceof String text && text.isBlank()) {
             return defaultValue;
         }
         if (!(raw instanceof Number num)) {
