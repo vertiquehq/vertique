@@ -135,10 +135,12 @@ record ResolvedKafkaConsumerConfig(
                 : DEFAULT_MAX_IN_FLIGHT;
 
         CommitStrategy commitStrategy = resolveEnum(
+                consumerPath(name, "commitStrategy"),
                 consumerConfig != null ? consumerConfig.commitStrategy() : null,
                 CommitStrategy.class,
                 defaultCommitStrategy);
         ErrorStrategy errorStrategy = resolveEnum(
+                consumerPath(name, "errorStrategy"),
                 consumerConfig != null ? consumerConfig.errorStrategy() : null,
                 ErrorStrategy.class,
                 defaultErrorStrategy);
@@ -272,34 +274,41 @@ record ResolvedKafkaConsumerConfig(
         return value != null ? value : fallback;
     }
 
+    private static String consumerPath(String name, String key) {
+        return "kafka.consumers." + name + "." + key;
+    }
+
     /**
      * Resolves an enum constant from a string name, returning the default if the name is blank or null.
      * A non-blank name that does not identify an enum constant fails with a
-     * {@link ConfigurationException}.
+     * {@link ConfigurationException} that names the configuration path and carries neither the value nor
+     * the lookup exception, whose message quotes it.
      *
      * @param <E> the enum type
+     * @param path the dotted configuration path of the key, used to name it in a failure
      * @param name the string name to look up
      * @param type the enum class
      * @param defaultValue the fallback value when name is blank or null
      * @return the resolved enum constant
      * @throws ConfigurationException if name is non-blank but does not identify an enum constant
      */
-    private static <E extends Enum<E>> E resolveEnum(String name, Class<E> type, E defaultValue) {
+    private static <E extends Enum<E>> E resolveEnum(String path, String name, Class<E> type, E defaultValue) {
         if (name == null || name.isBlank()) {
             return defaultValue;
         }
         try {
             return Enum.valueOf(type, name.toUpperCase());
         } catch (IllegalArgumentException e) {
-            throw new ConfigurationException("Invalid " + type.getSimpleName() + " value '" + name + "'", e);
+            throw new ConfigurationException("Invalid configuration at " + path + ": not a supported value");
         }
     }
 
     /**
      * Resolves the runtime {@link RetryConfig} from the typed per-consumer
-     * {@link KafkaConsumerConfig#retry()} block, or returns the default-valued config when the error
-     * strategy is {@link ErrorStrategy#RETRY} and no explicit config is present. Returns {@code null}
-     * when retry is not active.
+     * {@link KafkaConsumerConfig#retry()} block. The block is validated whenever it is configured,
+     * whatever the error strategy, so a bad value fails startup instead of waiting for a later switch
+     * to {@link ErrorStrategy#RETRY}. The result is the default-valued config when the error strategy is
+     * {@code RETRY} and no explicit block is present, and {@code null} when retry is not active.
      *
      * <p>The typed {@link KafkaConsumerRetryConfig} always carries non-null defaulted values (its
      * {@code @JsonCreator} applies {@link KafkaConsumerRetryConfig#defaults()}), so this method simply
@@ -315,16 +324,19 @@ record ResolvedKafkaConsumerConfig(
      */
     private static RetryConfig resolveRetryConfig(
             String name, @Nullable KafkaConsumerConfig consumerConfig, ErrorStrategy errorStrategy) {
-        if (errorStrategy != ErrorStrategy.RETRY) {
+        boolean configured = consumerConfig != null && consumerConfig.retry() != null;
+        if (errorStrategy != ErrorStrategy.RETRY && !configured) {
             return null;
         }
-        KafkaConsumerRetryConfig retryCfg = consumerConfig != null && consumerConfig.retry() != null
-                ? consumerConfig.retry()
-                : KafkaConsumerRetryConfig.defaults();
-        ErrorStrategy exhausted =
-                resolveEnum(retryCfg.exhaustedStrategy(), ErrorStrategy.class, RetryConfig.DEFAULT.exhaustedStrategy());
+        KafkaConsumerRetryConfig retryCfg = configured ? consumerConfig.retry() : KafkaConsumerRetryConfig.defaults();
+        ErrorStrategy exhausted = resolveEnum(
+                consumerPath(name, "retry.exhaustedStrategy"),
+                retryCfg.exhaustedStrategy(),
+                ErrorStrategy.class,
+                RetryConfig.DEFAULT.exhaustedStrategy());
+        RetryConfig resolved;
         try {
-            return new RetryConfig(
+            resolved = new RetryConfig(
                     retryCfg.maxRetries(),
                     retryCfg.backoffMs(),
                     retryCfg.backoffMultiplier(),
@@ -334,6 +346,7 @@ record ResolvedKafkaConsumerConfig(
             throw new ConfigurationException(
                     "Invalid configuration at kafka.consumers." + name + ".retry: " + e.getMessage(), e);
         }
+        return errorStrategy == ErrorStrategy.RETRY ? resolved : null;
     }
 
     /**

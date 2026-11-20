@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.vertique.core.exception.ConfigurationException;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -61,6 +62,34 @@ class RedisConnectionConfigTest {
                 IllegalArgumentException.class,
                 () -> new RedisConnectionConfig(
                         "primary", List.of("redis://redis:6379?password=secret"), null, null, false, 500, 8, 100));
+    }
+
+    @Test
+    @DisplayName("rejects a rediss endpoint when tlsEnabled is false, naming the path and not the endpoint")
+    void rejectsRedissEndpointWithTlsDisabled() {
+        ConfigurationException failure = assertThrows(
+                ConfigurationException.class,
+                () -> new RedisConnectionConfig(
+                        "primary",
+                        List.of("redis://redis-a:6379", "rediss://secret-host:6380"),
+                        null,
+                        null,
+                        false,
+                        500,
+                        8,
+                        100));
+
+        assertTrue(failure.getMessage().contains("redis.connections.primary.tlsEnabled"), failure.getMessage());
+        assertFalse(failure.getMessage().contains("secret-host"), failure.getMessage());
+        assertNull(failure.getCause());
+    }
+
+    @Test
+    @DisplayName("accepts rediss with tlsEnabled true and redis with either setting")
+    void acceptsConsistentSchemeAndTlsCombinations() {
+        new RedisConnectionConfig("a", List.of("rediss://redis:6380"), null, null, true, 500, 8, 100);
+        new RedisConnectionConfig("b", List.of("redis://redis:6379"), null, null, false, 500, 8, 100);
+        new RedisConnectionConfig("c", List.of("redis://redis:6379"), null, null, true, 500, 8, 100);
     }
 
     @Test

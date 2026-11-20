@@ -149,7 +149,7 @@ Profiles live under `redis.connections` as a keyed object (key = profile name). 
 | `endpoints` | string[] | yes | Non-empty; each entry credential-free `redis://` or `rediss://` (no user-info, query, or fragment) |
 | `username` | string | no | Blank treated as absent |
 | `passwordSecret` | string | no | The password itself, passed unchanged to the client; the module resolves no reference, so supply it through a `${...}` config placeholder to keep it out of the config file. Blank treated as absent; redacted in diagnostics/`toString()` |
-| `tlsEnabled` | boolean | no | Default `false`; mapped to Vert.x SSL |
+| `tlsEnabled` | boolean | no | Default `false`; mapped to Vert.x SSL. Must be `true` when any endpoint uses `rediss://`: the combination of a `rediss://` endpoint with `tlsEnabled: false` fails startup with a `ConfigurationException` naming `redis.connections.<name>.tlsEnabled` and no endpoint text |
 | `connectTimeoutMs` | long | yes | 1–60000 |
 | `maxPoolSize` | int | yes | 1–256 |
 | `maxPoolWaiting` | int | no | Default `0`; 0–10000 |

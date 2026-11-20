@@ -9,6 +9,7 @@ import io.github.jopenlibs.vault.VaultException;
 import io.github.jopenlibs.vault.response.AuthResponse;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Map;
@@ -231,9 +232,9 @@ class JOpenLibsVaultGateway implements VaultGateway {
     /**
      * Reads the contents of a JWT file from the filesystem.
      *
-     * <p>The {@link IOException} message contains only the file path and the OS-level error
-     * description — no secret content. It is safe to include directly in a
-     * {@link VaultReadException} detail string.
+     * <p>The failure names the configuration key and the I/O exception class only: neither the
+     * configured path nor the OS-level error text is echoed, because a mistyped value can be a
+     * secret. The cause is not attached.
      *
      * @param jwtPath path to the JWT token file
      * @return the JWT token string (trimmed)
@@ -242,11 +243,11 @@ class JOpenLibsVaultGateway implements VaultGateway {
     private static String readJwtFile(String jwtPath) {
         try {
             return Files.readString(Paths.get(jwtPath)).trim();
-        } catch (IOException e) {
-            // IOException message is path + OS error description — safe to include.
-            // Cause is not attached per the cause-severing discipline.
+        } catch (IOException | InvalidPathException e) {
             throw new VaultReadException(
-                    "<config>", "IOException reading Kubernetes JWT from '" + jwtPath + "': " + e.getMessage());
+                    "<config>",
+                    "the Kubernetes JWT file named by auth.jwtPath cannot be read ("
+                            + e.getClass().getSimpleName() + ")");
         }
     }
 

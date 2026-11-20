@@ -687,7 +687,10 @@ build time.
 | `retry.maxBackoffMs` | `60000` | Must be `>= 0` |
 | `retry.exhaustedStrategy` | `DEAD_LETTER` | Must not be `RETRY` |
 
-A violated constraint fails startup with a `ConfigurationException` naming the exact config path.
+A violated constraint fails startup with a `ConfigurationException` naming the exact config path and
+carrying no configured value. The `retry` block is validated whenever it is configured, whatever the
+consumer's `errorStrategy`: a `retry.exhaustedStrategy` of `RETRY` or a `retry.maxBackoffMs` below
+`retry.backoffMs` fails startup even on a consumer that does not retry.
 
 ### Kafka client property merge order
 
@@ -1335,7 +1338,7 @@ default accepts every producer interface.
 
 | Failure | Cause |
 |---|---|
-| `ConfigurationException` | A consumer config bound is violated — an unknown `commitStrategy`, `errorStrategy`, or `retry.exhaustedStrategy`, `eventBusTimeoutMs <= 0`, `maxInFlight < 1`, `instances < 1`, `maxRetries < 0`, `backoffMs < 0`, `backoffMultiplier < 1.0`, `maxBackoffMs < 0`. Enum failures identify the invalid type and value; other validation messages name the exact config path |
+| `ConfigurationException` | A consumer config bound is violated — an unknown `commitStrategy`, `errorStrategy`, or `retry.exhaustedStrategy`, `eventBusTimeoutMs <= 0`, `maxInFlight < 1`, `instances < 1`, `maxRetries < 0`, `backoffMs < 0`, `backoffMultiplier < 1.0`, `maxBackoffMs < 0`. Every failure names the exact config path (`kafka.consumers.{name}.errorStrategy`, `.commitStrategy`, `.retry.exhaustedStrategy`, or `.retry`) and carries no value, including an unknown enum value |
 | `KafkaRegistrationException` | An invalid consumer declaration, or a generated binding companion that is present but malformed. A `ConfigurationException` subtype — broken generated code is never silently skipped. All violations of one registration are collected into one exception, including a consumer's resolved format with no registered `KafkaSerdeProvider` (the message names the missing module), an ambiguous format auto-detection, and `worker = false` on a consumer whose effective deserializer reports `mayBlock()` |
 | `IllegalArgumentException` | A producer's resolved format has no registered `KafkaSerdeProvider`; the message names the missing module |
 | `IllegalStateException` | `bootstrap.servers` missing or blank when the producer factory is constructed |
