@@ -485,9 +485,9 @@ public final class RestClientBuilder {
     }
 
     /**
-     * Sets the builder-level {@link BackoffStrategy} used when a method's {@code @Retry}
-     * annotation uses {@link BackoffStrategy.Default}. Defaults to exponential backoff
-     * ({@code 500ms, ×2, max 30s}).
+     * Sets the {@link BackoffStrategy} of the client-level retry that a
+     * {@code restClient.{name}.retry} config block enables. It is not consulted for a method
+     * that carries {@code @Retry}. Defaults to exponential backoff ({@code 500ms, ×2, max 30s}).
      *
      * @param strategy the backoff strategy; must not be {@code null}
      * @return this builder

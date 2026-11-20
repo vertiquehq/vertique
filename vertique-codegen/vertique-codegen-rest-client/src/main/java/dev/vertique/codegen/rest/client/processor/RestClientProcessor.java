@@ -48,8 +48,8 @@ import javax.lang.model.element.TypeElement;
  *
  * <p>Processor options:
  * <ul>
- *   <li>{@code vertique.codegen.package} — overrides the output package for generated sources
- *       (default: same package as the origin type, per {@link CodegenContext#outputPackage}).</li>
+ *   <li>{@code vertique.codegen.package} — accepted but ignored for placement: the generated proxy
+ *       and accessor always land in the package of the origin type.</li>
  *   <li>{@code vertique.codegen.restclient.warnExternalBeans} — when {@code true} (default),
  *       a {@code WARNING} is emitted for {@code @BeanParam} types not visible in the compilation
  *       unit; set to {@code false} to suppress.</li>

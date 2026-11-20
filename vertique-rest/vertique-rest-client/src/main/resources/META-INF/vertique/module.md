@@ -190,7 +190,7 @@ and the optional `BeanValidator`.
 | `expecting(Expectation<HttpResponseHead>)` | Default response expectation, checked in addition to the 2xx rule (`expecting(HttpResponseExpectation.JSON)` still fails a 500); replaced per method by `@ExpectedStatus`, the only way to accept a non-2xx status |
 | `circuitBreaker(CircuitBreakerOptions)` | Builder-level baseline breaker (lowest priority) |
 | `retryPolicy(RestClientRetryPolicy)` | Policy consulted when `@Retry#retryOn` is empty; defaults to `DefaultRestClientRetryPolicy` |
-| `backoffStrategy(BackoffStrategy)` | Strategy used when `@Retry#backoff` is `BackoffStrategy.Default`; defaults to exponential (500 ms, ×2, cap 30 s) |
+| `backoffStrategy(BackoffStrategy)` | Backoff of the client-level retry that a `restClient.{name}.retry` config block enables; defaults to exponential (500 ms, ×2, cap 30 s). It does not replace the inline values of a method that carries `@Retry`; see the `@Retry` table |
 | `paramConversionResolver(ParamConversionResolver)` | Explicit outbound resolver; bypasses binding/provider accumulation |
 | `paramConverterBinding(ParamConverterBinding<T>)` | Adds a typed converter binding (standalone use; ignored once a resolver override is set) |
 | `paramConverterProvider(ParamConverterProvider)` | Adds a JAX-RS provider (standalone use; ignored once a resolver override is set) |
@@ -279,7 +279,10 @@ public interface PaymentClient {
 | Attribute | Default | Description |
 |-----------|---------|-------------|
 | `maxRetries` | `3` | Retries after the initial failure; `3` means up to 4 total attempts |
-| `backoff` | `BackoffStrategy.Default.class` | Strategy class needing a public no-arg constructor; `Default` inherits the builder-level strategy |
+| `delayMs` | `500` | Initial delay before the first retry, in milliseconds; used when `backoff` is `Default` |
+| `backoffMultiplier` | `2.0` | Exponential growth factor of the delay; used when `backoff` is `Default` |
+| `maxDelayMs` | `30000` | Delay cap before jitter is added, in milliseconds; used when `backoff` is `Default` |
+| `backoff` | `BackoffStrategy.Default.class` | Strategy class needing a public no-arg constructor. `Default` means the inline `delayMs`, `backoffMultiplier` and `maxDelayMs` above (exponential backoff); the builder's `backoffStrategy(...)` is not consulted for a method with `@Retry` |
 | `retryOn` | `{}` | When non-empty, only these exception types are retried |
 | `abortOn` | `{}` | Exception types that abort retrying immediately, outranking everything else |
 
@@ -304,7 +307,9 @@ retryCount)` receives a 0-based count, so `0` is the delay before the first retr
 | `BackoffStrategy.exponential(delayMs, multiplier, maxDelayMs)` | `min(delayMs × multiplier^retryCount, maxDelayMs) + jitter`, jitter ∈ `[0, min(delay, 1000))` |
 | `BackoffStrategy.fixed(delayMs)` | Constant delay |
 | `BackoffStrategy.none()` | Retry immediately |
-| `BackoffStrategy.Default` | Sentinel meaning "use the builder-level strategy"; never instantiated — `delay()` throws `UnsupportedOperationException` |
+| `BackoffStrategy.Default` | Sentinel for `@Retry#backoff` meaning "use the annotation's inline `delayMs`, `backoffMultiplier` and `maxDelayMs`"; never instantiated — `delay()` throws `UnsupportedOperationException` |
+
+A `restClient.{name}.retry.backoffStrategy` class takes precedence over the annotation's backoff, custom or inline. The builder's `backoffStrategy(...)` applies only to a method with no `@Retry` on it or on its interface, and only when the client has a `restClient.{name}.retry` config block: that block turns on a client-level retry whose backoff is the builder strategy. Without the block, a method with neither `@Retry` nor a named resilience policy is not retried.
 
 ```java
 public class AggressiveBackoff implements BackoffStrategy {
@@ -1128,11 +1133,14 @@ client.getProduct("123")
 | Failure | Cause |
 |---|---|
 | `IllegalArgumentException` | not an interface; a method that does not return `Future<T>`; no base URL resolvable; any `@Url` placement rule violated |
-| `RestClientConfigurationException` | a parameter type with no resolvable converter; a JSON profile other than the reserved `system`, `vertique`, or `vertique-strict` selected on a standalone builder with no registry; a method-level `@JsonProfile` on a `@RestClient` interface; a `retry.backoffStrategy` FQCN that cannot be loaded or instantiated; a raw Vert.x duration key in the `webClient` bag; a second interface whose client name another interface on the same factory already holds, when at least one of them derived it from its simple class name |
+| `RestClientConfigurationException` | a parameter type with no resolvable converter; a JSON profile other than the reserved `system`, `vertique`, or `vertique-strict` selected on a standalone builder with no registry; a method-level `@JsonProfile` on a `@RestClient` interface; a raw Vert.x duration key in the `webClient` bag; a second interface whose client name another interface on the same factory already holds, when at least one of them derived it from its simple class name |
 | `JsonProfileConfigurationException` | the selected profile id is unknown to the registry |
-| `ConfigurationException` | a blank `restClient.{name}` key, or `readTimeoutMs <= 0` |
+| `ConfigurationException` | a blank `restClient.{name}` key, or `readTimeoutMs <= 0`; a `retry.backoffStrategy` class that cannot be loaded or does not implement `BackoffStrategy`, which fails when the configuration is parsed, before any client is built |
+| `RestClientException` | a configured `retry.backoffStrategy` class that loads but cannot be instantiated at `build()` (no public no-arg constructor, or the constructor throws) |
 
 None of these defer to the first request.
+
+A bad `retry.backoffStrategy` class does not surface as `RestClientConfigurationException`: a handler that catches only that type misses it. Catch `core.ConfigurationException` for the parse-time failure and `RestClientException` for the instantiation failure.
 
 `RestClientDefaultProfileValidator` additionally validates `restClient.defaults.jsonProfile` during
 the startup `VALIDATE` phase, so an unknown boundary default fails even when zero clients are
@@ -1170,9 +1178,11 @@ configured or every client overrides it.
 
 ## Module Dagger Bindings
 
-`RestClientModule` is declared `@Module(includes = {JsonRuntimeModule.class, RestCoreModule.class})`.
+`RestClientModule` is declared `@Module(includes = {JsonRuntimeModule.class, RestCoreModule.class, ResilienceModule.class})`.
 `JsonRuntimeModule` supplies the `JsonMapperProfileRegistry`; `RestCoreModule` supplies the
-`ParamConversionResolver` and its converter multibindings, shared with `dev.vertique:vertique-rest-jaxrs`.
+`ParamConversionResolver` and its converter multibindings, shared with `dev.vertique:vertique-rest-jaxrs`;
+`ResilienceModule` supplies the application-scoped resilience runtime, with its shutdown step, that the
+per-method pipelines run on.
 
 | Type | Scope | Description |
 |------|-------|-------------|

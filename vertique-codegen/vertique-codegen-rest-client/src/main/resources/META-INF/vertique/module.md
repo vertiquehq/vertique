@@ -16,7 +16,7 @@ The processor generates two artifact types per compilation unit:
 - **`{Client}_RestClientProxy`** — a `public final` class implementing the `@RestClient` interface. It holds `ClientMethodMeta` references in `final` fields (resolved once at construction time from the pre-built `Map<Method, ClientMethodMeta>`) and calls accessor methods directly, with no per-call reflection.
 - **`{Bean}_BeanParamAccessor`** — a `public final` class implementing `BeanParamAccessor<T>`. It dispatches over field names via a `switch` expression calling record accessors, public getters, or direct field access — whichever is applicable — with no `setAccessible` or reflective dispatch on the hot path.
 
-Runtime selection is transparent: `RestClientBuilder.build()` and `RestClientFactory.builder()` both try `Class.forName(clientInterface.getName() + "_RestClientProxy")` before falling back to the existing JDK proxy. The application processor boundary described below is the only Maven setup required.
+Runtime selection is transparent: `RestClientBuilder.build()` and `RestClientFactory.builder()` both look up the generated `_RestClientProxy` companion of the client interface (name rule under "Nested-Class FQN Translation") before falling back to the existing JDK proxy. The application processor boundary described below is the only Maven setup required.
 
 In addition to the performance win, the processor lifts structural validation to compile time: `@Path` placeholder / `@PathParam` mismatches, missing HTTP verb annotations, and non-`Future<T>` return types all surface as build errors.
 
@@ -43,13 +43,11 @@ retains the JDK proxy as its fallback.
 })
 ```
 
-> **Note:** `vertique.codegen.package` is currently **not end-to-end for REST client artifacts** — the
-> override is honored when generating the bean-param accessor and by the scanner's same-package
-> access check, but the proxy generator does not add the required import for the `@RestClient`
-> interface, and the runtime `BeanParamAccessorRegistry` derives the accessor FQN from the bean's
-> binary name (not the override package). Setting this option for `@RestClient` interfaces will
-> produce a generated proxy that fails to compile and/or accessors that the runtime cannot discover.
-> Leave the option unset for projects using `@RestClient` until the override path is completed.
+> **Note:** `vertique.codegen.package` is **not supported for REST client artifacts**. The processor
+> ignores it for placement: the `{Client}_RestClientProxy` and every `{Bean}_BeanParamAccessor` are
+> always generated into the package of their origin type, because the runtime locates each companion
+> by that name and package. Setting the option does not move the generated classes, so it has no
+> supported use here. Leave the option unset for projects using `@RestClient`.
 
 ### Validators
 
@@ -202,7 +200,8 @@ Both discovery lookups follow the same pattern: one reflective call per type at 
 
 **Proxy lookup** (in `RestClientBuilder.build`):
 ```java
-String generatedFqn = clientInterface.getName() + "_RestClientProxy";
+// The companion name is the interface's binary name with '$' replaced by '_', plus the suffix.
+String generatedFqn = GeneratedNames.companionFqn(clientInterface, "_RestClientProxy");
 try {
     Class<?> generated = Class.forName(generatedFqn, true, clientInterface.getClassLoader());
     Constructor<?> ctor = generated.getDeclaredConstructor(
@@ -210,7 +209,7 @@ try {
     return clientInterface.cast(ctor.newInstance(dispatcher, registry, methodMetas));
 } catch (ClassNotFoundException e) {
     return buildReflectiveProxy(clientInterface);   // existing JDK proxy path
-} catch (ReflectiveOperationException e) {
+} catch (ReflectiveOperationException | LinkageError | ClassCastException e) {
     throw new RestClientConfigurationException(
             "Generated proxy %s present but failed to instantiate".formatted(generatedFqn), e);
 }
@@ -219,17 +218,19 @@ try {
 **Accessor lookup** (in `BeanParamAccessorRegistry.resolve`):
 ```java
 // Backed by ClassValue — resolution runs at most once per (type, classloader) pair.
-String generatedFqn = beanType.getName() + "_BeanParamAccessor";
+String generatedFqn = GeneratedNames.companionFqn(beanType, "_BeanParamAccessor");
 try {
     Class<?> generatedClass = Class.forName(generatedFqn, true, beanType.getClassLoader());
     return (BeanParamAccessor<?>) generatedClass.getDeclaredConstructor().newInstance();
 } catch (ClassNotFoundException e) {
     return fallback;    // ReflectiveBeanParamAccessor handles the whole bean
-} catch (ReflectiveOperationException e) {
+} catch (ReflectiveOperationException | LinkageError | ClassCastException e) {
     throw new RestClientConfigurationException(
             "Generated bean accessor %s present but failed to instantiate".formatted(generatedFqn), e);
 }
 ```
+
+`RestClientBuilder` runs the proxy lookup through a shared helper with the same semantics as the snippet: an absent class falls back, a present class that cannot be instantiated fails loudly.
 
 ### `BeanParamAccessorRegistry` Ownership
 
@@ -239,7 +240,7 @@ The registry's internal lookup table is backed by `ClassValue<BeanParamAccessor<
 
 ### Nested-Class FQN Translation
 
-Java uses `$` as the separator for nested classes in binary names, but `.` in source names. The generated class name follows binary name conventions. When a `@BeanParam` type is a nested class (e.g. `com.example.Outer$Inner`), the generated accessor is `com.example.Outer$Inner_BeanParamAccessor`. `Class.forName` receives the binary name, so discovery works correctly.
+Java uses `$` as the separator for nested classes in binary names, but `.` in source names. A generated class is a top-level class in the origin type's package, so its name flattens the enclosing types: each enclosing simple name is joined with `_`, and the suffix is appended. When a `@BeanParam` type is a nested class (e.g. `com.example.Outer$Inner`), the generated accessor is `com.example.Outer_Inner_BeanParamAccessor`; a nested `@RestClient` interface `com.example.Outer$Inner` gets `com.example.Outer_Inner_RestClientProxy`. The runtime builds the same name from the `Class` by replacing `$` in `Class.getName()` with `_` before appending the suffix, so `Class.forName` finds the companion for both top-level and nested origins.
 
 ### `@Url` Validation at Compile Time
 
@@ -296,5 +297,5 @@ None. The processor emits no Dagger binding modules. Generated proxies and acces
 ## Dependencies
 
 - `dev.vertique:vertique-codegen-core` — `CodegenContext`, `TypeResolver`, `AnnotationMirrors`, `Diagnostics`, `Identifiers`
-- `com.squareup:javapoet` — source generation (compile-only; not on runtime classpath)
+- `com.palantir.javapoet:javapoet` — source generation (compile scope of the processor; not on the application runtime classpath)
 - `javax.annotation.processing` APIs — part of the JDK; not a separate Maven dependency
