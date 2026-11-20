@@ -76,7 +76,7 @@ class ExecutorMetricsIT {
             WorkflowInstanceId first = b.record(startOf("first"));
             WorkflowInstanceId second = b.record(startOf("second"));
             WorkflowInstanceId crashes = b.record(startOf("crashes"));
-            faults.crashEverySegmentOf(crashes);
+            faults.crashEverySegmentOf(crashes).lapseCrashedClaims(fixture.observer());
             List<WorkflowInstanceId> all = List.of(first, second, crashes);
 
             // When A's executor peeks and defers the starts it cannot run

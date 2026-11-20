@@ -19,7 +19,8 @@ import java.util.UUID;
  *
  * <p>One executor runs with a lease of five seconds and one attempt per command. Its first segment of a chosen start is
  * abandoned as a crash would abandon it, and the start is dead-lettered when its lease has ended, which fails the
- * instance without state.
+ * instance without state. The lease is ended when the segment is abandoned, as if its time had elapsed, so the test
+ * does not wait it out.
  */
 public final class RetentionTestSupport implements AutoCloseable {
 
@@ -67,7 +68,7 @@ public final class RetentionTestSupport implements AutoCloseable {
      */
     public UUID deadLetteredStart(String ref) {
         WorkflowInstanceId id = node.record(startOf(ref));
-        faults.crashEverySegmentOf(id);
+        faults.crashEverySegmentOf(id).lapseCrashedClaims(fixture.observer());
         node.startExecutor();
         try {
             awaitCondition("the start to be dead-lettered", DEAD_LETTERED, () -> fixture.commandOf(id)

@@ -78,7 +78,7 @@ class FailedInstanceEventIT {
                     .commands(faults.decorator())
                     .build();
             WorkflowInstanceId id = node.record(startOf("event-dead"));
-            faults.crashEverySegmentOf(id);
+            faults.crashEverySegmentOf(id).lapseCrashedClaims(fixture.observer());
 
             // When the next claim dead-letters it
             node.startExecutor();

@@ -321,7 +321,7 @@ public class RecordedCancelIT {
             OpenTask a = tasks.open(node, "A");
             f.record(node, a.id(), "note", signal("dead"), "k-dead-signal");
             tasks.complete(node, a, new JsonObject(), "k-dead-completion");
-            faults.crashEverySegmentOf(a.id());
+            faults.crashEverySegmentOf(a.id()).lapseCrashedClaims(f.fixture.observer());
             node.startExecutor();
             try {
                 awaitCondition(
@@ -778,7 +778,7 @@ public class RecordedCancelIT {
             WorkflowInstanceId a = f.waiting(node, "counter-a");
             WorkflowInstanceId b = f.waiting(node, "counter-b");
             f.record(node, a, "note", secret, "dead");
-            faults.crashSegmentsOf(a, 1);
+            faults.crashSegmentsOf(a, 1).lapseCrashedClaims(f.fixture.observer());
             node.startExecutor();
             try {
                 awaitCondition("the signal to be dead-lettered", DEAD_LETTERED, () -> f.signal(a, "dead")
@@ -839,7 +839,7 @@ public class RecordedCancelIT {
 
             // Given instance Q whose start was dead-lettered, and instance P recorded and committed, executors stopped
             WorkflowInstanceId q = node.record(startOf("dead-start"));
-            faults.crashEverySegmentOf(q);
+            faults.crashEverySegmentOf(q).lapseCrashedClaims(fixture.observer());
             node.startExecutor();
             try {
                 awaitCondition("the start to be dead-lettered", DEAD_LETTERED, () -> fixture.commandOf(q)

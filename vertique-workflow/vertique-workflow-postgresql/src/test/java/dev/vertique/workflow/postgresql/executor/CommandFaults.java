@@ -10,12 +10,14 @@ import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.SqlClient;
+import io.vertx.sqlclient.Tuple;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -55,7 +57,9 @@ final class CommandFaults {
     private final Map<WorkflowInstanceId, Fault> faults = new ConcurrentHashMap<>();
     private final Map<WorkflowInstanceId, Function<ClaimedCommand, Future<Void>>> afterClaim =
             new ConcurrentHashMap<>();
+    private final Map<WorkflowInstanceId, UUID> lastClaim = new ConcurrentHashMap<>();
     private final AtomicBoolean dispositionGateSpent = new AtomicBoolean();
+    private volatile SqlClient lapsing;
     private volatile Supplier<Future<Void>> beforeFirstDisposition;
 
     private record Fault(AtomicInteger remaining, Supplier<? extends Throwable> failure, boolean crash) {}
@@ -103,6 +107,19 @@ final class CommandFaults {
         return this;
     }
 
+    /**
+     * Ends the lease of a claim at the moment a crash abandons its segment, as if the lease time had elapsed, instead of
+     * letting the test wait the lease out. The row is the one a lapsed lease leaves: still claimed, its attempt spent,
+     * its lease ended on the database clock. Only the claim whose segment was abandoned is touched, found by its token.
+     * For tests that need a claim to be reclaimable after a crash and do not observe the lease's duration.
+     *
+     * @param observer a client of the database the executors run against
+     */
+    CommandFaults lapseCrashedClaims(SqlClient observer) {
+        this.lapsing = observer;
+        return this;
+    }
+
     /** The names of the members called, in order. */
     List<String> calls() {
         return List.copyOf(calls);
@@ -138,9 +155,10 @@ final class CommandFaults {
                     }
                     calls.add(member);
                     if (member.equals("tryLockInstance")) {
-                        Throwable failure = nextFault((WorkflowInstanceId) arguments[0]);
+                        WorkflowInstanceId id = (WorkflowInstanceId) arguments[0];
+                        Throwable failure = nextFault(id);
                         if (failure != null) {
-                            return Future.failedFuture(failure);
+                            return lapseIfCrash(id, failure);
                         }
                     }
                     if (member.equals("claim")) {
@@ -173,10 +191,25 @@ final class CommandFaults {
         return fault.failure().get();
     }
 
+    /** Fails the call with the failure, after ending the lease of the abandoned claim when the test asked for it. */
+    private Future<Object> lapseIfCrash(WorkflowInstanceId id, Throwable failure) {
+        SqlClient client = lapsing;
+        UUID token = lastClaim.get(id);
+        Fault fault = faults.get(id);
+        if (client == null || token == null || fault == null || !fault.crash()) {
+            return Future.failedFuture(failure);
+        }
+        return client.preparedQuery("UPDATE workflow_commands SET lease_until = clock_timestamp() - interval '1 second'"
+                        + " WHERE claim_token = $1 AND state = 'CLAIMED'")
+                .execute(Tuple.of(token))
+                .transform(ignored -> Future.<Object>failedFuture(failure));
+    }
+
     @SuppressWarnings("unchecked")
     private Object afterClaim(WorkflowInstanceId id, Callable<Object> forward) throws Exception {
         Future<Optional<ClaimedCommand>> claimed = (Future<Optional<ClaimedCommand>>) forward.call();
         return claimed.compose(result -> {
+            result.map(ClaimedCommand::token).ifPresent(token -> lastClaim.put(id, token));
             Function<ClaimedCommand, Future<Void>> action = result.isPresent() ? afterClaim.remove(id) : null;
             return action == null
                     ? Future.succeededFuture(result)

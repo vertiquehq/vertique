@@ -128,7 +128,7 @@ public class ExecutorHistoryAnnouncementIT {
                     .historyListeners(Set.of(recorded, recorded.thrower()))
                     .build();
             WorkflowInstanceId id = node.record(startOf("announced-dead-letter"));
-            faults.crashEverySegmentOf(id);
+            faults.crashEverySegmentOf(id).lapseCrashedClaims(fixture.observer());
 
             // When the executor runs until the command is dead-lettered
             node.startExecutor();

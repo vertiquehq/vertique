@@ -171,7 +171,7 @@ public class TimerCommandIT {
                     .build();
             WorkflowInstanceId id = f.waiting(node, "dead-timeout");
             TimerRow timeout = timers.only(id, "TIMEOUT");
-            faults.crashSegmentsOf(id, 1);
+            faults.crashSegmentsOf(id, 1).lapseCrashedClaims(f.fixture.observer());
 
             // And the timeout is due, claimed, abandoned and then dead-lettered
             node.startExecutor();
