@@ -102,7 +102,10 @@ SPDX-License-Identifier: EUPL-1.2
                 <version>3.11.0</version>
                 <configuration>
                     <java>
-                        <palantirJavaFormat/>
+                        <!-- Pinned to the formatter spotless 3.10.x defaulted to; spotless 3.11.0 defaults to a newer one that reflows code. -->
+                        <palantirJavaFormat>
+                            <version>2.80.0</version>
+                        </palantirJavaFormat>
                         <removeUnusedImports/>
                     </java>
                 </configuration>

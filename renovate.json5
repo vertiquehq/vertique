@@ -32,6 +32,12 @@
       enabled: false,
     },
     {
+      description: 'jakarta.inject-api 2.0.1.MR re-releases 2.0.1 under a non-numeric qualifier; it is not a newer API. Dagger and the rest of the Jakarta stack stay on 2.0.1.',
+      matchManagers: ['maven'],
+      matchPackageNames: ['jakarta.inject:jakarta.inject-api'],
+      allowedVersions: '/^[0-9]+\\.[0-9]+\\.[0-9]+$/',
+    },
+    {
       description: 'GitHub Actions are pinned to commit SHAs with a version comment; let Renovate keep both in sync.',
       matchManagers: ['github-actions'],
       groupName: 'github actions',

@@ -215,7 +215,7 @@ failures are not wrapped: they reach the caller as the Vert.x or JDK throwable.
 **Vert.x hook.** Governance (egress, credentials, bounds, scoping, interceptors) is installed through the
 Vert.x Web Client interceptor hook: `WebClient.addInterceptor(Handler<io.vertx.ext.web.client.impl.HttpContext<?>>)`
 with the phases of `io.vertx.ext.web.client.impl.ClientPhase`. Those types are internal to Vert.x, not public
-Vert.x API, and the module is tested against Vert.x 5.2.2. The contract test `WebClientHookContractIT` (in this
+Vert.x API, and the module is tested against Vert.x 5.2.3. The contract test `WebClientHookContractIT` (in this
 module's tests) pins the phase order, reset after the response head, redirect handling of a wrapped agent and
 the other behavior the client relies on; run it first when upgrading Vert.x.
 

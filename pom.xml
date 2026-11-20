@@ -133,7 +133,7 @@ SPDX-License-Identifier: EUPL-1.2
         <lombok.version>1.18.48</lombok.version>
         <swagger-core.version>2.2.55</swagger-core.version>
         <jakarta.ws.rs.version>4.0.0</jakarta.ws.rs.version>
-        <jakarta.inject.version>2.0.1.MR</jakarta.inject.version>
+        <jakarta.inject.version>2.0.1</jakarta.inject.version>
         <jakarta.annotation.version>3.0.0</jakarta.annotation.version>
         <logback.version>1.6.7</logback.version>
         <slf4j.version>2.0.20</slf4j.version>
@@ -1390,7 +1390,10 @@ SPDX-License-Identifier: EUPL-1.2
                     <version>${spotless.version}</version>
                     <configuration>
                         <java>
-                            <palantirJavaFormat/>
+                            <!-- Pinned to the formatter spotless 3.10.2 defaulted to; the 3.11.0 default (2.102.0) reflows ~350 files. Move it deliberately, with a reformat. -->
+                            <palantirJavaFormat>
+                                <version>2.80.0</version>
+                            </palantirJavaFormat>
                             <removeUnusedImports/>
                         </java>
                     </configuration>

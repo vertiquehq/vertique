@@ -49,7 +49,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * Pins the Vert.x 5.2.2 {@code WebClient} interceptor behavior the governed client builds on: the
+ * Pins the Vert.x 5.2.3 {@code WebClient} interceptor behavior the governed client builds on: the
  * order and content of the interceptor phases, reset after the response head, the request timeout
  * stopping at the head, the redirect handler of a wrapped agent, interceptor uniqueness per class,
  * re-preparation after a body-codec swap and the pre-send veto.
