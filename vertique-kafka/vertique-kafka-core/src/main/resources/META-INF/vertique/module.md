@@ -137,8 +137,10 @@ component.kafkaConsumerDeploymentManager().deployAll();
 
 `deployAll()` registers local codecs, then deploys every enabled consumer verticle in parallel; if
 any deployment fails the successfully-started consumers are rolled back and the returned future
-fails with the original cause. `undeployAll()` is the counterpart. Consumer verticles are deployed
-in the `SERVICES` lifecycle phase.
+fails with the original cause. `undeployAll()` is the counterpart: it attempts to undeploy every
+consumer even when one attempt fails, and its future fails, once every attempt has settled, when
+any of them failed. A consumer that failed to undeploy stays tracked, so a later `undeployAll()`
+attempts it again. Consumer verticles are deployed in the `SERVICES` lifecycle phase.
 
 ### Model 1 — `@KafkaSource`
 
@@ -494,7 +496,7 @@ the wire and which headers fail a send.
 | Method | Description |
 |---|---|
 | `deployAll()` | Registers codecs, then deploys every enabled consumer verticle in parallel; rolls back on partial failure |
-| `undeployAll()` | Undeploys every consumer verticle |
+| `undeployAll()` | Attempts to undeploy every consumer verticle; the returned future fails, after every attempt has settled, if any attempt failed |
 
 ---
 
@@ -918,6 +920,13 @@ finished.
 - **Stopping.** A stop starts no record and no retry, stops all fetching, waits for the running records, dead-letter
   publishes and commits, and for the broker to acknowledge the finished prefix of each partition, for one drain
   period, then closes. A record that did not finish stays uncommitted and runs again at the next start.
+  An `AUTO` consumer pauses its partitions and waits for its in-flight dispatches for the same period. The
+  drain period and the close of the Kafka client that follows it are each bounded at 10 seconds, and neither
+  is configurable. The consumer is closed even when the drain period ends first. If records or dead-letter
+  publishes were still running then, the stop fails with a `TimeoutException` that reports how many, with a
+  close failure attached as a suppressed exception. Otherwise the stop fails only when the close fails or
+  exceeds its bound; a final commit that the broker has not acknowledged in time is logged as a warning and
+  does not fail the stop.
 
 ### A dispatch gate
 

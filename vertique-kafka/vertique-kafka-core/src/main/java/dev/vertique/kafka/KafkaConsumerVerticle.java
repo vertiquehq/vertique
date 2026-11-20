@@ -307,6 +307,11 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
      * finish stay uncommitted for the next run. An {@code AUTO} consumer pauses its partitions and waits for its in-flight
      * dispatches. Either then closes the consumer for at most {@value #KAFKA_CLOSE_TIMEOUT_MS} milliseconds.
      *
+     * <p>The stop fails with a {@link TimeoutException} reporting the pending count when the drain period ended
+     * with records or dead-letter publishes still running, with a close failure attached as suppressed. Otherwise it
+     * fails with the close failure, which is a {@link TimeoutException} when the close exceeded its bound. A final
+     * commit that was not acknowledged within the drain period is logged and does not fail the stop.
+     *
      * @param stopPromise the promise to complete when the verticle has stopped
      */
     @Override
