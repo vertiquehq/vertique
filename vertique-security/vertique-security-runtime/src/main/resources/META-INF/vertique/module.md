@@ -395,7 +395,7 @@ public record IdentitySnapshotConfig(
 | `identity.snapshot.carriageRequirements.<targetKind>` | `OPTIONAL` for an unlisted kind | `REQUIRED`, `OPTIONAL`, or `FORBIDDEN` |
 | `identity.snapshot.capturedAuthority.allowedTargetKinds[]` | empty | Each entry non-blank; each must resolve to `REQUIRED` in `carriageRequirements` |
 
-Every violation above throws `ConfigurationException` at provider time — including the **`REQUIRED` forces finite budgets** rule, which exists because a never-expiring `REQUIRED` snapshot would be a standing bearer credential.
+Every violation above throws `ConfigurationException` at provider time — including the **`REQUIRED` forces finite budgets** rule, which exists because, without both budgets, a `REQUIRED` snapshot would be bounded only by the 24-hour default signed expiry, a long-lived bearer credential nobody sized.
 
 `IdentitySnapshotDegradationPolicy` governs what happens when a deferred execution's carried snapshot is present but fails verification:
 

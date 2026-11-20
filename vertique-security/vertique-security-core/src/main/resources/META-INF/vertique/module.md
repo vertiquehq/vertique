@@ -67,7 +67,7 @@ Every outcome is a **succeeded** `Future<AuthorizationDecision>` — the engine 
 
 ### Reconstructed Contexts
 
-A `SecurityContext` reconstructed from a durably-carried `IdentitySnapshot` is not a live-authenticated context. `SecurityContext.reconstruction()` returns a typed, unforgeable `ReconstructionMarker` for exactly those contexts; every normal, live-authored context returns `Optional.empty()`. Three authority dispositions exist — see `ReconstructedAuthorityMode` below. The default (`ATTRIBUTION_ONLY`) always mints an **empty** `authorization()`: a snapshot's captured claims are audit lineage, never restored authority.
+A `SecurityContext` reconstructed from a durably-carried `IdentitySnapshot` is not a live-authenticated context. `SecurityContext.reconstruction()` returns a typed, framework-mediated `ReconstructionMarker` for exactly those contexts; every normal, live-authored context returns `Optional.empty()`. Three authority dispositions exist — see `ReconstructedAuthorityMode` below. The default (`ATTRIBUTION_ONLY`) always mints an **empty** `authorization()`: a snapshot's captured claims are audit lineage, never restored authority.
 
 ---
 
@@ -79,7 +79,7 @@ Interface extending `ContextValue`. The four pillars (`identity()`, `authenticat
 
 `snapshot()` pins the current facts into an immutable `SecurityContextSnapshot` — capture a snapshot before crossing a thread boundary so a later context rebind cannot replace the fact records under an off-thread projection. `SecurityContextSnapshot` carries `identity`, `authentication`, and `origin` only — **not** `authorization()`.
 
-`reconstruction()` returns the typed, unforgeable `ReconstructionMarker`, which every framework-built context carries only after a verified reconstruction.
+`reconstruction()` returns the typed, framework-mediated `ReconstructionMarker`, which every framework-built reconstructed context carries. The marker is not a cryptographic guarantee: it is trusted under the same in-process model as `SecurityContexts.assemble`, and any in-process code can construct one.
 
 ```java
 // Read-only use in a request handler
@@ -587,7 +587,7 @@ public enum CarriageRequirement { REQUIRED, OPTIONAL, FORBIDDEN }
 
 | Value | Meaning |
 |-------|---------|
-| `REQUIRED` | Every dispatch on this durable target must carry a verified snapshot; a dispatch that arrives with none is an `EXPECTED_ABSENT` degradation (`SnapshotDegradationReason`), not a silently-tolerated gap. Declaring any target-kind `REQUIRED` forces both `maxCarrierLifetimeMs` and `maxSnapshotLifetimeMs` to be configured — a never-expiring `REQUIRED` snapshot would otherwise be a standing bearer credential. |
+| `REQUIRED` | Every dispatch on this durable target must carry a verified snapshot; a dispatch that arrives with none is an `EXPECTED_ABSENT` degradation (`SnapshotDegradationReason`), not a silently-tolerated gap. Declaring any target-kind `REQUIRED` forces both `maxCarrierLifetimeMs` and `maxSnapshotLifetimeMs` to be configured — without them a `REQUIRED` snapshot would be bounded only by the 24-hour default signed expiry, a long-lived bearer credential nobody sized. |
 | `OPTIONAL` | Carriage may be absent on this durable target — the default for an unlisted target-kind. |
 | `FORBIDDEN` | This durable target never carries identity (e.g. a system-scheduled cron trigger with no originating principal) — an absent snapshot is expected and never flagged. A **present** snapshot on a `FORBIDDEN` target — verified or not — is refused fail-closed rather than reconstructed, since the target is declared to never carry identity and verification status is irrelevant once one arrives at all. |
 
@@ -633,7 +633,7 @@ public enum ReconstructedAuthorityMode {
 public record ReconstructionMarker(ReconstructedAuthorityMode mode)
 ```
 
-`ReconstructionMarker` is the typed, **unforgeable** verified-reconstruction signal `SecurityContext.reconstruction()` returns — present only for a context produced by the framework's verified-reconstruction path or the Mode-2 authorizer's evaluation-context rebuild, both of which go through `SecurityContexts.assembleReconstructed(...)`. Any code deciding whether a context is a verified reconstruction MUST key off this typed accessor — **never** the descriptive `identity.reconstructed=true` string attribute on `AuthenticationState#safeAttributes()`, which any code populating `safeAttributes` could set on an otherwise live-authored context.
+`ReconstructionMarker` is the typed, **framework-mediated** verified-reconstruction signal `SecurityContext.reconstruction()` returns — the framework's verified-reconstruction path and the Mode-2 authorizer's evaluation-context rebuild both produce it through `SecurityContexts.assembleReconstructed(...)`. It is **not** a cryptographic guarantee: the record has a public constructor and `assembleReconstructed` is public, so any in-process code can build one, exactly as it can assemble an arbitrary context with `SecurityContexts.assemble`. What the marker rules out is forging the signal through the descriptive string attribute named next. Any code deciding whether a context is a verified reconstruction MUST key off this typed accessor — **never** the descriptive `identity.reconstructed=true` string attribute on `AuthenticationState#safeAttributes()`, which any code populating `safeAttributes` could set on an otherwise live-authored context.
 
 **Carries no principal of its own.** A Mode-2 authorizer derives the `PrincipalKey` to re-resolve from `SecurityContext#identity()#actor()` — never from this marker and never from `SecurityIdentity#subject()`.
 
@@ -903,7 +903,7 @@ public interface IdentityReconstruction {
 
 - **Fail-closed, never partial.** Both entry points re-verify integrity *and* current freshness and confirm the signed `carrier()` matches `expectedCarrier` before minting anything. A `null` snapshot, a failed verification, or a carrier mismatch throws `IdentityReconstructionException` before any `SecurityContext` is built — there is never a partial or unbound result.
 - **Reconstructed authority is attribution-only**. Every context these methods mint has `authorization()` == `AuthorizationClaims.empty()` and marker mode `ATTRIBUTION_ONLY`, so a principal demoted or revoked during the pause never resumes with frozen standing. Live re-resolution (Mode 2) and captured authority (Mode 3) are opt-in layers on top of this default.
-- **`isReconstructed(ctx)` is a descriptive convenience, not a trust decision.** It reads the `identity.reconstructed` string attribute from `ctx.authentication().safeAttributes()`, which any code populating `safeAttributes` can set. Never use it to decide authority; use `SecurityContext#reconstruction()`, whose marker only the framework's reconstruction path can produce.
+- **`isReconstructed(ctx)` is a descriptive convenience, not a trust decision.** It reads the `identity.reconstructed` string attribute from `ctx.authentication().safeAttributes()`, which any code populating `safeAttributes` can set. Never use it to decide authority; use `SecurityContext#reconstruction()`, whose marker the framework's reconstruction path produces (the marker is a typed signal under the in-process trust model, not a cryptographic proof).
 - **`IdentityReconstructionException`** carries a typed `reason()` (`SnapshotDegradationReason`) classifying which failure occurred, so a caller can bind a precise `SnapshotDegradationMarker` rather than a catch-all code. A `null` snapshot or a carrier mismatch defaults to `DECODE_FAILED`.
 - The reconstruction marker attributes (`identity.reconstructed`, `.mode`, `.capturedAt`, `.authenticatedAt`) are purely descriptive of how the authentication state was produced; setting them grants nothing. `.authenticatedAt` is the one a chained re-capture reads back, so the original authentication instant survives each hop.
 

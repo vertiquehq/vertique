@@ -14,7 +14,7 @@ import java.util.Objects;
  * a framework-verified reconstruction — <strong>never</strong> the descriptive
  * {@code identity.reconstructed=true} string attribute on
  * {@link AuthenticationState#safeAttributes()}, which any code populating {@code safeAttributes}
- * could set on an otherwise live-authored context. This record can only be produced by
+ * could set on an otherwise live-authored context. This record is meant to reach a context only through
  * {@link SecurityContexts#assembleReconstructed}, whose sanctioned callers are the framework's
  * verified-reconstruction path ({@code DefaultIdentityReconstruction}) and the Mode-2 authorizer's
  * own evaluation-context rebuild.

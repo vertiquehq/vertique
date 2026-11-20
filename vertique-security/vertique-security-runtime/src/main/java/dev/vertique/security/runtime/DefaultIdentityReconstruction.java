@@ -47,7 +47,7 @@ import java.util.Optional;
  * authority. Current authority is resolved by mode (see
  * {@code PrincipalAuthorityResolver}), out of scope here.
  *
- * <p>Both entry points also mint the typed, unforgeable {@link ReconstructionMarker} signal
+ * <p>Both entry points also mint the typed, framework-mediated {@link ReconstructionMarker} signal
  * alongside the pre-existing {@code identity.reconstructed=true} string attribute on
  * {@link AuthenticationState#safeAttributes()} — the marker rides via
  * {@link SecurityContexts#assembleReconstructed}, while the string attribute is left

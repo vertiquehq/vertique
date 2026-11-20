@@ -13,7 +13,7 @@ import java.util.Optional;
  * created by {@link SecurityContexts#assembleReconstructed}.
  *
  * <p>Identical in shape to {@link DefaultSecurityContext} — the same four typed pillars — plus a
- * fifth field, {@link #marker()}, carrying the typed, unforgeable verified-reconstruction signal
+ * fifth field, {@link #marker()}, carrying the typed, framework-mediated verified-reconstruction signal
  * this context's {@link #reconstruction()} returns. That extra field is what distinguishes a
  * reconstructed context from a live-authored one at the type level, independent of any
  * string-attribute convention on {@link #authentication()}.
