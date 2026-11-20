@@ -12,6 +12,7 @@ import dev.vertique.resilience.annotation.ResilienceAnnotations;
 import dev.vertique.rest.client.ExpectedStatus;
 import dev.vertique.rest.client.HttpClientResponse;
 import dev.vertique.rest.client.Url;
+import dev.vertique.rest.client.exception.RestClientConfigurationException;
 import io.vertx.core.Expectation;
 import io.vertx.core.Future;
 import io.vertx.core.http.HttpResponseExpectation;
@@ -141,7 +142,7 @@ public final class ClientInterfaceScanner {
         ReturnTypeMeta returnType = resolveReturnType(iface, method);
         String consumesMediaType = resolveConsumes(iface, annotations);
         String producesMediaType = resolveProduces(iface, annotations);
-        Expectation<HttpResponseHead> expectation = resolveExpectedStatus(annotations);
+        Expectation<HttpResponseHead> expectation = resolveExpectedStatus(iface, method, annotations);
         ResilienceAnnotations resilienceAnnotations = ResilienceAnnotations.resolve(iface, method);
 
         boolean hasUrlParam = params.stream().anyMatch(p -> p.source() == ClientParamMeta.ParamSource.URL);
@@ -936,13 +937,23 @@ public final class ClientInterfaceScanner {
      * {@link Expectation}. Returns {@code null} if no annotation is present or the annotation
      * specifies neither exact codes nor a range.
      *
+     * @param iface the client interface, named in a configuration error
+     * @param method the client method, named in a configuration error
      * @param annotations the merged method annotations
      * @return the resolved expectation, or {@code null}
+     * @throws RestClientConfigurationException if the annotation declares both the exact-code form
+     *     and the range form
      */
-    private static Expectation<HttpResponseHead> resolveExpectedStatus(List<Annotation> annotations) {
+    private static Expectation<HttpResponseHead> resolveExpectedStatus(
+            Class<?> iface, Method method, List<Annotation> annotations) {
         ExpectedStatus ann = first(annotations, ExpectedStatus.class);
         if (ann == null) {
             return null;
+        }
+        if (ann.value().length > 0 && (ann.min() >= 0 || ann.max() >= 0)) {
+            throw new RestClientConfigurationException("@ExpectedStatus on " + iface.getName() + "." + method.getName()
+                    + "() declares both exact codes (value) and a range (min/max); the two forms are"
+                    + " mutually exclusive");
         }
         if (ann.value().length > 0) {
             Expectation<HttpResponseHead> result = HttpResponseExpectation.status(ann.value()[0]);

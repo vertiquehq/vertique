@@ -1277,6 +1277,19 @@ public final class Diagnostics {
     }
 
     /**
+     * Returns the standard compile-time error message when the class declaring an observer method
+     * cannot be reached from the package of the generated events module.
+     *
+     * @param methodFqn the fully qualified observer method name
+     * @param modulePackage the package the generated events module is emitted into
+     * @return the diagnostic message
+     */
+    public static String observerClassMustBeAccessible(String methodFqn, String modulePackage) {
+        return "Observer method %s is declared on a class that is not accessible from the generated module package %s; make the class public (or declare it in that package)"
+                .formatted(methodFqn, modulePackage);
+    }
+
+    /**
      * Returns the standard compile-time error message when the payload type of an {@code @Observes}
      * parameter or an {@code Event<T>} constructor injection is a parameterized (generic) type such
      * as {@code Box<String>}.

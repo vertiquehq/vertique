@@ -1274,7 +1274,7 @@ public final class RestClientBuilder {
      *     {@link JsonMapperProfileRegistry} was seeded (standalone builder)
      * @throws dev.vertique.core.json.JsonProfileConfigurationException if the selected profile id is
      *     not registered in the resolved registry
-     * @throws IllegalStateException if a method-level {@link JsonProfile} is present
+     * @throws RestClientConfigurationException if a method-level {@link JsonProfile} is present
      */
     ObjectMapper resolveEffectiveMapper(
             @Nullable RestClientConfig effectiveConfig, Class<?> clientInterface, String clientName) {
@@ -1412,12 +1412,13 @@ public final class RestClientBuilder {
      * early-return in {@link #resolveEffectiveMapper}) so it cannot be bypassed.
      *
      * @param clientInterface the client interface to scan
-     * @throws IllegalStateException if any method of the interface carries a {@link JsonProfile}
+     * @throws RestClientConfigurationException if any method of the interface carries a
+     *     {@link JsonProfile}
      */
     private void validateNoMethodLevelJsonProfile(Class<?> clientInterface) {
         for (Method method : clientInterface.getMethods()) {
             if (method.isAnnotationPresent(JsonProfile.class)) {
-                throw new IllegalStateException("REST client interface '" + clientInterface.getName()
+                throw new RestClientConfigurationException("REST client interface '" + clientInterface.getName()
                         + "' declares @JsonProfile on method '" + method.getName()
                         + "'. @JsonProfile is honored only at the TYPE level on a @RestClient interface"
                         + " — move it to the interface declaration.");

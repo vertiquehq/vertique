@@ -249,6 +249,11 @@ final class KafkaConsumerScanner {
                 continue;
             }
 
+            if (binding.targetService() == null) {
+                violations.add("KafkaConsumerBinding '" + name + "': names neither a handler nor a target service");
+                continue;
+            }
+
             // Validate target service exists
             ContractEntry<?> contractEntry;
             try {

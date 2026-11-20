@@ -1491,6 +1491,10 @@ the same rule before it is mounted, so a Dagger-substituted instance that adds r
 fails startup the same way. Resources within one mount are ordered by fully qualified class name,
 regardless of `resources()`'s own order.
 
+A generated resource whose provider throws, returns `null`, or resolves to a disallowed instance fails startup
+with a `RestConfigurationException` that names the application (its name and declaring interface) and the
+resource class; the provider's own exception is kept as the cause.
+
 ### Lifecycle and evaluation
 
 The declaring interface is never constructed: the composer reads the view for identity, activity,
@@ -1864,6 +1868,7 @@ remains (see [Startup failures](#startup-failures)).
 | `INVALID_FILE_PART_DECLARATION` | `@FilePart` on an unsupported type, invalid `allowedTypes`/`maxSizeBytes`, or overlapping constrained declarations |
 | `UNSUPPORTED_MULTIPART_COLLECTION_SHAPE` | a `@FormParam` collection parameter's element type is a native multipart target (`FileUpload`/`EntityPart`) declared in a shape other than `List` |
 | `DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT` | two parameters bind the same name from the same source but cannot share one declaration — incompatible multiplicities (one collection-shaped, one scalar), different scalar types, different collection element types, or different binding-affecting annotations (including `@DefaultValue`); scoped to `@PathParam`/`@QueryParam`/`@HeaderParam`/`@CookieParam` |
+| `INVALID_SSE_DECLARATION` | a method declaring `@Produces("text/event-stream")` does not return `ReadStream<SseEvent>` or `Future<ReadStream<SseEvent>>`, or a method returning such a stream does not declare `text/event-stream` |
 | `SECURITY_ANNOTATIONS_WITHOUT_AUTH_MODULE` | restrictive security annotations present but `AuthModule` absent |
 | `CONTEXT_PARAM_CONFLICT` | a `@Context` parameter also carries a JAX-RS value-binding annotation — the two are mutually exclusive |
 | `UNSUPPORTED_JAXRS_CONTEXT_TYPE` | a `@Context` parameter declares a reserved JAX-RS type that is not supported (e.g. `UriInfo`, `HttpHeaders`); fails fast instead of injecting `null` |

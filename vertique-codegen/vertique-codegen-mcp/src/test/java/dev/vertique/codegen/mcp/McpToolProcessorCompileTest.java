@@ -122,6 +122,82 @@ class McpToolProcessorCompileTest {
         row.proof().execute();
     }
 
+    @Test
+    @DisplayName("a @NotNull Optional<T> parameter is rejected at compile time, naming the parameter")
+    void shouldRejectNotNullOptionalParameter() {
+        JavaFileObject requiredOptional = SourceFiles.inline(TOOLS_PACKAGE + ".RequiredOptionalTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+                import jakarta.validation.constraints.NotNull;
+                import java.util.Optional;
+
+                public class RequiredOptionalTools {
+
+                    @Inject
+                    public RequiredOptionalTools() {}
+
+                    @McpTool(name = "weather.required_optional", description = "Look up the current weather.")
+                    public Future<WeatherReport> lookup(
+                            @McpToolParam(name = "city", description = "The city to look up.")
+                            @NotNull Optional<String> city) {
+                        return Future.succeededFuture(new WeatherReport(city.orElse(""), 21));
+                    }
+                }
+                """);
+        try (McpToolCompilation compilation = McpToolCompilation.of(weatherReport(), requiredOptional)) {
+            compilation.result().assertFailed();
+            assertEquals(
+                    1,
+                    compilation.errorsNaming("city"),
+                    "a required yet optional parameter must be rejected with one diagnostic naming it");
+        }
+    }
+
+    @Test
+    @DisplayName("a parameter description over 4,096 characters is rejected at compile time")
+    void shouldRejectParameterDescriptionOverBound() {
+        String atBound = "x".repeat(4096);
+        String overBound = "x".repeat(4097);
+        String template = """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+
+                public class LongDescriptionTools {
+
+                    @Inject
+                    public LongDescriptionTools() {}
+
+                    @McpTool(name = "weather.long_description", description = "Look up the current weather.")
+                    public Future<WeatherReport> lookup(
+                            @McpToolParam(name = "city", description = "%s") String city) {
+                        return Future.succeededFuture(new WeatherReport(city, 21));
+                    }
+                }
+                """;
+        try (McpToolCompilation control = McpToolCompilation.of(
+                weatherReport(),
+                SourceFiles.inline(TOOLS_PACKAGE + ".LongDescriptionTools", template.formatted(atBound)))) {
+            control.result().assertSuccess();
+        }
+        try (McpToolCompilation oversized = McpToolCompilation.of(
+                weatherReport(),
+                SourceFiles.inline(TOOLS_PACKAGE + ".LongDescriptionTools", template.formatted(overBound)))) {
+            oversized.result().assertFailed();
+            assertEquals(
+                    1,
+                    oversized.errorsNaming("city", "4096"),
+                    "an oversized parameter description must be rejected with one diagnostic naming the bound");
+        }
+    }
+
     // ==================================================================================
     // T008 — generated parameter carriers, profile, and access metadata
     // ==================================================================================

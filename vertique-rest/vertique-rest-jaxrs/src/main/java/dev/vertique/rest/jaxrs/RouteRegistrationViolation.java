@@ -199,6 +199,14 @@ public record RouteRegistrationViolation(String operationId, ViolationType type,
         DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT,
 
         /**
+         * A server-sent-events declaration is inconsistent: a method that declares
+         * {@code @Produces("text/event-stream")} does not return {@code ReadStream<SseEvent>} or
+         * {@code Future<ReadStream<SseEvent>>}, or a method that returns such a stream does not
+         * declare {@code text/event-stream}.
+         */
+        INVALID_SSE_DECLARATION,
+
+        /**
          * An operation has no explicit security policy: it neither restricts callers ({@code
          * DenyAll}/{@code AuthenticatedOnly}/{@code Constrained}, a non-empty, non-anonymous
          * {@code securityRequirementSets()}, or a resolved required action) nor is declared public

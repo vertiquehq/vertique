@@ -213,7 +213,7 @@ A binding names a `handler` or a `dispatchTo` target, not both: `build()` throws
 `ignoreUndecodable`, `noHeaderContext` or `requireBindingStrategies` is set and no `handler` is, and when
 `requireBindingStrategies` is set without `commitStrategy(CommitStrategy.MANUAL)`: the default `AUTO` could
 commit past an unsettled record when the consumer closes. A binding
-that names neither a handler nor a target builds, and the registrar refuses it at startup. A handler binding is registered as a handler-kind consumer
+that names neither a handler nor a target builds, and the registrar refuses it at startup with a violation naming the binding, collected with the other registration violations. A handler binding is registered as a handler-kind consumer
 (see Model 4): it receives the decoded `KafkaMessage<V>` with key, topic, partition, offset,
 timestamp and headers, runs with the record's durable context installed, and keeps the binding's
 filter, commit strategy, error and retry strategy, dead-letter topic, custom deserializer and
