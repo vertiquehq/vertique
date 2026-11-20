@@ -16,6 +16,7 @@ import io.opentelemetry.api.trace.Tracer;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Locale;
 
 /** Records sealed cache operation events as short-lived child spans. */
@@ -63,7 +64,10 @@ public final class CacheTracingObserver implements CacheObserver {
             String operation, String provider, String cacheName, String outcome, Duration elapsed, boolean failed) {
         Span span = null;
         try {
+            // The event arrives after the operation, so the span is back-dated to cover it.
+            Instant ended = Instant.now();
             span = tracer.spanBuilder("cache." + operation.toLowerCase(Locale.ROOT))
+                    .setStartTimestamp(ended.minus(elapsed))
                     .startSpan();
             span.setAttribute("provider", bounded(provider));
             span.setAttribute("cache", bounded(cacheName));
