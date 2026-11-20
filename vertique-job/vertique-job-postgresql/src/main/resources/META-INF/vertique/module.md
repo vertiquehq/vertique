@@ -119,6 +119,7 @@ Flyway migration:
 
 - `V003__add_job_execution_scope.sql` — adds `job_executions.scope_key VARCHAR(255) NOT NULL DEFAULT 'default'`, so every existing row reads `default`. The default is a constant, so PostgreSQL 11 and later add the column without rewriting the table. The script sets `lock_timeout` to 30 s, which bounds only the wait for the table lock. No index and no check constraint are added.
 - `V004__add_job_execution_idempotency_key.sql` — adds the nullable `job_executions.idempotency_key VARCHAR(255)`, so every existing row reads `NULL`, and the partial unique index `idx_job_executions_idempotency_key` on `(handler, scope_key, idempotency_key)` that holds for every execution whose key is not `NULL` and whose state is not `SUCCEEDED`, `CANCELLED` or `DEAD_LETTER`. The column is added without a default, so no row is rewritten. The plain `CREATE UNIQUE INDEX` blocks every write to `job_executions` (enqueue, claim, completion) while it builds, so on a very large installation add the column and build the index ahead of the upgrade with `CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS` and the same name and definition. The script sets `lock_timeout` to 30 s, which bounds only the wait for the lock, not the build, and it drops an index of that name that a cancelled concurrent build left invalid before it creates one. The script can be rerun after a failure
+- `V005__drop_job_schedules_max_attempts.sql` — drops `job_schedules.max_attempts`, the attempt limit of a cron schedule that nothing reads: cron never retries, and an execution records its own limit in `job_executions.max_attempts`, which is unchanged. The drop is catalog-only and rewrites no row. The script sets `lock_timeout` to 30 s, which bounds only the wait for the lock, and can be rerun after a failure. During a rolling upgrade a node still on the earlier version reads and writes the dropped column at startup, when it persists its schedules and when its misfire recovery looks up the schedule of each single-instance job; both fail after the migration and are logged and ignored, so that node skips its misfire catch-up until it is upgraded.
 
 **The `V1` schema is frozen.** `vertique-job-postgresql` is Stable, so every later schema change ships
 as a new `V2+` migration file; `V1` is never edited again. A database that applied an earlier `V1`
@@ -199,7 +200,6 @@ Cron schedule definitions written by `JobRepository.saveSchedule()` at startup. 
 | `timezone` | `VARCHAR(50)` | IANA zone ID |
 | `enabled` | `BOOLEAN` | Whether the schedule is active |
 | `overlap_policy` | `VARCHAR(20)` | `SKIP` or `QUEUE_ONE` |
-| `max_attempts` | `INTEGER` | Max attempts per execution |
 | `tracked` | `BOOLEAN` | Whether executions are persisted |
 | `last_fired_at` | `TIMESTAMPTZ` | Last fire instant (for misfire detection) |
 | `next_fire_at` | `TIMESTAMPTZ` | Next computed fire instant; stored by the startup upsert and refreshed after each tracked fire |
