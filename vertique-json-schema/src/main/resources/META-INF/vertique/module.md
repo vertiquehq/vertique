@@ -313,13 +313,15 @@ interpolator does not. This module never constructs a `Validator` itself
 
 ### Which properties the input direction describes
 
-`forInputProfile(JsonMapperProfile)` describes a walked property when Jackson reports it
-deserializable **or** it has a backing field, and its access is not `READ_ONLY`. A backing field
-counts because Jackson populates a private field through reflection wherever the mapper infers
-property mutators — Jackson's default, and the setting every built-in profile leaves alone — so the
-commonest DTO shape of all, a private field reachable only through a getter, is described with its
-type and format. So are a field-backed getter-only `List<String>` or `Map<String, String>` and a
-type holding such a shape as a property.
+`forInputProfile(JsonMapperProfile)` describes a property when the profile mapper's own resolved
+bean deserializer reports it bound — a field, a setter, a creator parameter or a builder method — and
+never through a walk of the Java source's fields. The set therefore follows the mapper: Jackson
+populates a private field through reflection wherever the mapper infers property mutators — Jackson's
+default, and the setting every built-in profile leaves alone — so the commonest DTO shape of all, a
+private field reachable only through a getter, is bound and is described with its type and format. So
+are a field-backed getter-only `List<String>` or `Map<String, String>` and a type holding such a shape
+as a property. A mapper that disables that inference does not bind a private field that has no setter,
+so such a scalar property is not described.
 
 A builder type is filled through its builder rather than through the field. A builder method's own
 constraint is borrowed from the built type's Jackson-introspected property of the same wire name —
@@ -549,8 +551,9 @@ separate cases:
 - the storage field a method `@JsonAnyGetter` returns, which Jackson fills through that getter;
 - a name bound only through a setter with no field, through an accessor pair over a differently
   named field, through a `@Schema(hidden = true)` field, or through a `transient` field;
-- a `@JsonAlias` spelling more than one property claims, and a spelling of a property the document
-  does not publish under its own wire name — neither is published, so neither is subtracted;
+- a `@JsonAlias` spelling of a property the document does not publish under its own wire name — it
+  is not published, so it is not subtracted. A spelling more than one property claims is published
+  with the claimant Jackson routes it to, so it is subtracted like any published name;
 - a `@JsonUnwrapped` child's own alias spelling, and its own hidden, ignored, or bound-but-unpublished
   name, keyed by the child's wire name with any unwrapped prefix or suffix applied — folded in beside
   the parent's own names, scoped to when the parent actually has an any-setter (the only case where an
@@ -657,11 +660,11 @@ that entry: a spelling of a property the document never publishes — a `@Schema
 field, an accessor pair with no same-named field, a property published under some other name — is
 listed nowhere and stays a reserved name. A spelling that is already another property's name is not
 listed either — whether or not the document publishes that property, because the type still binds
-that name — and neither is a spelling more than one property of the type claims: the generator
-cannot predict which claimant Jackson binds such a key to, so publishing it would attach one
-claimant's schema to another claimant's value. A contested spelling is therefore published nowhere,
-named in no rule, and reserved where extras are described; constrain that shape with Bean
-Validation.
+that name — and a spelling more than one property of the type claims is listed with the claimant
+Jackson's own deserializer routes it to: the generator asks that deserializer which property the
+spelling binds to, and publishes the spelling with that property's schema, so the schema the gate
+applies is the one of the member the value actually reaches. A contested spelling whose claimant is
+published is therefore listed, and nothing is reserved for it where extras are described.
 
 A required aliased property leaves the top-level `required` list, because one rule per aliased
 property states which spellings may appear instead. Which rule depends on the selected profile's own

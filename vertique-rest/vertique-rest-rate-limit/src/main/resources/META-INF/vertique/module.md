@@ -137,7 +137,7 @@ backend detail. `@RateLimited` itself is declared on the JAX-RS resource method 
 | Binding | Kind | Description |
 |---|---|---|
 | Exception mappers | `@Provides @IntoSet` | `429`/`503` mapping for `RateLimitExceededException`/`RateLimitUnavailableException` |
-| Edge `Middleware` | `@Provides @IntoSet` | Contributed only when `rateLimit.rest.edge.enabled` is `true` |
+| Edge `Middleware` | `@Provides @IntoSet` | Always contributes one `ROOT` entry at the edge priority: the edge limiter when `rateLimit.rest.edge.enabled` is `true`, otherwise a no-op that passes every request on, so the `Set<Middleware>` shape does not depend on configuration |
 
 `RestRateLimitModule` includes `RateLimitCoreModule`. It does not itself contribute
 or require `vertique-rest-security`'s `AuthModule`/`SecurityModule`; co-installing

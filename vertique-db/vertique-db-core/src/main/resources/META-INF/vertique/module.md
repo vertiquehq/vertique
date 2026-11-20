@@ -223,7 +223,7 @@ page exists, without a `COUNT(*)`.
 | `.orderBy(OrderDirection, NullHandling, String...)` | Uniform direction and null policy |
 | `.orderBy(OrderKey, OrderKey...)` | Per-column direction and null policy |
 | `.uniqueKey(String...)` | Declares which order columns form a unique key |
-| `.pageSize(int)` | Default page size when the cursor carries none (default `20`) |
+| `.pageSize(int)` | Page size for `page()`, the first page (default `20`); a cursor passed to `page(PageCursor)` always carries its own size, which is the one used |
 | `.queryClause(QueryClause)` | Vendor clause appended after `LIMIT` |
 
 | Terminal method | Returns |
@@ -252,7 +252,8 @@ Future<PagedResult<Item>> second = this.<Item>pagedQuery(
 ```
 
 **At least one order key is required** — building without `orderBy(...)` throws
-`IllegalArgumentException`. The framework emits row-value comparison syntax such as
+`NullPointerException`, and `orderBy(...)` with no columns throws `IllegalArgumentException`. The
+framework emits row-value comparison syntax such as
 `(created_at, id) > ($2, $3)`, so every order column must appear in the `SELECT` list and be
 readable by name from the returned `Row`.
 
@@ -266,7 +267,8 @@ reversed for the fetch and the results are reversed back in memory, so display o
 
 **Null keyset values** are rejected unless the corresponding `OrderKey` allows them. A cursor
 carrying a null for a `DISALLOW` column fails the future with `IllegalArgumentException`; a *result
-row* with a null in such a column fails with `IllegalStateException`. Use `.nullsFirst()` or
+row* with a null in such a column fails the future with a `DataAccessException` whose cause is an
+`IllegalStateException`. Use `.nullsFirst()` or
 `.nullsLast()` on the `OrderKey` when nulls are expected.
 
 **Cardinality** is checked at execution: a cursor whose keyset value count differs from the order-key
@@ -977,11 +979,12 @@ compile-time constant or a developer-controlled string, never anything derived f
 
 | Symptom | Cause |
 |---|---|
-| `IllegalArgumentException: At least one order key is required` | `PagedQuery` built without `orderBy(...)` |
+| `NullPointerException: orderKeys must not be null (call orderBy() on the builder)` | `PagedQuery` built without `orderBy(...)` |
+| `IllegalArgumentException: At least one column is required` | `orderBy(...)` called with no columns |
 | `IllegalArgumentException: uniqueKey column '…' does not appear in the orderBy columns` | `.uniqueKey(...)` names a column not in `orderBy` |
 | WARN "no declared unique tiebreaker column" (once per process) | `PagedQuery` executed without `.uniqueKey(...)`; pagination may skip or duplicate rows |
 | `IllegalArgumentException: Cursor keyset values count (…) does not match order keys count (…)` | Cursor reused against a query whose `orderBy` changed |
-| `IllegalStateException: Null value in column '…' … null handling is DISALLOW` | A result row has a null order-key value; use `.nullsFirst()` / `.nullsLast()` |
+| `DataAccessException` caused by `IllegalStateException: Null value in column '…' … null handling is DISALLOW` | A result row has a null order-key value; use `.nullsFirst()` / `.nullsLast()` |
 | `IllegalArgumentException: Invalid cursor token` | Malformed, truncated, or foreign token from the client |
 | `IllegalArgumentException: Unsupported keyset value type prefix: …` | Cursor produced with a codec set the decoder does not have |
 | `PageSizeConstraintViolationException` (→ HTTP 400) | Client page size outside `[min, max]` at a `validatePageSize` / `withPageSize` call |
@@ -1003,7 +1006,7 @@ compile-time constant or a developer-controlled string, never anything derived f
 | Dagger duplicate-binding error for `DbSchemas` | The application provides its own `DbSchemas` and also includes `DbModule`; pick one source |
 | Application queries miss the schema the migrations used | Hand-written SQL names the table without `PgTableNames.qualify(schemas, name, table)` |
 | Unique-violation surfaces as HTTP 500 | No boundary translation; catch `UniqueConstraintViolationException` and rethrow `ConflictException` |
-| Syntax error after `ORDER BY` | Base SQL for a paginated query already contained `ORDER BY`, `LIMIT`, or `OFFSET` |
+| `IllegalArgumentException: Base SQL for paged queries must not contain ORDER BY` (or `LIMIT`, `OFFSET`) | Base SQL for a paginated query already contained that clause; the PostgreSQL implementation refuses it when the query is built, before any statement is sent |
 
 ---
 

@@ -233,13 +233,16 @@ Public class with public static helpers imported via `import static` in generate
 
 The following types are excluded from the discovery root set and never receive a generated processor:
 
-- `String`, `CharSequence`
+- `String`
 - `boolean`, `byte`, `short`, `int`, `long`, `float`, `double`, `char` (and their boxed wrappers)
 - `Number`, `BigDecimal`, `BigInteger`
-- `Character`
-- Any `java.time.*` type
+- Five `java.time` types: `LocalDate`, `LocalDateTime`, `OffsetDateTime`, `ZonedDateTime`, `Instant`
 - `UUID`
+- `OptionalInt`, `OptionalLong`, `OptionalDouble`
+- `Object`
 - Any `Enum` subtype
+
+The filter is exactly this list, not a package or a supertype test: `LocalTime`, `Duration`, the other `java.time` types and `CharSequence` are not in it.
 
 If a `@BODY` method parameter is one of the above types (or a `Collection<E>` / `E[]` whose element type resolves to one of the above), no processor is emitted for it. The scalar-type processing that happens at the route level (via `EffectiveInputPolicies`) is unaffected.
 
@@ -262,8 +265,10 @@ The processor emits `ERROR` when mutually exclusive annotations appear on the sa
 
 | Conflict | Diagnostic |
 |----------|------------|
-| `@Canonicalize` + `@SkipCanonicalization` on same field/type | `Conflicting canonicalization annotations on {element}: @Canonicalize and @SkipCanonicalization cannot be combined` |
-| `@Sanitize` + `@SkipSanitization` on same field/type | `Conflicting sanitization annotations on {element}: @Sanitize and @SkipSanitization cannot be combined` |
+| `@Canonicalize` + `@SkipCanonicalization` on same field/type | `{location} has both @Canonicalize and @SkipCanonicalization — these annotations are mutually exclusive` |
+| `@Sanitize` + `@SkipSanitization` on same field/type | `{location} has both @Sanitize and @SkipSanitization — these annotations are mutually exclusive` |
+
+`{location}` is the type's qualified name for a type-level conflict, and `{qualified type}#{name}` for a field or record component.
 
 ---
 

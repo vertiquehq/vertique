@@ -56,8 +56,10 @@ integral types, `BigInteger`/`BigDecimal`, finite `Float`/`Double`, `Enum`, `UUI
 `java.time` scalars); `RateLimitKey.global()` is the explicit zero-component bucket.
 Each framed component is bounded at 256 bytes UTF-8 post-encoding; an oversized
 component is deterministically replaced by `h:` followed by the lowercase-hex
-SHA-256 digest of its pre-encoding value — a fixed-width, distinctness-preserving
-substitution, never a rejection path.
+SHA-256 digest of the component's type tag, a colon, and its pre-encoding payload
+(`tag + ":" + payload`) — a fixed-width, distinctness-preserving substitution, never
+a rejection path. Folding the tag into the digest input keeps two oversized
+components of different scalar types that spell the same text from colliding.
 
 A policy is one `RateLimitPolicy`: `name`, `enabled`, `mode` (`LOCAL`/`CLUSTERED`),
 `failureMode` (`OPEN`/`CLOSED`, no default for any policy), `revision`, `defaultCost`,

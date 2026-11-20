@@ -172,7 +172,7 @@ carve-out documented on `RestRequestCompletedEvent`.
 2. Decode        RequestBodyDecoder chain → intermediate Map/List
 3. Canonicalize  InputObjectProcessor (dev.vertique.input.processing): route-level → object-level
    + Sanitize    → field-level canonicalizers, then route-level → object-level → field-level sanitizers
-4. Validate      BeanValidator.validateParameters()   (only when ValidationModule is present)
+4. Validate      BeanValidator.checkParameters()      (only when ValidationModule is present)
 5. Invoke        the resource method, with processed and validated arguments
 ```
 
@@ -548,6 +548,7 @@ The framework's `ExceptionMapper<Throwable>`, pre-configured by `RestModule`:
 | `ForbiddenException` (core.exception) | 403 | `ProblemDetail` |
 | `ConflictException` (core.exception) | 409 | `ProblemDetail` |
 | `NotFoundException` (core.exception) | 404 | `ProblemDetail` |
+| `TooManyRequestsException` (core.exception) | 429 | `ProblemDetail`; when the exception carries a retry hint, a `Retry-After` header in whole seconds, rounded up and at least `1` |
 | `UnavailableException` (core.exception) | 503 | `ProblemDetail` |
 | `Throwable` (catch-all) | 500 | `ProblemDetail` with the fixed detail `"Internal Server Error"` — the exception message is never echoed. Logging is deferred to `ErrorPipeline` (see below) so a Vert.x 4xx fallback is not recorded as an unhandled server fault |
 
@@ -740,9 +741,13 @@ the already-written headers. When nothing matches it logs a warning and switches
 / `application/problem+json`. A `StreamingBody` is piped with `endOnFailure(false)` and is never
 buffered, so a failed pipe leaves termination to the caller observing the returned future.
 
-Override it with a custom `@Provides ResponseSerializer` to emit CBOR, XML, or any other format; a
-replacement must honor the same dual-channel contract, documented under `ResponseSerializer` in
-`dev.vertique:vertique-rest-core`.
+To emit CBOR, XML, or any other format, contribute a `ResponseBodyEncoder` with
+`@Provides @IntoSet`; the serializer selects it by `OrderedExtension` order, and an application
+encoder at the default priority `0` is tried before the framework encoders. `RestModule` binds
+`ResponseSerializer` with an unconditional `@Provides`, so the binding is not a replacement point:
+a second `@Provides ResponseSerializer` in the same component is a duplicate binding that Dagger
+rejects. The dual-channel contract the serializer honors is documented under `ResponseSerializer`
+in `dev.vertique:vertique-rest-core`.
 
 ### `RouteRegistrationException`
 
@@ -1106,12 +1111,13 @@ Each event is written as lines terminated by `\n`, followed by a blank line:
 ```
 id: <id>          (omitted when null)
 event: <event>    (omitted when null)
-data: <data>      (omitted when null)
 retry: <ms>       (omitted when null)
 : <comment>       (omitted when null)
+data: <data>      (omitted when null)
 ```
 
-Keepalive comments (`:\n\n`) are emitted at `jaxrs.sse.keepAliveIntervalMs` while no data events flow.
+Keepalive comments (`: keep-alive`, then a blank line) are emitted at a fixed `jaxrs.sse.keepAliveIntervalMs`
+cadence for as long as the response streams, whether or not data events are flowing.
 
 Startup validation pairs the two halves of the contract: a method returning `ReadStream<SseEvent>`
 must declare `@Produces("text/event-stream")`, and a method declaring that media type must return
@@ -2010,8 +2016,12 @@ late failure is observed.
 - **Expecting `openapi.json` to affect routing.** On the default path it is documentation only.
   Runtime contract validation requires the opt-in `openapi-contract` strategy from
   `dev.vertique:vertique-rest-openapi-validation`.
-- **Omitting `RestValidationModule` and expecting validation.** Without a module contributing a
-  strategy, only the built-in `none` strategy exists and no request gate is installed.
+- **Omitting `RestValidationModule` and expecting validation.** `jaxrs.validationStrategy` defaults to
+  `web-validation`. Without a module contributing a strategy with that id, only the built-in `none`
+  strategy is registered and router build fails with a `RestConfigurationException` that names the
+  configured id and lists the available ids; there is no fallback to `none` (a mount with no resources
+  selects no strategy). Add the module, or set `jaxrs.validationStrategy` to `none` to run without a
+  request gate.
 - **Assuming an application decoder or encoder is a fallback.** Application implementations default to
   priority `0`, ahead of every framework default at 999–1100. Raise the priority above 1100 to sit
   behind them.

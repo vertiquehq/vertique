@@ -26,8 +26,8 @@ import java.util.Optional;
  * Dagger wiring for the REST rate-limit adapter.
  *
  * <p>Includes {@link RateLimitCoreModule} and contributes the {@link RateLimitExceptionMapper}'s
- * two nested mappers unconditionally, plus the optional edge {@link RateLimitEdgeMiddleware} only
- * when {@code rateLimit.rest.edge.enabled} is {@code true}. Carries a compile dependency on {@code
+ * two nested mappers unconditionally, plus the edge {@link RateLimitEdgeMiddleware} when {@code
+ * rateLimit.rest.edge.enabled} is {@code true} and a no-op middleware otherwise. Carries a compile dependency on {@code
  * vertique-rest-security} for {@link OriginCaptureMiddleware}/{@code RequestOrigin} only — this
  * module never contributes or requires {@code AuthModule}/{@code SecurityModule} itself;
  * co-installing {@code AuthModule} so {@link OriginCaptureMiddleware} is bound remains the
