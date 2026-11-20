@@ -23,6 +23,9 @@ import java.lang.annotation.Target;
  * }
  * }</pre>
  *
+ * <p>Cron never retries: a failed execution is recorded as failed and the next scheduled fire is the
+ * retry. A job that needs retries enqueues a delayed job from its handler.
+ *
  * <p>Place this annotation on the <em>implementation</em> method, not on the contract interface.
  * The annotation is discovered at startup by {@link CronJobRegistrar}, which scans service
  * implementations via the {@link dev.vertique.services.ServiceContractRegistry}.
@@ -72,17 +75,6 @@ public @interface CronJob {
      * @return the timezone ID (must be a valid {@link java.time.ZoneId})
      */
     String timezone() default "UTC";
-
-    /**
-     * Maximum number of execution attempts, recorded on each execution record. Defaults to
-     * {@code 3}.
-     *
-     * <p>Cron does not retry: a failed execution is recorded as failed and the next scheduled fire
-     * produces a fresh execution, so this value is never used to dead-letter a cron job.
-     *
-     * @return the maximum attempt count (must be positive)
-     */
-    int maxAttempts() default 3;
 
     /**
      * Overlap policy controlling what happens when this job fires while a previous execution is

@@ -62,10 +62,11 @@ public class CleanupServiceImpl implements CleanupService {
 | `cron` | Yes | — | Cron expression in 6-field format |
 | `mode` | No | `EVERY_INSTANCE` | Execution mode; `SINGLE_INSTANCE` requires a `JobRepository` |
 | `timezone` | No | `"UTC"` | IANA timezone ID for evaluating the cron expression |
-| `maxAttempts` | No | `3` | Recorded on each execution record. Cron never retries: a failed execution is recorded `FAILED` and the next scheduled tick produces a fresh one, so this value is never used to dead-letter |
 | `overlapPolicy` | No | `SKIP` | What to do when the previous execution is still running |
 | `tracked` | No | `""` (use global) | `"true"`, `"false"`, or `""` (use `cron.tracked` config; default `true`) |
 | `misfirePolicy` | No | `FIRE_NOW` for `SINGLE_INSTANCE`, `SKIP` for `EVERY_INSTANCE` | How to handle fires missed while the app was down. The annotation's own default is `FIRE_NOW`; for `EVERY_INSTANCE` jobs, an unset (or explicit — the two are indistinguishable) `FIRE_NOW` is rewritten to `SKIP` at registration so the mode-based default applies. See **`EVERY_INSTANCE` + `FIRE_NOW` rewrite** below. |
+
+**Cron never retries.** A failed execution is recorded `FAILED` and the next scheduled fire is the retry; there is no attempt limit to configure, and every execution record carries `maxAttempts` `1`. An application that needs a failed run retried enqueues a delayed job from the cron handler (`vertique-job-delayed`), which owns retry, backoff and dead-lettering.
 
 **Cron expression format (6 fields):**
 
@@ -225,7 +226,7 @@ Immutable record describing a registered job:
 | `handlerAddress` | `String` | Event bus address for an `EventBusTarget` job. Always `null` for a `ServiceTarget` job — that address is resolved per fire from `target`, never at startup |
 | `mode` | `ExecutionMode` | Execution mode |
 | `timezone` | `ZoneId` | Timezone for cron evaluation |
-| `maxAttempts` | `int` | Recorded on each execution record; cron never retries |
+| `maxAttempts` | `int` | Attempt limit recorded on each execution record; cron never retries, so the registrar passes `1` for every annotated and config-only job |
 | `payload` | `Object` | Static payload included in dispatch (may be `null`) |
 | `overlapPolicy` | `OverlapPolicy` | Overlap handling policy |
 | `tracked` | `boolean` | Whether to persist execution records |
