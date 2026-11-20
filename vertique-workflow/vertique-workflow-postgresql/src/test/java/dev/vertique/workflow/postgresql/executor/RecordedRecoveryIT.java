@@ -124,7 +124,7 @@ public class RecordedRecoveryIT {
                     .commands(faults.decorator())
                     .build();
             WorkflowInstanceId id = node.record(startOf("dead-start"));
-            faults.crashEverySegmentOf(id);
+            faults.crashEverySegmentOf(id).lapseCrashedClaims(fixture.observer());
             node.startExecutor();
             awaitCondition("the start to be dead-lettered", DEAD_LETTERED, () -> fixture.commandOf(id)
                     .state()
@@ -207,7 +207,7 @@ public class RecordedRecoveryIT {
             f.idle(node, b);
             assertThat(f.fixture.instanceOf(b).status()).isEqualTo("FAILED");
             assertThat(f.fixture.instanceOf(b).stateJson()).isNotNull();
-            faults.crashSegmentsOf(a, 2);
+            faults.crashSegmentsOf(a, 2).lapseCrashedClaims(f.fixture.observer());
             f.record(node, a, "paid", signal("one"), "k1");
             node.startExecutor();
             try {
@@ -336,7 +336,7 @@ public class RecordedRecoveryIT {
             OpenTask task = tasks.open(node, "dead-completion");
             TimerRow due = timers.only(task.id(), "DUE");
             tasks.complete(node, task, new JsonObject(), "k1");
-            faults.crashSegmentsOf(task.id(), 2);
+            faults.crashSegmentsOf(task.id(), 2).lapseCrashedClaims(f.fixture.observer());
             timers.dueNow(due.id());
             node.startExecutor();
             try {
@@ -406,8 +406,8 @@ public class RecordedRecoveryIT {
 
             // And both timeouts are due, abandoned and dead-lettered, and an approve signal recorded after each
             // fire time is parked behind it
-            faults.crashSegmentsOf(waits, 1);
-            faults.crashSegmentsOf(ends, 1);
+            faults.crashSegmentsOf(waits, 1).lapseCrashedClaims(f.fixture.observer());
+            faults.crashSegmentsOf(ends, 1).lapseCrashedClaims(f.fixture.observer());
             node.startExecutor();
             try {
                 timers.dueNow(waitsTimeout.id());
@@ -479,8 +479,8 @@ public class RecordedRecoveryIT {
             // When paid is recorded for A and the task of B is completed, and every segment of both is abandoned
             f.record(node, a, "paid", signal("paid"), "k-paid");
             tasks.complete(node, b, new JsonObject(), "k-done");
-            faults.crashEverySegmentOf(a);
-            faults.crashEverySegmentOf(b.id());
+            faults.crashEverySegmentOf(a).lapseCrashedClaims(f.fixture.observer());
+            faults.crashEverySegmentOf(b.id()).lapseCrashedClaims(f.fixture.observer());
             node.startExecutor();
             IdleReport report;
             try {

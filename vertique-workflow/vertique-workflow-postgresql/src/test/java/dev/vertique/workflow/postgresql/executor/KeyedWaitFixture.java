@@ -1149,8 +1149,8 @@ final class KeyedWaitFixture implements AutoCloseable {
     }
 
     /**
-     * Makes the timeout of each instance due, abandons its segment as a crash would and waits until its command is
-     * dead-lettered. The executor of the node is stopped again when this returns. The node must come from
+     * Makes the timeout of each instance due, abandons its segment as a crash would, ends the lease of the abandoned
+     * claim as if its time had elapsed, and waits until its command is dead-lettered. The executor of the node is stopped again when this returns. The node must come from
      * {@link #deadLettering} and each instance must be idle at a timed wait.
      *
      * @param node     the node whose executor runs
@@ -1159,7 +1159,7 @@ final class KeyedWaitFixture implements AutoCloseable {
      */
     void deadLetterTimeouts(Node node, @Nullable String branchId, WorkflowInstanceId... ids) {
         for (WorkflowInstanceId id : ids) {
-            faults.crashSegmentsOf(id, 1);
+            faults.crashSegmentsOf(id, 1).lapseCrashedClaims(fixture.observer());
         }
         for (WorkflowInstanceId id : ids) {
             dueNow(id, "TIMEOUT", branchId);

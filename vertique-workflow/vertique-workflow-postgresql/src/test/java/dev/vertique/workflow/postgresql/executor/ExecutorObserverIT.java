@@ -67,7 +67,7 @@ class ExecutorObserverIT {
             WorkflowInstanceId flaky = node.record(startOf("flaky"));
             WorkflowInstanceId crashes = node.record(startOf("crashes"));
             faults.failSegmentsOf(flaky, 2, connectionFailure());
-            faults.crashEverySegmentOf(crashes);
+            faults.crashEverySegmentOf(crashes).lapseCrashedClaims(fixture.observer());
 
             // When the executor runs until idle
             node.startExecutor();

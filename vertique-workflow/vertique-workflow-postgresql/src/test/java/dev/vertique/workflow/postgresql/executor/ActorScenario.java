@@ -298,7 +298,7 @@ public final class ActorScenario implements AutoCloseable {
      * @param failureText   the message of the failure that abandons each segment
      */
     public void deadLetter(WorkflowInstanceId id, String signalKey, String completionKey, String failureText) {
-        faults.crashEverySegmentOf(id, failureText);
+        faults.crashEverySegmentOf(id, failureText).lapseCrashedClaims(f.fixture.observer());
         node.startExecutor();
         try {
             ExecutorFixture.awaitCondition(
