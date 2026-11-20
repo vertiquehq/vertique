@@ -25,7 +25,8 @@ needs this module on every node that runs the executor, so it is part of the wor
 ## When To Use It
 
 Install this module next to `vertique-workflow-core` when payload types should be checked as part of
-definition registration rather than at the first request that uses them.
+definition registration rather than at the first request that uses them. A node that runs the workflow
+executor needs it in any case; only a recording-only node can omit it.
 
 Good fits:
 
@@ -67,7 +68,9 @@ interface AppComponent { /* ... */ }
 ```
 
 Without `WorkflowSchemaModule` the registry has no payload validator and registration performs no
-payload check. Without the JSON runtime bindings the component does not compile, because the
+payload check, and a node that runs the executor fails startup, because the module also binds the plan
+schema producer the executor needs (see Schemas Stored On Definition Rows). Only a recording-only node
+(`workflow.executor.enabled=false`) can leave the module out. Without the JSON runtime bindings the component does not compile, because the
 validator cannot be constructed.
 
 The constraint supplement is off unless a `jakarta.validation.Validator` is bound. Install
@@ -420,7 +423,9 @@ profile override; the original exception is chained as the cause. The start payl
 
 ## Common Mistakes
 
-- **Not installing `WorkflowSchemaModule`.** Registration then succeeds without any payload check,
+- **Not installing `WorkflowSchemaModule` on a node that runs the executor.** Startup fails with a
+  `WorkflowConfigurationException` that names the module and `workflow.executor.enabled`. On a
+  recording-only node registration succeeds without any payload check,
   and an unsuitable type surfaces only when a decision is submitted. A scope-owned definition whose state class
   differs from the default scope's is refused, because no state comparison is available.
 - **Installing it without the JSON runtime module.** The validator needs `JsonMapperProfileRegistry`
