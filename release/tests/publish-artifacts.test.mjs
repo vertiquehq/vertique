@@ -23,6 +23,7 @@ import assert from 'node:assert/strict';
 import {
   chmodSync,
   copyFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -65,16 +66,38 @@ function runProcess(command, args, options = {}) {
   });
 }
 
-// Shared by every test that passes it: the before hook downloads the deploy
-// plugin into it once, so each later run starts Maven against a warm repository.
+// The before hook downloads the deploy plugin into it once. It is a template that
+// no test's Maven run uses directly: every run that wants a warm repository gets
+// its own copy (see privatePluginRepository).
 let sharedPluginRepository;
 
-/** Runs release/publish-artifacts.sh from the fixture repository with the given arguments. */
+/**
+ * A private copy of the warmed plugin repository, inside the test's own directory.
+ *
+ * deploy-file also keeps a scratch copy of each deployed GAV's repository metadata
+ * in its local repository, and deletes it when the target holds no metadata yet.
+ * Every test here deploys the same fixture GAVs to its own target, so two
+ * concurrent Maven JVMs on one local repository delete each other's scratch file
+ * between merging and uploading it, and one fails with "Could not transfer
+ * metadata". A copy per run leaves nothing shared; it costs a few megabytes of
+ * local copying instead of a download.
+ */
+function privatePluginRepository(repo) {
+  const copy = mkdtempSync(path.join(path.dirname(repo), 'plugin-repository-'));
+  cpSync(sharedPluginRepository, copy, { recursive: true });
+  return copy;
+}
+
+/**
+ * Runs release/publish-artifacts.sh from the fixture repository with the given
+ * arguments, against a private copy of the warmed plugin repository unless
+ * sharedPlugins is false.
+ */
 function publish(repo, args, { sharedPlugins = true } = {}) {
   return runProcess('bash', [
     path.join(repo, 'release', 'publish-artifacts.sh'),
     ...args,
-    ...(sharedPlugins ? ['--plugin-repository', sharedPluginRepository] : []),
+    ...(sharedPlugins ? ['--plugin-repository', privatePluginRepository(repo)] : []),
   ]);
 }
 
@@ -198,8 +221,8 @@ function fixtureRepository(root, extraArtifactIds = [], archetypeArtifactIds = [
   return { repo, localRepository: path.join(root, 'm2') };
 }
 
-// Concurrent: each test owns its fixture directories, and the shared plugin
-// repository is only read once the before hook has populated it.
+// Concurrent: each test owns its fixture directories and its own copy of the plugin
+// repository; the template is only read once the before hook has populated it.
 describe('PublishArtifactsTest', { concurrency: true }, () => {
   before(async () => {
     sharedPluginRepository = mkdtempSync(path.join(tmpdir(), 'vertique-publish-plugins-'));
@@ -208,6 +231,7 @@ describe('PublishArtifactsTest', { concurrency: true }, () => {
       const { repo, localRepository } = fixtureRepository(root);
       const stage = path.join(root, 'staged');
       mkdirSync(stage);
+      // Populates the template itself, so it is the one run that names it directly.
       const warm = await publish(repo, [
         '--local-repository', localRepository,
         '--repository-id', 'fixture-stage',
@@ -215,7 +239,8 @@ describe('PublishArtifactsTest', { concurrency: true }, () => {
         '--mode', 'snapshot',
         '--version', VERSION,
         '--settings', 'settings.xml',
-      ]);
+        '--plugin-repository', sharedPluginRepository,
+      ], { sharedPlugins: false });
       assert.equal(warm.status, 0, `warming the plugin repository failed:\n${warm.stdout}\n${warm.stderr}`);
     } finally {
       rmSync(root, { recursive: true, force: true });
