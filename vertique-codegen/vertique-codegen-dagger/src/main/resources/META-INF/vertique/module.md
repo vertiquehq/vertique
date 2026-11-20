@@ -119,6 +119,13 @@ Public record with two components: `TypeElement origin` (the discovered type —
 
 Single-binding rounds return that binding's own package.
 
+**A type the module cannot name is left unbound.** The generated `@KafkaConsumers`, `@DelayedJobs` and
+`@RestClient` modules are `public` types in the resolved package. A consumer, delayed-job handler or client that
+package cannot reference (a package-private type, or one nested in a non-public type, outside the resolved package, or a
+type in the unnamed package) is skipped with a mandatory warning naming the type and the package; every other binding in
+the round is still emitted, and when every binding of a qualifier is skipped no module is generated for it. Make the type public, set `-Avertique.codegen.package` to a package it is visible from, or
+bind it with a hand-written `@Provides` method.
+
 ### `AnnotationRootedCollector`
 
 Shared base for `RestClientCollector` and `KafkaConsumerCollector`. Filters out:

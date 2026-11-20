@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.codegen.kafka.processor`
 > **Artifact:** `vertique-codegen-kafka`
-> **Depends on:** codegen-core, security-core (compile), kafka (processor classpath only)
+> **Depends on:** codegen-core, kafka (processor classpath only)
 
 Annotation processor that eliminates boot-time reflective scan and classify for Kafka consumers. For each `@KafkaListener` type (Model 3 routing interface or Model 4 `KafkaRecordHandler` class) and each class carrying `@KafkaSource` methods (Model 1), it generates a `{Consumer}_BindingMeta` companion holding `public static final List<KafkaBindingMeta> METAS` of compile-time-knowable binding metadata. `KafkaConsumerScanner` consults a `GeneratedBindingMetaLoader` at each scan hook and skips the reflective annotation read, parameter classification, and generic resolution for any consumer whose companion is present.
 
@@ -156,7 +156,7 @@ None. The processor emits no Dagger binding modules. Generated companions are di
 ## Dependencies
 
 - `dev.vertique:vertique-codegen-core` — `CodegenContext`, `TypeResolver`, `AnnotationMirrors`, `Diagnostics`, `Identifiers`, `PackageResolver`
-- `dev.vertique:vertique-security-core` — compile scope. The processor recognises `SecurityContext` handler parameters by the fully qualified name `dev.vertique.security.SecurityContext`.
+- No dependency on `vertique-security-core`. The processor recognises `SecurityContext` handler parameters by the fully qualified name `dev.vertique.security.SecurityContext`, resolved from the consuming application's classpath; when the type is absent, no parameter is classified as a security context.
 - `dev.vertique:vertique-kafka-core` — `@KafkaListener`, `@KafkaHandler`, `@KafkaSource`, `KafkaRecordHandler`, `KafkaBindingMeta`, `ErrorStrategy`, `CommitStrategy`. **Test-scope in this processor module** (the processor only needs these types to compile its own tests, not at processing time). A **consuming application** needs `vertique-kafka-core` on its normal compile/runtime classpath — it carries the consumer annotations the app authors against, and the generated `{Consumer}_BindingMeta` references `KafkaBindingMeta`/`ErrorStrategy`/`CommitStrategy` — so adding the processor never pulls in a new runtime dependency. Applications also include at least one format module (`vertique-kafka-json` and/or `vertique-kafka-avro`) for serialization.
 - `com.palantir.javapoet:javapoet` — source generation (compile-only; not on runtime classpath)
 - `javax.annotation.processing` APIs — part of the JDK; not a separate Maven dependency

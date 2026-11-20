@@ -54,12 +54,16 @@ public final class MultibindingModuleEmitter {
      * returns without throwing.
      *
      * @param qualifier   the qualifier whose bindings are being emitted; must not be {@code null}
-     * @param bindings    the non-empty list of bindings to emit; must not be {@code null} or empty
+     * @param allBindings the non-empty list of bindings to emit; must not be {@code null} or empty. A
+     *                    binding whose type the module's package cannot reference is skipped with a
+     *                    mandatory warning
      * @param packageName the fully-qualified package name for the generated module; must not be
      *                    {@code null}
      */
-    public void emit(Qualifier qualifier, List<Binding> bindings, String packageName) {
-        if (hasSimpleNameCollisions(qualifier, bindings)) {
+    public void emit(Qualifier qualifier, List<Binding> allBindings, String packageName) {
+        List<Binding> bindings =
+                ReferenceableBindings.filter(ctx, allBindings, packageName, qualifier.moduleSimpleName);
+        if (bindings.isEmpty() || hasSimpleNameCollisions(qualifier, bindings)) {
             return;
         }
         ClassName moduleName = ClassName.get(packageName, qualifier.moduleSimpleName);
