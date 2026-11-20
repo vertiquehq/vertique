@@ -24,6 +24,7 @@ import dev.vertique.workflow.registry.store.DefinitionFailure;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
+import dev.vertique.workflow.state.WaitType;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
 import dev.vertique.workflow.timer.TimerStore;
@@ -884,19 +885,19 @@ final class MigrationExecutor {
     }
 
     /**
-     * Deletes the record of the main wait the migrated instance leaves, which is the source's current step. A migrating
-     * instance holds at most its main wait.
+     * Closes the main wait the migrated instance leaves, which is the source's current step. A migrating instance holds
+     * at most its main wait.
      *
-     * <p>When a record was deleted and the wait carried a timeout timer, the timer is cancelled in the same
-     * transaction, a dead-lettered one included, so that it cannot block the wait the migration enters. A wait that
-     * declares no key holds no record, and its timer is left as it is.
+     * <p>The wait's record, when it declared a key, is deleted. The timeout timer of a signal wait is cancelled in the
+     * same transaction by this method, whether or not a record existed and a dead-lettered timer included, so that
+     * it cannot block the wait the migration enters.
      */
     private Future<Void> closeSourceWait(WorkflowInstance source, String sourceStepId, SqlClient tx) {
         return signalWaits
                 .close(source.id(), sourceStepId, null, null, null, tx)
-                .compose(deleted -> {
-                    UUID timeoutTimerId = source.waitAuxId();
-                    if (!deleted || timeoutTimerId == null) {
+                .compose(recordClosed -> {
+                    UUID timeoutTimerId = source.waitType() == WaitType.SIGNAL ? source.waitAuxId() : null;
+                    if (timeoutTimerId == null) {
                         return Future.<Void>succeededFuture();
                     }
                     return timerStore

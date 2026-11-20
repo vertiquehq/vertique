@@ -788,9 +788,9 @@ class EntryFenceIT {
 
     @Test
     @DisplayName(
-            "an instance-id signal keeps today's behaviour in the unkeyed guard cells and applies after a migration"
-                    + " into a keyed wait")
-    void instanceIdSignalKeepsTodaysBehaviourInTheUnkeyedGuardCellsAndAppliesAfterAMigrationIntoAKeyedWait() {
+            "a migration of a timed wait, keyed or not, cancels its dead-lettered timeout, and a failed fork keeps its"
+                    + " signal parked")
+    void migrationOfATimedWaitCancelsItsDeadLetteredTimeoutKeyedOrNotAndAFailedForkKeepsItsSignalParked() {
         try (KeyedWaitFixture f = KeyedWaitFixture.openWithExits(db.toPoolConfig())) {
             Node node = f.deadLettering(f.migratingNode("engine")).build();
 
@@ -819,6 +819,7 @@ class EntryFenceIT {
             f.migrate(node, unkeyed, 2);
             f.migrate(node, keyed, 2);
             f.idle(node, forked, unkeyed, keyed);
+            assertThat(f.historyCount(unkeyed, "TIMER_CANCELLED")).isEqualTo(1);
             f.signalInstance(node, unkeyed, SHIPPED, new Payment("txn-2"), "i-2");
             f.signalInstance(node, keyed, SHIPPED, new Payment("txn-3"), "i-3");
             f.idle(node, unkeyed, keyed);
@@ -830,19 +831,19 @@ class EntryFenceIT {
             assertThat(f.fixture.instanceOf(forked).status()).isEqualTo("FAILED");
             assertThat(first.waitId()).isNull();
 
-            // And the second is parked behind the old timeout, which stays scheduled and dead-lettered, as it does
-            // today
+            // And the second applies at the re-entered wait, because the migration cancelled the old timer and its
+            // command by step although the unkeyed wait held no record
             SignalRow second = only(f.signalRows(unkeyed));
-            assertThat(second.state()).isEqualTo("PARKED");
+            assertThat(second.state()).isEqualTo("COMPLETE");
             assertThat(second.waitId()).isNull();
             assertThat(f.timerRecords(unkeyed))
                     .filteredOn(timer -> timer.timerId().equals(unkeyedTimer.timerId()))
                     .extracting(TimerRecord::status)
-                    .containsExactly("SCHEDULED");
+                    .containsExactly("CANCELLED");
             assertThat(f.timerCommands(unkeyed))
                     .filteredOn(command -> command.id() == unkeyedTimeout.id())
                     .extracting(CommandRow::state)
-                    .containsExactly("DEAD");
+                    .containsExactly("CANCELLED");
 
             // And the third applies at the re-entered wait, because the migration cancelled the old timer and its
             // command
