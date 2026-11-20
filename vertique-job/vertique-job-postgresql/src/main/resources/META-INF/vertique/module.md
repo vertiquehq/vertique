@@ -202,7 +202,7 @@ Cron schedule definitions written by `JobRepository.saveSchedule()` at startup. 
 | `max_attempts` | `INTEGER` | Max attempts per execution |
 | `tracked` | `BOOLEAN` | Whether executions are persisted |
 | `last_fired_at` | `TIMESTAMPTZ` | Last fire instant (for misfire detection) |
-| `next_fire_at` | `TIMESTAMPTZ` | Next computed fire instant |
+| `next_fire_at` | `TIMESTAMPTZ` | Next computed fire instant; stored by the startup upsert and refreshed after each tracked fire |
 | `created_at` | `TIMESTAMPTZ` | Row creation time |
 | `updated_at` | `TIMESTAMPTZ` | Last update time |
 

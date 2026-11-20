@@ -11,11 +11,13 @@ import io.vertx.core.Vertx;
 import io.vertx.core.eventbus.Message;
 import io.vertx.core.eventbus.MessageConsumer;
 import java.util.Objects;
+import java.util.OptionalLong;
 
 /** Handles cron dispatches for the provider-owned physical cleanup sweep. */
 final class RedisCleanupHandler {
     private final RedisCleanupJob job;
     private final EventBusClient eventBus;
+    private Vertx vertx;
 
     RedisCleanupHandler(RedisCleanupJob job, EventBusClient eventBus) {
         this.job = Objects.requireNonNull(job, "job");
@@ -23,15 +25,25 @@ final class RedisCleanupHandler {
     }
 
     MessageConsumer<Object> register(Vertx vertx) {
-        return Objects.requireNonNull(vertx, "vertx")
-                .eventBus()
-                .consumer(RedisCleanupJob.HANDLER_ADDRESS, this::handle);
+        this.vertx = Objects.requireNonNull(vertx, "vertx");
+        return vertx.eventBus().consumer(RedisCleanupJob.HANDLER_ADDRESS, this::handle);
     }
 
     private void handle(Message<Object> message) {
         if (!(message.body() instanceof DispatchEnvelope<?> envelope)) {
             return;
         }
+        OptionalLong delayMillis = job.admitTick();
+        if (delayMillis.isEmpty()) {
+            reply(envelope, Result.success(new RedisCleanupJob.CleanupResult(0, 0, 0, false)));
+        } else if (delayMillis.getAsLong() > 0) {
+            vertx.setTimer(delayMillis.getAsLong(), timerId -> sweep(envelope));
+        } else {
+            sweep(envelope);
+        }
+    }
+
+    private void sweep(DispatchEnvelope<?> envelope) {
         Future<RedisCleanupJob.CleanupResult> sweep;
         try {
             sweep = job.sweep();

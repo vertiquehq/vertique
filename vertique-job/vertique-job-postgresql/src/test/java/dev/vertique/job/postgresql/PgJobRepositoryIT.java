@@ -993,6 +993,96 @@ public class PgJobRepositoryIT {
     }
 
     @Test
+    @DisplayName("saveSchedule stores the computed next fire instant of the schedule")
+    void saveScheduleStoresNextFireAt(VertxTestContext ctx) {
+        String jobId = "sched-next-fire-" + UUID.randomUUID();
+        Instant nextFireAt = Instant.now().plus(1, ChronoUnit.HOURS).truncatedTo(ChronoUnit.MILLIS);
+        CronJobSchedule schedule = new CronJobSchedule(
+                jobId,
+                "0 0 8 * * *",
+                "test/my-svc/doWork",
+                "eventbus:test/my-svc/doWork",
+                "EVERY_INSTANCE",
+                "UTC",
+                true,
+                "SKIP",
+                3,
+                false,
+                null,
+                nextFireAt);
+
+        repository
+                .saveSchedule(schedule)
+                .compose(v -> repository.findSchedule(jobId))
+                .onSuccess(found -> ctx.verify(() -> {
+                    assertEquals(nextFireAt, found.orElseThrow().nextFireAt(), "next_fire_at should be stored");
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("saveSchedule refreshes next_fire_at on conflict and keeps it when the new instant is null")
+    void saveScheduleUpsertKeepsOrRefreshesNextFireAt(VertxTestContext ctx) {
+        String jobId = "sched-next-fire-upsert-" + UUID.randomUUID();
+        Instant first = Instant.now().plus(1, ChronoUnit.HOURS).truncatedTo(ChronoUnit.MILLIS);
+        Instant second = first.plus(1, ChronoUnit.HOURS);
+        CronJobSchedule base = new CronJobSchedule(
+                jobId,
+                "0 0 8 * * *",
+                "test/my-svc/doWork",
+                "eventbus:test/my-svc/doWork",
+                "EVERY_INSTANCE",
+                "UTC",
+                true,
+                "SKIP",
+                3,
+                false,
+                null,
+                first);
+        CronJobSchedule refreshed = new CronJobSchedule(
+                jobId,
+                base.cronExpression(),
+                base.handler(),
+                base.target(),
+                base.executionMode(),
+                base.timezone(),
+                true,
+                "SKIP",
+                3,
+                false,
+                null,
+                second);
+        CronJobSchedule withoutInstant = new CronJobSchedule(
+                jobId,
+                base.cronExpression(),
+                base.handler(),
+                base.target(),
+                base.executionMode(),
+                base.timezone(),
+                true,
+                "SKIP",
+                3,
+                false,
+                null,
+                null);
+
+        repository
+                .saveSchedule(base)
+                .compose(v -> repository.saveSchedule(refreshed))
+                .compose(v -> repository.findSchedule(jobId))
+                .compose(found -> {
+                    ctx.verify(() -> assertEquals(second, found.orElseThrow().nextFireAt(), "new instant replaces"));
+                    return repository.saveSchedule(withoutInstant).compose(v -> repository.findSchedule(jobId));
+                })
+                .onSuccess(found -> ctx.verify(() -> {
+                    assertEquals(second, found.orElseThrow().nextFireAt(), "null keeps the stored instant");
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
     @DisplayName("updateScheduleFireTimes updates last_fired_at and next_fire_at")
     void updateScheduleFireTimesUpdatesTimestamps(VertxTestContext ctx) {
         String jobId = "sched-fire-times-" + UUID.randomUUID();

@@ -232,11 +232,12 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
 
         this.sqlSaveSchedule = """
                 INSERT INTO %s (job_id, cron_expression, handler, target, execution_mode, timezone,
-                    enabled, overlap_policy, max_attempts, tracked, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+                    enabled, overlap_policy, max_attempts, tracked, next_fire_at, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
                 ON CONFLICT (job_id) DO UPDATE SET
                     cron_expression = $2, handler = $3, target = $4, execution_mode = $5, timezone = $6,
-                    enabled = $7, overlap_policy = $8, max_attempts = $9, tracked = $10, updated_at = NOW()
+                    enabled = $7, overlap_policy = $8, max_attempts = $9, tracked = $10,
+                    next_fire_at = COALESCE($11, %1$s.next_fire_at), updated_at = NOW()
                 """.formatted(jobSchedules);
 
         this.sqlUpdateScheduleFireTimes = "UPDATE " + jobSchedules
@@ -703,7 +704,8 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
                         schedule.enabled(),
                         schedule.overlapPolicy(),
                         schedule.maxAttempts(),
-                        schedule.tracked()))
+                        schedule.tracked(),
+                        toOffsetDateTime(schedule.nextFireAt())))
                 .execute()
                 .mapEmpty();
     }
