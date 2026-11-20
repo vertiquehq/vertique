@@ -476,9 +476,8 @@ public abstract class PagedQuery<T> {
         }
 
         /**
-         * Sets the page size used by {@link #page()}, the first page. Defaults to 20 if not set. A
-         * cursor passed to {@link #page(PageCursor)} always carries its own page size, which is the
-         * one used.
+         * Sets the size of the first page returned by {@link #page()}; 20 when not set. A cursor
+         * handed to {@link #page(PageCursor)} supplies its own size, and that size is used.
          *
          * @param pageSize the default page size
          * @return this builder
@@ -506,7 +505,7 @@ public abstract class PagedQuery<T> {
          * Sets the keyset column ordering with a uniform direction. All columns use
          * {@link NullHandling#DISALLOW}. At least one column is required.
          *
-         * <p>Fails as {@link #orderBy(OrderDirection, NullHandling, String...)} does.
+         * <p>Invalid arguments fail as in the three-argument overload.
          *
          * @param direction the sort direction for all columns
          * @param columns   the column names in sort priority order
