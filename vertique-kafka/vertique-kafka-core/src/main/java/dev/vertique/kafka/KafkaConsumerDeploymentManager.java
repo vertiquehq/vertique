@@ -141,9 +141,11 @@ public class KafkaConsumerDeploymentManager {
      * Undeploys all currently tracked Kafka consumer verticles.
      *
      * <p>All undeploys are attempted regardless of individual failures ({@link Future#join}
-     * semantics). Tracking entries are removed only on successful undeploy.
+     * semantics). Tracking entries are removed only on successful undeploy, so a consumer that failed
+     * to undeploy stays tracked and a later call attempts it again.
      *
-     * @return a future that succeeds when all undeploy attempts have settled
+     * @return a future that succeeds when every undeploy succeeded, or fails once all attempts have
+     *     settled if any of them failed
      */
     public Future<Void> undeployAll() {
         return undeployEntries("Undeploy");
@@ -167,7 +169,8 @@ public class KafkaConsumerDeploymentManager {
      *
      * @param logContext a short prefix for log messages (e.g., {@code "Undeploy"} or
      *     {@code "Rollback"})
-     * @return a future that completes when all undeploy attempts have settled
+     * @return a future that succeeds when every undeploy succeeded, or fails once all attempts have
+     *     settled if any of them failed
      */
     private Future<Void> undeployEntries(String logContext) {
         List<Future<Void>> undeploys = new ArrayList<>();

@@ -590,8 +590,9 @@ attributes; `with...` copies), `HttpClientResponseHead` (status, message, every 
 `HttpClientAttemptTarget` (scheme, host, port). Their `toString` prints no header value, path, query or body.
 A seven-component constructor of the completion keeps both bodies absent.
 
-`WebClientOptionsHardening` and `WebClientOptionsNormalizer` are public only because other framework
-modules use them. They are INTERNAL, outside the compatibility promise of this artifact, and
+`WebClientOptionsHardening` and `WebClientOptionsNormalizer` are public only because other packages use
+them: the `config` package of this module uses both, and the REST client module uses
+`WebClientOptionsNormalizer`. They are INTERNAL, outside the compatibility promise of this artifact, and
 application code must not use them. Every other type of the package that is not documented here is
 package-private.
 

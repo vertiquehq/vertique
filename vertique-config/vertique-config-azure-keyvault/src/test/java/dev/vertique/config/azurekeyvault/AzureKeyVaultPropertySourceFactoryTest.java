@@ -131,14 +131,31 @@ class AzureKeyVaultPropertySourceFactoryTest {
         }
 
         @Test
-        @DisplayName("throws when auth method is unknown")
+        @DisplayName("throws naming auth.method when the auth method is unknown")
         void unknownAuthMethodThrows() {
             JsonObject config = minimalConfig("https://myvault.vault.azure.net")
                     .put("auth", new JsonObject().put("method", "certificate"));
             var ex = assertThrows(ConfigPropertySourceException.class, () -> factoryWithStub(Map.of())
                     .create("test-src", config));
-            assertTrue(ex.getMessage().contains("certificate"), "error must name the invalid method");
+            assertTrue(ex.getMessage().contains("auth.method"), "error must name the path: " + ex.getMessage());
+            assertFalse(ex.getMessage().contains("certificate"), "error must not echo the value");
             assertEquals("test-src", ex.sourceName());
+        }
+
+        @Test
+        @DisplayName("a blank auth.method counts as absent and selects 'default'")
+        void blankAuthMethodSelectsDefault() {
+            AzureConnectionSettings[] captured = new AzureConnectionSettings[1];
+            var factory = new AzureKeyVaultPropertySourceFactory((name, settings) -> {
+                captured[0] = settings;
+                return (n, k) -> Optional.empty();
+            });
+
+            factory.create(
+                    "src",
+                    minimalConfig("https://myvault.vault.azure.net").put("auth", new JsonObject().put("method", "  ")));
+
+            assertEquals("default", captured[0].authMethod());
         }
 
         @Test

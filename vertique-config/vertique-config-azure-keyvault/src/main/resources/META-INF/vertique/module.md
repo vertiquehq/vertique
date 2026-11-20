@@ -106,8 +106,8 @@ The full per-source configuration block under `config.propertySources[*]`:
 | `endpoint` | Yes | — | Azure Key Vault endpoint URL (e.g. `https://myapp.vault.azure.net`). Non-blank and validated at `create()` time; see [Endpoint Validation](#endpoint-validation). |
 | `prefix` | No | none | Optional key prefix. When set, only keys starting with this prefix reach the vault. The prefix is stripped before the lookup — routing multiple sources via non-overlapping prefixes is the standard way to separate vault namespaces. |
 | `auth` | No | `{"method": "default"}` | Auth configuration object; see Auth Methods below. When absent entirely, defaults to `method: "default"` with no `clientId`. |
-| `connectTimeoutMs` | No | 5000 | Connection timeout in milliseconds. Must be > 0. Applied via `HttpClientOptions` to the underlying Netty client. |
-| `readTimeoutMs` | No | 5000 | Read and response timeout in milliseconds. Must be > 0. Applied as both `readTimeout` and `responseTimeout` via `HttpClientOptions`, bounding per-chunk read time and total time-to-first-byte from the server. |
+| `connectTimeoutMs` | No | 5000 | Connection timeout in milliseconds. Must be > 0. A blank string counts as absent and takes the default. Applied via `HttpClientOptions` to the underlying Netty client. |
+| `readTimeoutMs` | No | 5000 | Read and response timeout in milliseconds. Must be > 0. A blank string counts as absent and takes the default. Applied as both `readTimeout` and `responseTimeout` via `HttpClientOptions`, bounding per-chunk read time and total time-to-first-byte from the server. |
 
 ### Endpoint Validation
 
@@ -181,7 +181,7 @@ The factory discovered by `ServiceLoader`. Registered in `META-INF/services/dev.
 - Schema validation happens before the `SecretClient` is built. A malformed config is rejected with a descriptive error before any Azure SDK construction occurs.
 - The `SecretClient` is built once at `create()` time. SDK errors that surface at build time (e.g. malformed endpoint URL) fail the source immediately. Auth errors surface at the first vault call.
 - `create()` is called from the single-threaded bootstrap path; no thread-safety is required.
-- Unknown `auth.method` values are rejected at create time. Only `"default"` and `"managed-identity"` are accepted.
+- Unknown `auth.method` values are rejected at create time. Only `"default"` and `"managed-identity"` are accepted. The failure names `auth.method` and does not echo the value. A blank `auth.method` counts as absent and selects `"default"`.
 
 ### AzureKeyVaultPropertySource
 

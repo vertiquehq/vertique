@@ -49,14 +49,24 @@ calls.
 
 `dev.vertique.core.async.Timeouts` provides shared timeout boundaries for asynchronous work:
 
-- `awaitCondition(vertx, condition, pollIntervalMs, timeoutMs, operation)` polls a condition on a
-  Vert.x timer, completing when it becomes true or failing with `TimeoutException` at the deadline.
+- `awaitCondition(vertx, condition, pollIntervalMs, timeoutMs, operation)` evaluates the condition
+  once, on the calling thread, and returns a succeeded future without starting a timer when it is
+  already true. Otherwise it polls the condition on a Vert.x periodic timer every `pollIntervalMs`
+  and succeeds when it becomes true. The first poll at or after `timeoutMs` fails the future with a
+  `TimeoutException` whose message is `<operation> did not complete within <timeoutMs> ms`, without
+  evaluating the condition again, so the failure can arrive up to one poll interval after the
+  deadline. A `RuntimeException` thrown by the condition fails the future with that exception.
 - `withTimeout(future, timeoutMs, description)` returns the future's result or failure, bounded by
-  the timeout.
+  the timeout. When the future has not settled by then, the returned future fails with a
+  `TimeoutException` whose message is `<description> did not complete within <timeoutMs> ms`, and a
+  later settlement of the original future is ignored. A `TimeoutException` that the future itself fails
+  with is replaced by the same message.
 
-Both timeout values must be positive. A timeout does not cancel the underlying asynchronous
-operation, so the caller still owns cleanup and failure policy. For example, a consumer can report
-the timeout while its close future continues to settle in the background.
+`pollIntervalMs` and `timeoutMs` must be positive and no argument may be null. A violation is thrown
+at once, as `IllegalArgumentException` or `NullPointerException`, not returned as a failed future. A
+timeout does not cancel the underlying asynchronous operation, so the caller still owns cleanup and
+failure policy. For example, a consumer can report the timeout while its close future continues to
+settle in the background.
 
 ### The graph-input seam
 
@@ -1495,11 +1505,12 @@ runtime or annotation vocabulary.
 - **The dispatch codecs are local-only.** `LocalMessageCodec` throws
   `UnsupportedOperationException` from both wire methods, so a clustered event bus fails loudly
   rather than degrading silently; `transform` returns the object reference unchanged, which means
-  no defensive copy occurs on a local hop. Registration of the `dispatch.envelope` and
-  `dispatch.result` codec names is owned by whichever deployment path an application installs —
-  `dev.vertique:vertique-services`, `dev.vertique:vertique-kafka-core`, or
-  `dev.vertique:vertique-job-delayed` — each tolerating an already-registered name. Core itself
-  registers neither, so `EventBusClient` is usable only once one of those modules has deployed.
+  no defensive copy occurs on a local hop. Registration of the codec names is owned by whichever
+  deployment path an application installs, each tolerating an already-registered name:
+  `dev.vertique:vertique-services` and `dev.vertique:vertique-kafka-core` register both
+  `dispatch.envelope` and `dispatch.result`, and `dev.vertique:vertique-job-delayed` registers
+  `dispatch.envelope` only. Core itself registers neither, so `EventBusClient` is usable only once
+  one of those modules has deployed.
 - **`PayloadSources` never copies.** Copy the array yourself before calling `buffered(byte[], …)`
   if you need immutability, and prefer `bufferedStream()` over `bufferedView()` on hot paths for
   non-`Buffer` backings.

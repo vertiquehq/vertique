@@ -838,6 +838,26 @@ class VaultPropertySourceFactoryTest {
         }
 
         @Test
+        @DisplayName("a blank openTimeoutMs or readTimeoutMs counts as absent and takes the default")
+        void blankTimeoutsTakeDefault() {
+            VaultConnectionSettings settings =
+                    capture(base().put("openTimeoutMs", "").put("readTimeoutMs", "   "));
+
+            assertEquals(5000, settings.openTimeoutMs());
+            assertEquals(5000, settings.readTimeoutMs());
+        }
+
+        @Test
+        @DisplayName("an explicit null openTimeoutMs or readTimeoutMs counts as absent and takes the default")
+        void nullTimeoutsTakeDefault() {
+            VaultConnectionSettings settings =
+                    capture(base().putNull("openTimeoutMs").putNull("readTimeoutMs"));
+
+            assertEquals(5000, settings.openTimeoutMs());
+            assertEquals(5000, settings.readTimeoutMs());
+        }
+
+        @Test
         @DisplayName("a rejected timeout names the field and does not echo the number")
         void rejectedTimeoutDoesNotEchoNumber() {
             JsonObject config = base().put("openTimeoutMs", -987654);

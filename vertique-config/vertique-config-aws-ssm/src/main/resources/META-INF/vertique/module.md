@@ -123,8 +123,8 @@ The store entry goes in `config.stores[*]`:
 | `recursive` | No | `true` | Whether to fetch parameters recursively under `path`. |
 | `withDecryption` | No | `true` | Whether to decrypt `SecureString` parameters. |
 | `prefix` | No | none | Dot-separated re-root prefix (e.g. `"app"` or `"app.db"`) that nests the entire result under additional path segments. Must not be blank; must not contain blank dot-segments (e.g. `"a..b"` is invalid). |
-| `connectTimeoutMs` | No | 5000 | Connection timeout in milliseconds. Must be positive. |
-| `readTimeoutMs` | No | 5000 | Socket/read timeout in milliseconds. Must be positive. |
+| `connectTimeoutMs` | No | 5000 | Connection timeout in milliseconds. Must be positive. A blank string counts as absent and takes the default. |
+| `readTimeoutMs` | No | 5000 | Socket/read timeout in milliseconds. Must be positive. A blank string counts as absent and takes the default. |
 
 ### Validation Errors
 
@@ -132,7 +132,7 @@ Thrown as `IllegalArgumentException` from the factory (surfaces as `BootstrapCon
 
 - `path` missing or blank
 - `prefix` present but blank, or contains blank dot-segments (e.g. `"a..b"`, `".app"`, `"app."`)
-- `connectTimeoutMs` or `readTimeoutMs` is zero, negative, or non-integer
+- `connectTimeoutMs` or `readTimeoutMs` is zero, negative, or non-integer; the message names the field and does not carry the rejected value
 
 ### Path Normalization
 

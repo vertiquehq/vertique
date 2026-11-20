@@ -204,7 +204,6 @@ Add human tasks:
 public interface AppComponent {
     WorkflowOperations workflowOperations();
     TaskService taskService();
-    WorkflowTasksComposeValidator workflowTasksComposeValidator();
 }
 ```
 
