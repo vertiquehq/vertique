@@ -1491,6 +1491,10 @@ the same rule before it is mounted, so a Dagger-substituted instance that adds r
 fails startup the same way. Resources within one mount are ordered by fully qualified class name,
 regardless of `resources()`'s own order.
 
+A generated resource whose provider throws, returns `null`, or resolves to a disallowed instance fails startup
+with a `RestConfigurationException` that names the application (its name and declaring interface) and the
+resource class; the provider's own exception is kept as the cause.
+
 ### Lifecycle and evaluation
 
 The declaring interface is never constructed: the composer reads the view for identity, activity,
