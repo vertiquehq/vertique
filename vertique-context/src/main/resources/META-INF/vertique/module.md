@@ -161,7 +161,7 @@ public class OrderDispatcher {
 | Method | Purpose |
 |---|---|
 | `build(T payload, Map<String,Object> callerOverrides, String boundary)` | Merge caller overrides with encoder output and build the envelope |
-| `build(T payload, Map<String,Object> callerOverrides, String boundary, String replyAddress)` | Same, plus a fire-and-report reply address the invoker publishes to instead of replying |
+| `build(T payload, Map<String,Object> callerOverrides, String boundary, String replyAddress)` | Same, plus a fire-and-report reply address the invoker sends the outcome to instead of replying |
 | `DispatchEnvelopeBuilder.forTesting()` | A builder backed by empty registries, for plain-JUnit fixtures with no Dagger graph — never for production |
 
 `callerOverrides` keys **must** be type FQCNs and may be empty, but must not be `null`. A caller key that collides with a key an encoder produces throws `IllegalStateException`; an encoder that returns `null` also throws `IllegalStateException`.
