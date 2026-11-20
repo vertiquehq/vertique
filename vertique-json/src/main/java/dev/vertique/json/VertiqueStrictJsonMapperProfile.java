@@ -104,9 +104,10 @@ import java.util.List;
  * property as {@link BigDecimal}; untyped relay is explicitly a lossy-but-shape-stable path.
  *
  * <p>This type is package-private, is seeded separately from application-contributed profiles, and
- * is <strong>probe-exempt</strong>: the registry's structural round-trip probe round-trips a
- * {@code JsonObject} carrying a null field, which the inherited {@code NON_NULL} inclusion would
- * drop. Applications must not contribute a profile with the reserved {@code vertique-strict} id.
+ * is run through the registry's structural round-trip probe like every other mapper; the probe
+ * payload carries no null-valued field and no {@link BigDecimal}, so the inherited {@code NON_NULL}
+ * inclusion and the string wire form do not affect it. Applications must not contribute a profile
+ * with the reserved {@code vertique-strict} id.
  *
  * @see VertiqueJsonMapperProfile
  * @see JacksonDefaults

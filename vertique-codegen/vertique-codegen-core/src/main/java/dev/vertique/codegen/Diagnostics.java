@@ -18,7 +18,7 @@ import javax.tools.Diagnostic;
  * static factory methods for consistent diagnostic message wording.
  *
  * <p>The static formatters ({@link #mustReturnFuture}, {@link #duplicateOperation},
- * {@link #unsupportedAnnotation}, {@link #expectedRecord}) form an externally-stable contract:
+ * {@link #unsupportedAnnotation}, {@link #expectedRecord}) fix the message wording shared by the framework's own processors:
  * downstream processors MUST use these methods so that error messages stay consistent
  * across the codegen series. The exact string values are tested in {@code DiagnosticsTest}.
  *
@@ -139,7 +139,7 @@ public final class Diagnostics {
      * Returns the standard error message for a type that has more than one constructor annotated
      * with {@code @Inject}.
      *
-     * <p>This formatter is part of the externally-stable contract and is
+     * <p>This formatter is part of the message wording shared by the framework's own processors and is
      * used by {@code AutoWireProcessor}. Downstream processors MUST use this method for
      * duplicate-inject-constructor errors so that message wording stays consistent across the
      * codegen series.
@@ -156,7 +156,7 @@ public final class Diagnostics {
      * Returns the standard error message for a {@code @Path} placeholder that has no matching
      * {@code @PathParam} on the method.
      *
-     * <p>This formatter is part of the externally-stable contract and is
+     * <p>This formatter is part of the message wording shared by the framework's own processors and is
      * used by {@code PathPlaceholderValidator}. Downstream processors MUST use this method
      * so that error messages stay consistent across the codegen series.
      *
@@ -172,7 +172,7 @@ public final class Diagnostics {
      * Returns the standard error message for a {@code @PathParam} annotation that has no matching
      * placeholder in the method's {@code @Path}.
      *
-     * <p>This formatter is part of the externally-stable contract and is
+     * <p>This formatter is part of the message wording shared by the framework's own processors and is
      * used by {@code PathPlaceholderValidator}. Downstream processors MUST use this method
      * so that error messages stay consistent across the codegen series.
      *
@@ -346,7 +346,7 @@ public final class Diagnostics {
      * declaration level (class or method). Mirrors the base wording of the runtime channel in
      * {@code ResourceScanner} (security-annotation conflict path).
      *
-     * <p>This formatter is part of the externally-stable contract.
+     * <p>This formatter is part of the message wording shared by the framework's own processors.
      *
      * @param level       a human-readable description of the declaration level
      *                    (e.g. {@code "class-level"} or {@code "method-level"})
@@ -382,7 +382,7 @@ public final class Diagnostics {
      * value array. Mirrors the base wording of the runtime channel in {@code ResourceScanner}
      * (empty-roles-allowed path).
      *
-     * <p>This formatter is part of the externally-stable contract.
+     * <p>This formatter is part of the message wording shared by the framework's own processors.
      *
      * @param level a human-readable description of the declaration level
      *              (e.g. {@code "class-level"} or {@code "method-level"})
@@ -399,7 +399,7 @@ public final class Diagnostics {
      * Mirrors the exact wording of the runtime channel in {@code RouteValidator}
      * (multiple-body-params path): {@code "Method ClassName.methodName() has N body parameters; …"}.
      *
-     * <p>This formatter is part of the externally-stable contract.
+     * <p>This formatter is part of the message wording shared by the framework's own processors.
      *
      * @param resourceClassName the simple name of the resource class (e.g. {@code "HelloResource"})
      * @param methodName        the simple name of the resource method (e.g. {@code "create"})
@@ -417,7 +417,7 @@ public final class Diagnostics {
      * {@code RouteValidator} (form-and-body-conflict path):
      * {@code "Method ClassName.methodName() mixes @FormParam/…"}.
      *
-     * <p>This formatter is part of the externally-stable contract.
+     * <p>This formatter is part of the message wording shared by the framework's own processors.
      *
      * @param resourceClassName the simple name of the resource class (e.g. {@code "HelloResource"})
      * @param methodName        the simple name of the resource method (e.g. {@code "upload"})
@@ -433,7 +433,7 @@ public final class Diagnostics {
      * Returns the standard error message when a method declares more than one HTTP verb
      * annotation (build-time-only guardrail).
      *
-     * <p>This formatter is part of the externally-stable contract.
+     * <p>This formatter is part of the message wording shared by the framework's own processors.
      *
      * @param methodName the simple name of the resource method (e.g. {@code "handle"})
      * @param verbs      the HTTP verb annotation simple names present on the method
@@ -526,7 +526,7 @@ public final class Diagnostics {
      * the target must be an interface (the runtime {@code DelayedJobClientFactory.create} also requires
      * one via an explicit {@code isInterface()} check).
      *
-     * <p>This formatter is part of the externally-stable contract and is used
+     * <p>This formatter is part of the message wording shared by the framework's own processors and is used
      * by {@code DelayedJobContractProcessor}. The check runs before the {@code isAssignable} check so
      * that an abstract class annotated with {@code @DelayedJobContract} yields a clear diagnostic
      * instead of a generated-source compile error from {@code implements SomeClass}.
@@ -542,7 +542,7 @@ public final class Diagnostics {
      * Returns the standard compile-time error message when a {@code @DelayedJobContract} interface does
      * not extend {@code DelayedJobClient<P>} directly with a concrete payload type.
      *
-     * <p>This formatter is part of the externally-stable contract and is used
+     * <p>This formatter is part of the message wording shared by the framework's own processors and is used
      * by {@code DelayedJobContractProcessor}.
      *
      * @param contractFqn the fully-qualified name of the offending contract interface
@@ -575,7 +575,7 @@ public final class Diagnostics {
      * {@code @DelayedJobContract} interface cannot be resolved (e.g. raw {@code DelayedJobClient} or a
      * forwarding type variable).
      *
-     * <p>This formatter is part of the externally-stable contract.
+     * <p>This formatter is part of the message wording shared by the framework's own processors.
      *
      * @param contractFqn the fully-qualified name of the contract interface
      * @return the formatted error message
@@ -589,7 +589,7 @@ public final class Diagnostics {
      * Returns the standard compile-time error message when two {@code @DelayedJobContract} interfaces in
      * the same compilation unit declare the same {@code name()}.
      *
-     * <p>This formatter is part of the externally-stable contract.
+     * <p>This formatter is part of the message wording shared by the framework's own processors.
      *
      * @param name      the duplicated contract name
      * @param contractA the fully-qualified name of the first contract
@@ -607,7 +607,7 @@ public final class Diagnostics {
      * promoted to an error under the {@code vertique.codegen.delayedjob.requireExecutor} option (the executor
      * may legitimately live in another module).
      *
-     * <p>This formatter is part of the externally-stable contract.
+     * <p>This formatter is part of the message wording shared by the framework's own processors.
      *
      * @param contractFqn the fully-qualified name of the contract interface
      * @return the formatted message
@@ -620,7 +620,7 @@ public final class Diagnostics {
      * Returns the standard compile-time error message when a same-unit {@code DelayedJobExecutor}'s payload
      * type does not match the payload type declared by its contract.
      *
-     * <p>This formatter is part of the externally-stable contract.
+     * <p>This formatter is part of the message wording shared by the framework's own processors.
      *
      * @param executorFqn the fully-qualified name of the executor
      * @param executorP   the executor's resolved payload type
@@ -638,7 +638,7 @@ public final class Diagnostics {
      * Returns the standard compile-time error message when a {@code @DelayedJobContract} interface
      * declares its own abstract method, which the generated proxy cannot implement.
      *
-     * <p>This formatter is part of the externally-stable contract. The check
+     * <p>This formatter is part of the message wording shared by the framework's own processors. The check
      * covers methods declared on the contract <em>and</em> inherited through intermediate interfaces,
      * whether {@code abstract} or {@code default}: an extra {@code abstract} method would leave the
      * generated proxy uncompilable, while a {@code default} method would execute in the generated proxy but
@@ -659,7 +659,7 @@ public final class Diagnostics {
      * Returns the standard compile-time error message when a {@code @KafkaHandler} method declares
      * zero or more than one payload parameter.
      *
-     * <p>This formatter is part of the externally-stable contract.
+     * <p>This formatter is part of the message wording shared by the framework's own processors.
      *
      * @param className   simple name of the {@code @KafkaListener} interface (e.g. {@code "OrderRouter"})
      * @param methodName  simple name of the handler method (e.g. {@code "onOrder"})
@@ -675,7 +675,7 @@ public final class Diagnostics {
      * Returns the standard compile-time error message when a {@code @KafkaHandler} method does not
      * return {@code void} or {@code Future<Void>}.
      *
-     * <p>This formatter is part of the externally-stable contract.
+     * <p>This formatter is part of the message wording shared by the framework's own processors.
      *
      * @param className  simple name of the {@code @KafkaListener} interface
      * @param methodName simple name of the handler method
@@ -689,7 +689,7 @@ public final class Diagnostics {
      * Returns the standard compile-time error message when a {@code @KafkaListener}'s
      * {@code topic()} attribute is blank.
      *
-     * <p>This formatter is part of the externally-stable contract.
+     * <p>This formatter is part of the message wording shared by the framework's own processors.
      *
      * @param className the simple name of the {@code @KafkaListener}-annotated type
      * @return the formatted error message
@@ -703,7 +703,7 @@ public final class Diagnostics {
      * satisfy the mutual-exclusion rule: exactly one of {@code matchHeader}, {@code matchProperty},
      * or {@code defaultHandler = true} must be set.
      *
-     * <p>This formatter is part of the externally-stable contract.
+     * <p>This formatter is part of the message wording shared by the framework's own processors.
      *
      * @param className  simple name of the {@code @KafkaListener} interface
      * @param methodName simple name of the handler method
@@ -723,7 +723,7 @@ public final class Diagnostics {
      * header vs. a property — sharing the same name and value are <em>not</em> duplicates and are not
      * reported here; they can both be meaningful.)
      *
-     * <p>This formatter is part of the externally-stable contract.
+     * <p>This formatter is part of the message wording shared by the framework's own processors.
      *
      * @param className    simple name of the {@code @KafkaListener} interface
      * @param selectorKind the selector kind, {@code "header"} or {@code "property"}
@@ -746,7 +746,7 @@ public final class Diagnostics {
      * contract interface — placing it on the interface would mean the annotation is part of the
      * public API contract rather than an infrastructure wiring decision.
      *
-     * <p>This formatter is part of the externally-stable contract.
+     * <p>This formatter is part of the message wording shared by the framework's own processors.
      *
      * @param className  simple name of the interface that carries the misplaced annotation
      * @param methodName simple name of the annotated method
@@ -766,7 +766,7 @@ public final class Diagnostics {
      * {@code .class} literal for the value type. The reflective path also errors in this case.
      * The fix is to parameterize the implementation: {@code implements KafkaRecordHandler<MyEvent>}.
      *
-     * <p>This formatter is part of the externally-stable contract.
+     * <p>This formatter is part of the message wording shared by the framework's own processors.
      *
      * @param className the simple name of the offending {@code @KafkaListener} class
      * @return the formatted error message
@@ -788,7 +788,7 @@ public final class Diagnostics {
      *   <li>Model 4 direct handler — class implementing {@code KafkaRecordHandler<V>}</li>
      * </ul>
      *
-     * <p>This formatter is part of the externally-stable contract.
+     * <p>This formatter is part of the message wording shared by the framework's own processors.
      *
      * @param className the simple name of the offending {@code @KafkaListener} type
      * @return the formatted error message
@@ -809,7 +809,7 @@ public final class Diagnostics {
      * reflective parity: the reflective {@code KafkaConsumerScanner.resolveRouteValueType} reads
      * {@code params[0]} as the payload type, so {@code params[0]} must be the payload.
      *
-     * <p>This formatter is part of the externally-stable contract.
+     * <p>This formatter is part of the message wording shared by the framework's own processors.
      *
      * @param className  simple name of the {@code @KafkaListener} interface
      * @param methodName simple name of the handler method
@@ -831,7 +831,7 @@ public final class Diagnostics {
      * This formatter produces the compile-time parity diagnostic when the codegen processor detects
      * the same mismatch via the APT type system.
      *
-     * <p>This formatter is part of the externally-stable contract.
+     * <p>This formatter is part of the message wording shared by the framework's own processors.
      *
      * @param className      the simple name of the offending {@code @KafkaListener} class
      * @param annotatedType  the human-readable name of {@code @KafkaListener.valueType()} as declared
@@ -858,7 +858,7 @@ public final class Diagnostics {
      * type that is not an interface. The generated proxy {@code implements} the contract, so the target
      * must be an interface (the reflective path likewise builds a JDK dynamic proxy, which requires one).
      *
-     * <p>This formatter is part of the externally-stable contract.
+     * <p>This formatter is part of the message wording shared by the framework's own processors.
      *
      * @param typeFqn the fully-qualified name of the offending type
      * @return the formatted error message
@@ -1196,7 +1196,7 @@ public final class Diagnostics {
      * that cannot consume a return value; returning anything other than {@code void} is therefore a
      * contract violation that is rejected at compile time.
      *
-     * <p>This formatter is part of the externally-stable contract and is
+     * <p>This formatter is part of the message wording shared by the framework's own processors and is
      * used by {@code EventsProcessor}. The message contains the word {@code void} so that the test
      * harness's {@code assertErrorMessage("void")} assertion can locate it by substring.
      *
@@ -1217,7 +1217,7 @@ public final class Diagnostics {
      * compilable. The {@code "single"} substring is used by {@code assertErrorMessage("single")}
      * in the test harness to locate this diagnostic.
      *
-     * <p>This formatter is part of the externally-stable contract and is
+     * <p>This formatter is part of the message wording shared by the framework's own processors and is
      * used by {@code EventsProcessor}.
      *
      * @param methodFqn the fully-qualified {@code Type.method} name of the offending observer method
@@ -1238,7 +1238,7 @@ public final class Diagnostics {
      * works. The {@code "Object"} substring is used by {@code assertErrorMessage("Object")} in the
      * test harness to locate this diagnostic.
      *
-     * <p>This formatter is part of the externally-stable contract and is
+     * <p>This formatter is part of the message wording shared by the framework's own processors and is
      * used by {@code EventsProcessor}.
      *
      * @param methodFqn the fully-qualified {@code Type.method} name of the offending observer method
@@ -1265,7 +1265,7 @@ public final class Diagnostics {
      * word {@code "accessible"} so that tests can locate it via
      * {@code assertErrorMessage("accessible")}.
      *
-     * <p>This formatter is part of the externally-stable contract and is
+     * <p>This formatter is part of the message wording shared by the framework's own processors and is
      * used by {@code EventsProcessor}.
      *
      * @param methodFqn the fully-qualified {@code Type.method} name of the offending observer method
@@ -1291,7 +1291,7 @@ public final class Diagnostics {
      * <p>This formatter contains the word {@code "parameterized"} so that tests can locate it via
      * {@code assertErrorMessage("parameterized")}.
      *
-     * <p>This formatter is part of the externally-stable contract and is
+     * <p>This formatter is part of the message wording shared by the framework's own processors and is
      * used by {@code EventsProcessor}.
      *
      * @param typeName a human-readable description of the parameterized type (e.g.
@@ -1317,7 +1317,7 @@ public final class Diagnostics {
      * source. Requiring {@code public} on the aspect-carrying bean is consistent with the
      * {@code @Observes} observer accessibility rule.
      *
-     * <p>This formatter is part of the externally-stable contract and is used by
+     * <p>This formatter is part of the message wording shared by the framework's own processors and is used by
      * {@code AopProcessor}. The message contains the word {@code "public"} so that tests can locate
      * it via {@code assertErrorMessage("must be public")}.
      *
@@ -1339,7 +1339,7 @@ public final class Diagnostics {
      * emitter to render an invalid back-cast to the wildcard element type in the generated override.
      * Both are rejected with this diagnostic so the author supplies a concrete {@code Future<X>}.
      *
-     * <p>This formatter is part of the externally-stable contract and is used by
+     * <p>This formatter is part of the message wording shared by the framework's own processors and is used by
      * {@code AopProcessor}. The {@code wildcard} flag selects the wording: the raw form names the
      * return as <em>raw (unparameterized)</em>, the wildcard form contains the word {@code wildcard}.
      *
@@ -1378,7 +1378,7 @@ public final class Diagnostics {
      *
      * <p>Each refusal is a hard compile error emitted <em>before</em> proxy emission, so the build
      * fails with this clear diagnostic instead of a confusing generated-source {@code javac} error.
-     * This formatter is part of the externally-stable contract and is used by
+     * This formatter is part of the message wording shared by the framework's own processors and is used by
      * {@code AopProcessor}.
      *
      * @param elementFqn the fully-qualified name of the offending class, or {@code Type.method} of the
@@ -1401,7 +1401,7 @@ public final class Diagnostics {
      * The message names the annotation, the offending member, and its kind so the
      * author can locate it.
      *
-     * <p>This formatter is part of the externally-stable contract and is used by
+     * <p>This formatter is part of the message wording shared by the framework's own processors and is used by
      * {@code MetadataEmitter} via {@code AopProxyEmitter}.
      *
      * @param annotationFqn the fully-qualified name of the annotation type being materialized

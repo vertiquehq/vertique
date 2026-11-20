@@ -211,6 +211,8 @@ Bindings provided:
 | `MeterRegistry` | — | `MeterRegistryHolder.registry()` |
 | `MetricsConfig` | — | Deserialized from `metrics` config section |
 | `SecurityEventObserver` | `@IntoSet` | `SecurityMetricsObserver` |
+| `Optional<MetricsConfig>` | — | `@BindsOptionalOf` declaration; resolves to the `MetricsConfig` above |
+| `AspectProvider<Timed>` | — | `TimedAspect` |
 
 Adapter modules gate their hot-path callbacks by declaring `@BindsOptionalOf MetricsConfig` and
 injecting `Optional<MetricsConfig>`. They read `.map(MetricsConfig::enabled).orElse(true)` — absent
@@ -282,8 +284,10 @@ extra tag (for example `workflow_kind`) before upgrading.
 ### `@Timed` and `TimedAspect`
 
 Times a method and records the sample on the application registry. `@Timed` is the annotation an
-application puts on its own beans; `TimedAspect` is the `AspectProvider<Timed>` that implements it,
-and an application binds it once in a Dagger module.
+application puts on its own beans; `TimedAspect` is the `AspectProvider<Timed>` that implements it.
+`MicrometerModule` binds `TimedAspect` as `AspectProvider<Timed>`, so an application that installs
+`MicrometerModule` binds nothing more; a second `AspectProvider<Timed>` binding would be a duplicate in
+the Dagger graph.
 
 ```java
 @Timed                                   // vertique.greeter.greet
@@ -293,12 +297,18 @@ String greet(String name) { ... }
 Future<Receipt> checkout(Cart cart) { ... }
 ```
 
+An application that does not install `MicrometerModule` binds it once in its own Dagger module,
+together with the optional `MetricsConfig` declaration `TimedAspect` injects:
+
 ```java
 @Module
 abstract class AopBindingsModule {
 
     @Binds
     abstract AspectProvider<Timed> bindTimedAspect(TimedAspect aspect);
+
+    @BindsOptionalOf
+    abstract MetricsConfig optionalMetricsConfig();
 }
 ```
 

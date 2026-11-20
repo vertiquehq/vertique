@@ -9,7 +9,9 @@ SPDX-License-Identifier: EUPL-1.2
 > **Package:** `dev.vertique.application.test`
 > **Artifact:** `vertique-application-test`
 > **Depends on:** `dev.vertique:vertique-application`, `dev.vertique:vertique-core`,
-> `dev.vertique:vertique-deplo---
+> `dev.vertique:vertique-deploy` (test scope only; this module's own tests use it)
+
+---
 
 ## When To Use It
 
@@ -42,7 +44,7 @@ the boot side of that contract.
 
 ### `VertiqueAppExtension`
 
-The JUnit 5 extension. Registered as a `@RegisterExtension static final` field, configured through a
+The JUnit Jupiter extension. Registered as a `@RegisterExtension static final` field, configured through a
 small fluent surface before the first test runs, and queried during tests for what the running
 application resolved.
 
@@ -59,7 +61,7 @@ application resolved.
 
 ## Testing
 
-`vertique-application-test` provides `VertiqueAppExtension`, a JUnit 5 extension that boots a
+`vertique-application-test` provides `VertiqueAppExtension`, a JUnit Jupiter extension that boots a
 Vertique application once per test class and tears it down afterwards. Integration tests use it as a
 `@RegisterExtension static final` field so every test in the class runs against a fully started app
 without hand-writing the asynchronous bootstrap dance or the easy-to-forget awaited teardown.
@@ -109,11 +111,15 @@ static void setUp() {
 
 ### Invariants & Gotchas
 
-- The extension implements `BeforeAllCallback` + `AfterAllCallback`. It must be a `static final`
-  field to take effect at class level; an instance field runs per-method.
+- The extension implements `BeforeAllCallback` + `AfterAllCallback` only. Register it in a
+  `static final` field. JUnit does not call class-level callbacks on an extension registered in an
+  instance field, so such a registration never starts or stops the application and the accessors that
+  need a started application throw `IllegalStateException`. There is no per-method mode.
 - In `afterAll` the extension awaits `VertiqueApplicationHandle.shutdown()` first, then closes the
-  `Vertx` it owns. Teardown failures are surfaced (not swallowed), so a broken teardown fails the
-  build.
+  `Vertx` it owns. A teardown failure that reaches those awaited futures fails the build: a shutdown
+  that does not settle within the start timeout, or a failed close of the owned `Vertx`. A failure
+  inside an individual shutdown step or an individual verticle undeploy does not: it is logged and the
+  remaining steps still run.
 - The start timeout covers both startup (in `beforeAll`) and each teardown future (in `afterAll`).
 - Blocking the JUnit thread is safe here: that thread is not a Vert.x event-loop thread, so the
   awaited futures cannot deadlock.

@@ -102,7 +102,7 @@ public final class DispatchEnvelopeBuilder {
      * address.
      *
      * <p>Identical to {@link #build(Object, Map, String)} but additionally sets the reply address
-     * on the envelope so that the service invoker publishes the result to that event bus address
+     * on the envelope so that the service invoker sends the result to that event bus address
      * instead of calling {@code message.reply()}.
      *
      * @param payload                the request payload; may be {@code null} for void operations
@@ -111,7 +111,7 @@ public final class DispatchEnvelopeBuilder {
      *                               {@code null}.
      * @param boundary               the boundary identifier passed into the encode context;
      *                               must not be {@code null}
-     * @param replyAddress           the event bus address to publish the result to;
+     * @param replyAddress           the event bus address to send the result to;
      *                               must not be {@code null}
      * @param <T>                    the payload type
      * @return the constructed envelope with the reply address set; never {@code null}

@@ -56,8 +56,9 @@ public interface ServiceTargetResolver {
      * @param contract the contract interface class
      * @param method the contract method (must carry {@link ServiceOperation})
      * @return the resolved service target
-     * @throws IllegalArgumentException if the contract is not registered or the method has no registered operation
-     * @throws IllegalStateException if the method is missing {@link ServiceOperation} or its value is blank
+     * @throws IllegalArgumentException if the contract is not registered, the method is not annotated with
+     *     {@link ServiceOperation}, or the operation is not registered
+     * @throws IllegalStateException if the {@link ServiceOperation} value is blank
      */
     ResolvedServiceTarget resolve(Class<?> contract, Method method);
 

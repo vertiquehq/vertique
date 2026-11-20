@@ -35,9 +35,10 @@ import jakarta.inject.Singleton;
  * triggers {@link MicrometerMetricsContributor}.
  *
  * <p><b>Security observer contribution:</b> The {@link SecurityEventObserver} contribution
- * provided by this module flows into the rest-security module's {@code AuthModule} multibound
- * set when both modules are installed in the same Dagger component. This enables automatic
- * recording of authentication and authorization events as Micrometer metrics.
+ * provided by this module joins the single {@code Set<SecurityEventObserver>} multibinding that
+ * {@code SecurityEventsModule} (in {@code vertique-security-runtime}) declares, when that module is
+ * part of the same Dagger component. This enables automatic recording of authentication and
+ * authorization events as Micrometer metrics.
  *
  * @see MeterRegistryHolder
  * @see SecurityMetricsObserver

@@ -43,7 +43,7 @@ import jakarta.inject.Singleton;
  * <ul>
  *   <li>Match {@code ^/[A-Za-z0-9._/-]*$}</li>
  *   <li>Not contain {@code *} or {@code :}</li>
- *   <li>Not equal or start with {@code /health}</li>
+ *   <li>Not equal {@code /health} and not start with {@code /health/}</li>
  * </ul>
  * A {@link ConfigurationException} is thrown if any constraint is violated.
  *

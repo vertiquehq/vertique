@@ -103,8 +103,9 @@ Defined in `vertique-application` (package `dev.vertique.application`), alongsid
 
 #### Invariants & Gotchas
 
-- Exactly one `@VertiqueApp` per compilation is allowed. The processor emits a compile error on
-  each annotated element when more than one is present.
+- Exactly one `@VertiqueApp` per compilation is allowed. The processor counts only components that
+  pass their own validations, across all processing rounds, and emits a compile error on each
+  passing component of the current round once more than one has been counted.
 - The annotation is `SOURCE`-retained and absent at runtime; it carries no overhead in the
   deployed artifact.
 
@@ -117,7 +118,7 @@ Defined in `vertique-application` (package `dev.vertique.application`), alongsid
 and a `ComponentFactoryEmitter` in `init()`.
 
 `process(annotations, roundEnv)` collects every `@VertiqueApp`-annotated `TypeElement`, enforces
-the four validations (below), and delegates to `ComponentFactoryEmitter.emit(component)` for the
+the validations (below), and delegates to `ComponentFactoryEmitter.emit(component)` for the
 one valid survivor. Always returns `false`.
 
 **Validations — on any violation a `Messager` error is emitted on the offending element and no
@@ -131,9 +132,10 @@ output is generated:**
 | 4 | **Exactly one** `@VertiqueApp` per compilation | `exactly one @VertiqueApp per application; found also …` |
 
 Validation 1 is checked first; a class or enum annotated with `@VertiqueApp` gets a clear error
-without running the subsequent checks. Validation 4 is checked before validations 1–3, so when
-multiple annotated elements are present, all of them get the "exactly one" error and no output is
-produced regardless of whether they are individually valid.
+without running the subsequent checks. The exactly-one check runs after the other validations: an element that
+fails one of them gets that error and is not counted. Once the count of elements that pass the other
+validations exceeds one, across all processing rounds, the "exactly one" error is reported on the passing
+elements of that round and of later rounds, and the processor emits no further factory.
 
 ---
 
