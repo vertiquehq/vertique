@@ -57,8 +57,9 @@ import org.slf4j.LoggerFactory;
 /**
  * Integration tests of the interceptor extension point: {@code beforeRequest} folds in order before
  * credentials, {@code onAttemptCompleted} runs exactly once per exchange on every terminal path that
- * reached the client (refusals before sending included), a throwing interceptor is isolated, and no
- * credential is visible to an interceptor, a failure or a {@code toString}.
+ * reached the client (refusals before sending included), a throwing interceptor is isolated, no credential is
+ * visible to {@code beforeRequest}, a failure or a {@code toString}, and the completion snapshot carries the
+ * credential headers unredacted.
  *
  * <p>Every test dials only loopback addresses.
  */
@@ -325,8 +326,8 @@ class InterceptorExtensionIT {
 
     /** AC-023. */
     @Test
-    @DisplayName("AC-023: interceptors, failures and toString never show credentials")
-    void interceptorsFailuresAndToStringNeverShowCredentials() {
+    @DisplayName("AC-023: beforeRequest, failures and toString never show credentials; the completion snapshot does")
+    void beforeRequestFailuresAndToStringNeverShowCredentials() {
         // Given a credential source, a recording interceptor and a server that answers 500 to GET /x
         RecordingServer server = support.server(
                 (request, body) -> request.response().setStatusCode(500).end("failed"));
@@ -343,15 +344,20 @@ class InterceptorExtensionIT {
         assertThat(server.requests).hasSize(1);
         assertThat(server.requests.get(0).headers().get("Authorization")).isEqualTo(BEARER);
 
-        // And the recorded contexts hold no Authorization header and no secret, and neither does their toString
+        // And the beforeRequest context holds no Authorization header and no secret
         List<Completed> completed = settled(recorder, 1);
         assertThat(completed).hasSize(1);
         assertThat(recorder.contexts).hasSize(1);
-        List<HttpClientRequestContext> contexts = new ArrayList<>(recorder.contexts);
-        contexts.add(completed.get(0).request());
-        for (HttpClientRequestContext context : contexts) {
-            assertThat(context.headers().contains("Authorization")).isFalse();
-            assertThat(headerNamesAndValues(context.headers())).doesNotContain(SECRET);
+        HttpClientRequestContext prepared = recorder.contexts.get(0);
+        assertThat(prepared.headers().contains("Authorization")).isFalse();
+        assertThat(headerNamesAndValues(prepared.headers())).doesNotContain(SECRET);
+
+        // And the completion snapshot holds the credential unredacted, as the server received it
+        HttpClientRequestContext snapshot = completed.get(0).request();
+        assertThat(snapshot.headers().get("Authorization")).isEqualTo(BEARER);
+
+        // And toString of neither context shows the secret or the header name
+        for (HttpClientRequestContext context : List.of(prepared, snapshot)) {
             assertThat(context.toString()).doesNotContain(SECRET).doesNotContain("Authorization");
         }
         assertThat(completed.get(0).completion().toString()).doesNotContain(SECRET);
@@ -380,6 +386,67 @@ class InterceptorExtensionIT {
                 .doesNotContain(SECRET)
                 .doesNotContain("Authorization");
         assertThat(credentialCompleted.get(0).request().toString()).doesNotContain(SECRET);
+        assertThat(credentialCompleted.get(0).request().headers().contains("Authorization"))
+                .isFalse();
+    }
+
+    /** FR-016, supporting. */
+    @Test
+    @DisplayName("the snapshot carries the credential an asynchronous source resolved for the last original-origin hop")
+    void theSnapshotCarriesTheCredentialAnAsynchronousSourceResolvedForTheLastOriginalOriginHop() {
+        // Given a source that answers from a timer with a new value per resolution, a server whose /start
+        // answers 302 to its own /landing and whose /away answers 302 to another server, and a recording interceptor
+        AtomicInteger resolutions = new AtomicInteger();
+        CredentialSource delayed = target -> {
+            String value = "Bearer v" + resolutions.incrementAndGet();
+            Promise<Map<String, String>> later = Promise.promise();
+            support.vertx.setTimer(5, id -> later.complete(Map.of("Authorization", value)));
+            return later.future();
+        };
+        RecordingServer other = okServer();
+        RecordingServer server = support.server((request, body) -> {
+            switch (request.path()) {
+                case "/start" ->
+                    request.response()
+                            .setStatusCode(302)
+                            .putHeader("Location", "/landing")
+                            .end();
+                case "/away" ->
+                    request.response()
+                            .setStatusCode(302)
+                            .putHeader("Location", "http://localhost:" + other.port() + "/elsewhere")
+                            .end();
+                default -> request.response().end("ok");
+            }
+        });
+        Recorder recorder = new Recorder("rec");
+        HttpClient client = build(builder(server.origin(), recorder)
+                .webClientOptions(
+                        new WebClientOptions().setFollowRedirects(true).setMaxRedirects(5))
+                .credentials(delayed));
+
+        // When the caller follows the same-origin redirect
+        await(client.execute(web -> web.get("/start").send()));
+
+        // Then each hop got its own credential and the snapshot holds the one sent on the last hop
+        assertThat(server.requests).hasSize(2);
+        assertThat(server.requests.get(0).headers().get("Authorization")).isEqualTo("Bearer v1");
+        assertThat(server.requests.get(1).headers().get("Authorization")).isEqualTo("Bearer v2");
+        assertThat(settled(recorder, 1).get(0).request().headers().get("Authorization"))
+                .isEqualTo("Bearer v2");
+
+        // And when the caller follows a redirect to another origin, that origin receives no credential, while the
+        // snapshot keeps the one set on the original-origin hop
+        Recorder away = new Recorder("away");
+        HttpClient leaving = build(builder(server.origin(), away)
+                .webClientOptions(
+                        new WebClientOptions().setFollowRedirects(true).setMaxRedirects(5))
+                .credentials(delayed));
+        await(leaving.execute(web -> web.get("/away").send()));
+        assertThat(other.requests).hasSize(1);
+        assertThat(other.requests.get(0).headers().contains("Authorization")).isFalse();
+        assertThat(settled(away, 1).get(0).request().headers().get("Authorization"))
+                .isEqualTo("Bearer v3");
     }
 
     private static String headerNamesAndValues(MultiMap headers) {
@@ -391,8 +458,8 @@ class InterceptorExtensionIT {
 
     /** AC-039. */
     @Test
-    @DisplayName("AC-039: interceptors add headers in order and see no credentials")
-    void interceptorsAddHeadersInOrderAndSeeNoCredentials() {
+    @DisplayName("AC-039: interceptors add headers in order and beforeRequest sees no credentials")
+    void interceptorsAddHeadersInOrderAndBeforeRequestSeesNoCredentials() {
         // Given interceptor A (key a) adding X-Trace: 1, B (key b) recording what it receives and adding X-Trace: 2,
         // a credential source and a recording server
         RecordingServer server = okServer();
@@ -426,11 +493,12 @@ class InterceptorExtensionIT {
             assertThat(context.toString()).doesNotContain(SECRET);
         }
 
-        // And the snapshot handed to completion carries both trace values and no credential
+        // And the snapshot handed to completion carries both trace values and the credential
         settled(b, 1);
         HttpClientRequestContext snapshot = b.completed.get(0).request();
         assertThat(snapshot.headers().getAll("X-Trace")).containsExactly("1", "2");
-        assertThat(snapshot.headers().contains("Authorization")).isFalse();
+        assertThat(snapshot.headers().get("Authorization")).isEqualTo(BEARER);
+        assertThat(snapshot.toString()).doesNotContain(SECRET);
 
         // And a URI changed by an interceptor to a host the egress policy denies fails the exchange with a HOST
         // denial, reaches the denied host (here the same server under another name) not at all, and notifies once
@@ -841,8 +909,8 @@ class InterceptorExtensionIT {
 
     /** FR-016, supporting. */
     @Test
-    @DisplayName("concurrent exchanges each complete once and the snapshot is taken before credentials")
-    void concurrentExchangesEachCompleteOnceAndTheSnapshotIsTakenBeforeCredentials() {
+    @DisplayName("concurrent exchanges each complete once with their own snapshot")
+    void concurrentExchangesEachCompleteOnceWithTheirOwnSnapshot() {
         // Given an interceptor adding X-Pre in beforeRequest, a credential source and a recording server
         int calls = 24;
         RecordingServer server = okServer();
@@ -873,9 +941,9 @@ class InterceptorExtensionIT {
             assertThat(done.completion().attemptOrdinal()).isEqualTo(1);
             assertThat(done.completion().statusCode()).isEqualTo(200);
 
-            // And the snapshot holds the interceptor's header and the call's own header but no credential
+            // And the snapshot holds the interceptor's header, the call's own header and the credential
             assertThat(done.request().headers().get("X-Pre")).isEqualTo("added-before-credentials");
-            assertThat(done.request().headers().contains("Authorization")).isFalse();
+            assertThat(done.request().headers().get("Authorization")).isEqualTo(BEARER);
         }
         assertThat(callIds).hasSize(calls);
         assertThat(numbers).hasSize(calls);

@@ -295,8 +295,8 @@ public final class HttpClientBuilder {
      * multipart request body, a request body over the request bound or one that cannot be encoded, a
      * response body that did not complete, did not decode or is piped or discarded by the caller's codec,
      * and every {@code stream(...)} body are reported as metadata only. A client without an interceptor
-     * retains nothing. Credentials a {@link CredentialSource} adds are headers and stay out of the request
-     * snapshot.
+     * retains nothing. The headers a {@link CredentialSource} adds are in the request snapshot, unredacted like
+     * the bodies.
      *
      * @param capture whether to capture the request and response bodies
      * @return this builder

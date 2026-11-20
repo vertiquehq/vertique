@@ -42,7 +42,8 @@ import java.util.function.Predicate;
  *
  * <p>A source failure, a null result and an invalid header name or value fail the exchange once with an
  * {@link HttpCredentialException} and send nothing. The returned values are never put into a message or
- * a log. Per-exchange state lives in the {@link HttpContext}, never on this instance.
+ * a log; the applied headers are set on the request snapshot the interceptors are shown when the exchange ends.
+ * Per-exchange state lives in the {@link HttpContext}, never on this instance.
  */
 final class CredentialInterceptor implements Handler<HttpContext<?>> {
 
@@ -235,6 +236,10 @@ final class CredentialInterceptor implements Handler<HttpContext<?>> {
         MultiMap target = request.headers();
         for (Map.Entry<String, String> header : headers.entrySet()) {
             target.set(header.getKey(), header.getValue());
+        }
+        AttemptScope.Exchange exchange = ExchangeTracker.exchangeOf(ctx);
+        if (exchange != null) {
+            exchange.credentials(headers);
         }
         ctx.next();
     }

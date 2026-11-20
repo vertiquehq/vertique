@@ -61,8 +61,8 @@ import org.junit.jupiter.api.Timeout;
 /**
  * Integration tests of body capture: it is off by default, a client or its configuration turns it on, a
  * completed exchange hands the interceptor both bodies as written and received, a streamed or incomplete body
- * is reported as metadata only, a followed redirect reports the final hop, and bodies are unredacted while
- * credentials and {@code toString} stay excluded.
+ * is reported as metadata only, a followed redirect reports the final hop, and bodies and credential headers are
+ * unredacted while {@code toString} prints neither.
  *
  * <p>Every test dials only loopback addresses.
  */
@@ -839,10 +839,10 @@ class BodyCaptureIT {
         assertThat(only(boundedRec).completion().error()).isSameAs(bounded);
     }
 
-    /** AC-099: bodies are unredacted while credentials and printing stay excluded. */
+    /** AC-099: bodies and credentials are unredacted while printing stays excluded. */
     @Test
-    @DisplayName("AC-099: bodies are unredacted while credentials and printing stay excluded")
-    void bodiesAreUnredactedWhileCredentialsAndPrintingStayExcluded() {
+    @DisplayName("AC-099: bodies and credentials are unredacted while printing stays excluded")
+    void bodiesAndCredentialsAreUnredactedWhilePrintingStaysExcluded() {
         // Given a capturing client with a bearer credential source and a server answering with a token body
         RecordingServer server = support.server((request, body) ->
                 request.response().putHeader("Content-Type", "application/json").end("{\"access_token\":\"s3cr3t\"}"));
@@ -860,11 +860,12 @@ class BodyCaptureIT {
         assertBuffered(seen.requestBody(), "{\"password\":\"p\"}", "application/json");
         assertBuffered(seen.responseBody(), "{\"access_token\":\"s3cr3t\"}", "application/json");
 
-        // And the credential reached the server but is not in the request snapshot
+        // And the credential reached the server and is in the request snapshot unredacted
         assertThat(server.requests.get(0).headers().get("Authorization")).isEqualTo("Bearer t");
-        assertThat(seen.request().headers().contains("Authorization")).isFalse();
+        assertThat(seen.request().headers().get("Authorization")).isEqualTo("Bearer t");
 
-        // And toString of the completion contains neither body
+        // And toString of the completion contains neither body, and toString of the snapshot no header value
+        assertThat(seen.request().toString()).doesNotContain("Bearer");
         assertThat(seen.printed()).doesNotContain("s3cr3t").doesNotContain("password");
         assertThat(seen.completion().toString()).doesNotContain("s3cr3t").doesNotContain("password");
     }

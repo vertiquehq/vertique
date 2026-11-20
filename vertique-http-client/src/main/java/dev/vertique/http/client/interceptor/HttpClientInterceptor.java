@@ -16,9 +16,9 @@ import jakarta.annotation.Nullable;
  * {@code WebClient}, whether the client hands the {@code WebClient} out directly or scopes it to one
  * call. An interceptor must be safe to call from any thread and concurrently for different exchanges.
  *
- * <p>An interceptor never sees a credential: the {@code CredentialSource} resolves after
- * {@link #beforeRequest} and its headers appear in neither the contexts nor the completion. Put a
- * secret in the credential source, not in a header an interceptor adds.
+ * <p>{@link #beforeRequest} never sees a credential: the {@code CredentialSource} resolves after it. The
+ * snapshot {@link #onAttemptCompleted} receives does carry the credential headers set on a hop to the original
+ * origin, unredacted, like the bodies; redacting what an interceptor stores or logs is its own job.
  */
 public interface HttpClientInterceptor extends OrderedExtension {
 
@@ -51,7 +51,8 @@ public interface HttpClientInterceptor extends OrderedExtension {
      * refused request body, failed {@link #beforeRequest}).
      *
      * <p>{@code request} is the client's immutable snapshot of the method, URI and headers as written,
-     * taken after {@link #beforeRequest} ran and before credentials resolved, with framework identity.
+     * taken after {@link #beforeRequest} ran, with framework identity, plus the headers the
+     * {@code CredentialSource} set on a hop to the original origin. Nothing in it is redacted.
      * {@code response} is a framework-built head, or {@code null} when no response head arrived.
      * {@code completion} carries the status when a head arrived, the failure as the caller sees it (or
      * {@code null} when the exchange completed with a response), the call id, the attempt ordinal, the
@@ -82,7 +83,7 @@ public interface HttpClientInterceptor extends OrderedExtension {
      * error level at a limited rate, once per five minutes for an interceptor class, with the number of
      * failures that went unreported in between. The next interceptor still runs.
      *
-     * @param request the immutable snapshot of the request as written, without credentials
+     * @param request the immutable snapshot of the request as written, with its credential headers
      * @param response the response head, or {@code null} when none arrived
      * @param completion the framework facts of how the exchange ended
      */

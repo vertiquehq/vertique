@@ -5,7 +5,8 @@
  * The extension point of the governed HTTP client.
  *
  * <p>{@link dev.vertique.http.client.interceptor.HttpClientInterceptor} prepares every request before
- * credentials are applied and is told how every exchange ended. The records carry framework facts
- * only: no credential, no body and no {@code toString} that prints a header value, path or query.
+ * credentials are applied and is told how every exchange ended. The records are not redacted: the
+ * completion snapshot holds the credential headers and, when the client captures bodies, the completion holds
+ * both bodies. No {@code toString} prints a header value, a body, a path or a query.
  */
 package dev.vertique.http.client.interceptor;

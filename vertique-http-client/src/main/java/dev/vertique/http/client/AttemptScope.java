@@ -15,6 +15,7 @@ import dev.vertique.http.client.interceptor.HttpClientAttemptTarget;
 import dev.vertique.http.client.interceptor.HttpClientRequestContext;
 import dev.vertique.http.client.interceptor.HttpClientResponseHead;
 import dev.vertique.resilience.exception.ResilienceTimeoutException;
+import io.vertx.core.MultiMap;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClientRequest;
 import io.vertx.core.http.HttpClientResponse;
@@ -280,6 +281,20 @@ final class AttemptScope {
         /** Records the request snapshot the interceptors are shown when the exchange ends. */
         void snapshot(HttpClientRequestContext request) {
             snapshot = request;
+        }
+
+        /**
+         * Sets the credential headers applied to a hop on the snapshot, replacing any value of the same name, so
+         * the interceptors are shown the headers the exchange was sent with to the original origin.
+         */
+        void credentials(Map<String, String> headers) {
+            HttpClientRequestContext current = snapshot;
+            if (current == null) {
+                return;
+            }
+            MultiMap merged = current.headers();
+            headers.forEach(merged::set);
+            snapshot = current.withHeaders(merged);
         }
 
         /** Marks the exchange as one whose bodies the interceptors receive. */

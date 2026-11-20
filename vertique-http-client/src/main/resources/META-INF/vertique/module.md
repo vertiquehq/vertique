@@ -116,7 +116,8 @@ response, completion)` runs exactly once per exchange on every terminal path onc
 a completed response, a refused status, a bound exceeded, a timeout, a reset, a connection failure, a refused
 redirect hop, a cancellation, and the refusals before sending (egress denial, credential failure, invalid header,
 refused request body, failed `beforeRequest`). `request` is an immutable snapshot of the method, URI and headers
-taken after `beforeRequest` and before credentials, so no credential is ever visible to an interceptor;
+taken after `beforeRequest`, plus the headers the `CredentialSource` set on a hop to the original origin (unredacted;
+`beforeRequest` itself never sees a credential);
 `response` is a framework-built head without `Set-Cookie`, or `null` when none arrived; `completion` carries the
 status, the failure as the caller sees it, the call id, the attempt ordinal, the duration and the final target
 (scheme, host and port only), and, when the client captures bodies, the request and response bodies (see Request and
@@ -160,8 +161,9 @@ every interceptor, so read it, never write to it, and copy what you keep or chan
 client holds the bodies of every exchange of an attempt until the attempt ends.
 
 **Unredacted.** Bodies are delivered as written and received; the interceptor redacts what it stores or logs.
-Credential headers a `CredentialSource` adds never appear in the request snapshot, and `toString` of the completion
-prints no body.
+The same holds for headers: the request snapshot carries the headers a `CredentialSource` added, such as
+`Authorization`, so an access token can be inspected when debugging. `toString` of the completion prints no body, and
+`toString` of the snapshot prints no header value.
 
 ```java
 import dev.vertique.core.payload.PayloadKind;

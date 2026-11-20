@@ -12,8 +12,9 @@ import java.util.Objects;
  * The request an {@link HttpClientInterceptor} prepares and the snapshot it is shown on completion.
  *
  * <p>Instances are immutable: the headers and attributes are copied on construction and the
- * {@code with...} methods return modified copies. The {@code headers} never hold a credential, because
- * credentials are applied after interceptors run. {@link #toString()} prints the method, client name
+ * {@code with...} methods return modified copies. The context {@code beforeRequest} receives never holds
+ * a credential, because credentials are applied after interceptors run; the snapshot {@code onAttemptCompleted}
+ * receives holds the credential headers set on a hop to the original origin, unredacted. {@link #toString()} prints the method, client name
  * and call id only, never a header value, a path, a query or an attribute.
  *
  * @param method the HTTP method, for example {@code "GET"}
