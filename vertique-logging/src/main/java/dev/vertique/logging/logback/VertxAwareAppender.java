@@ -3,6 +3,7 @@
 
 package dev.vertique.logging.logback;
 
+import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.AsyncAppenderBase;
 import dev.vertique.logging.MDC;
@@ -105,5 +106,17 @@ public class VertxAwareAppender extends AsyncAppenderBase<ILoggingEvent> {
             event = new VertxMdcLoggingEvent(event, vertxMdc);
         }
         super.append(event);
+    }
+
+    /**
+     * Marks events at INFO level or below (TRACE, DEBUG, INFO) as droppable once the queue fill passes
+     * the {@code discardingThreshold}; WARN and ERROR events are always kept while the queue has room.
+     *
+     * @param event the event being queued
+     * @return {@code true} when the event's level is INFO or lower
+     */
+    @Override
+    protected boolean isDiscardable(ILoggingEvent event) {
+        return event.getLevel().toInt() <= Level.INFO_INT;
     }
 }
