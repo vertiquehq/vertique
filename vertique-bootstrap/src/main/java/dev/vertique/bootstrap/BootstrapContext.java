@@ -34,7 +34,10 @@ public interface BootstrapContext {
      * {@link io.vertx.core.Vertx} instance.
      *
      * <p>Mutations made via the returned object are immediately visible to all subsequent
-     * contributors and are applied at build time.
+     * contributors and take effect when the {@code Vertx} instance is built. The launcher
+     * rebuilds the options from their JSON form when the resolved configuration has a non-empty
+     * {@code vertx.options} section, so option state with no JSON representation (for example a
+     * pre-built metrics registry) set by a contributor is not preserved on that path.
      *
      * @return the non-null live {@link VertxOptions} instance
      */
