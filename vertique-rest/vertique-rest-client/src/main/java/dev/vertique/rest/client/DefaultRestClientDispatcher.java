@@ -31,6 +31,7 @@ import io.vertx.core.AsyncResult;
 import io.vertx.core.Expectation;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.http.HttpResponseExpectation;
 import io.vertx.core.http.HttpResponseHead;
 import io.vertx.ext.web.client.HttpRequest;
 import io.vertx.ext.web.client.HttpResponse;
@@ -149,7 +150,9 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
         this.interceptorChain = interceptorChain;
         this.exceptionMapper = exceptionMapper;
         this.objectMapper = objectMapper;
-        this.defaultExpectation = defaultExpectation;
+        // The builder default adds to the 2xx rule; only a method-level @ExpectedStatus replaces it.
+        this.defaultExpectation =
+                defaultExpectation == null ? null : HttpResponseExpectation.SC_SUCCESS.and(defaultExpectation);
         this.resilienceFactory = resilienceFactory;
         this.beanValidator = beanValidator;
         this.clientName = clientName;
@@ -869,7 +872,7 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
                             reqCtx,
                             responseContext != null ? responseContext : RestClientResponseContext.from(response)));
         }
-        // A response the expectation accepts is a success whatever its status class; one it rejects is
+        // A response the effective expectation accepts is a success; one it rejects, a 2xx included, is
         // always a RestClientResponseException, with the expectation's failure as its cause.
         return Future.succeededFuture(response)
                 .expecting(expectation)
@@ -969,8 +972,9 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
             return Future.succeededFuture(Optional.empty());
         }
 
-        // The response reaching this point was accepted by the expectation (2xx when none is set),
-        // so it is decoded as the declared type whatever its status.
+        // The response reaching this point was accepted by the effective expectation (2xx when none is
+        // set, the builder default in addition to 2xx, or the method's @ExpectedStatus statuses), so it
+        // is decoded as the declared type.
         // Deserialize and validate
         try {
             Object result = deserializeSuccess(response, meta);
