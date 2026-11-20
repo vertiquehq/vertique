@@ -127,9 +127,11 @@ output is generated:**
 | # | Rule | Error message |
 |---|------|---------------|
 | 1 | Target must be an **interface** | `@VertiqueApp must be placed on an interface …` |
-| 2 | Target must be annotated with **`dagger.Component`** | `@VertiqueApp … must be annotated with @dagger.Component` |
-| 3 | Interface hierarchy must include **`VertiqueApplicationComponent`** (transitively) | `@VertiqueApp … must extend dev.vertique.application.VertiqueApplicationComponent` |
-| 4 | **Exactly one** `@VertiqueApp` per compilation | `exactly one @VertiqueApp per application; found also …` |
+| 2 | Target must be a **top-level** interface, not a nested one | `@VertiqueApp must be placed on a top-level interface; … is nested` |
+| 3 | Target must be annotated with **`dagger.Component`** | `@VertiqueApp … must be annotated with @dagger.Component` |
+| 4 | Interface hierarchy must include **`VertiqueApplicationComponent`** (transitively) | `@VertiqueApp … must extend dev.vertique.application.VertiqueApplicationComponent` |
+| 5 | Target must not declare a nested **`@Component.Factory`** or **`@Component.Builder`**, because the generated factory calls Dagger's default builder | `@VertiqueApp requires the default Dagger component builder … declares a custom @Component.Factory/@Component.Builder, which is not supported …` |
+| 6 | **Exactly one** `@VertiqueApp` per compilation | `exactly one @VertiqueApp per application; found also …` |
 
 Validation 1 is checked first; a class or enum annotated with `@VertiqueApp` gets a clear error
 without running the subsequent checks. The exactly-one check runs after the other validations: an element that
