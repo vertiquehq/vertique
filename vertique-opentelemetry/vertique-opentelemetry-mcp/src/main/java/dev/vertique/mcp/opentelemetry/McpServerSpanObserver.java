@@ -47,7 +47,9 @@ import lombok.extern.slf4j.Slf4j;
  * terminal event carries a resolved tool identity (never the unresolved-call placeholder) —
  * {@code gen_ai.tool.name}. These are experimental OpenTelemetry semantic-convention names, so they
  * are declared as internal, Vertique-owned {@link AttributeKey} constants here rather than pulled
- * from an incubating semconv artifact dependency.
+ * from an incubating semconv artifact dependency. They follow the one semantic-conventions version
+ * the framework manages in its root build ({@code opentelemetry-semconv.version}); this module
+ * pins and documents no version of its own.
  *
  * <p><b>{@code mcp.protocol.version}.</b> Set only when {@link
  * McpRequestTerminalEvent#protocolVersion()} is non-{@code null} — i.e. only when this request's

@@ -71,6 +71,14 @@ before the terminal write."
 OpenTelemetry semantic-convention names; rather than depending on an incubating semconv artifact, they
 are declared as internal, Vertique-owned `AttributeKey` constants on `McpServerSpanObserver`.
 
+**Semantic-conventions version.** This module has no version of its own. Like every Vertique module,
+its attribute names follow the one OpenTelemetry semantic-conventions version the framework manages in
+its root build (the `opentelemetry-semconv.version` property of the framework BOM and parent POM). The
+four names above are checked against that version: each exists with exactly that string in the
+incubating semantic-conventions artifact of the managed version, and none is deprecated. A framework
+upgrade of that version is the point at which the names are re-checked; the `vertique.mcp.*` names are
+Vertique's own and follow no semantic-conventions release.
+
 **At most one body-trace link, never a child span, and only under `mcp.bodyTracePolicy=LINK`.**
 When the request's terminal observation carries a non-null `linkedTrace` (a
 `dev.vertique.core.correlation.TraceReference` — the framework's single trace-reference type,
