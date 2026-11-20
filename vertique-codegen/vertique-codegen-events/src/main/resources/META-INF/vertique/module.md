@@ -77,6 +77,8 @@ The processor enforces the following at compile time:
 | Observer method must return `void` | `@Observes` on a non-`void` method is a compile error |
 | Observer method must have exactly one parameter | A method with multiple parameters (even if one carries `@Observes`) is rejected |
 | `@Observes Object` is rejected | The registry's superclass walk excludes `Object`; such an observer would silently never fire |
+| Observer method must be `public` | A non-`public` observer method is rejected at the method |
+| Observer class must be reachable | The generated module calls the observer from the package it is emitted into (by default the longest common prefix of the event packages), so a declaring class that is not `public` and not in that package is rejected at the observer |
 
 ---
 
