@@ -548,10 +548,13 @@ exception and can carry submitted text, so applications must not log the cause o
 `WorkflowInvalidPayloadException` at INFO or above. The engine logs the cause at DEBUG unsanitized: it can
 quote submitted text, including line breaks. Keep DEBUG off for the `dev.vertique.workflow.engine` loggers in
 production, or sanitize at the log sink. A decision payload type is resolved from the name the plan holds: the engine looks the name up in the
-`WorkflowTypeNames` index first, so a class named with `@WorkflowType` resolves by its logical name, and an
-instance written before the class was annotated still resolves by the class's binary name. A name the index
-does not know is looked up as a binary class name, as before, without running the class's static
-initializer. A payload class that cannot be resolved remains a
+`WorkflowTypeNames` index, so a class named with `@WorkflowType` resolves by its logical name, and an
+instance written before the class was annotated still resolves by the class's binary name when a registered
+definition uses the class. The index is the only lookup. **Behaviour change:** a name the index does not
+know is no longer loaded as a class name, so a completion whose plan names a class that no registered
+definition uses fails with a `WorkflowDefinitionException` whose message says the payload type name
+cannot be resolved. Register the definition that uses the class, or give the class a `@WorkflowType` name
+in a definition that is registered. An unresolvable payload class is a
 definition error (`WorkflowDefinitionException`), not a caller error. A failure thrown by an application
 decision applicator is also reported as a definition error, with the applicator exception as its cause
 and without its message.
@@ -672,7 +675,7 @@ clock. Defaulted: `recorders` and `inboundContextInitializers` to empty sets, `o
 `DEFAULT_OPTIONAL_INTENT_KINDS`, `executorConfig` to `WorkflowExecutorConfig.defaults()`, `recordingConfig` to `WorkflowRecordingConfig.defaults()` (the payload bound and the open-signal limit of recorded signals and the schema cache size of recorded completions), `schemaProducer` to empty (the producer of the payload schemas that a new task's decision snapshot stores; without it new tasks carry no schemas and the executor alone validates their completions), `executorObservers` to an empty set (the observers of the executor's events, see the executor observer in `vertique-workflow-core`), `commandWakeups` to `CommandWakeups.none()` (the source that wakes the executor's instances, see Executor), and `migrationRegistry`,
 `beanValidator`, `stateCompatibility` and `historyRedactor` to empty, `historyPublisher` to `WorkflowHistoryEventPublisher.disabled()`, which announces nothing, and `intakeAdmission` to an admission that always accepts: an engine built by the factory runs no intake sampler (see Intake Limit), and a test that needs a refusing node supplies an `IntakeAdmission` whose `admitting()` answers `false`. `vertx` may be `null`; the executor of such an engine cannot be started. The
 `propagator` may be `null`. The `typeNames` index is the one the registry fills (`DefaultWorkflowRegistry#typeNames()`);
-with a different index a decision payload name resolves as a binary class name only. An empty `beanValidator` leaves
+with a different index a decision payload name resolves only if that index holds the class. An empty `beanValidator` leaves
 payload constraints off, an empty `stateCompatibility` makes the engine refuse a migration between differing state
 classes, and an empty `migrationRegistry` makes `migrate` fail with `UnsupportedOperationException`.
 

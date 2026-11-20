@@ -331,6 +331,24 @@ public final class AopProcessor extends AbstractProcessor {
                                 Diagnostics.aopNotProxyable(
                                         methodFqn, "it is a final method and cannot be overridden"));
                 rejected = true;
+            } else {
+                // An interface trigger method is itself never final; the implementation the proxy
+                // would override can be, whether the bean declares it or inherits it.
+                ExecutableElement implementation = concreteMember(bean, method);
+                if (implementation != null && implementation.getModifiers().contains(Modifier.FINAL)) {
+                    boolean declaredOnBean =
+                            implementation.getEnclosingElement().equals(bean);
+                    ctx.diagnostics()
+                            .error(
+                                    declaredOnBean ? implementation : bean,
+                                    Diagnostics.aopNotProxyable(
+                                            methodFqn,
+                                            "its implementation "
+                                                    + implementation.getEnclosingElement() + "."
+                                                    + implementation.getSimpleName()
+                                                    + " is a final method and cannot be overridden"));
+                    rejected = true;
+                }
             }
             if (modifiers.contains(Modifier.PRIVATE)) {
                 ctx.diagnostics()
@@ -678,13 +696,23 @@ public final class AopProcessor extends AbstractProcessor {
      * concrete (non-abstract) member — a class body or an inherited interface {@code default}.
      */
     private boolean isConcreteMember(TypeElement bean, ExecutableElement ifaceMethod) {
+        ExecutableElement candidate = concreteMember(bean, ifaceMethod);
+        return candidate != null && !candidate.getModifiers().contains(Modifier.ABSTRACT);
+    }
+
+    /**
+     * Returns the member of {@code bean} that is {@code method} or overrides it (a class body, an
+     * inherited superclass method, or an inherited interface {@code default}), or {@code null} when
+     * {@code bean} has none.
+     */
+    private ExecutableElement concreteMember(TypeElement bean, ExecutableElement method) {
         for (ExecutableElement candidate :
                 ElementFilter.methodsIn(ctx.elements().getAllMembers(bean))) {
-            if (candidate.equals(ifaceMethod) || ctx.elements().overrides(candidate, ifaceMethod, bean)) {
-                return !candidate.getModifiers().contains(Modifier.ABSTRACT);
+            if (candidate.equals(method) || ctx.elements().overrides(candidate, method, bean)) {
+                return candidate;
             }
         }
-        return false;
+        return null;
     }
 
     /**
