@@ -8,11 +8,11 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.events`
 > **Artifact:** `vertique-events`
-> **Depends on:** `vertique-core`, `vertx-core`, `jakarta.inject-api`
+> **Depends on:** `vertique-core`, `vertx-core`, `jakarta.inject-api`, `slf4j-api`
 
 `vertique-events` is the runtime module for compile-time typed event dispatch. It provides an `@Observes` annotation, the `Event<T>` abstract publisher, and the `ObserverRegistry` that matches fired events to registered observers by subtype routing. Observers are registered through Dagger multibinding — no runtime classpath scanning or annotation reflection occurs at dispatch time.
 
-The module provides notification-only semantics: `Event<T>.fire(T)` always succeeds, and a throwing observer never fails the fan-out or prevents subsequent observers from running.
+The module provides notification-only semantics: `Event<T>.fire(T)` never fails because of an observer, and a throwing observer never fails the fan-out or prevents subsequent observers from running. A `null` event is a programming error: `fire` rejects it synchronously with a `NullPointerException` before any observer runs.
 
 ---
 
@@ -71,7 +71,7 @@ public class OrderAuditListener {
         auditLog.record(event.orderId());
     }
 
-    public void onOrderCreated(@Observes(priority = 500) OrderCreated event) {
+    public void onOrderCreatedEarly(@Observes(priority = 500) OrderCreated event) {
         // fires BEFORE the default priority (1000) observer above
     }
 }
@@ -186,3 +186,4 @@ static ObserverRegistration myObserver(MyBean bean) {
 | `vertique-core` | `Combinators.foldSequential` (sequential fan-out with swallow step); `TypeResolver.getAllInterfaces` (interface supertype walk in `ObserverRegistry`) |
 | `vertx-core` | `io.vertx.core.Future` — the return type of `Event.fire()` |
 | `jakarta.inject-api` | `@Inject`, `@Singleton` on `ObserverRegistry` |
+| `slf4j-api` | Logs the swallowed observer failure in `Event.fire()` |
