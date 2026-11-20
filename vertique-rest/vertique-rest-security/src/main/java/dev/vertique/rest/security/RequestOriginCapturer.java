@@ -52,6 +52,9 @@ import lombok.extern.slf4j.Slf4j;
 @Singleton
 public final class RequestOriginCapturer {
 
+    /** Longest {@code X-Forwarded-Host} value considered: a 253-character host name plus {@code :65535}. */
+    private static final int MAX_AUTHORITY_LENGTH = 259;
+
     private final RequestOriginConfig config;
     private final List<CidrMatcher> trustedProxies;
 
@@ -104,11 +107,10 @@ public final class RequestOriginCapturer {
             // Trusted peer: derive clientIp by right-to-left chain walk, peeling trusted entries.
             clientIp = derivClientIpFromChain(chain.entries, remoteIp);
             scheme = config.trustForwardedScheme()
-                    ? Optional.ofNullable(request.getHeader("X-Forwarded-Proto"))
-                            .orElse(resolveScheme(request))
+                    ? forwardedScheme(request.getHeader("X-Forwarded-Proto")).orElseGet(() -> resolveScheme(request))
                     : resolveScheme(request);
             host = config.trustForwardedHost()
-                    ? Optional.ofNullable(request.getHeader("X-Forwarded-Host")).orElse(resolveHost(request))
+                    ? forwardedHost(request.getHeader("X-Forwarded-Host")).orElseGet(() -> resolveHost(request))
                     : resolveHost(request);
         } else {
             clientIp = remoteIp;
@@ -123,6 +125,123 @@ public final class RequestOriginCapturer {
     }
 
     // --- Private helpers ---
+
+    /**
+     * Validates a trusted {@code X-Forwarded-Proto} value. Only {@code http} and {@code https}
+     * (any case) are accepted, and the result is lower-cased; an absent, blank or any other value
+     * yields empty so the caller falls back to the connection's scheme.
+     *
+     * @param value the raw header value; may be {@code null}
+     * @return the normalized scheme, or empty when the header is absent or not {@code http}/{@code https}
+     */
+    private static Optional<String> forwardedScheme(String value) {
+        if (value == null) {
+            return Optional.empty();
+        }
+        String trimmed = value.strip();
+        if ("http".equalsIgnoreCase(trimmed)) {
+            return Optional.of("http");
+        }
+        if ("https".equalsIgnoreCase(trimmed)) {
+            return Optional.of("https");
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Validates a trusted {@code X-Forwarded-Host} value against the authority grammar: a host
+     * name, an IPv4 literal or a bracketed IPv6 literal, optionally followed by {@code :port}. An
+     * absent, blank or malformed value (a list, user information, a path, whitespace) yields empty
+     * so the caller falls back to the connection's host.
+     *
+     * @param value the raw header value; may be {@code null}
+     * @return the trimmed header value, or empty when it is absent or not a valid authority
+     */
+    private static Optional<String> forwardedHost(String value) {
+        if (value == null) {
+            return Optional.empty();
+        }
+        String trimmed = value.strip();
+        return isValidAuthority(trimmed) ? Optional.of(trimmed) : Optional.empty();
+    }
+
+    private static boolean isValidAuthority(String authority) {
+        if (authority.isEmpty() || authority.length() > MAX_AUTHORITY_LENGTH) {
+            return false;
+        }
+        String host;
+        String port = null;
+        if (authority.charAt(0) == '[') {
+            int close = authority.indexOf(']');
+            if (close < 0) {
+                return false;
+            }
+            String literal = authority.substring(1, close);
+            if (literal.indexOf(':') < 0 || !isIpLiteral(literal)) {
+                return false;
+            }
+            String rest = authority.substring(close + 1);
+            if (!rest.isEmpty()) {
+                if (rest.charAt(0) != ':') {
+                    return false;
+                }
+                port = rest.substring(1);
+            }
+            return port == null || isValidPort(port);
+        }
+        int colon = authority.indexOf(':');
+        if (colon >= 0) {
+            host = authority.substring(0, colon);
+            port = authority.substring(colon + 1);
+            if (!isValidPort(port)) {
+                return false;
+            }
+        } else {
+            host = authority;
+        }
+        return isValidHostName(host);
+    }
+
+    private static boolean isValidPort(String port) {
+        if (port.isEmpty() || port.length() > 5) {
+            return false;
+        }
+        for (int i = 0; i < port.length(); i++) {
+            char c = port.charAt(i);
+            if (c < '0' || c > '9') {
+                return false;
+            }
+        }
+        return Integer.parseInt(port) <= 65_535;
+    }
+
+    /** A dot-separated host name (which includes an IPv4 literal): non-empty labels of letters, digits, '-' and '_', with an optional trailing dot. */
+    private static boolean isValidHostName(String host) {
+        // One trailing dot (an absolute name, as in "example.com.") is allowed.
+        if (host.endsWith(".")) {
+            host = host.substring(0, host.length() - 1);
+        }
+        if (host.isEmpty() || host.length() > 253) {
+            return false;
+        }
+        int labelLength = 0;
+        for (int i = 0; i < host.length(); i++) {
+            char c = host.charAt(i);
+            if (c == '.') {
+                if (labelLength == 0) {
+                    return false;
+                }
+                labelLength = 0;
+                continue;
+            }
+            boolean ok =
+                    (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-' || c == '_';
+            if (!ok || ++labelLength > 63) {
+                return false;
+            }
+        }
+        return labelLength > 0;
+    }
 
     /**
      * Resolves the effective scheme from the request. Vert.x 5 exposes scheme via
@@ -162,11 +281,13 @@ public final class RequestOriginCapturer {
     }
 
     /**
-     * Normalizes an IP address string, converting IPv6-mapped IPv4 addresses
-     * (e.g., {@code ::ffff:1.2.3.4}) to their plain IPv4 form.
+     * Normalizes an IP address string: an IPv4 or IPv4-mapped IPv6 address becomes plain dotted-quad
+     * (e.g., {@code ::ffff:1.2.3.4} becomes {@code 1.2.3.4}), and any other IPv6 address is rendered
+     * in the RFC 5952 canonical form (lowercase hex, no leading zeros, the longest run of two or more
+     * zero groups compressed to {@code ::}). A {@code %zone} suffix is kept as written.
      *
      * @param raw the raw IP string from the socket or XFF header entry
-     * @return normalized IP string; {@code raw} unchanged if not an IPv6-mapped IPv4 address
+     * @return normalized IP string; {@code raw} unchanged if it is not an IP literal
      */
     static String normalizeIp(String raw) {
         byte[] bytes = addressBytes(raw);
@@ -177,9 +298,54 @@ public final class RequestOriginCapturer {
         if (bytes.length == 4) {
             return (bytes[0] & 0xFF) + "." + (bytes[1] & 0xFF) + "." + (bytes[2] & 0xFF) + "." + (bytes[3] & 0xFF);
         }
-        // Pure IPv6 — return the raw string unchanged so addresses like "2001:db8::1" are
-        // not expanded to their full form.
-        return raw;
+        int percent = raw.indexOf('%');
+        return renderIpv6(bytes) + (percent >= 0 ? raw.substring(percent) : "");
+    }
+
+    /**
+     * Renders 16 address bytes as an RFC 5952 canonical IPv6 string.
+     *
+     * @param bytes the 16 address bytes
+     * @return the canonical text form
+     */
+    private static String renderIpv6(byte[] bytes) {
+        int[] groups = new int[8];
+        for (int i = 0; i < 8; i++) {
+            groups[i] = ((bytes[2 * i] & 0xFF) << 8) | (bytes[2 * i + 1] & 0xFF);
+        }
+        int bestStart = -1;
+        int bestLen = 0;
+        for (int i = 0; i < 8; ) {
+            if (groups[i] != 0) {
+                i++;
+                continue;
+            }
+            int j = i;
+            while (j < 8 && groups[j] == 0) {
+                j++;
+            }
+            if (j - i > bestLen) {
+                bestStart = i;
+                bestLen = j - i;
+            }
+            i = j;
+        }
+        if (bestLen < 2) {
+            bestStart = -1;
+        }
+        StringBuilder sb = new StringBuilder(39);
+        for (int i = 0; i < 8; i++) {
+            if (i == bestStart) {
+                sb.append("::");
+                i += bestLen - 1;
+                continue;
+            }
+            if (sb.length() > 0 && sb.charAt(sb.length() - 1) != ':') {
+                sb.append(':');
+            }
+            sb.append(Integer.toHexString(groups[i]));
+        }
+        return sb.toString();
     }
 
     /**

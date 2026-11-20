@@ -38,9 +38,10 @@ public final class SourceConfigValues {
      * <ul>
      *   <li>Field absent → return {@code defaultValue} unchanged.</li>
      *   <li>Field present but not numeric (e.g. {@code "not-a-number"}) →
-     *       {@link ConfigPropertySourceException} whose message contains the field name.</li>
+     *       {@link ConfigPropertySourceException} whose message contains the field name and not the
+     *       value or its type.</li>
      *   <li>Field present and numeric but &lt;= 0 → {@link ConfigPropertySourceException} whose
-     *       message contains the field name and the actual value.</li>
+     *       message contains the field name and not the value.</li>
      *   <li>Field present and &gt; 0 → return the validated value.</li>
      * </ul>
      *
@@ -57,10 +58,7 @@ public final class SourceConfigValues {
             return defaultValue;
         }
         if (!(raw instanceof Number num)) {
-            throw new ConfigPropertySourceException(
-                    sourceName,
-                    "field '" + field + "' must be an integer; got: "
-                            + raw.getClass().getSimpleName());
+            throw new ConfigPropertySourceException(sourceName, "field '" + field + "' must be an integer");
         }
         // Normalise to BigDecimal so that BigDecimal, BigInteger, Double, Float, Long, and
         // Integer are all handled uniformly. Using new BigDecimal(value.toString()) avoids
@@ -71,33 +69,23 @@ public final class SourceConfigValues {
         } catch (NumberFormatException e) {
             // Should not happen for standard Number types, but guard defensively.
             throw new ConfigPropertySourceException(
-                    sourceName, "field '" + field + "' could not be parsed as a number; got: " + num);
+                    sourceName, "field '" + field + "' could not be parsed as a number");
         }
         // Reject any fractional value (e.g. 1.5, 5000.5).
         if (bd.stripTrailingZeros().scale() > 0) {
             throw new ConfigPropertySourceException(
-                    sourceName, "field '" + field + "' must be an exact integer (no fractional part); got: " + num);
+                    sourceName, "field '" + field + "' must be an exact integer (no fractional part)");
         }
         // Reject values outside int range (e.g. BigInteger 2^40, Long 3_000_000_000).
         BigInteger bigInt = bd.toBigIntegerExact();
         if (bigInt.compareTo(BigInteger.valueOf(Integer.MAX_VALUE)) > 0
                 || bigInt.compareTo(BigInteger.valueOf(Integer.MIN_VALUE)) < 0) {
-            throw new ConfigPropertySourceException(
-                    sourceName,
-                    "field '"
-                            + field
-                            + "' value "
-                            + bigInt
-                            + " is out of int range ["
-                            + Integer.MIN_VALUE
-                            + ", "
-                            + Integer.MAX_VALUE
-                            + "]");
+            throw new ConfigPropertySourceException(sourceName, "field '" + field + "' is out of int range");
         }
         int value = bigInt.intValueExact();
         if (value <= 0) {
             throw new ConfigPropertySourceException(
-                    sourceName, "field '" + field + "' must be a positive integer (> 0); got: " + value);
+                    sourceName, "field '" + field + "' must be a positive integer (> 0)");
         }
         return value;
     }

@@ -14,7 +14,14 @@ import java.lang.annotation.Target;
  *
  * <p>When placed on a method in a {@link RestClient}-annotated interface, the proxy validates the
  * response status code and fails with a {@link dev.vertique.rest.client.exception.RestClientResponseException} if the status does not
- * match. This annotation takes precedence over any default expectation set via the builder.
+ * match. This annotation replaces, rather than adds to, any default expectation set via the builder, and
+ * with it the 2xx rule the builder default is checked against.
+ *
+ * <p>The listed statuses are the ones that succeed, whatever their class: {@code @ExpectedStatus({200, 404})}
+ * makes a 404 a normal answer. An accepted response is decoded as the method's declared type (declare
+ * {@code Optional<T>}, {@code Void} or {@code HttpClientResponse} when an accepted status has another body
+ * shape); a rejected one, a 2xx included, fails with the exception above. An accepted status is a success
+ * for retries and the circuit breaker.
  *
  * <p>Two mutually exclusive forms are supported:
  * <ul>

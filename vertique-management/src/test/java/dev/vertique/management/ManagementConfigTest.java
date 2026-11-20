@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
+import dev.vertique.core.exception.ConfigurationException;
 import io.vertx.core.json.JsonObject;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -57,6 +58,33 @@ class ManagementConfigTest {
             assertEquals("127.0.0.1", config.host());
             assertFalse(config.enabled());
             assertEquals(10L, config.healthCheckTimeoutSeconds());
+        }
+
+        @Test
+        @DisplayName("a blank, whitespace or explicit null host counts as absent and takes the default")
+        void blankHostTakesDefault() {
+            assertEquals(
+                    "0.0.0.0",
+                    new JsonObject()
+                            .put("host", "")
+                            .mapTo(ManagementConfig.class)
+                            .host());
+            assertEquals(
+                    "0.0.0.0",
+                    new JsonObject()
+                            .put("host", "   ")
+                            .mapTo(ManagementConfig.class)
+                            .host());
+            assertEquals(
+                    "0.0.0.0",
+                    new JsonObject()
+                            .putNull("host")
+                            .mapTo(ManagementConfig.class)
+                            .host());
+            assertEquals(
+                    "0.0.0.0", ManagementConfig.builder().host("  ").build().host());
+            assertEquals(
+                    "0.0.0.0", ManagementConfig.builder().host(null).build().host());
         }
 
         @Test
@@ -116,19 +144,19 @@ class ManagementConfigTest {
         }
 
         @Test
-        @DisplayName("the module provider rejects a non-positive timeout instead of failing at deploy")
-        void nonPositiveTimeoutRejectedAtBinding() {
+        @DisplayName("the module provider rejects a non-positive timeout with a ConfigurationException")
+        void nonPositiveTimeoutRejectedAsConfigurationException() {
             JsonObject config =
                     new JsonObject().put("management", new JsonObject().put("healthCheckTimeoutSeconds", 0));
 
-            IllegalArgumentException failure = assertThrows(
-                    IllegalArgumentException.class,
+            ConfigurationException failure = assertThrows(
+                    ConfigurationException.class,
                     () -> ManagementModule.managementConfig(
                             config, new DefaultConfigParser(DefaultConfigMapper.lenient())));
             assertTrue(failure.getMessage().contains("healthCheckTimeoutSeconds"), failure.getMessage());
 
             assertThrows(
-                    IllegalArgumentException.class,
+                    ConfigurationException.class,
                     () -> ManagementModule.managementConfig(
                             new JsonObject().put("management", new JsonObject().put("healthCheckTimeoutSeconds", -1)),
                             new DefaultConfigParser(DefaultConfigMapper.lenient())));

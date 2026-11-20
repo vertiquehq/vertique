@@ -413,8 +413,9 @@ final class JaxRsApplicationComposer {
      * @param selectedEntryTypes every resolved catalog entry's declared type accumulates here
      * @param selectedManualOut  every selected manual instance accumulates here
      * @return one mount per registration, in mounting order
-     * @throws RestConfigurationException when a resolved catalog instance is {@code null}, or does
-     *     not keep its entry's declared resource surface
+     * @throws RestConfigurationException naming the application when a catalog entry's provider
+     *     throws, a resolved catalog instance is {@code null}, or it does not keep its entry's
+     *     declared resource surface
      */
     private static Set<RouterMount> resolveAndMount(
             JaxRsRouterMount.Factory factory,
@@ -426,19 +427,30 @@ final class JaxRsApplicationComposer {
         Set<RouterMount> mounts = new LinkedHashSet<>();
         for (AppSelection selection : selections) {
             GeneratedRestApplicationRegistration registration = selection.registration();
+            RestApplications.Entry applicationEntry =
+                    view.byName(registration.name()).orElseThrow();
+            String application = "JAX-RS application '" + applicationEntry.name() + "' ("
+                    + applicationEntry.declaringType().getName() + "): ";
             Set<Object> resourceSet = Collections.newSetFromMap(new IdentityHashMap<>());
             for (GeneratedJaxRsResourceEntry entry : selection.entries()) {
                 Object instance;
                 if (resolved.containsKey(entry)) {
                     instance = resolved.get(entry);
                 } else {
-                    instance = entry.get();
+                    try {
+                        instance = entry.get();
+                    } catch (RuntimeException e) {
+                        throw new RestConfigurationException(
+                                application + "resolving the resource "
+                                        + entry.type().getName() + " failed; see the cause",
+                                e);
+                    }
                     if (instance == null) {
-                        throw new RestConfigurationException("Generated resource entry for "
+                        throw new RestConfigurationException(application + "Generated resource entry for "
                                 + entry.type().getName() + " returned null instead of an instance");
                     }
                     if (!sameSurface(entry.type(), instance.getClass())) {
-                        throw new RestConfigurationException("Generated resource entry for "
+                        throw new RestConfigurationException(application + "Generated resource entry for "
                                 + entry.type().getName() + " resolved to an instance of "
                                 + instance.getClass().getName() + ", which does not have the same resource"
                                 + " surface as " + entry.type().getName());
@@ -455,7 +467,7 @@ final class JaxRsApplicationComposer {
             ordered.sort(Comparator.comparing(resource -> resource.getClass().getName()));
             Set<Object> orderedResources = new LinkedHashSet<>(ordered);
 
-            RestApplications.Entry entry = view.byName(registration.name()).orElseThrow();
+            RestApplications.Entry entry = applicationEntry;
             JaxRsRouterMount mount = factory.createApplicationMount(
                     entry.mountPath(),
                     entry.effectiveOpenapiPath(),

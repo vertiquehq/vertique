@@ -126,15 +126,6 @@ class OperationInventoryParityTest {
             "listSequenced", List.of(),
             "listKinds", List.of(GeneratedPaging.class));
 
-    /**
-     * The collection-typed query inputs of {@code listKinds}, whose {@code type} legitimately differs
-     * by path: generated descriptors carry no generic type for a non-body parameter, so the generated
-     * path reports the raw {@code List}, while the reflection path reports the declared
-     * {@code List<String>}. These rows compare by raw class, and each path is checked against its own
-     * fixed expected type; every other row compares {@code type} exactly.
-     */
-    private static final Set<String> RAW_TYPE_ROWS = Set.of("tags", "ids");
-
     /** Operation id → the number of bindings its inventory lists, on either path. */
     private static final Map<String, Integer> BINDING_COUNTS = Map.of(
             "createOrder", 12,
@@ -326,19 +317,18 @@ class OperationInventoryParityTest {
                     compositeTypes(described.inputs()),
                     "generated composite classes of " + operationId);
 
-            // Then: each path reports its own fixed type for the collection-typed query inputs
+            // Then: both paths report the declared List<String> for the collection-typed query inputs
             if (operationId.equals("listKinds")) {
-                for (String name : RAW_TYPE_ROWS) {
+                for (String name : List.of("tags", "ids")) {
                     assertListOfString(typeOf(reflected.inputs(), name), "reflection type of " + name);
-                    assertSame(List.class, typeOf(described.inputs(), name), "generated type of " + name);
+                    assertListOfString(typeOf(described.inputs(), name), "generated type of " + name);
                 }
             }
 
-            // Then: the inventories agree binding by binding, composite classes mapped by twin and
-            // the collection-typed rows compared by raw class
+            // Then: the inventories agree binding by binding, composite classes mapped by twin
             assertEquals(
-                    views(reflected.inputs(), false, RAW_TYPE_ROWS),
-                    views(described.inputs(), true, RAW_TYPE_ROWS),
+                    views(reflected.inputs(), false),
+                    views(described.inputs(), true),
                     "generated vs reflection inputs of " + operationId);
 
             // Then: the responses agree except for the resource class, which is each twin's own
@@ -382,8 +372,8 @@ class OperationInventoryParityTest {
             OperationDetail plain = detailOf(reflection, operationId, "reflection");
             OperationDetail declared = detailOf(application, operationId, "application");
             assertEquals(
-                    views(plain.inputs(), false, Set.of()),
-                    views(declared.inputs(), false, Set.of()),
+                    views(plain.inputs(), false),
+                    views(declared.inputs(), false),
                     "application vs plain inputs of " + operationId);
             assertEquals(
                     ResponseView.of(plain.response()),
@@ -522,31 +512,22 @@ class OperationInventoryParityTest {
                 List.of(String.class), List.of(parameterized.getActualTypeArguments()), message + ": type argument");
     }
 
-    /** The raw class of a type, for the rows whose type is compared by raw class. */
-    private static Type rawClass(Type type) {
-        return type instanceof ParameterizedType parameterized ? parameterized.getRawType() : type;
-    }
-
     /**
      * Projects each binding to a comparable view; on the generated path, a composite type is first
-     * mapped to its reflection-path twin through {@link #GENERATED_TO_REFLECTION_COMPOSITES}, and the
-     * type of every binding named in {@code rawTypeRows} is reduced to its raw class.
+     * mapped to its reflection-path twin through {@link #GENERATED_TO_REFLECTION_COMPOSITES}.
      */
-    private static List<BindingView> views(List<InputBinding> inputs, boolean generatedPath, Set<String> rawTypeRows) {
+    private static List<BindingView> views(List<InputBinding> inputs, boolean generatedPath) {
         List<BindingView> views = new ArrayList<>(inputs.size());
         for (InputBinding binding : inputs) {
             Class<?> composite = binding.compositeType();
             if (generatedPath && composite != null) {
                 composite = GENERATED_TO_REFLECTION_COMPOSITES.getOrDefault(composite, composite);
             }
-            // The body binding has no name, and Set.contains rejects null
-            boolean rawRow = binding.name() != null && rawTypeRows.contains(binding.name());
-            Type type = rawRow ? rawClass(binding.type()) : binding.type();
             views.add(new BindingView(
                     binding.origin(),
                     binding.location(),
                     binding.name(),
-                    type,
+                    binding.type(),
                     binding.defaultValue(),
                     binding.requiredness(),
                     binding.hidden(),

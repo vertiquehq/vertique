@@ -9,6 +9,7 @@ import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.eventbus.EventBusClient;
 import dev.vertique.job.JobInterceptor;
+import dev.vertique.job.JobNodeId;
 import dev.vertique.job.cron.CronJobRegistrar;
 import dev.vertique.job.cron.CronScheduler;
 import dev.vertique.job.cron.config.CronConfig;
@@ -63,6 +64,7 @@ public abstract class CronModule {
      * @param interceptors          the set of job interceptors contributed via Dagger multibinding
      * @param serviceTargetResolver resolver for stable service target ids to event bus addresses
      * @param envelopeBuilder       dispatch envelope builder for dispatch-context capture
+     * @param nodeId                this node's job-scheduling identity
      * @return the singleton cron scheduler
      */
     @Provides
@@ -72,8 +74,19 @@ public abstract class CronModule {
             Set<JobInterceptor> interceptors,
             ServiceTargetResolver serviceTargetResolver,
             EventBusClient eventBusClient,
-            dev.vertique.context.DispatchEnvelopeBuilder envelopeBuilder) {
-        return new CronScheduler(vertx, interceptors, null, serviceTargetResolver, eventBusClient, envelopeBuilder);
+            dev.vertique.context.DispatchEnvelopeBuilder envelopeBuilder,
+            @JobNodeId String nodeId) {
+        return new CronScheduler(
+                vertx,
+                interceptors,
+                null,
+                serviceTargetResolver,
+                eventBusClient,
+                CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
+                0L,
+                0L,
+                envelopeBuilder,
+                nodeId);
     }
 
     /**

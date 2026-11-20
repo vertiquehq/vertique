@@ -71,6 +71,21 @@ class OpenTelemetryBootstrapContributorTest {
         assertInstanceOf(ConfigurationException.class, new TracingBootstrapException("test"));
     }
 
+    @Test
+    @DisplayName("tracing.enabled that is not a boolean fails with a value-free ConfigurationException")
+    void unbindableTracingValueFailsWithoutEchoingIt() {
+        OpenTelemetryBootstrapContributor contributor = new OpenTelemetryBootstrapContributor();
+        BootstrapContext ctx = fakeContext(
+                new JsonObject().put("tracing", new JsonObject().put("enabled", "maybe-secret")), new VertxOptions());
+
+        ConfigurationException failure =
+                assertThrows(ConfigurationException.class, () -> contributor.contribute(mock(VertxBuilder.class), ctx));
+
+        assertTrue(failure.getMessage().contains("tracing"), failure.getMessage());
+        assertFalse(failure.getMessage().contains("maybe-secret"), failure.getMessage());
+        assertNull(failure.getCause(), "the binding failure echoes the value, so it is not chained");
+    }
+
     // --- Test 1: Disabled path ---
 
     @Nested

@@ -62,8 +62,9 @@ The observer implementation itself is package-private and not an application-vis
 | `vertique.resilience.bulkhead.queue.wait` | timer | `BulkheadAdmitted`, `BulkheadQueueTimedOut` | `operation`, `outcome` |
 
 Timer values are the event durations in milliseconds. Counter events increment once per event.
-Enum labels use lowercase kebab-case (`circuit-breaker`, `timed-out`, and so on); queue-wait
-outcomes are `admitted` and `timed-out`.
+Enum labels use lowercase kebab-case (`half-open`, `application-failure`, `circuit-open`, and so
+on); an execution or attempt that timed out carries `outcome=timeout`. Queue-wait outcomes are the
+literals `admitted` and `timed-out`.
 
 Only validated operation/state keys and closed enum values become labels. Execution IDs, attempt
 ordinals, exception classes, queue depth, active count, configured capacities, and request data

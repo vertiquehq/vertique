@@ -15,9 +15,7 @@ import java.util.Optional;
 import java.util.Set;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.Element;
-import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
-import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.TypeMirror;
@@ -111,29 +109,23 @@ public final class ClientInterfaceScanner {
         List<MethodModel> methods = new ArrayList<>();
         Set<TypeElement> referencedBeans = new LinkedHashSet<>();
 
-        for (Element enclosed : clientType.getEnclosedElements()) {
-            if (enclosed.getKind() != ElementKind.METHOD) {
-                continue;
-            }
-            ExecutableElement method = (ExecutableElement) enclosed;
-            // Skip default methods
-            if (method.getModifiers().contains(Modifier.DEFAULT)) {
-                continue;
-            }
+        for (ClientMethods.ClientMethod operation : ClientMethods.collect(ctx, clientType)) {
+            ExecutableElement method = operation.method();
+            List<ExecutableElement> declarations = operation.declarations();
 
-            String httpVerb = resolveHttpVerb(method);
+            String httpVerb = resolveHttpVerb(declarations);
             if (httpVerb == null) {
                 // Validator will catch this; scanner just skips
                 continue;
             }
 
-            String pathSuffix = resolvePathValue(method);
-            List<ParamModel> params = resolveParams(method, referencedBeans);
+            String pathSuffix = resolvePathValue(declarations);
+            List<ParamModel> params = resolveParams(operation, referencedBeans);
 
             // Post-classify: validate @Url method-level constraints
-            validateUrlMethodConstraints(clientType, method, params, interfaceHasPath);
+            validateUrlMethodConstraints(clientType, method, declarations, params, interfaceHasPath);
 
-            TypeMirror returnType = method.getReturnType();
+            TypeMirror returnType = operation.type().getReturnType();
             TypeMirror futureValueType = ctx.unwrapFuture(returnType);
 
             methods.add(new MethodModel(method, httpVerb, pathSuffix, params, returnType, futureValueType));
@@ -145,19 +137,22 @@ public final class ClientInterfaceScanner {
     // --- HTTP verb resolution ---
 
     /**
-     * Resolves the HTTP verb for the given method by checking for supported JAX-RS verb annotations.
-     * {@code @OPTIONS} is intentionally not supported (mirrors the runtime scanner).
+     * Resolves the HTTP verb for an operation by checking the supported JAX-RS verb annotations on
+     * the method and then on the declarations it overrides; the nearest declaration that carries a
+     * verb decides. {@code @OPTIONS} is intentionally not supported (mirrors the runtime scanner).
      *
-     * @param method the method to inspect
+     * @param declarations the method followed by the declarations it overrides
      * @return the verb string (e.g. {@code "GET"}), or {@code null} if no supported verb is present
      */
-    private String resolveHttpVerb(ExecutableElement method) {
-        if (AnnotationMirrors.isPresent(method, GET_FQN)) return "GET";
-        if (AnnotationMirrors.isPresent(method, POST_FQN)) return "POST";
-        if (AnnotationMirrors.isPresent(method, PUT_FQN)) return "PUT";
-        if (AnnotationMirrors.isPresent(method, DELETE_FQN)) return "DELETE";
-        if (AnnotationMirrors.isPresent(method, PATCH_FQN)) return "PATCH";
-        if (AnnotationMirrors.isPresent(method, HEAD_FQN)) return "HEAD";
+    private String resolveHttpVerb(List<ExecutableElement> declarations) {
+        for (ExecutableElement declaration : declarations) {
+            if (AnnotationMirrors.isPresent(declaration, GET_FQN)) return "GET";
+            if (AnnotationMirrors.isPresent(declaration, POST_FQN)) return "POST";
+            if (AnnotationMirrors.isPresent(declaration, PUT_FQN)) return "PUT";
+            if (AnnotationMirrors.isPresent(declaration, DELETE_FQN)) return "DELETE";
+            if (AnnotationMirrors.isPresent(declaration, PATCH_FQN)) return "PATCH";
+            if (AnnotationMirrors.isPresent(declaration, HEAD_FQN)) return "HEAD";
+        }
         return null;
     }
 
@@ -167,6 +162,21 @@ public final class ClientInterfaceScanner {
      * Reads the {@code value} attribute of the {@code @Path} annotation on the given element.
      *
      * @param element the element to inspect (type or method)
+     * @return the path value, or empty string if {@code @Path} is absent
+     */
+    private String resolvePathValue(List<? extends Element> elements) {
+        for (Element element : elements) {
+            if (AnnotationMirrors.isPresent(element, PATH_FQN)) {
+                return resolvePathValue(element);
+            }
+        }
+        return "";
+    }
+
+    /**
+     * Reads the {@code value} attribute of the {@code @Path} annotation on one element.
+     *
+     * @param element the element to inspect
      * @return the path value, or empty string if {@code @Path} is absent
      */
     private String resolvePathValue(Element element) {
@@ -180,18 +190,29 @@ public final class ClientInterfaceScanner {
     // --- Parameter resolution ---
 
     /**
-     * Resolves the parameter list for the given method. {@code @BeanParam} parameters cause the
-     * bean type to be recorded in {@code referencedBeans}.
+     * Resolves the parameter list for an operation. {@code @BeanParam} parameters cause the bean
+     * type to be recorded in {@code referencedBeans}. A parameter's annotations are those of the same
+     * parameter of the method and of every declaration it overrides, and its type is the one the
+     * interface's hierarchy binds.
      *
-     * @param method the method to inspect
+     * @param operation the operation to inspect
      * @param referencedBeans accumulator for bean types encountered in {@code @BeanParam} params
      * @return the ordered list of parameter models
      */
-    private List<ParamModel> resolveParams(ExecutableElement method, Set<TypeElement> referencedBeans) {
+    private List<ParamModel> resolveParams(ClientMethods.ClientMethod operation, Set<TypeElement> referencedBeans) {
         List<ParamModel> params = new ArrayList<>();
-        for (VariableElement param : method.getParameters()) {
-            ParamModel model = classifyParam(param, referencedBeans);
-            params.add(model);
+        List<? extends VariableElement> parameters = operation.method().getParameters();
+        for (int i = 0; i < parameters.size(); i++) {
+            int index = i;
+            List<VariableElement> sources = operation.declarations().stream()
+                    .map(declaration ->
+                            (VariableElement) declaration.getParameters().get(index))
+                    .toList();
+            params.add(classifyParam(
+                    parameters.get(i),
+                    sources,
+                    operation.type().getParameterTypes().get(i),
+                    referencedBeans));
         }
         return params;
     }
@@ -215,41 +236,43 @@ public final class ClientInterfaceScanner {
      * <p>{@code @DefaultValue} is read from the parameter regardless of kind, and stored in
      * {@link ParamModel#defaultValue()}.
      *
-     * @param param the parameter element
+     * @param param the parameter element of the method the proxy implements
+     * @param sources the same parameter of the method and of each declaration it overrides
+     * @param type the parameter type as a member of the client interface
      * @param referencedBeans accumulator for bean types
      * @return the classified parameter model
      */
-    private ParamModel classifyParam(VariableElement param, Set<TypeElement> referencedBeans) {
-        TypeMirror type = param.asType();
-        String defaultValue = resolveDefaultValue(param);
+    private ParamModel classifyParam(
+            VariableElement param, List<VariableElement> sources, TypeMirror type, Set<TypeElement> referencedBeans) {
+        String defaultValue = resolveDefaultValue(sources);
 
         // javaName is always the Java parameter identifier
         String javaName = param.getSimpleName().toString();
 
         // @Url must be checked first — it is mutually exclusive with all JAX-RS annotations
-        if (AnnotationMirrors.isPresent(param, URL_FQN)) {
-            validateUrlParameter(param, type);
+        if (isPresentOnAny(sources, URL_FQN)) {
+            validateUrlParameter(param, sources, type);
             // @DefaultValue on @Url is forbidden; null is always used regardless of any default
             return new ParamModel(ParamModel.Kind.URL, javaName, javaName, type, param, null, null);
         }
 
-        if (AnnotationMirrors.isPresent(param, PATH_PARAM_FQN)) {
-            String name = literalAnnotationValue(param, PATH_PARAM_FQN);
+        if (isPresentOnAny(sources, PATH_PARAM_FQN)) {
+            String name = literalAnnotationValue(sources, PATH_PARAM_FQN);
             return new ParamModel(ParamModel.Kind.PATH, name, javaName, type, param, null, defaultValue);
         }
-        if (AnnotationMirrors.isPresent(param, QUERY_PARAM_FQN)) {
-            String name = literalAnnotationValue(param, QUERY_PARAM_FQN);
+        if (isPresentOnAny(sources, QUERY_PARAM_FQN)) {
+            String name = literalAnnotationValue(sources, QUERY_PARAM_FQN);
             return new ParamModel(ParamModel.Kind.QUERY, name, javaName, type, param, null, defaultValue);
         }
-        if (AnnotationMirrors.isPresent(param, HEADER_PARAM_FQN)) {
-            String name = literalAnnotationValue(param, HEADER_PARAM_FQN);
+        if (isPresentOnAny(sources, HEADER_PARAM_FQN)) {
+            String name = literalAnnotationValue(sources, HEADER_PARAM_FQN);
             return new ParamModel(ParamModel.Kind.HEADER, name, javaName, type, param, null, defaultValue);
         }
-        if (AnnotationMirrors.isPresent(param, COOKIE_PARAM_FQN)) {
-            String name = literalAnnotationValue(param, COOKIE_PARAM_FQN);
+        if (isPresentOnAny(sources, COOKIE_PARAM_FQN)) {
+            String name = literalAnnotationValue(sources, COOKIE_PARAM_FQN);
             return new ParamModel(ParamModel.Kind.COOKIE, name, javaName, type, param, null, defaultValue);
         }
-        if (AnnotationMirrors.isPresent(param, BEAN_PARAM_FQN)) {
+        if (isPresentOnAny(sources, BEAN_PARAM_FQN)) {
             // Record the bean type for accessor emission
             var element = ctx.types().asElement(type);
             if (element instanceof TypeElement te) {
@@ -271,22 +294,23 @@ public final class ClientInterfaceScanner {
      *   <li>No other JAX-RS parameter-binding annotation may appear on the same parameter.</li>
      * </ul>
      *
-     * @param param the {@code @Url}-annotated parameter element
+     * @param param the {@code @Url}-annotated parameter element, where diagnostics are reported
+     * @param sources the same parameter of the method and of each declaration it overrides
      * @param type the parameter's type mirror
      */
-    private void validateUrlParameter(VariableElement param, TypeMirror type) {
+    private void validateUrlParameter(VariableElement param, List<VariableElement> sources, TypeMirror type) {
         // Type must be java.net.URI
         String typeFqn = type.toString();
         if (!"java.net.URI".equals(typeFqn)) {
             ctx.diagnostics().error(param, "@Url parameter must be java.net.URI, found: %s", typeFqn);
         }
         // @DefaultValue is forbidden on @Url
-        if (AnnotationMirrors.isPresent(param, DEFAULT_VALUE_FQN)) {
+        if (isPresentOnAny(sources, DEFAULT_VALUE_FQN)) {
             ctx.diagnostics().error(param, "@DefaultValue is not allowed on @Url parameters");
         }
         // No other JAX-RS parameter-binding annotation on the same parameter
         for (String jaxRsAnnotationFqn : JAX_RS_PARAM_ANNOTATIONS) {
-            if (AnnotationMirrors.isPresent(param, jaxRsAnnotationFqn)) {
+            if (isPresentOnAny(sources, jaxRsAnnotationFqn)) {
                 String simpleName = jaxRsAnnotationFqn.substring(jaxRsAnnotationFqn.lastIndexOf('.') + 1);
                 ctx.diagnostics().error(param, "@Url is mutually exclusive with @%s on the same parameter", simpleName);
             }
@@ -309,11 +333,16 @@ public final class ClientInterfaceScanner {
      *
      * @param clientType the interface type (for class-level {@code @Path} check)
      * @param method the method being scanned
+     * @param declarations the method followed by the declarations it overrides
      * @param params the resolved parameter models for the method
      * @param interfaceHasPath whether the interface itself carries {@code @Path}
      */
     private void validateUrlMethodConstraints(
-            TypeElement clientType, ExecutableElement method, List<ParamModel> params, boolean interfaceHasPath) {
+            TypeElement clientType,
+            ExecutableElement method,
+            List<ExecutableElement> declarations,
+            List<ParamModel> params,
+            boolean interfaceHasPath) {
         long urlCount =
                 params.stream().filter(p -> p.kind() == ParamModel.Kind.URL).count();
         if (urlCount == 0) {
@@ -335,7 +364,7 @@ public final class ClientInterfaceScanner {
                             method.getSimpleName(),
                             clientType.getSimpleName());
         }
-        if (AnnotationMirrors.isPresent(method, PATH_FQN)) {
+        if (isPresentOnAny(declarations, PATH_FQN)) {
             ctx.diagnostics().error(method, "@Url method %s must not have method-level @Path", method.getSimpleName());
         }
         // No @PathParam at top level
@@ -380,25 +409,53 @@ public final class ClientInterfaceScanner {
      * {@code dev.vertique.rest.jaxrs.ParameterExtractor}. Codegen must do the same so generated
      * proxies and reflective runtime emit the same wire request for the same source.
      *
-     * @param element the element carrying the annotation
+     * @param elements the parameter and the same parameter of the declarations it overrides; the
+     *     nearest carrier of the annotation wins
      * @param annotationFqn the annotation's fully-qualified name
      * @return the literal value attribute (may be blank), or empty string if the annotation is absent
      */
-    private String literalAnnotationValue(Element element, String annotationFqn) {
-        return AnnotationMirrors.findByFqn(element, annotationFqn)
-                .flatMap(mirror -> ctx.annotations().attribute(mirror, "value", String.class))
-                .orElse("");
+    private String literalAnnotationValue(List<? extends Element> elements, String annotationFqn) {
+        for (Element element : elements) {
+            if (AnnotationMirrors.isPresent(element, annotationFqn)) {
+                return AnnotationMirrors.findByFqn(element, annotationFqn)
+                        .flatMap(mirror -> ctx.annotations().attribute(mirror, "value", String.class))
+                        .orElse("");
+            }
+        }
+        return "";
+    }
+
+    /**
+     * Whether any of the elements carries the annotation.
+     *
+     * @param elements the element and the declarations it overrides
+     * @param annotationFqn the annotation's fully-qualified name
+     * @return {@code true} if one of them carries it
+     */
+    private static boolean isPresentOnAny(List<? extends Element> elements, String annotationFqn) {
+        for (Element element : elements) {
+            if (AnnotationMirrors.isPresent(element, annotationFqn)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
      * Reads the {@code value} attribute of {@code @DefaultValue} on the given element.
      *
-     * @param element the element to inspect
+     * @param elements the parameter and the same parameter of the declarations it overrides; the
+     *     nearest {@code @DefaultValue} wins
      * @return the default value string, or {@code null} if {@code @DefaultValue} is absent
      */
-    private String resolveDefaultValue(Element element) {
-        return AnnotationMirrors.findByFqn(element, DEFAULT_VALUE_FQN)
-                .flatMap(mirror -> ctx.annotations().attribute(mirror, "value", String.class))
-                .orElse(null);
+    private String resolveDefaultValue(List<? extends Element> elements) {
+        for (Element element : elements) {
+            if (AnnotationMirrors.isPresent(element, DEFAULT_VALUE_FQN)) {
+                return AnnotationMirrors.findByFqn(element, DEFAULT_VALUE_FQN)
+                        .flatMap(mirror -> ctx.annotations().attribute(mirror, "value", String.class))
+                        .orElse(null);
+            }
+        }
+        return null;
     }
 }

@@ -18,6 +18,7 @@ import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContexts;
 import dev.vertique.security.SecurityIdentity;
+import dev.vertique.security.ServiceIdentityResolver;
 import dev.vertique.security.SnapshotDegradationMarker;
 import dev.vertique.security.SnapshotDegradationReason;
 import dev.vertique.security.SystemIdentities;

@@ -67,7 +67,8 @@ public class DelayedJobClientFactory {
     }
 
     /**
-     * Creates a JDK dynamic proxy for the given {@link DelayedJobClient} contract interface.
+     * Creates a proxy for the given {@link DelayedJobClient} contract interface: the generated static
+     * proxy when present, otherwise a JDK dynamic proxy.
      *
      * <p>The contract interface must:
      * <ul>

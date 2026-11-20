@@ -154,32 +154,36 @@ static WorkflowTypeCatalog workflowTypeCatalog() {
 
 ## Compile-Time Validation Summary
 
+Each message is the text of the matching `Diagnostics#workflow*` formatter, shown for the contract `com.acme.OrderWorkflow`. A message names the contract by its fully-qualified name and the method by its simple name; the types in `got ...` are what the compiler reports.
+
 | Violation | Level | Example message |
 |-----------|-------|----------------|
-| `@WorkflowContract` not on an interface | ERROR | `OrderWorkflow must be an interface` |
+| `@WorkflowContract` not on an interface | ERROR | `@WorkflowContract com.acme.OrderWorkflow must be an interface` |
 | Blank, over-long or control-character `@WorkflowContract.value()` | ERROR | `The contract name of com.acme.OrderWorkflow is invalid: it is blank` (an over-long name is reported as `longer than 255 code points` and one with a control character as `not free of control characters`; the name is never echoed) |
-| Zero or more than one `@WorkflowStart` method | ERROR | `OrderWorkflow must declare exactly one @WorkflowStart method; found 0` |
-| Duplicate signal name across clean `@WorkflowSignal` methods | ERROR | `OrderWorkflow: duplicate @WorkflowSignal name "cancel"` |
-| `default` method on contract | ERROR | `OrderWorkflow.helper() is a default method — @WorkflowContract methods must be abstract` |
-| Multiple operation-role annotations on one method | ERROR | `OrderWorkflow.start(): conflicting workflow operation annotations` |
-| No operation-role annotation on a method | ERROR | `OrderWorkflow.doSomething(): method declares no workflow operation annotation` |
-| `@WorkflowStart` has a `WorkflowInstanceId` parameter | ERROR | `OrderWorkflow.start(): @WorkflowStart must not have a WorkflowInstanceId parameter` |
-| `@WorkflowStart` has zero or more than one PAYLOAD parameter | ERROR | `OrderWorkflow.start(): @WorkflowStart must declare exactly one payload parameter` |
-| `@WorkflowStart` has no idempotency source | ERROR | `OrderWorkflow.start(): @WorkflowStart must have an @IdempotencyKey parameter or an IdempotencyKeyed payload` |
-| `@WorkflowSignal` INSTANCE_ID count ≠ 1 | ERROR | `OrderWorkflow.cancel(): @WorkflowSignal must declare exactly one WorkflowInstanceId parameter; found 0` |
-| `@WorkflowSignal` INSTANCE_ID not first parameter | ERROR | `OrderWorkflow.cancel(): @WorkflowSignal WorkflowInstanceId parameter must be first` |
-| `@WorkflowSignal` has zero or more than one PAYLOAD parameter | ERROR | `OrderWorkflow.cancel(): @WorkflowSignal must declare exactly one payload parameter` |
-| `@WorkflowSignal` has no dedup source | ERROR | `OrderWorkflow.cancel(): @WorkflowSignal must have a @SignalDedupKey parameter or a SignalDedupKeyed payload` |
-| `@WorkflowQuery` parameter count or role not exactly one INSTANCE_ID | ERROR | `OrderWorkflow.getStatus(): @WorkflowQuery must declare exactly one WorkflowInstanceId parameter; found 2` |
-| `@WorkflowStart` return type ≠ `Future<WorkflowInstanceId>` | ERROR | `OrderWorkflow.start(): @WorkflowStart must return Future<WorkflowInstanceId>` |
-| `@WorkflowSignal` return type ≠ `Future<Void>` | ERROR | `OrderWorkflow.cancel(): @WorkflowSignal must return Future<Void>` |
-| `@WorkflowQuery` return type ≠ `Future<WorkflowView>` | ERROR | `OrderWorkflow.getStatus(): @WorkflowQuery but return type is not Future<WorkflowView>; got ...` |
-| `@IdempotencyKey`/`@BusinessKey`/`@SignalDedupKey` param not `String` | ERROR | `OrderWorkflow.start(): @IdempotencyKey parameter must be of type String` |
-| `@SubjectRef` param not `WorkflowSubjectRef` | ERROR | `OrderWorkflow.start(): @SubjectRef parameter must be of type WorkflowSubjectRef` |
-| Duplicate `@IdempotencyKey`, `@BusinessKey`, `@SubjectRef`, or `@SignalDedupKey` | ERROR | `OrderWorkflow.start(): duplicate @IdempotencyKey annotation` |
-| Two operations share an erased signature inherited from unrelated super-interfaces | ERROR | `OrderWorkflow inherits an ambiguous operation 'start(com.example.StartOrder)' from multiple unrelated super-interfaces; a workflow contract may not inherit the same method signature from sibling interfaces` |
-| `@WorkflowContract` or `@WorkflowType` class not accessible from the catalog module's package | MANDATORY WARNING | `@WorkflowType com.acme.hidden.Hidden is not accessible from package 'com.acme', where GeneratedWorkflowTypeCatalogModule is generated, so it is left out of the catalog ...` |
-| A class named like the catalog module already exists | ERROR | `Cannot generate the workflow type catalog module com.acme.GeneratedWorkflowTypeCatalogModule: a class with that name already exists ... Set -Avertique.codegen.package ...` |
+| Zero or more than one `@WorkflowStart` method | ERROR | `Contract com.acme.OrderWorkflow must have exactly one @WorkflowStart method; found 0` |
+| Duplicate signal name across clean `@WorkflowSignal` methods | ERROR | `Duplicate @WorkflowSignal("cancel") methods on com.acme.OrderWorkflow; signal names must be unique within a contract` |
+| `default` method on contract | ERROR | `Method helper in com.acme.OrderWorkflow is a default method; default methods are not supported on workflow contract interfaces in cycle 1.` |
+| Multiple operation-role annotations on one method | ERROR | `Method start on com.acme.OrderWorkflow has conflicting workflow annotations; a method must have at most one of @WorkflowStart, @WorkflowSignal, @WorkflowQuery` |
+| No operation-role annotation on a method | ERROR | `Method doSomething in com.acme.OrderWorkflow has no workflow role annotation; declare exactly one of @WorkflowStart, @WorkflowSignal, or @WorkflowQuery.` |
+| `@WorkflowStart` has a `WorkflowInstanceId` parameter | ERROR | `Method start in com.acme.OrderWorkflow: @WorkflowStart must not have a WorkflowInstanceId parameter; start always creates a new instance` |
+| `@WorkflowStart` has more than one payload parameter | ERROR | `Method start in com.acme.OrderWorkflow: @WorkflowStart must have at most one payload (non-annotated) parameter; found more than one` |
+| `@WorkflowStart` has no payload parameter | ERROR | `Method start in com.acme.OrderWorkflow is @WorkflowStart but has no payload parameter; exactly one payload parameter is required` |
+| `@WorkflowStart` has one payload and no idempotency source | ERROR | `Method start in com.acme.OrderWorkflow is @WorkflowStart but has no idempotency key source; either add @IdempotencyKey String parameter or have the payload implement IdempotencyKeyed` |
+| `@WorkflowSignal` INSTANCE_ID count ≠ 1 | ERROR | `Method cancel in com.acme.OrderWorkflow: @WorkflowSignal requires exactly one WorkflowInstanceId parameter; found none` (with two, `found 2`) |
+| `@WorkflowSignal` INSTANCE_ID not first parameter | ERROR | `Method cancel in com.acme.OrderWorkflow: @WorkflowSignal requires WorkflowInstanceId to be the first parameter (found at index 1)` |
+| `@WorkflowSignal` has more than one payload parameter | ERROR | `Method cancel in com.acme.OrderWorkflow: @WorkflowSignal must have at most one payload (non-annotated) parameter; found more than one` |
+| `@WorkflowSignal` has no payload parameter | ERROR | `Method cancel in com.acme.OrderWorkflow is @WorkflowSignal but has no payload parameter; exactly one payload parameter is required` |
+| `@WorkflowSignal` has one payload and no dedup source | ERROR | `Method cancel in com.acme.OrderWorkflow is @WorkflowSignal but has no dedup key source; either add @SignalDedupKey String parameter or have the payload implement SignalDedupKeyed` |
+| `@WorkflowQuery` parameter count or role not exactly one INSTANCE_ID | ERROR | `Method getStatus in com.acme.OrderWorkflow is @WorkflowQuery but must have exactly one parameter of type WorkflowInstanceId; got 2 params` |
+| `@WorkflowStart` return type ≠ `Future<WorkflowInstanceId>` | ERROR | `Method start in com.acme.OrderWorkflow is @WorkflowStart but return type is not Future<WorkflowInstanceId>; got void` |
+| `@WorkflowSignal` return type ≠ `Future<Void>` | ERROR | `Method cancel in com.acme.OrderWorkflow is @WorkflowSignal but return type is not Future<Void>; got void` |
+| `@WorkflowQuery` return type ≠ `Future<WorkflowView>` | ERROR | `Method getStatus in com.acme.OrderWorkflow is @WorkflowQuery but return type is not Future<WorkflowView>; got java.lang.String` |
+| `@IdempotencyKey`/`@BusinessKey`/`@SignalDedupKey` param not `String` | ERROR | `Method start in com.acme.OrderWorkflow: @IdempotencyKey must be on a String parameter` |
+| `@SubjectRef` param not `WorkflowSubjectRef` | ERROR | `Method start in com.acme.OrderWorkflow: @SubjectRef must be on a WorkflowSubjectRef parameter` |
+| Duplicate `@IdempotencyKey`, `@BusinessKey`, `@SubjectRef`, or `@SignalDedupKey` | ERROR | `Method start in com.acme.OrderWorkflow: duplicate @IdempotencyKey parameters are not allowed` |
+| Two operations share an erased signature inherited from unrelated super-interfaces | ERROR | `Contract com.acme.OrderWorkflow inherits an ambiguous operation 'start(com.acme.StartOrder)' from multiple unrelated super-interfaces; a workflow contract may not inherit the same method signature from sibling interfaces` |
+| `@WorkflowContract` or `@WorkflowType` class not accessible from the catalog module's package | MANDATORY WARNING | `@WorkflowType com.acme.hidden.Hidden is not accessible from package 'com.acme', where GeneratedWorkflowTypeCatalogModule is generated, so it is left out of the catalog and a document loaded at runtime cannot name it. ...` |
+| A class named like the catalog module already exists | ERROR | `Cannot generate the workflow type catalog module com.acme.GeneratedWorkflowTypeCatalogModule: a class with that name already exists, for example generated by a dependency. Set -Avertique.codegen.package to a package that is unique to this module.` |
 
 ---
 

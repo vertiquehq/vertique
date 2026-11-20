@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.sun.net.httpserver.HttpServer;
 import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.kafka.DeserializationException;
 import dev.vertique.kafka.KafkaRecordHeaders;
 import dev.vertique.kafka.config.KafkaConfig;
@@ -164,6 +165,77 @@ class ApicurioAvroSerdeProviderTest {
             JsonObject cfg = endpointConfig("http://localhost:8080/apis/registry/v3");
             assertNotNull(provider.serializer(SampleSpecificRecord.class, cfg));
             assertNotNull(provider.deserializer(SampleSpecificRecord.class, cfg));
+        }
+    }
+
+    // --- schemaRegistry carries url only ---
+
+    @Nested
+    @DisplayName("the schemaRegistry block carries only url")
+    class SchemaRegistryUrlOnly {
+
+        private static final String SECRET = "s3cr3t-value-never-echoed";
+
+        private KafkaConfig configWithRegistry(JsonObject registry) {
+            return KafkaConfig.fromConfig(
+                    new JsonObject().put("kafka", new JsonObject().put("schemaRegistry", registry)),
+                    new DefaultConfigParser(DefaultConfigMapper.lenient()));
+        }
+
+        @Test
+        @DisplayName("a url-only global block is accepted")
+        void urlOnlyAccepted() {
+            assertNotNull(new ApicurioAvroSerdeProvider(
+                    configWithRegistry(new JsonObject().put("url", "http://localhost:8080/apis/registry/v3"))));
+        }
+
+        @Test
+        @DisplayName("an extra global key fails provider construction, naming the key and not its value")
+        void globalExtraKeyFailsStartup() {
+            JsonObject registry = new JsonObject()
+                    .put("url", "http://localhost:8080/apis/registry/v3")
+                    .put("basic.auth.password", SECRET);
+
+            ConfigurationException failure = assertThrows(
+                    ConfigurationException.class, () -> new ApicurioAvroSerdeProvider(configWithRegistry(registry)));
+
+            assertTrue(failure.getMessage().contains("basic.auth.password"), failure.getMessage());
+            assertTrue(failure.getMessage().contains("serdeProperties"), failure.getMessage());
+            assertFalse(failure.getMessage().contains(SECRET), "the value must never appear");
+        }
+
+        @Test
+        @DisplayName("a nested object under schemaRegistry is rejected by its top-level key without rendering it")
+        void nestedObjectNamedByKeyOnly() {
+            JsonObject registry = new JsonObject().put("auth", new JsonObject().put("password", SECRET));
+
+            ConfigurationException failure = assertThrows(
+                    ConfigurationException.class, () -> new ApicurioAvroSerdeProvider(configWithRegistry(registry)));
+
+            assertTrue(failure.getMessage().contains("'auth'"), failure.getMessage());
+            assertFalse(failure.getMessage().contains(SECRET), "the nested value must never appear");
+        }
+
+        @Test
+        @DisplayName("an extra key in the endpoint's schemaRegistry view fails serializer and deserializer builds")
+        void endpointExtraKeyFails() {
+            JsonObject cfg = new JsonObject()
+                    .put(
+                            "schemaRegistry",
+                            new JsonObject()
+                                    .put("url", "http://localhost:8080/apis/registry/v3")
+                                    .put("basic.auth.password", SECRET))
+                    .put("serdeProperties", new JsonObject());
+
+            ConfigurationException onSerializer = assertThrows(
+                    ConfigurationException.class, () -> provider.serializer(SampleSpecificRecord.class, cfg));
+            ConfigurationException onDeserializer = assertThrows(
+                    ConfigurationException.class, () -> provider.deserializer(SampleSpecificRecord.class, cfg));
+
+            assertTrue(onSerializer.getMessage().contains("basic.auth.password"));
+            assertTrue(onDeserializer.getMessage().contains("basic.auth.password"));
+            assertFalse(onSerializer.getMessage().contains(SECRET));
+            assertFalse(onDeserializer.getMessage().contains(SECRET));
         }
     }
 

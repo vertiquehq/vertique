@@ -79,11 +79,13 @@ import java.util.function.Consumer;
  * profile overrides differ between modes.
  *
  * <p><strong>Which properties the input direction describes.</strong>
- * {@link #forInputProfile(JsonMapperProfile)} describes a walked property when Jackson reports it
- * deserializable or it has a backing field, and its access is not {@code READ_ONLY}. A backing field
- * counts because Jackson populates a private field through reflection wherever the mapper infers
- * property mutators — its default, and the setting every built-in profile leaves alone — so a
- * getter-only property with a field behind it is bound and is described. A builder type is filled
+ * {@link #forInputProfile(JsonMapperProfile)} describes a property when the profile mapper's own
+ * resolved bean deserializer reports it bound — a field, a setter, a creator parameter or a builder
+ * method — and never through a walk of the Java source's fields. Jackson populates a private field
+ * through reflection wherever the mapper infers property mutators — its default, and the setting
+ * every built-in profile leaves alone — so a getter-only property with a field behind it is bound and
+ * is described; a mapper that disables that inference does not bind a private field that has no setter,
+ * so such a scalar property is not described. A builder type is filled
  * through its builder rather than through the field: a builder method's own constraint is borrowed
  * from the built type's Jackson-introspected property of the same wire name — unconditionally, for
  * any builder, when that property has a getter and a backing field; only when it has no getter does
@@ -174,9 +176,9 @@ import java.util.function.Consumer;
  * under {@code properties} with a deep copy of the schema that property is published with, so the
  * same constraints apply under either spelling instead of the alias passing a gate undescribed. A
  * spelling that is already another property's name — the type's own name for it, whether or not the
- * document publishes that property — is not listed, and neither is a spelling more than one property
- * of the type claims: the generator cannot predict which claimant Jackson binds such a key to, so it
- * is published nowhere, named in no rule and, where extras are described, reserved.
+ * document publishes that property — is not listed. A spelling more than one property of the type
+ * claims is listed with the claimant Jackson's own deserializer routes it to, the property the
+ * spelling actually binds into, and where extras are described nothing is reserved for it.
  * Listing runs over the finished document, after generation, so every reference a copied schema
  * carries is already resolved; it copies the owning property's own entry in the finished {@code
  * properties} object and does nothing when that entry is absent, so a spelling is listed exactly

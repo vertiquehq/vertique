@@ -8,6 +8,7 @@ import dev.vertique.resilience.adapter.CircuitFailureClassifier;
 import dev.vertique.resilience.exception.CircuitOpenException;
 import dev.vertique.resilience.exception.ResiliencePolicyException;
 import dev.vertique.resilience.exception.ResiliencePolicyFailureReason;
+import dev.vertique.resilience.spi.event.CircuitState;
 import dev.vertique.resilience.spi.event.ResilienceConcern;
 import io.vertx.core.Future;
 import java.nio.charset.StandardCharsets;
@@ -110,11 +111,24 @@ public final class ResiliencePipeline {
             Bulkhead bulkhead,
             CircuitFailureClassifier classifier,
             BooleanSupplier contextOpen) {
+        return fromAdapterPolicy(
+                resilience, identity, policy, circuitBreaker, bulkhead, classifier, contextOpen, false);
+    }
+
+    private static ResiliencePipeline fromAdapterPolicy(
+            Resilience resilience,
+            AdapterOperationIdentity identity,
+            ResolvedResiliencePolicy policy,
+            CircuitBreaker circuitBreaker,
+            Bulkhead bulkhead,
+            CircuitFailureClassifier classifier,
+            BooleanSupplier contextOpen,
+            boolean allowNoConcern) {
         Objects.requireNonNull(resilience, "resilience");
         Objects.requireNonNull(identity, "identity");
         Objects.requireNonNull(policy, "policy");
         Objects.requireNonNull(contextOpen, "contextOpen");
-        if (policy.isEmpty() && circuitBreaker == null && bulkhead == null) {
+        if (!allowNoConcern && policy.isEmpty() && circuitBreaker == null && bulkhead == null) {
             throw new IllegalStateException("a pipeline must configure at least one concern");
         }
         if (policy.circuitBreaker().isPresent() || policy.bulkhead().isPresent()) {
@@ -155,8 +169,9 @@ public final class ResiliencePipeline {
             BooleanSupplier contextOpen,
             Function<Runnable, Runnable> executionRegistrar) {
         Objects.requireNonNull(executionRegistrar, "executionRegistrar");
-        ResiliencePipeline base =
-                fromAdapterPolicy(resilience, identity, policy, circuitBreaker, bulkhead, classifier, contextOpen);
+        // Only a pipeline built through an adapter context may enable no concern at all.
+        ResiliencePipeline base = fromAdapterPolicy(
+                resilience, identity, policy, circuitBreaker, bulkhead, classifier, contextOpen, true);
         return new ResiliencePipeline(
                 base.resilience,
                 base.operationKey,
@@ -187,10 +202,38 @@ public final class ResiliencePipeline {
      */
     public <T> Future<T> execute(Supplier<Future<T>> operation) {
         Objects.requireNonNull(operation, "operation");
+        return run(operation, null);
+    }
+
+    /**
+     * Executes the configured pipeline so that it can be cancelled.
+     *
+     * <p>Cancelling stops a pending retry delay, removes a call queued in a bulkhead, prevents any
+     * further operation invocation and fails the returned future once with the cancellation reason. An
+     * operation future already in flight is not cancelled and its late result is ignored. A cancelled
+     * execution never closes the circuit breaker and is reported as an application failure.
+     *
+     * @param operation asynchronous operation supplier
+     * @param cancellation handle that cancels this execution
+     * @param <T> operation result type
+     * @return a future settled by the configured concerns or by the cancellation
+     * @throws NullPointerException if {@code operation} or {@code cancellation} is null
+     */
+    public <T> Future<T> execute(Supplier<Future<T>> operation, ResilienceCancellation cancellation) {
+        Objects.requireNonNull(operation, "operation");
+        Objects.requireNonNull(cancellation, "cancellation");
+        return run(operation, cancellation);
+    }
+
+    private <T> Future<T> run(Supplier<Future<T>> operation, ResilienceCancellation cancellation) {
         ResilienceExecutionObservation observation =
-                new ResilienceExecutionObservation(resilience, operationKey, enabledConcerns());
+                new ResilienceExecutionObservation(resilience, operationKey, enabledConcerns(), cancellation);
         if (!contextOpen.getAsBoolean()) {
             return finish(observation, resilience.failedOnContext(resilience.executionContext(), operationKey));
+        }
+        if (cancellation != null && cancellation.isCancelled()) {
+            return finish(
+                    observation, resilience.failedOnContext(resilience.executionContext(), cancellation.reason()));
         }
         if (circuitBreaker != null && circuitBreaker.isOpenForAdmission()) {
             observation.circuitRejected(circuitBreaker.stateKey(), circuitBreaker.currentState());
@@ -201,14 +244,7 @@ public final class ResiliencePipeline {
                             new CircuitOpenException(operationKey, circuitBreaker.stateKey())));
         }
         Supplier<Future<T>> retryOrTimeout = timeoutConfiguration != null || retryConfiguration != null
-                ? () -> resilience.executeCircuitBreakerPolicy(
-                        operationKey,
-                        timeoutConfiguration,
-                        retryConfiguration,
-                        operation,
-                        observation,
-                        contextOpen,
-                        executionRegistrar)
+                ? () -> executeTimeoutAndRetry(operation, observation)
                 : () -> observation.executeAttempt(operation);
         Supplier<Future<T>> protectedOperation = circuitBreaker == null
                 ? retryOrTimeout
@@ -235,6 +271,29 @@ public final class ResiliencePipeline {
         Future<T> outcome = retryOrTimeout.get();
         Future<T> fenced = executionRegistrar == null ? outcome : fenceContext(outcome);
         return finish(observation, fenced);
+    }
+
+    /**
+     * Runs the timeout and retry policy for one admitted logical call. A call admitted as the HALF_OPEN
+     * probe runs with a zero-retry plan: the probe is a single attempt, so a failing dependency cannot hold
+     * the breaker half-open through retries and backoff while every other call is rejected.
+     */
+    private <T> Future<T> executeTimeoutAndRetry(
+            Supplier<Future<T>> operation, ResilienceExecutionObservation observation) {
+        RetryConfig effectiveRetry = circuitBreaker != null && circuitBreaker.currentState() == CircuitState.HALF_OPEN
+                ? null
+                : retryConfiguration;
+        if (timeoutConfiguration == null && effectiveRetry == null) {
+            return observation.executeAttempt(operation);
+        }
+        return resilience.executeCircuitBreakerPolicy(
+                operationKey,
+                timeoutConfiguration,
+                effectiveRetry,
+                operation,
+                observation,
+                contextOpen,
+                executionRegistrar);
     }
 
     private Set<ResilienceConcern> enabledConcerns() {

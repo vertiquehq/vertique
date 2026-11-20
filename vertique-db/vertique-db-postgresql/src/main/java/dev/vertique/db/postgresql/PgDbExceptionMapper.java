@@ -17,7 +17,11 @@ import dev.vertique.db.exception.TransientDataAccessException;
 import dev.vertique.db.exception.UniqueConstraintViolationException;
 import io.vertx.core.VertxException;
 import io.vertx.pgclient.PgException;
+import io.vertx.sqlclient.ClosedConnectionException;
 import io.vertx.sqlclient.DatabaseException;
+import java.net.ConnectException;
+import java.net.SocketException;
+import java.nio.channels.ClosedChannelException;
 import java.util.Locale;
 
 /**
@@ -47,7 +51,12 @@ import java.util.Locale;
  *   <li>SQL state class {@code 54} (program limit exceeded) → {@link InvalidDataAccessUsageException}
  *   <li>SQL state class {@code 53} (insufficient resources) → {@link TransientDataAccessException}
  *   <li>SQL state class {@code 58} (system error) → {@link TransientDataAccessException}
- *   <li>{@link VertxException} with message containing {@code "timeout"} (case-insensitive) → {@link QueryTimeoutException}
+ *   <li>{@link VertxException} with message containing {@code "timeout"} (case-insensitive), such as the
+ *       wait for a pooled connection → {@link QueryTimeoutException}
+ *   <li>network failures that are not database errors → {@link ConnectionException}: {@link
+ *       ConnectException} (connection refused, connect timeout), {@link SocketException} (connection
+ *       reset), {@link ClosedChannelException} and {@link ClosedConnectionException} (connection
+ *       closed)
  * </ul>
  *
  * <p>Pass-through of existing {@link DataAccessException}s and the catch-all wrapping of any other
@@ -62,6 +71,10 @@ public class PgDbExceptionMapper extends DbExceptionMapper {
     public PgDbExceptionMapper() {
         on(DatabaseException.class, this::mapDatabaseException);
         on(VertxException.class, this::mapVertxException);
+        on(ConnectException.class, this::mapNetworkFailure);
+        on(SocketException.class, this::mapNetworkFailure);
+        on(ClosedChannelException.class, this::mapNetworkFailure);
+        on(ClosedConnectionException.class, this::mapNetworkFailure);
     }
 
     /**
@@ -116,6 +129,17 @@ public class PgDbExceptionMapper extends DbExceptionMapper {
             return new TransientDataAccessException(ctx, e, sqlState);
         }
         return new DataAccessException(ctx, e, sqlState);
+    }
+
+    /**
+     * Maps a network failure that is not a database error to {@link ConnectionException}.
+     *
+     * @param e   the network failure
+     * @param ctx contextual message for the translated exception
+     * @return the connection exception
+     */
+    private DataAccessException mapNetworkFailure(Throwable e, String ctx) {
+        return new ConnectionException(ctx, e);
     }
 
     /**

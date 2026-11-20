@@ -188,6 +188,12 @@ public class DurableScopeOutboxRelayIT {
 
         @Provides
         @Singleton
+        static OutboxRelayConfig relayConfig() {
+            return OutboxRelayConfig.builder().build();
+        }
+
+        @Provides
+        @Singleton
         static ServiceMethodMeta metadata(Receiver receiver) {
             try {
                 return ServiceMethodMeta.ofDirect(

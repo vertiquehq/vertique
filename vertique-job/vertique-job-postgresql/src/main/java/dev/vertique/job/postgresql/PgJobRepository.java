@@ -24,9 +24,7 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
-import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
-import java.net.InetAddress;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -57,6 +55,9 @@ import lombok.extern.slf4j.Slf4j;
 @Singleton
 public class PgJobRepository extends PgSqlRepository implements JobRepository {
 
+    /** How many times a keyed save repeats its insert when the key's holder cannot be read back. */
+    private static final int KEYED_SAVE_ATTEMPTS = 3;
+
     // --- SQL statements ---
     //
     // The statements are built once at construction because every table reference is qualified with
@@ -71,10 +72,14 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
     private final String sqlUpdateState;
     private final String sqlComplete;
     private final String sqlScheduleRetry;
+    private final String sqlCompleteClaimed;
+    private final String sqlScheduleRetryClaimed;
     private final String sqlHeartbeat;
     private final String sqlFindStale;
     private final String sqlInsertLog;
     private final String sqlTryInsert;
+    private final String sqlInsertKeyed;
+    private final String sqlFindUnfinishedByKey;
     private final String sqlSaveSchedule;
     private final String sqlUpdateScheduleFireTimes;
     private final String sqlFindSchedule;
@@ -87,42 +92,38 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
     // --- Node identity ---
 
     /**
-     * Stable identifier for this repository instance, used as {@code locked_by} during job claim.
-     * Constructed from the hostname and a random suffix to differentiate multiple JVM instances
-     * running on the same host.
+     * This node's identity, stamped as {@code locked_by} during job claim. The coordinator must
+     * heartbeat under the same value for dead-node recovery to find this node's claims.
      */
     private final String nodeId;
 
     // --- Constructor ---
 
     /**
-     * Creates a new PostgreSQL job repository whose tables are not schema-qualified, so they resolve
-     * through the connection's default schema.
+     * Creates a new PostgreSQL job repository that stamps the given node identity as
+     * {@code locked_by} on the executions it claims and qualifies every table reference with the
+     * schema mapped to the {@code job} instance, when {@code schemas} holds one. Without a mapping the
+     * table names are not schema-qualified and resolve through the connection's default schema.
      *
-     * @param pool          the PostgreSQL connection pool
-     * @param exceptionMapper the PostgreSQL failure mapper for exception translation
-     */
-    @Inject
-    public PgJobRepository(Pool pool, PgDbExceptionMapper exceptionMapper) {
-        this(pool, exceptionMapper, DbSchemas.empty());
-    }
-
-    /**
-     * Creates a new PostgreSQL job repository that qualifies every table reference with the schema
-     * mapped to the {@code job} instance, when {@code schemas} holds one. Without a
-     * mapping the statements are identical to those of the two-argument constructor.
-     *
-     * <p>The mapping is validated here, before any query runs.
+     * <p>Pass the value the node's {@link dev.vertique.job.JobCoordinator} heartbeats under (the
+     * {@link dev.vertique.job.JobNodeId} binding), so that a surviving node's coordinator finds this
+     * node's claims when this node dies. {@link JobPostgresqlModule} does. The mapping is validated
+     * here, before any query runs.
      *
      * @param pool          the PostgreSQL connection pool
      * @param exceptionMapper the PostgreSQL failure mapper for exception translation
      * @param schemas       the schema placement shared with the migrations; never {@code null}
+     * @param nodeId        this node's identity; must not be {@code null} or blank
      * @throws IllegalArgumentException if the schema mapped for the job instance is not a valid
-     *                                  single-segment PostgreSQL schema name
+     *                                  single-segment PostgreSQL schema name, or if {@code nodeId}
+     *                                  is {@code null} or blank
      */
-    public PgJobRepository(Pool pool, PgDbExceptionMapper exceptionMapper, DbSchemas schemas) {
+    public PgJobRepository(Pool pool, PgDbExceptionMapper exceptionMapper, DbSchemas schemas, String nodeId) {
         super(pool, exceptionMapper);
-        this.nodeId = resolveNodeId();
+        if (nodeId == null || nodeId.isBlank()) {
+            throw new IllegalArgumentException("nodeId must not be null or blank");
+        }
+        this.nodeId = nodeId;
 
         String executions = PgTableNames.qualify(schemas, JobMigrationsModule.INSTANCE_NAME, "job_executions");
         String logs = PgTableNames.qualify(schemas, JobMigrationsModule.INSTANCE_NAME, "job_logs");
@@ -133,16 +134,16 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
                 INSERT INTO %s (
                     id, job_id, job_type, handler, queue, state, payload, progress, parameters,
                     metadata, attempt, max_attempts, priority, scheduled_at, locked_by,
-                    last_error, error_type, scope_key, created_at, updated_at
+                    last_error, error_type, scope_key, idempotency_key, created_at, updated_at
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
-                          $11, $12, $13, $14, $15, $16, $17, $18, NOW(), NOW())
+                          $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW(), NOW())
                 RETURNING id
                 """.formatted(executions);
 
         this.sqlSelectAllCols = """
                 SELECT id, job_id, job_type, handler, queue, state, payload, progress, parameters,
                        metadata, attempt, max_attempts, priority, scheduled_at, started_at, completed_at,
-                       locked_by, last_error, error_type, scope_key, created_at, updated_at
+                       locked_by, last_error, error_type, scope_key, idempotency_key, created_at, updated_at
                 FROM %s
                 """.formatted(executions);
 
@@ -176,6 +177,20 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
                 + "started_at = NULL, completed_at = NULL, locked_by = NULL, updated_at = NOW() "
                 + "WHERE id = $1 AND state IN ('FAILED', 'ABANDONED')";
 
+        // Dead-node recovery variants: the same writes, but only on a row still PROCESSING under the claim
+        // recovery read: $6 / $4 is the dead node's identity and $7 / $5 the attempt number read. A row
+        // another node has claimed again, or this node re-claimed at a later attempt, matches nothing. Both
+        // statements of the retry transaction carry the predicate.
+        this.sqlCompleteClaimed = "UPDATE " + executions + " SET state = $2, completed_at = NOW(), updated_at = NOW(), "
+                + "last_error = $3, error_type = $4, progress = $5::jsonb "
+                + "WHERE id = $1 AND state = 'PROCESSING' AND locked_by = $6 AND attempt = $7 "
+                + "AND $2 IN ('SUCCEEDED', 'FAILED', 'CANCELLED', 'ABANDONED', 'DEAD_LETTER') RETURNING *";
+
+        this.sqlScheduleRetryClaimed = "UPDATE " + executions
+                + " SET state = 'ENQUEUED', scheduled_at = $2, attempt = $3, "
+                + "started_at = NULL, completed_at = NULL, locked_by = NULL, updated_at = NOW() "
+                + "WHERE id = $1 AND state IN ('FAILED', 'ABANDONED') AND locked_by = $4 AND attempt = $5";
+
         this.sqlHeartbeat = "UPDATE " + executions + " SET updated_at = NOW(), progress = $2::jsonb WHERE id = $1";
 
         this.sqlFindStale =
@@ -188,21 +203,41 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
                 INSERT INTO %s (
                     id, job_id, job_type, handler, queue, state, payload, progress, parameters,
                     metadata, attempt, max_attempts, priority, scheduled_at, locked_by,
-                    last_error, error_type, scope_key, created_at, updated_at
+                    last_error, error_type, scope_key, idempotency_key, created_at, updated_at
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
-                          $11, $12, $13, $14, $15, $16, $17, $18, NOW(), NOW())
+                          $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW(), NOW())
                 ON CONFLICT (job_id, scheduled_at) WHERE job_type = 'CRON' AND state NOT IN ('DEAD_LETTER', 'CANCELLED')
                 DO NOTHING
                 RETURNING id
                 """.formatted(executions);
 
+        // The conflict target repeats the predicate of idx_job_executions_idempotency_key. DO NOTHING (not DO UPDATE)
+        // leaves the existing row untouched, including updated_at, which stale-execution detection reads.
+        this.sqlInsertKeyed = """
+                INSERT INTO %s (
+                    id, job_id, job_type, handler, queue, state, payload, progress, parameters,
+                    metadata, attempt, max_attempts, priority, scheduled_at, locked_by,
+                    last_error, error_type, scope_key, idempotency_key, created_at, updated_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
+                          $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW(), NOW())
+                ON CONFLICT (handler, scope_key, idempotency_key)
+                    WHERE idempotency_key IS NOT NULL AND state NOT IN ('SUCCEEDED', 'CANCELLED', 'DEAD_LETTER')
+                DO NOTHING
+                RETURNING id
+                """.formatted(executions);
+
+        this.sqlFindUnfinishedByKey = "SELECT id FROM " + executions
+                + " WHERE handler = $1 AND scope_key = $2 AND idempotency_key = $3"
+                + " AND state NOT IN ('SUCCEEDED', 'CANCELLED', 'DEAD_LETTER')";
+
         this.sqlSaveSchedule = """
                 INSERT INTO %s (job_id, cron_expression, handler, target, execution_mode, timezone,
-                    enabled, overlap_policy, max_attempts, tracked, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+                    enabled, overlap_policy, max_attempts, tracked, next_fire_at, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
                 ON CONFLICT (job_id) DO UPDATE SET
                     cron_expression = $2, handler = $3, target = $4, execution_mode = $5, timezone = $6,
-                    enabled = $7, overlap_policy = $8, max_attempts = $9, tracked = $10, updated_at = NOW()
+                    enabled = $7, overlap_policy = $8, max_attempts = $9, tracked = $10,
+                    next_fire_at = COALESCE($11, %1$s.next_fire_at), updated_at = NOW()
                 """.formatted(jobSchedules);
 
         this.sqlUpdateScheduleFireTimes = "UPDATE " + jobSchedules
@@ -249,21 +284,13 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
     }
 
     /**
-     * Generates a node identifier from the hostname and a short random suffix.
-     * Falls back to {@code "unknown"} if hostname resolution fails.
+     * Returns the node identity this repository stamps as {@code locked_by} on the executions it
+     * claims.
      *
-     * @return a stable node identifier for this JVM instance
+     * @return the node identity
      */
-    private static String resolveNodeId() {
-        String hostname;
-        try {
-            hostname = InetAddress.getLocalHost().getHostName();
-        } catch (Exception e) {
-            hostname = "unknown";
-        }
-        // Append a random suffix to distinguish multiple instances on the same host
-        String suffix = UUID.randomUUID().toString().substring(0, 8);
-        return hostname + "-" + suffix;
+    String nodeId() {
+        return nodeId;
     }
 
     // --- JobRepository ---
@@ -276,6 +303,9 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
      */
     @Override
     public Future<UUID> save(JobExecution execution) {
+        if (execution.idempotencyKey() != null) {
+            return saveKeyed(execution, null);
+        }
         return withInsertParams(execution, params -> this.<UUID>query(sqlInsert)
                 .params(params)
                 .mapping(row -> row.getUUID(COL_ID))
@@ -291,11 +321,63 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
      * @return a future of the saved execution ID
      */
     public Future<UUID> save(JobExecution execution, SqlClient client) {
+        if (execution.idempotencyKey() != null) {
+            return saveKeyed(execution, client);
+        }
         return withInsertParams(execution, params -> this.<UUID>query(sqlInsert)
                 .on(client)
                 .params(params)
                 .mapping(row -> row.getUUID(COL_ID))
                 .returning());
+    }
+
+    /**
+     * Stores an execution that holds an idempotency key, or finds the unfinished execution that already holds it.
+     *
+     * <p>The insert is {@code ON CONFLICT DO NOTHING}, so a held key never raises a unique violation and never
+     * aborts the caller's transaction. When the insert stores nothing, a second statement reads the holder. The
+     * holder can finish between the two statements, and under a snapshot older than a concurrent commit the
+     * holder can be invisible to the read, so a read that finds nothing repeats the insert, at most
+     * {@link #KEYED_SAVE_ATTEMPTS} times in all.
+     *
+     * @param execution the execution to store; its idempotency key is not {@code null}
+     * @param client    the client to run on, or {@code null} for the pool
+     * @return a future of the stored execution's ID, or of the unfinished holder's ID
+     */
+    private Future<UUID> saveKeyed(JobExecution execution, SqlClient client) {
+        return withInsertParams(execution, params -> insertKeyed(execution, params, client, 1));
+    }
+
+    private Future<UUID> insertKeyed(JobExecution execution, Tuple params, SqlClient client, int attempt) {
+        var insert = this.<UUID>query(sqlInsertKeyed);
+        if (client != null) {
+            insert = insert.on(client);
+        }
+        return insert.params(params)
+                .mapping(row -> row.getUUID(COL_ID))
+                .returningOptional()
+                .compose(stored -> {
+                    if (stored.isPresent()) {
+                        return Future.succeededFuture(stored.get());
+                    }
+                    var find = this.<UUID>query(sqlFindUnfinishedByKey);
+                    if (client != null) {
+                        find = find.on(client);
+                    }
+                    return find.params(Tuple.of(execution.handler(), execution.scopeKey(), execution.idempotencyKey()))
+                            .mapping(row -> row.getUUID(COL_ID))
+                            .one()
+                            .compose(holder -> {
+                                if (holder.isPresent()) {
+                                    return Future.succeededFuture(holder.get());
+                                }
+                                if (attempt >= KEYED_SAVE_ATTEMPTS) {
+                                    return Future.<UUID>failedFuture(new IllegalStateException(
+                                            "The execution holding the idempotency key could not be read back"));
+                                }
+                                return insertKeyed(execution, params, client, attempt + 1);
+                            });
+                });
     }
 
     /**
@@ -398,6 +480,36 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
     /**
      * {@inheritDoc}
      *
+     * <p>Uses a statement that also requires {@code state = 'PROCESSING'}, {@code locked_by = lockedBy} and
+     * {@code attempt = claimedAttempt}; it matches no row, and returns {@link Optional#empty()}, for an
+     * execution that has been claimed again since recovery read it.
+     */
+    @Override
+    public Future<Optional<JobExecution>> completeClaimedExecution(
+            UUID executionId,
+            String lockedBy,
+            int claimedAttempt,
+            JobState newState,
+            String errorMessage,
+            String errorType,
+            ProgressSnapshot progress) {
+        java.util.Objects.requireNonNull(lockedBy, "lockedBy must not be null");
+        return this.<JobExecution>query(sqlCompleteClaimed)
+                .params(Tuple.of(
+                        executionId,
+                        newState.name(),
+                        errorMessage,
+                        errorType,
+                        toJsonObject(progress),
+                        lockedBy,
+                        claimedAttempt))
+                .mapping(JobExecutionMapper::fromRow)
+                .returningOptional();
+    }
+
+    /**
+     * {@inheritDoc}
+     *
      * <p>Fails with {@link IllegalStateException} when no row is updated, which happens when the
      * execution is not in a retryable state ({@code FAILED} or {@code ABANDONED}). This surfaces a
      * programming error early rather than silently no-oping.
@@ -430,7 +542,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
             Instant nextScheduledAt,
             int nextAttempt) {
         return markAndScheduleRetry(
-                executionId, JobState.FAILED, errorMessage, errorType, progress, nextScheduledAt, nextAttempt);
+                executionId, null, 0, JobState.FAILED, errorMessage, errorType, progress, nextScheduledAt, nextAttempt);
     }
 
     /**
@@ -447,7 +559,43 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
             Instant nextScheduledAt,
             int nextAttempt) {
         return markAndScheduleRetry(
-                executionId, JobState.ABANDONED, errorMessage, errorType, progress, nextScheduledAt, nextAttempt);
+                executionId,
+                null,
+                0,
+                JobState.ABANDONED,
+                errorMessage,
+                errorType,
+                progress,
+                nextScheduledAt,
+                nextAttempt);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Delegates to {@link #markAndScheduleRetry} with {@link JobState#ABANDONED} as the recorded mark and
+     * the claim owner and attempt as the fence on both writes.
+     */
+    @Override
+    public Future<Optional<JobExecution>> abandonClaimedAndScheduleRetry(
+            UUID executionId,
+            String lockedBy,
+            int claimedAttempt,
+            String errorMessage,
+            String errorType,
+            ProgressSnapshot progress,
+            Instant nextScheduledAt,
+            int nextAttempt) {
+        return markAndScheduleRetry(
+                executionId,
+                java.util.Objects.requireNonNull(lockedBy, "lockedBy must not be null"),
+                claimedAttempt,
+                JobState.ABANDONED,
+                errorMessage,
+                errorType,
+                progress,
+                nextScheduledAt,
+                nextAttempt);
     }
 
     /**
@@ -460,28 +608,42 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
      * ({@code markState} → {@code ENQUEUED}). If step 1 transitioned no row the result is empty; if step 2
      * unexpectedly updates no row the transaction rolls back so neither write persists.
      *
+     * @param lockedBy  when not {@code null}, the claim owner both writes are fenced by: the row must still be
+     *                  {@code PROCESSING} under it at {@code claimedAttempt}, so an execution claimed again is
+     *                  left alone
+     * @param claimedAttempt the attempt number the fence also requires; ignored when {@code lockedBy} is
+     *                  {@code null}
      * @param markState the durable attempt-outcome mark to record ({@code FAILED} or {@code ABANDONED})
      */
     private Future<Optional<JobExecution>> markAndScheduleRetry(
             UUID executionId,
+            String lockedBy,
+            int claimedAttempt,
             JobState markState,
             String errorMessage,
             String errorType,
             ProgressSnapshot progress,
             Instant nextScheduledAt,
             int nextAttempt) {
-        return transaction().execute(conn -> this.<JobExecution>query(sqlComplete)
+        boolean fenced = lockedBy != null;
+        Tuple markParams = Tuple.of(executionId, markState.name(), errorMessage, errorType, toJsonObject(progress));
+        Tuple retryParams = Tuple.of(executionId, toOffsetDateTime(nextScheduledAt), nextAttempt);
+        if (fenced) {
+            markParams.addValue(lockedBy).addValue(claimedAttempt);
+            retryParams.addValue(lockedBy).addValue(claimedAttempt);
+        }
+        return transaction().execute(conn -> this.<JobExecution>query(fenced ? sqlCompleteClaimed : sqlComplete)
                 .on(conn)
-                .params(Tuple.of(executionId, markState.name(), errorMessage, errorType, toJsonObject(progress)))
+                .params(markParams)
                 .mapping(JobExecutionMapper::fromRow)
                 .returningOptional()
                 .compose(markSnapshot -> {
                     if (markSnapshot.isEmpty()) {
                         return Future.succeededFuture(Optional.<JobExecution>empty());
                     }
-                    return this.<Void>query(sqlScheduleRetry)
+                    return this.<Void>query(fenced ? sqlScheduleRetryClaimed : sqlScheduleRetry)
                             .on(conn)
-                            .params(Tuple.of(executionId, toOffsetDateTime(nextScheduledAt), nextAttempt))
+                            .params(retryParams)
                             .execute()
                             .compose(count -> {
                                 if (count == 0) {
@@ -542,7 +704,8 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
                         schedule.enabled(),
                         schedule.overlapPolicy(),
                         schedule.maxAttempts(),
-                        schedule.tracked()))
+                        schedule.tracked(),
+                        toOffsetDateTime(schedule.nextFireAt())))
                 .execute()
                 .mapEmpty();
     }
@@ -714,7 +877,8 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
                 execution.lockedBy(),
                 execution.errorMessage(),
                 execution.errorType(),
-                execution.scopeKey());
+                execution.scopeKey(),
+                execution.idempotencyKey());
     }
 
     /**

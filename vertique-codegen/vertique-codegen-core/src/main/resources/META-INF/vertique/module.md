@@ -25,10 +25,10 @@ graph — that is what the framework's own codegen modules do.
 mark a type for inclusion in the generated Dagger module; the processor emits the binding, so there
 is no runtime scan and no reflection at startup.
 
-**Conditions are evaluated by the compiler, not the runtime.** `@ConditionalOnProperty` decides
-whether a binding is emitted at all. A binding that a condition excluded is absent from the graph
-rather than present-and-disabled, so a wrong condition is a compile-time or wiring failure, not a
-silent no-op at request time.
+**Conditions are emitted by the compiler and evaluated at run time.** The processor reads
+`@ConditionalOnProperty` at compile time and emits the condition into the generated code, which
+checks it against the live configuration. A resource or implementation whose condition does not
+match contributes no binding rather than being present-and-disabled.
 
 **Violations are compile errors.** A type that cannot be proxied, an injectable constructor that
 does not qualify, a selector path that cannot be parsed — each is reported against the offending
@@ -129,7 +129,7 @@ Obtain via `CodegenContext.annotations()`.
 
 ### Diagnostics
 
-Combines instance methods bound to a `Messager` with static factory methods for consistent message wording. The static formatters form an externally-stable contract — downstream processors must use them so error messages stay consistent across the framework's codegen modules.
+Combines instance methods bound to a `Messager` with static factory methods for consistent message wording. The static formatters fix message wording for the framework's own processors — downstream processors must use them so error messages stay consistent across the framework's codegen modules. `Diagnostics` is an internal seam (see Framework seams), so the wording is a contract between the framework's own processors and carries no compatibility promise to applications or to processors outside the framework.
 
 Obtain via `CodegenContext.diagnostics()`.
 
@@ -144,7 +144,7 @@ Obtain via `CodegenContext.diagnostics()`.
 
 All instance methods accept a `String.format`-style format string.
 
-**Static message formatters (externally-stable contract):**
+**Static message formatters (wording fixed for the framework's own processors):**
 
 | Method | Output template |
 |--------|----------------|
@@ -374,7 +374,7 @@ present, where generated artifacts are named and placed, and that a violation fa
 
 ### Static Diagnostics Formatters
 
-The four static methods on `Diagnostics` (`mustReturnFuture`, `duplicateOperation`, `unsupportedAnnotation`, `expectedRecord`) are an externally-stable string contract. Downstream codegen processors must call these methods rather than inline the strings. Any change to their string values is a breaking change across the codegen modules.
+The four static methods on `Diagnostics` (`mustReturnFuture`, `duplicateOperation`, `unsupportedAnnotation`, `expectedRecord`) have fixed string values that the framework's own codegen modules share; `Diagnostics` is an internal seam, so the wording carries no promise to code outside the framework. Downstream codegen processors must call these methods rather than inline the strings. Changing a string value changes the message of every codegen module that uses it, so the strings are pinned by `DiagnosticsTest`.
 
 ---
 
@@ -388,6 +388,5 @@ None. This is a compile-time-only helper library with no Dagger `@Module`.
 
 | Dependency | Scope | Purpose |
 |------------|-------|---------|
-| `com.palantir.javapoet:javapoet:0.14.0` | compile | Java source generation with record and sealed-class support |
-| `com.google.dagger:dagger` (annotations only) | compile | `ClassName` references for `@Module`, `@Provides`, etc. in generated output |
+| `com.palantir.javapoet:javapoet` | compile | Java source generation with record and sealed-class support |
 | JDK annotation processing API (`javax.annotation.processing`, `javax.lang.model`) | provided (JDK) | APT runtime |

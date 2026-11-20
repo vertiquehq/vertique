@@ -267,9 +267,8 @@ final class SignalHandler {
             return Future.failedFuture(new WorkflowDefinitionException("stateUpdater threw for branch '"
                     + waiting.branchId() + "' signal '" + signalName + "': " + e.getMessage()));
         }
-        // Lock-order rule: timers → branch token → instance.
-        // If the branch has a signal-timeout timer (wait_aux_id set), cancel it FIRST before
-        // touching the branch token — timers must be locked before branch tokens.
+        // If the branch has a signal-timeout timer (wait_aux_id set), cancel it before touching the branch
+        // token. The execution lock of the instance is held, so the order of the rows is not a rule.
         UUID timeoutTimerId = waiting.waitAuxId();
         Future<Void> cancelTimeout = Future.succeededFuture();
         if (timeoutTimerId != null) {
@@ -280,7 +279,7 @@ final class SignalHandler {
 
         // Clear the branch's wait and advance to nextStepId.
         BranchToken cleared = waiting.withClearedWait(BranchStatus.RUNNING, wsn.nextStepId(), clock.instant());
-        // Branch token update second (lock order: timers → branch token → instance).
+        // Branch token update second.
         return cancelTimeout
                 .compose(v -> branchTokens.updateOptimistic(cleared, waiting.version(), tx))
                 .compose(rc -> {
@@ -288,7 +287,7 @@ final class SignalHandler {
                         return Future.<Void>failedFuture(new WorkflowConflictException(
                                 "Optimistic concurrency conflict on branch token during signal resumption"));
                     }
-                    // Instance update second (lock order: branch token → instance).
+                    // Instance update second.
                     long instVersion = inst.version();
                     WorkflowInstance updatedInst = inst.withVersion(instVersion + 1)
                             .withState(Json.encode(newState))

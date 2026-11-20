@@ -28,7 +28,8 @@ import java.util.Optional;
  *
  * @param reasonCode machine-readable degradation reason; non-null, non-blank. One of
  *                   {@code BAD_HMAC}, {@code UNKNOWN_KEY}, {@code DECODE_FAILED},
- *                   {@code KEY_UNAVAILABLE}, {@code SCHEMA_INCOMPATIBLE}
+ *                   {@code KEY_UNAVAILABLE}, {@code SCHEMA_INCOMPATIBLE}, {@code EXPIRED},
+ *                   {@code MALFORMED_TEMPORAL}, {@code EXPECTED_ABSENT}
  * @param origin     best-effort {@link RequestOrigin} recovered from the present-but-unverifiable
  *                   snapshot metadata, when available; non-null {@link Optional} — use
  *                   {@link Optional#empty()} when no origin could be recovered

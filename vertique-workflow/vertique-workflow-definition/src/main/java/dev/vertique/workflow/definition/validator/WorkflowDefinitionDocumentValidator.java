@@ -9,6 +9,7 @@ import dev.vertique.workflow.definition.expression.ExpressionEnv;
 import dev.vertique.workflow.definition.expression.ExpressionParseException;
 import dev.vertique.workflow.definition.expression.ExpressionProfile;
 import dev.vertique.workflow.definition.schema.CompensationStep;
+import dev.vertique.workflow.definition.schema.CompleteStep;
 import dev.vertique.workflow.definition.schema.DecisionStep;
 import dev.vertique.workflow.definition.schema.FailStep;
 import dev.vertique.workflow.definition.schema.ForkStep;
@@ -24,11 +25,14 @@ import dev.vertique.workflow.types.WorkflowTypeNames;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -53,6 +57,11 @@ import java.util.function.Supplier;
  * <ol>
  *   <li>{@code DEFINITION_ID_BLANK} — {@code definitionId} null or blank.</li>
  *   <li>{@code DEFINITION_VERSION_INVALID} — {@code definitionVersion < 1}.</li>
+ *   <li>{@code STATE_TYPE_MISSING}, {@code CONTRACT_MISSING}, {@code START_PAYLOAD_TYPE_MISSING},
+ *       {@code INITIAL_STATE_MAPPER_MISSING} — the field is null or blank.</li>
+ *   <li>{@code STEPS_MISSING} — {@code steps} is null or empty.</li>
+ *   <li>{@code STEP_ID_MISSING} — a step's {@code id} is null or blank; the message gives the step's position in
+ *       the steps list.</li>
  *   <li>{@code STATE_TYPE_UNRESOLVABLE} — {@code stateType} name not found.</li>
  *   <li>{@code CONTRACT_UNRESOLVABLE} — {@code contract} name not found.</li>
  *   <li>{@code CONTRACT_NOT_ANNOTATED} — resolved contract class is not annotated with
@@ -62,6 +71,11 @@ import java.util.function.Supplier;
  *   <li>{@code SUBJECT_RESOLVER_UNKNOWN} — {@code subjectResolver} present but not registered.</li>
  *   <li>{@code INITIAL_STEP_UNKNOWN} — {@code initialStep} does not match any step id.</li>
  *   <li>{@code STEP_ID_DUPLICATE} — same step id appears more than once in the steps list.</li>
+ *   <li>{@code UNREACHABLE_STEP} — a step cannot be reached from {@code initialStep}. Reachability follows every
+ *       step reference: {@code next}, a wait-signal {@code timeout.next}, a human-task decision or due
+ *       {@code next}, a decision route {@code to} and {@code default}, a service step's {@code compensation}, a
+ *       fork's branch {@code startStep} and {@code join}, and a join's {@code next} and {@code onFailure}. One
+ *       violation per unreachable step; skipped when {@code initialStep} is not a step id.</li>
  *   <li>{@code STEP_NEXT_UNKNOWN} — a {@code next} reference does not resolve to any step id.</li>
  *   <li>{@code STEP_TARGET_SERVICE_FORMAT} — {@code target} field is blank on a
  *       {@link ServiceStep} or {@link CompensationStep}. Note: real service-target registry
@@ -260,6 +274,7 @@ public final class WorkflowDefinitionDocumentValidator {
 
         // --- Document-level checks ---
         checkDefinitionIdAndVersion(doc, violations);
+        checkRequiredFieldsPresent(doc, violations);
 
         // Collect step ids early for forward-reference resolution.
         Set<String> stepIds = collectStepIds(doc);
@@ -362,6 +377,8 @@ public final class WorkflowDefinitionDocumentValidator {
             }
         }
 
+        checkReachability(doc, definitionId, definitionVersion, violations);
+
         // --- Step-level checks ---
         checkStepDuplicates(doc, violations);
         checkSignalDuplicates(doc, violations);
@@ -399,6 +416,69 @@ public final class WorkflowDefinitionDocumentValidator {
     }
 
     // --- Private implementation helpers ---
+
+    /**
+     * Adds a {@code *_MISSING} violation for each required document field that is null or blank, and a
+     * {@code STEP_ID_MISSING} violation for each step without an id. The resolution rules skip a missing value, so
+     * this is the only rule that reports it.
+     */
+    private static void checkRequiredFieldsPresent(WorkflowDefinitionDocument doc, List<Violation> violations) {
+        String definitionId = blankFallback(doc.definitionId());
+        long definitionVersion = doc.definitionVersion();
+        requirePresent(
+                definitionId, definitionVersion, doc.stateType(), "STATE_TYPE_MISSING", "`stateType`", violations);
+        requirePresent(definitionId, definitionVersion, doc.contract(), "CONTRACT_MISSING", "`contract`", violations);
+        requirePresent(
+                definitionId,
+                definitionVersion,
+                doc.startPayloadType(),
+                "START_PAYLOAD_TYPE_MISSING",
+                "`startPayloadType`",
+                violations);
+        requirePresent(
+                definitionId,
+                definitionVersion,
+                doc.initialStateMapper(),
+                "INITIAL_STATE_MAPPER_MISSING",
+                "`initialStateMapper`",
+                violations);
+        if (doc.steps() == null || doc.steps().isEmpty()) {
+            violations.add(new Violation(
+                    definitionId,
+                    definitionVersion,
+                    null,
+                    null,
+                    "STEPS_MISSING",
+                    "`steps` must list at least one step"));
+            return;
+        }
+        List<StepNode> steps = doc.steps();
+        for (int i = 0; i < steps.size(); i++) {
+            StepNode step = steps.get(i);
+            if (step != null && (step.id() == null || step.id().isBlank())) {
+                violations.add(new Violation(
+                        definitionId,
+                        definitionVersion,
+                        null,
+                        null,
+                        "STEP_ID_MISSING",
+                        "the step at position " + i + " in `steps` has no `id`"));
+            }
+        }
+    }
+
+    private static void requirePresent(
+            String definitionId,
+            long definitionVersion,
+            @Nullable String value,
+            String code,
+            String fieldLabel,
+            List<Violation> violations) {
+        if (value == null || value.isBlank()) {
+            violations.add(new Violation(
+                    definitionId, definitionVersion, null, null, code, fieldLabel + " must not be blank"));
+        }
+    }
 
     /**
      * Checks that {@code definitionId} is non-blank and {@code definitionVersion >= 1}.
@@ -470,7 +550,7 @@ public final class WorkflowDefinitionDocumentValidator {
             String fieldLabel,
             List<Violation> violations) {
         if (fqn == null || fqn.isBlank()) {
-            // A blank FQN is reported by the relevant blank-id rule, not here.
+            // A null or blank name is reported by the field's presence rule (*_MISSING), not here.
             return null;
         }
         Optional<Class<?>> known = indexed.apply(fqn);
@@ -546,6 +626,102 @@ public final class WorkflowDefinitionDocumentValidator {
             violations.add(
                     new Violation(blankFallback(definitionId), definitionVersion, stepId, routeIndex, code, msg));
         }
+    }
+
+    /**
+     * Adds an {@code UNREACHABLE_STEP} violation for each step that no chain of step references reaches from
+     * {@code initialStep}. Skipped when the steps are missing or {@code initialStep} is not a step id, because
+     * {@code INITIAL_STEP_UNKNOWN} already reports that and every step would otherwise be flagged as well.
+     */
+    private static void checkReachability(
+            WorkflowDefinitionDocument doc, String definitionId, long definitionVersion, List<Violation> violations) {
+        if (doc.steps() == null || doc.initialStep() == null) {
+            return;
+        }
+        Map<String, StepNode> byId = new LinkedHashMap<>();
+        for (StepNode step : doc.steps()) {
+            if (step.id() != null && !step.id().isBlank()) {
+                byId.putIfAbsent(step.id(), step);
+            }
+        }
+        if (!byId.containsKey(doc.initialStep())) {
+            return;
+        }
+        Set<String> reached = new HashSet<>();
+        ArrayDeque<String> pending = new ArrayDeque<>();
+        reached.add(doc.initialStep());
+        pending.add(doc.initialStep());
+        while (!pending.isEmpty()) {
+            for (String target : successors(byId.get(pending.poll()))) {
+                if (target != null && byId.containsKey(target) && reached.add(target)) {
+                    pending.add(target);
+                }
+            }
+        }
+        for (String id : byId.keySet()) {
+            if (!reached.contains(id)) {
+                violations.add(new Violation(
+                        blankFallback(definitionId),
+                        definitionVersion,
+                        id,
+                        null,
+                        "UNREACHABLE_STEP",
+                        "step '" + id + "' cannot be reached from `initialStep` '" + doc.initialStep()
+                                + "'; no step references it"));
+            }
+        }
+    }
+
+    /** Returns every step id the step references, in document order; entries may be null. */
+    private static List<String> successors(StepNode step) {
+        List<String> targets = new ArrayList<>();
+        switch (step) {
+            case ServiceStep s -> {
+                targets.add(s.next());
+                targets.add(s.compensation());
+            }
+            case WaitSignalStep s -> {
+                targets.add(s.next());
+                if (s.timeout() != null) {
+                    targets.add(s.timeout().next());
+                }
+            }
+            case TimerStep s -> targets.add(s.next());
+            case HumanTaskStep s -> {
+                if (s.decisions() != null) {
+                    s.decisions().forEach(d -> targets.add(d.next()));
+                }
+                if (s.due() != null) {
+                    targets.add(s.due().next());
+                }
+            }
+            case DecisionStep s -> {
+                if (s.routes() != null) {
+                    s.routes().forEach(r -> targets.add(r.to()));
+                }
+                targets.add(s.defaultRoute());
+            }
+            case ForkStep s -> {
+                if (s.branches() != null) {
+                    s.branches().forEach(b -> targets.add(b.startStep()));
+                }
+                targets.add(s.join());
+            }
+            case JoinStep s -> {
+                targets.add(s.next());
+                targets.add(s.onFailure());
+            }
+            case CompensationStep s -> {
+                // Terminal: forwardStep names the step it undoes, not a successor.
+            }
+            case FailStep s -> {
+                // Terminal.
+            }
+            case CompleteStep s -> {
+                // Terminal.
+            }
+        }
+        return targets;
     }
 
     /**

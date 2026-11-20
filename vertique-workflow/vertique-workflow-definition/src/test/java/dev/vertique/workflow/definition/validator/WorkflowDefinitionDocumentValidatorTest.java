@@ -1525,6 +1525,193 @@ class WorkflowDefinitionDocumentValidatorTest {
                 .contains(INIT_MAPPER_ID);
     }
 
+    // --- Presence rules ---
+
+    @Nested
+    @DisplayName("Presence rules")
+    class PresenceRules {
+
+        private WorkflowDefinitionViolations validate(
+                String stateType,
+                String contract,
+                String startPayloadType,
+                String initialStateMapper,
+                List<StepNode> steps) {
+            WorkflowDefinitionDocument doc = new WorkflowDefinitionDocument(
+                    DEF_ID, DEF_VER, stateType, contract, startPayloadType, initialStateMapper, null, "svc", steps);
+            return new WorkflowDefinitionDocumentValidator(fullLookup).validate(doc);
+        }
+
+        private List<String> codes(WorkflowDefinitionViolations violations) {
+            return violations.toList().stream().map(Violation::code).toList();
+        }
+
+        @Test
+        @DisplayName("a null or blank stateType, contract, startPayloadType or initialStateMapper is reported once")
+        void missingScalarFieldsAreReported() {
+            List<StepNode> steps = validDocument().steps();
+            for (String missing : new String[] {null, "", "   "}) {
+                assertThat(codes(validate(missing, CONTRACT_FQN, PAYLOAD_FQN, INIT_MAPPER_ID, steps)))
+                        .containsExactly("STATE_TYPE_MISSING");
+                assertThat(codes(validate(STATE_FQN, missing, PAYLOAD_FQN, INIT_MAPPER_ID, steps)))
+                        .containsExactly("CONTRACT_MISSING");
+                assertThat(codes(validate(STATE_FQN, CONTRACT_FQN, missing, INIT_MAPPER_ID, steps)))
+                        .containsExactly("START_PAYLOAD_TYPE_MISSING");
+                assertThat(codes(validate(STATE_FQN, CONTRACT_FQN, PAYLOAD_FQN, missing, steps)))
+                        .containsExactly("INITIAL_STATE_MAPPER_MISSING");
+            }
+        }
+
+        @Test
+        @DisplayName("a missing field names the field and the violation carries the definition id and version")
+        void missingFieldNamesTheField() {
+            Violation violation = findFirstByCode(
+                    validate(
+                            STATE_FQN,
+                            CONTRACT_FQN,
+                            null,
+                            INIT_MAPPER_ID,
+                            validDocument().steps()),
+                    "START_PAYLOAD_TYPE_MISSING");
+
+            assertThat(violation.message()).contains("startPayloadType");
+            assertThat(violation.definitionId()).isEqualTo(DEF_ID);
+            assertThat(violation.definitionVersion()).isEqualTo(DEF_VER);
+        }
+
+        @Test
+        @DisplayName("null or empty steps is reported as STEPS_MISSING without failing")
+        void missingStepsAreReported() {
+            assertThat(codes(validate(STATE_FQN, CONTRACT_FQN, PAYLOAD_FQN, INIT_MAPPER_ID, null)))
+                    .contains("STEPS_MISSING");
+            assertThat(codes(validate(STATE_FQN, CONTRACT_FQN, PAYLOAD_FQN, INIT_MAPPER_ID, List.of())))
+                    .contains("STEPS_MISSING");
+        }
+
+        @Test
+        @DisplayName("a step with a null or blank id is reported with its position")
+        void stepWithoutIdIsReported() {
+            for (String missing : new String[] {null, "", "  "}) {
+                List<StepNode> steps = List.of(
+                        new ServiceStep("svc", "inventory.reserve", PAYLOAD_MAPPER_ID, null, "done"),
+                        new CompleteStep(missing));
+
+                WorkflowDefinitionViolations result =
+                        validate(STATE_FQN, CONTRACT_FQN, PAYLOAD_FQN, INIT_MAPPER_ID, steps);
+
+                assertThat(findFirstByCode(result, "STEP_ID_MISSING").message()).contains("position 1");
+            }
+        }
+
+        @Test
+        @DisplayName("every missing field is accumulated in one pass")
+        void missingFieldsAccumulate() {
+            assertThat(codes(validate(null, null, null, null, null)))
+                    .contains(
+                            "STATE_TYPE_MISSING",
+                            "CONTRACT_MISSING",
+                            "START_PAYLOAD_TYPE_MISSING",
+                            "INITIAL_STATE_MAPPER_MISSING",
+                            "STEPS_MISSING");
+        }
+    }
+
+    // --- Reachability ---
+
+    @Nested
+    @DisplayName("Reachability")
+    class Reachability {
+
+        private WorkflowDefinitionViolations validate(String initialStep, List<StepNode> steps) {
+            WorkflowDefinitionDocument doc = new WorkflowDefinitionDocument(
+                    DEF_ID, DEF_VER, STATE_FQN, CONTRACT_FQN, PAYLOAD_FQN, INIT_MAPPER_ID, null, initialStep, steps);
+            return new WorkflowDefinitionDocumentValidator(fullLookup).validate(doc);
+        }
+
+        private List<String> unreachable(WorkflowDefinitionViolations violations) {
+            return violations.toList().stream()
+                    .filter(v -> "UNREACHABLE_STEP".equals(v.code()))
+                    .map(Violation::stepId)
+                    .toList();
+        }
+
+        @Test
+        @DisplayName("a step no reference reaches is reported once, naming the step")
+        void orphanStepIsReported() {
+            List<StepNode> steps = List.of(
+                    new ServiceStep("svc", "inventory.reserve", PAYLOAD_MAPPER_ID, null, "done"),
+                    new CompleteStep("done"),
+                    new CompleteStep("orphan"));
+
+            WorkflowDefinitionViolations result = validate("svc", steps);
+
+            assertThat(unreachable(result)).containsExactly("orphan");
+            assertThat(findFirstByCode(result, "UNREACHABLE_STEP").message())
+                    .contains("orphan")
+                    .contains("svc");
+        }
+
+        @Test
+        @DisplayName("every step of an unreachable chain is reported, including a reference cycle")
+        void unreachableChainAndCycleAreReported() {
+            List<StepNode> steps = List.of(
+                    new ServiceStep("svc", "inventory.reserve", PAYLOAD_MAPPER_ID, null, "done"),
+                    new CompleteStep("done"),
+                    new TimerStep("island-a", "ref:" + TIMER_RESOLVER_ID, "island-b"),
+                    new TimerStep("island-b", "ref:" + TIMER_RESOLVER_ID, "island-a"));
+
+            assertThat(unreachable(validate("svc", steps))).containsExactly("island-a", "island-b");
+        }
+
+        @Test
+        @DisplayName("a document whose steps are all reached through every kind of reference is not reported")
+        void everyReferenceKindReaches() {
+            List<StepNode> steps = List.of(
+                    new DecisionStep(
+                            "route", List.of(new DecisionStep.RouteEntry(null, CONDITION_ID, "svc")), "waiting"),
+                    new ServiceStep("svc", "inventory.reserve", PAYLOAD_MAPPER_ID, "comp", "pause"),
+                    new CompensationStep("comp", "svc", "inventory.release", PAYLOAD_MAPPER_ID),
+                    new TimerStep("pause", "ref:" + TIMER_RESOLVER_ID, "fork"),
+                    new WaitSignalStep(
+                            "waiting",
+                            "go",
+                            PAYLOAD_FQN,
+                            STATE_REDUCER_ID,
+                            "human",
+                            new WaitSignalStep.TimeoutBlock("PT1H", STATE_MUTATOR_ID, "timed-out")),
+                    new CompleteStep("timed-out"),
+                    new HumanTaskStep(
+                            "human",
+                            "approval",
+                            new HumanTaskStep.AssignmentBlock("user", "u1", null),
+                            List.of(new HumanTaskStep.TaskDecisionBlock(
+                                    "ok", PAYLOAD_FQN, STATE_REDUCER_ID, "decided")),
+                            new HumanTaskStep.DueBlock("PT2H", STATE_MUTATOR_ID, "overdue"),
+                            null,
+                            null),
+                    new CompleteStep("decided"),
+                    new CompleteStep("overdue"),
+                    new ForkStep("fork", List.of(new ForkStep.BranchEntry("a", "branch-a", null)), "join", null),
+                    new CompleteStep("branch-a"),
+                    new JoinStep("join", "all-required", BRANCH_REDUCER_ID, "done", "join-failed"),
+                    new CompleteStep("done"),
+                    new CompleteStep("join-failed"));
+
+            assertThat(unreachable(validate("route", steps))).isEmpty();
+        }
+
+        @Test
+        @DisplayName("an unknown initialStep reports INITIAL_STEP_UNKNOWN only, not every step")
+        void unknownInitialStepDoesNotCascade() {
+            List<StepNode> steps = List.of(new CompleteStep("done"));
+
+            WorkflowDefinitionViolations result = validate("ghost", steps);
+
+            assertViolationCode(result, "INITIAL_STEP_UNKNOWN");
+            assertThat(unreachable(result)).isEmpty();
+        }
+    }
+
     // --- Assertion helpers ---
 
     /** Asserts that the violations aggregate contains at least one entry with the expected code. */

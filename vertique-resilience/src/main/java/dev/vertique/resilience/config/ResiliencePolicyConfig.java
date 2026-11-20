@@ -105,6 +105,9 @@ public record ResiliencePolicyConfig(
         if (value.maxDelayMs() != null && value.maxDelayMs() < 0) {
             throw new ConfigurationException(path + "maxDelayMs must be >= 0, got " + value.maxDelayMs());
         }
+        if (value.retryAfterMaxMs() != null && value.retryAfterMaxMs() < 0) {
+            throw new ConfigurationException(path + "retryAfterMaxMs must be >= 0, got " + value.retryAfterMaxMs());
+        }
     }
 
     private static void validateCircuitBreaker(String name, CircuitBreakerPolicyConfig value) {

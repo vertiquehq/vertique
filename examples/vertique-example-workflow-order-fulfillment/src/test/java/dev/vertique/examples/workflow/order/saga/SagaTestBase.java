@@ -142,8 +142,9 @@ public abstract class SagaTestBase {
      * broker.
      *
      * @param vertx          the Vert.x instance from the extension
-     * @param kafkaBootstrap the broker's {@code host:port} list, or {@code null} for a component with no Kafka
-     *                       configuration
+     * @param kafkaBootstrap the broker's {@code host:port} list, or {@code null} for a component that meets no
+     *                       broker: it gets a placeholder address, which the producer factory requires at
+     *                       construction but never connects to
      * @return a Future that completes once the component is ready and migrations have run
      */
     protected static Future<Void> setUpComponent(Vertx vertx, String kafkaBootstrap) {
@@ -228,7 +229,9 @@ public abstract class SagaTestBase {
                                 .put("workflow", new JsonObject().put("signals", new JsonObject().put("instances", 1))))
                 .put("workflow", new JsonObject().put("executor", new JsonObject().put("pollIntervalMs", 100)))
                 .put("management", new JsonObject().put("port", 0).put("host", "127.0.0.1"));
-        if (kafkaBootstrap != null) {
+        if (kafkaBootstrap == null) {
+            config.put("kafka", new JsonObject().put("bootstrap.servers", "localhost:9092"));
+        } else {
             config.put(
                     "kafka",
                     new JsonObject()

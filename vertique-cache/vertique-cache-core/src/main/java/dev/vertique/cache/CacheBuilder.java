@@ -119,7 +119,12 @@ public final class CacheBuilder {
             boolean asynchronousOnly,
             String selectorPaths,
             boolean register) {
-        CacheMode effectiveMode = effectiveMode(name, requestedMode);
+        CacheMode effectiveMode = effectiveMode(name, requestedMode, asynchronousOnly);
+        if (asynchronousOnly && effectiveMode == CacheMode.CLUSTERED) {
+            throw new IllegalArgumentException(
+                    "synchronous cache operation cannot use CLUSTERED mode (only Future-returning methods can): "
+                            + name);
+        }
         long effectiveTtl = effectiveTtl(name, requestedTtl);
         CacheIdentity effectiveIdentity = identity == null ? CacheIdentity.EFFECTIVE_PRINCIPAL : identity;
         AnonymousCachePolicy effectiveAnonymous =
@@ -140,8 +145,7 @@ public final class CacheBuilder {
                 effectiveTtl,
                 effectiveIdentity,
                 effectiveAnonymous,
-                selector,
-                asynchronousOnly);
+                selector);
     }
 
     public abstract static class TypeRef<V> {
@@ -356,11 +360,20 @@ public final class CacheBuilder {
         return ttl.getSeconds();
     }
 
-    private CacheMode effectiveMode(String name, CacheMode requested) {
+    /**
+     * Resolves the mode: a per-cache configuration override wins, then an explicit definition mode. A
+     * definition that sets no mode follows {@code cache.defaultMode}, except that a synchronous operation
+     * resolves to {@code LOCAL} because only a {@code Future}-returning operation can use a clustered store.
+     */
+    private CacheMode effectiveMode(String name, CacheMode requested, boolean synchronous) {
         CacheEntryConfig entry = config.caches().get(name);
-        return entry != null && entry.mode() != CacheMode.DEFAULT
-                ? entry.mode()
-                : requested == null || requested == CacheMode.DEFAULT ? config.defaultMode() : requested;
+        if (entry != null && entry.mode() != CacheMode.DEFAULT) {
+            return entry.mode();
+        }
+        if (requested != null && requested != CacheMode.DEFAULT) {
+            return requested;
+        }
+        return synchronous ? CacheMode.LOCAL : config.defaultMode();
     }
 
     private long effectiveTtl(String name, long requested) {

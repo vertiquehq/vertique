@@ -11,6 +11,8 @@ import dev.vertique.core.VertxModule;
 import dev.vertique.core.lifecycle.CoreLifecycleStepsModule;
 import dev.vertique.deploy.DeployerModule;
 import dev.vertique.examples.sse.job.JobModule;
+import dev.vertique.http.client.HttpClientFactory;
+import dev.vertique.http.client.HttpClientModule;
 import dev.vertique.management.ManagementModule;
 import dev.vertique.rest.jaxrs.RestModule;
 import dev.vertique.rest.validation.RestValidationModule;
@@ -40,6 +42,7 @@ import jakarta.inject.Singleton;
  *       steps (Jackson configuration + compose-validator harness)</li>
  *   <li>{@link AppModule} — Application-specific verticle deployments and null security bindings</li>
  *   <li>{@link JobModule} — Job service and JAX-RS resource multibinding</li>
+ *   <li>{@link HttpClientModule} — governed HTTP clients configured from {@code httpClient.{name}}</li>
  * </ul>
  *
  * <p>Security modules ({@code AuthModule}, {@code SecurityModule}) are intentionally excluded —
@@ -60,6 +63,11 @@ import jakarta.inject.Singleton;
             DeployerModule.class,
             CoreLifecycleStepsModule.class,
             AppModule.class,
-            JobModule.class
+            JobModule.class,
+            HttpClientModule.class
         })
-interface AppComponent extends VertiqueApplicationComponent {}
+interface AppComponent extends VertiqueApplicationComponent {
+
+    /** The governed HTTP clients, one per configured {@code httpClient.{name}} section. */
+    HttpClientFactory httpClientFactory();
+}

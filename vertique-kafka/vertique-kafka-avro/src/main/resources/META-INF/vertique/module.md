@@ -73,7 +73,7 @@ default, so the provider extends the list itself when a serde is built:
 
 ### Configuration is separated from native Kafka properties
 
-The native `properties` bag is passed verbatim to the Vert.x Kafka client and must contain only Kafka-client keys. Serde and registry configuration lives in the dedicated `serdeProperties` namespace and the `kafka.schemaRegistry.*` block; `ApicurioAvroSerdeProvider` never reads the native `properties` bag.
+The native `properties` bag is passed verbatim to the Vert.x Kafka client and must contain only Kafka-client keys. Serde and registry configuration lives in the dedicated `serdeProperties` namespace and the `kafka.schemaRegistry.url` key; `ApicurioAvroSerdeProvider` never reads the native `properties` bag.
 
 ---
 
@@ -134,11 +134,11 @@ The merged `endpointConfig` passed by the framework already combines `serdePrope
 | `serdeProperties.*` | Any `apicurio.registry.*` key | User properties overlay, highest priority |
 | `serdeProperties."vertique.avro.trusted-packages"` | — (read by the provider, never forwarded to Apicurio) | Extra trusted package prefixes; see [Avro class trust](#avro-class-trust-avro-122) |
 
-Fixed defaults applied by the provider (not overridable via `serdeProperties` without explicit re-setting):
+Defaults applied by the provider. `serdeProperties` overrides each of them except `apicurio.registry.headers.enabled`, which is a fixed invariant: the provider sets it to `false` after the overlay, so a value in `serdeProperties` has no effect.
 
 | Apicurio key | Serializer | Deserializer | Value |
 |---|---|---|---|
-| `apicurio.registry.headers.enabled` | yes | yes | `false` (Confluent-wire: schema-id in payload, not headers) |
+| `apicurio.registry.headers.enabled` | yes | yes | `false`, always (Confluent-wire: schema-id in payload, not headers; not overridable) |
 | `apicurio.registry.use-specific-avro-reader` | — | yes | `true` |
 | `apicurio.registry.auto-register` | yes | — | `true` (dev convenience; override via `serdeProperties`) |
 | `apicurio.registry.retry-count` | yes | yes | `3` (bounded retries; override via `serdeProperties`) |
@@ -146,10 +146,12 @@ Fixed defaults applied by the provider (not overridable via `serdeProperties` wi
 
 Registry-call bounding: the JDK client adapter applies a 30s connect timeout and the retry knobs above bound retry storms; the worker-threading contract keeps blocking calls off the event loop. Apicurio 3.3.3 has no config-map key for a per-request socket read timeout (a custom registry client would be needed; this is a known, deferred gap).
 
+**`schemaRegistry` carries `url` only.** Registry credentials and every other Apicurio client setting go in `serdeProperties` as `apicurio.registry.*` keys. Any other key under `kafka.schemaRegistry` fails startup with a `ConfigurationException` that names the key and never its value, so a credential placed there is never silently ignored.
+
 #### Invariants and Gotchas
 
 - The router-routing deserializer (`routingDeserializer(endpointConfig)`) is built once per router consumer (held by the dispatcher) from the consumer's merged `endpointConfig`, so endpoint `serdeProperties` + `schemaRegistry` apply during route selection. It is type-agnostic: the wire schema-id resolves the concrete `SpecificRecord` with no caller-supplied type.
-- `matchValue` reads the discriminator field from the deserialized `GenericRecord` using `record.get(property)`. A non-Avro value or a missing field returns `null` (unmatched route, not an error).
+- `matchValue` reads the discriminator field from the deserialized `GenericRecord` using `record.get(property)`. A field whose value is `null` returns `null` (unmatched route, not an error). A value that is not an Avro record throws `IllegalArgumentException`, because the dispatcher passes only what this provider's routing deserializer produced, so a non-Avro value is a wiring bug.
 - Serialization failures (missing schema, registry unreachable) surface as `DeserializationException` / failed `Future` and flow through the configured `ErrorStrategy` — never as an uncaught throw. A failure whose cause is an I/O error, or a registry answer of 5xx, 401, 403, 408 or 429, is marked `isTransient()`; a binding that ignores undecodable records ignores only the others.
 
 ---
@@ -259,11 +261,11 @@ This module is itself an extension of the `KafkaSerdeProvider` SPI. There are no
 | Key | Scope | Description |
 |-----|-------|-------------|
 | `kafka.format` | Global | Default format for all producers and consumers (`"avro"`, `"json"`) |
-| `kafka.schemaRegistry.url` | Global | Schema Registry base URL |
+| `kafka.schemaRegistry.url` | Global | Schema Registry base URL. The only key `schemaRegistry` accepts |
 | `kafka.consumers.{name}.format` | Per-consumer | Overrides global format for this consumer |
-| `kafka.consumers.{name}.serdeProperties.*` | Per-consumer | Apicurio config overlaid on top of `kafka.schemaRegistry.*` |
+| `kafka.consumers.{name}.serdeProperties.*` | Per-consumer | Apicurio config overlaid on top of `kafka.schemaRegistry.url` |
 | `kafka.producers.{name}.format` | Per-producer | Overrides global format for all methods of this producer |
-| `kafka.producers.{name}.serdeProperties.*` | Per-producer | Apicurio config overlaid on top of `kafka.schemaRegistry.*` |
+| `kafka.producers.{name}.serdeProperties.*` | Per-producer | Apicurio config overlaid on top of `kafka.schemaRegistry.url` |
 | `kafka.producers.{name}.methods.{method}.format` | Per-method | Overrides per-producer format for this producer method |
 | `kafka.producers.{name}.methods.{method}.serdeProperties.*` | Per-method | Apicurio config for this method; merged last (highest priority) |
 | `serdeProperties."vertique.avro.trusted-packages"` | Per-consumer / per-producer / per-method | Array of package names, or one comma-separated string. Each entry must have at least two segments (`com.acme.events`) and matches that package and its subpackages. Wildcards (`*`, `com.acme.*`), single-segment roots and JDK/library roots (`java`, `javax`, `jakarta`, `jdk`, `sun`, `com.sun`, `org.apache`, `org.springframework`) are rejected at startup. List only the dedicated package of your generated records: a prefix trusts every class under it |

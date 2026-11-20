@@ -10,11 +10,7 @@ package dev.vertique.core.exception;
  * <ul>
  *   <li>{@link ValidationException} — input validation failures (→ 400)
  *     <ul>
- *       <li>{@link BusinessRuleException} — business-rule / domain-rule violations (→ 400)
- *         <ul>
- *           <li>{@link TooManyRequestsException} — rate/quota limit exceeded (→ 429)</li>
- *         </ul>
- *       </li>
+ *       <li>{@link BusinessRuleException} — business-rule / domain-rule violations (→ 400)</li>
  *     </ul>
  *   </li>
  *   <li>{@link ConflictException} — state conflicts (→ 409)</li>
@@ -31,6 +27,8 @@ package dev.vertique.core.exception;
  *       <li>{@link UnavailableException} — required dependency/service unavailable (→ 503)</li>
  *     </ul>
  *   </li>
+ *   <li>{@link TooManyRequestsException} — rate/quota limit exceeded (→ 429); a direct child, not a
+ *     {@link ValidationException}</li>
  * </ul>
  */
 public class VertiqueException extends RuntimeException {

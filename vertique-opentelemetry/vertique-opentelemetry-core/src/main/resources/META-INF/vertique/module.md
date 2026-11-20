@@ -240,7 +240,7 @@ properties always win. The whole subtree is **inert on the reuse path**.
 |---|---|---|---|
 | `tracing.enabled` | boolean | `true` | Master switch. `false` installs the NOOP tracer and binds `OpenTelemetry.noop()`. |
 | `tracing.security.spanEvents` | boolean | `true` | Emit the security span events listed above. |
-| `tracing.otel.*` | object | — | Flattened to `otel.*` and supplied to `AutoConfiguredOpenTelemetrySdk`. |
+| `tracing.otel.*` | object | — | Flattened to `otel.*` and supplied to `AutoConfiguredOpenTelemetrySdk`. A blank string value counts as absent and is skipped, so it never overwrites a seeded value. |
 
 Two `otel.*` properties are seeded before the flatten step and can be overridden by it:
 `otel.metrics.exporter=none` (meters are Micrometer-owned) and `otel.logs.exporter=none`.
@@ -283,6 +283,8 @@ takes precedence over it.
   `tracing.otel`, `metrics`, and `metrics.tags` are each traversed with a tolerant navigator that
   throws `ConfigurationException` when the key is bound to a non-object. That exception passes through
   the contributor untouched, so a config-shape error stays distinguishable from an SDK failure.
+- **A `tracing` value that cannot be bound aborts startup.** For example a non-boolean `tracing.enabled`
+  fails with a `ConfigurationException` that names the `tracing` section and carries no value or cause.
 - **SDK provisioning failure aborts startup with no cause chain.** The failure surfaces as
   `TracingBootstrapException` naming only the underlying exception's simple class name. If a failing
   exporter endpoint needs diagnosis, reproduce it outside the launcher — the message will not carry

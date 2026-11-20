@@ -13,6 +13,7 @@ import dev.vertique.context.DefaultContextHolder;
 import dev.vertique.context.DurableContextMetadataRegistry;
 import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.core.context.DurableMetadata;
+import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.inboxoutbox.DelayedJobControl;
 import dev.vertique.inboxoutbox.OutboxDeliveryMetadata;
@@ -46,7 +47,8 @@ class DelayedJobOutboxDestinationPayloadRejectionTest {
     @Test
     @DisplayName("a payload the job store rejects is a permanent failure")
     void rejectedPayloadIsPermanentFailure() {
-        PgJobRepository repository = new PgJobRepository(mock(Pool.class), new PgDbExceptionMapper());
+        PgJobRepository repository =
+                new PgJobRepository(mock(Pool.class), new PgDbExceptionMapper(), DbSchemas.empty(), "test-node");
         DelayedJobHandlerRegistrar registrar = mock(DelayedJobHandlerRegistrar.class);
         when(registrar.handlerAddresses()).thenReturn(Map.of("deliver-webhook", "job/deliver-webhook/execute"));
         DefaultContextHolder holder = new DefaultContextHolder();

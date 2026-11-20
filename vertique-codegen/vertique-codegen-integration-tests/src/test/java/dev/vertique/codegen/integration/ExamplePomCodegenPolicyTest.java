@@ -35,6 +35,7 @@ class ExamplePomCodegenPolicyTest {
             "vertique-example-events",
             "vertique-example-hello",
             "vertique-example-localization",
+            "vertique-example-mcp",
             "vertique-example-rest-client",
             "vertique-example-services-codegen",
             "vertique-example-services",

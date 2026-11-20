@@ -191,6 +191,38 @@ public class PgTaskStoreIT {
                 null); // branchId
     }
 
+    /** A copy of a task record carrying the given task type. */
+    private static TaskRecord withTaskType(TaskRecord record, String taskType) {
+        return new TaskRecord(
+                record.taskId(),
+                record.workflowId(),
+                record.stepId(),
+                record.assignment(),
+                record.status(),
+                record.decisions(),
+                record.dueAt(),
+                record.dueDateTimerId(),
+                record.completedAt(),
+                record.cancelledAt(),
+                record.expiredAt(),
+                record.updatedAt(),
+                record.decisionName(),
+                record.decisionPayloadJson(),
+                record.completedBy(),
+                record.cancelledBy(),
+                record.reassignedBy(),
+                record.cancellationReason(),
+                record.reassignmentReason(),
+                record.subjectVersionAtCreation(),
+                record.branchTokenId(),
+                record.forkStepId(),
+                record.branchId(),
+                record.scopeKey(),
+                record.requireVersionStability(),
+                record.reservationCommandId(),
+                taskType);
+    }
+
     /** A copy of a task record with other decisions (when given) and another stability requirement. */
     private static TaskRecord copyOf(
             TaskRecord record, List<TaskDecisionDescriptor> decisions, Boolean requireVersionStability) {
@@ -743,6 +775,43 @@ public class PgTaskStoreIT {
                     .onSuccess(result -> ctx.verify(() -> {
                         assertEquals(1, result.items().size(), "should return only alice's task");
                         assertEquals(taskAlice, result.items().get(0).taskId());
+                        ctx.completeNow();
+                    }))
+                    .onFailure(ctx::failNow);
+        }
+
+        @Test
+        @DisplayName("findByFilter with taskType matches the stored task type and round-trips it")
+        void filterByTaskType(VertxTestContext ctx) {
+            WorkflowInstanceId wfId = new WorkflowInstanceId(UUID.randomUUID());
+            UUID approval = UUID.randomUUID();
+            UUID review = UUID.randomUUID();
+            UUID untyped = UUID.randomUUID();
+
+            seedInstance(wfId)
+                    .compose(v -> pool.withTransaction(tx -> store.insertOpen(
+                                    withTaskType(
+                                            openTask(approval, wfId, new TaskAssignment.User("alice")), "approval"),
+                                    tx)
+                            .compose(x -> store.insertOpen(
+                                    withTaskType(openTask(review, wfId, new TaskAssignment.User("alice")), "review"),
+                                    tx))
+                            .compose(x ->
+                                    store.insertOpen(openTask(untyped, wfId, new TaskAssignment.User("alice")), tx))))
+                    .compose(v -> pool.withTransaction(tx -> store.findByFilter(
+                                    TaskFilter.empty().withTaskType("approval"), PageCursor.first(10), tx)
+                            .compose(typed -> store.findByFilter(TaskFilter.empty(), PageCursor.first(10), tx)
+                                    .map(all -> List.of(typed, all)))))
+                    .onSuccess(results -> ctx.verify(() -> {
+                        var typed = results.get(0);
+                        var all = results.get(1);
+                        assertEquals(1, typed.items().size(), "only the approval task matches");
+                        assertEquals(approval, typed.items().get(0).taskId());
+                        assertEquals("approval", typed.items().get(0).taskType());
+                        assertEquals(3, all.items().size());
+                        assertTrue(all.items().stream()
+                                .filter(t -> t.taskId().equals(untyped))
+                                .allMatch(t -> t.taskType() == null));
                         ctx.completeNow();
                     }))
                     .onFailure(ctx::failNow);

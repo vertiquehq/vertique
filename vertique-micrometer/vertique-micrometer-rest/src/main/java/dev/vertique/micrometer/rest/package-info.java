@@ -17,7 +17,7 @@
  * <p>Key classes:
  * <ul>
  *   <li>{@link dev.vertique.micrometer.rest.MicrometerRestModule} — Dagger module contributing all
- *       components via multibinding; install alongside {@code RestCoreModule} (or {@code RestModule})
+ *       components via multibinding; install alongside {@code RestModule} (the JAX-RS mount)
  *       and {@link dev.vertique.micrometer.MicrometerModule}</li>
  *   <li>{@link dev.vertique.micrometer.rest.RestServerRequestMetricsListener} — records a per-request
  *       timer ({@value dev.vertique.micrometer.rest.RestServerRequestMetricsListener#METER_NAME})

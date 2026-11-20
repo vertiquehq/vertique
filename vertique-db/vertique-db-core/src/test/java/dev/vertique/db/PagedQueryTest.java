@@ -9,11 +9,17 @@ import dev.vertique.db.query.OrderDirection;
 import dev.vertique.db.query.OrderKey;
 import dev.vertique.db.query.PagedQuery;
 import dev.vertique.db.query.QueryClause;
+import io.vertx.core.Future;
+import io.vertx.sqlclient.PreparedQuery;
+import io.vertx.sqlclient.Row;
+import io.vertx.sqlclient.RowSet;
 import io.vertx.sqlclient.SqlClient;
+import io.vertx.sqlclient.Tuple;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
@@ -196,6 +202,48 @@ class PagedQueryTest {
                 .mapping(row -> "x")
                 .orderBy("id")
                 .build();
+    }
+
+    // -- Tiebreaker warning --
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void page_withoutUniqueKey_warnsAboutTheTiebreakerOnlyOnce() throws ReflectiveOperationException {
+        // The warning is once per process; rearm it so the result does not depend on test order
+        var warned = PagedQuery.class.getDeclaredField("TIEBREAKER_WARNING_EMITTED");
+        warned.setAccessible(true);
+        ((java.util.concurrent.atomic.AtomicBoolean) warned.get(null)).set(false);
+        PreparedQuery<RowSet<Row>> prepared = Mockito.mock(PreparedQuery.class);
+        Mockito.when(client.preparedQuery(Mockito.anyString())).thenReturn(prepared);
+        Mockito.when(prepared.execute(Mockito.any(Tuple.class))).thenReturn(Future.failedFuture("no database"));
+        var builder = StubPagedQuery.<String>builder()
+                .on(client)
+                .sql("SELECT 1")
+                .exceptionMapper(exceptionMapper)
+                .mapping(row -> "x")
+                .orderBy("id");
+
+        ch.qos.logback.classic.Logger queryLogger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(PagedQuery.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.setContext(queryLogger.getLoggerContext());
+        appender.start();
+        queryLogger.addAppender(appender);
+        try {
+            builder.page();
+            builder.page();
+            builder.page();
+        } finally {
+            queryLogger.detachAppender(appender);
+            appender.stop();
+        }
+
+        long warnings = appender.list.stream()
+                .filter(event -> event.getLevel() == ch.qos.logback.classic.Level.WARN)
+                .filter(event -> event.getFormattedMessage().contains("unique tiebreaker"))
+                .count();
+        assertEquals(1, warnings, "the missing-tiebreaker warning is documented as one-time");
     }
 
     static final class StubPagedQuery<T> extends PagedQuery<T> {

@@ -529,7 +529,12 @@ public surface and application code may use them like any other core type.
 - **`dev.vertique.core.util.TypeResolver`** — resolves the concrete type argument bound to a target
   interface (`resolveTypeArgument`) and collects all transitively reachable interfaces
   (`getAllInterfaces`). Type variables forwarded through a parameterized intermediate interface are
-  not resolved.
+  not resolved by `resolveTypeArgument`. `resolveMemberType(context, type)` substitutes the type
+  variables of a reflective member type (a parameter or return type) with the arguments the
+  concrete `context` class binds through its class and interface hierarchy, including variables
+  forwarded through intermediate supertypes and nested in parameterized, array and wildcard types.
+  A variable that no class in the hierarchy binds, or a method's own type variable, stays
+  unresolved; the result's `equals`/`hashCode` follow the JDK reflective type contracts.
 - **`dev.vertique.core.util.AnnotationResolver`** — resolves method, class, and parameter
   annotations across the superclass chain and interface hierarchy (`resolveMethodAnnotations`,
   `resolveClassAnnotations`, `resolveParameterAnnotations`) and finds composed annotations through
@@ -1297,6 +1302,20 @@ The seam is entirely optional — an application that binds nothing gets the fra
 default. Because the framework finalizes the supplied mapper in place, do not share that instance
 concurrently for any other purpose.
 
+### `ConfigSecret`
+
+Field-level marker (`@Retention(RUNTIME)`; targets field, method, parameter and record component) for
+a config property whose whole value is a secret — typically an open bag whose keys cannot be named in
+advance (`DbPoolConfig#properties`, `FlywayConfig#placeholders`). The config mapper behind
+`ConfigParser` writes a non-empty value of a marked property as the single string `"***"` without
+descending into it, whatever the property's path or type, and the marker wins over the path rule. An
+empty map, collection, array or string, and a `null` or empty `Optional`, are written as given, so an
+unset bag stays visible as unset. The marker affects serialization only: the record keeps the live value, and
+a record that carries a marked property must still redact it in its own `toString()` (for example with
+`ConfigSecretRenderer.redactBag`, or by printing the keys only). Configuring a marked bag as the string
+`"***"` fails binding like any other wrong shape, without echoing a value. Like the rest of the masking,
+it applies only to the config mapper: another `ObjectMapper` prints the value.
+
 ### `ConfigSecretRenderer`
 
 Shared redactor so every module's config `toString()` masks the same things. `MASK` is `"***"`, and
@@ -1309,7 +1328,8 @@ sensitive renders as `"***"` when it has a value and is omitted when it is absen
 rejects a literal `"***"` at such a path so a masked dump cannot be fed back as a secret. A scalar
 secret component whose serialized name the rule recognises therefore needs no
 `@JsonProperty(access = WRITE_ONLY)`; it stays readable from configuration and through its accessor.
-An open bag that may hold a secret under any key keeps `WRITE_ONLY`. Only the config mapper masks —
+An open bag that may hold a secret under any key carries `@ConfigSecret` (above) and renders whole as
+`"***"` when non-empty. Only the config mapper masks —
 a record serialized with another `ObjectMapper` prints the secret — and the substring rule also masks
 look-alikes such as `keyStorePath` or `maxTokens`.
 
@@ -1329,7 +1349,7 @@ is masked, a scheme-less or semicolon-style connection string is printed as give
 
 | Method | Behavior |
 |---|---|
-| `isSensitivePath(String dottedPath)` | `true` when the lower-cased path contains `password`, `secret`, `token`, `passphrase`, `credential`, `jaas.config`, `user.info`, `private.key`, `keystore`, or `truststore`; or when its separator-stripped, lower-cased form contains `apikey`, `accesskey`, `secretkey`, or `privatekey` (so `privateKeyPem`, `private-key` and `private_key` all match). |
+| `isSensitivePath(String dottedPath)` | `true` when the lower-cased path contains `password`, `secret`, `token`, `passphrase`, `credential`, `jaas.config`, `user.info`, `private.key`, `keystore`, or `truststore`; or when its separator-stripped, lower-cased form contains `apikey`, `accesskey`, `secretkey`, `privatekey`, `jaasconfig`, or `userinfo` (so `privateKeyPem`, `private-key`, `private_key`, `jaasConfig`, `jaas-config`, `userInfo` and `user_info` all match). |
 | `isUriPath(String dottedPath)` | `true` when the separator-stripped, lower-cased path contains `url`, `uri`, `endpoint` or `connectionstring`. Biased towards matching: `security` and `during` match through `uri`; a wrong match costs at most a rewritten non-URL string that contains `//…@` or a credential-named `?name=value`, because `redactUri` returns an equal string otherwise. The token set may widen in a minor release and never narrows. |
 | `redactBag(JsonObject bag)` | Renders a bag as a log-safe `String`, descending through nested objects *and* arrays and masking every leaf whose full dotted path is sensitive. |
 | `redactUri(String uri)` | Masks authority userinfo (`user:pass` between `//` and `@`) and the value of any credential-bearing query parameter. Best-effort; never throws. |
@@ -1498,7 +1518,8 @@ runtime or annotation vocabulary.
   `ConfigSecretRenderer` in the record's `toString()` rather than relying on `@JsonIgnore`, which on
   a record would also block deserialization and make the value unreadable from configuration. Do not
   serialize a configuration record with a mapper other than the config mapper: the masking lives
-  there, and secret components carry no `WRITE_ONLY` annotation of their own.
+  there, and secret components carry no `WRITE_ONLY` annotation of their own (an open bag carries
+  `@ConfigSecret`).
 
 ---
 

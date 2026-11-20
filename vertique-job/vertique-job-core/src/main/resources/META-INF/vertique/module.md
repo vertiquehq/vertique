@@ -8,14 +8,14 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.job`
 > **Artifact:** `vertique-job-core`
-> **Depends on:** core
+> **Depends on:** core, deploy
 
 `vertique-job-core` defines the vocabulary every Vertique scheduling module shares: the job execution
 record and its state machine, the `JobContext` handler-side API for progress, structured logging,
-step deduplication and cooperative cancellation, the `JobRepository` persistence SPI, and the two
+step deduplication and the cancellation flag, the `JobRepository` persistence SPI, and the two
 observation SPIs. It also ships `JobCompletionHandler`, which turns a handler reply into a persisted
 outcome, and `JobCoordinator`, which runs node heartbeats, dead-node detection, orphan recovery and
-cooperative cancellation across a cluster.
+cancellation across a cluster.
 
 This module schedules nothing by itself — it owns no trigger and no queue. Install
 `dev.vertique:vertique-job-cron` for recurring work or `dev.vertique:vertique-job-delayed` for
@@ -39,7 +39,10 @@ audit or notification consumer that must see durable outcomes
 
 ### One logical job, one or many executions
 
-`jobId` is the **logical** identifier and is stable across retries; `JobExecution.id()` is the
+`jobId` is a **label** for the logical job, stable across retries and **not unique**: two enqueues with the
+same `jobId` are two executions. It is not an idempotency key. A delayed job that must not be enqueued twice
+carries an `idempotencyKey` instead (see `vertique-job-delayed`); inbound events are de-duplicated by the
+inbox. `JobExecution.id()` is the
 **execution** identifier. A delayed job reuses one execution row across all its attempts — `id` stays
 put and `attemptNumber` increments, so a specific attempt is `(id, attemptNumber)`. A cron fire
 creates a distinct row each time. `attemptNumber` is zero-based and `maxAttempts` is inclusive, so
@@ -139,7 +142,7 @@ Per-execution runtime API; thread-safe.
 | `jobId()` / `executionId()` / `attemptNumber()` / `jobType()` | Execution identity |
 | `scopeKey()` | The row's scope label, never `null`; `default` when the execution has none. A `default` method, so existing implementations keep compiling |
 | `progress()` / `logger()` | The execution's `ProgressReporter` and buffered `JobLogger` (never `null`) |
-| `isCancelled()` / `setCancelled(boolean)` | Cooperative cancellation flag |
+| `isCancelled()` / `setCancelled(boolean)` | Cancellation flag; the handler's stop signal, set when a cancel arrives (see `cancelExecution`) |
 | `saveMetadata(String, Object)` / `getMetadata(String, Class<T>)` | Named values; a `null` value removes the key |
 | `hasCompletedStep(String)` / `runStepOnce(String, Supplier<Future<T>>)` | Step deduplication |
 
@@ -226,24 +229,56 @@ handler.handleCompletion(
 
 ### JobCoordinator
 
-Cluster-level lifecycle owner, constructed as `new JobCoordinator(vertx, repository, config)`.
+Cluster-level lifecycle owner, constructed as `new JobCoordinator(vertx, repository, config, serverId)`.
+`serverId` is this node's identity: the heartbeat row's `server_id`, which must equal the `locked_by`
+value the node's repository stamps on its claims, because recovery finds a dead node's executions by
+that value. `JobCoordinatorModule` passes the `@JobNodeId` binding, which `JobPostgresqlModule` and
+`CronModule` and `CronPersistenceModule` also use.
+
+**Breaking change.** The `new JobCoordinator(vertx, repository, config)` constructor, which generated
+an identity of its own that no repository shared, is removed without a deprecation cycle; a
+coordinator built that way heartbeated but could not recover a dead node's claims. Pass the node's
+`@JobNodeId` value as `serverId`. `PgJobRepository` and `CronScheduler` lose their identity-generating
+constructors the same way (see `vertique-job-postgresql` and `vertique-job-cron`).
 
 | Method | Description |
 |---|---|
-| `start()` | Writes an immediate heartbeat, then starts the heartbeat and scan timers; a no-op when `enabled()` is `false` |
-| `stop()` | Cancels both timers and removes this node's heartbeat row; succeeds even if the delete fails |
-| `cancelExecution(UUID)` | Publishes on `job.cancel.<executionId>` and marks the execution `CANCELLED` |
+| `start()` | Writes an immediate heartbeat, then starts the heartbeat and scan timers; a no-op when `enabled()` is `false` or when already started |
+| `stop()` | Cancels both timers and, when this node holds no `PROCESSING` claims, removes its heartbeat row; a no-op when not started; succeeds even if a repository call fails |
+| `cancelExecution(UUID)` | Publishes on `job.cancel.<executionId>` and marks a `PROCESSING` execution `CANCELLED` at once; the future completes when the repository write has finished, not when the handler stops. There is no grace period and no `ABANDONED` step |
 | `serverId()` | This node's identity, `<hostname>-<8-char suffix>` |
 
 It heartbeats every `nodeHeartbeatIntervalMs`, scans every `scanIntervalMs` for nodes whose heartbeat
 is older than `nodeHeartbeatTimeoutMs`, and recovers each orphan it finds: a `DELAYED` execution with
 attempts remaining is atomically abandoned and re-enqueued, an exhausted one is dead-lettered, and
 any other type (`CRON`) is marked `ABANDONED` so its schedule re-fires normally. Cancellation is
-cooperative — the published signal sets the in-process flag, and the repository write makes the
-decision durable even if the handler ignores it. The dead node's heartbeat row is deleted **only
+immediate and the handler is not awaited: the repository write marks the execution `CANCELLED`
+whether or not the handler ever sees the signal, and the published signal only sets the in-process
+flag a handler can poll to stop early. A handler reply that arrives after the cancel is ignored —
+`completeExecution` accepts only a `PROCESSING` or `ABANDONED` execution, so it returns
+`Optional.empty()` for a `CANCELLED` one: the outcome of the reply is not persisted and no listener
+is notified. An execution in any state other than `PROCESSING`, including `ENQUEUED` and
+`ABANDONED`, is left as it is by a cancel. The dead node's heartbeat row is deleted **only
 after every per-execution recovery write has committed**; if any fails, the row stays so the next
 scan rediscovers the node, because deleting it early would strand a still-`PROCESSING` orphan
-permanently.
+permanently. For the same reason `stop()` keeps this node's own row while executions it claimed are
+still `PROCESSING` (handlers still running at shutdown): the row expires and a surviving node recovers
+whatever is left. `start()` completes once its initial heartbeat write has settled.
+
+Every recovery write is **fenced by the claim**: it adds `locked_by = <dead server id>` and
+`attempt = <attempt read>` (and requires the row to still be `PROCESSING`) to its predicate. When two
+surviving nodes read the same orphan, another node claims it again between the scan's read and its write,
+or a node that stalled past the heartbeat timeout wakes and claims its own orphan again (the same
+`locked_by`, a new attempt), the later write matches no row and recovery leaves the new claim alone, so the
+execution does not run twice. A fenced write that matches nothing is
+a normal outcome: the coordinator skips that execution, logs at `DEBUG`, writes nothing more for it, and
+still removes the dead node's heartbeat row once the other recoveries have committed.
+
+Applications do not call `start()` or `stop()`: `JobCoordinatorModule` deploys a verticle that does
+(see Module Dagger Bindings). The coordinator therefore writes a heartbeat to
+`job_server_heartbeats` every `nodeHeartbeatIntervalMs` and scans every `scanIntervalMs` on every node
+that installs a scheduling module with persistence; set `job.coordinator.enabled: false` to turn both
+off.
 
 ### JobCoordinatorConfig
 
@@ -318,6 +353,7 @@ without it (in-memory only); delayed jobs require it. Every method returns a `Fu
 |---|---|
 | Lifecycle | `save`, `updateState`, `claimNextJob`, `heartbeat`, `findStale`, `findById` |
 | Terminal + retry | `completeExecution`, `scheduleRetry`, `failAndScheduleRetry`, `abandonAndScheduleRetry` |
+| Dead-node recovery | `completeClaimedExecution`, `abandonClaimedAndScheduleRetry` |
 | Leader election | `tryInsert` |
 | Auxiliary records | `saveLogs` |
 | Cron schedules | `saveSchedule`, `updateScheduleFireTimes`, `findSchedule` |
@@ -336,8 +372,25 @@ Obligations an implementation must honour:
   return the **pre-re-enqueue** snapshot (`FAILED` and `ABANDONED` respectively) even though the
   committed row is `ENQUEUED`, so an audit consumer sees the attempt that failed. `Optional.empty()`
   signals a no-op.
+- `completeClaimedExecution` and `abandonClaimedAndScheduleRetry` are the claim-fenced variants of
+  `completeExecution` and `abandonAndScheduleRetry` that `JobCoordinator` uses for dead-node recovery.
+  They take the claim owner (`lockedBy`) and the attempt number read (`claimedAttempt`), and must match a
+  row only while it is still `PROCESSING` under that owner at that attempt, returning `Optional.empty()`
+  otherwise. Both writes of the retry apply all three predicates. They are abstract: there is no default
+  that falls back to the unfenced writes, so a repository that cannot test the claim cannot take part in
+  dead-node recovery. A decorator must forward both to its delegate unchanged, or it removes the fence.
+
+  **Breaking change.** These two methods were `default` methods without the `claimedAttempt` parameter,
+  delegating to the unfenced writes. They are now abstract and take `claimedAttempt` after `lockedBy`.
+  There is no deprecation cycle: every `JobRepository` implementation and decorator must declare both, and an
+  implementation that takes part in recovery must apply the three predicates atomically.
 - `tryInsert(execution)` is an insert-if-absent used for cron `SINGLE_INSTANCE` leader election: all
   nodes race on the same `(jobId, scheduledAt)` and only the winner receives the generated id.
+- `save` of an execution whose `idempotencyKey` is not `null` stores it only if no unfinished execution
+  (any state except `SUCCEEDED`, `CANCELLED` and `DEAD_LETTER`) of the same handler and scope holds the key;
+  otherwise it stores nothing and returns the holder's id. A custom `JobRepository` that cannot enforce this
+  must reject such an execution instead of storing a duplicate. `vertique-job-delayed` is the only producer
+  of keys.
 - `saveSchedule` is an upsert — code is the source of truth and overwrites the stored row on every
   deploy. `removeServer` must tolerate a missing row.
 
@@ -346,12 +399,13 @@ component order is part of this contract:
 
 - `JobExecution(id, jobId, jobType, handler, queue, state, attemptNumber, maxAttempts, payload,
   priority, lockedBy, scheduledAt, enqueuedAt, startedAt, completedAt, errorMessage, errorType,
-  progress, parameters, attributes, metadata, scopeKey)` — 22 components; a public 21-argument
-  constructor without `scopeKey` remains and reads `default`. The compact constructor copies
+  progress, parameters, attributes, metadata, scopeKey, idempotencyKey)` — 23 components; public
+  22-argument (without `idempotencyKey`, reads no key) and 21-argument (also without `scopeKey`,
+  reads `default`) constructors remain. The compact constructor copies
   `parameters`/`attributes`, defaults `progress` to `ProgressSnapshot.EMPTY` and `metadata` to
   `DurableMetadata.empty()`, and maps a `null` `scopeKey` to `default`. A repository must persist
-  `scopeKey` with the execution and return it unchanged on every read. Copy-on-write helpers (each
-  carries `scopeKey`): `withState`, `withProgress`, `withPayload`,
+  `scopeKey` and `idempotencyKey` with the execution and return them unchanged on every read.
+  Copy-on-write helpers (each carries both): `withState`, `withProgress`, `withPayload`,
   `withLockedBy`, `withError`, `withStarted(Instant, String)`, `withCompleted(Instant)`.
 - `CronJobSchedule(jobId, cronExpression, handler, target, executionMode, timezone, enabled,
   overlapPolicy, maxAttempts, tracked, lastFiredAt, nextFireAt)` — 12 components, persisted for
@@ -445,14 +499,26 @@ static JobExecutionStateTransitionListener myListener(MyStateTransitionListener 
 
 `JobModule` declares the empty `Set<JobInterceptor>` and
 `Set<JobExecutionStateTransitionListener>` multibindings so both resolve even when nothing is
-contributed. Include it whenever any job scheduling module is used — the scheduling modules already
-include it transitively.
+contributed. It also binds `@JobNodeId String`, this node's job-scheduling identity
+(`<hostname>-<8-char suffix>`, scoped once per component), which the coordinator heartbeats under and
+the PostgreSQL repository and persistence-backed cron scheduler stamp as `locked_by`. A custom
+`JobRepository` that records claim ownership should inject it rather than generate its own. Include
+`JobModule` whenever any job scheduling module is used — the scheduling modules already include it
+transitively.
 
-`JobCoordinatorModule` provides `JobCoordinatorConfig` (parsed from `job.coordinator`) and the
-singleton `JobCoordinator`, and requires a bound `JobRepository`. `CronPersistenceModule` and
+`JobCoordinatorModule` includes `JobModule` and provides `JobCoordinatorConfig` (parsed from
+`job.coordinator`) and the singleton `JobCoordinator`, built with the `@JobNodeId` identity, and
+requires a bound `JobRepository`. `CronPersistenceModule` and
 `DelayedJobModule` include it, so an application lists it explicitly only when wiring the coordinator
-without either of those. It does not call `start()`/`stop()` — the scheduling module that owns the
-lifecycle drives them.
+without either of those. It also contributes one `VerticleDeployment` named `job-coordinator` (one
+however many modules include it) whose verticle calls `start()` when it deploys and `stop()` when it
+undeploys. It deploys in the `SERVICES` phase at priority 50, below the priority 100 of the delayed-job
+pollers and the cron scheduler. Verticles deploy in ascending and undeploy in descending priority, so
+the claimers deploy only after the initial heartbeat write has settled (when that write fails, the next
+periodic heartbeat writes the row), heartbeats continue until
+every claimer has stopped, and the shutdown claim check sees the claims they made last. A host that
+does not deploy the `Set<VerticleDeployment>` must call `start()` and `stop()` itself, in that order
+around its claimers.
 
 ```java
 @Component(modules = {VertxModule.class, JobPostgresqlModule.class, JobCoordinatorModule.class})
@@ -468,3 +534,4 @@ public interface AppComponent { ... }
   transition event), `OrderedExtension` (interceptor ordering), and `ConfigParser` /
   `JsonConfigPaths` (the `job.coordinator` parse boundary).
 - **resilience** — the `BackoffStrategy` contract used for retry delays.
+- **deploy** — `VerticleDeployment`, through which `JobCoordinatorModule` deploys the coordinator.

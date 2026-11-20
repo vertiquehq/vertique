@@ -71,6 +71,14 @@ before the terminal write."
 OpenTelemetry semantic-convention names; rather than depending on an incubating semconv artifact, they
 are declared as internal, Vertique-owned `AttributeKey` constants on `McpServerSpanObserver`.
 
+**Semantic-conventions version.** This module has no version of its own. Like every Vertique module,
+its attribute names follow the one OpenTelemetry semantic-conventions version the framework manages in
+its root build (the `opentelemetry-semconv.version` property of the framework BOM and parent POM). The
+four names above are checked against that version: each exists with exactly that string in the
+incubating semantic-conventions artifact of the managed version, and none is deprecated. A framework
+upgrade of that version is the point at which the names are re-checked; the `vertique.mcp.*` names are
+Vertique's own and follow no semantic-conventions release.
+
 **At most one body-trace link, never a child span, and only under `mcp.bodyTracePolicy=LINK`.**
 When the request's terminal observation carries a non-null `linkedTrace` (a
 `dev.vertique.core.correlation.TraceReference` — the framework's single trace-reference type,
@@ -83,9 +91,10 @@ self-reference and adds no link — this is the shape a body reference identical
 `traceparent` header actually takes: the header shares the captured span's trace id (only the span id
 differs, since the captured span's own span id is freshly minted at `open` and never equals its
 parent's), so suppression compares trace id only, never full span identity. Malformed trace-state data
-(not well-formed W3C `key=value` entries) is caught and logged at WARN with a bounded diagnostic — the
-exception class name only, never the raw trace data — and adds no link; every other enrichment
-attribute is still recorded.
+(not well-formed W3C `key=value` entries) is caught and logged at DEBUG, not WARN, with a bounded
+diagnostic — the exception class name only, never the raw trace data — and adds no link; every other
+enrichment attribute is still recorded. The body trace value is client-supplied, so a client can
+trigger this at will and a WARN would let any client flood the operator's logs.
 
 **This observer performs no extraction of its own — the policy lives in `vertique-mcp-server`.**
 The MCP server module's `mcp.bodyTracePolicy` defaults to `IGNORE`

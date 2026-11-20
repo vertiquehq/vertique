@@ -8,13 +8,15 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.security.runtime` (identity-snapshot durable carriage + reconstruction), `dev.vertique.security.runtime.authz`, `dev.vertique.security.runtime.events`
 > **Artifact:** `vertique-security-runtime`
-> **Depends on:** security-core, core, context, config-core, resilience
+> **Depends on:** security-core, core, context, resilience
 
 Default in-process authorization engine, event fan-out wiring, and identity-snapshot durable-carriage/reconstruction pipeline for the Vertique security model. This module implements the API and SPI contracts declared in `dev.vertique:vertique-security-core` and supplies the Dagger modules that wire them. It carries no dependency on any transport module or Vert.x Web.
 
 It also provides the opt-in authorization-narrowing composition and the reconstructed-context authority modes — each behind its own opt-in Dagger module, degrading to a passthrough of the base engine when not installed.
 
 Config-backed policy and role-resolver contributions live in `dev.vertique:vertique-security-config`.
+
+This module does not put `vertique-config-core` on its consumers' classpath: it uses none of it in main code. An application that reached `vertique-config-core` only through this module declares it directly.
 
 This engine is Stable, and so are the SPIs it implements or wires for contributors, which
 `dev.vertique:vertique-security-core` owns. What is promised here is the wiring and the documented
@@ -387,8 +389,8 @@ public record IdentitySnapshotConfig(
 | `identity.snapshot.hmacKeys.active.keyId` | — | Required, non-blank |
 | `identity.snapshot.hmacKeys.active.secretRef` | — | Required, ≥ 32 UTF-8 bytes; never logged; the config mapper serializes it as `"***"` and `ConfigParser` rejects a literal `"***"` |
 | `identity.snapshot.hmacKeys.previous[]` | empty | Each `keyId` must be distinct from the active key's and from every other `previous` key; each `secretRef` ≥ 32 UTF-8 bytes |
-| `identity.snapshot.maxCarrierLifetimeMs` | unset (unbounded) | Required when any `carriageRequirements` entry is `REQUIRED` |
-| `identity.snapshot.maxSnapshotLifetimeMs` | unset (unbounded) | Required when any `carriageRequirements` entry is `REQUIRED` |
+| `identity.snapshot.maxCarrierLifetimeMs` | unset (no carrier-lifetime budget; the signed expiry still applies) | Required when any `carriageRequirements` entry is `REQUIRED` |
+| `identity.snapshot.maxSnapshotLifetimeMs` | unset (no configured budget; the encoder still signs `expiresAt` as the capture instant plus 24 hours) | Required when any `carriageRequirements` entry is `REQUIRED` |
 | `identity.snapshot.clockSkewMs` | `30000` | — |
 | `identity.snapshot.carriageRequirements.<targetKind>` | `OPTIONAL` for an unlisted kind | `REQUIRED`, `OPTIONAL`, or `FORBIDDEN` |
 | `identity.snapshot.capturedAuthority.allowedTargetKinds[]` | empty | Each entry non-blank; each must resolve to `REQUIRED` in `carriageRequirements` |
@@ -457,9 +459,9 @@ Must always be installed alongside `IdentitySnapshotCarriageModule` — it wires
 
 ---
 
-### IdentitySnapshotReconstructionModule, ServiceIdentityResolver
+### IdentitySnapshotReconstructionModule
 
-`IdentitySnapshotReconstructionModule` is the receive-side wiring that reconstructs a `SecurityContext` from a durably-carried snapshot at every service-dispatch receive (delayed-job execution, inbox handler dispatch, and any other event-bus service dispatch). It includes `IdentitySnapshotCarriageModule`, `PrivilegedIdentityModule`, and the context runtime module, contributes an `InboundContextInitializer` into the framework's multibinding set, and declares `ServiceIdentityResolver` as an overridable `@BindsOptionalOf` seam.
+`IdentitySnapshotReconstructionModule` is the receive-side wiring that reconstructs a `SecurityContext` from a durably-carried snapshot at every service-dispatch receive (delayed-job execution, inbox handler dispatch, and any other event-bus service dispatch). It includes `IdentitySnapshotCarriageModule`, `PrivilegedIdentityModule`, and the context runtime module, contributes an `InboundContextInitializer` into the framework's multibinding set, and declares `ServiceIdentityResolver` (`dev.vertique:vertique-security-core`) as an overridable `@BindsOptionalOf` seam.
 
 Applications wiring identity-snapshot durable carriage into deferred execution must include this module (and supply the required `identity.snapshot.hmacKeys` config) alongside their delayed-job/inbox-outbox module and dispatch module.
 
@@ -477,16 +479,9 @@ Applications wiring identity-snapshot durable carriage into deferred execution m
 
 The deferred-execution-origin provenance gate is the security boundary that keeps the bounded mint from privileging an ordinary context-empty (or unproven-deferred) dispatch: an attacker who writes a garbage, unverifiable durable row with no origin marker must not end up better off under `CONTINUE_WITHOUT_IDENTITY` than by writing nothing at all. When nothing is bound, `@RequiresAction`-gated service operations are treated as `AUTHENTICATION_REQUIRED`; **ungated operations run without a bound context, exactly as if the reconstruction module were not installed.**
 
-`ServiceIdentityResolver` is the functional seam that resolves the executing identity used as the actor when a service-only or reconstructed context is minted:
+`ServiceIdentityResolver` is the SPI, owned by `dev.vertique:vertique-security-core`, that names the executing identity used as the actor when a service-only or reconstructed context is minted.
 
-```java
-@FunctionalInterface
-public interface ServiceIdentityResolver {
-    SecurityIdentity resolve(DeferredExecutionOrigin origin);
-}
-```
-
-The `DeferredExecutionOrigin` carries the provenance `kind` (`delayed-job` / `cron` / `outbox-relay`) and a `reference` — the specific job-type / cron-name / event-type — that becomes the resolved identity's audit reason. The seam is bound via `@BindsOptionalOf` with **no** concrete framework binding: absent an application resolver the built-in default maps `origin.reference()` to `SystemIdentities.scheduledJob(...)`; an application overrides by binding its own `@Provides ServiceIdentityResolver` (present ⇒ used, no duplicate-binding collision). The mint honors the resolved actor's `PrincipalType` — a `SYSTEM` actor via `SecurityContexts.system(...)`, a `SERVICE` actor via `SecurityContexts.unauthenticated(...)` (stamping `custom("system")` on a `SERVICE` actor would misattribute it as system-acting), any other actor type rejected.
+The resolver receives the `DeferredExecutionOrigin`, whose `reference` (the job type, cron name or event type) the built-in default turns into the identity's audit reason. The seam is bound via `@BindsOptionalOf` with **no** concrete framework binding: absent an application resolver the built-in default maps `origin.reference()` to `SystemIdentities.scheduledJob(...)`; an application overrides by binding its own `@Provides ServiceIdentityResolver` (present ⇒ used, no duplicate-binding collision). The mint honors the resolved actor's `PrincipalType` — a `SYSTEM` actor via `SecurityContexts.system(...)`, a `SERVICE` actor via `SecurityContexts.unauthenticated(...)` (stamping `custom("system")` on a `SERVICE` actor would misattribute it as system-acting), any other actor type rejected.
 
 ---
 
@@ -605,6 +600,5 @@ static ServiceIdentityResolver serviceIdentityResolver() {
 - `dev.vertique:vertique-security-core` — all SPI interfaces and value types
 - `dev.vertique:vertique-core` — `OrderedExtension`, `ContextHolder`, durable-context types, the `ConfigParser` seam, exception roots
 - `dev.vertique:vertique-context` — the durable-context encoder/decoder multibinding sets the carriage module contributes into
-- `dev.vertique:vertique-config-core` — config parsing for the `identity.*` sections
 - `io.vertx:vertx-core` — `Future`, and the timer backing the Mode-2 resolution timeout
 - `com.google.dagger:dagger` — the `@Module`/`@Multibinds`/`@BindsOptionalOf` wiring this module ships

@@ -4,11 +4,14 @@
 package dev.vertique.inboxoutbox;
 
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
+import com.fasterxml.jackson.annotation.JsonSetter;
+import com.fasterxml.jackson.annotation.Nulls;
 import dev.vertique.core.scope.ScopeKey;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.experimental.Accessors;
@@ -39,6 +42,9 @@ import lombok.extern.jackson.Jacksonized;
 @Accessors(fluent = true)
 @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.ANY, getterVisibility = JsonAutoDetect.Visibility.NONE)
 public class OutboxEntry {
+
+    /** The attempt limit {@link #maxAttempts()} reports for an entry that sets none. */
+    private static final int DEFAULT_MAX_ATTEMPTS = 20;
 
     /**
      * Optional domain aggregate type that produced this event (e.g., {@code "Order"}).
@@ -98,11 +104,13 @@ public class OutboxEntry {
     private final Map<String, String> headers = Map.of();
 
     /**
-     * Maximum number of delivery attempts before the entry is moved to dead-letter state.
-     * Defaults to {@code 20}. Must be a positive integer.
+     * Maximum number of delivery attempts before the entry is moved to dead-letter state, or
+     * {@code null} when the builder did not set one. Read it through {@link #maxAttempts()}, which
+     * reports {@code 20} for an entry without its own limit; the outbox service
+     * gives such an entry the relay's configured limit when it publishes it.
      */
-    @Builder.Default
-    private final int maxAttempts = 20;
+    @Getter(AccessLevel.NONE)
+    private final Integer maxAttempts;
 
     /**
      * Optional wall-clock time at which this entry is intended to be delivered. Relay workers
@@ -148,7 +156,7 @@ public class OutboxEntry {
      * @param destination     destination address within the destination type
      * @param payload         the event payload
      * @param headers         application headers; copied, {@code null} means none
-     * @param maxAttempts     maximum number of delivery attempts
+     * @param maxAttempts     maximum number of delivery attempts, {@code null} when the entry sets none
      * @param scheduledAt     optional intended delivery time
      * @param delayedJob      optional delayed-job scheduling snapshot
      * @param availableAt     earliest time at which the entry may be claimed
@@ -162,7 +170,7 @@ public class OutboxEntry {
             String destination,
             Object payload,
             Map<String, String> headers,
-            int maxAttempts,
+            Integer maxAttempts,
             Instant scheduledAt,
             DelayedJobControl delayedJob,
             Instant availableAt,
@@ -179,6 +187,56 @@ public class OutboxEntry {
         this.delayedJob = delayedJob;
         this.availableAt = availableAt;
         this.scopeKey = scopeKey;
+    }
+
+    /**
+     * Returns the maximum number of delivery attempts before the entry is moved to dead-letter
+     * state.
+     *
+     * <p>An entry that set no limit reports {@code 20}. Publishing such an entry
+     * through the PostgreSQL outbox service stores the relay's configured
+     * {@code inboxOutbox.relay.maxAttempts} instead; an entry's own limit always wins.
+     *
+     * @return the entry's own limit, or {@code 20} when it sets none
+     */
+    public int maxAttempts() {
+        return maxAttempts == null ? DEFAULT_MAX_ATTEMPTS : maxAttempts;
+    }
+
+    /**
+     * Tells whether the entry carries its own attempt limit.
+     *
+     * @return {@code true} when the builder set {@code maxAttempts}; {@code false} when the entry
+     *     takes the default limit
+     */
+    boolean hasOwnMaxAttempts() {
+        return maxAttempts != null;
+    }
+
+    /**
+     * Returns an entry that keeps this entry's own attempt limit, or takes {@code defaultMaxAttempts}
+     * when it has none. Every other field is carried over unchanged.
+     *
+     * @param defaultMaxAttempts the limit for an entry that set none
+     * @return this entry when it has its own limit; otherwise a copy with {@code defaultMaxAttempts}
+     */
+    public OutboxEntry withDefaultMaxAttempts(int defaultMaxAttempts) {
+        if (maxAttempts != null) {
+            return this;
+        }
+        return new OutboxEntry(
+                aggregateType,
+                aggregateId,
+                eventType,
+                destinationType,
+                destination,
+                payload,
+                headers,
+                defaultMaxAttempts,
+                scheduledAt,
+                delayedJob,
+                availableAt,
+                scopeKey);
     }
 
     /**
@@ -208,5 +266,27 @@ public class OutboxEntry {
             return Map.of();
         }
         return Collections.unmodifiableMap(new LinkedHashMap<>(headers));
+    }
+
+    /** Builder additions; the rest of the builder is generated. */
+    public static class OutboxEntryBuilder {
+
+        private Integer maxAttempts;
+
+        /**
+         * Sets the entry's own attempt limit; an explicit JSON {@code null} leaves it unset.
+         *
+         * @param maxAttempts maximum number of delivery attempts before dead-lettering; at least 1
+         * @return this builder
+         * @throws IllegalArgumentException when {@code maxAttempts} is below 1
+         */
+        @JsonSetter(nulls = Nulls.SKIP)
+        public OutboxEntryBuilder maxAttempts(int maxAttempts) {
+            if (maxAttempts < 1) {
+                throw new IllegalArgumentException("maxAttempts must be at least 1");
+            }
+            this.maxAttempts = maxAttempts;
+            return this;
+        }
     }
 }

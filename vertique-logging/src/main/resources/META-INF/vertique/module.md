@@ -32,9 +32,11 @@ public final class MDC {
 
 **The MDC data type lives in this module; the generic storage substrate lives in `vertique-context`.** `MDCContext` (package-private) is the mutable per-request MDC map, defined and owned by this module. Its instance is bound in the substrate holder slot (`ContextLocal<Map<String,Object>>`) owned by `ContextLocalServiceProvider` in `vertique-context`, keyed by `MDCContext.class.getName()`. The slot itself is shared with all other typed context values — the substrate has no MDC-specific code, and the `ContextHolder`/`ServiceDispatchContextEncoder`/`ServiceDispatchContextDecoder` SPI contracts it implements against are declared in `vertique-core`. `MDCContexts` (in `dev.vertique.logging`) is the primary public API; `dev.vertique.logging.MDC` is a thin SLF4J-style delegation facade. `MDCContextValueAdapter` is the `ServiceLoader<ContextValueAdapter>` entry that gives the substrate deep-copy semantics for `MDCContext` on `duplicate(true)`. There is no separate `VertxServiceProvider` in this module (`LoggingServiceProvider` is gone).
 
-**Fail-fast writes.** `MDC.put`, `MDC.remove`, `MDC.clear`, and `MDC.setContextMap` throw
-`IllegalStateException` when called outside a duplicated Vert.x context. This matches the substrate's
-invariant and prevents silent no-ops that produced invisible MDC data in earlier versions.
+**Fail-fast writes.** `MDC.put`, `MDC.remove`, `MDC.clear`, and `MDC.setContextMap` with a non-empty map
+throw `IllegalStateException` when called outside a duplicated Vert.x context. This matches the
+substrate's invariant and prevents silent no-ops that produced invisible MDC data in earlier versions.
+`MDC.setContextMap(null)` and `MDC.setContextMap(Map.of())` outside a context have nothing to clear
+and do nothing.
 
 **Lenient reads.** `MDC.get` and `MDC.getCopyOfContextMap` return `null` / an empty map when called
 outside a Vert.x context.

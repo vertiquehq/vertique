@@ -121,12 +121,13 @@ import java.util.function.Supplier;
  * McpToolRegistry}, reauthorizes the resolved descriptor through {@link McpPolicyEnforcer#decide}
  * exactly like {@code tools/list}, and maps an unknown name or a denied decision to the same
  * {@code -32602} JSON response {@link #writeUnknownOrUnauthorized} already produces — no tool is ever
- * invoked on that path. Only once a call is known and authorized does the dispatcher select
- * request-scoped SSE ({@code text/event-stream}, {@code X-Accel-Buffering: no}) — unconditionally,
- * before {@link McpToolInvoker#prepare} runs, so the response is committed to SSE framing regardless
- * of how invocation later resolves and never falls back to JSON afterward — and only then runs stage 1
- * of the fixed request-time input pipeline: the precompiled input schema
- * validator compiled at composition. A schema rejection settles as the bounded text-only {@code
+ * invoked on that path. Only once a call is known, authorized, carries the client capabilities its
+ * tool requires and passes tool admission (a missing capability or an admission rejection is answered
+ * as JSON first) does the dispatcher select request-scoped SSE ({@code text/event-stream}, {@code
+ * X-Accel-Buffering: no}) — unconditionally, before {@link McpToolInvoker#prepare} runs, so the
+ * response is committed to SSE framing regardless of how invocation later resolves and never falls
+ * back to JSON afterward — and only then runs stage 1 of the fixed request-time input pipeline: the
+ * precompiled input schema validator compiled at composition. A schema rejection settles as the bounded text-only {@code
  * isError=true} tool-error outcome without ever calling {@code prepare()}. Only once schema validation
  * passes does the dispatcher invoke the generated invoker directly (no reflection); {@code prepare()}
  * itself then owns stages 2–4 (input-processing canonicalization/sanitization, materialization, Bean
@@ -1082,13 +1083,15 @@ final class McpRequestDispatcher {
             return;
         }
         context.put(PROTOCOL_VERSION_KEY, negotiation.protocolVersion());
-        // Extracted at most once per request, independent of negotiation's own outcome — a
-        // malformed or absent body trace reference never affects protocol admission — and only when
-        // mcp.bodyTracePolicy is LINK. Under the default IGNORE policy, extractBodyTraceContext is
-        // never called at all: no parse, no diagnostics, no cost. The result is bound onto the
-        // coordinator (when one exists — a fixture dispatch that bypasses begin() has none) so the
-        // terminal observation carries it (McpRequestTerminalObservation#linkedTrace()); McpRequestContext
-        // does not carry a body trace component.
+        // Extracted at most once per request, only after the official params check and negotiation
+        // have succeeded — a request rejected at either step is answered without extraction and carries
+        // no linked trace — and only when mcp.bodyTracePolicy is LINK. A malformed or absent body
+        // trace reference never affects protocol admission. Under the default IGNORE policy,
+        // extractBodyTraceContext is never called at all: no parse, no diagnostics, no cost. The
+        // result is bound onto the coordinator (when one exists — a fixture dispatch that bypasses
+        // begin() has none) so the terminal observation carries it
+        // (McpRequestTerminalObservation#linkedTrace()); McpRequestContext does not carry a body
+        // trace component.
         TraceReference linkedTrace =
                 config.bodyTracePolicy() == McpBodyTracePolicy.LINK ? codec.extractBodyTraceContext(envelope) : null;
         McpCompletionCoordinator coordinator = ownedCoordinator(context);
@@ -2376,13 +2379,15 @@ final class McpRequestDispatcher {
      * Selects request-scoped SSE, runs stage 1 of the fixed request-time input pipeline, then
      * invokes the resolved tool directly.
      *
-     * <p>{@link #selectSse} runs unconditionally as the first statement here — strictly before {@link
-     * McpToolInvoker#prepare} is ever called — so the response is committed to SSE framing before
-     * invocation begins and independently of how invocation later resolves: a synchronous {@code
-     * prepare}/{@code invoke} throw and a failed invocation future both settle through {@link
-     * #writeSseFallback}, never a JSON response. The official schema has already admitted only an
-     * absent or object-valued {@code arguments} member; explicit {@code null} and every other
-     * non-object value are rejected as {@code -32602} before SSE selection.
+     * <p>The tool-admission stage runs first and answers a rate-limit rejection as JSON. Once it
+     * admits the call, {@link #selectSse} runs unconditionally as the first statement of {@link
+     * #invokeAfterAdmission} — strictly before {@link McpToolInvoker#prepare} is ever called — so the
+     * response is committed to SSE framing before invocation begins and independently of how
+     * invocation later resolves: a synchronous {@code prepare}/{@code invoke} throw and a failed
+     * invocation future both settle through {@link #writeSseFallback}, never a JSON response. The
+     * official schema has already admitted only an absent or object-valued {@code arguments}
+     * member; explicit {@code null} and every other non-object value are rejected as {@code -32602}
+     * before SSE selection.
      *
      * <p>Stage 1 — the precompiled schema validator compiled at composition — runs next, on
      * exactly this {@code arguments} tree, before {@code prepare()} is ever called: a schema rejection
@@ -3530,8 +3535,10 @@ final class McpRequestDispatcher {
      * <p>Settlement is driven from {@link RoutingContext#addEndHandler}, which Vert.x Web multicasts to
      * every registered handler and which fires on normal end, on an exception, and on a connection
      * close. A failed outcome is a premature disconnect or a stream reset, classified by cause; a
-     * succeeded outcome is a normal end, already settled by the two-phase write path, so nothing is done
-     * with it. A failed outcome signalled from inside this request's own terminal {@code end()} call
+     * succeeded outcome is a normal end: MCP's two-phase write path has already settled it, or, when
+     * another handler answered the request, the observation {@code begin} opened is closed one context turn
+     * later with a cancelled, not-settled-by-MCP terminal (see {@link
+     * McpCompletionCoordinator#settleNotSettledByMcp}). A failed outcome signalled from inside this request's own terminal {@code end()} call
      * (see {@link McpCompletionCoordinator#endResponse}) was produced by that write rather than by
      * the peer: a response written outside the connection's read loop, such as from a timer task, is
      * reported that way over HTTP/2 although the write succeeds. It is settled one context turn
@@ -3577,8 +3584,8 @@ final class McpRequestDispatcher {
      * It never claims on a succeeded outcome, because
      * MCP settles a normal end only through its own write path, which has already claimed: a request
      * that ended normally without that write, because an earlier mount's failure handler took it or a
-     * reroute took it out of this mount, is not MCP's to report, and rest-core reports it instead.
-     * Neither {@link #begin} nor an admission rejection on a request's first entry into the mount
+     * reroute took it out of this mount, is not MCP's to report, and rest-core reports it instead; MCP only closes the observation it
+     * opened, without a claim. Neither {@link #begin} nor an admission rejection on a request's first entry into the mount
      * claims: {@link #begin} runs before MCP knows it will settle the request, and such an admission
      * rejection is written before any coordinator or hook exists. The claim reaches the emitter in time, because this hook is registered in {@link #begin},
      * after the emitter's own end handler, and Vert.x Web runs end handlers in reverse registration
@@ -3589,7 +3596,13 @@ final class McpRequestDispatcher {
             RoutingContext context, McpCompletionCoordinator coordinator, Instant startedAt) {
         context.addEndHandler(outcome -> {
             if (outcome.succeeded()) {
-                // A normal response end: the two-phase write path owns this settlement.
+                // A normal response end: the two-phase write path owns this settlement when it ran. When
+                // it did not, another handler answered the request, so close the observation begin opened
+                // without claiming the request, which rest-core reports.
+                int status = context.response().getStatusCode();
+                coordinator.settleNotSettledByMcp(
+                        () -> settlementTerminal(context, startedAt, McpErrorType.HTTP, status, null),
+                        context.response().headWritten());
                 return;
             }
             RequestCompletionRecorder.claimForOtherTransport(context);

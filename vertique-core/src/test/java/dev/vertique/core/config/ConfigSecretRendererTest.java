@@ -63,6 +63,30 @@ class ConfigSecretRendererTest {
         }
 
         @Test
+        @DisplayName("matches camel-case and hyphenated jaasConfig and userInfo through the normalized path")
+        void jaasConfigAndUserInfoVariantsMatch() {
+            assertTrue(ConfigSecretRenderer.isSensitivePath("jaasConfig"));
+            assertTrue(ConfigSecretRenderer.isSensitivePath("sasl.jaas-config"));
+            assertTrue(ConfigSecretRenderer.isSensitivePath("kafka.JAAS_CONFIG"));
+            assertTrue(ConfigSecretRenderer.isSensitivePath("userInfo"));
+            assertTrue(ConfigSecretRenderer.isSensitivePath("user_info"));
+            assertTrue(ConfigSecretRenderer.isSensitivePath("basic.auth.user-info"));
+            // the dotted forms keep matching
+            assertTrue(ConfigSecretRenderer.isSensitivePath("sasl.jaas.config"));
+            assertTrue(ConfigSecretRenderer.isSensitivePath("basic.auth.user.info"));
+        }
+
+        @Test
+        @DisplayName("near misses of jaasconfig and userinfo stay non-secret")
+        void jaasConfigAndUserInfoNearMissesDoNotMatch() {
+            assertFalse(ConfigSecretRenderer.isSensitivePath("jaas"));
+            assertFalse(ConfigSecretRenderer.isSensitivePath("jaasMode"));
+            assertFalse(ConfigSecretRenderer.isSensitivePath("user"));
+            assertFalse(ConfigSecretRenderer.isSensitivePath("userId"));
+            assertFalse(ConfigSecretRenderer.isSensitivePath("jaas.mode"));
+        }
+
+        @Test
         @DisplayName("returns false for a non-secret path")
         void nonSecretPath() {
             assertFalse(ConfigSecretRenderer.isSensitivePath("bootstrap.servers"));

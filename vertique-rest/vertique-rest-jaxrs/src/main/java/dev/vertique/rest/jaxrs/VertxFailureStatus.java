@@ -3,6 +3,7 @@
 
 package dev.vertique.rest.jaxrs;
 
+import dev.vertique.rest.core.RestExceptionMapper;
 import io.vertx.ext.web.RoutingContext;
 
 /**

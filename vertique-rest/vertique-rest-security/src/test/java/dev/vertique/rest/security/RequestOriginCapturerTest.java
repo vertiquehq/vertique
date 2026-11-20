@@ -19,6 +19,9 @@ import javax.net.ssl.SSLSession;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * Unit tests for {@link RequestOriginCapturer}.
@@ -224,6 +227,96 @@ class RequestOriginCapturerTest {
             RequestOrigin origin = capturer.capture(request);
 
             assertEquals("api.example.com", origin.host());
+        }
+    }
+
+    // --- Forwarded scheme and host grammar from a trusted peer ---
+
+    @Nested
+    @DisplayName("trusted forwarded scheme and host are validated, falling back to the connection values")
+    class ForwardedGrammar {
+
+        private RequestOriginCapturer trustingCapturer() {
+            return new RequestOriginCapturer(new RequestOriginConfig(Set.of("10.0.0.0/8"), 16, true, true));
+        }
+
+        private RequestOrigin capture(String proto, String forwardedHost) {
+            HttpServerRequest request = stubRequest("10.0.0.1", 0, "http", "internal.svc", "203.0.113.5");
+            when(request.getHeader("X-Forwarded-Proto")).thenReturn(proto);
+            when(request.getHeader("X-Forwarded-Host")).thenReturn(forwardedHost);
+            return trustingCapturer().capture(request);
+        }
+
+        @ParameterizedTest(name = "X-Forwarded-Proto [{0}] -> {1}")
+        @CsvSource(
+                delimiter = '|',
+                value = {"https|https", "HTTPS|https", "http|http", "' https '|https", "ftp|http", "https, http|http"})
+        @DisplayName("scheme accepts only http or https, otherwise the connection scheme applies")
+        void schemeIsValidated(String proto, String expected) {
+            assertEquals(expected, capture(proto, null).scheme());
+        }
+
+        @Test
+        @DisplayName("blank X-Forwarded-Proto is treated as absent and keeps the whole origin")
+        void blankSchemeIsAbsent() {
+            RequestOrigin origin = capture("   ", null);
+
+            assertEquals("http", origin.scheme());
+            assertEquals("203.0.113.5", origin.clientIp());
+        }
+
+        @ParameterizedTest(name = "X-Forwarded-Host [{0}] accepted")
+        @ValueSource(
+                strings = {
+                    "api.example.com",
+                    "api.example.com.",
+                    "api.example.com:8443",
+                    "localhost",
+                    "203.0.113.5:80",
+                    "[2001:db8::1]",
+                    "[2001:db8::1]:8443"
+                })
+        @DisplayName("host accepts a name, IPv4 or bracketed IPv6 literal with an optional port")
+        void validHostIsAccepted(String forwardedHost) {
+            assertEquals(forwardedHost, capture(null, forwardedHost).host());
+        }
+
+        @ParameterizedTest(name = "X-Forwarded-Host [{0}] rejected")
+        @ValueSource(
+                strings = {
+                    "a.example.com, b.example.com",
+                    "user@api.example.com",
+                    "api.example.com/path",
+                    "api example.com",
+                    "api.example.com:",
+                    "api.example.com:99999",
+                    "api.example.com:80:80",
+                    "[2001:db8::1",
+                    "[not-an-ip]",
+                    "[2001:db8::1]x",
+                    ".example.com",
+                    "example..com",
+                    "exa\u00e9mple.com"
+                })
+        @DisplayName("malformed host falls back to the connection host")
+        void malformedHostFallsBack(String forwardedHost) {
+            assertEquals("internal.svc", capture(null, forwardedHost).host());
+        }
+
+        @Test
+        @DisplayName("surrounding whitespace on X-Forwarded-Host is stripped")
+        void paddedHostIsStripped() {
+            assertEquals("api.example.com", capture(null, "  api.example.com ").host());
+        }
+
+        @Test
+        @DisplayName("blank X-Forwarded-Host is treated as absent and keeps the whole origin")
+        void blankHostIsAbsent() {
+            RequestOrigin origin = capture(null, "  ");
+
+            assertEquals("internal.svc", origin.host());
+            assertEquals("203.0.113.5", origin.clientIp());
+            assertEquals("10.0.0.1", origin.remoteIp());
         }
     }
 
@@ -690,6 +783,28 @@ class RequestOriginCapturerTest {
             RequestOrigin origin = defaultCapturer().capture(request);
 
             assertEquals("2001:db8::1", origin.remoteIp());
+        }
+
+        @Test
+        @DisplayName("a native IPv6 address is reported in lowercase compressed form")
+        void nativeIpv6AddressIsReportedInCanonicalForm() {
+            HttpServerRequest request =
+                    stubRequest("2001:DB8:0:0:0:0:0:1", 0, "http", "example.com", "2001:0db8:0:0:1:0:0:2");
+            RequestOrigin origin = defaultCapturer().capture(request);
+
+            assertEquals("2001:db8::1", origin.remoteIp());
+            assertEquals("2001:db8::1:0:0:2", origin.forwardedFor().get(0));
+        }
+
+        @Test
+        @DisplayName("IPv6 canonical form follows RFC 5952 for edge cases")
+        void ipv6CanonicalEdgeCases() {
+            assertEquals("::", RequestOriginCapturer.normalizeIp("0:0:0:0:0:0:0:0"));
+            assertEquals("::1", RequestOriginCapturer.normalizeIp("0:0:0:0:0:0:0:1"));
+            assertEquals("1::", RequestOriginCapturer.normalizeIp("1:0:0:0:0:0:0:0"));
+            assertEquals("2001:db8:0:1:1:1:1:1", RequestOriginCapturer.normalizeIp("2001:DB8:0:1:1:1:1:1"));
+            assertEquals("2001:0:0:1::1", RequestOriginCapturer.normalizeIp("2001:0:0:1:0:0:0:1"));
+            assertEquals("fe80::1%eth0", RequestOriginCapturer.normalizeIp("FE80:0:0:0:0:0:0:1%eth0"));
         }
 
         @Test

@@ -169,9 +169,8 @@ public interface TaskStore<TX> {
      * given branch token.
      *
      * <p>Used by the branch-owned wait cancellation cascade ({@code cancelBranchOwnedWaits}) to
-     * enumerate and close tasks after their owned timers have already been cancelled. Implements the
-     * {@code tasks} step of the lock-order rule:
-     * {@code workflow_timers → workflow_tasks → workflow_branch_tokens → workflow_instances}.
+     * enumerate and close tasks after their owned timers have already been cancelled. The caller holds the
+     * instance's execution lock.
      *
      * @param branchTokenId the branch token whose owned open tasks should be returned
      * @param tx            the active transaction context

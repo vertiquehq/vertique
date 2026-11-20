@@ -68,6 +68,7 @@ SPDX-License-Identifier: EUPL-1.2
         <module>vertique-kafka</module>
         <module>vertique-db</module>
         <module>vertique-redis</module>
+        <module>vertique-http-client</module>
         <module>vertique-cache</module>
         <module>vertique-rate-limit</module>
         <module>vertique-job</module>
@@ -198,6 +199,12 @@ SPDX-License-Identifier: EUPL-1.2
              consumes, so the ~90 per-module report renderings are waste there.
              Local builds keep them for browsable per-module HTML. -->
         <jacoco.module.report.skip>false</jacoco.module.report.skip>
+        <!-- SonarCloud counts every executable line of a source file it analyses, so the
+             Dagger wiring that the JaCoCo plugin configuration below excludes from coverage
+             must be excluded here too, or those lines fail the new-code coverage gate with
+             nothing able to cover them. Keep this list identical to the JaCoCo excludes,
+             with .java in place of .class. -->
+        <sonar.coverage.exclusions>**/*_Factory.java,**/*_MembersInjector.java,**/Dagger*.java,**/*Module_*.java,**/*Module.java,**/package-info.java</sonar.coverage.exclusions>
         <!-- PIT mutation testing is opt-in and advisory: nothing binds the goal to a
              lifecycle phase, and invoking it directly is a no-op until pitest.skip=false.
              scripts/pit-pr-scope.sh is the supported entry point. -->
@@ -454,6 +461,11 @@ SPDX-License-Identifier: EUPL-1.2
             </dependency>
             <dependency>
                 <groupId>dev.vertique</groupId>
+                <artifactId>vertique-micrometer-outbox</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
                 <artifactId>vertique-micrometer-rate-limit</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -670,6 +682,11 @@ SPDX-License-Identifier: EUPL-1.2
             <dependency>
                 <groupId>dev.vertique</groupId>
                 <artifactId>vertique-events</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-http-client</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

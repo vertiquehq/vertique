@@ -25,16 +25,15 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import javax.annotation.processing.Generated;
+import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
-import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.ExecutableType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
-import javax.lang.model.util.Types;
 
 /**
  * Emitter for per-method {@code {Resource}_{methodName}_{idx}_ExecutionPlan} companions.
@@ -117,10 +116,13 @@ public final class ExecutionPlanEmitter {
     private static final ClassName ROUTING_CONTEXT = ClassName.get("io.vertx.ext.web", "RoutingContext");
     private static final ClassName BOUND_REQUEST = ClassName.get("dev.vertique.rest.jaxrs.request", "BoundRequest");
     private static final ClassName LIST = ClassName.get("java.util", "List");
+    private static final ClassName GENERATED_DESCRIPTOR_SUPPORT =
+            ClassName.get("dev.vertique.rest.jaxrs.runtime", "GeneratedJaxRsDescriptorSupport");
 
     // --- State ---
 
     private final CodegenContext ctx;
+    private final GenericTypeExpressions genericTypes;
     private final ParameterAnnotationMaterializer parameterAnnotationMaterializer;
 
     // --- Constructor ---
@@ -132,6 +134,7 @@ public final class ExecutionPlanEmitter {
      */
     public ExecutionPlanEmitter(CodegenContext ctx) {
         this.ctx = ctx;
+        this.genericTypes = new GenericTypeExpressions(ctx);
         this.parameterAnnotationMaterializer = new ParameterAnnotationMaterializer(ctx);
     }
 
@@ -188,7 +191,7 @@ public final class ExecutionPlanEmitter {
 
         // --- Static ParamMeta constants per extractable parameter ---
         List<FieldSpec> staticFields =
-                buildParamMetaConstants(params, method.concreteMethod(), planClass, emittedLiteralFqns);
+                buildParamMetaConstants(params, method.concreteMethod(), resourceClass, planClass, emittedLiteralFqns);
 
         // --- Static EffectiveInputPolicies constants (including BEAN_PARAM baselines) ---
         staticFields.addAll(buildPoliciesConstants(params));
@@ -246,12 +249,14 @@ public final class ExecutionPlanEmitter {
      *   <li>The method's declaring class must not be {@code java.lang.Object}.</li>
      *   <li>No parameter or return type may be a non-public type whose enclosing package differs
      *       from the resource class's package.</li>
-     *   <li>Each declared parameter type must erase to the same type as the parameter's type as a
-     *       member of the resource. An inherited generic method — a {@code default remove(I id)} of
-     *       {@code Crud<I>}, or a generic superclass method — declares {@code I}, which the
-     *       reflective path binds as its erasure; a typed call {@code ((Resource) r).remove(...)}
-     *       sees {@code remove(String)} instead and would not compile, so such a method keeps
-     *       reflective dispatch at parity with the runtime.</li>
+     *   <li>A parameterized parameter type, as a member of the resource, must erase to the same
+     *       type as the declared parameter. An inherited generic method whose type variable is
+     *       bound to a parameterized type — {@code accept(T body)} of {@code Base<T>} with
+     *       {@code T = List<String>} — erases to {@code Object} as declared but to {@code List} as a
+     *       member; a raw cast could make same-erasure overloads ambiguous, so such a method keeps
+     *       reflective dispatch. A type variable bound to a non-parameterized type
+     *       ({@code remove(I id)} with {@code I = String}) is called through the resource type with
+     *       its bound type.</li>
      *   <li>An inherited interface {@code default} method must not share its name and erased
      *       parameter types with a method declared along the resource's superclass chain. Such a
      *       method can only be a superclass's private one (anything else would override the
@@ -281,7 +286,9 @@ public final class ExecutionPlanEmitter {
         String resourcePkg = ctx.packageNameOf(concreteClass);
 
         // Check return type
-        TypeMirror returnType = method.concreteMethod().getReturnType();
+        TypeMirror returnType = ((ExecutableType)
+                        ctx.types().asMemberOf((DeclaredType) concreteClass.asType(), method.concreteMethod()))
+                .getReturnType();
         if (!isTypeAccessible(returnType, resourcePkg, elements)) {
             return false;
         }
@@ -305,20 +312,22 @@ public final class ExecutionPlanEmitter {
             }
         }
 
-        // Gate 4: declared parameter types must erase like their types as resource members
-        Types types = ctx.types();
-        ExecutableType memberType =
-                (ExecutableType) types.asMemberOf((DeclaredType) concreteClass.asType(), method.concreteMethod());
-        List<? extends VariableElement> declared = method.concreteMethod().getParameters();
-        for (int i = 0; i < declared.size(); i++) {
-            TypeMirror declaredErasure = types.erasure(declared.get(i).asType());
-            TypeMirror memberErasure =
-                    types.erasure(memberType.getParameterTypes().get(i));
-            if (!types.isSameType(declaredErasure, memberErasure)) {
+        // A raw cast of a parameterized member can make same-erasure overloads ambiguous.
+        for (int i = 0; i < method.params().size(); i++) {
+            TypeMirror type = method.params().get(i).type();
+            if (type instanceof DeclaredType declared
+                    && !declared.getTypeArguments().isEmpty()
+                    && !ctx.types()
+                            .isSameType(
+                                    ctx.types().erasure(type),
+                                    ctx.types()
+                                            .erasure(method.concreteMethod()
+                                                    .getParameters()
+                                                    .get(i)
+                                                    .asType()))) {
                 return false;
             }
         }
-
         return true;
     }
 
@@ -327,7 +336,9 @@ public final class ExecutionPlanEmitter {
      *
      * <p>Primitive types and {@code void} are always accessible. For declared types: {@code PUBLIC}
      * types are accessible everywhere. For package-private or protected types, accessibility
-     * requires the type to be in the same package as the generated companion.
+     * requires the type to be in the same package as the generated companion. A private type, or
+     * one nested in a private class, is never accessible, and an array is as accessible as its
+     * element type.
      *
      * @param type        the type to check
      * @param fromPackage the package where the generated code lives
@@ -343,20 +354,32 @@ public final class ExecutionPlanEmitter {
         if (kind.isPrimitive() || kind == TypeKind.VOID || kind == TypeKind.NULL) {
             return true;
         }
-        // Erase to get the declared element
+        // Erase to get the declared element; an array is as accessible as its element type
         TypeMirror erased = ctx.types().erasure(type);
+        while (erased instanceof javax.lang.model.type.ArrayType array) {
+            erased = array.getComponentType();
+            if (erased.getKind().isPrimitive()) {
+                return true;
+            }
+        }
         var element = ctx.types().asElement(erased);
         if (!(element instanceof TypeElement te)) {
-            // Array or other non-declared type — treat as accessible
             return true;
         }
-        // PUBLIC types are accessible from any package
-        if (te.getModifiers().contains(Modifier.PUBLIC)) {
-            return true;
+        // A type is accessible when it, and every class that encloses it, is not private and is
+        // either public or declared in the generated companion's package.
+        for (Element current = te; current instanceof TypeElement; current = current.getEnclosingElement()) {
+            Set<Modifier> modifiers = current.getModifiers();
+            if (modifiers.contains(Modifier.PRIVATE)) {
+                return false;
+            }
+            if (!modifiers.contains(Modifier.PUBLIC)
+                    && !fromPackage.equals(
+                            elements.getPackageOf(current).getQualifiedName().toString())) {
+                return false;
+            }
         }
-        // Non-public: only accessible from the same package
-        String typePkg = elements.getPackageOf(te).getQualifiedName().toString();
-        return fromPackage.equals(typePkg);
+        return true;
     }
 
     // --- Private: static constant builders ---
@@ -377,6 +400,8 @@ public final class ExecutionPlanEmitter {
      * @param params              the parameter contracts in declaration order
      * @param concreteMethod      the enclosing concrete method (seeds each parameter's reflective
      *                            annotation fallback lookup — declaring class, name, param types)
+     * @param resourceClass       the {@link ClassName} of the resource the plan serves, against which a
+     *                            parameter type that cannot be written out is resolved at class-load time
      * @param planClass           the {@link ClassName} of the enclosing execution plan, used to name
      *                            the per-parameter standalone {@code ParameterMetadata} impls
      * @param emittedLiteralFqns  the per-round shared dedup set for {@code <Ann>$JaxRsLiteral} classes
@@ -385,6 +410,7 @@ public final class ExecutionPlanEmitter {
     private List<FieldSpec> buildParamMetaConstants(
             List<EffectiveParamContract> params,
             javax.lang.model.element.ExecutableElement concreteMethod,
+            ClassName resourceClass,
             ClassName planClass,
             Set<String> emittedLiteralFqns) {
         List<FieldSpec> result = new ArrayList<>();
@@ -422,9 +448,22 @@ public final class ExecutionPlanEmitter {
                 init.add("null, ");
             }
 
-            // genericType — emit TypeReference token for parameterized BODY types; null otherwise.
-            // Jackson TypeReference is already on the runtime classpath for body deserialization.
-            init.add("$L, ", buildGenericTypeExpr(pc));
+            // genericType — the declared type, as GenericTypeExpressions builds it; null for a source
+            // whose contract carries none.
+            int paramIndex = i;
+            init.add(
+                    "$L, ",
+                    genericTypes.of(
+                            pc,
+                            planClass.packageName(),
+                            typeClassExpr(pc.type()),
+                            () -> CodeBlock.of(
+                                    "new $T().resolvedParameterType($T.class, $S, new String[] {$L}, $L)",
+                                    GENERATED_DESCRIPTOR_SUPPORT,
+                                    resourceClass,
+                                    concreteMethod.getSimpleName().toString(),
+                                    declaredParameterFqns(concreteMethod),
+                                    paramIndex)));
 
             // defaultValue
             if (pc.defaultValue() != null) {
@@ -558,60 +597,13 @@ public final class ExecutionPlanEmitter {
     }
 
     /**
-     * Builds the {@code genericType} expression for a parameter's {@code ParamMeta} constructor
-     * argument in the execution plan.
-     *
-     * <p>For {@link JaxRsParamSource#BODY} parameters with a parameterized {@link DeclaredType},
-     * emits an anonymous Jackson {@code TypeReference} subclass literal that captures the full
-     * generic type. For non-body or non-parameterized types, emits {@code null}.
-     *
-     * @param pc the parameter contract
-     * @return the code block expression ({@code null} literal or TypeReference expression)
+     * Renders the declared parameter types of {@code method} as a comma-separated list of string literals
+     * in the form {@code GeneratedJaxRsDescriptorSupport#resolveMethod} accepts.
      */
-    private CodeBlock buildGenericTypeExpr(EffectiveParamContract pc) {
-        if (pc.genericType() == null || pc.source() != JaxRsParamSource.BODY) {
-            return CodeBlock.of("null");
-        }
-        if (!(pc.genericType() instanceof DeclaredType dt)
-                || dt.getTypeArguments().isEmpty()) {
-            return CodeBlock.of("null");
-        }
-        String sourceType = sourceTypeName(pc.genericType());
-        return CodeBlock.of("new com.fasterxml.jackson.core.type.TypeReference<$L>() {}.getType()", sourceType);
-    }
-
-    /**
-     * Returns the source-form type name (qualified name with type arguments, not binary) for
-     * embedding in a TypeReference literal.
-     *
-     * <p>Non-declared types (notably array type arguments such as the {@code Outer.Inner[]} in
-     * {@code List<Outer.Inner[]>}) go through
-     * {@link TypeMirrorFqn#erasedSourceFqn(TypeMirror, dev.vertique.codegen.CodegenContext)}, not
-     * {@link TypeMirrorFqn#erasedFqn(TypeMirror, dev.vertique.codegen.CodegenContext)}: this string
-     * is interpolated into the generated source, where a binary {@code Outer$Inner} base name would
-     * not compile.
-     *
-     * @param type the type mirror to render
-     * @return the source-form type name string
-     */
-    private String sourceTypeName(TypeMirror type) {
-        if (!(type instanceof DeclaredType dt)) {
-            return erasedSourceFqn(type);
-        }
-        var element = ctx.types().asElement(ctx.types().erasure(type));
-        String rawName =
-                element instanceof TypeElement te ? te.getQualifiedName().toString() : erasedSourceFqn(type);
-        var args = dt.getTypeArguments();
-        if (args.isEmpty()) {
-            return rawName;
-        }
-        StringBuilder sb = new StringBuilder(rawName).append('<');
-        for (int i = 0; i < args.size(); i++) {
-            if (i > 0) sb.append(", ");
-            sb.append(sourceTypeName(args.get(i)));
-        }
-        sb.append('>');
-        return sb.toString();
+    private CodeBlock declaredParameterFqns(javax.lang.model.element.ExecutableElement method) {
+        return method.getParameters().stream()
+                .map(parameter -> CodeBlock.of("$S", erasedFqn(parameter.asType())))
+                .collect(CodeBlock.joining(", "));
     }
 
     // --- Private: interface method builders ---
@@ -986,14 +978,6 @@ public final class ExecutionPlanEmitter {
      */
     private String erasedFqn(TypeMirror type) {
         return TypeMirrorFqn.erasedFqn(type, ctx);
-    }
-
-    /**
-     * Returns the erased source-form FQN of {@code type} — for strings interpolated into the
-     * generated source rather than resolved at runtime. Delegates to {@link TypeMirrorFqn}.
-     */
-    private String erasedSourceFqn(TypeMirror type) {
-        return TypeMirrorFqn.erasedSourceFqn(type, ctx);
     }
 
     /**

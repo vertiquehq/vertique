@@ -10,7 +10,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Artifact:** `vertique-deploy`
 > **Depends on:** `dev.vertique:vertique-core`
 
-Verticle lifecycle management with phase-ordered startup/shutdown, multi-instance support, and supervised restart. Verticles are grouped into `LifecyclePhase` buckets (`BOOTSTRAP` → `INFRA` → `SERVICES` → `EDGE`) for coarse ordering, with `priority` for fine-grained ordering within each phase. A separate `VerticleSupervisor` handles crash detection, exponential-backoff restart, and availability signalling.
+Verticle lifecycle management with phase-ordered startup/shutdown, multi-instance support, and supervised restart. Verticles are grouped into `LifecyclePhase` buckets (`BOOTSTRAP` → `INFRA` → `SERVICES` → `EDGE`) for coarse ordering, with `priority` for fine-grained ordering within each phase. A separate `VerticleSupervisor` restarts a verticle with exponential backoff after a fatal error is reported to it for that name, and signals availability. It does not watch deployments itself.
 
 ---
 
@@ -192,7 +192,7 @@ supervisor.reportRedeployFailure(name, cause);     // clears in-progress flag, s
 - Concurrent `reportFatalError` calls for the same name are de-duplicated via an internal `restartInProgress` flag
 - Each restart calls `deployer.undeploy(name)` before the redeploy action to avoid orphaned event bus consumers
 - If undeploy fails because the verticle is already dead (stale deployer tracking), the supervisor automatically calls `deployer.evict(name, expectedId)` via CAS so the name can be reused
-- The verticle is marked unavailable while restarting, and back to available on successful redeploy
+- The verticle is marked unavailable while restarting. It becomes available again only when the redeploy action calls `supervise` again for the name with the new deployment id; the supervisor does not see the redeploy action's result, so an action that does not re-register leaves the name unavailable. An action that throws synchronously is treated as a redeploy failure; an action that fails asynchronously must call `reportRedeployFailure`.
 - If re-registration after a restart is detected (same name), mutable state is reset but the restart timestamp history is preserved so the sliding window budget remains accurate
 
 **Re-registration on restart:** `supervise()` accepts re-registration of an already-supervised name. Mutable state (`available`, `restartInProgress`, `consecutiveRestarts`) is reset; restart timestamps are preserved.

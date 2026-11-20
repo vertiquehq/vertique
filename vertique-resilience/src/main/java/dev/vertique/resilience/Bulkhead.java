@@ -129,6 +129,7 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
         if (!accepted) {
             execution.requestClose();
         } else {
+            execution.bindCancellation();
             context.runOnContext(ignored -> execution.admit());
         }
         return execution.future();
@@ -257,6 +258,7 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
         private final Promise<T> result = Promise.promise();
         private final AtomicBoolean terminal = new AtomicBoolean();
         private Runnable deregistration = () -> {};
+        private volatile Runnable cancellationRegistration = () -> {};
 
         private Context context;
         private Supplier<Future<T>> operation;
@@ -372,6 +374,42 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
             publishFailure(failure);
         }
 
+        private void bindCancellation() {
+            ResilienceCancellation cancellation = observation == null ? null : observation.cancellation();
+            if (cancellation != null) {
+                cancellationRegistration = cancellation.onCancel(this::cancel);
+                if (terminal.get()) {
+                    cancellationRegistration.run();
+                }
+            }
+        }
+
+        /**
+         * Ends this execution because its cancellation was cancelled: leaves the queue or releases the
+         * permit, never starts the supplier, and fails the result with the reason on the execution's
+         * context. A supplier future already in flight is not cancelled; its late result is ignored.
+         */
+        private void cancel(Throwable reason) {
+            Context executionContext;
+            synchronized (stateMonitor) {
+                if (state == ExecutionState.TERMINAL) {
+                    return;
+                }
+                if (state == ExecutionState.WAITING) {
+                    waiting.remove(this);
+                    cancelQueueTimer();
+                } else if (state == ExecutionState.ACTIVE) {
+                    activeCalls--;
+                }
+                state = ExecutionState.TERMINAL;
+                terminal.set(true);
+                executionContext = context;
+                clearReferences();
+            }
+            onTerminal();
+            executionContext.runOnContext(ignored -> result.tryFail(reason));
+        }
+
         private void timeoutInQueue() {
             boolean timedOut;
             synchronized (stateMonitor) {
@@ -442,6 +480,7 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
                     return false;
                 }
                 activeCalls--;
+                state = ExecutionState.TERMINAL;
                 cancelQueueTimer();
                 clearReferences();
                 return true;
@@ -454,6 +493,7 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
         }
 
         private void onTerminal() {
+            cancellationRegistration.run();
             Execution<?> next;
             synchronized (stateMonitor) {
                 executions.remove(this);

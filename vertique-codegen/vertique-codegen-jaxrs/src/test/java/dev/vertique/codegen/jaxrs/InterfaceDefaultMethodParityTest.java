@@ -442,9 +442,9 @@ class InterfaceDefaultMethodParityTest {
                                 """)),
                                 1,
                                 List.of("GenericCrud"),
-                                false),
+                                true),
                         new ParityCase(
-                                "inherited generic superclass method binds its erasure and keeps reflective dispatch",
+                                "inherited generic superclass method binds its concrete type and uses typed dispatch",
                                 new TicketResource(),
                                 "TicketResource",
                                 List.of(src("GenericBase", """
@@ -461,7 +461,7 @@ class InterfaceDefaultMethodParityTest {
                                         """)),
                                 1,
                                 List.of("GenericBase"),
-                                false),
+                                true),
                         new ParityCase(
                                 "most specific interface default wins when the less specific one is listed first",
                                 new ReversedDocumentResource(),
@@ -529,7 +529,7 @@ class InterfaceDefaultMethodParityTest {
                                         """)),
                                 1,
                                 List.of("CreateApi"),
-                                false))
+                                true))
                 .map(Arguments::of);
     }
 

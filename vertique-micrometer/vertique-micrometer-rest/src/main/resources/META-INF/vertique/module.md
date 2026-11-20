@@ -10,7 +10,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Artifact:** `vertique-micrometer-rest`
 > **Depends on:** micrometer-core, rest-core, core, codegen-core
 
-Observe-only REST server metrics adapter. When installed alongside `RestCoreModule` (or `RestModule`)
+Observe-only REST server metrics adapter. When installed alongside `RestModule` (the JAX-RS mount)
 and `MicrometerModule`, it emits a per-request timer (`vertique.rest.server.requests`) that covers
 every JAX-RS operation request, and an in-flight-requests gauge (`vertique.rest.server.active`).
 
@@ -26,8 +26,12 @@ configuration keys beyond following `metrics.enabled`.
 
 ## When To Use It
 
-Install `vertique-micrometer-rest` whenever an application exposes an HTTP server via
-`RestModule`/`RestCoreModule` and metrics are enabled. Pair it with `vertique-micrometer-core` and
+Install `vertique-micrometer-rest` whenever an application serves JAX-RS resources through
+`RestModule` and metrics are enabled. The JAX-RS mount is what is metered: the gauge is
+incremented by the request interceptor, which only the JAX-RS mount and the WebSocket mount call,
+and the timer records only requests that a JAX-RS operation route claimed. An application that
+includes `RestCoreModule` without a JAX-RS mount gets no request timer series, and the
+active-requests gauge never moves. Pair it with `vertique-micrometer-core` and
 at least one backend module (e.g., `vertique-micrometer-registry-prometheus`) to make the emitted
 meters visible. Without a backend the injected `MeterRegistry` is an empty composite whose recording
 is a no-op.
@@ -162,7 +166,7 @@ Outcome mapping:
 | other / 0 | `UNKNOWN` |
 
 Prometheus rendering: `vertique_rest_server_requests_seconds_count` /
-`vertique_rest_server_requests_seconds_sum` / `vertique_rest_server_requests_seconds_bucket`.
+`vertique_rest_server_requests_seconds_sum` / `vertique_rest_server_requests_seconds_bucket`. Buckets appear only when `metrics.histograms.enabled=true`; with the default `false`, the timer publishes only `_count`, `_sum` and `_max`.
 
 ### `vertique.rest.server.active` — Gauge
 
@@ -202,5 +206,5 @@ only those type adaptations; the optional `MetricsConfig` binding remains hand-w
 | `vertique-micrometer-core` | `MetricsConfig` / `metrics.enabled` gate |
 | `vertique-rest-core` | Completion listener and request interceptor SPIs |
 | `vertique-core` | `OrderedExtension` |
-| `vertique-codegen-core` | Codegen support for generated registrations |
+| `vertique-codegen-core` | Wiring annotations for this module's components; `provided`, so it is not on a consumer's runtime classpath |
 | `io.micrometer:micrometer-core` | `MeterRegistry`, `Timer`, `Gauge`, `Tags` |

@@ -17,6 +17,7 @@ import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
+import dev.vertique.workflow.events.WorkflowEventType;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.plan.RaceSafety;
@@ -93,6 +94,8 @@ public class PgWorkflowEngineRaceJoinSupersedesOpenWaitsIT {
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_race_supersede_waits_test")
             .withMigration("classpath:db/migration/workflow");
+
+    static final RecordedWorkflowEvents events = new RecordedWorkflowEvents();
 
     static Pool pool;
     static WorkflowEngineHandle engine;
@@ -202,7 +205,7 @@ public class PgWorkflowEngineRaceJoinSupersedesOpenWaitsIT {
                 instances,
                 history,
                 dedup,
-                Set.of(),
+                Set.of(events),
                 Set.of(IntentKind.WORKFLOW_EVENT),
                 timerStore,
                 taskStore,
@@ -363,6 +366,13 @@ public class PgWorkflowEngineRaceJoinSupersedesOpenWaitsIT {
                     assertTrue(ar.succeeded(), "full cascade must succeed: " + ar.cause());
                     String branchBStatus = ar.result().iterator().next().getString("status");
                     assertEquals("SUPERSEDED", branchBStatus, "branch-b token must be SUPERSEDED");
+                    // The loser's task is reported as cancelled, as the task of a single-path instance is
+                    var cancelled = events.of(idRef.get(), WorkflowEventType.TASK_CANCELLED);
+                    assertEquals(1, cancelled.size(), "the loser's task cancellation must be reported once");
+                    assertEquals("task-step", cancelled.getFirst().stepId());
+                    assertEquals(
+                            "BRANCH_CANCELLED",
+                            cancelled.getFirst().attributes().get("cause"));
                     ctx.completeNow();
                 }));
     }

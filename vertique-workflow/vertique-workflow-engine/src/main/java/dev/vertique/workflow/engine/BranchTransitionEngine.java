@@ -7,12 +7,15 @@ import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.DispatchBoundary;
 import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.core.context.InboundContextInitializer;
+import dev.vertique.workflow.actor.WorkflowActorMaps;
 import dev.vertique.workflow.dedup.WorkflowDedupScopes;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.TimerCommandSpec;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
+import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
+import dev.vertique.workflow.events.WorkflowEventType;
 import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowSubjectVersionUnavailableException;
@@ -86,6 +89,8 @@ import java.util.UUID;
 final class BranchTransitionEngine {
 
     private final BranchTokenRepository<SqlClient> branchTokens;
+    private final WorkflowInstanceRepository<SqlClient> instances;
+    private final WorkflowEventEmitter eventEmitter;
     private final WorkflowDedupRepository<SqlClient> dedup;
     private final WorkflowHistoryRepository<SqlClient> history;
     private final RecorderRouter recorders;
@@ -143,6 +148,7 @@ final class BranchTransitionEngine {
      * Creates a new engine.
      *
      * @param branchTokens branch-token repository
+     * @param instances    instance repository (read to report the events of a branch-owned task)
      * @param dedup        dedup repository (used for the dispatch-dedup gate)
      * @param history      history repository (used to assign sequence numbers + append entries)
      * @param recorders    side-effect recorder router
@@ -160,6 +166,7 @@ final class BranchTransitionEngine {
     @Inject
     BranchTransitionEngine(
             BranchTokenRepository<SqlClient> branchTokens,
+            WorkflowInstanceRepository<SqlClient> instances,
             WorkflowDedupRepository<SqlClient> dedup,
             WorkflowHistoryRepository<SqlClient> history,
             RecorderRouter recorders,
@@ -173,6 +180,8 @@ final class BranchTransitionEngine {
         this.signalWaits = signalWaits;
         this.schemaProducer = schemaProducer;
         this.branchTokens = branchTokens;
+        this.instances = instances;
+        this.eventEmitter = new WorkflowEventEmitter(recorders, clock);
         this.dedup = dedup;
         this.history = history;
         this.recorders = recorders;
@@ -192,6 +201,7 @@ final class BranchTransitionEngine {
      */
     BranchTransitionEngine(
             BranchTokenRepository<SqlClient> branchTokens,
+            WorkflowInstanceRepository<SqlClient> instances,
             WorkflowDedupRepository<SqlClient> dedup,
             WorkflowHistoryRepository<SqlClient> history,
             RecorderRouter recorders,
@@ -203,6 +213,7 @@ final class BranchTransitionEngine {
             SignalWaits signalWaits) {
         this(
                 branchTokens,
+                instances,
                 dedup,
                 history,
                 recorders,
@@ -221,6 +232,7 @@ final class BranchTransitionEngine {
      */
     BranchTransitionEngine(
             BranchTokenRepository<SqlClient> branchTokens,
+            WorkflowInstanceRepository<SqlClient> instances,
             WorkflowDedupRepository<SqlClient> dedup,
             WorkflowHistoryRepository<SqlClient> history,
             RecorderRouter recorders,
@@ -229,7 +241,18 @@ final class BranchTransitionEngine {
             Clock clock,
             dev.vertique.context.DurableContextPropagator propagator,
             SignalWaits signalWaits) {
-        this(branchTokens, dedup, history, recorders, commands, taskStore, clock, propagator, null, signalWaits);
+        this(
+                branchTokens,
+                instances,
+                dedup,
+                history,
+                recorders,
+                commands,
+                taskStore,
+                clock,
+                propagator,
+                null,
+                signalWaits);
     }
 
     /**
@@ -238,6 +261,7 @@ final class BranchTransitionEngine {
      */
     BranchTransitionEngine(
             BranchTokenRepository<SqlClient> branchTokens,
+            WorkflowInstanceRepository<SqlClient> instances,
             WorkflowDedupRepository<SqlClient> dedup,
             WorkflowHistoryRepository<SqlClient> history,
             RecorderRouter recorders,
@@ -245,7 +269,7 @@ final class BranchTransitionEngine {
             TaskStore<SqlClient> taskStore,
             Clock clock,
             SignalWaits signalWaits) {
-        this(branchTokens, dedup, history, recorders, commands, taskStore, clock, null, null, signalWaits);
+        this(branchTokens, instances, dedup, history, recorders, commands, taskStore, clock, null, null, signalWaits);
     }
 
     // --- Public entry points ---
@@ -1131,7 +1155,8 @@ final class BranchTransitionEngine {
                 token.branchId(), // branchId
                 WorkflowScopes.DEFAULT,
                 htn.requireVersionStability(),
-                null); // reservationCommandId
+                null, // reservationCommandId
+                htn.taskType());
     }
 
     /**
@@ -1157,15 +1182,47 @@ final class BranchTransitionEngine {
                 .compose(seq -> {
                     String histPayload = Json.encode(new TaskCreatedHistoryPayload(stepId, taskId, assignment, dueAt));
                     return history.append(
-                            new WorkflowHistoryEntry(
-                                    token.workflowId(),
-                                    seq,
-                                    WorkflowEntryType.BRANCH_TASK_CREATED,
-                                    histPayload,
-                                    clock.instant()),
-                            tx);
+                                    new WorkflowHistoryEntry(
+                                            token.workflowId(),
+                                            seq,
+                                            WorkflowEntryType.BRANCH_TASK_CREATED,
+                                            histPayload,
+                                            clock.instant()),
+                                    tx)
+                            .compose(v -> emitTaskCreated(token, stepId, taskId, assignment, dueAt, seq, tx));
                 })
                 .map(v -> token);
+    }
+
+    /** Reports a branch-owned task as created, as the task of a single-path instance is. */
+    private Future<Void> emitTaskCreated(
+            BranchToken token,
+            String stepId,
+            UUID taskId,
+            TaskAssignment assignment,
+            @Nullable Instant dueAt,
+            long seq,
+            SqlClient tx) {
+        return instances.findById(token.workflowId(), tx).compose(found -> {
+            if (found.isEmpty()) {
+                return Future.<Void>failedFuture(new IllegalStateException(
+                        "Workflow instance " + token.workflowId().value() + " of a branch task is missing"));
+            }
+            return eventEmitter.emitEvent(
+                    found.get(),
+                    WorkflowEventType.TASK_CREATED,
+                    seq,
+                    taskId,
+                    stepId,
+                    WorkflowEventEmitter.attrs(
+                            "assigneeType",
+                            assignment.getClass().getSimpleName(),
+                            "assigneeKey",
+                            WorkflowActorMaps.toMap(assignment).get("value"),
+                            "dueAt",
+                            dueAt != null ? dueAt.toString() : null),
+                    tx);
+        });
     }
 
     /**

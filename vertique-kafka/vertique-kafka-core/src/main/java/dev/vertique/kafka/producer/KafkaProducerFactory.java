@@ -74,7 +74,8 @@ import lombok.extern.slf4j.Slf4j;
  * hook is logged and swallowed, so it affects neither the send result nor the hooks after it. An
  * {@link Exception} or {@link AssertionError} is logged at warn level each time. A
  * {@link LinkageError} means the hook cannot run at all and would repeat for every send, so it is
- * logged at error level once per hook class for the life of the factory.
+ * logged at error level the first time and after that at most once every five minutes per hook
+ * class and callback.
  */
 @Slf4j
 public class KafkaProducerFactory {
@@ -136,6 +137,9 @@ public class KafkaProducerFactory {
      * @param serdeRegistry the value-format serde registry used to select a per-method serializer
      * @param captureHooks  the set of producer capture hooks; sorted by {@link OrderedExtension#comparator()}
      *                      at construction time
+     * @throws IllegalStateException if {@code bootstrap.servers} is missing or blank after the producer
+     *                      property layers are merged; nothing connects, and the shared producer is
+     *                      still created lazily on the first send
      */
     public KafkaProducerFactory(
             Vertx vertx,
@@ -151,6 +155,9 @@ public class KafkaProducerFactory {
         List<KafkaProducerCaptureHook> sorted = new ArrayList<>(captureHooks);
         sorted.sort(OrderedExtension.comparator());
         this.captureHooks = Collections.unmodifiableList(sorted);
+        // Validate the merged producer settings now so a missing address fails startup, not the first send.
+        // Only merges property bags; the producer itself is still created lazily.
+        buildProducerProperties();
     }
 
     // --- Proxy creation ---

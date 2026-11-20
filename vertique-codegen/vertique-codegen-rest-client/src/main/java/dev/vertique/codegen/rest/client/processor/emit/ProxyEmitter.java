@@ -60,13 +60,20 @@ import javax.lang.model.type.TypeMirror;
  * using {@code getSimpleName()} for nested interfaces would cause a {@code ClassNotFoundException}
  * at runtime and a silent fallback to the JDK reflective proxy.
  *
+ * <p>Failure delivery: every generated method body runs request construction and the dispatch inside
+ * one {@code try} block whose {@code catch} returns a failed {@link io.vertx.core.Future} carrying a
+ * {@link dev.vertique.rest.client.exception.RestClientException} ("Failed to build request for
+ * &lt;method&gt;", cause kept), exactly as {@code RestClientProxy#invoke} does for the JDK proxy, so a
+ * construction failure never escapes the call site.
+ *
  * <p>Null-safety and {@code @DefaultValue} semantics:
  * <ul>
  *   <li>{@code QUERY}, {@code HEADER}, {@code COOKIE}: if the argument is {@code null} and a
  *       {@code @DefaultValue} is present, the default is used; if {@code null} and no default,
  *       the call is omitted (matches runtime behaviour).</li>
  *   <li>{@code PATH}: if the argument is {@code null} and no {@code @DefaultValue} is present, a
- *       {@link dev.vertique.rest.client.exception.RestClientException} is thrown with a clear message.
+ *       {@link dev.vertique.rest.client.exception.RestClientException} is raised with a clear message and
+ *       delivered as a failed future.
  *       The reflective path's {@code RestClientRequestFactory.collectParamsWithMeta} (and its
  *       {@code buildPath} counterpart) fail fast identically on a null required {@code PATH} param —
  *       both proxy paths reject the call at the same point rather than letting an unresolved
@@ -180,10 +187,14 @@ public final class ProxyEmitter {
             // Use erased (raw) types for getDeclaredMethod — you cannot use .class on parameterized types
             List<VariableElement> params = new ArrayList<>(method.method().getParameters());
             CodeBlock.Builder getDeclaredMethod = CodeBlock.builder();
+            // The method may be one the interface inherits, so it is looked up on its own declaring
+            // interface; that is the Method key of the runtime scan.
+            ClassName declaringClassName =
+                    ClassName.get((TypeElement) method.method().getEnclosingElement());
             getDeclaredMethod.add(
                     "$L = $T.class.getDeclaredMethod($S",
                     constantName,
-                    clientClassName,
+                    declaringClassName,
                     method.method().getSimpleName().toString());
             for (VariableElement param : params) {
                 TypeName paramTypeName = resolveErasedTypeName(param.asType());
@@ -347,16 +358,21 @@ public final class ProxyEmitter {
                                 + "@return a {@link io.vertx.core.Future} completing with the deserialized response\n",
                         method.method().getSimpleName());
 
-        // Add parameters
-        for (VariableElement param : method.method().getParameters()) {
-            TypeName paramTypeName = resolveTypeName(param.asType());
-            builder.addParameter(
-                    ParameterSpec.builder(paramTypeName, param.getSimpleName().toString())
-                            .build());
+        // Add parameters, typed as members of the client interface (a bound type variable of an
+        // inherited declaration is the type the interface binds it to)
+        for (ParamModel param : method.params()) {
+            TypeName paramTypeName = resolveTypeName(param.type());
+            builder.addParameter(ParameterSpec.builder(
+                            paramTypeName, param.element().getSimpleName().toString())
+                    .build());
         }
 
         // Use a mangled local variable name to avoid colliding with user-supplied parameter names.
         // (e.g. a @BeanParam parameter named "req" would clash with the obvious "req" choice.)
+        // Request construction runs inside a try block so a construction failure (a null path value, an
+        // invalid @Url, a body or parameter that cannot be converted) is delivered as a failed future,
+        // exactly as RestClientProxy#invoke does for the JDK proxy flavor.
+        builder.beginControlFlow("try");
         builder.addStatement("$T _req_ = dispatcher.newRequest($L)", REST_REQUEST_BUILDER, metaFieldName);
 
         for (ParamModel param : method.params()) {
@@ -389,6 +405,13 @@ public final class ProxyEmitter {
         }
 
         builder.addStatement("return dispatcher.send(_req_, $L)", metaFieldName);
+        builder.nextControlFlow("catch ($T _e_)", Exception.class);
+        builder.addStatement(
+                "return $T.failedFuture(new $T($S, _e_))",
+                FUTURE,
+                REST_CLIENT_EXCEPTION,
+                "Failed to build request for " + method.method().getSimpleName());
+        builder.endControlFlow();
         return builder.build();
     }
 

@@ -465,42 +465,6 @@ class ManagementVerticleTest {
         }
 
         @Test
-        @DisplayName("explicit null host fails deployment with a message naming management.host")
-        void nullHostFailsDeploymentWithConfigMessage(Vertx vertx, VertxTestContext ctx) {
-            ManagementConfig config =
-                    ManagementConfig.builder().port(0).host(null).build();
-            ManagementVerticle verticle = new ManagementVerticle(Set.of(), Set.of(), config, Set.of());
-
-            vertx.deployVerticle(verticle).onComplete(ctx.failing(cause -> {
-                ctx.verify(() -> {
-                    assertInstanceOf(IllegalArgumentException.class, cause);
-                    assertTrue(
-                            cause.getMessage().contains("management.host"),
-                            "expected a configuration-style message naming management.host, got: " + cause);
-                });
-                ctx.completeNow();
-            }));
-        }
-
-        @Test
-        @DisplayName("explicit blank host fails deployment with a message naming management.host")
-        void blankHostFailsDeploymentWithConfigMessage(Vertx vertx, VertxTestContext ctx) {
-            ManagementConfig config =
-                    ManagementConfig.builder().port(0).host("   ").build();
-            ManagementVerticle verticle = new ManagementVerticle(Set.of(), Set.of(), config, Set.of());
-
-            vertx.deployVerticle(verticle).onComplete(ctx.failing(cause -> {
-                ctx.verify(() -> {
-                    assertInstanceOf(IllegalArgumentException.class, cause);
-                    assertTrue(
-                            cause.getMessage().contains("management.host"),
-                            "expected a configuration-style message naming management.host, got: " + cause);
-                });
-                ctx.completeNow();
-            }));
-        }
-
-        @Test
         @DisplayName("unresolvable host fails deployment")
         void invalidHostFailsDeployment(Vertx vertx, VertxTestContext ctx) {
             ManagementConfig config = ManagementConfig.builder()

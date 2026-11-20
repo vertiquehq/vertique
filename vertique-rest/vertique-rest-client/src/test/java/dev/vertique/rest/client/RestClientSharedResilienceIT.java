@@ -5,7 +5,9 @@ package dev.vertique.rest.client;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
+import static com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlMatching;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
@@ -54,6 +56,19 @@ class RestClientSharedResilienceIT {
         Future<String> rateLimited();
     }
 
+    /**
+     * A client outside the shared breaker. Its request pays the one-time costs of a fresh JVM (class
+     * loading, the WireMock server's first exchange) before the measured calls, whose breaker times a
+     * call out after one second.
+     */
+    @RestClient(name = "shared-resilience-warm-up")
+    interface WarmUpClient {
+
+        @GET
+        @Path("/warm-up")
+        Future<String> warmUp();
+    }
+
     @BeforeEach
     void resetWireMock() {
         wireMock.resetAll();
@@ -65,11 +80,22 @@ class RestClientSharedResilienceIT {
         wireMock.stubFor(
                 get(urlEqualTo("/other-server-error")).willReturn(aResponse().withStatus(502)));
         wireMock.stubFor(get(urlEqualTo("/rate-limited")).willReturn(aResponse().withStatus(429)));
+        wireMock.stubFor(get(urlEqualTo("/warm-up")).willReturn(aResponse().withStatus(200)));
 
         RestClientBuilder builder = RestClientBuilder.create(vertx).baseUrl("http://127.0.0.1:" + wireMock.getPort());
+        WarmUpClient warmUp = builder.build(WarmUpClient.class);
         SharedResilienceClient first = builder.build(SharedResilienceClient.class);
         SharedResilienceClient second = builder.build(SharedResilienceClient.class);
 
+        warmUp.warmUp().onComplete(testContext.succeeding(warm -> runMatrix(testContext, builder, first, second)));
+    }
+
+    /** Runs the calls whose outcomes the matrix fixes, one after the other. */
+    private static void runMatrix(
+            VertxTestContext testContext,
+            RestClientBuilder builder,
+            SharedResilienceClient first,
+            SharedResilienceClient second) {
         first.rateLimited().onComplete(testContext.failing(rateLimitFailure -> {
             first.serverError().onComplete(testContext.failing(serverFailure -> {
                 first.otherServerError().onComplete(testContext.failing(sharedBreakerFailure -> {
@@ -82,7 +108,9 @@ class RestClientSharedResilienceIT {
                                 assertThat(serverFailure).isInstanceOf(RestClientResponseException.class);
                                 assertThat(sharedBreakerFailure).isInstanceOf(RestClientUnavailableException.class);
                                 assertThat(secondFailure).isInstanceOf(RestClientResponseException.class);
-                                assertThat(wireMock.getAllServeEvents()).hasSize(3);
+                                assertThat(wireMock.findAll(getRequestedFor(
+                                                urlMatching("/(rate-limited|server-error|other-server-error)"))))
+                                        .hasSize(3);
                                 testContext.completeNow();
                             });
                         }));

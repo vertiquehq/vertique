@@ -305,6 +305,25 @@ public final class EventsProcessor extends AbstractProcessor {
             pkg = FALLBACK_PACKAGE;
         }
 
+        // The generated module calls each observer from its own package, so the declaring class
+        // must be reachable from there.
+        boolean reachable = true;
+        for (ObserverInfo observer : observers) {
+            if (!isReachableFrom(observer.beanType(), pkg)) {
+                ctx.diagnostics()
+                        .error(
+                                observer.method(),
+                                Diagnostics.observerClassMustBeAccessible(
+                                        observer.beanType().getQualifiedName() + "."
+                                                + observer.method().getSimpleName(),
+                                        pkg));
+                reachable = false;
+            }
+        }
+        if (!reachable) {
+            return false;
+        }
+
         // --- Step 3: Emit one X$Event publisher per inventory type ---
         // Each publisher is placed in its event type's own package: two distinct-FQN event
         // types sharing the same simple name (e.g. com.acme.OrderCreated, com.shop.OrderCreated)
@@ -438,6 +457,15 @@ public final class EventsProcessor extends AbstractProcessor {
      */
     private boolean isJavaLangObject(TypeMirror type) {
         return ctx.types().erasure(type).toString().equals("java.lang.Object");
+    }
+
+    /**
+     * Reports whether code in package {@code pkg} can name the top-level class {@code type}: the class
+     * is public, or it is declared in {@code pkg} itself.
+     */
+    private boolean isReachableFrom(TypeElement type, String pkg) {
+        return type.getModifiers().contains(Modifier.PUBLIC)
+                || ctx.elements().getPackageOf(type).getQualifiedName().contentEquals(pkg);
     }
 
     /**

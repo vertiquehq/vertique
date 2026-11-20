@@ -9,7 +9,7 @@ import dev.vertique.ratelimit.RateLimitFailureMode;
 import dev.vertique.ratelimit.RateLimiters;
 import dev.vertique.rest.core.middleware.Middleware;
 import dev.vertique.rest.core.router.HttpVerticle;
-import dev.vertique.rest.security.RequestOriginConfig;
+import dev.vertique.rest.core.security.AuthEnforcementCapability;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.ext.web.client.WebClient;
@@ -92,8 +92,7 @@ class RestRateLimitModuleProgrammaticPolicyIT {
         // IP-dimension startup validation passes; OriginCaptureMiddleware itself is deliberately
         // NOT deployed below, so RequestOrigin is absent from the routing context at request time —
         // forcing the middleware down its failureMode-classification branch.
-        Optional<RequestOriginConfig> originCaptureBinding =
-                Optional.of(new RequestOriginConfig(Set.of(), 16, false, false));
+        Optional<AuthEnforcementCapability> originCaptureBinding = Optional.of(AuthEnforcementCapability.INSTANCE);
 
         Middleware edge =
                 RestRateLimitModule.rateLimitEdgeMiddlewareContribution(config, rateLimiters, originCaptureBinding);

@@ -8,8 +8,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.rest.core.ValidationErrorDetail;
+import dev.vertique.rest.core.request.FileContentVerifier;
 import dev.vertique.rest.core.request.FilePart;
-import dev.vertique.rest.jaxrs.validation.FileContentVerifier;
 import dev.vertique.rest.test.RestTestContributions;
 import dev.vertique.rest.test.RestTestMount;
 import dev.vertique.rest.test.RestTestMounts;

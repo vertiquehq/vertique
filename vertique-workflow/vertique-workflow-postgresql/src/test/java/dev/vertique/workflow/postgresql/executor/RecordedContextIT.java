@@ -335,6 +335,42 @@ public class RecordedContextIT {
     }
 
     @Test
+    @DisplayName("a branch timer drive fills a namespace the token lacks from the instance carrier; the token wins")
+    void branchTimerDriveFillsMissingNamespacesFromTheInstanceCarrier() {
+        SecurityProbe probe = new SecurityProbe();
+        try (SignalFixture f =
+                new SignalFixture(db.toPoolConfig(), new BranchWithTimerAndTask(probe), List.of(), new JsonObject())) {
+            probe.attach(f.fixture);
+            TimerFixture timers = new TimerFixture(f);
+            Node node = f.node("engine").identityCarriage().build();
+
+            // Given an instance whose carrier holds correlation I, tenant T and an identity snapshot, and a branch
+            // token whose carrier holds only correlation C
+            WorkflowInstanceId id = f.waiting(node, "branch-fill");
+            DurableMetadata instanceCarrier = DurableMetadata.of(
+                            "correlation", new JsonObject().put("correlationId", "I"))
+                    .with("tenant", new JsonObject().put("tenantId", "T"))
+                    .with(IDENTITY_NAMESPACE, new JsonObject().put("subject", "user-77"));
+            await(f.fixture
+                    .observer()
+                    .preparedQuery("UPDATE workflow_instances SET metadata = $1 WHERE id = $2")
+                    .execute(Tuple.of(instanceCarrier.toCarrier(), id.value())));
+            seedTokenCarrier(f, id, "a", DurableMetadata.of("correlation", new JsonObject().put("correlationId", "C")));
+
+            // When the branch timer fires
+            timers.dueNow(timers.only(id, "FIRE").id());
+            f.idle(node, id);
+
+            // Then the branch's next step saw the tenant the token lacked, kept its own correlation, and no identity
+            assertThat(probe.at("timer")).singleElement().satisfies(seen -> {
+                assertNoIdentityBound(seen);
+                assertThat(seen.tenant()).contains("T");
+                assertThat(seen.correlation()).contains("C");
+            });
+        }
+    }
+
+    @Test
     @DisplayName(
             "an executor started from a context with an identity and an origin bound binds only each instance's own")
     void executorStartedFromADirtyContextBindsOnlyEachInstancesOwnContext() {

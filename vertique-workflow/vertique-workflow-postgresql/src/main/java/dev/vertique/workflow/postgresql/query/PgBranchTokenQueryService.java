@@ -67,6 +67,8 @@ public final class PgBranchTokenQueryService {
             return base.map(rows -> rows.stream()
                     .filter(t -> effective.status() == null || t.status() == effective.status())
                     .filter(t -> effective.waitType() == null || t.waitType() == effective.waitType())
+                    .filter(t ->
+                            effective.branchId() == null || effective.branchId().equals(t.branchId()))
                     .toList());
         });
     }

@@ -125,6 +125,7 @@ class DelayedJobClientProxy implements InvocationHandler {
         int priority = effectivePriority;
         int maxAttempts = effectiveMaxAttempts;
         String jobId = null;
+        String idempotencyKey = null;
         DurableMetadata premergedMetadata = null;
 
         if (options != null) {
@@ -141,6 +142,7 @@ class DelayedJobClientProxy implements InvocationHandler {
                 maxAttempts = options.maxAttempts();
             }
             jobId = options.jobId();
+            idempotencyKey = options.idempotencyKey();
             premergedMetadata = options.premergedMetadata();
         }
 
@@ -151,7 +153,8 @@ class DelayedJobClientProxy implements InvocationHandler {
                 .queue(queue)
                 .priority(priority)
                 .maxAttempts(maxAttempts)
-                .jobId(jobId);
+                .jobId(jobId)
+                .idempotencyKey(idempotencyKey);
 
         // When premergedMetadata is non-null, the caller has already captured and merged durable
         // context. Thread the map onto the job and route to the no-recapture enqueue variant so

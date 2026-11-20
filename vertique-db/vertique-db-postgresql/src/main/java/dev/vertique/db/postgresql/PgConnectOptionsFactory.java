@@ -3,6 +3,7 @@
 
 package dev.vertique.db.postgresql;
 
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.db.DbPoolConfig;
 import io.vertx.core.net.ClientSSLOptions;
 import io.vertx.core.net.JksOptions;
@@ -28,11 +29,15 @@ import java.util.Locale;
  */
 public final class PgConnectOptionsFactory {
 
+    private static final int DEFAULT_PORT = 5432;
+    private static final int MAX_PORT = 65_535;
+
     private PgConnectOptionsFactory() {}
 
     /**
      * Creates {@link PgConnectOptions} from the given pool config, applying all connection
-     * settings including SSL/TLS when configured.
+     * settings including SSL/TLS when configured. An omitted port ({@code 0}) connects on the
+     * PostgreSQL default port, 5432.
      *
      * @param config the database pool configuration
      * @return fully configured connect options
@@ -40,7 +45,7 @@ public final class PgConnectOptionsFactory {
     public static PgConnectOptions create(DbPoolConfig config) {
         PgConnectOptions connectOptions = new PgConnectOptions()
                 .setHost(config.host())
-                .setPort(config.port())
+                .setPort(effectivePort(config.port()))
                 .setDatabase(config.database())
                 .setUser(config.user())
                 .setPassword(config.password())
@@ -54,6 +59,20 @@ public final class PgConnectOptionsFactory {
 
         applySsl(connectOptions, config);
         return connectOptions;
+    }
+
+    /**
+     * Returns the port to connect on: the PostgreSQL default when none is configured ({@code 0}),
+     * otherwise the configured port, which must be a valid TCP port.
+     */
+    private static int effectivePort(int port) {
+        if (port == 0) {
+            return DEFAULT_PORT;
+        }
+        if (port < 1 || port > MAX_PORT) {
+            throw new ConfigurationException("db.port must be between 1 and " + MAX_PORT);
+        }
+        return port;
     }
 
     // --- SSL ---

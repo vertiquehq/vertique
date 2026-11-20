@@ -124,7 +124,7 @@ Per-request timer. One sample is recorded per `McpRequestCompletedEvent`.
 | `transport.outcome` | `WRITTEN`, `DISCONNECTED`, `RESET`, `WRITE_FAILED` | `McpTransportOutcome` enum name |
 
 Prometheus rendering: `vertique_mcp_server_requests_seconds_count` /
-`vertique_mcp_server_requests_seconds_sum` / `vertique_mcp_server_requests_seconds_bucket`.
+`vertique_mcp_server_requests_seconds_sum` / `vertique_mcp_server_requests_seconds_bucket`. Buckets appear only when `metrics.histograms.enabled=true`; with the default `false`, the timer publishes only `_count`, `_sum` and `_max`.
 
 ### `vertique.mcp.server.active` — Gauge
 
@@ -156,7 +156,7 @@ Recorded only for `TOOLS_CALL` requests, once per completed request.
 | `error.type` | see above | |
 
 Prometheus rendering: `vertique_mcp_tool_calls_seconds_count` /
-`vertique_mcp_tool_calls_seconds_sum` / `vertique_mcp_tool_calls_seconds_bucket`.
+`vertique_mcp_tool_calls_seconds_sum` / `vertique_mcp_tool_calls_seconds_bucket`. Buckets appear only when `metrics.histograms.enabled=true`; with the default `false`, the timer publishes only `_count`, `_sum` and `_max`.
 
 ---
 
