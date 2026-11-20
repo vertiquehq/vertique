@@ -27,9 +27,10 @@ this module when the work fires once, at a known time, and must survive a restar
 
 ## When To Use It
 
-Install it when work must run **later** and **exactly once**, and losing it on a restart is
-unacceptable — send a reminder in an hour, retry a webhook with backoff, expire a reservation at a
-deadline. Enqueue inside your own transaction when the job must not exist unless the business write
+Install it when work must run **later**, and losing it on a restart is unacceptable — send a
+reminder in an hour, retry a webhook with backoff, expire a reservation at a deadline. Delivery is
+**at-least-once**, not exactly-once, so handlers must be idempotent (see
+[Core Concepts](#core-concepts)). Enqueue inside your own transaction when the job must not exist unless the business write
 commits. Reach for `dev.vertique:vertique-job-cron` instead for recurring wall-clock schedules, and
 for a plain `dev.vertique:vertique-services` call when you need sub-second latency — this queue is
 poll-based. PostgreSQL is required: the module pulls in `dev.vertique:vertique-job-postgresql`, and
@@ -60,13 +61,20 @@ replies within `job.coordinator.executionTimeoutMs` is an **interruption**, not 
 it is atomically marked `ABANDONED` and re-enqueued when attempts remain, or dead-lettered directly
 when they are exhausted. Either way exactly one state transition is recorded.
 
+**Delivery is at-least-once.** An interruption does not stop the handler that is still running: the
+watchdog re-enqueues an execution with attempts remaining after `executionTimeoutMs`, and dead-node
+recovery re-enqueues such executions from a node that missed its heartbeats, so the same job can run again while an earlier attempt
+is still executing or after it has already had side effects. A handler that is retried after a
+failure also runs again by design. **Make handlers idempotent**, for example by deduplicating on the
+stable `executionId` or on a business key.
+
 Backoff is configured **per queue**, not per job:
 
 | Strategy | Delay for attempt *n* (zero-based) |
 |---|---|
 | `FIXED` | `backoffBaseDelayMs` |
 | `LINEAR` *(default)* | `min(backoffBaseDelayMs × (n + 1), backoffMaxDelayMs)` |
-| `EXPONENTIAL` | `backoffBaseDelayMs × 2ⁿ`, capped at `backoffMaxDelayMs` |
+| `EXPONENTIAL` | `backoffBaseDelayMs × 2ⁿ`, capped at `backoffMaxDelayMs`, plus a random jitter of up to `min(delay, 1000 ms)` added after the cap, so the delay can exceed `backoffMaxDelayMs` by up to one second |
 
 **Ordering and concurrency.** Claiming is exclusive across nodes and poller instances, so deploying
 more instances is always safe, and higher `priority` is claimed first. There is **no** per-job
@@ -394,7 +402,7 @@ annotation-based handler resolves to the framework defaults (`"default"` queue, 
 | `maxConcurrentJobs` | `5` | Maximum in-flight dispatches per poller instance |
 | `backoffStrategy` | `"LINEAR"` | `FIXED`, `LINEAR` or `EXPONENTIAL`, case-insensitive |
 | `backoffBaseDelayMs` | `30000` | Base retry delay |
-| `backoffMaxDelayMs` | `3600000` | Retry delay cap |
+| `backoffMaxDelayMs` | `3600000` | Retry delay cap (before `EXPONENTIAL` jitter) |
 | `instances` | `1` | Poller verticles deployed for this queue |
 
 Every numeric field must be `> 0` and `backoffStrategy` must name a known strategy; a violation fails
