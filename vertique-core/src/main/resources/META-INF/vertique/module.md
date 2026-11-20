@@ -467,8 +467,8 @@ literals and reflection-free `java.lang.reflect.Type` graphs). Application code 
   per-module JaCoCo exclude.
 - JaCoCo applies a class-level marker to that class file only, never to its nested or anonymous
   classes. That is why generators mark nested types and anonymous-class methods individually. The
-  constructor of an anonymous class cannot be annotated, so one line per anonymous literal can
-  still show in a report.
+  constructor of an anonymous class cannot be annotated, so one line per anonymous class (an annotation literal, or an empty
+  `new TypeReference<…>() {}`) can still show in a report.
 - Generators keep emitting `javax.annotation.processing.Generated` as well. It has `SOURCE`
   retention, never reaches the class file, and serves source-level tools only.
 - Generated sources reference the marker, so code that runs a Vertique processor needs
