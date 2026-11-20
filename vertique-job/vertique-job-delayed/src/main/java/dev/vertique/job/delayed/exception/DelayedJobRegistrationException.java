@@ -6,7 +6,8 @@ package dev.vertique.job.delayed.exception;
 import java.util.List;
 
 /**
- * Thrown when one or more delayed job handler registration violations are found during startup.
+ * Thrown when one or more delayed job registration violations (handler methods or typed executors) are
+ * found during startup.
  *
  * <p>All violations are collected before throwing so that the complete set of problems
  * is reported in a single exception.
@@ -24,7 +25,7 @@ public class DelayedJobRegistrationException extends DelayedJobConfigurationExce
      * @param violations the list of violation messages (must not be empty)
      */
     public DelayedJobRegistrationException(List<String> violations) {
-        super("Delayed job handler registration failed with "
+        super("Delayed job registration failed with "
                 + violations.size()
                 + " violation(s):\n  - "
                 + String.join("\n  - ", violations));

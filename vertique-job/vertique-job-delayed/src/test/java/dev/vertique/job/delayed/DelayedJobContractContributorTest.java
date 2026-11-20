@@ -10,12 +10,14 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.job.JobContext;
+import dev.vertique.job.delayed.exception.DelayedJobRegistrationException;
 import dev.vertique.services.ServiceContractRegistry.ContractEntry;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamSource;
 import io.vertx.core.Future;
 import io.vertx.core.json.JsonObject;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
@@ -291,25 +293,39 @@ class DelayedJobContractContributorTest {
     class ValidationFailures {
 
         @Test
-        @DisplayName("throws IllegalStateException when @DelayedJobContract name is invalid")
+        @DisplayName("throws DelayedJobRegistrationException when @DelayedJobContract name is invalid")
         void throwsOnInvalidContractName() {
             DelayedJobContractContributor contributor =
                     new DelayedJobContractContributor(Set.of(new InvalidNameJobExecutor()));
 
-            IllegalStateException ex =
-                    assertThrows(IllegalStateException.class, () -> contributor.contribute(new JsonObject()));
-            assertTrue(ex.getMessage().contains("Invalid @DelayedJobContract name"), ex.getMessage());
+            DelayedJobRegistrationException ex =
+                    assertThrows(DelayedJobRegistrationException.class, () -> contributor.contribute(new JsonObject()));
+            assertEquals(1, ex.violations().size(), ex.getMessage());
+            assertTrue(ex.violations().getFirst().contains("Invalid @DelayedJobContract name"), ex.getMessage());
         }
 
         @Test
-        @DisplayName("throws IllegalStateException when contract interface lacks @DelayedJobContract")
+        @DisplayName("throws DelayedJobRegistrationException when contract interface lacks @DelayedJobContract")
         void throwsWhenAnnotationMissing() {
             DelayedJobContractContributor contributor =
                     new DelayedJobContractContributor(Set.of(new NoAnnotationJobExecutor()));
 
-            IllegalStateException ex =
-                    assertThrows(IllegalStateException.class, () -> contributor.contribute(new JsonObject()));
-            assertTrue(ex.getMessage().contains("must be annotated with @DelayedJobContract"), ex.getMessage());
+            DelayedJobRegistrationException ex =
+                    assertThrows(DelayedJobRegistrationException.class, () -> contributor.contribute(new JsonObject()));
+            assertEquals(1, ex.violations().size(), ex.getMessage());
+            assertTrue(
+                    ex.violations().getFirst().contains("must be annotated with @DelayedJobContract"), ex.getMessage());
+        }
+
+        @Test
+        @DisplayName("collects every executor violation into one DelayedJobRegistrationException")
+        void collectsAllViolations() {
+            DelayedJobContractContributor contributor = new DelayedJobContractContributor(
+                    new LinkedHashSet<>(List.of(new InvalidNameJobExecutor(), new NoAnnotationJobExecutor())));
+
+            DelayedJobRegistrationException ex =
+                    assertThrows(DelayedJobRegistrationException.class, () -> contributor.contribute(new JsonObject()));
+            assertEquals(2, ex.violations().size(), ex.getMessage());
         }
     }
 

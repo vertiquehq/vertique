@@ -5,6 +5,7 @@ package dev.vertique.job.delayed;
 
 import dev.vertique.core.util.TypeResolver;
 import dev.vertique.job.JobContext;
+import dev.vertique.job.delayed.exception.DelayedJobRegistrationException;
 import dev.vertique.resilience.annotation.ResilienceAnnotations;
 import dev.vertique.services.ServiceContractContributor;
 import dev.vertique.services.ServiceContractEntries;
@@ -75,12 +76,12 @@ public class DelayedJobContractContributor implements ServiceContractContributor
      * Produces one {@link ContractEntry} per registered executor.
      *
      * <p>All executors are processed before any error is thrown. If multiple executors fail
-     * validation, all error messages are collected and thrown together as a single
-     * {@link IllegalStateException}.
+     * validation, all violations are collected and thrown together as a single
+     * {@link DelayedJobRegistrationException}.
      *
      * @param config the application configuration (used for deployment option resolution)
      * @return list of contract entries; never {@code null}
-     * @throws IllegalStateException if any executor fails validation, with all error messages joined
+     * @throws DelayedJobRegistrationException if any executor fails validation, carrying every violation
      */
     @Override
     public List<ContractEntry<?>> contribute(JsonObject config) {
@@ -96,8 +97,7 @@ public class DelayedJobContractContributor implements ServiceContractContributor
         }
 
         if (!errors.isEmpty()) {
-            throw new IllegalStateException("Delayed job executor registration failed with " + errors.size()
-                    + " error(s):\n" + String.join("\n", errors));
+            throw new DelayedJobRegistrationException(errors);
         }
 
         return entries;
