@@ -574,6 +574,96 @@ class ResolvedKafkaConsumerConfigTest {
                     "message must name the retry config path, was: " + ex.getMessage());
         }
 
+        /** Resolves a consumer with the given error strategy whose {@code retry} block is the given one. */
+        private ResolvedKafkaConsumerConfig resolveWithStrategy(ErrorStrategy strategy, JsonObject retryBlock) {
+            JsonObject kafkaConfig = new JsonObject()
+                    .put("consumers", new JsonObject().put("consumer", new JsonObject().put("retry", retryBlock)));
+            return resolve("consumer", "topic", "group", true, CommitStrategy.AUTO, strategy, "", 30_000L, kafkaConfig);
+        }
+
+        private void assertNamesPathWithoutValue(ConfigurationException ex, String path, String value) {
+            assertTrue(
+                    String.valueOf(ex.getMessage()).contains(path),
+                    "message must name " + path + ", was: " + ex.getMessage());
+            for (Throwable t = ex; t != null; t = t.getCause()) {
+                assertFalse(
+                        String.valueOf(t.getMessage()).contains(value),
+                        "no message in the chain may echo the value, was: " + t.getMessage());
+            }
+        }
+
+        @Test
+        @DisplayName("an unknown retry.exhaustedStrategy names the path and does not echo the value")
+        void unknownExhaustedStrategyNamesPathWithoutValue() {
+            ConfigurationException ex = assertThrows(
+                    ConfigurationException.class,
+                    () -> resolveRetrying(new JsonObject().put("exhaustedStrategy", "MISTYPED_VALUE")));
+
+            assertNamesPathWithoutValue(ex, "kafka.consumers.consumer.retry.exhaustedStrategy", "MISTYPED_VALUE");
+        }
+
+        @Test
+        @DisplayName("an unknown errorStrategy and commitStrategy name their path and do not echo the value")
+        void unknownStrategiesNamePathWithoutValue() {
+            for (String key : java.util.List.of("errorStrategy", "commitStrategy")) {
+                JsonObject kafkaConfig = new JsonObject()
+                        .put(
+                                "consumers",
+                                new JsonObject().put("consumer", new JsonObject().put(key, "MISTYPED_VALUE")));
+                ConfigurationException ex = assertThrows(
+                        ConfigurationException.class,
+                        () -> resolve(
+                                "consumer",
+                                "topic",
+                                "group",
+                                true,
+                                CommitStrategy.AUTO,
+                                ErrorStrategy.SKIP,
+                                "",
+                                30_000L,
+                                kafkaConfig));
+
+                assertNamesPathWithoutValue(ex, "kafka.consumers.consumer." + key, "MISTYPED_VALUE");
+            }
+        }
+
+        @Test
+        @DisplayName("an invalid retry block fails whatever the error strategy")
+        void invalidRetryBlockFailsForEveryErrorStrategy() {
+            for (ErrorStrategy strategy : ErrorStrategy.values()) {
+                ConfigurationException unknown = assertThrows(
+                        ConfigurationException.class,
+                        () -> resolveWithStrategy(
+                                strategy, new JsonObject().put("exhaustedStrategy", "MISTYPED_VALUE")),
+                        strategy.name());
+                assertNamesPathWithoutValue(
+                        unknown, "kafka.consumers.consumer.retry.exhaustedStrategy", "MISTYPED_VALUE");
+
+                ConfigurationException retrying = assertThrows(
+                        ConfigurationException.class,
+                        () -> resolveWithStrategy(strategy, new JsonObject().put("exhaustedStrategy", "RETRY")),
+                        strategy.name());
+                assertTrue(retrying.getMessage().contains("kafka.consumers.consumer.retry"), retrying.getMessage());
+
+                ConfigurationException cap = assertThrows(
+                        ConfigurationException.class,
+                        () -> resolveWithStrategy(
+                                strategy,
+                                new JsonObject().put("backoffMs", 5_000L).put("maxBackoffMs", 1_000L)),
+                        strategy.name());
+                assertTrue(cap.getMessage().contains("kafka.consumers.consumer.retry"), cap.getMessage());
+            }
+        }
+
+        @Test
+        @DisplayName("a valid retry block on a consumer that does not retry resolves to no retry config")
+        void validRetryBlockOnNonRetryingConsumerResolvesToNull() {
+            ResolvedKafkaConsumerConfig config =
+                    resolveWithStrategy(ErrorStrategy.DEAD_LETTER, new JsonObject().put("maxRetries", 5));
+
+            assertNull(config.retryConfig());
+        }
+
         @Test
         @DisplayName("retry.maxRetries of zero is accepted for a RETRY consumer")
         void zeroMaxRetriesIsAccepted() {
