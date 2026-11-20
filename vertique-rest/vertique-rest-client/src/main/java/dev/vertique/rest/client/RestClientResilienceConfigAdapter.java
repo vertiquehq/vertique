@@ -109,7 +109,14 @@ final class RestClientResilienceConfigAdapter {
                 retryConfig == null ? Optional.empty() : Optional.of(defaultRetry()),
                 Optional.empty(),
                 Optional.empty());
-        ResiliencePolicyOverrides effectiveOverrides = registry.layer(annotations, overrides(retryConfig));
+        ResiliencePolicyOverrides configured = overrides(retryConfig);
+        if (usesInterfaceBreaker) {
+            // The shared interface breaker already carries the merged builder, interface and configured
+            // values field by field, so a configured breaker block must not be resolved again per method.
+            configured = new ResiliencePolicyOverrides(
+                    configured.timeout(), configured.retry(), Optional.empty(), configured.bulkhead());
+        }
+        ResiliencePolicyOverrides effectiveOverrides = registry.layer(annotations, configured);
         if (retryIsActive(annotations, effectiveOverrides, defaults)) {
             effectiveOverrides = withFallbackPolicy(effectiveOverrides);
         }
