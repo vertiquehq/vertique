@@ -77,6 +77,13 @@ class WorkflowPayloadsTest {
 
     private static final String SENTINEL = "ZZSENTINEL";
 
+    /** Returns an index that holds the given payload classes under their binary names. */
+    private static DefaultWorkflowTypeNames indexing(Class<?>... payloadTypes) {
+        DefaultWorkflowTypeNames names = new DefaultWorkflowTypeNames();
+        names.add(null, List.of(payloadTypes));
+        return names;
+    }
+
     @Test
     @DisplayName("an unresolvable decision class stays a definition exception that names the type")
     void unresolvableDecisionClassStaysADefinitionException() {
@@ -84,7 +91,8 @@ class WorkflowPayloadsTest {
         // When: it is validated; Then: a definition exception (not the payload exception) names the type
         WorkflowDefinitionException failure = assertThrows(
                 WorkflowDefinitionException.class,
-                () -> WorkflowPayloads.validateAndCoerceTaskPayload(new JsonObject(), "com.example.Missing"));
+                () -> WorkflowPayloads.validateAndCoerceTaskPayload(
+                        new JsonObject(), "com.example.Missing", new DefaultWorkflowTypeNames()));
 
         assertEquals(WorkflowDefinitionException.class, failure.getClass());
         assertTrue(failure.getMessage().contains("com.example.Missing"), "message must name the type");
@@ -237,7 +245,8 @@ class WorkflowPayloadsTest {
                 // Given: a void decision type name; When: an (empty) payload object is supplied
                 WorkflowInvalidPayloadException rejection = assertThrows(
                         WorkflowInvalidPayloadException.class,
-                        () -> WorkflowPayloads.validateAndCoerceTaskPayload(new JsonObject(), voidName),
+                        () -> WorkflowPayloads.validateAndCoerceTaskPayload(
+                                new JsonObject(), voidName, new DefaultWorkflowTypeNames()),
                         voidName);
 
                 // Then: one payload detail
@@ -252,7 +261,8 @@ class WorkflowPayloadsTest {
             // Given: a non-void decision type; When: the payload is null
             WorkflowInvalidPayloadException rejection = assertThrows(
                     WorkflowInvalidPayloadException.class,
-                    () -> WorkflowPayloads.validateAndCoerceTaskPayload(null, Comment.class.getName()));
+                    () -> WorkflowPayloads.validateAndCoerceTaskPayload(
+                            null, Comment.class.getName(), indexing(Comment.class)));
 
             // Then: one payload detail
             assertSingleDetail(rejection, "payload is required", "payload");
@@ -273,7 +283,8 @@ class WorkflowPayloadsTest {
             // When: it is validated against Comment
             WorkflowInvalidPayloadException rejection = assertThrows(
                     WorkflowInvalidPayloadException.class,
-                    () -> WorkflowPayloads.validateAndCoerceTaskPayload(payload, Comment.class.getName()));
+                    () -> WorkflowPayloads.validateAndCoerceTaskPayload(
+                            payload, Comment.class.getName(), indexing(Comment.class)));
 
             // Then: the frozen binding detail, the decode failure as cause, and no value or type name
             assertSingleDetail(rejection, "payload does not bind to the declared type", "binding");
