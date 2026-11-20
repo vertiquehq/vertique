@@ -318,6 +318,9 @@ class SseStreamIT {
         /** Every event is the same size: {@code data: } + 8 digits + a blank line. */
         static final int EVENT_BYTES = 16;
 
+        /** Building a chunk takes milliseconds, so one event-loop turn writes only this many of them. */
+        private static final int CHUNKS_PER_TURN = 2;
+
         private long nextSequence;
 
         Buffer nextChunk() {
@@ -334,6 +337,7 @@ class SseStreamIT {
         }
 
         void pump(HttpServerResponse response) {
+            int chunks = 0;
             while (!response.closed() && System.nanoTime() < deadlineNanos) {
                 if (response.writeQueueFull()) {
                     full = true;
@@ -342,6 +346,13 @@ class SseStreamIT {
                         drains.incrementAndGet();
                         pump(response);
                     });
+                    return;
+                }
+                if (chunks++ == CHUNKS_PER_TURN) {
+                    // The server shares an event loop with the client and the blocked-thread checker: yield, so a
+                    // fast reader, or a client that has already gone away and whose close this loop would
+                    // otherwise only see on returning, never keeps the loop in this write loop.
+                    Vertx.currentContext().runOnContext(v -> pump(response));
                     return;
                 }
                 Buffer chunk = nextChunk();
