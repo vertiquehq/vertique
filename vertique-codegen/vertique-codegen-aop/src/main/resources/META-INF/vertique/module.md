@@ -84,18 +84,19 @@ All legal annotation member kinds are materialized into generated literals: `boo
 
 ### `Bean$AopProxy`
 
+Abridged: the generated terminal also converts a synchronous throw from `super.greet(...)` into a failed future. The members shown as `private` are not part of any contract.
+
 ```java
-@Generated("dev.vertique.codegen.aop.AopProcessor")
 public final class UserService$AopProxy extends UserService {
 
     // MethodMetadata constant per intercepted method
-    private static final MethodMetadata GREET_0_METADATA = new GreetMethod0Metadata();
+    private static final MethodMetadata GREET_0_META = new greet_0_MethodMetadata();
 
     // Annotation-literal instance per aspect occurrence per method
-    private static final Timed GREET_0_TIMED = new Timed$AopLiteral("user.greet");
+    private static final Timed TIMED_0_LITERAL = new Timed$AopLiteral("user.greet");
 
     // Interceptor chain field per intercepted method (resolved once in the constructor)
-    private final MethodInterceptor[] greet_0_chain;
+    private final MethodInterceptor[] greet_0$chain;
 
     @Inject
     public UserService$AopProxy(
@@ -104,15 +105,17 @@ public final class UserService$AopProxy extends UserService {
             // AspectProvider<A> appended per distinct aspect annotation used on this bean
             AspectProvider<Timed> timedProvider) {
         super(repo);
-        this.greet_0_chain = new MethodInterceptor[] {
-            timedProvider.interceptor(GREET_0_METADATA, GREET_0_TIMED)
+        this.greet_0$chain = new MethodInterceptor[] {
+            timedProvider.interceptor(GREET_0_META, TIMED_0_LITERAL)
         };
     }
 
     @Override
     public Future<String> greet(String name) {
-        return Invocations.run(this, GREET_0_METADATA, new Object[] {name}, greet_0_chain,
-            () -> super.greet(name).map(r -> (Object) r));
+        Object[] args = {name};
+        Future<Object> result = Invocations.run(this, GREET_0_META, args, greet_0$chain,
+            () -> super.greet((String) args[0]).map(r -> (Object) r));
+        return result.map(o -> (String) o);
     }
 }
 ```
@@ -157,7 +160,7 @@ public abstract class GeneratedAopModule {
 
     @Binds
     @Singleton  // scope replicated from UserService's declared scope
-    abstract UserService bindUserService$AopProxy(UserService$AopProxy proxy);
+    abstract UserService bindUserService(UserService$AopProxy impl);
 }
 ```
 
@@ -216,7 +219,7 @@ When a method carries multiple aspect annotations, the processor resolves the ch
 1. Sort by descending `@Aspect.ordering()` — higher is outermost.
 2. Tiebreak by ascending fully-qualified annotation name — deterministic across compilations.
 
-Example: `@Outer` (`ordering=1000`) + `@Timed` (`ordering=2000`) → chain is `[Timed interceptor, Outer interceptor]` — `Timed` wraps `Outer` which wraps the real method.
+Example: `@Outer` (`ordering=1500`) + `@Timed` (`ordering=1000`) → chain is `[Outer interceptor, Timed interceptor]` — `Outer` wraps `Timed` which wraps the real method.
 
 ---
 
