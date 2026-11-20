@@ -319,10 +319,11 @@ its dedicated `ObjectMapper`, and the Dagger binding.
 
 ### ConfigParsingModule
 
-Abstract Dagger `@Module` providing the single `ConfigParser` binding. **It must be listed in every
-application `@Component`**, alongside `VertxModule`. There is no transitive auto-include: the only
-universally installed framework modules live in `dev.vertique:vertique-core`, which cannot depend on
-this artifact. Omitting it yields a Dagger missing-binding compile error.
+Abstract Dagger `@Module` providing the single `ConfigParser` binding. **Every application
+`@Component` must install it**, either directly, alongside `VertxModule`, or through a module that
+includes it, such as `CoreApplicationModule` in `dev.vertique:vertique-starter-core`. Feature modules
+do not include it: the only universally installed framework modules live in `dev.vertique:vertique-core`,
+which cannot depend on this artifact. Omitting it yields a Dagger missing-binding compile error.
 
 ```java
 @Component(modules = {VertxModule.class, ConfigParsingModule.class, /* … */})
