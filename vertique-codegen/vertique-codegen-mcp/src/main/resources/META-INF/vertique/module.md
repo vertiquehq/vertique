@@ -229,7 +229,7 @@ targeted diagnostic and no model, so a rejected tool never produces a second, de
 |---|---|
 | Direct invocability | The tool method is `public`, concrete, and an instance method on a Dagger-managed type with exactly one `@Inject` constructor |
 | Protocol metadata | Tool names are unique across the compilation and match `[A-Za-z0-9_.-]{1,128}`; the description is non-blank and bounded; a blank title is omitted |
-| Honest type contracts | No raw, wildcard, type-variable, or unresolved type in a parameter or result; no `void` result; no input member without a JSON schema representation |
+| Honest type contracts | No raw, wildcard, type-variable, or unresolved type in a parameter or result; no `void` result; no input member without a JSON schema representation; an `Optional` parameter is never `@NotNull` (Jakarta Validation), because requiredness is type-derived |
 | Effective JSON profile | Resolved method-over-type; a blank id is rejected at compile time rather than surfacing as an unresolvable mapper during composition |
 | Input-policy conflicts | A `@Canonicalize`/`@Sanitize` declaration and its `@Skip*` counterpart on the same element (method, declaring type, or parameter) is a compile error |
 

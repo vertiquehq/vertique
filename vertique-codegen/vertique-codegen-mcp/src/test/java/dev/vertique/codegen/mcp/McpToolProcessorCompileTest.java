@@ -122,6 +122,41 @@ class McpToolProcessorCompileTest {
         row.proof().execute();
     }
 
+    @Test
+    @DisplayName("a @NotNull Optional<T> parameter is rejected at compile time, naming the parameter")
+    void shouldRejectNotNullOptionalParameter() {
+        JavaFileObject requiredOptional = SourceFiles.inline(TOOLS_PACKAGE + ".RequiredOptionalTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+                import jakarta.validation.constraints.NotNull;
+                import java.util.Optional;
+
+                public class RequiredOptionalTools {
+
+                    @Inject
+                    public RequiredOptionalTools() {}
+
+                    @McpTool(name = "weather.required_optional", description = "Look up the current weather.")
+                    public Future<WeatherReport> lookup(
+                            @McpToolParam(name = "city", description = "The city to look up.")
+                            @NotNull Optional<String> city) {
+                        return Future.succeededFuture(new WeatherReport(city.orElse(""), 21));
+                    }
+                }
+                """);
+        try (McpToolCompilation compilation = McpToolCompilation.of(weatherReport(), requiredOptional)) {
+            compilation.result().assertFailed();
+            assertEquals(
+                    1,
+                    compilation.errorsNaming("city"),
+                    "a required yet optional parameter must be rejected with one diagnostic naming it");
+        }
+    }
+
     // ==================================================================================
     // T008 — generated parameter carriers, profile, and access metadata
     // ==================================================================================
