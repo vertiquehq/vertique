@@ -100,6 +100,21 @@ class MediaTypeValidatorTest {
         assertDoesNotThrow(() -> MediaTypeValidator.validate(List.of(method), DECODERS, ENCODERS, "STRICT"));
     }
 
+    record Widget(String name) {}
+
+    @Test
+    @DisplayName("Should report a @Produces type that no built-in encoder writes for the method's real response type")
+    void shouldReportUnwritableProducesForTheRealResponseType() {
+        ResourceMethodMeta method = method("widget", List.of(), List.of("application/pdf"));
+        when(method.responseBodyType()).thenAnswer(invocation -> Widget.class);
+
+        RestConfigurationException ex = assertThrows(
+                RestConfigurationException.class,
+                () -> MediaTypeValidator.validate(List.of(method), DECODERS, ENCODERS, "STRICT"));
+
+        assertTrue(ex.getMessage().contains("@Produces(\"application/pdf\")"), ex.getMessage());
+    }
+
     private static ResourceMethodMeta method(String operationId, List<String> consumes, List<String> produces) {
         ResourceMethodMeta meta = mock(ResourceMethodMeta.class);
         when(meta.operationId()).thenReturn(operationId);
