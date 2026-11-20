@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.exception.ValidationException;
+import dev.vertique.inboxoutbox.exception.InboxOutboxConfigurationException;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -68,14 +68,14 @@ class InboxOutboxCleanupConfigTest {
                         .build()
                         .discardedRetentionDays());
         for (int value : new int[] {0, -1, Integer.MIN_VALUE, 3651, Integer.MAX_VALUE}) {
-            ValidationException failure = assertThrows(
-                    ValidationException.class,
+            InboxOutboxConfigurationException failure = assertThrows(
+                    InboxOutboxConfigurationException.class,
                     () -> InboxOutboxCleanupConfig.builder()
                             .discardedRetentionDays(value)
                             .build(),
                     String.valueOf(value));
 
-            assertEquals("discardedRetentionDays must be between 1 and 3650", failure.getMessage());
+            assertEquals("inboxOutbox.cleanup.discardedRetentionDays must be between 1 and 3650", failure.getMessage());
         }
     }
 
@@ -100,8 +100,9 @@ class InboxOutboxCleanupConfigTest {
                 root = root.getCause();
             }
 
-            assertInstanceOf(ValidationException.class, root, json);
-            assertEquals("discardedRetentionDays must be between 1 and 3650", root.getMessage(), json);
+            assertInstanceOf(InboxOutboxConfigurationException.class, root, json);
+            assertEquals(
+                    "inboxOutbox.cleanup.discardedRetentionDays must be between 1 and 3650", root.getMessage(), json);
         }
     }
 

@@ -32,7 +32,7 @@ class PgOutboxServicesConstructionTest {
     @DisplayName("the query service requires a pool, a mapper and a config")
     void queryServiceRequiresCollaborators() {
         Pool pool = mock(Pool.class);
-        OutboxQueryConfig config = OutboxQueryConfig.builder().build();
+        OutboxQueryConfig config = OutboxQueryConfig.defaults();
 
         assertEquals(
                 "pool",
@@ -92,8 +92,7 @@ class PgOutboxServicesConstructionTest {
 
         assertThrows(
                 IllegalArgumentException.class,
-                () -> new PgOutboxQueryService(
-                        pool, MAPPER, BAD_SCHEMA, OutboxQueryConfig.builder().build()));
+                () -> new PgOutboxQueryService(pool, MAPPER, BAD_SCHEMA, OutboxQueryConfig.defaults()));
         assertThrows(IllegalArgumentException.class, () -> new PgOutboxOperations(pool, MAPPER, BAD_SCHEMA));
     }
 
@@ -101,8 +100,8 @@ class PgOutboxServicesConstructionTest {
     @DisplayName("invalid arguments fail before any statement is sent to the database")
     void validationNeverReachesThePool() {
         Pool pool = mock(Pool.class);
-        PgOutboxQueryService query = new PgOutboxQueryService(
-                pool, MAPPER, DbSchemas.empty(), OutboxQueryConfig.builder().build());
+        PgOutboxQueryService query =
+                new PgOutboxQueryService(pool, MAPPER, DbSchemas.empty(), OutboxQueryConfig.defaults());
         PgOutboxOperations operations = new PgOutboxOperations(pool, MAPPER, DbSchemas.empty());
         OutboxQuery pending = OutboxQuery.inStates(OutboxEntryState.PENDING);
 

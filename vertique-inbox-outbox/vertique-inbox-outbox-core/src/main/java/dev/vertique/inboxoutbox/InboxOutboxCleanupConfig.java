@@ -5,7 +5,7 @@ package dev.vertique.inboxoutbox;
 
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import dev.vertique.core.exception.ValidationException;
+import dev.vertique.inboxoutbox.exception.InboxOutboxConfigurationException;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.experimental.Accessors;
@@ -96,7 +96,7 @@ public class InboxOutboxCleanupConfig {
      * @param discardedRetentionDays  retention of discarded entries; 1 to {@value #MAX_DISCARDED_RETENTION_DAYS}
      * @param inboxRetentionDays      retention of inbox records, in days
      * @param cleanupBatchSize        records deleted per batch
-     * @throws ValidationException if {@code discardedRetentionDays} is outside its range
+     * @throws InboxOutboxConfigurationException if {@code discardedRetentionDays} is outside its range
      */
     InboxOutboxCleanupConfig(
             int publishedRetentionDays,
@@ -105,8 +105,8 @@ public class InboxOutboxCleanupConfig {
             int inboxRetentionDays,
             int cleanupBatchSize) {
         if (discardedRetentionDays < 1 || discardedRetentionDays > MAX_DISCARDED_RETENTION_DAYS) {
-            throw new ValidationException(
-                    "discardedRetentionDays must be between 1 and " + MAX_DISCARDED_RETENTION_DAYS);
+            throw new InboxOutboxConfigurationException(
+                    "inboxOutbox.cleanup.discardedRetentionDays must be between 1 and " + MAX_DISCARDED_RETENTION_DAYS);
         }
         this.publishedRetentionDays = publishedRetentionDays;
         this.deadLetterRetentionDays = deadLetterRetentionDays;

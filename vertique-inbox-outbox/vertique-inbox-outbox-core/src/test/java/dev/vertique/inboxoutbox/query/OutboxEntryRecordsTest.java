@@ -40,7 +40,19 @@ class OutboxEntryRecordsTest {
             Instant created,
             Instant updated) {
         return new OutboxEntrySummary(
-                id, state, type, destination, eventType, null, null, attempt, maxAttempts, null, created, updated);
+                id,
+                state,
+                type,
+                destination,
+                eventType,
+                null,
+                null,
+                "default",
+                attempt,
+                maxAttempts,
+                null,
+                created,
+                updated);
     }
 
     private static OutboxEntryDetail detail(
@@ -63,6 +75,7 @@ class OutboxEntryRecordsTest {
                 eventType,
                 null,
                 null,
+                "default",
                 attempt,
                 maxAttempts,
                 null,
@@ -92,6 +105,7 @@ class OutboxEntryRecordsTest {
                     "event",
                     "Order",
                     "o-1",
+                    "tenant-a",
                     3,
                     20,
                     "java.io.IOException",
@@ -105,6 +119,7 @@ class OutboxEntryRecordsTest {
             assertEquals("event", summary.eventType());
             assertEquals("Order", summary.aggregateType());
             assertEquals("o-1", summary.aggregateId());
+            assertEquals("tenant-a", summary.scopeKey());
             assertEquals(3, summary.attempt());
             assertEquals(20, summary.maxAttempts());
             assertEquals("java.io.IOException", summary.errorType());
@@ -182,6 +197,7 @@ class OutboxEntryRecordsTest {
                     "event",
                     "Order",
                     "o-1",
+                    "tenant-a",
                     5,
                     7,
                     "java.io.IOException",

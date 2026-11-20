@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.exception.ValidationException;
+import dev.vertique.inboxoutbox.exception.InboxOutboxConfigurationException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -31,39 +31,34 @@ class OutboxQueryConfigTest {
     @DisplayName("the limit is 16 MiB and the default is 1 MiB")
     void constants() throws Exception {
         assertEquals(16 * 1024 * 1024, OutboxQueryConfig.MAX_PAYLOAD_BYTES_LIMIT);
-        assertEquals(1_048_576, OutboxQueryConfig.builder().build().maxPayloadBytes());
+        assertEquals(1_048_576, OutboxQueryConfig.defaults().maxPayloadBytes());
         assertEquals(1_048_576, mapper.readValue("{}", OutboxQueryConfig.class).maxPayloadBytes());
     }
 
     @Test
-    @DisplayName("the builder accepts one byte and 16 MiB")
-    void builderBounds() {
-        assertEquals(1, OutboxQueryConfig.builder().maxPayloadBytes(1).build().maxPayloadBytes());
-        assertEquals(
-                16_777_216,
-                OutboxQueryConfig.builder().maxPayloadBytes(16_777_216).build().maxPayloadBytes());
+    @DisplayName("the constructor accepts one byte and 16 MiB")
+    void constructorBounds() {
+        assertEquals(1, new OutboxQueryConfig(1).maxPayloadBytes());
+        assertEquals(16_777_216, new OutboxQueryConfig(16_777_216).maxPayloadBytes());
     }
 
     @Test
-    @DisplayName("the builder rejects zero, negatives and values above 16 MiB")
-    void builderRejects() {
-        ValidationException zero = assertThrows(
-                ValidationException.class,
-                () -> OutboxQueryConfig.builder().maxPayloadBytes(0).build());
-        ValidationException negative = assertThrows(
-                ValidationException.class,
-                () -> OutboxQueryConfig.builder().maxPayloadBytes(-1).build());
-        ValidationException tooBig = assertThrows(
-                ValidationException.class,
-                () -> OutboxQueryConfig.builder().maxPayloadBytes(16_777_217).build());
-        ValidationException intMax = assertThrows(ValidationException.class, () -> OutboxQueryConfig.builder()
-                .maxPayloadBytes(Integer.MAX_VALUE)
-                .build());
+    @DisplayName("the constructor rejects zero, negatives and values above 16 MiB")
+    void constructorRejects() {
+        InboxOutboxConfigurationException zero =
+                assertThrows(InboxOutboxConfigurationException.class, () -> new OutboxQueryConfig(0));
+        InboxOutboxConfigurationException negative =
+                assertThrows(InboxOutboxConfigurationException.class, () -> new OutboxQueryConfig(-1));
+        InboxOutboxConfigurationException tooBig =
+                assertThrows(InboxOutboxConfigurationException.class, () -> new OutboxQueryConfig(16_777_217));
+        InboxOutboxConfigurationException intMax =
+                assertThrows(InboxOutboxConfigurationException.class, () -> new OutboxQueryConfig(Integer.MAX_VALUE));
 
-        assertEquals("maxPayloadBytes must be positive", zero.getMessage());
-        assertEquals("maxPayloadBytes must be positive", negative.getMessage());
-        assertEquals("maxPayloadBytes must be at most 16777216", tooBig.getMessage());
-        assertEquals("maxPayloadBytes must be at most 16777216", intMax.getMessage());
+        String message = "inboxOutbox.query.maxPayloadBytes must be between 1 and 16777216";
+        assertEquals(message, zero.getMessage());
+        assertEquals(message, negative.getMessage());
+        assertEquals(message, tooBig.getMessage());
+        assertEquals(message, intMax.getMessage());
     }
 
     @Test
@@ -82,8 +77,8 @@ class OutboxQueryConfigTest {
                 }) {
             Exception failure = assertThrows(Exception.class, () -> mapper.readValue(json, OutboxQueryConfig.class));
 
-            assertInstanceOf(ValidationException.class, rootOf(failure), json);
-            assertTrue(rootOf(failure).getMessage().startsWith("maxPayloadBytes must be"), json);
+            assertInstanceOf(InboxOutboxConfigurationException.class, rootOf(failure), json);
+            assertTrue(rootOf(failure).getMessage().startsWith("inboxOutbox.query.maxPayloadBytes must be"), json);
         }
     }
 }

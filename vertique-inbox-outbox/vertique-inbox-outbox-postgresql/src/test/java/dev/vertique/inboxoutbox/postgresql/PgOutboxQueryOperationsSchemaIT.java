@@ -85,10 +85,7 @@ class PgOutboxQueryOperationsSchemaIT {
     void operationsUseMappedSchema() throws Exception {
         RecordingPool recording = new RecordingPool(fixture.pool());
         PgOutboxQueryService query = new PgOutboxQueryService(
-                recording.pool(),
-                new PgDbExceptionMapper(),
-                mapping(),
-                OutboxQueryConfig.builder().build());
+                recording.pool(), new PgDbExceptionMapper(), mapping(), OutboxQueryConfig.defaults());
         PgOutboxOperations operations = new PgOutboxOperations(fixture.pool(), new PgDbExceptionMapper(), mapping());
         PgInboxOutboxRepository repository =
                 new PgInboxOutboxRepository(fixture.pool(), new PgDbExceptionMapper(), mapping());
@@ -141,10 +138,7 @@ class PgOutboxQueryOperationsSchemaIT {
     @DisplayName("without the mapping the same statements resolve through the connection default schema")
     void unmappedServicesFollowConnectionDefault() {
         PgOutboxQueryService query = new PgOutboxQueryService(
-                fixture.pool(),
-                new PgDbExceptionMapper(),
-                DbSchemas.empty(),
-                OutboxQueryConfig.builder().build());
+                fixture.pool(), new PgDbExceptionMapper(), DbSchemas.empty(), OutboxQueryConfig.defaults());
         PgOutboxOperations operations =
                 new PgOutboxOperations(fixture.pool(), new PgDbExceptionMapper(), DbSchemas.empty());
         PgInboxOutboxRepository repository =

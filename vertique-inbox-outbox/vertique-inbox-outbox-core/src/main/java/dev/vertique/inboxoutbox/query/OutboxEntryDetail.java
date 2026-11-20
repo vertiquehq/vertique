@@ -4,6 +4,7 @@
 package dev.vertique.inboxoutbox.query;
 
 import dev.vertique.core.exception.ValidationException;
+import dev.vertique.core.scope.ScopeKey;
 import dev.vertique.inboxoutbox.DestinationType;
 import dev.vertique.inboxoutbox.OutboxEntryState;
 import jakarta.annotation.Nullable;
@@ -15,7 +16,7 @@ import java.time.Instant;
  *
  * <p>The last error is read from the database at most {@value #MAX_LAST_ERROR_LENGTH} characters long;
  * {@link #lastErrorTruncated()} says whether there was more. The payload and headers are in
- * {@link OutboxEntryPayload}, and the scope key and carrier metadata are never returned.
+ * {@link OutboxEntryPayload}; carrier metadata is never returned. The scope key is returned as a label.
  *
  * @param entryId            identifier of the entry; positive
  * @param state              the entry's current state
@@ -24,6 +25,8 @@ import java.time.Instant;
  * @param eventType          the event or message type
  * @param aggregateType      the logical aggregate type, or {@code null}
  * @param aggregateId        the aggregate instance id, or {@code null}
+ * @param scopeKey           the scope label the entry was published under; {@code default} for an entry that
+ *                           selected none, never {@code null}
  * @param attempt            how many delivery attempts have failed; not negative
  * @param maxAttempts        the attempt budget the relay stops at; not negative
  * @param errorType          the class name of the last failure's cause, or {@code null}
@@ -46,6 +49,7 @@ public record OutboxEntryDetail(
         String eventType,
         @Nullable String aggregateType,
         @Nullable String aggregateId,
+        String scopeKey,
         int attempt,
         int maxAttempts,
         @Nullable String errorType,
@@ -74,6 +78,7 @@ public record OutboxEntryDetail(
         QueryChecks.required(destinationType, "destinationType");
         QueryChecks.required(destination, "destination");
         QueryChecks.required(eventType, "eventType");
+        scopeKey = ScopeKey.orDefault(scopeKey);
         QueryChecks.nonNegative(attempt, "attempt");
         QueryChecks.nonNegative(maxAttempts, "maxAttempts");
         QueryChecks.required(createdAt, "createdAt");

@@ -45,8 +45,7 @@ import java.util.stream.Collectors;
  * {@link OutboxEntryState} constants, never from caller text, so the planner can match the partial indexes of
  * the outbox table; every other filter is a bound parameter appended from a constant fragment that names no table.
  *
- * <p>Reads project only the columns they return: the list never selects payload, headers, metadata or the scope
- * label, and the detail reads at most {@value OutboxEntryDetail#MAX_LAST_ERROR_LENGTH} characters of the last
+ * <p>Reads project only the columns they return: the list never selects payload, headers or metadata, and the detail reads at most {@value OutboxEntryDetail#MAX_LAST_ERROR_LENGTH} characters of the last
  * error from the database. {@link #getPayload(long)} decides the size limit in the same statement that reads the
  * content, so an oversized value is never transferred. The listing pages with the shared keyset paging of
  * {@code vertique-db}, ordered by one timestamp column and the entry id.
@@ -58,7 +57,7 @@ import java.util.stream.Collectors;
 public class PgOutboxQueryService extends PgSqlRepository implements OutboxQueryService {
 
     private static final String SUMMARY_COLUMNS = "id, state, destination_type, destination, event_type,"
-            + " aggregate_type, aggregate_id, attempt, max_attempts, error_type, created_at, updated_at";
+            + " aggregate_type, aggregate_id, scope_key, attempt, max_attempts, error_type, created_at, updated_at";
 
     private final PgDbExceptionMapper failureMapper;
     private final int maxPayloadBytes;
@@ -231,6 +230,7 @@ public class PgOutboxQueryService extends PgSqlRepository implements OutboxQuery
                 row.getString("event_type"),
                 row.getString("aggregate_type"),
                 row.getString("aggregate_id"),
+                row.getString("scope_key"),
                 row.getInteger("attempt"),
                 row.getInteger("max_attempts"),
                 row.getString("error_type"),
@@ -247,6 +247,7 @@ public class PgOutboxQueryService extends PgSqlRepository implements OutboxQuery
                 row.getString("event_type"),
                 row.getString("aggregate_type"),
                 row.getString("aggregate_id"),
+                row.getString("scope_key"),
                 row.getInteger("attempt"),
                 row.getInteger("max_attempts"),
                 row.getString("error_type"),

@@ -75,16 +75,10 @@ class PgOutboxQueryServiceIT {
         vertx = Vertx.vertx();
         fixture = new OutboxFixture(db, vertx);
         service = new PgOutboxQueryService(
-                fixture.pool(),
-                new PgDbExceptionMapper(),
-                DbSchemas.empty(),
-                OutboxQueryConfig.builder().build());
+                fixture.pool(), new PgDbExceptionMapper(), DbSchemas.empty(), OutboxQueryConfig.defaults());
         recording = new RecordingPool(fixture.pool());
         recordedService = new PgOutboxQueryService(
-                recording.pool(),
-                new PgDbExceptionMapper(),
-                DbSchemas.empty(),
-                OutboxQueryConfig.builder().build());
+                recording.pool(), new PgDbExceptionMapper(), DbSchemas.empty(), OutboxQueryConfig.defaults());
     }
 
     @AfterAll
@@ -129,6 +123,30 @@ class PgOutboxQueryServiceIT {
     @Nested
     @DisplayName("list: state filter")
     class StateFilter {
+
+        @Test
+        @DisplayName("a large pending backlog is listed newest first in a bounded page")
+        void largePendingBacklog() throws Exception {
+            fixture.exec("INSERT INTO outbox (carrier_id, aggregate_type, aggregate_id, event_type, destination,"
+                    + " destination_type, payload, headers, metadata, available_at, state, attempt, max_attempts,"
+                    + " created_at, updated_at, scope_key)"
+                    + " SELECT gen_random_uuid(), 'Order', 'o-' || n, 'order.created', 'orders.target', 'SERVICE',"
+                    + " '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, now(), 'PENDING', 0, 20,"
+                    + " timestamptz '2026-01-01' + n * interval '1 second',"
+                    + " timestamptz '2026-01-01' + n * interval '1 second', 'default'"
+                    + " FROM generate_series(1, 20000) AS n");
+            long newest = fixture.longValue("SELECT max(id) FROM outbox");
+
+            List<OutboxEntrySummary> page = await(
+                            service.list(OutboxQuery.inStates(OutboxEntryState.PENDING), PageCursor.first(50)))
+                    .items();
+
+            assertEquals(50, page.size());
+            assertEquals(newest, page.get(0).entryId());
+            for (int i = 1; i < page.size(); i++) {
+                assertEquals(newest - i, page.get(i).entryId());
+            }
+        }
 
         @Test
         @DisplayName("a single state lists exactly the entries in that state, for each of the four listable states")
@@ -196,6 +214,7 @@ class PgOutboxQueryServiceIT {
                             "order.created",
                             "Order",
                             "order-1",
+                            "scope-a",
                             5,
                             7,
                             "java.io.IOException",
@@ -863,8 +882,7 @@ class PgOutboxQueryServiceIT {
     @DisplayName("statements never select content")
     class Projections {
 
-        private static final List<String> NEVER_SELECTED =
-                List.of("payload", "headers", "metadata", "scope_key", "carrier_id");
+        private static final List<String> NEVER_SELECTED = List.of("payload", "headers", "metadata", "carrier_id");
 
         private void assertNoneReferenced(String sql) {
             for (String column : NEVER_SELECTED) {
@@ -873,7 +891,7 @@ class PgOutboxQueryServiceIT {
         }
 
         @Test
-        @DisplayName("the list and detail statements reference neither payload, headers, metadata, scope nor carrier")
+        @DisplayName("the list and detail statements reference neither payload, headers, metadata nor carrier")
         void listAndDetail() throws Exception {
             long id = fixture.seed().insert();
 
@@ -955,6 +973,7 @@ class PgOutboxQueryServiceIT {
                                 "order.created",
                                 "Order",
                                 "order-1",
+                                "scope-a",
                                 5,
                                 7,
                                 "java.io.IOException",
@@ -1102,7 +1121,7 @@ class PgOutboxQueryServiceIT {
                     pool == null ? fixture.pool() : pool.pool(),
                     new PgDbExceptionMapper(),
                     DbSchemas.empty(),
-                    OutboxQueryConfig.builder().maxPayloadBytes(maxPayloadBytes).build());
+                    new OutboxQueryConfig(maxPayloadBytes));
         }
 
         private long storedBytes(long id) throws SQLException {
@@ -1304,7 +1323,7 @@ class PgOutboxQueryServiceIT {
                     fixture.pool(),
                     new PgDbExceptionMapper(),
                     new DbSchemas(Map.of("inbox-outbox", "no_such_schema")),
-                    OutboxQueryConfig.builder().build());
+                    OutboxQueryConfig.defaults());
         }
 
         private void assertOpaque(Throwable failure, String operation) {
