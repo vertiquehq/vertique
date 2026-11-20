@@ -347,12 +347,10 @@ public abstract class OffsetPagedQuery<T> {
          * {@link OrderDirection#ASC} and {@link NullHandling#DISALLOW}. At least one column is
          * required.
          *
+         * <p>Fails as {@link #orderBy(OrderDirection, NullHandling, String...)} does.
+         *
          * @param columns the column names in sort priority order
          * @return this builder
-         * @throws NullPointerException if an argument or a column name is null
-         * @throws dev.vertique.db.exception.InvalidDataAccessUsageException if a column name is blank or not a
-         *     safe SQL identifier
-         * @throws IllegalArgumentException if columns is empty or contains duplicates
          */
         public B orderBy(String... columns) {
             return orderBy(OrderDirection.ASC, NullHandling.DISALLOW, columns);
@@ -362,13 +360,11 @@ public abstract class OffsetPagedQuery<T> {
          * Sets the column ordering with a uniform direction. All columns use
          * {@link NullHandling#DISALLOW}. At least one column is required.
          *
+         * <p>Fails as {@link #orderBy(OrderDirection, NullHandling, String...)} does.
+         *
          * @param direction the sort direction for all columns
          * @param columns   the column names in sort priority order
          * @return this builder
-         * @throws NullPointerException if an argument or a column name is null
-         * @throws dev.vertique.db.exception.InvalidDataAccessUsageException if a column name is blank or not a
-         *     safe SQL identifier
-         * @throws IllegalArgumentException if columns is empty or contains duplicates
          */
         public B orderBy(OrderDirection direction, String... columns) {
             return orderBy(direction, NullHandling.DISALLOW, columns);
