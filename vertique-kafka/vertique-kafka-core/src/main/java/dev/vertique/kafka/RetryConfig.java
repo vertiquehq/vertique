@@ -34,20 +34,19 @@ public record RetryConfig(
      */
     public RetryConfig {
         if (maxRetries < 1) {
-            throw new IllegalArgumentException("maxRetries must be >= 1, got " + maxRetries);
+            throw new IllegalArgumentException("maxRetries must be >= 1");
         }
         if (backoffMs < 0) {
-            throw new IllegalArgumentException("backoffMs must be >= 0, got " + backoffMs);
+            throw new IllegalArgumentException("backoffMs must be >= 0");
         }
         if (!Double.isFinite(backoffMultiplier) || backoffMultiplier < 1.0) {
-            throw new IllegalArgumentException("backoffMultiplier must be finite and >= 1.0, got " + backoffMultiplier);
+            throw new IllegalArgumentException("backoffMultiplier must be finite and >= 1.0");
         }
         if (exhaustedStrategy == ErrorStrategy.RETRY) {
             throw new IllegalArgumentException("exhaustedStrategy must not be RETRY (would cause infinite recursion)");
         }
         if (maxBackoffMs < backoffMs) {
-            throw new IllegalArgumentException(
-                    "maxBackoffMs must be >= backoffMs, got maxBackoffMs=" + maxBackoffMs + " backoffMs=" + backoffMs);
+            throw new IllegalArgumentException("maxBackoffMs must be >= backoffMs");
         }
     }
 

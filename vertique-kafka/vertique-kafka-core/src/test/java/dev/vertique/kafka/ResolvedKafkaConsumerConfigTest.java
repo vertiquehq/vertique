@@ -531,6 +531,48 @@ class ResolvedKafkaConsumerConfigTest {
                             30_000L,
                             kafkaConfig));
         }
+
+        /** Resolves a RETRY consumer named {@code consumer} whose {@code retry} block is the given one. */
+        private ResolvedKafkaConsumerConfig resolveRetrying(JsonObject retryBlock) {
+            JsonObject kafkaConfig = new JsonObject()
+                    .put("consumers", new JsonObject().put("consumer", new JsonObject().put("retry", retryBlock)));
+            return resolve(
+                    "consumer",
+                    "topic",
+                    "group",
+                    true,
+                    CommitStrategy.AUTO,
+                    ErrorStrategy.RETRY,
+                    "",
+                    30_000L,
+                    kafkaConfig);
+        }
+
+        @Test
+        @DisplayName(
+                "retry.maxBackoffMs below retry.backoffMs fails with a ConfigurationException naming the retry path")
+        void maxBackoffBelowBackoffFailsNamingTheRetryPath() {
+            ConfigurationException ex = assertThrows(
+                    ConfigurationException.class,
+                    () -> resolveRetrying(
+                            new JsonObject().put("backoffMs", 5_000L).put("maxBackoffMs", 1_000L)));
+
+            assertTrue(
+                    String.valueOf(ex.getMessage()).contains("kafka.consumers.consumer.retry"),
+                    "message must name the retry config path, was: " + ex.getMessage());
+        }
+
+        @Test
+        @DisplayName("retry.exhaustedStrategy RETRY fails with a ConfigurationException naming the retry path")
+        void exhaustedStrategyRetryFailsNamingTheRetryPath() {
+            ConfigurationException ex = assertThrows(
+                    ConfigurationException.class,
+                    () -> resolveRetrying(new JsonObject().put("exhaustedStrategy", "RETRY")));
+
+            assertTrue(
+                    String.valueOf(ex.getMessage()).contains("kafka.consumers.consumer.retry"),
+                    "message must name the retry config path, was: " + ex.getMessage());
+        }
     }
 
     // --- Hierarchical config compatibility ---

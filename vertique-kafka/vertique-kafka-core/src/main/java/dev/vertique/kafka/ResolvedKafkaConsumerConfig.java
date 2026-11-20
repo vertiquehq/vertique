@@ -149,7 +149,7 @@ record ResolvedKafkaConsumerConfig(
         String deadLetterTopic = (rawDlq == null || rawDlq.isBlank()) ? topic + ".dlq" : rawDlq;
 
         // Retry config from the typed per-consumer retry block (only material for ErrorStrategy.RETRY)
-        RetryConfig retryConfig = resolveRetryConfig(consumerConfig, errorStrategy);
+        RetryConfig retryConfig = resolveRetryConfig(name, consumerConfig, errorStrategy);
 
         // Deployment options: explicit worker=true still forces WORKER immediately (existing behavior).
         int instances = consumerConfig != null && consumerConfig.instances() != null ? consumerConfig.instances() : 1;
@@ -306,12 +306,15 @@ record ResolvedKafkaConsumerConfig(
      * maps the typed values into the validating runtime {@link RetryConfig}. The
      * {@code exhaustedStrategy} string is parsed via {@link #resolveEnum} exactly as before.
      *
+     * @param name the consumer name, used to name the config path in a failure
      * @param consumerConfig the typed per-consumer config, or {@code null} when not configured
      * @param errorStrategy the resolved error strategy
      * @return the retry config, or {@code null} if retry is not active
+     * @throws ConfigurationException if the retry values violate a constraint; the message names
+     *     {@code kafka.consumers.{name}.retry} and carries no value
      */
     private static RetryConfig resolveRetryConfig(
-            @Nullable KafkaConsumerConfig consumerConfig, ErrorStrategy errorStrategy) {
+            String name, @Nullable KafkaConsumerConfig consumerConfig, ErrorStrategy errorStrategy) {
         if (errorStrategy != ErrorStrategy.RETRY) {
             return null;
         }
@@ -320,12 +323,17 @@ record ResolvedKafkaConsumerConfig(
                 : KafkaConsumerRetryConfig.defaults();
         ErrorStrategy exhausted =
                 resolveEnum(retryCfg.exhaustedStrategy(), ErrorStrategy.class, RetryConfig.DEFAULT.exhaustedStrategy());
-        return new RetryConfig(
-                retryCfg.maxRetries(),
-                retryCfg.backoffMs(),
-                retryCfg.backoffMultiplier(),
-                exhausted,
-                retryCfg.maxBackoffMs());
+        try {
+            return new RetryConfig(
+                    retryCfg.maxRetries(),
+                    retryCfg.backoffMs(),
+                    retryCfg.backoffMultiplier(),
+                    exhausted,
+                    retryCfg.maxBackoffMs());
+        } catch (IllegalArgumentException e) {
+            throw new ConfigurationException(
+                    "Invalid configuration at kafka.consumers." + name + ".retry: " + e.getMessage(), e);
+        }
     }
 
     /**
