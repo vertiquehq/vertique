@@ -99,7 +99,6 @@ class SseStreamIT {
     private static final class Reading {
         final List<Ev> events = new CopyOnWriteArrayList<>();
         final AtomicReference<HttpStream> stream = new AtomicReference<>();
-        final AtomicReference<Context> context = new AtomicReference<>();
         final AtomicReference<ReadStream<SseEvent>> eventStream = new AtomicReference<>();
         volatile Optional<String> lastEventIdAtHead = Optional.of("unset");
         final Future<HttpStream> future;
@@ -108,7 +107,6 @@ class SseStreamIT {
             future = client.stream(CallOptions.defaults(), web -> web.get(path), null);
             future.onSuccess(delivered -> {
                 stream.set(delivered);
-                context.set(Vertx.currentContext());
                 ReadStream<SseEvent> read = delivered.events();
                 lastEventIdAtHead = delivered.lastEventId();
                 eventStream.set(read);
@@ -318,6 +316,9 @@ class SseStreamIT {
         /** Every event is the same size: {@code data: } + 8 digits + a blank line. */
         static final int EVENT_BYTES = 16;
 
+        /** Building a chunk takes milliseconds, so one event-loop turn writes only this many of them. */
+        private static final int CHUNKS_PER_TURN = 2;
+
         private long nextSequence;
 
         Buffer nextChunk() {
@@ -334,6 +335,7 @@ class SseStreamIT {
         }
 
         void pump(HttpServerResponse response) {
+            int chunks = 0;
             while (!response.closed() && System.nanoTime() < deadlineNanos) {
                 if (response.writeQueueFull()) {
                     full = true;
@@ -342,6 +344,13 @@ class SseStreamIT {
                         drains.incrementAndGet();
                         pump(response);
                     });
+                    return;
+                }
+                if (chunks++ == CHUNKS_PER_TURN) {
+                    // The server shares an event loop with the client and the blocked-thread checker: yield, so a
+                    // fast reader, or a client that has already gone away and whose close this loop would
+                    // otherwise only see on returning, never keeps the loop in this write loop.
+                    Vertx.currentContext().runOnContext(v -> pump(response));
                     return;
                 }
                 Buffer chunk = nextChunk();
@@ -374,10 +383,11 @@ class SseStreamIT {
         AtomicReference<Context> context = new AtomicReference<>();
         Future<HttpStream> future = client.stream(CallOptions.defaults(), web -> web.get("/flood"), null);
         future.onSuccess(stream -> {
-            context.set(Vertx.currentContext());
             ReadStream<SseEvent> events = stream.events();
             eventStream.set(events);
             events.handler(event -> {
+                // The handler runs on the stream's context; the onSuccess callback does not when the head arrived first
+                context.compareAndSet(null, Vertx.currentContext());
                 sequences.add(Long.parseLong(event.data()));
                 if (delivered.incrementAndGet() == 1) {
                     events.pause();
@@ -684,10 +694,11 @@ class SseStreamIT {
         AtomicReference<Context> context = new AtomicReference<>();
         Future<HttpStream> future = client.stream(CallOptions.defaults(), web -> web.get("/p"), null);
         future.onSuccess(delivered -> {
-            context.set(Vertx.currentContext());
             ReadStream<SseEvent> events = delivered.events();
             eventStream.set(events);
             events.handler(event -> {
+                // The handler runs on the stream's context; the onSuccess callback does not when the head arrived first
+                context.compareAndSet(null, Vertx.currentContext());
                 ids.add(event.id());
                 if (ids.size() == 1) {
                     events.pause();
