@@ -953,7 +953,8 @@ class PgOutboxQueryServiceIT {
     class Detail {
 
         @Test
-        @DisplayName("reads the entry in every state with every scheduling, lease and failure column")
+        @DisplayName(
+                "reads the entry in every state with the scheduling and failure columns, and the lease only while processing")
         void everyState() throws Exception {
             for (OutboxEntryState state : OutboxEntryState.values()) {
                 Instant publishedAt = state == OutboxEntryState.PUBLISHED ? BASE.plusSeconds(50) : null;
@@ -982,8 +983,8 @@ class PgOutboxQueryServiceIT {
                                 BASE.plusSeconds(7),
                                 BASE.plusSeconds(5),
                                 publishedAt,
-                                BASE.plusSeconds(6),
-                                "node-1",
+                                state == OutboxEntryState.PROCESSING ? BASE.plusSeconds(6) : null,
+                                state == OutboxEntryState.PROCESSING ? "node-1" : null,
                                 "boom: gateway refused",
                                 false)),
                         detail,

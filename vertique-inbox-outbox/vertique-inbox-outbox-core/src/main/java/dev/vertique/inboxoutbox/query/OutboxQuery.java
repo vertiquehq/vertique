@@ -20,10 +20,10 @@ import lombok.Builder;
  *
  * <p>At least one state is required, and every other filter is optional and narrows the result. Listings of
  * {@code DEAD_LETTER} and {@code DISCARDED} entries are served by indexes. {@code PUBLISHED} entries cannot be listed:
- * they are the largest set and no index serves them; {@code OutboxQueryService#getById} still reads one. Time ranges are inclusive at the start and exclusive at the end. A text
+ * they are the largest set and no index serves their listing; {@code OutboxQueryService#getById} still reads one. Time ranges are inclusive at the start and exclusive at the end. A text
  * filter matches the whole stored value exactly.
  *
- * <p>The query does not filter on, and results do not carry, an entry's scope key.
+ * <p>The query does not filter on an entry's scope key; results carry it as a label.
  *
  * @param states          the states to list; at least one, never {@link OutboxEntryState#PUBLISHED}, held as an
  *                        unmodifiable set

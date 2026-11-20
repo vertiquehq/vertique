@@ -88,8 +88,10 @@ public class PgOutboxQueryService extends PgSqlRepository implements OutboxQuery
         this.sqlListPrefix = "SELECT " + SUMMARY_COLUMNS + " FROM " + outbox + " WHERE ";
 
         int max = OutboxEntryDetail.MAX_LAST_ERROR_LENGTH;
-        this.sqlFind = "SELECT " + SUMMARY_COLUMNS + ", available_at, scheduled_at, published_at, claimed_at,"
-                + " claimed_by, left(last_error, " + max + ") AS last_error,"
+        this.sqlFind = "SELECT " + SUMMARY_COLUMNS + ", available_at, scheduled_at, published_at,"
+                + " CASE WHEN state = 'PROCESSING' THEN claimed_at END AS claimed_at,"
+                + " CASE WHEN state = 'PROCESSING' THEN claimed_by END AS claimed_by,"
+                + " left(last_error, " + max + ") AS last_error,"
                 + " COALESCE(char_length(last_error) > " + max + ", false) AS last_error_truncated"
                 + " FROM " + outbox + " WHERE id = $1";
 
