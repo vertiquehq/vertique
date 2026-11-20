@@ -191,6 +191,9 @@ problems, with `DelayedJobRegistrationException` under it exposing `violations()
 `DelayedJobTechnicalException` (core `TechnicalException`) for runtime failures, with
 `DelayedJobPersistenceException` under it.
 
+Startup registration collects its violations into one `DelayedJobRegistrationException`, including a
+`@DelayedJobHandlerMethod` name outside `[a-zA-Z0-9._-]{1,128}`.
+
 Every `enqueue*` method translates persistence failures automatically, so callers never see a raw
 `DataAccessException`. They surface as `DelayedJobPersistenceException`, whose `retryable()` flag is
 `true` for optimistic-locking, pessimistic-locking and transient data-access failures (deadlock,
