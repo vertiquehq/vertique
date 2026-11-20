@@ -34,7 +34,7 @@ public interface InboxService {
 
 | Parameter | Description |
 |-----------|-------------|
-| `messageId` | Unique identifier for the inbound message (e.g., `x-message-id` header value) |
+| `messageId` | Unique identifier for the inbound message, chosen by the application — for example an id the producer carries in its own message header. The framework supplies no message id header: relay control stays out of `headers` (see [Header model](#header-model)) |
 | `source` | Logical source name (e.g., `"payments"`, `"orders"`) |
 | `tx` | Caller-provided transaction; dedup insert participates in this transaction |
 | `work` | Business logic to execute only for new messages |
@@ -46,7 +46,8 @@ Processing steps:
 
 ```java
 KafkaRecordContext record = KafkaRecordContext.current().orElseThrow();
-String messageId = Objects.requireNonNull(record.headers().asMap().get("x-message-id"), "x-message-id");
+// "event-id" is an application header the producer put in its OutboxEntry headers
+String messageId = Objects.requireNonNull(record.headers().asMap().get("event-id"), "event-id");
 
 pool.withTransaction(tx ->
     inboxService.processOnce(messageId, "payments", tx, () ->
@@ -153,7 +154,7 @@ Domain record representing a persisted outbox row. Carries all relay state field
 | `eventType` | `String` | Event type |
 | `destination` | `String` | Stable target id or topic |
 | `destinationType` | `DestinationType` | Open value type; built-ins are `SERVICE`, `DELAYED_JOB`, `KAFKA`; adapter-declared types are also valid |
-| `payload` | `Object` | Deserialized payload (decoded from JSONB by `PayloadCodec`) |
+| `payload` | `Object` | Payload as read from JSONB storage — a `JsonObject`; a non-object payload is stored wrapped as `{"_v": …}`. Destination handlers decode it with `PayloadCodec.decode(JsonObject)` or `PayloadCodec.decode(JsonObject, Class)`, which unwrap the wrapper |
 | `headers` | `Map<String, String>` | Application/transport headers only (no framework keys); an unmodifiable copy — see [Header model](#header-model) |
 | `scheduledAt` | `Instant` | Optional scheduled publish time |
 | `availableAt` | `Instant` | Earliest publish time after backoff |
