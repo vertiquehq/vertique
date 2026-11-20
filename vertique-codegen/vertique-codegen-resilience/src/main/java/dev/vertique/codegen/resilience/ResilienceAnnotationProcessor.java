@@ -111,11 +111,10 @@ public final class ResilienceAnnotationProcessor extends AbstractProcessor {
         }
 
         if (enclosingType.getKind() == ElementKind.INTERFACE) {
-            if (!isAllowedInterface(enclosingType)) {
-                context.diagnostics().error(method, Diagnostics.resilientInterfaceNotAllowed());
-            } else if (policy.isEmpty() && !declaration) {
+            if (policy.isEmpty() && !declaration) {
                 context.diagnostics().error(method, Diagnostics.resilientAnchorRequiresPolicyOrDeclaration());
             }
+            validateReturnType(method, true);
             return;
         }
 
@@ -123,29 +122,21 @@ public final class ResilienceAnnotationProcessor extends AbstractProcessor {
             context.diagnostics().error(method, Diagnostics.resilientAnchorRequiresPolicyOrDeclaration());
         }
         proxyabilityValidator.validate(method);
-        validateReturnType(method);
+        validateReturnType(method, false);
         validateServiceDoubleWrap(method, enclosingType);
     }
 
-    private boolean isAllowedInterface(TypeElement type) {
-        if (AnnotationMirrors.isPresent(type, SERVICE_CONTRACT_FQN)) {
-            return true;
-        }
-        return type.getAnnotationMirrors().stream()
-                .map(mirror -> mirror.getAnnotationType().asElement())
-                .filter(TypeElement.class::isInstance)
-                .map(TypeElement.class::cast)
-                .map(annotation -> annotation.getQualifiedName().toString())
-                .anyMatch(name -> name.startsWith("jakarta.ws.rs."));
-    }
-
-    private void validateReturnType(ExecutableElement method) {
+    /**
+     * Requires a concrete {@code Future<T>} return type. An interface method may name a type variable as
+     * the payload, because each implementor specializes it; a concrete class cannot.
+     */
+    private void validateReturnType(ExecutableElement method, boolean onInterface) {
         TypeMirror returnType = method.getReturnType();
         TypeMirror payload = context.unwrapFuture(returnType);
         boolean concreteFuture = payload != returnType
                 && returnType.getKind() == TypeKind.DECLARED
                 && payload.getKind() != TypeKind.WILDCARD
-                && payload.getKind() != TypeKind.TYPEVAR
+                && (onInterface || payload.getKind() != TypeKind.TYPEVAR)
                 && payload.getKind() != TypeKind.ERROR;
         if (!concreteFuture) {
             context.diagnostics().error(method, Diagnostics.resilientMethodsMustReturnFuture());

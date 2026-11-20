@@ -124,4 +124,89 @@ class AutoWireProcessorRestClientsTest {
 
         result.assertSuccess();
     }
+
+    @Test
+    @DisplayName("a package-private client outside the module package is skipped with a warning, not emitted")
+    void packagePrivateClientOutsideModulePackage_isSkippedWithWarning() {
+        var result = ProcessorTestHarness.run(
+                new AutoWireProcessor(),
+                SourceFiles.inline("dev.vertique.rest.client.RestClient", REST_CLIENT_ANNOTATION),
+                SourceFiles.inline("dev.vertique.rest.client.RestClientFactory", REST_CLIENT_FACTORY),
+                SourceFiles.inline("dev.vertique.examples.client.UserClient", """
+                        package dev.vertique.examples.client;
+
+                        import dev.vertique.rest.client.RestClient;
+
+                        @RestClient(name = "userService", value = "http://localhost:8081")
+                        public interface UserClient {
+                            String getUser(String id);
+                        }
+                        """),
+                SourceFiles.inline("dev.vertique.examples.hidden.HiddenClient", """
+                        package dev.vertique.examples.hidden;
+
+                        import dev.vertique.rest.client.RestClient;
+
+                        @RestClient(name = "hidden", value = "http://localhost:8082")
+                        interface HiddenClient {
+                            String ping();
+                        }
+                        """));
+
+        String module = "dev.vertique.examples.GeneratedRestClientsModule";
+        result.assertSuccess();
+        result.assertWarningMessage("dev.vertique.examples.hidden.HiddenClient is not accessible from package");
+        result.assertGeneratedSourceContains(module, "provideUserClient");
+        result.assertGeneratedSourceDoesNotContain(module, "provideHiddenClient");
+    }
+
+    @Test
+    @DisplayName("a package-private client is still bound when the module lands in its own package")
+    void packagePrivateClientInModulePackage_isBound() {
+        var result = ProcessorTestHarness.run(
+                new AutoWireProcessor(),
+                SourceFiles.inline("dev.vertique.rest.client.RestClient", REST_CLIENT_ANNOTATION),
+                SourceFiles.inline("dev.vertique.rest.client.RestClientFactory", REST_CLIENT_FACTORY),
+                SourceFiles.inline("dev.vertique.examples.hidden.HiddenClient", """
+                        package dev.vertique.examples.hidden;
+
+                        import dev.vertique.rest.client.RestClient;
+
+                        @RestClient(name = "hidden", value = "http://localhost:8082")
+                        interface HiddenClient {
+                            String ping();
+                        }
+                        """));
+
+        result.assertSuccess();
+        result.assertNoWarnings();
+        result.assertGeneratedSourceContains(
+                "dev.vertique.examples.hidden.GeneratedRestClientsModule", "provideHiddenClient");
+    }
+
+    @Test
+    @DisplayName("no module is generated when every client is unreachable from the configured package")
+    void everyClientUnreachable_generatesNoModule() {
+        var result = ProcessorTestHarness.run(
+                new AutoWireProcessor(),
+                java.util.Map.of("vertique.codegen.package", "dev.vertique.examples.other"),
+                SourceFiles.inline("dev.vertique.rest.client.RestClient", REST_CLIENT_ANNOTATION),
+                SourceFiles.inline("dev.vertique.rest.client.RestClientFactory", REST_CLIENT_FACTORY),
+                SourceFiles.inline("dev.vertique.examples.hidden.HiddenClient", """
+                        package dev.vertique.examples.hidden;
+
+                        import dev.vertique.rest.client.RestClient;
+
+                        @RestClient(name = "hidden", value = "http://localhost:8082")
+                        interface HiddenClient {
+                            String ping();
+                        }
+                        """));
+
+        result.assertSuccess();
+        result.assertWarningMessage("dev.vertique.examples.hidden.HiddenClient is not accessible from package");
+        org.junit.jupiter.api.Assertions.assertTrue(result.compilation()
+                .generatedSourceFile("dev.vertique.examples.other.GeneratedRestClientsModule")
+                .isEmpty());
+    }
 }

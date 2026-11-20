@@ -709,7 +709,7 @@ describe('PublicCiContractTest', () => {
     assert.ok(reportStep > buildStep, 'test-report retention must run after Maven verification');
     assert.match(
       yaml,
-      /^      - name: Upload test reports after build interruption\n        if: \$\{\{ always\(\) && \(failure\(\) \|\| cancelled\(\)\) \}\}\n        uses: actions\/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7\.0\.1\n        with:\n          name: test-reports\n          path: \|\n            \*\*\/target\/surefire-reports\/\*\*\n            \*\*\/target\/failsafe-reports\/\*\*\n          if-no-files-found: ignore$/m,
+      /^      - name: Upload test reports after build interruption\n        if: \$\{\{ always\(\) && \(failure\(\) \|\| cancelled\(\)\) \}\}\n        uses: actions\/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7\.0\.2\n        with:\n          name: test-reports\n          path: \|\n            \*\*\/target\/surefire-reports\/\*\*\n            \*\*\/target\/failsafe-reports\/\*\*\n          if-no-files-found: ignore$/m,
       'ci.yml must retain Surefire and Failsafe diagnostics after failure or cancellation'
     );
   });
