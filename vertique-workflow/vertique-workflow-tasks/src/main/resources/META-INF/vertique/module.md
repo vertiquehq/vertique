@@ -23,7 +23,7 @@ The module is intentionally thin. It contains no SQL implementation and no workf
 | `TaskService` | Application-facing service that opens its own transaction |
 | `TransactionalTaskService<TX>` | Same operations inside a caller-provided transaction |
 | `WorkflowTasksModule` | Dagger bindings for the task services |
-| Compose validator | Optional startup check that required task bindings exist |
+| Compose validator | Startup check, run in the `VALIDATE` phase, that required task bindings exist |
 
 The engine still owns state transitions. Completing or reassigning a task delegates to engine callbacks so workflow state, history, timers, and idempotency are updated consistently. Completing a task is a two-step operation: `complete` validates and *records* the completion and reserves the task (`COMPLETING`), and the workflow executor applies the decision afterwards (see [Recorded completion](#recorded-completion)).
 
@@ -100,13 +100,12 @@ Version-stable tasks compare the reviewed subject version supplied by the caller
 })
 public interface AppComponent {
     TaskService taskService();
-    WorkflowTasksComposeValidator workflowTasksComposeValidator();
 }
 ```
 
 Human tasks with due dates or reminders need no further module: their timers are commands that the workflow executor of `vertique-workflow-postgresql` fires.
 
-Expose and call `workflowTasksComposeValidator()` during startup if you want fail-fast validation before serving requests.
+In a component that includes `CoreLifecycleStepsModule`, as `@VertiqueApp` components do, the `VALIDATE` startup phase runs `WorkflowTasksComposeValidator` with every other compose validator, so the component needs no accessor for it. A missing `TaskService` or `TaskStore` binding is a Dagger compile-time error.
 
 ---
 

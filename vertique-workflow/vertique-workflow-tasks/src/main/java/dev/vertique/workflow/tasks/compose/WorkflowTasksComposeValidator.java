@@ -29,13 +29,10 @@ import jakarta.inject.Singleton;
  *
  * <h2>How to use</h2>
  *
- * <p>Applications that include {@link dev.vertique.workflow.tasks.di.WorkflowTasksModule} should
- * expose a {@code WorkflowTasksComposeValidator} accessor on their {@code AppComponent} and call
- * it during {@code MainVerticle.start()} to fail fast if the SPI bindings are missing. This is
- * belt-and-suspenders on top of the Dagger compile-time check and catches runtime misconfiguration
- * where the component is constructed lazily.
- *
- * <p>This validator implements {@link ComposeValidator} so the framework can materialize it in the
+ * <p>Applications that include {@link dev.vertique.workflow.tasks.di.WorkflowTasksModule} need no
+ * accessor for this validator: it implements {@link ComposeValidator}, and the module contributes
+ * it to the {@code Set<ComposeValidator>} multibinding, so a component that includes
+ * {@code CoreLifecycleStepsModule} (as {@code @VertiqueApp} components do) materializes it in the
  * {@link dev.vertique.core.lifecycle.LifecyclePhase#VALIDATE VALIDATE} lifecycle phase (forcing its
  * construction, hence its validation) without any app code referencing it. The marker adds no
  * methods and does not change how validation runs.
