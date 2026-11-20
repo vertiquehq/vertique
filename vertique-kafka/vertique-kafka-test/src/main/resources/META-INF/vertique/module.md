@@ -17,8 +17,8 @@ integration tests do not start a broker for every test class.
 ## When To Use It
 
 Add `dev.vertique:vertique-kafka-test` in test scope when an integration test needs a real Kafka
-broker. The artifact is currently consumed by `vertique-kafka-core` and `vertique-kafka-avro`; it
-is test infrastructure, not an application runtime dependency.
+broker. It is test infrastructure for framework modules and example applications, not an
+application runtime dependency.
 
 ## Core Concepts
 

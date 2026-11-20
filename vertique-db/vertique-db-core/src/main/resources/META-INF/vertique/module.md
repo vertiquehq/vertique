@@ -393,8 +393,11 @@ name is validated through `SqlIdentifier` in the compact constructor.
 
 ### Transactions
 
-`transaction()` returns a single-use `TransactionBuilder`. It auto-commits on success, auto-rolls
-back on failure, and translates the failure through the repository's exception mapper.
+`transaction()` returns a `TransactionBuilder` that is meant to be executed once. It auto-commits on
+success, auto-rolls back on failure, and translates the failure through the repository's exception
+mapper. The builder holds only the isolation level, read-only flag and deadline, so a second
+`execute` on the same builder runs an independent transaction with the same settings (a deadline is
+measured from that call); build a fresh builder per transaction.
 
 ```java
 // Database-default isolation, read-write
@@ -448,15 +451,21 @@ repository.transaction().deadline(Duration.ofSeconds(5)).execute(conn -> doWork(
 Every statement inside the lambda must be bound to the transactional connection with `.on(conn)`;
 a builder left on the pool silently runs outside the transaction.
 
-`Savepoint.execute(conn, name, fn)` gives partial rollback inside an open transaction: on success the
-savepoint is released, on failure it is rolled back to and the original error propagates, and the
-surrounding transaction stays open either way. The name must be a valid SQL identifier.
+`Savepoint.execute(conn, name, fn)` gives partial rollback inside an open transaction for work that
+fails with something other than a failed SQL statement: on success the savepoint is released, on
+failure it is rolled back to and the original error propagates, and the surrounding transaction stays
+open. A failed SQL statement inside the savepoint, such as a unique-key violation, fails the whole
+transaction even when the work recovers from it and the savepoint is rolled back: the transaction
+does not commit and the future returned by `execute` fails (see
+[Transaction completion](#transaction-completion)). The name must be a valid SQL identifier.
 
 ```java
 repository.transaction().serializable().execute(conn ->
         doPartOne(conn)
-                .compose(v -> Savepoint.execute(conn, "sp1", c -> doRiskyWork(c)))
-                .recover(err -> doFallback(conn)));
+                // doRiskyWork fails with a non-SQL failure, such as a business-rule check
+                .compose(v -> Savepoint.execute(conn, "sp1", c -> doRiskyWork(c))
+                        .recover(err -> Future.succeededFuture())) // writes made inside sp1 are undone
+                .compose(v -> doPartTwo(conn)));
 ```
 
 `TransactionOptions` is the record the builder hands to the vendor base class: `isolationLevel`
@@ -557,8 +566,8 @@ columns; vendor builders quote every column during composition.
 The typed `db` config section — see [Configuration](#configuration) for every key.
 `DbPoolConfig.validate()` returns a list of warning strings for likely misconfigurations — an unset
 host, a non-positive `maxPoolSize`, a trust store configured while `sslMode` is `DISABLE`. It never
-throws and nothing calls it automatically; invoke it yourself and log the result if you want that
-diagnostic at startup.
+throws. `DbModule` calls it when it creates the `DbPoolConfig` binding and logs each warning at
+WARN (see [`DbModule`](#dbmodule)); a warning never fails startup.
 
 ### `DbSchemas`
 
@@ -623,8 +632,11 @@ public record MigrationResult(int migrationsApplied, String targetVersion) {}
 ```
 
 `targetVersion` is `null` when nothing was applied. Implementations wrap vendor failures in
-`MigrationException` (extends `dev.vertique.core.exception.VertiqueException`), which may carry a
-partial `MigrationResult` via `partialResult()` when the engine reported progress before failing.
+`MigrationException` (extends `dev.vertique.core.exception.VertiqueException`). A runner may attach a
+partial `MigrationResult`, readable through `partialResult()`, and `partialResult()` is `null`
+otherwise. The Flyway runner attaches none: a failed single-history run carries no progress, and a
+failed named run reports its progress through `MigrationRunException.report()`, which is `null` when
+the failure came before any report existed.
 
 Run migrations before deploying verticles:
 

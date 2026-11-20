@@ -157,7 +157,7 @@ would fail Flyway checksum validation, which is why the fold-back practice ends 
 | Index | Columns | Partial condition | Purpose |
 |-------|---------|-------------------|---------|
 | `idx_job_executions_claim` | `queue, priority DESC, scheduled_at ASC` | `WHERE state = 'ENQUEUED'` | Job claiming query (poller and cron) |
-| `idx_job_executions_heartbeat` | `updated_at` | `WHERE state = 'PROCESSING'` | Stale-job detection by coordinator |
+| `idx_job_executions_heartbeat` | `updated_at` | `WHERE state = 'PROCESSING'` | Serves `findStale(heartbeatTimeout)`, which no framework component calls. The coordinator recovers a dead node's executions through the heartbeat table (`job_server_heartbeats`), not this index |
 | `idx_job_executions_state` | `state, created_at DESC` | — | Dashboard queries by state |
 | `idx_job_executions_job_id` | `job_id, created_at DESC` | — | Dashboard queries by job |
 | `idx_job_executions_idempotency_key` | `handler, scope_key, idempotency_key` (UNIQUE) | `WHERE idempotency_key IS NOT NULL AND state NOT IN ('SUCCEEDED', 'CANCELLED', 'DEAD_LETTER')` | Delayed-job idempotency key: at most one unfinished execution per handler, scope and key; `FAILED` and `ABANDONED` stay unfinished because a retry can still re-enqueue them |

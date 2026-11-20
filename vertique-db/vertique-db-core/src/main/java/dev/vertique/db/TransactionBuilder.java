@@ -12,8 +12,10 @@ import java.util.function.Function;
 /**
  * Fluent builder for configuring and executing a database transaction with specific options.
  *
- * <p>Obtained via {@link SqlRepository#transaction()}. The builder is single-use — call
- * {@link #execute(Function)} once to run the transaction.
+ * <p>Obtained via {@link SqlRepository#transaction()}. The builder is meant to be executed once —
+ * call {@link #execute(Function)} once to run the transaction. It holds only the isolation level,
+ * read-only flag and deadline, so a second {@code execute} runs an independent transaction with the
+ * same settings, and a deadline is measured from that call.
  *
  * <pre>{@code
  * // Serializable read-only transaction
@@ -22,13 +24,15 @@ import java.util.function.Function;
  *     .readOnly()
  *     .execute(conn -> queryWork(conn));
  *
- * // Repeatable read with savepoint
+ * // Repeatable read with savepoint; doRiskyWork fails with a non-SQL failure, because a failed
+ * // SQL statement fails the whole transaction even inside a savepoint
  * repository.transaction()
  *     .repeatableRead()
  *     .execute(conn ->
  *         doPartOne(conn)
- *             .compose(v -> Savepoint.execute(conn, "sp1", c -> doRiskyWork(c)))
- *             .recover(err -> fallback(conn))
+ *             .compose(v -> Savepoint.execute(conn, "sp1", c -> doRiskyWork(c))
+ *                 .recover(err -> Future.succeededFuture()))
+ *             .compose(v -> doPartTwo(conn))
  *     );
  * }</pre>
  *

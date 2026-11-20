@@ -35,7 +35,9 @@ import lombok.experimental.Accessors;
 public class DelayedJob {
 
     /**
-     * The handler name. Maps to the event bus address {@code job.delayed.<handler>}.
+     * The handler name. At enqueue time it is resolved to the handler's event bus address: the service
+     * operation address of the annotated method, or {@code jobs/delayed/<handler>/execute} for a typed
+     * contract.
      * Must correspond to a method annotated with {@link DelayedJobHandlerMethod}.
      */
     private final String handler;

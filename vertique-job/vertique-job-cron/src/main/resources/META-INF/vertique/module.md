@@ -62,7 +62,7 @@ public class CleanupServiceImpl implements CleanupService {
 | `cron` | Yes | — | Cron expression in 6-field format |
 | `mode` | No | `EVERY_INSTANCE` | Execution mode; `SINGLE_INSTANCE` requires a `JobRepository` |
 | `timezone` | No | `"UTC"` | IANA timezone ID for evaluating the cron expression |
-| `maxAttempts` | No | `3` | Max retry attempts before dead-letter |
+| `maxAttempts` | No | `3` | Recorded on each execution record. Cron never retries: a failed execution is recorded `FAILED` and the next scheduled tick produces a fresh one, so this value is never used to dead-letter |
 | `overlapPolicy` | No | `SKIP` | What to do when the previous execution is still running |
 | `tracked` | No | `""` (use global) | `"true"`, `"false"`, or `""` (use `cron.tracked` config; default `true`) |
 | `misfirePolicy` | No | `FIRE_NOW` for `SINGLE_INSTANCE`, `SKIP` for `EVERY_INSTANCE` | How to handle fires missed while the app was down. The annotation's own default is `FIRE_NOW`; for `EVERY_INSTANCE` jobs, an unset (or explicit — the two are indistinguishable) `FIRE_NOW` is rewritten to `SKIP` at registration so the mode-based default applies. See **`EVERY_INSTANCE` + `FIRE_NOW` rewrite** below. |
@@ -107,7 +107,7 @@ Supported syntax: `*` (all), `N` (specific), `A-B` (range), `A,B,C` (list), `*/N
 
 ### `MisfirePolicy`
 
-Applied at startup during misfire recovery. Requires a `JobRepository` and a persisted schedule with `last_fired_at` data; jobs without a repository or with `tracked=false` always behave as `SKIP`.
+Applied at startup during misfire recovery, which runs only for `SINGLE_INSTANCE` jobs. Requires a `JobRepository` and a persisted schedule with `last_fired_at` data; jobs without a repository or with `tracked=false` always behave as `SKIP`.
 
 | Constant | Description |
 |----------|-------------|
@@ -115,7 +115,7 @@ Applied at startup during misfire recovery. Requires a `JobRepository` and a per
 | `SKIP` | Ignore missed fires; wait for the next scheduled tick. Default for `EVERY_INSTANCE`. |
 | `FIRE_ALL` | Execute every missed fire in sequence, oldest to newest. Capped at `CronScheduler.MAX_MISFIRE_FIRES` (100). |
 
-**`EVERY_INSTANCE` + `FIRE_NOW` rewrite.** `@CronJob.misfirePolicy()` defaults to `FIRE_NOW`, so `CronJobRegistrar` cannot distinguish "user explicitly wrote `FIRE_NOW`" from "user left the default." For an `EVERY_INSTANCE` job, an annotation value of `FIRE_NOW` (explicit or defaulted — indistinguishable) is therefore rewritten to `SKIP` before registration. This gives the intended UX — `EVERY_INSTANCE` defaults to `SKIP`, `SINGLE_INSTANCE` defaults to `FIRE_NOW` — but means an `EVERY_INSTANCE` job cannot select `FIRE_NOW` via the annotation; use the `cron.jobs.<id>.misfirePolicy` config override instead, which takes precedence and is applied verbatim.
+**`EVERY_INSTANCE` + `FIRE_NOW` rewrite.** `@CronJob.misfirePolicy()` defaults to `FIRE_NOW`, so `CronJobRegistrar` cannot distinguish "user explicitly wrote `FIRE_NOW`" from "user left the default." For an `EVERY_INSTANCE` job, an annotation value of `FIRE_NOW` (explicit or defaulted — indistinguishable) is therefore rewritten to `SKIP` before registration. This gives the intended UX — `EVERY_INSTANCE` defaults to `SKIP`, `SINGLE_INSTANCE` defaults to `FIRE_NOW` — but means an `EVERY_INSTANCE` job cannot select `FIRE_NOW` via the annotation. The `cron.jobs.<id>.misfirePolicy` config override takes precedence and is applied verbatim, but it does not change the outcome: misfire recovery skips every job that is not `SINGLE_INSTANCE` (an `EVERY_INSTANCE` job fires on every node independently and has no shared tracking state), so an `EVERY_INSTANCE` job never recovers missed fires, whatever its policy.
 
 ### `CronTargetReference`
 
@@ -225,7 +225,7 @@ Immutable record describing a registered job:
 | `handlerAddress` | `String` | Event bus address for an `EventBusTarget` job. Always `null` for a `ServiceTarget` job — that address is resolved per fire from `target`, never at startup |
 | `mode` | `ExecutionMode` | Execution mode |
 | `timezone` | `ZoneId` | Timezone for cron evaluation |
-| `maxAttempts` | `int` | Max retry attempts |
+| `maxAttempts` | `int` | Recorded on each execution record; cron never retries |
 | `payload` | `Object` | Static payload included in dispatch (may be `null`) |
 | `overlapPolicy` | `OverlapPolicy` | Overlap handling policy |
 | `tracked` | `boolean` | Whether to persist execution records |
