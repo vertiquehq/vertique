@@ -582,6 +582,19 @@ final class McpToolModelValidator {
                                 method.getSimpleName());
                 return Optional.empty();
             }
+            if (description.length() > McpToolDescriptor.MAX_DESCRIPTION_CHARS) {
+                ctx.diagnostics()
+                        .error(
+                                parameter,
+                                "@McpToolParam '%s' of @McpTool method %s.%s() has a description of %d characters;"
+                                        + " the protocol bound is %d",
+                                protocolName,
+                                declaringType.getSimpleName(),
+                                method.getSimpleName(),
+                                description.length(),
+                                McpToolDescriptor.MAX_DESCRIPTION_CHARS);
+                return Optional.empty();
+            }
             if (erasureIs(type, OPTIONAL)
                     && AnnotationMirrors.findByFqn(parameter, NOT_NULL).isPresent()) {
                 ctx.diagnostics()
