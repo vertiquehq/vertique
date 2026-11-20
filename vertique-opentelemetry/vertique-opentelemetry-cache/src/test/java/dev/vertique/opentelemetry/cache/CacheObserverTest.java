@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -92,5 +93,22 @@ class CacheObserverTest {
 
         assertDoesNotThrow(() -> observer.onEvent(new CacheOperationCompleted(
                 CacheOperation.GET, "redis", "profiles", CacheOutcome.ERROR, Duration.ofMillis(1))));
+    }
+
+    @Test
+    void fatalTracerFailuresAreRethrown() {
+        Tracer virtualMachineFailure = mock(Tracer.class);
+        when(virtualMachineFailure.spanBuilder("cache.get")).thenThrow(new InternalError("virtual machine failure"));
+        Tracer linkageFailure = mock(Tracer.class);
+        when(linkageFailure.spanBuilder("cache.get")).thenThrow(new NoClassDefFoundError("linkage failure"));
+        CacheOperationCompleted event = new CacheOperationCompleted(
+                CacheOperation.GET, "redis", "profiles", CacheOutcome.ERROR, Duration.ofMillis(1));
+
+        assertThrows(InternalError.class, () -> new CacheTracingObserver(
+                        virtualMachineFailure, TracingConfig.builder().build())
+                .onEvent(event));
+        assertThrows(LinkageError.class, () -> new CacheTracingObserver(
+                        linkageFailure, TracingConfig.builder().build())
+                .onEvent(event));
     }
 }

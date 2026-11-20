@@ -76,16 +76,27 @@ public final class CacheTracingObserver implements CacheObserver {
             if (failed) {
                 span.setStatus(StatusCode.ERROR);
             }
-        } catch (Throwable ignored) {
+        } catch (Throwable failure) {
+            rethrowIfFatal(failure);
             // Telemetry must never alter cache behavior.
         } finally {
             if (span != null) {
                 try {
                     span.end();
-                } catch (Throwable ignored) {
+                } catch (Throwable failure) {
+                    rethrowIfFatal(failure);
                     // Telemetry must never alter cache behavior.
                 }
             }
+        }
+    }
+
+    @SuppressWarnings("removal")
+    private static void rethrowIfFatal(Throwable failure) {
+        if (failure instanceof VirtualMachineError
+                || failure instanceof ThreadDeath
+                || failure instanceof LinkageError) {
+            throw (Error) failure;
         }
     }
 

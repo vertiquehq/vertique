@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -192,6 +193,22 @@ class RateLimitSpanObserverTest {
         RateLimitSpanObserver observer = new RateLimitSpanObserver(tracer);
 
         assertDoesNotThrow(() -> observer.onEvent(decision(RateLimitOutcome.BACKEND_FAILURE_OPEN)));
+    }
+
+    @Test
+    @DisplayName("a fatal tracer failure is rethrown so the runtime can see it")
+    void shouldRethrowFatalTracerFailures() {
+        Tracer virtualMachineFailure = mock(Tracer.class);
+        when(virtualMachineFailure.spanBuilder(RateLimitSpanObserver.SPAN_NAME))
+                .thenThrow(new InternalError("virtual machine failure"));
+        Tracer linkageFailure = mock(Tracer.class);
+        when(linkageFailure.spanBuilder(RateLimitSpanObserver.SPAN_NAME))
+                .thenThrow(new NoClassDefFoundError("linkage failure"));
+
+        assertThrows(InternalError.class, () -> new RateLimitSpanObserver(virtualMachineFailure)
+                .onEvent(decision(RateLimitOutcome.BACKEND_FAILURE_OPEN)));
+        assertThrows(LinkageError.class, () -> new RateLimitSpanObserver(linkageFailure)
+                .onEvent(decision(RateLimitOutcome.PERMITTED)));
     }
 
     // --- Supporting verification ---
