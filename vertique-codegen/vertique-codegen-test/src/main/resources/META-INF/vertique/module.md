@@ -11,7 +11,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 `vertique-codegen-test` provides a `compile-testing`-backed test harness for annotation processors in the Vertique codegen series. It exposes `ProcessorTestHarness` from `src/main/java` so downstream modules consume it as a plain `<scope>test</scope>` dependency — keeping Guava (a transitive of `compile-testing`) off the main classpath of any framework module.
 
-The harness is JUnit-version-agnostic: all assertion failures throw `org.opentest4j.AssertionFailedError` with the full compilation diagnostics embedded in the message, which integrates naturally with JUnit 5 (today's standard) and any other framework that handles opentest4j.
+The harness is JUnit-version-agnostic: all assertion failures throw `org.opentest4j.AssertionFailedError`, and a failure message embeds the full compilation diagnostics (the two generated-source assertions are the exception, see Result), which integrates naturally with JUnit 5 (today's standard) and any other framework that handles opentest4j.
 
 ---
 
@@ -75,7 +75,7 @@ Each `-A` option is emitted as `-Akey=value` and appended to the harness's pinne
 | `generatedClassLoader()` | Asserts success, then returns a `ClassLoader` over every class the compilation produced. Built once and reused |
 | `loadGeneratedClass(String fqn)` | Loads one class the compilation produced, by fully-qualified name |
 
-All failure messages include a `Compilation diagnostics:` section listing every diagnostic so test output is immediately actionable.
+Every failure message includes a `Compilation diagnostics:` section listing every diagnostic so test output is immediately actionable, except in `assertGeneratedSourceContains` and `assertGeneratedSourceDoesNotContain` once the generated source exists. A snippet mismatch there embeds the snippet and the full generated source instead of the diagnostics, and a generated source that cannot be read embeds neither. When no generated source exists for the name, those two assertions embed the diagnostics like every other failure.
 
 **Chained assertion example:**
 
@@ -167,4 +167,4 @@ None. Test-utility library only.
 | `dev.vertique:vertique-codegen-core` | compile | APT helpers available to test fixtures |
 | `com.google.testing.compile:compile-testing:0.23.0` | compile | In-process Java compiler with `Compilation` result and `JavaFileObjects` utilities |
 | `org.opentest4j:opentest4j:1.3.0` | compile | `AssertionFailedError` thrown by all `Result` assertions |
-| `com.palantir.javapoet:javapoet:0.14.0` | compile | Fixtures may build source objects via JavaPoet |
+| `com.palantir.javapoet:javapoet` | compile | Fixtures may build source objects via JavaPoet |
