@@ -111,7 +111,8 @@ final class CommandFaults {
      * Ends the lease of a claim at the moment a crash abandons its segment, as if the lease time had elapsed, instead of
      * letting the test wait the lease out. The row is the one a lapsed lease leaves: still claimed, its attempt spent,
      * its lease ended on the database clock. Only the claim whose segment was abandoned is touched, found by its token.
-     * For tests that need a claim to be reclaimable after a crash and do not observe the lease's duration.
+     * For tests that need a claim to be reclaimable after a crash and do not observe the lease's duration. A crash
+     * fault is matched to the instance's latest claim, so use it only where an instance has one live claim at a time.
      *
      * @param observer a client of the database the executors run against
      */
