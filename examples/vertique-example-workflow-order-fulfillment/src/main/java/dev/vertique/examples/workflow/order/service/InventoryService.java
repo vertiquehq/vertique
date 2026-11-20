@@ -5,6 +5,7 @@ package dev.vertique.examples.workflow.order.service;
 
 import dev.vertique.examples.workflow.order.command.ReleaseInventory;
 import dev.vertique.examples.workflow.order.command.ReserveInventory;
+import dev.vertique.examples.workflow.order.signal.InventoryReserved;
 import dev.vertique.services.ServiceContract;
 import dev.vertique.services.ServiceOperation;
 import io.vertx.core.Future;
@@ -27,15 +28,13 @@ public interface InventoryService {
     /**
      * Reserves stock for the given order.
      *
-     * <p>On success, the implementation posts an
-     * {@link dev.vertique.examples.workflow.order.signal.InventoryReserved} signal back to the
-     * workflow engine.
+     * <p>The returned {@link dev.vertique.examples.workflow.order.signal.InventoryReserved} resumes the waiting workflow.
      *
      * @param cmd the reservation command
      * @return a {@link Future} that completes when the reservation is recorded
      */
     @ServiceOperation("reserve")
-    Future<Void> reserve(ReserveInventory cmd);
+    Future<InventoryReserved> reserve(ReserveInventory cmd);
 
     /**
      * Releases a prior inventory reservation (compensation).

@@ -37,8 +37,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *       branch identity → engine receives each signal, advances the matching branch token to
  *       {@code COMPLETED}, evaluates the join after each completion, and advances the workflow to
  *       {@code ship-order} once all three are done.</li>
- *   <li>Drive relay (cycle 2) → shipping.create-shipment dispatched → shipment.created signal
- *       posted (instance-level) → workflow reaches {@code COMPLETED}.</li>
+ *   <li>Drive relay (cycle 2) → shipping.create-shipment dispatched → shipment reply
+ *       recorded (instance-level) → workflow reaches {@code COMPLETED}.</li>
  * </ol>
  *
  * <p>Assertions:
@@ -83,7 +83,7 @@ public class FanOutOrderFulfillmentIT extends SagaTestBase {
 
     @Test
     @DisplayName("happy path: ALL_REQUIRED fan-out completes after all three branch signals arrive")
-    void happyPathFanOutCompletesSuccessfully(VertxTestContext ctx) {
+    void inventoryBranchResumesOnItsServiceReply(VertxTestContext ctx) {
         String orderId = "fanout-happy-1";
 
         // Fan-out branch drives hit DurableContextPropagator.bindFrom which is strict on
@@ -91,7 +91,7 @@ public class FanOutOrderFulfillmentIT extends SagaTestBase {
         // duplicated context so the substrate's write guard accepts the bind, matching how
         // production dispatch (event-bus / Kafka / cron) always reaches the engine.
         runOnDuplicatedContext(() -> startFanOutOrder(orderId)
-                        // Cycle 1: relay dispatches inventory.reserve → inventory.reserved signal → inventory
+                        // Cycle 1: relay dispatches inventory.reserve → reservation reply → inventory
                         //           branch COMPLETED.
                         .compose(id -> driveRelay().map(v -> id))
                         // Cycle 2: relay dispatches payment.authorize → payment.captured signal → payment
@@ -100,7 +100,7 @@ public class FanOutOrderFulfillmentIT extends SagaTestBase {
                         // Cycle 3: relay dispatches fraud.screen → fraud.screened signal → fraud branch
                         //           COMPLETED → join fires → ship-order dispatch recorded.
                         .compose(id -> driveRelay().map(v -> id))
-                        // Cycle 2: relay dispatches shipping.create-shipment → shipment.created signal →
+                        // Cycle 2: relay dispatches shipping.create-shipment → shipment reply →
                         // workflow reaches COMPLETED.
                         .compose(id -> driveRelay().map(v -> id))
                         .compose(id -> component.workflowOperations().query(id)))

@@ -30,12 +30,12 @@ import jakarta.inject.Singleton;
  * <pre>
  *   start
  *     → fork "reserve-order"
- *         branch "inventory"  → dispatch inventory.reserve → wait inventory.reserved → complete
+ *         branch "inventory"  → call inventory.reserve → wait for reply → complete
  *         branch "payment"    → dispatch payment.authorize → wait payment.captured   → complete
  *         branch "fraud"      → dispatch fraud.screen      → wait fraud.screened     → complete
  *     → join "all-reservations" (ALL_REQUIRED)
  *     → dispatch "ship-order" (shipping.create-shipment)
- *     → wait  "wait-shipment" (shipment.created)
+ *     → wait  "ship-order.reply" (shipment result)
  *     → complete "done"
  * </pre>
  *
@@ -94,15 +94,16 @@ public final class OrderFulfillmentFanOutDefinition
                 .join("all-reservations")
 
                 // --- Branch: inventory reservation ---
-                .dispatch(
+                .call(
                         "dispatch-inventory",
                         "inventory.reserve",
-                        state -> new ReserveInventory(state.orderId(), state.items()),
-                        "wait-inventory-reserved")
-                .waitForSignal("wait-inventory-reserved", "inventory.reserved", InventoryReserved.class)
-                .onSignal((s, sig) -> s.withReservation(sig.reservationId()))
-                .toStepOnSignal("inventory-done")
+                        state -> new ReserveInventory(state.orderId(), state.items()))
+                .onReply(InventoryReserved.class, (s, sig) -> s.withReservation(sig.reservationId()))
+                .toStepOnReply("inventory-done")
+                .onFailure()
+                .toStepOnFailure("inventory-failed")
                 .build()
+                .fail("inventory-failed", "INVENTORY_FAILURE", state -> "Inventory reservation failed")
                 .complete("inventory-done")
 
                 // --- Branch: payment authorization ---
@@ -138,14 +139,14 @@ public final class OrderFulfillmentFanOutDefinition
                 .endJoin()
 
                 // --- Post-join: create shipment ---
-                .dispatch(
+                .call(
                         "ship-order",
                         "shipping.create-shipment",
-                        state -> new CreateShipment(state.orderId(), state.customerId(), state.items()),
-                        "wait-shipment")
-                .waitForSignal("wait-shipment", "shipment.created", ShipmentCreated.class)
-                .onSignal((s, sig) -> s.withShipment(sig.trackingNumber()))
-                .toStepOnSignal("done")
+                        state -> new CreateShipment(state.orderId(), state.customerId(), state.items()))
+                .onReply(ShipmentCreated.class, (s, sig) -> s.withShipment(sig.trackingNumber()))
+                .toStepOnReply("done")
+                .onFailure()
+                .toStepOnFailure("order-failed")
                 .build()
                 .complete("done")
 

@@ -247,7 +247,25 @@ public final class WorkflowDefinitionCompiler {
         NamedPayloadMapper<?> payloadMapper = lookup.payloadMappers().lookup(step.payloadMapper());
         Function<Object, Object> payloadFn = (Function<Object, Object>) (Function<?, ?>) payloadMapper.mapper();
 
-        if (step.compensation() == null) {
+        if (step.reply() != null) {
+            var reply = step.reply();
+            var call = builder.call(step.id(), step.target(), payloadFn);
+            if (step.compensation() != null) call.compensateWith(step.compensation());
+            if (Boolean.TRUE.equals(reply.completesLater())) call.completesLater();
+            var reducer = lookup.stateReducers().lookup(reply.stateReducer());
+            BiFunction<Object, Object, Object> reducerFn =
+                    (BiFunction<Object, Object, Object>) (BiFunction<?, ?, ?>) reducer.reducer();
+            var withReply = call.onReply(
+                            loadClass(reply.payloadType(), "reply payload for step '" + step.id() + "'"), reducerFn)
+                    .toStepOnReply(reply.next());
+            var failure = reply.onFailure();
+            var failureStage = failure.stateReducer() == null
+                    ? withReply.onFailure()
+                    : withReply.onFailure((BiFunction) lookup.stateReducers()
+                            .lookup(failure.stateReducer())
+                            .reducer());
+            emitTimeout(failureStage.toStepOnFailure(failure.next()), reply.timeout());
+        } else if (step.compensation() == null) {
             builder.dispatch(step.id(), step.target(), payloadFn, step.next());
         } else {
             builder.dispatchWithCompensation(step.id(), step.target(), payloadFn, step.compensation(), step.next());
@@ -275,32 +293,28 @@ public final class WorkflowDefinitionCompiler {
 
         var withNext = declaration.onSignal(reducerFn).toStepOnSignal(step.next());
 
-        if (step.timeout() == null) {
-            withNext.build();
-        } else {
-            WaitSignalStep.TimeoutBlock timeout = step.timeout();
-            NamedStateMutator<?> mutator = lookup.stateMutators().lookup(timeout.onTimeoutMutator());
-            Function<Object, Object> mutatorFn = (Function<Object, Object>) (Function<?, ?>) mutator.mutator();
+        emitTimeout(withNext, step.timeout());
+    }
 
-            // Determine the timeout spec: Duration, Instant, or ref:id
-            String after = timeout.after();
-            if (after.startsWith("ref:")) {
-                // Strip whitespace so "ref: myId" and "ref:myId" resolve identically — the
-                // validator also strips when checking the id, keeping both in sync.
-                String resolverId = after.substring(4).strip();
-                NamedTimerResolver<?> timerResolver = lookup.timerResolvers().lookup(resolverId);
-                Function<Object, Instant> resolverFn =
-                        (Function<Object, Instant>) (Function<?, ?>) timerResolver.resolver();
-                withNext.timeoutFromState(resolverFn).onTimeout(mutatorFn).toStepOnTimeout(timeout.next());
-            } else {
-                Duration dur = tryParseDuration(after);
-                if (dur != null) {
-                    withNext.timeoutAfter(dur).onTimeout(mutatorFn).toStepOnTimeout(timeout.next());
-                } else {
-                    Instant instant = Instant.parse(after);
-                    withNext.timeoutAt(instant).onTimeout(mutatorFn).toStepOnTimeout(timeout.next());
-                }
-            }
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private void emitTimeout(WorkflowBuilder.SignalWaitWithNextStep withNext, WaitSignalStep.TimeoutBlock timeout) {
+        if (timeout == null) {
+            withNext.build();
+            return;
+        }
+        NamedStateMutator<?> mutator = lookup.stateMutators().lookup(timeout.onTimeoutMutator());
+        Function<Object, Object> mutatorFn = (Function<Object, Object>) (Function<?, ?>) mutator.mutator();
+        String after = timeout.after();
+        if (after.startsWith("ref:")) {
+            NamedTimerResolver<?> resolver =
+                    lookup.timerResolvers().lookup(after.substring(4).strip());
+            Function<Object, Instant> resolverFn = (Function<Object, Instant>) (Function<?, ?>) resolver.resolver();
+            withNext.timeoutFromState(resolverFn).onTimeout(mutatorFn).toStepOnTimeout(timeout.next());
+        } else {
+            Duration duration = tryParseDuration(after);
+            if (duration != null)
+                withNext.timeoutAfter(duration).onTimeout(mutatorFn).toStepOnTimeout(timeout.next());
+            else withNext.timeoutAt(Instant.parse(after)).onTimeout(mutatorFn).toStepOnTimeout(timeout.next());
         }
     }
 

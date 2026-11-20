@@ -4,9 +4,7 @@
 package dev.vertique.examples.workflow.order;
 
 import dev.vertique.examples.workflow.order.command.PlaceOrder;
-import dev.vertique.examples.workflow.order.signal.InventoryReserved;
 import dev.vertique.examples.workflow.order.signal.PaymentCaptured;
-import dev.vertique.examples.workflow.order.signal.ShipmentCreated;
 import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.contract.WorkflowQuery;
 import dev.vertique.workflow.contract.WorkflowSignal;
@@ -26,11 +24,11 @@ import io.vertx.core.Future;
  * <p>The saga follows these forward steps:
  * <ol>
  *   <li>Start: dispatch {@code inventory.reserve} (compensable).</li>
- *   <li>Wait for {@code inventory.reserved} signal.</li>
+ *   <li>Wait for the inventory service reply.</li>
  *   <li>Dispatch {@code payment.authorize} (compensable).</li>
  *   <li>Wait for {@code payment.captured} signal.</li>
  *   <li>Dispatch {@code shipping.create-shipment}.</li>
- *   <li>Wait for {@code shipment.created} signal.</li>
+ *   <li>Wait for the shipment service reply.</li>
  *   <li>Complete.</li>
  * </ol>
  *
@@ -53,19 +51,6 @@ public interface OrderFulfillmentWorkflow {
     Future<WorkflowInstanceId> start(PlaceOrder cmd);
 
     /**
-     * Delivers the {@code inventory.reserved} signal to a waiting saga instance.
-     *
-     * <p>The dedup key is sourced from {@link InventoryReserved#dedupKey()}. Duplicate deliveries
-     * with the same order id are idempotently ignored.
-     *
-     * @param id the workflow instance id to signal
-     * @param signal the signal payload; must not be null
-     * @return a {@link Future} that completes when the signal has been applied
-     */
-    @WorkflowSignal("inventory.reserved")
-    Future<Void> inventoryReserved(WorkflowInstanceId id, InventoryReserved signal);
-
-    /**
      * Delivers the {@code payment.captured} signal to a waiting saga instance.
      *
      * <p>The dedup key is sourced from {@link PaymentCaptured#dedupKey()}. Duplicate deliveries
@@ -77,19 +62,6 @@ public interface OrderFulfillmentWorkflow {
      */
     @WorkflowSignal("payment.captured")
     Future<Void> paymentCaptured(WorkflowInstanceId id, PaymentCaptured signal);
-
-    /**
-     * Delivers the {@code shipment.created} signal to a waiting saga instance.
-     *
-     * <p>The dedup key is sourced from {@link ShipmentCreated#dedupKey()}. Duplicate deliveries
-     * with the same order id are idempotently ignored.
-     *
-     * @param id the workflow instance id to signal
-     * @param signal the signal payload; must not be null
-     * @return a {@link Future} that completes when the signal has been applied
-     */
-    @WorkflowSignal("shipment.created")
-    Future<Void> shipmentCreated(WorkflowInstanceId id, ShipmentCreated signal);
 
     /**
      * Queries the current state of an order-fulfillment saga instance.

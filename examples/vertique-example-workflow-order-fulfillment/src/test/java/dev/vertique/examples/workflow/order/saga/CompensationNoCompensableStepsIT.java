@@ -23,17 +23,14 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * No-compensation saga integration test (§9.4 test 17b — cycle 1 adaptation).
+ * No-compensation saga integration test.
  *
- * <p><strong>Cycle 1 limitation note:</strong> In cycle 1, service runtime failures in the relay
- * do NOT advance the saga to {@code FAILED} — the relay retries the outbox entry, and the saga
- * remains {@code WAITING}. A saga can only reach {@code FAILED} via a {@code FailNode} in its
- * plan. The "no compensable steps" scenario is therefore verified at the engine level by
- * {@link dev.vertique.workflow.postgresql.engine.CompensationLifoIT#partialCompensation} (using a
- * 3-step definition with FailNode) and cannot be demonstrated through the relay-driven
- * {@code order-fulfillment} saga in cycle 1.
+ * <p>While an inventory call is retrying, the saga remains waiting and no compensation is written.
+ * When attempts run out, the call can take its failure route. The engine-level
+ * {@link dev.vertique.workflow.postgresql.engine.CompensationLifoIT#partialCompensation} covers
+ * compensation after a completed step.
  *
- * <p>This test verifies the observable cycle 1 behavior when a service is unreachable:
+ * <p>This test verifies the observable behavior while a service is unreachable:
  * <ul>
  *   <li>The saga is started and advances to the inventory wait step.</li>
  *   <li>When inventory fails in the relay, the outbox entry is marked for retry and the saga
@@ -83,7 +80,7 @@ public class CompensationNoCompensableStepsIT extends SagaTestBase {
         startOrder(orderId)
                 // Relay dispatches inventory.reserve → stub fails → relay marks retry.
                 // Saga has already committed SIDE_EFFECT_RECORDED and transitioned to WAITING.
-                // Cycle 1 limitation: relay failure does NOT fail the saga.
+                // A retryable relay failure leaves the saga waiting while attempts remain.
                 .compose(id -> driveRelay().map(v -> id))
                 .compose(id -> component.workflowOperations().query(id))
                 .onComplete(ar -> ctx.verify(() -> {
@@ -91,15 +88,15 @@ public class CompensationNoCompensableStepsIT extends SagaTestBase {
 
                     var view = ar.result();
 
-                    // Cycle 1: saga remains WAITING after relay failure (no FailNode triggered).
+                    // The saga remains WAITING while the relay retries.
                     assertEquals(
                             WorkflowStatus.WAITING,
                             view.instance().status(),
                             "saga must remain WAITING when inventory service fails (cycle 1 relay limitation)");
                     assertEquals(
-                            "wait-inventory",
+                            "reserve-inventory.reply",
                             view.instance().currentStepId(),
-                            "saga must be waiting at wait-inventory step");
+                            "saga must be waiting at reserve-inventory.reply step");
 
                     // History must NOT contain compensation entries.
                     var entryTypes = view.recentHistory().stream()
@@ -139,8 +136,7 @@ public class CompensationNoCompensableStepsIT extends SagaTestBase {
         // step A's compensation is triggered (one COMPENSATING_STEP).
         //
         // For a "zero compensable steps completed" scenario, the engine goes directly to FAILED
-        // (no COMPENSATING phase). The order-fulfillment saga cannot demonstrate this via the
-        // relay in cycle 1 because relay failures do not advance the saga to FAILED.
+        // (no COMPENSATING phase). This test observes the earlier retrying state.
         ctx.completeNow();
     }
 }

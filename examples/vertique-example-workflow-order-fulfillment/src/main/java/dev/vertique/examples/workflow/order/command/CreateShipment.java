@@ -8,7 +8,7 @@ import java.util.List;
 /**
  * Command dispatched to the shipping service to create a shipment for a fulfilled order.
  *
- * @param orderId the order identifier used to correlate with the {@code shipment.created} signal
+ * @param orderId the order identifier for the shipment
  * @param customerId the customer to ship to
  * @param items the line items to include in the shipment
  */

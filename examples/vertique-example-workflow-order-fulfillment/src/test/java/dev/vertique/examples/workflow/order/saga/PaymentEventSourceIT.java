@@ -95,12 +95,12 @@ public class PaymentEventSourceIT extends SagaTestBase {
                     return produceJson(kafkaBootstrap, PAYMENTS_TOPIC, orderId, paymentCaptured)
                             .map(produced -> waiting.instance().id());
                 })
-                .compose(id -> awaitStep(id, "wait-shipment", ARRIVAL_DEADLINE_MS))
+                .compose(id -> awaitStep(id, "create-shipment.reply", ARRIVAL_DEADLINE_MS))
                 .compose(id -> component.workflowOperations().query(id))
                 .onComplete(ctx.succeeding(resumed -> ctx.verify(() -> {
                     // Then the order has left wait-payment with the charge recorded, and now waits for its shipment.
                     assertEquals(WorkflowStatus.WAITING, resumed.instance().status());
-                    assertEquals("wait-shipment", resumed.instance().currentStepId());
+                    assertEquals("create-shipment.reply", resumed.instance().currentStepId());
                     assertEquals(
                             chargeId,
                             new JsonObject(resumed.instance().stateJson()).getString("authorizationId"),

@@ -24,4 +24,20 @@ public record ServiceStep(
         String target,
         String payloadMapper,
         @Nullable String compensation,
-        String next) implements StepNode {}
+        @Nullable String next,
+        @Nullable ReplyBlock reply)
+        implements StepNode {
+    public ServiceStep(String id, String target, String payloadMapper, @Nullable String compensation, String next) {
+        this(id, target, payloadMapper, compensation, next, null);
+    }
+
+    public record ReplyBlock(
+            String payloadType,
+            String stateReducer,
+            String next,
+            FailureBlock onFailure,
+            @Nullable WaitSignalStep.TimeoutBlock timeout,
+            @Nullable Boolean completesLater) {}
+
+    public record FailureBlock(@Nullable String stateReducer, String next) {}
+}

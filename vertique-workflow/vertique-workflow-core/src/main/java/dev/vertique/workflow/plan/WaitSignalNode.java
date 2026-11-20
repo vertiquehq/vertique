@@ -5,6 +5,8 @@ package dev.vertique.workflow.plan;
 
 import dev.vertique.workflow.registry.CallbackId;
 import jakarta.annotation.Nullable;
+import java.util.List;
+import java.util.Objects;
 
 /**
  * A plan node that suspends the workflow until a named external signal arrives.
@@ -46,8 +48,17 @@ public record WaitSignalNode(
         CallbackId stateUpdaterCallbackId,
         String nextStepId,
         @Nullable TimeoutBranch timeout,
-        @Nullable CallbackId correlationKeyCallbackId)
+        @Nullable CallbackId correlationKeyCallbackId,
+        @Nullable ReplyWait reply)
         implements WorkflowNode {
+
+    public WaitSignalNode {
+        Objects.requireNonNull(stepId);
+        Objects.requireNonNull(signalName);
+        Objects.requireNonNull(payloadTypeName);
+        Objects.requireNonNull(stateUpdaterCallbackId);
+        Objects.requireNonNull(nextStepId);
+    }
 
     /**
      * Creates a node that declares no correlation key.
@@ -66,7 +77,45 @@ public record WaitSignalNode(
             CallbackId stateUpdaterCallbackId,
             String nextStepId,
             @Nullable TimeoutBranch timeout) {
-        this(stepId, signalName, payloadTypeName, stateUpdaterCallbackId, nextStepId, timeout, null);
+        this(stepId, signalName, payloadTypeName, stateUpdaterCallbackId, nextStepId, timeout, null, null);
+    }
+
+    public WaitSignalNode(
+            String stepId,
+            String signalName,
+            String payloadTypeName,
+            CallbackId stateUpdaterCallbackId,
+            String nextStepId,
+            @Nullable TimeoutBranch timeout,
+            @Nullable CallbackId correlationKeyCallbackId) {
+        this(
+                stepId,
+                signalName,
+                payloadTypeName,
+                stateUpdaterCallbackId,
+                nextStepId,
+                timeout,
+                correlationKeyCallbackId,
+                null);
+    }
+
+    /** Returns the signal names accepted by this wait, in reply then failure order. */
+    public List<String> acceptedSignalNames() {
+        return reply == null ? List.of(signalName) : List.of(signalName, reply.failureSignalName());
+    }
+
+    /** The failure route and originating call for a reply wait. */
+    public record ReplyWait(
+            String callStepId,
+            String failureSignalName,
+            @Nullable CallbackId failureUpdaterCallbackId,
+            String failureNextStepId,
+            boolean completesLater) {
+        public ReplyWait {
+            Objects.requireNonNull(callStepId);
+            Objects.requireNonNull(failureSignalName);
+            Objects.requireNonNull(failureNextStepId);
+        }
     }
 
     /**

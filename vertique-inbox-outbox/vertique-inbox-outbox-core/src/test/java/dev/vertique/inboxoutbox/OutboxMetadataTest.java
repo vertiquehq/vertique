@@ -70,6 +70,21 @@ class OutboxMetadataTest {
         }
 
         @Test
+        void replyControlRoundTripsWithBothModesAndAbsent() {
+            for (boolean later : new boolean[] {false, true}) {
+                var delivery = new OutboxDeliveryMetadata(
+                        java.util.Optional.empty(),
+                        java.util.Optional.empty(),
+                        java.util.Optional.of(new OutboxReplyControl("secret", later)));
+                assertEquals(delivery, OutboxDeliveryMetadata.fromJson(delivery.toJson()));
+            }
+            assertEquals(
+                    OutboxDeliveryMetadata.empty(),
+                    OutboxDeliveryMetadata.fromJson(
+                            OutboxDeliveryMetadata.empty().toJson()));
+        }
+
+        @Test
         @DisplayName("null metadata yields empty()")
         void nullMetadataYieldsEmpty() {
             assertEquals(OutboxMetadata.empty(), OutboxMetadata.fromJson(null));

@@ -4,6 +4,7 @@
 package dev.vertique.workflow.definition.pipeline;
 
 import dev.vertique.workflow.definition.schema.HumanTaskStep;
+import dev.vertique.workflow.definition.schema.ServiceStep;
 import dev.vertique.workflow.definition.schema.StepNode;
 import dev.vertique.workflow.definition.schema.WaitSignalStep;
 import dev.vertique.workflow.definition.schema.WorkflowDefinitionDocument;
@@ -61,7 +62,13 @@ public final class DocumentTypeReferences {
         add(references, false, "startPayloadType", doc.startPayloadType());
         if (doc.steps() != null) {
             for (StepNode step : doc.steps()) {
-                if (step instanceof WaitSignalStep wait) {
+                if (step instanceof ServiceStep service && service.reply() != null) {
+                    add(
+                            references,
+                            false,
+                            "steps[].reply.payloadType",
+                            service.reply().payloadType());
+                } else if (step instanceof WaitSignalStep wait) {
                     add(references, false, "steps[].payloadType", wait.payloadType());
                 } else if (step instanceof HumanTaskStep task && task.decisions() != null) {
                     for (HumanTaskStep.TaskDecisionBlock decision : task.decisions()) {

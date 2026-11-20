@@ -3,10 +3,12 @@
 
 package dev.vertique.inboxoutbox.services;
 
+import dagger.BindsOptionalOf;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dev.vertique.inboxoutbox.OutboxDestinationHandler;
+import dev.vertique.inboxoutbox.OutboxOutcomeConsumer;
 import dev.vertique.logging.LoggingContextModule;
 
 /**
@@ -35,6 +37,9 @@ import dev.vertique.logging.LoggingContextModule;
  */
 @Module(includes = {dev.vertique.context.ContextRuntimeModule.class, LoggingContextModule.class})
 public abstract class TransactionalMessagingServiceModule {
+
+    @BindsOptionalOf
+    abstract OutboxOutcomeConsumer outcomeConsumer();
 
     /**
      * Contributes the {@link ServiceOutboxDestinationHandler} to the set of registered

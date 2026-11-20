@@ -8,7 +8,7 @@ import jakarta.annotation.Nullable;
 import java.util.Optional;
 
 /**
- * INTERNAL: the one place that decides what becomes of a command that meets an ended or failed instance.
+ * INTERNAL: common outcomes for a command that meets an ended or failed instance.
  *
  * <p>The table, by the status the instance has when the command runs:
  *
@@ -26,7 +26,7 @@ import java.util.Optional;
  * <p>Any other command (a start) that meets an ended instance is rejected, or cancelled when the instance was cancelled.
  * Every reason is built by {@link CommandErrors}: a reason code and a framework statement, never a payload value or
  * exception text. The executor's claim, the segment of each command kind and the settlement of an instance's parked and
- * dead-lettered commands all read this table; none evaluates it on its own.
+ * dead-lettered commands read this table. The claim path also handles recorded replies to ended instances.
  */
 public final class EndedInstanceOutcomes {
 

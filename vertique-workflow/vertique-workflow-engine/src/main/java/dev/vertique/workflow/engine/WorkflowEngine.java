@@ -285,6 +285,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /** The size and depth bounds a signal's payload and explicit carrier must meet to be recorded. */
     private final RecordTimePayloadValidator recordValidator;
 
+    private final int replyMaxPayloadBytes;
+
     /** The most signals an instance may hold open. */
     private final int maxOpenSignals;
 
@@ -305,6 +307,64 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * sanitization of the public signal forms, without the intake check.
      */
     private final RelayedSignals<SqlClient> relayedSignals = new RelayedSignals<>() {
+        @Override
+        public Future<CorrelatedSignalReceipt> signalWait(
+                WorkflowInstanceId id,
+                java.util.UUID waitId,
+                Object payload,
+                SignalProvenance provenance,
+                SqlClient tx) {
+            if (id == null || waitId == null || provenance == null)
+                return Future.failedFuture(new NullPointerException("id, waitId and provenance are required"));
+            Future<CorrelatedSignalReceipt> invalid = WorkflowTransactionClientGuard.reject("signalWait", tx);
+            if (invalid != null) return invalid;
+            return historyPublisher.around(
+                    WorkflowHistoryFailure.Action.SIGNAL,
+                    null,
+                    tx,
+                    () -> recordReply(id, waitId, payload, provenance, false, tx));
+        }
+
+        @Override
+        public Future<CorrelatedSignalReceipt> failWait(
+                WorkflowInstanceId id,
+                java.util.UUID waitId,
+                dev.vertique.workflow.ops.ServiceFailure failure,
+                SignalProvenance provenance,
+                SqlClient tx) {
+            if (id == null || waitId == null || failure == null || provenance == null)
+                return Future.failedFuture(new NullPointerException("id, waitId, failure and provenance are required"));
+            Future<CorrelatedSignalReceipt> invalid = WorkflowTransactionClientGuard.reject("failWait", tx);
+            if (invalid != null) return invalid;
+            return historyPublisher.around(
+                    WorkflowHistoryFailure.Action.SIGNAL,
+                    null,
+                    tx,
+                    () -> recordReply(id, waitId, failure, provenance, true, tx));
+        }
+
+        @Override
+        public Future<java.util.Optional<String>> recordedOutcomeName(
+                WorkflowInstanceId id, java.util.UUID waitId, SqlClient tx) {
+            if (id == null || waitId == null)
+                return Future.failedFuture(new NullPointerException("id and waitId are required"));
+            Future<java.util.Optional<String>> invalid =
+                    WorkflowTransactionClientGuard.reject("recordedOutcomeName", tx);
+            if (invalid != null) return invalid;
+            return commands.recordedReplyName(id, waitId, WorkflowDedupScopes.correlatedKey(waitId.toString()), tx);
+        }
+
+        @Override
+        public Future<Boolean> waitOpen(WorkflowInstanceId id, java.util.UUID waitId, SqlClient tx) {
+            if (id == null || waitId == null)
+                return Future.failedFuture(new NullPointerException("id and waitId are required"));
+            Future<Boolean> invalid = WorkflowTransactionClientGuard.reject("waitOpen", tx);
+            if (invalid != null) return invalid;
+            return signalWaits.findById(waitId, tx).map(found -> found.filter(
+                            wait -> wait.instanceId().equals(id))
+                    .isPresent());
+        }
+
         @Override
         public Future<Void> signal(
                 WorkflowInstanceId id,
@@ -373,6 +433,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         this.actors = actors;
         this.recorderRouter = recorderRouter;
         this.recordValidator = new RecordTimePayloadValidator(recordingConfig);
+        this.replyMaxPayloadBytes = recordingConfig.maxPayloadBytes();
         this.startPayloadValidation = new StartPayloadValidation(recordValidator);
         this.maxOpenSignals = recordingConfig.maxOpenSignalsPerInstance();
         this.executionProbe = executionProbe;
@@ -654,6 +715,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         this.actors = actors;
         this.recorderRouter = recorders;
         this.recordValidator = new RecordTimePayloadValidator(recordingConfig);
+        this.replyMaxPayloadBytes = recordingConfig.maxPayloadBytes();
         this.startPayloadValidation = new StartPayloadValidation(recordValidator);
         this.definitionReads = definitionReads;
         this.maxOpenSignals = recordingConfig.maxOpenSignalsPerInstance();
@@ -795,6 +857,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 builtContextBinder,
                 historyRecorder,
                 recorderRouter,
+                eventEmitter,
                 waitRecords);
         // MigrationExecutor needs the driver eagerly (built above) plus the optional migration
         // registry; nothing references it back, so it is a plain leaf in the construction order.
@@ -2296,6 +2359,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                                     payloadJson,
                                     namespace,
                                     dedupKey,
+                                    maxOpenSignals,
                                     tx);
                         }),
                 tx);
@@ -2363,6 +2427,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                         payloadJson,
                         namespace,
                         dedupKey,
+                        maxOpenSignals,
                         tx),
                 tx);
     }
@@ -2398,6 +2463,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                     "Signal for contract '" + EchoedNames.bounded(contractName) + "' is refused: the signal name"
                             + " exceeds " + MAX_NAME_LENGTH + " characters",
                     List.of(ViolationDetail.unlocated("the signal name is too long", "payload"))));
+        }
+        if (dev.vertique.workflow.plan.ReplySignals.isReserved(signalName)) {
+            return Future.failedFuture(reservedSignal());
         }
         String namespace = WorkflowDedupScopes.correlatedScope(contractName, signalName, signal.scopeKey());
         String dedupKey = WorkflowDedupScopes.correlatedKey(signal.dedupKey());
@@ -2439,6 +2507,86 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         });
     }
 
+    private Future<CorrelatedSignalReceipt> recordReply(
+            WorkflowInstanceId id,
+            java.util.UUID waitId,
+            Object payload,
+            SignalProvenance provenance,
+            boolean failure,
+            SqlClient tx) {
+        String namespace = WorkflowDedupScopes.REPLY_NAMESPACE;
+        String key = WorkflowDedupScopes.correlatedKey(waitId.toString());
+        return dedup.findCorrelated(namespace, key, tx).compose(existing -> {
+            if (existing.isPresent())
+                return existing.get().equals(id)
+                        ? Future.succeededFuture(duplicateReceipt())
+                        : Future.failedFuture(replyNoMatch());
+            return signalWaits.findById(waitId, tx).compose(found -> {
+                if (found.isEmpty() || !found.get().instanceId().equals(id)) return Future.failedFuture(replyNoMatch());
+                SignalWaitRecord wait = found.get();
+                String payloadJson;
+                try {
+                    payloadJson = dev.vertique.workflow.ops.ReplyPayloadBounds.encode(payload, replyMaxPayloadBytes);
+                } catch (WorkflowInvalidPayloadException e) {
+                    return Future.failedFuture(e);
+                } catch (RuntimeException e) {
+                    return Future.failedFuture(
+                            new WorkflowInvalidPayloadException("Reply payload is refused", List.of()));
+                }
+                CorrelatedSignal signal = new CorrelatedSignal(
+                        Object.class,
+                        failure
+                                ? dev.vertique.workflow.plan.ReplySignals.failureNameFor(wait.signalName())
+                                : wait.signalName(),
+                        waitId.toString(),
+                        payload,
+                        waitId.toString(),
+                        null,
+                        null,
+                        provenance);
+                return commands.lockInstance(id, tx)
+                        .compose(locked -> dedup.findCorrelated(namespace, key, tx))
+                        .compose(again -> {
+                            if (again.isPresent())
+                                return again.get().equals(id)
+                                        ? Future.succeededFuture(duplicateReceipt())
+                                        : Future.failedFuture(replyNoMatch());
+                            return signalWaits.findById(waitId, tx).compose(current -> {
+                                if (current.isEmpty()
+                                        || !current.get().instanceId().equals(id))
+                                    return Future.failedFuture(replyNoMatch());
+                                return recordCorrelated(
+                                                signal,
+                                                wait.contractName(),
+                                                id,
+                                                wait.definitionId(),
+                                                wait.forkStepId().isEmpty() ? null : wait.forkStepId(),
+                                                wait.branchId().isEmpty() ? null : wait.branchId(),
+                                                waitId.toString(),
+                                                payloadJson,
+                                                namespace,
+                                                key,
+                                                Integer.MAX_VALUE,
+                                                tx)
+                                        .recover(error -> error instanceof WorkflowSignalNoMatchException
+                                                ? Future.failedFuture(replyNoMatch())
+                                                : Future.failedFuture(error));
+                            });
+                        });
+            });
+        });
+    }
+
+    private static WorkflowSignalNoMatchException replyNoMatch() {
+        return new WorkflowSignalNoMatchException("vertique.reply.", "vertique.reply.");
+    }
+
+    private static WorkflowInvalidPayloadException reservedSignal() {
+        return new WorkflowInvalidPayloadException(
+                "The signal name is reserved",
+                List.of(ViolationDetail.unlocated("the signal name is reserved", "payload")));
+    }
+
     /** The receipt of a delivery that an earlier delivery of the same event already recorded. */
     private static CorrelatedSignalReceipt duplicateReceipt() {
         return new CorrelatedSignalReceipt(CorrelatedSignalReceipt.Outcome.DUPLICATE, null);
@@ -2463,16 +2611,16 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             String payloadJson,
             String namespace,
             String dedupKey,
+            int limit,
             SqlClient tx) {
         String signalName = signal.signalName();
         return admitSignal(id, contractName, signalName, forkStepId, branchId, contractName, tx)
                 .compose(admitted -> capturedForDelivery(signal, contractName)
-                        .compose(actor -> commands.raiseOpenSignals(id, maxOpenSignals, tx)
+                        .compose(actor -> commands.raiseOpenSignals(id, limit, tx)
                                 .compose(raised -> {
                                     if (!raised) {
                                         return Future.<CorrelatedSignalReceipt>failedFuture(
-                                                new WorkflowSignalLimitException(
-                                                        id, maxOpenSignals, contractName, signalName));
+                                                new WorkflowSignalLimitException(id, limit, contractName, signalName));
                                     }
                                     return dedup.claimOrResolveCorrelated(namespace, dedupKey, id, tx)
                                             .compose(inserted -> {
@@ -2603,6 +2751,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                     "Signal for instance '" + id.value() + "' is refused: the " + oversized + " exceeds "
                             + MAX_NAME_LENGTH + " characters",
                     List.of(ViolationDetail.unlocated("the " + oversized + " is too long", "payload"))));
+        }
+        if (signalName != null && dev.vertique.workflow.plan.ReplySignals.isReserved(signalName)) {
+            return Future.failedFuture(reservedSignal());
         }
         String key = WorkflowDedupScopes.signalKey(signalDedupKey, forkStepId, branchId);
         return dedup.findSignal(id, key, tx).compose(duplicate -> {

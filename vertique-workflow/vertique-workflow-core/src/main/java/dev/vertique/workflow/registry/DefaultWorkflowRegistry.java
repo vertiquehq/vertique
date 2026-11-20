@@ -11,8 +11,10 @@ import dev.vertique.workflow.exception.WorkflowDefinitionNotFoundException;
 import dev.vertique.workflow.exception.WorkflowNodeRoleException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.migration.WorkflowStateCompatibility;
+import dev.vertique.workflow.ops.ServiceFailure;
 import dev.vertique.workflow.plan.CompensationNode;
 import dev.vertique.workflow.plan.HumanTaskNode;
+import dev.vertique.workflow.plan.ReplySignals;
 import dev.vertique.workflow.plan.ServiceDispatchNode;
 import dev.vertique.workflow.plan.TimerNode;
 import dev.vertique.workflow.plan.TimerSpec;
@@ -383,7 +385,7 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
 
         // The candidate's classes enter the shared index before the contributed validators run, so a
         // validator can resolve the logical names the plan holds. Any later failure removes them again.
-        Runnable undoIndexing = indexCandidate(def, builder);
+        Runnable undoIndexing = indexCandidate(def, builder, plan);
         try {
             // Contributed definition validators run last, before the publish phase; an exception
             // propagates unchanged and the definition is never published.
@@ -445,7 +447,7 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                 def.stateType(),
                 builder.startPayloadType(),
                 builder.initialState(),
-                builder.signalPayloadTypes(),
+                signalPayloadTypesWithReplies(plan, builder.signalPayloadTypes()),
                 perDefCallbacks);
         return new Compiled(builder, rw, builder.nameBinding(def.stateType()));
     }
@@ -668,16 +670,27 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
      *
      * @return an action that removes the names this call added
      */
-    private Runnable indexCandidate(WorkflowDefinition<?, ?> def, WorkflowBuilder<?> builder) {
+    private Runnable indexCandidate(WorkflowDefinition<?, ?> def, WorkflowBuilder<?> builder, WorkflowPlan plan) {
         if (!(typeNames instanceof DefaultWorkflowTypeNames index)) {
             return () -> {};
         }
         List<Class<?>> classes = new ArrayList<>();
         classes.add(def.stateType());
         classes.add(builder.startPayloadType());
-        classes.addAll(builder.signalPayloadTypes().values());
+        classes.addAll(signalPayloadTypesWithReplies(plan, builder.signalPayloadTypes())
+                .values());
         classes.addAll(builder.decisionPayloadTypes());
         return index.add(def.contract(), classes);
+    }
+
+    static Map<String, Class<?>> signalPayloadTypesWithReplies(WorkflowPlan plan, Map<String, Class<?>> types) {
+        Map<String, Class<?>> result = new HashMap<>(types);
+        for (WorkflowNode node : plan.nodes()) {
+            if (node instanceof WaitSignalNode wait && wait.reply() != null) {
+                result.put(wait.reply().failureSignalName(), ServiceFailure.class);
+            }
+        }
+        return result;
     }
 
     /**
@@ -706,8 +719,7 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
      * @param definitionVersion the definition version (for error messages)
      * @throws WorkflowDefinitionException if any structural rule is violated
      */
-    private static void validatePlanGraph(
-            WorkflowPlan plan, String scopeKey, String definitionId, long definitionVersion) {
+    static void validatePlanGraph(WorkflowPlan plan, String scopeKey, String definitionId, long definitionVersion) {
         String label = "plan " + describe(scopeKey, definitionId, definitionVersion);
 
         // --- 1. Collect all stepIds and reject duplicates ---
@@ -763,6 +775,10 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                     }
                 }
                 case WaitSignalNode wsn -> {
+                    if (wsn.reply() != null && !nodeById.containsKey(wsn.reply().failureNextStepId())) {
+                        throw new WorkflowDefinitionException(
+                                "WaitSignalNode '" + wsn.stepId() + "' references unknown failure next step");
+                    }
                     if (!nodeById.containsKey(wsn.nextStepId())) {
                         throw new WorkflowDefinitionException("WaitSignalNode '" + wsn.stepId() + "' in " + label
                                 + " references unknown nextStepId '" + wsn.nextStepId() + "'");
@@ -843,7 +859,7 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
      * @param definitionVersion the definition version (for error messages)
      * @throws WorkflowDefinitionException if a required callback is missing
      */
-    private static void validateCallbackConsistency(
+    static void validateCallbackConsistency(
             WorkflowPlan plan,
             WorkflowCallbackRegistry callbacks,
             String scopeKey,
@@ -865,6 +881,14 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                     }
                 }
                 case WaitSignalNode wsn -> {
+                    if (wsn.reply() != null && wsn.reply().failureUpdaterCallbackId() != null) {
+                        try {
+                            callbacks.stateUpdater(wsn.reply().failureUpdaterCallbackId());
+                        } catch (IllegalArgumentException | UnsupportedOperationException ex) {
+                            throw new WorkflowDefinitionException(
+                                    "WaitSignalNode '" + wsn.stepId() + "' has an unregistered failure updater");
+                        }
+                    }
                     if (wsn.correlationKeyCallbackId() != null) {
                         CallbackId keyId = wsn.correlationKeyCallbackId();
                         try {
@@ -902,15 +926,17 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
      * @param definitionVersion the definition version (for error messages)
      * @throws WorkflowDefinitionException if duplicate signal names are found
      */
-    private static void validateSignalUniqueness(
+    static void validateSignalUniqueness(
             WorkflowPlan plan, String scopeKey, String definitionId, long definitionVersion) {
         Set<String> seen = new HashSet<>();
         for (var node : plan.nodes()) {
             if (node instanceof WaitSignalNode w) {
-                if (!seen.add(w.signalName())) {
-                    throw new WorkflowDefinitionException("duplicate signal name '" + w.signalName() + "' in plan "
-                            + describe(scopeKey, definitionId, definitionVersion)
-                            + "; plans must have unique signal names across WaitSignalNodes");
+                for (String name : w.acceptedSignalNames()) {
+                    if (!seen.add(name)) {
+                        throw new WorkflowDefinitionException("duplicate signal name '" + name + "' in plan "
+                                + describe(scopeKey, definitionId, definitionVersion)
+                                + "; plans must have unique signal names across WaitSignalNodes");
+                    }
                 }
             }
         }
@@ -941,7 +967,7 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
      * @param definitionVersion the definition version (for error messages)
      * @throws WorkflowDefinitionException if the plan waits for a signal the contract does not declare
      */
-    private static void validateDeclaredSignals(
+    static void validateDeclaredSignals(
             WorkflowPlan plan, Class<?> contract, String scopeKey, String definitionId, long definitionVersion) {
         Set<String> declared = new HashSet<>();
         for (Method method : contract.getMethods()) {
@@ -952,8 +978,10 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
         }
         SortedSet<String> missing = new TreeSet<>();
         for (WorkflowNode node : plan.nodes()) {
-            if (node instanceof WaitSignalNode wait && !declared.contains(wait.signalName())) {
-                missing.add(wait.signalName());
+            if (node instanceof WaitSignalNode wait) {
+                for (String name : wait.acceptedSignalNames()) {
+                    if (!ReplySignals.isReserved(name) && !declared.contains(name)) missing.add(name);
+                }
             }
         }
         if (!missing.isEmpty()) {
@@ -1084,7 +1112,8 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
         WorkflowTypeNames names =
                 nameBinding.isEmpty() ? typeNames : DefaultWorkflowTypeNames.bound(typeNames, nameBinding);
         Compiled compiled = compile(scopeKey, def, names);
-        Runnable undoIndexing = indexCandidate(def, compiled.builder());
+        Runnable undoIndexing =
+                indexCandidate(def, compiled.builder(), compiled.runtime().plan());
         try {
             RegisteredWorkflowDefinition candidate = new RegisteredWorkflowDefinition(
                     compiled.runtime().plan(), compiled.builder().startPayloadType());

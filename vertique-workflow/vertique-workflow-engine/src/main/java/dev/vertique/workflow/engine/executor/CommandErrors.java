@@ -211,6 +211,15 @@ public final class CommandErrors {
                         + " see the executor log");
     }
 
+    /** Returns the fixed error stored when a reply remains parked for retry.
+     * @return the stored value
+     */
+    public static String replyFailure() {
+        return format(
+                Reason.DETERMINISTIC_FAILURE,
+                "Reply failed to apply; the instance is failed and the reply is parked for retry; see the executor log");
+    }
+
     /**
      * The value for a signal whose application executed more nodes than the step cap allows a segment.
      *
