@@ -193,23 +193,22 @@ public class SsmConfigStoreFactory implements ConfigStoreFactory {
 
     /**
      * Reads a positive integer field from {@code config}, returning {@code defaultValue} when
-     * the field is absent, or throwing {@link IllegalArgumentException} when the value is
-     * non-integer or not positive.
+     * the field is absent or a blank string, or throwing {@link IllegalArgumentException} when the
+     * value is non-integer or not positive. The failure names the field and never the value.
      *
      * @param config       the JSON object to read from
      * @param field        the config field name
-     * @param defaultValue the value to use when {@code field} is absent
-     * @return the validated positive integer, or {@code defaultValue} when the field is absent
+     * @param defaultValue the value to use when {@code field} is absent or blank
+     * @return the validated positive integer, or {@code defaultValue} when the field is absent or blank
      * @throws IllegalArgumentException if the field is non-integer or not positive
      */
     private static int parsePositiveInt(JsonObject config, String field, int defaultValue) {
         Object raw = config.getValue(field);
-        if (raw == null) {
+        if (raw == null || raw instanceof String text && text.isBlank()) {
             return defaultValue;
         }
         if (!(raw instanceof Number num)) {
-            throw new IllegalArgumentException("AWS SSM store: field '" + field + "' must be an integer; got: "
-                    + raw.getClass().getSimpleName());
+            throw new IllegalArgumentException("AWS SSM store: field '" + field + "' must be an integer");
         }
         // Normalise to BigDecimal so that BigDecimal, BigInteger, Double, Float, Long, and
         // Integer are all handled uniformly. Using new BigDecimal(value.toString()) avoids
@@ -218,32 +217,22 @@ public class SsmConfigStoreFactory implements ConfigStoreFactory {
         try {
             bd = new BigDecimal(num.toString());
         } catch (NumberFormatException e) {
-            throw new IllegalArgumentException(
-                    "AWS SSM store: field '" + field + "' could not be parsed as a number; got: " + num);
+            throw new IllegalArgumentException("AWS SSM store: field '" + field + "' could not be parsed as a number");
         }
         // Reject any fractional value (e.g. 1.5, 5000.5).
         if (bd.stripTrailingZeros().scale() > 0) {
             throw new IllegalArgumentException(
-                    "AWS SSM store: field '" + field + "' must be an exact integer (no fractional part); got: " + num);
+                    "AWS SSM store: field '" + field + "' must be an exact integer (no fractional part)");
         }
         // Reject values outside int range (e.g. BigInteger 2^40, Long 3_000_000_000).
         BigInteger bigInt = bd.toBigIntegerExact();
         if (bigInt.compareTo(BigInteger.valueOf(Integer.MAX_VALUE)) > 0
                 || bigInt.compareTo(BigInteger.valueOf(Integer.MIN_VALUE)) < 0) {
-            throw new IllegalArgumentException("AWS SSM store: field '"
-                    + field
-                    + "' value "
-                    + bigInt
-                    + " is out of int range ["
-                    + Integer.MIN_VALUE
-                    + ", "
-                    + Integer.MAX_VALUE
-                    + "]");
+            throw new IllegalArgumentException("AWS SSM store: field '" + field + "' is out of int range");
         }
         int value = bigInt.intValueExact();
         if (value <= 0) {
-            throw new IllegalArgumentException(
-                    "AWS SSM store: field '" + field + "' must be a positive integer (> 0); got: " + value);
+            throw new IllegalArgumentException("AWS SSM store: field '" + field + "' must be a positive integer (> 0)");
         }
         return value;
     }

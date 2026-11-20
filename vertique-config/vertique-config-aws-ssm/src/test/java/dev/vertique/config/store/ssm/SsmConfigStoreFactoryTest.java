@@ -187,6 +187,33 @@ class SsmConfigStoreFactoryTest {
         }
 
         @Test
+        @DisplayName("a rejected timeout names the field and does not echo the value")
+        void rejectedTimeoutDoesNotEchoValue(Vertx vertx) {
+            record Case(Object value, String marker) {}
+            for (Case c : List.of(
+                    new Case(-987654, "987654"),
+                    new Case(0, "got"),
+                    new Case(5000.7531, "7531"),
+                    new Case(3_000_000_000L, "3000000000"),
+                    new Case(java.math.BigInteger.TWO.pow(40), "1099511627776"),
+                    new Case("hunter2-secret", "hunter2"))) {
+                JsonObject config = configWithPath("/myapp/prod/").put("connectTimeoutMs", c.value());
+                var ex = assertThrows(IllegalArgumentException.class, () -> factory.create(vertx, config));
+                assertTrue(
+                        ex.getMessage().contains("connectTimeoutMs"), "error must name the field: " + ex.getMessage());
+                assertFalse(ex.getMessage().contains(c.marker()), "error must not echo the value: " + ex.getMessage());
+            }
+        }
+
+        @Test
+        @DisplayName("a blank timeout counts as absent and takes the default")
+        void blankTimeoutCountsAsAbsent(Vertx vertx) {
+            JsonObject config =
+                    configWithPath("/myapp/prod/").put("connectTimeoutMs", "").put("readTimeoutMs", "   ");
+            assertNotNull(factory.create(vertx, config));
+        }
+
+        @Test
         @DisplayName("minimal valid config (path only) creates store without error")
         void minimalValidConfig(Vertx vertx) {
             JsonObject config = configWithPath("/myapp/prod/");
