@@ -93,6 +93,14 @@ class TimeoutsTest {
         }
 
         @Test
+        @DisplayName("preserves a timeout failure the operation raised itself")
+        void preservesOperationOwnTimeout() throws Exception {
+            TimeoutException own = new TimeoutException("broker did not answer");
+
+            assertSame(own, awaitFailure(Timeouts.withTimeout(Future.failedFuture(own), 500L, "close")));
+        }
+
+        @Test
         @DisplayName("preserves an operation failure")
         void preservesFailure() throws Exception {
             RuntimeException cause = new RuntimeException("close failed");
