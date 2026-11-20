@@ -907,7 +907,8 @@ There is no warn-only mode. Every validation failure stops startup.
 | 401 | — | Credential verification failed; the authentication handler reported and failed the request |
 | 401 | `AUTHENTICATION_REQUIRED` | No `SecurityContext` bound, or an anonymous actor on an `AuthenticatedOnly` or `Constrained` route |
 | 403 | `DENY_ALL` | `@DenyAll` |
-| 403 | the decision's own code | The decision point denied |
+| 401 | the decision's own code | The decision point denied a request whose identity is anonymous. The decision point still runs first, so an application that permits anonymous callers is unaffected |
+| 403 | the decision's own code | The decision point denied an authenticated identity |
 | 403 | `INTERNAL_AUTHZ_ERROR` | The decision point or `Authorizer` threw synchronously, returned a `null` future, or resolved to a `null` decision — a contract violation, fail-closed |
 | 503 | `INTERNAL_AUTHZ_ERROR` or `AUTHORITY_RESOLUTION_FAILED` | The decision point or `Authorizer` could not answer: it returned a failed future (with any exception), exceeded the configured [gate deadline](#authorization-gate-deadline-authorizationgateconfig), the `Resilience` runtime had closed, or it *returned* a decision whose reason code is `INTERNAL_AUTHZ_ERROR` (an engine-internal error) or `AUTHORITY_RESOLUTION_FAILED` (a Mode-2 principal-authority resolution failed or timed out) — fail-closed. The event keeps the decision's own reason code. The problem detail is the generic `Authorization is temporarily unavailable`, with a `Retry-After` of the gate deadline rounded up to whole seconds; the cause is logged, never returned |
 | 503 | — | A provider failed during the opt-in [Vert.x authorization import](#vertx-authorization-import-opt-in) — fail-closed: the `SecurityContext` is never bound and no partially imported claim is observable. The problem detail is the generic `Authorization is temporarily unavailable`; the failing provider id is logged, never returned |

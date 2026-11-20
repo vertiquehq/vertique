@@ -804,7 +804,8 @@ public class SecurityPolicyEnforcer {
      *   <li>missing {@code SecurityContext} → emit deny ({@link AuthzReasonCodes#AUTHENTICATION_REQUIRED}),
      *       then {@code ctx.fail(401)}</li>
      *   <li>permit → emit the decision, then {@code ctx.next()}</li>
-     *   <li>deny → emit the decision, then {@code ctx.fail(403)}</li>
+     *   <li>deny → emit the decision, then {@code ctx.fail(403)}, or {@code ctx.fail(401)} when the
+     *       denied identity is anonymous</li>
      *   <li>decision-point failure (failed future, deadline, closed runtime) → emit deny
      *       ({@link AuthzReasonCodes#INTERNAL_AUTHZ_ERROR}), then fail as unavailable: {@code 503} with
      *       the generic detail and a {@code Retry-After}; the cause is logged, never propagated</li>
@@ -922,7 +923,7 @@ public class SecurityPolicyEnforcer {
                             decision.reasonCode(),
                             path,
                             method);
-                    ctx.fail(403);
+                    ctx.fail(deniedStatus(secCtx));
                 }
             });
         };
@@ -1051,7 +1052,7 @@ public class SecurityPolicyEnforcer {
                             roleScope.reasonCode(),
                             path,
                             method);
-                    ctx.fail(statusForRoleScope(roleScope));
+                    ctx.fail(statusForRoleScope(roleScope, secCtx));
                     return;
                 }
 
@@ -1118,7 +1119,7 @@ public class SecurityPolicyEnforcer {
                                 decision.reasonCode(),
                                 path,
                                 method);
-                        ctx.fail(403);
+                        ctx.fail(deniedStatus(secCtx));
                     }
                 });
             });
@@ -1283,13 +1284,27 @@ public class SecurityPolicyEnforcer {
 
     /**
      * Maps a denied role/scope decision to the HTTP status used on the composed path:
-     * {@link AuthzReasonCodes#AUTHENTICATION_REQUIRED} → 401, everything else → 403.
+     * {@link AuthzReasonCodes#AUTHENTICATION_REQUIRED} → 401, a denial of an anonymous identity → 401,
+     * everything else → 403.
      *
      * @param roleScope the denied role/scope decision; must not be {@code null}
+     * @param secCtx    the security context the decision was made for; must not be {@code null}
      * @return the HTTP status code for the deny
      */
-    private static int statusForRoleScope(AuthorizationDecision roleScope) {
-        return AuthzReasonCodes.AUTHENTICATION_REQUIRED.equals(roleScope.reasonCode()) ? 401 : 403;
+    private static int statusForRoleScope(AuthorizationDecision roleScope, SecurityContext secCtx) {
+        return AuthzReasonCodes.AUTHENTICATION_REQUIRED.equals(roleScope.reasonCode()) ? 401 : deniedStatus(secCtx);
+    }
+
+    /**
+     * Status for an access decision that denied the request: 401 when the identity is anonymous (the
+     * caller can still authenticate), otherwise 403. The decision point has already run, so an
+     * application that permits anonymous callers is unaffected.
+     *
+     * @param secCtx the security context the denied decision was made for; must not be {@code null}
+     * @return 401 for an anonymous identity, 403 otherwise
+     */
+    private static int deniedStatus(SecurityContext secCtx) {
+        return secCtx.identity().actor().type() == dev.vertique.security.PrincipalType.ANONYMOUS ? 401 : 403;
     }
 
     /**
