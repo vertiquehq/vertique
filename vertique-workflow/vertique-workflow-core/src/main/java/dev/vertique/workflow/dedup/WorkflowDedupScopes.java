@@ -39,7 +39,7 @@ import java.security.NoSuchAlgorithmException;
  *   <li><b>signalInboxId</b> — composite id used by {@code WorkflowSignalContributor} for the
  *       inbox-message-id ({@code inbox.message_id VARCHAR(255)}). For non-branch signals it
  *       reproduces today's {@code workflowId + ":" + dedupKey} string so existing inbox rows
- *       remain unique. For branch signals it concatenates {@code workflowId:forkStepId:branchId:
+ *       remain unique, hashing the dedup key when that string would exceed 255 chars. For branch signals it concatenates {@code workflowId:forkStepId:branchId:
  *       dedupKey}, hashing the suffix when the natural composite would exceed 255 chars.</li>
  * </ul>
  *
@@ -75,7 +75,9 @@ public final class WorkflowDedupScopes {
      * Returns the {@code workflow_dedup.key} string for a signal claim.
      *
      * <p>For non-branch signals (both {@code forkStepId} and {@code branchId} null), returns
-     * {@code dedupKey} unchanged so existing single-path entries remain compatible. For branch
+     * {@code dedupKey} unchanged so existing single-path entries remain compatible, except that a
+     * key longer than 255 characters (the {@code workflow_dedup.key} column) is replaced by its
+     * 64-char SHA-256 hex digest. For branch
      * signals the key is a 64-char SHA-256 hex digest of {@code (forkStepId, branchId, dedupKey)}
      * so two sibling branches sharing a {@code dedupKey} do not collide.
      *
@@ -89,7 +91,7 @@ public final class WorkflowDedupScopes {
     public static String signalKey(String dedupKey, @Nullable String forkStepId, @Nullable String branchId) {
         requireBothOrNeither(forkStepId, branchId);
         if (forkStepId == null) {
-            return dedupKey;
+            return dedupKey.length() <= INBOX_MESSAGE_ID_MAX_LENGTH ? dedupKey : sha256Hex(dedupKey);
         }
         return sha256Hex(forkStepId, branchId, dedupKey);
     }
@@ -98,7 +100,9 @@ public final class WorkflowDedupScopes {
      * Returns the inbox-message-id used by {@code WorkflowSignalContributor}.
      *
      * <p>Reproduces today's {@code workflowId + ":" + dedupKey} for non-branch signals (so
-     * existing inbox rows remain stable). For branch signals the composite is
+     * existing inbox rows remain stable); when that string would exceed
+     * {@link #INBOX_MESSAGE_ID_MAX_LENGTH}, the dedup key is replaced with its 64-char SHA-256 hex
+     * digest. For branch signals the composite is
      * {@code workflowId:forkStepId:branchId:dedupKey}; if that string would exceed
      * {@link #INBOX_MESSAGE_ID_MAX_LENGTH}, the suffix portion is replaced with a 64-char
      * SHA-256 hex digest.
@@ -114,7 +118,11 @@ public final class WorkflowDedupScopes {
         requireBothOrNeither(forkStepId, branchId);
         String wfPrefix = workflowId.value().toString();
         if (forkStepId == null) {
-            return wfPrefix + ":" + dedupKey;
+            String plain = wfPrefix + ":" + dedupKey;
+            if (plain.length() <= INBOX_MESSAGE_ID_MAX_LENGTH) {
+                return plain;
+            }
+            return wfPrefix + ":" + sha256Hex(dedupKey);
         }
         String composite = wfPrefix + ":" + forkStepId + ":" + branchId + ":" + dedupKey;
         if (composite.length() <= INBOX_MESSAGE_ID_MAX_LENGTH) {

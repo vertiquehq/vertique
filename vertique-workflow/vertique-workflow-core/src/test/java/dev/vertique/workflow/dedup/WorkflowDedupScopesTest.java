@@ -132,6 +132,22 @@ class WorkflowDedupScopesTest {
         }
 
         @Test
+        @DisplayName("non-branch inbox id fits the inbox column when the dedupKey is long")
+        void nonBranchFitsColumnWhenLong() {
+            String id = WorkflowDedupScopes.signalInboxId(WF, null, null, "x".repeat(300));
+            assertThat(id).hasSizeLessThanOrEqualTo(WorkflowDedupScopes.INBOX_MESSAGE_ID_MAX_LENGTH);
+        }
+
+        @Test
+        @DisplayName("non-branch dedup key over 255 characters is hashed to fit the dedup column")
+        void nonBranchLongKeyFitsDedupColumn() {
+            String key = WorkflowDedupScopes.signalKey("x".repeat(300), null, null);
+            assertThat(key).hasSize(64);
+            assertThat(WorkflowDedupScopes.signalKey("x".repeat(255), null, null))
+                    .isEqualTo("x".repeat(255));
+        }
+
+        @Test
         @DisplayName("siblings with same dedupKey produce distinct inbox ids")
         void siblingsDistinct() {
             String a = WorkflowDedupScopes.signalInboxId(WF, "fork", "a", "inv-1");
