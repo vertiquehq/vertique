@@ -36,8 +36,7 @@ Pair it with:
 |---|---|
 | `dev.vertique:vertique-rest-auth-jwt` | Ready-made bearer-token `SecuritySchemeHandler` and `RouteAuthHandler` |
 | `dev.vertique:vertique-security-core` | The typed `SecurityContext` model, `AuthorizationClaims`, `@RequiresAction`, `AuthorizationPolicy` |
-| `dev.vertique:vertique-security-runtime` | `SecurityEventEmitter` and the `SecurityEventObserver` multibinding |
-| `dev.vertique:vertique-security-authz` | The action `Authorizer` engine that `@RequiresAction` requires |
+| `dev.vertique:vertique-security-runtime` | `SecurityEventEmitter`, the `SecurityEventObserver` multibinding, and `DefaultAuthorizer`, the action `Authorizer` engine that `@RequiresAction` requires |
 
 ---
 
@@ -761,7 +760,7 @@ public Future<Response> handle(jakarta.ws.rs.core.SecurityContext sc) { ... }
 
 | Annotation | Effect |
 |---|---|
-| `@DenyAll` | Always 403; wins over every other annotation |
+| `@DenyAll` | Always 403. A method-level `@DenyAll` overrides a class-level `@PermitAll`, `@RolesAllowed` or `@Authorized`. At the same level, `@DenyAll` together with `@PermitAll`, `@RolesAllowed` or `@Authorized` is a conflict, and so is `@DenyAll` together with `@RequiresAction` even across levels. A conflict fails the build (generated descriptors) or startup (reflective scan) |
 | `@PermitAll` | No authorization handler installed |
 | `@RolesAllowed("a", "b")` | OR — any one listed role is sufficient |
 | `@Authorized(scopes = "write")` | The listed scope is required |
@@ -966,6 +965,7 @@ code, plus `rolesSatisfied`, `actionSatisfied`, and `actionEvaluated` in `safeAt
 | `dev.vertique:vertique-security-runtime` | `SecurityEventEmitter`, `SecurityEventsModule`, `IdentitySnapshotCapture` |
 | `dev.vertique:vertique-context` | `ContextHolder` scopes and the service-dispatch context encoder/decoder seam |
 | `dev.vertique:vertique-logging` | MDC key binding for `userId`, `clientId`, and `authMethod` |
+| `dev.vertique:vertique-resilience` | The `Resilience` runtime whose timeout-only pipeline bounds the authorization gate |
 | `io.vertx:vertx-auth-common` | `AuthenticationHandler`, `User`, `AuthorizationProvider` |
 | `jakarta.ws.rs:jakarta.ws.rs-api` | The `jakarta.ws.rs.core.SecurityContext` bridge and the Jakarta security annotations |
 | `com.google.dagger:dagger` | Module wiring and multibindings |
