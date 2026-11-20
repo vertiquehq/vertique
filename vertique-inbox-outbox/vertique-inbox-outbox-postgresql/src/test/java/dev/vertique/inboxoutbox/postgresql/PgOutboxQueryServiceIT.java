@@ -1176,6 +1176,7 @@ class PgOutboxQueryServiceIT {
         void oversizedValueIsNotTransferred() throws Exception {
             long id = fixture.seed()
                     .payload("{\"v\": \"" + "x".repeat(50_000) + "\"}")
+                    .lastError("boom: quoted payload fragment")
                     .insert();
             RecordingPool pool = new RecordingPool(fixture.pool());
 
@@ -1189,6 +1190,8 @@ class PgOutboxQueryServiceIT {
             assertTrue(row.getLong("content_bytes") > 50_000);
             assertNull(row.getString("payload_text"), "the payload text was not sent");
             assertNull(row.getString("headers_text"), "the headers text was not sent");
+            assertNull(row.getString("last_error_text"), "the last error text was not sent");
+            assertNull(row.getBoolean("last_error_truncated"), "the truncation flag was not sent");
         }
 
         @Test
@@ -1205,6 +1208,8 @@ class PgOutboxQueryServiceIT {
                     fixture.string("SELECT payload::text FROM outbox WHERE id = ?", id), row.getString("payload_text"));
             assertEquals(
                     fixture.string("SELECT headers::text FROM outbox WHERE id = ?", id), row.getString("headers_text"));
+            assertEquals("boom: gateway refused", row.getString("last_error_text"));
+            assertEquals(Boolean.FALSE, row.getBoolean("last_error_truncated"));
         }
 
         @Test
@@ -1248,10 +1253,10 @@ class PgOutboxQueryServiceIT {
         void lastErrorAtLimit() throws Exception {
             long id = fixture.seed().lastError("e".repeat(4096)).insert();
 
-            OutboxEntryPayload detail = await(service.getPayload(id)).orElseThrow();
+            OutboxEntryPayload payload = await(service.getPayload(id)).orElseThrow();
 
-            assertEquals("e".repeat(4096), detail.lastError());
-            assertFalse(detail.lastErrorTruncated());
+            assertEquals("e".repeat(4096), payload.lastError());
+            assertFalse(payload.lastErrorTruncated());
         }
 
         @Test
@@ -1274,11 +1279,11 @@ class PgOutboxQueryServiceIT {
         void lastErrorCutCountsCharacters() throws Exception {
             long id = fixture.seed().lastError("é€".repeat(3000)).insert();
 
-            OutboxEntryPayload detail = await(service.getPayload(id)).orElseThrow();
+            OutboxEntryPayload payload = await(service.getPayload(id)).orElseThrow();
 
-            assertEquals(4096, detail.lastError().length());
-            assertEquals("é€".repeat(2048), detail.lastError());
-            assertTrue(detail.lastErrorTruncated());
+            assertEquals(4096, payload.lastError().length());
+            assertEquals("é€".repeat(2048), payload.lastError());
+            assertTrue(payload.lastErrorTruncated());
         }
 
         @Test
@@ -1318,20 +1323,6 @@ class PgOutboxQueryServiceIT {
             assertEquals("boom: gateway refused", payload.lastError());
             assertFalse(payload.lastErrorTruncated());
             assertEquals(Map.of("traceparent", "abc", "tenant", "t-1"), payload.headers());
-        }
-
-        @Test
-        @DisplayName("an oversized payload fails the whole read and returns no last error")
-        void oversizedReturnsNothing() throws Exception {
-            long id = fixture.seed()
-                    .payload("{\"v\": \"" + "x".repeat(2_000) + "\"}")
-                    .lastError("boom")
-                    .insert();
-
-            Throwable failure = failureOf(withLimit(1_000, null).getPayload(id));
-
-            assertInstanceOf(OutboxPayloadTooLargeException.class, failure);
-            assertFalse(String.valueOf(failure.getMessage()).contains("boom"));
         }
 
         @Test
