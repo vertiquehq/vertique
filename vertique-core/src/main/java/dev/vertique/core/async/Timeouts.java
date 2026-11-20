@@ -18,11 +18,15 @@ public final class Timeouts {
     private Timeouts() {}
 
     /**
-     * Completes when {@code condition} becomes true, polling it on the Vert.x context until the
+     * Completes when {@code condition} becomes true, polling it on a Vert.x periodic timer until the
      * timeout expires.
      *
-     * <p>The condition is evaluated once immediately and then at each poll interval. The polling
-     * timer is cancelled on success, timeout, or condition failure.
+     * <p>The condition is evaluated once immediately, on the calling thread, and then at each poll
+     * interval; when the first evaluation is true no timer is started. The polling timer is cancelled
+     * on success, timeout, or condition failure. The first poll at or after {@code timeoutMs} fails
+     * the future with a {@link TimeoutException} without evaluating the condition again, so the
+     * failure can arrive up to one poll interval after the deadline. A {@link RuntimeException}
+     * thrown by the condition fails the future with that exception.
      *
      * @param vertx the Vert.x instance that owns the polling timer
      * @param condition the condition that signals the awaited work is complete
@@ -30,6 +34,8 @@ public final class Timeouts {
      * @param timeoutMs maximum time to wait; must be positive
      * @param operation short description included in timeout failures
      * @return a succeeded future when the condition becomes true, otherwise a failed future
+     * @throws IllegalArgumentException if {@code pollIntervalMs} or {@code timeoutMs} is not positive
+     * @throws NullPointerException if an argument is {@code null}
      */
     public static Future<Void> awaitCondition(
             Vertx vertx, BooleanSupplier condition, long pollIntervalMs, long timeoutMs, String operation) {
@@ -91,7 +97,10 @@ public final class Timeouts {
      * @param timeoutMs maximum time to wait; must be positive
      * @param description short description included in timeout failures
      * @param <T> the result type
-     * @return a future with the same result or failure, or a timeout failure
+     * @return a future with the same result or failure, or a timeout failure; a {@link TimeoutException}
+     *     raised by the operation itself is also replaced by the timeout failure
+     * @throws IllegalArgumentException if {@code timeoutMs} is not positive
+     * @throws NullPointerException if an argument is {@code null}
      */
     public static <T> Future<T> withTimeout(Future<T> operation, long timeoutMs, String description) {
         Objects.requireNonNull(operation, "operation");
