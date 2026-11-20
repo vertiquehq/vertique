@@ -77,7 +77,7 @@ wf.task("review")
   .build();
 ```
 
-Assignment can be literal or resolved from workflow state. Decisions carry typed payloads and update workflow state before moving to their next step. Use `void.class` as the payload type to declare a decision that carries no payload. Due dates and reminders require the delayed workflow module.
+Assignment can be literal or resolved from workflow state. Decisions carry typed payloads and update workflow state before moving to their next step. Use `void.class` as the payload type to declare a decision that carries no payload.
 
 Version-stable tasks compare the reviewed subject version supplied by the caller with the version snapshotted when the task was created. This is useful for approval flows over mutable domain objects.
 
