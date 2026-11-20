@@ -407,9 +407,11 @@ of a context an interceptor rebuilt stays as that interceptor returned it, so re
 
 ### `ResourceMethodMeta`
 
-The immutable per-method descriptor built at startup and consumed on every request. It is the object
-an `OperationHandlerContributor` receives through `OperationRegistrationContext`, so `operationId()`
-and `securityPolicy()` in particular are read at extension-point call sites.
+The immutable per-method descriptor built at startup and consumed on every request. It belongs to
+this module: the registrar, the scanner and generated code build and read it. An
+`OperationHandlerContributor` does not receive it; the contributor's `OperationRegistrationContext`
+carries `operationId()` and `securityPolicy()` itself and a transport-neutral `RestOperationDescriptor`
+(from `vertique-rest-core`) as `operation()`.
 
 ```java
 public record ResourceMethodMeta(
