@@ -136,7 +136,7 @@ public final class WorkflowEventEnvelope {
     private final String correlationId;
 
     /**
-     * Optional id of the cause event that triggered this event.
+     * Optional id of the cause of this event: the row id of the command whose segment emitted it, as text.
      */
     @Nullable
     private final String causationId;

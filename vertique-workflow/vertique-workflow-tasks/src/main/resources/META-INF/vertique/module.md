@@ -127,7 +127,7 @@ Application code should use `TaskService` or `TransactionalTaskService<TX>`. It 
 
 - Human task completion and reassignment are idempotent when callers reuse the same idempotency key for the same logical command.
 - A task with a due date depends on workflow timer infrastructure.
-- Transactions that touch timers, tasks, and workflow instances must follow the lock order enforced by the engine and persistence module.
+- Transactions that change a workflow instance or its tasks and timers must hold the instance's execution lock first; the persistence module's lock-order section states the rule.
 - Authorization is application-defined. The workflow engine records the actor supplied on the task command but does not decide whether that actor may act.
 
 ---

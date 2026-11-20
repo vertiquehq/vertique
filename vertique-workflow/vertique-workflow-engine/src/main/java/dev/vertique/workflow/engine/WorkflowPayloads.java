@@ -400,6 +400,21 @@ final class WorkflowPayloads {
         if (ambient != null) {
             return ambient;
         }
+        return capturedCorrelationId(inst);
+    }
+
+    /**
+     * Reads the correlation id the instance captured when it started, from the {@code correlation} namespace of its
+     * durable metadata.
+     *
+     * <p>The nested read is type-checked before use: a malformed shape returns {@code null} rather than throwing.
+     *
+     * @param inst the workflow instance
+     * @return the captured correlation id value, or {@code null} when the instance captured none or the shape is
+     *     malformed
+     */
+    @Nullable
+    static String capturedCorrelationId(WorkflowInstance inst) {
         DurableMetadata metadata = inst.metadata();
         if (metadata == null) {
             return null;

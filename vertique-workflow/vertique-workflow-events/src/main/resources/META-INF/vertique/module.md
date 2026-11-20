@@ -139,6 +139,15 @@ Applications normally only provide the binding and destination handler.
 - **Reminder-using workflows require this module.** If any registered workflow plan declares task reminders, the per-plan `WorkflowReminderComposeValidator` (package `dev.vertique.workflow.engine`, module `vertique-workflow-engine`) refuses that plan, aborting startup for a code plan, when `WorkflowEventsModule` is not installed. There is no silent reminder drop.
 - **Optional intent kind.** When no application installs an event recorder and no plan requires it, `WORKFLOW_EVENT` is treated as an optional intent kind that no-ops cleanly rather than failing transitions.
 - **History stays the engine's ledger.** Events are derived from history but are not a substitute for it. Recovery, retries, and engine decisions read history rows; consumers read the outbox-delivered event stream.
+- **Correlation and cause.** Every event carries `correlationId`, the correlation id the instance captured when it started (absent
+  when it captured none), and `causationId`, the row id of the command whose segment emitted the event, as text. An event written
+  outside a command's segment, such as the events of `cancel`, has no `causationId`. A signal applied from the parked state is the
+  cause of its own events.
+- **Branch-owned tasks are reported like the tasks of a single path.** A task created by a fork branch emits `TASK_CREATED`,
+  completing it emits `TASK_COMPLETED`, its due date passing emits `TASK_EXPIRED`, and cancelling it (with its branch, or when
+  the branch loses a race) emits `TASK_CANCELLED` with cause `BRANCH_CANCELLED`. Each event carries the sequence of the history
+  entry written with it; the cancellation of a branch's task writes a `TASK_CANCELLED` history entry, which it did not before.
+  **Behaviour change:** consumers that counted the task events of an instance with a fork now see these four for branch tasks.
 - **Attribution headers.** The outbox entry of an event a workflow segment emits carries only the attribution headers `x-workflow-actor-kind` and `x-workflow-attribution` (`VERIFIED`, `ABSENT` or `DEGRADED`), taken from the command the segment executes; the actor id, reason and party acted for are not sent to event consumers. They are for audit and logs. They are unauthenticated: anyone who can write an outbox record or publish to the broker can forge them, so a consumer must never treat them as the identity of the caller. The envelope is unchanged.
 - **Envelope contract is versioned.** External consumers depend on the v1 event envelope contract; breaking changes require a new envelope version, not field-shape changes in place.
 

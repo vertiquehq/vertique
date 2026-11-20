@@ -125,6 +125,19 @@ final class RecorderRouter {
         });
     }
 
+    /**
+     * The id of the command the segment on the transaction is executing, when there is one. A workflow event names it
+     * as its cause.
+     *
+     * @param tx the transaction handle
+     * @return the command's row id, or {@code null} when no command is executing on the transaction
+     */
+    @Nullable
+    Long executingCommandId(SqlClient tx) {
+        SegmentCommand command = executing.get(tx);
+        return command == null ? null : command.commandId();
+    }
+
     /** Puts back the command that was executing on the transaction before a nested one, or none. */
     private void restore(SqlClient tx, SegmentCommand outer) {
         if (outer == null) {

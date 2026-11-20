@@ -549,10 +549,12 @@ The engine does not depend on in-memory workflow state for correctness.
 
 ## Lock-Order Requirements
 
-Operations that touch multiple workflow tables follow a fixed lock order to avoid deadlocks with the timer firing executor and the signal claim path:
+One rule keeps the engine's transactions from deadlocking on an instance's rows: **the instance's execution lock comes
+first.** Every transaction that writes an instance, its history or its rows takes the execution lock before it writes
+or locks any row of that instance. The rows themselves are not ordered between tables by a second rule.
 
 ```
-execution lock (instance)  →  workflow_timers  →  workflow_tasks  →  workflow_branch_tokens  →  workflow_instances  →  workflow_command_queues
+execution lock (instance)  →  the instance's rows, in the order the path that holds the lock takes them
 ```
 
 The execution lock is an exclusive, transaction-scoped PostgreSQL advisory lock in the two-integer form, derived from the
@@ -565,9 +567,38 @@ the rest of the caller's transaction. A timeout (`55P03`) or a deadlock (`40P01`
 `tryLockInstance` takes the lock without waiting. `nextQueueSequence` allocates from `workflow_command_queues` under the
 lock, creating the queue row on first touch (the first value is 1); a rolled-back transaction gives its value back.
 
-Reversing any segment of this chain deadlocks against an already-running firing executor or a concurrent signal claim. All engine code paths — fire, signal, cancel, complete, supersede — follow it.
+How each kind of caller takes it:
 
-Integrator rule: do not write custom transactions that lock workflow tables in a different order. Prefer the public workflow APIs or the provided transactional services. When extending storage behavior, preserve the established ordering across timers, tasks, branch state, and workflow instances.
+| Caller | Execution lock |
+|---|---|
+| Recording paths: signal, signal by key or business key, task completion, task reassignment, cancel, retry, migrate | waits, up to `lockTimeoutMs`, before any row is written or locked |
+| `start` | takes the lock of the instance id it is about to create, which no other caller can hold, before it inserts the instance |
+| Executor: claim, defer, fail, and a segment | tries; a busy instance is skipped, never waited for; the command row of the executing command is the first row the segment locks |
+| Retention (archive, purge) | tries per candidate instance; a busy instance is skipped |
+| Releasing or rescheduling one command after a transient failure | not taken; one statement on the command's own row, which holds nothing else while it waits |
+
+What follows from the rule:
+
+- **Two transactions never wait for each other's rows of one instance.** The one that holds the execution lock is the
+  only one that locks them, so the order in which a path locks timers, tasks, branch tokens, join state, the instance row
+  and the command rows does not matter between paths. The paths do not agree on it (cancel and the supersede of a race
+  join lock timers, then tasks, then branch tokens, then the instance; a join evaluation locks the join state before the
+  instance row; a retry that resumes a failed wait locks the instance row before it re-arms the timers), and they need not.
+- **A path that locks or writes rows of an instance without holding its execution lock is the defect.** It is the only
+  way to deadlock against a firing executor, a concurrent signal or a cancel, and `ExecutionLockCoverageIT` fails for
+  it by name for the entry points it lists (not `signalByKey`, `signalByBusinessKey`, the executor or retention).
+- **Callers that touch two instances can deadlock.** Two transactions that each hold one instance and wait for the
+  other's lock are detected by PostgreSQL; the victim fails with a retryable `WorkflowPersistenceException`. Take the
+  instances in one order, or use the public workflow APIs, which touch one instance per call.
+- **Definition-level locks are separate.** The pin admission and the lifecycle mutations lock by definition id (a
+  different advisory space) and are taken after the execution lock.
+
+Integrator rule: do not write custom transactions that change workflow tables of an instance without holding its
+execution lock. Prefer the public workflow APIs or the provided transactional services.
+
+The comments in `V1__create_workflow_tables.sql` that state a lock chain of timers, tasks and instances describe the
+order the first release's paths followed; they are not the rule above. The file is not edited, because Flyway validates
+its checksum.
 
 ---
 
@@ -618,12 +649,12 @@ This module implements the workflow-side durable context propagation surfaces fo
 
 ## Invariants & Gotchas
 
-- **Branch tables have no FK to workflow_instances.** `workflow_tasks` and `workflow_timers` carry nullable `branch_token_id` / `fork_step_id` / `branch_id` columns but no FK constraint, by design — adding one would invert the established lock order.
+- **Branch tables have no FK to workflow_instances.** `workflow_tasks` and `workflow_timers` carry nullable `branch_token_id` / `fork_step_id` / `branch_id` columns but no FK constraint, by design — branch tokens are always written before the tasks and timers that name them, and the instance cascade removes all of them.
 - **Dispatch dedup lives in the engine, not the recorder.** Branch service-dispatch idempotency is enforced inside the persistence engine before the recorder runs, so the `workflow-services` boundary stays generic.
 - **Stranded re-enqueue is detected by row count.** Timer-store mutations are guarded by `status = 'SCHEDULED'` and fail when `rowCount = 0`, rolling back the transaction rather than silently re-enqueuing into the wrong state.
 - **Late callbacks are swallowed deliberately.** Task / timer callbacks carrying a `branchTokenId` from a superseded branch are recorded as `BRANCH_LATE_CALLBACK_IGNORED` history entries and return without raising — preventing zombie callbacks from corrupting later state.
 - **A task is completed in two transactions.** `taskCompleted` writes the dedup row, the `COMPLETION` command and the `OPEN` to `COMPLETING` reservation under the execution lock; the executor's segment completes the task (`markCompleted`), or rejects the command and reopens the task. A reservation owner is never cleared except by that reopening, and a `COMPLETING` task whose command is lost would refuse every completion and reassignment, so a command repository that settles a `COMPLETION` (an ended instance, a failure disposition) settles the reservation in the same transaction.
-- **Signal recording claims the dedup key last.** `signal()` looks up a committed duplicate, reads the instance and the pinned row's declared names without the execution lock, takes the lock, raises the instance's `open_signals` count with one conditional update and only then claims the dedup key and inserts the `SIGNAL` command, so a refusal (cap, undeclared name, ended instance) leaves no dedup row. `cancel()` still uses `findById` + `claimOrResolveSignal` to honor the `workflow_timers`-before-`workflow_instances` lock-order invariant.
+- **Signal recording claims the dedup key last.** `signal()` looks up a committed duplicate, reads the instance and the pinned row's declared names without the execution lock, takes the lock, raises the instance's `open_signals` count with one conditional update and only then claims the dedup key and inserts the `SIGNAL` command, so a refusal (cap, undeclared name, ended instance) leaves no dedup row. `cancel()` still uses `findById` + `claimOrResolveSignal`, which read the instance before the execution lock and lock nothing.
 - **Archived rows are filtered by default.** `findFiltered` / `findByFilter` exclude `archived_at IS NOT NULL` rows unless `WorkflowInstanceQuery.includeArchived = true`.
 - **Retention tries the execution lock and skips busy instances.** Each archive or purge batch is one transaction. It picks its candidates with `FOR UPDATE SKIP LOCKED` (an unarchived instance of the status past the cutoff, or an archived one past the purge cutoff; `FAILED` is a status like the others, so `archiveFailedBefore` archives failed instances, including a `PENDING` instance whose start was dead-lettered) and tries `pg_try_advisory_xact_lock` on each candidate's execution lock (the same two integers as the executors, derived in SQL from the instance id) without waiting. An instance whose lock is held is skipped and removed by a later run; it still counts against the batch limit. A second statement then reads eligibility again, with a snapshot taken after the locks were won: an instance that is no longer eligible, or that has any `PENDING`, `DEFERRED` or `CLAIMED` command, is left alone. A `RETRY` recorded on an archive-eligible failed instance therefore keeps it until the retry has run. The commands, queue row and history of an archived or purged instance go with it (foreign-key cascade) under the lock.
 - **Archive and purge do not share a clock.** `archiveBefore` stamps `archived_at` from the *database* clock, while `purgeArchivedBefore` compares it against the cutoff *you* supply. Since your application drives the sweep cadence, a purge issued immediately after an archive with a cutoff read from your own clock may skip rows it just archived, whenever the database clock is running ahead. Use a cutoff meaningfully in the past — real retention horizons of hours or days make this invisible.

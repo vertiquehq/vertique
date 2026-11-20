@@ -709,7 +709,7 @@ final class ForkJoinCoordinator {
                                 return supersededWithClearedWait(b, supersededAt);
                             })
                             .toList();
-                    return supersedeNonTerminalSiblings(branches, winningBranchId, tx)
+                    return supersedeNonTerminalSiblings(inst, branches, winningBranchId, tx)
                             .compose(v -> appendFanInDecided(inst, fork, joinNode, success, tx))
                             .compose(v -> advanceInstanceAfterJoin(inst, joinNode, success, patched, rw, tx));
                 });
@@ -724,13 +724,17 @@ final class ForkJoinCoordinator {
      * The {@code cancelBranchOwnedWaits} helper is reached through the lazy engine provider because
      * the engine's single-path {@code cancel} path also uses it, so it stays on the engine.
      *
+     * @param inst the parent instance
      * @param branches all branch tokens of the fork
      * @param winningBranchId the elected winning branch id (never superseded)
      * @param tx the active transaction
      * @return a {@link Future} that completes when all losing siblings are superseded
      */
     private Future<Void> supersedeNonTerminalSiblings(
-            java.util.List<dev.vertique.workflow.state.BranchToken> branches, String winningBranchId, SqlClient tx) {
+            WorkflowInstance inst,
+            java.util.List<dev.vertique.workflow.state.BranchToken> branches,
+            String winningBranchId,
+            SqlClient tx) {
         Future<Void> chain = Future.succeededFuture();
         java.time.Instant now = clock.instant();
         for (var b : branches) {
@@ -742,7 +746,7 @@ final class ForkJoinCoordinator {
             // status predicate) — late signals/timer-fires on SUPERSEDED branches are silently no-ops.
             final BranchToken loser = b;
             BranchToken superseded = supersededWithClearedWait(b, now);
-            chain = chain.compose(v -> enginePvd.get().cancelBranchOwnedWaits(loser, tx))
+            chain = chain.compose(v -> enginePvd.get().cancelBranchOwnedWaits(inst, loser, tx))
                     // The loser's signal wait ends with it: its record goes in the transaction that supersedes it.
                     .compose(v -> signalWaits.close(
                             loser.workflowId(), loser.currentStepId(), loser.forkStepId(), loser.branchId(), null, tx))

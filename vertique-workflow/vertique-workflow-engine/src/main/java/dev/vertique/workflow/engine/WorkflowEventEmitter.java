@@ -10,6 +10,7 @@ import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
 import dev.vertique.workflow.state.WorkflowInstance;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.SqlClient;
+import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Clock;
@@ -55,6 +56,9 @@ final class WorkflowEventEmitter {
      * {@code WORKFLOW_EVENT} recorder is registered (the kind is optional), the call is a silent
      * no-op that returns a succeeded future.
      *
+     * <p>The event carries the correlation id the instance captured when it started and, as its causation id, the id of
+     * the command the transaction is executing; an event written outside a command's segment has no causation id.
+     *
      * @param inst the workflow instance that produced the event
      * @param type the event type
      * @param sequence the {@code workflow_history} sequence number at which the event occurred
@@ -87,8 +91,8 @@ final class WorkflowEventEmitter {
                 taskId,
                 stepId,
                 attributes,
-                null,
-                null);
+                WorkflowPayloads.capturedCorrelationId(inst),
+                causationId(tx));
         WorkflowSideEffectIntent intent = new WorkflowSideEffectIntent(
                 IntentKind.WORKFLOW_EVENT,
                 type.name(),
@@ -102,6 +106,13 @@ final class WorkflowEventEmitter {
                         inst.scopeKey(),
                         stepId != null ? stepId : inst.currentStepId()));
         return recorders.route(intent, tx).mapEmpty();
+    }
+
+    /** The command the transaction is executing, as the event's cause; none when no command is executing. */
+    @Nullable
+    private String causationId(SqlClient tx) {
+        Long commandId = recorders.executingCommandId(tx);
+        return commandId == null ? null : commandId.toString();
     }
 
     // --- Attribute helpers ---
