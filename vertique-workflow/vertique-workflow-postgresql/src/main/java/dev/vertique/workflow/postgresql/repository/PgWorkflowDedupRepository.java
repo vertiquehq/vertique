@@ -99,8 +99,6 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
 
     private final String sqlFindSignal;
 
-    private final String sqlInsertSignal;
-
     /**
      * Race-safe upsert for signal dedup. Same shape as {@link #sqlClaimOrResolveStart}: the
      * {@code DO UPDATE} no-op write makes {@code RETURNING} fire on conflict so the caller always
@@ -181,9 +179,6 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
 
         this.sqlFindSignal = "SELECT workflow_id FROM " + dedup + " WHERE kind = '" + DEDUP_KIND_SIGNAL
                 + "' AND scope_key = '" + WorkflowScopes.DEFAULT + "' AND dedup_namespace = $1 AND key = $2";
-
-        this.sqlInsertSignal = "INSERT INTO " + dedup + " (kind, scope_key, dedup_namespace, key, workflow_id)"
-                + " VALUES ('" + DEDUP_KIND_SIGNAL + "', '" + WorkflowScopes.DEFAULT + "', $1, $2, $3)";
 
         this.sqlClaimOrResolveSignal = "INSERT INTO " + dedup + " (kind, scope_key, dedup_namespace, key, workflow_id)"
                 + " VALUES ('" + DEDUP_KIND_SIGNAL + "', '" + WorkflowScopes.DEFAULT + "', $1, $2, $3)"
@@ -334,28 +329,6 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_dedup findSignal")));
     }
 
-    /**
-     * Records that a signal has been applied to the given workflow instance.
-     *
-     * <p>Inserts a row with {@code kind='signal'}, {@code dedup_namespace=workflowId.value().toString()},
-     * {@code key=signalDedupKey}, {@code workflow_id=workflowId.value()}. Fails with a
-     * unique-constraint violation if the same {@code (workflowId, signalDedupKey)} was already
-     * inserted (which is always a programming error — callers must check {@link #findSignal} first).
-     *
-     * @param workflowId     the workflow instance id (used as the dedup namespace)
-     * @param signalDedupKey the caller-supplied signal dedup key
-     * @param tx             the active transaction to use
-     * @return a {@link Future} that completes when the row is inserted
-     */
-    @Override
-    public Future<Void> insertSignal(WorkflowInstanceId workflowId, String signalDedupKey, SqlClient tx) {
-        String scope = workflowId.value().toString();
-        return tx.preparedQuery(sqlInsertSignal)
-                .execute(Tuple.of(scope, signalDedupKey, workflowId.value()))
-                .<Void>mapEmpty()
-                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_dedup insertSignal")));
-    }
-
     // --- Correlated dedup ---
 
     /**
@@ -496,38 +469,8 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
     }
 
     /**
-     * Atomically claims a signal dedup slot or resolves an existing one. Race-safe replacement for
-     * the {@link #findSignal} + {@link #insertSignal} two-step.
-     *
-     * <p>Returns {@code true} iff this caller inserted the row (won the race) and should proceed
-     * with applying the signal; {@code false} iff a prior committed transaction already held the
-     * row and the caller should treat the signal as an idempotent no-op.
-     *
-     * <p>Eliminates the snapshot-visibility race that the prior two-step pattern allowed: under
-     * READ COMMITTED two concurrent same-key callers could both observe an empty {@code findSignal}
-     * result, both proceed to apply the signal, and the second would then collide on the unique
-     * constraint or on optimistic-version on {@code workflow_instances}. Postgres
-     * {@code ON CONFLICT} semantics wait for a conflicting transaction to commit/roll back before
-     * the UPDATE branch executes, so exactly one caller observes {@code inserted=true}.
-     *
-     * @param workflowId     the workflow instance id (used as the dedup namespace)
-     * @param signalDedupKey the caller-supplied signal dedup key
-     * @param tx             the active transaction to use
-     * @return a {@link Future} of {@code true} when this caller won the race, {@code false}
-     *     when the dedup row already existed
-     */
-    @Override
-    public Future<Boolean> claimOrResolveSignal(WorkflowInstanceId workflowId, String signalDedupKey, SqlClient tx) {
-        String scope = workflowId.value().toString();
-        return tx.preparedQuery(sqlClaimOrResolveSignal)
-                .execute(Tuple.of(scope, signalDedupKey, workflowId.value()))
-                .map(rs -> Boolean.TRUE.equals(rs.iterator().next().getBoolean("inserted")))
-                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_dedup claimOrResolveSignal")));
-    }
-
-    /**
-     * Variant of {@link #claimOrResolveSignal} that accepts a caller-supplied {@code (dedup_namespace, key)}
-     * pair directly. Used by the branch-aware signal path: the
+     * Atomically claims a signal dedup slot for a caller-supplied {@code (dedup_namespace, key)} pair or resolves an
+     * existing one. Both the instance-addressed and the branch-aware signal paths use it: the
      * branch path uses {@link dev.vertique.workflow.dedup.WorkflowDedupScopes#signalKey} which
      * folds the branch identity into the dedup key so two sibling branches sharing the same
      * caller-supplied {@code dedupKey} cannot collide.

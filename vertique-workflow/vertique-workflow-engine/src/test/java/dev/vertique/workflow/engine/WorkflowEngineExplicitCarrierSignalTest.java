@@ -522,7 +522,7 @@ class WorkflowEngineExplicitCarrierSignalTest {
                             .isTrue();
                     assertThat(ar.cause()).isInstanceOf(UnsupportedOperationException.class);
                     org.mockito.Mockito.verify(h.dedup(), org.mockito.Mockito.never())
-                            .claimOrResolveSignal(any(), any(), any());
+                            .claimOrResolveSignalScoped(any(), any(), any(), any());
                     ctx.completeNow();
                 })));
     }

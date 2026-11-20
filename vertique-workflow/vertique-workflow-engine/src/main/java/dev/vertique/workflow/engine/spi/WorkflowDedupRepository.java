@@ -72,31 +72,11 @@ public interface WorkflowDedupRepository<TX> {
     Future<Optional<UUID>> findSignal(WorkflowInstanceId workflowId, String signalDedupKey, TX tx);
 
     /**
-     * Records that a signal has been applied to the given workflow instance.
-     *
-     * @param workflowId     the workflow instance id (used as the dedup scope)
-     * @param signalDedupKey the caller-supplied signal dedup key
-     * @param tx             the active transaction to use
-     * @return a {@link Future} that completes when the row is inserted
-     */
-    Future<Void> insertSignal(WorkflowInstanceId workflowId, String signalDedupKey, TX tx);
-
-    /**
-     * Atomically claims a signal dedup slot or resolves an existing one. Race-safe replacement for
-     * the {@link #findSignal} + {@link #insertSignal} two-step.
-     *
-     * @param workflowId     the workflow instance id (used as the dedup scope)
-     * @param signalDedupKey the caller-supplied signal dedup key
-     * @param tx             the active transaction to use
-     * @return a {@link Future} of {@code true} when this caller won the race, {@code false} when the
-     *         dedup row already existed
-     */
-    Future<Boolean> claimOrResolveSignal(WorkflowInstanceId workflowId, String signalDedupKey, TX tx);
-
-    /**
-     * Variant of {@link #claimOrResolveSignal} that accepts a caller-supplied {@code (scope, key)}
-     * pair directly. Used by the branch-aware signal path, which folds branch identity into the
-     * dedup key so two sibling branches sharing the same caller-supplied dedup key cannot collide.
+     * Atomically claims a signal dedup slot for a caller-supplied {@code (scope, key)} pair or
+     * resolves an existing one. Race-safe replacement for a {@link #findSignal} followed by an
+     * insert. Both the instance-addressed and the branch-aware signal paths use it; the branch path
+     * folds branch identity into the dedup key so two sibling branches sharing the same
+     * caller-supplied dedup key cannot collide.
      *
      * @param scope      dedup scope (typically the workflow id string)
      * @param key        dedup key (typically a hash combining branch identity + dedup key)

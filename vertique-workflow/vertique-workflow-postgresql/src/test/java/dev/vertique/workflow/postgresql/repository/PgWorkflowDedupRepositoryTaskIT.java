@@ -50,7 +50,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li>Cross-kind non-collision: same {@code (taskId, idempotencyKey)} succeeds for both
  *       {@code 'task-complete'} and {@code 'task-reassign'}.</li>
  *   <li>Cycle-1 {@code claimOrResolveStart} writes a row with {@code fingerprint IS NULL}.</li>
- *   <li>Cycle-2 {@code claimOrResolveSignal} writes a row with {@code fingerprint IS NULL}.</li>
+ *   <li>Cycle-2 {@code claimOrResolveSignalScoped} writes a row with {@code fingerprint IS NULL}.</li>
  * </ul>
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
@@ -439,11 +439,11 @@ public class PgWorkflowDedupRepositoryTaskIT {
     }
 
     /**
-     * Cycle-2 {@link PgWorkflowDedupRepository#claimOrResolveSignal} writes a row with
+     * Cycle-2 {@link PgWorkflowDedupRepository#claimOrResolveSignalScoped} writes a row with
      * {@code fingerprint IS NULL}.
      */
     @Test
-    @DisplayName("claimOrResolveSignal writes a row with fingerprint IS NULL")
+    @DisplayName("claimOrResolveSignalScoped writes a row with fingerprint IS NULL")
     void signalDedupRowHasNullFingerprint(VertxTestContext ctx) {
         WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
         String signalDedupKey = "sig-fp-null-" + UUID.randomUUID();
@@ -451,13 +451,13 @@ public class PgWorkflowDedupRepositoryTaskIT {
 
         insertInstance(workflowId)
                 .compose(v -> pool.withTransaction(
-                        tx -> dedupRepository.claimOrResolveSignal(workflowId, signalDedupKey, tx)))
+                        tx -> dedupRepository.claimOrResolveSignalScoped(scope, signalDedupKey, workflowId, tx)))
                 .compose(inserted -> {
                     assertTrue(inserted, "signal claim must succeed");
                     return readFingerprint("signal", scope, signalDedupKey);
                 })
                 .onSuccess(fingerprint -> ctx.verify(() -> {
-                    assertNull(fingerprint, "claimOrResolveSignal must write fingerprint IS NULL");
+                    assertNull(fingerprint, "claimOrResolveSignalScoped must write fingerprint IS NULL");
                     ctx.completeNow();
                 }))
                 .onFailure(ctx::failNow);

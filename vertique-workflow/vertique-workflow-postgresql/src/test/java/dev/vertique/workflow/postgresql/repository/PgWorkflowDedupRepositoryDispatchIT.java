@@ -145,7 +145,8 @@ public class PgWorkflowDedupRepositoryDispatchIT {
         String dispatchKey = WorkflowDedupScopes.dispatchKey("fork", "a", "step-a", "svc.foo", "reserve");
         // Same scope/key string, but different kind → different PK row.
         pool.withTransaction(tx -> repo.claimOrResolveDispatch(wf, scope, dispatchKey, tx)
-                        .compose(v -> repo.claimOrResolveSignal(wf, dispatchKey, tx)))
+                        .compose(v -> repo.claimOrResolveSignalScoped(
+                                WorkflowDedupScopes.signalScope(wf), dispatchKey, wf, tx)))
                 .onComplete(ar -> {
                     if (ar.failed()) {
                         ctx.failNow(ar.cause());

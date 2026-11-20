@@ -71,6 +71,17 @@ class RepositorySpiContractTest {
                 .isTrue();
     }
 
+    @Test
+    @DisplayName("the dedup SPI and its PostgreSQL implementation declare only the scoped signal claim")
+    void dedupSpiDeclaresOnlyTheScopedSignalClaim() {
+        for (Class<?> type : new Class<?>[] {WorkflowDedupRepository.class, PgWorkflowDedupRepository.class}) {
+            assertThat(java.util.Arrays.stream(type.getDeclaredMethods()).map(Method::getName))
+                    .as(type.getSimpleName())
+                    .doesNotContain("claimOrResolveSignal", "insertSignal")
+                    .contains("claimOrResolveSignalScoped", "findSignal");
+        }
+    }
+
     // --- Neutral records live in the spi package ---
 
     @Test
