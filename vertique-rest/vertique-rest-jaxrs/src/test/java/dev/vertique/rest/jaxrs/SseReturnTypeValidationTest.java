@@ -10,6 +10,7 @@ import dev.vertique.rest.core.sse.SseEvent;
 import io.vertx.core.Future;
 import io.vertx.core.streams.ReadStream;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -58,6 +59,14 @@ class SseReturnTypeValidationTest {
     }
 
     // --- Helper ---
+
+    private static void validate(List<ResourceMethodMeta> methods) {
+        List<RouteRegistrationViolation> violations = new ArrayList<>();
+        JaxRsRouteRegistrar.validateSseReturnTypes(methods, violations);
+        if (!violations.isEmpty()) {
+            throw new RouteRegistrationException(violations);
+        }
+    }
 
     /**
      * Constructs a {@link ResourceMethodMeta} with the given method, operationId, and produces list.
@@ -147,7 +156,7 @@ class SseReturnTypeValidationTest {
             ResourceMethodMeta direct = inheritedMeta(new SseBoundResource(), "events");
             ResourceMethodMeta future = inheritedMeta(new SseBoundResource(), "futureEvents");
 
-            assertDoesNotThrow(() -> JaxRsRouteRegistrar.validateSseReturnTypes(List.of(direct, future)));
+            assertDoesNotThrow(() -> validate(List.of(direct, future)));
         }
 
         @Test
@@ -155,8 +164,7 @@ class SseReturnTypeValidationTest {
         void shouldRejectWrongBoundEventType() throws NoSuchMethodException {
             ResourceMethodMeta meta = inheritedMeta(new StringBoundResource(), "events");
 
-            assertThrows(
-                    RestConfigurationException.class, () -> JaxRsRouteRegistrar.validateSseReturnTypes(List.of(meta)));
+            assertThrows(RestConfigurationException.class, () -> validate(List.of(meta)));
         }
     }
 
@@ -171,7 +179,7 @@ class SseReturnTypeValidationTest {
         void shouldPassForReadStreamSseEvent() throws NoSuchMethodException {
             ResourceMethodMeta meta = metaFor(method("validSseMethod"), "validOp", List.of("text/event-stream"));
 
-            assertDoesNotThrow(() -> JaxRsRouteRegistrar.validateSseReturnTypes(List.of(meta)));
+            assertDoesNotThrow(() -> validate(List.of(meta)));
         }
 
         @Test
@@ -180,13 +188,13 @@ class SseReturnTypeValidationTest {
             ResourceMethodMeta meta =
                     metaFor(method("validFutureSseMethod"), "validFutureOp", List.of("text/event-stream"));
 
-            assertDoesNotThrow(() -> JaxRsRouteRegistrar.validateSseReturnTypes(List.of(meta)));
+            assertDoesNotThrow(() -> validate(List.of(meta)));
         }
 
         @Test
         @DisplayName("Should pass for empty method list")
         void shouldPassForEmptyList() {
-            assertDoesNotThrow(() -> JaxRsRouteRegistrar.validateSseReturnTypes(List.of()));
+            assertDoesNotThrow(() -> validate(List.of()));
         }
 
         @Test
@@ -194,7 +202,7 @@ class SseReturnTypeValidationTest {
         void shouldSkipNonSseMethods() throws NoSuchMethodException {
             ResourceMethodMeta meta = metaFor(method("nonSseMethod"), "jsonOp", List.of("application/json"));
 
-            assertDoesNotThrow(() -> JaxRsRouteRegistrar.validateSseReturnTypes(List.of(meta)));
+            assertDoesNotThrow(() -> validate(List.of(meta)));
         }
     }
 
@@ -209,8 +217,8 @@ class SseReturnTypeValidationTest {
         void shouldRejectStringReturnType() throws NoSuchMethodException {
             ResourceMethodMeta meta = metaFor(method("invalidStringSseMethod"), "badOp", List.of("text/event-stream"));
 
-            RestConfigurationException ex = assertThrows(
-                    RestConfigurationException.class, () -> JaxRsRouteRegistrar.validateSseReturnTypes(List.of(meta)));
+            RestConfigurationException ex =
+                    assertThrows(RestConfigurationException.class, () -> validate(List.of(meta)));
             assertTrue(ex.getMessage().contains("badOp"), "Message should include operationId");
             assertTrue(ex.getMessage().contains("text/event-stream"), "Message should reference the media type");
         }
@@ -221,8 +229,8 @@ class SseReturnTypeValidationTest {
             ResourceMethodMeta meta =
                     metaFor(method("wrongTypeArgSseMethod"), "wrongTypeOp", List.of("text/event-stream"));
 
-            RestConfigurationException ex = assertThrows(
-                    RestConfigurationException.class, () -> JaxRsRouteRegistrar.validateSseReturnTypes(List.of(meta)));
+            RestConfigurationException ex =
+                    assertThrows(RestConfigurationException.class, () -> validate(List.of(meta)));
             assertTrue(ex.getMessage().contains("wrongTypeOp"));
         }
 
@@ -232,8 +240,7 @@ class SseReturnTypeValidationTest {
             ResourceMethodMeta meta =
                     metaFor(method("invalidRawFutureSseMethod"), "rawFutureOp", List.of("text/event-stream"));
 
-            assertThrows(
-                    RestConfigurationException.class, () -> JaxRsRouteRegistrar.validateSseReturnTypes(List.of(meta)));
+            assertThrows(RestConfigurationException.class, () -> validate(List.of(meta)));
         }
 
         @Test
@@ -242,9 +249,8 @@ class SseReturnTypeValidationTest {
             ResourceMethodMeta bad1 = metaFor(method("invalidStringSseMethod"), "op1", List.of("text/event-stream"));
             ResourceMethodMeta bad2 = metaFor(method("wrongTypeArgSseMethod"), "op2", List.of("text/event-stream"));
 
-            RestConfigurationException ex = assertThrows(
-                    RestConfigurationException.class,
-                    () -> JaxRsRouteRegistrar.validateSseReturnTypes(List.of(bad1, bad2)));
+            RestConfigurationException ex =
+                    assertThrows(RestConfigurationException.class, () -> validate(List.of(bad1, bad2)));
             assertTrue(ex.getMessage().contains("op1"), "Should mention first violation");
             assertTrue(ex.getMessage().contains("op2"), "Should mention second violation");
         }
@@ -277,7 +283,7 @@ class SseReturnTypeValidationTest {
                     List.of(),
                     List.of());
 
-            assertDoesNotThrow(() -> JaxRsRouteRegistrar.validateSseReturnTypes(List.of(meta)));
+            assertDoesNotThrow(() -> validate(List.of(meta)));
         }
     }
 }
