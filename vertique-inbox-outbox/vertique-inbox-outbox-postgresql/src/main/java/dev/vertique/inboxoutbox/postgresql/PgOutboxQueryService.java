@@ -45,8 +45,9 @@ import java.util.stream.Collectors;
  * {@link OutboxEntryState} constants, never from caller text, so the planner can match the partial indexes of
  * the outbox table; every other filter is a bound parameter appended from a constant fragment that names no table.
  *
- * <p>Reads project only the columns they return: the list never selects payload, headers or metadata, and the detail reads at most {@value OutboxEntryDetail#MAX_LAST_ERROR_LENGTH} characters of the last
- * error from the database. {@link #getPayload(long)} decides the size limit in the same statement that reads the
+ * <p>Reads project only the columns they return: neither the list nor the detail selects payload, headers, metadata
+ * or the last error text, and {@link #getPayload(long)} reads at most {@value OutboxEntryPayload#MAX_LAST_ERROR_LENGTH}
+ * characters of the last error from the database. It decides the size limit in the same statement that reads the
  * content, so an oversized value is never transferred. The listing pages with the shared keyset paging of
  * {@code vertique-db}, ordered by one timestamp column and the entry id.
  *
@@ -87,25 +88,29 @@ public class PgOutboxQueryService extends PgSqlRepository implements OutboxQuery
 
         this.sqlListPrefix = "SELECT " + SUMMARY_COLUMNS + " FROM " + outbox + " WHERE ";
 
-        int max = OutboxEntryDetail.MAX_LAST_ERROR_LENGTH;
         this.sqlFind = "SELECT " + SUMMARY_COLUMNS + ", available_at, scheduled_at, published_at,"
                 + " CASE WHEN state = 'PROCESSING' THEN claimed_at END AS claimed_at,"
-                + " CASE WHEN state = 'PROCESSING' THEN claimed_by END AS claimed_by,"
-                + " left(last_error, " + max + ") AS last_error,"
-                + " COALESCE(char_length(last_error) > " + max + ", false) AS last_error_truncated"
+                + " CASE WHEN state = 'PROCESSING' THEN claimed_by END AS claimed_by"
                 + " FROM " + outbox + " WHERE id = $1";
+        int max = OutboxEntryPayload.MAX_LAST_ERROR_LENGTH;
 
         // One statement measures the combined UTF-8 size and returns the text only when it fits, so a large value
         // never leaves the database and no separate size check can race with the read. The JSONB-to-text
         // conversions run once, in the materialized CTE; the size and both CASE expressions read their result.
+        // The last error is cut in the database, so it adds at most that many characters to what leaves it; like the
+        // payload and headers it is returned only when they fit, and it is left out of the size they are measured by.
         this.sqlReadPayload = "WITH content AS MATERIALIZED (SELECT payload::text AS payload_text,"
-                + " headers::text AS headers_text FROM " + outbox + " WHERE id = $1),"
-                + " sized AS (SELECT payload_text, headers_text,"
+                + " headers::text AS headers_text, left(last_error, " + max + ") AS last_error_text,"
+                + " COALESCE(char_length(last_error) > " + max + ", false) AS last_error_truncated"
+                + " FROM " + outbox + " WHERE id = $1),"
+                + " sized AS (SELECT payload_text, headers_text, last_error_text, last_error_truncated,"
                 + " octet_length(payload_text) + COALESCE(octet_length(headers_text), 0) AS content_bytes"
                 + " FROM content)"
                 + " SELECT content_bytes,"
                 + " CASE WHEN content_bytes <= $2 THEN payload_text END AS payload_text,"
-                + " CASE WHEN content_bytes <= $2 THEN headers_text END AS headers_text FROM sized";
+                + " CASE WHEN content_bytes <= $2 THEN headers_text END AS headers_text,"
+                + " CASE WHEN content_bytes <= $2 THEN last_error_text END AS last_error_text,"
+                + " CASE WHEN content_bytes <= $2 THEN last_error_truncated END AS last_error_truncated FROM sized";
     }
 
     @Override
@@ -200,7 +205,11 @@ public class PgOutboxQueryService extends PgSqlRepository implements OutboxQuery
                         throw new OutboxPayloadTooLargeException();
                     }
                     return Optional.of(new OutboxEntryPayload(
-                            entryId, row.getString("payload_text"), toHeaders(row.getString("headers_text"))));
+                            entryId,
+                            row.getString("payload_text"),
+                            toHeaders(row.getString("headers_text")),
+                            row.getString("last_error_text"),
+                            Boolean.TRUE.equals(row.getBoolean("last_error_truncated"))));
                 })
                 .recover(
                         t -> Future.failedFuture(PgOutboxFailures.translate(failureMapper, t, "outbox entry payload")));
@@ -259,9 +268,7 @@ public class PgOutboxQueryService extends PgSqlRepository implements OutboxQuery
                 instantOrNull(row.getOffsetDateTime("scheduled_at")),
                 instantOrNull(row.getOffsetDateTime("published_at")),
                 instantOrNull(row.getOffsetDateTime("claimed_at")),
-                row.getString("claimed_by"),
-                row.getString("last_error"),
-                row.getBoolean("last_error_truncated"));
+                row.getString("claimed_by"));
     }
 
     private static Instant instantOrNull(OffsetDateTime value) {

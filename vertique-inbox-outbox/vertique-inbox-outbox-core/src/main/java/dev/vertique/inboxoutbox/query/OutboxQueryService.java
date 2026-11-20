@@ -10,7 +10,7 @@ import java.util.Optional;
 
 /**
  * Read-only view of the outbox for trusted in-process code, such as administration adapters: list entries by
- * state and other filters, read one entry, and read its stored payload.
+ * state and other filters, read one entry, and read its stored content.
  *
  * <p>The service performs no authorization. It reads the configured store as a whole: it does not filter on an
  * entry's scope key and returns it only as a label, so it is a platform-operator surface, not a scope-isolation
@@ -57,10 +57,13 @@ public interface OutboxQueryService {
     Future<Optional<OutboxEntryDetail>> getById(long entryId);
 
     /**
-     * Reads the stored payload and application headers of one entry, in any state.
+     * Reads the stored payload, application headers and last error text of one entry, in any state. This is the read
+     * that exposes entry content: the error text can quote payload fragments, so it is returned here and not by
+     * {@link #getById(long)}.
      *
      * <p>The size check and the read are one statement, so a value above {@link OutboxQueryConfig#maxPayloadBytes()}
-     * is never transferred.
+     * is never transferred. An entry whose content is too large fails the whole call, and its error text is not
+     * returned either.
      *
      * @param entryId identifier of the entry; positive
      * @return the content, or empty when there is no such entry; fails with an
