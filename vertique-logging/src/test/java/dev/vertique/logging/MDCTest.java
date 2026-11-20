@@ -3,6 +3,7 @@
 
 package dev.vertique.logging;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -69,6 +70,13 @@ class MDCTest {
     @DisplayName("clear outside any Vert.x context throws IllegalStateException")
     void shouldThrowOnClearOutsideContext() {
         assertThrows(IllegalStateException.class, MDC::clear);
+    }
+
+    @Test
+    @DisplayName("setContextMap with null or empty map outside any Vert.x context does not throw")
+    void shouldAcceptNullOrEmptySetContextMapOutsideContext() {
+        assertDoesNotThrow(() -> MDC.setContextMap(null));
+        assertDoesNotThrow(() -> MDC.setContextMap(Map.of()));
     }
 
     // --- fail-fast writes on a non-duplicated context ---
