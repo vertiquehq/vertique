@@ -89,6 +89,10 @@ class RestClientExpectedStatusIT {
         Future<Item> plain();
 
         @GET
+        @Path("/optional-plain")
+        Future<Optional<Item>> optionalPlain();
+
+        @GET
         @Path("/retried")
         @ExpectedStatus({200, 503})
         @Retry(maxRetries = 2, backoff = RestClientRetryIT.NoDelayBackoff.class)
@@ -214,8 +218,8 @@ class RestClientExpectedStatusIT {
     }
 
     @Test
-    @DisplayName("a builder-level expectation can accept a non-2xx status")
-    void builderExpectationAcceptsNonSuccess(Vertx vertx, VertxTestContext ctx) {
+    @DisplayName("a builder expectation does not accept a non-2xx status that it would pass")
+    void builderExpectationDoesNotAcceptNonSuccess(Vertx vertx, VertxTestContext ctx) {
         wireMock.stubFor(get(urlEqualTo("/items/plain"))
                 .willReturn(aResponse()
                         .withStatus(404)
@@ -226,15 +230,16 @@ class RestClientExpectedStatusIT {
                 .expecting(HttpResponseExpectation.SC_SUCCESS.or(HttpResponseExpectation.SC_NOT_FOUND))
                 .build(ItemClient.class)
                 .plain()
-                .onComplete(ctx.succeeding(item -> ctx.verify(() -> {
-                    assertThat(item).isEqualTo(new Item("gone"));
+                .onComplete(ctx.failing(err -> ctx.verify(() -> {
+                    assertThat(err).isInstanceOf(RestClientResponseException.class);
+                    assertThat(((RestClientResponseException) err).statusCode()).isEqualTo(404);
                     ctx.completeNow();
                 })));
     }
 
     @Test
-    @DisplayName("a status-blind builder expectation accepts a 500 that matches it")
-    void statusBlindExpectationAcceptsEveryStatus(Vertx vertx, VertxTestContext ctx) {
+    @DisplayName("a status-blind builder expectation still fails a 500 that matches it")
+    void statusBlindExpectationKeepsTheStatusRule(Vertx vertx, VertxTestContext ctx) {
         wireMock.stubFor(get(urlEqualTo("/items/plain"))
                 .willReturn(aResponse()
                         .withStatus(500)
@@ -245,8 +250,80 @@ class RestClientExpectedStatusIT {
                 .expecting(HttpResponseExpectation.JSON)
                 .build(ItemClient.class)
                 .plain()
+                .onComplete(ctx.failing(err -> ctx.verify(() -> {
+                    assertThat(err).isInstanceOf(RestClientResponseException.class);
+                    RestClientResponseException ex = (RestClientResponseException) err;
+                    assertThat(ex.statusCode()).isEqualTo(500);
+                    assertThat(ex.getCause()).isNotNull();
+                    ctx.completeNow();
+                })));
+    }
+
+    @Test
+    @DisplayName("a builder expectation also rejects a 2xx it does not accept, keeping the reason")
+    void builderExpectationRejectsMatchingStatusWithWrongShape(Vertx vertx, VertxTestContext ctx) {
+        wireMock.stubFor(get(urlEqualTo("/items/plain"))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "text/plain")
+                        .withBody("not json")));
+
+        builder(vertx)
+                .expecting(HttpResponseExpectation.JSON)
+                .build(ItemClient.class)
+                .plain()
+                .onComplete(ctx.failing(err -> ctx.verify(() -> {
+                    assertThat(err).isInstanceOf(RestClientResponseException.class);
+                    RestClientResponseException ex = (RestClientResponseException) err;
+                    assertThat(ex.statusCode()).isEqualTo(200);
+                    assertThat(ex.getCause()).isNotNull();
+                    ctx.completeNow();
+                })));
+    }
+
+    @Test
+    @DisplayName("a 2xx that the builder expectation accepts succeeds")
+    void builderExpectationAcceptsMatchingSuccess(Vertx vertx, VertxTestContext ctx) {
+        wireMock.stubFor(get(urlEqualTo("/items/plain")).willReturn(okJson("{\"name\":\"fine\"}")));
+
+        builder(vertx)
+                .expecting(HttpResponseExpectation.JSON)
+                .build(ItemClient.class)
+                .plain()
                 .onComplete(ctx.succeeding(item -> ctx.verify(() -> {
-                    assertThat(item).isEqualTo(new Item("error body"));
+                    assertThat(item).isEqualTo(new Item("fine"));
+                    ctx.completeNow();
+                })));
+    }
+
+    @Test
+    @DisplayName("@ExpectedStatus replaces the builder expectation and the 2xx rule for its method")
+    void methodStatusesOutrankTheBuilderExpectation(Vertx vertx, VertxTestContext ctx) {
+        wireMock.stubFor(get(urlEqualTo("/items/value"))
+                .willReturn(aResponse().withStatus(404).withBody("{\"name\":\"gone\"}")));
+
+        builder(vertx)
+                .expecting(HttpResponseExpectation.JSON)
+                .build(ItemClient.class)
+                .value()
+                .onComplete(ctx.succeeding(item -> ctx.verify(() -> {
+                    assertThat(item).isEqualTo(new Item("gone"));
+                    ctx.completeNow();
+                })));
+    }
+
+    @Test
+    @DisplayName("Optional with a 404 is empty even when a builder expectation is set")
+    void optionalNotFoundIsEmptyWithBuilderExpectation(Vertx vertx, VertxTestContext ctx) {
+        wireMock.stubFor(
+                get(urlEqualTo("/items/optional-plain")).willReturn(aResponse().withStatus(404)));
+
+        builder(vertx)
+                .expecting(HttpResponseExpectation.JSON)
+                .build(ItemClient.class)
+                .optionalPlain()
+                .onComplete(ctx.succeeding(item -> ctx.verify(() -> {
+                    assertThat(item).isEmpty();
                     ctx.completeNow();
                 })));
     }

@@ -187,7 +187,7 @@ and the optional `BeanValidator`.
 | `registerCapturer(RestClientContextCapturer<?>)` | Adds a per-client system-owned context capturer |
 | `exceptionMapper(RestClientExceptionMapper)` | Replaces the whole mapper, discarding prior `onFailure` registrations |
 | `onFailure(Class<T>, FailureTranslator<T>)` | Registers one translator on the current mapper; last registration wins per type |
-| `expecting(Expectation<HttpResponseHead>)` | Default response expectation; overridden per method by `@ExpectedStatus`. A response it accepts is a success whatever its status; a status-blind expectation (such as a content-type check) accepts every status, so combine it with `HttpResponseExpectation.SC_SUCCESS` to keep the 2xx rule |
+| `expecting(Expectation<HttpResponseHead>)` | Default response expectation, checked in addition to the 2xx rule (`expecting(HttpResponseExpectation.JSON)` still fails a 500); replaced per method by `@ExpectedStatus`, the only way to accept a non-2xx status |
 | `circuitBreaker(CircuitBreakerOptions)` | Builder-level baseline breaker (lowest priority) |
 | `retryPolicy(RestClientRetryPolicy)` | Policy consulted when `@Retry#retryOn` is empty; defaults to `DefaultRestClientRetryPolicy` |
 | `backoffStrategy(BackoffStrategy)` | Strategy used when `@Retry#backoff` is `BackoffStrategy.Default`; defaults to exponential (500 ms, ×2, cap 30 s) |
@@ -337,7 +337,8 @@ RestClientBuilder.create(vertx)
 
 ### `@ExpectedStatus`
 
-Per-method status validation, outranking any builder-level `expecting(...)`. The two forms are
+Per-method status validation. It replaces any builder-level `expecting(...)`, and the 2xx rule with it:
+the listed statuses alone decide. The two forms are
 mutually exclusive.
 
 | Attribute | Default | Description |
@@ -452,12 +453,13 @@ pipeline or the expectation check, whatever the expectation says.
 
 ### Accepted and rejected statuses
 
-The effective expectation is the method's `@ExpectedStatus` when it names codes or a range, otherwise the
-builder's `expecting(...)`, otherwise "status 200 to 299". It runs once per attempt, inside the retry
-loop and the circuit breaker.
+The effective expectation is the method's `@ExpectedStatus` when it names codes or a range (its statuses
+alone decide), otherwise "status 200 to 299" together with the builder's `expecting(...)` when one is set.
+It runs once per attempt, inside the retry loop and the circuit breaker.
 
-- **Accepted means success, whatever the status.** A response the expectation passes is decoded as the
-  declared type, a 404 included when `@ExpectedStatus(404)` or `expecting(...)` accepts it.
+- **Accepted means success, whatever the status.** A response the effective expectation passes is decoded
+  as the declared type, a 404 included when `@ExpectedStatus({200, 404})` lists it. A builder
+  `expecting(...)` never widens the accepted statuses.
 - **Rejected means `RestClientResponseException`, whatever the status.** A 2xx the expectation rejects
   (a 200 when only 201 is declared) fails the same way as a 404 does when only 200 is declared. The
   exception carries the status and the raw response body, and the expectation's failure as its cause.
@@ -489,9 +491,9 @@ Consequences to know:
   `onResponse` rather than `onError` (unless decoding or validation then fails). A rejected response fires
   `onError` and never `onResponse`. A 401 accepted by a
   wide range never reaches a token-refresh `recoverRequest` interceptor.
-- **An expectation that does not look at the status accepts every status.** The builder's
-  `expecting(HttpResponseExpectation.JSON)` passes a 500 whose `Content-Type` is JSON, so that response
-  is now decoded as a success. Keep the 2xx rule with `expecting(HttpResponseExpectation.SC_SUCCESS.and(...))`.
+- **A builder expectation does not replace the 2xx rule.** `expecting(HttpResponseExpectation.JSON)`
+  fails a 500 with `RestClientResponseException(500)` and fails a 200 that is not JSON; the expectation is
+  checked in addition to the status. Accept a non-2xx status only through `@ExpectedStatus`.
 - **Ranges are half-open.** `@ExpectedStatus(min = 200, max = 400)` accepts 200 to 399.
 - **A rejected 2xx is a `RestClientResponseException`**, not a plain `RestClientException`; an
   expectation that throws its own exception type has that type as the cause. A custom retry policy
@@ -1140,8 +1142,8 @@ configured or every client overrides it.
 
 - **Catching `RestClientException` and expecting transport errors.** It covers response, decoding and
   build failures, not transport or resilience failures; see the hierarchy above.
-- **Setting a status-blind `expecting(...)` and expecting 4xx and 5xx to fail.** An expectation accepts
-  every status it passes; combine it with `HttpResponseExpectation.SC_SUCCESS`.
+- **Setting a builder `expecting(...)` and expecting it to accept a 404.** It is checked in addition to the
+  2xx rule, so it never accepts a non-2xx status; list the status with `@ExpectedStatus` on the method.
 - **Reading system context inside `beforeRequest`.** By then the dispatch may have hopped contexts.
   Framework modules capture at dispatch entry with `RestClientContextCapturer`.
 - **Expecting `onResponse` or `onError` to count attempts.** `onResponse` never fires on a transport
