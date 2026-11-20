@@ -75,6 +75,7 @@ public final class DefaultTaskService implements TaskService {
         Objects.requireNonNull(principals, "principals");
         Objects.requireNonNull(filter, "filter");
         Objects.requireNonNull(cursor, "cursor");
+        refuseAssigneeInFilter(filter);
         return pool.withTransaction(tx -> txService.listAssignedTo(principals, filter, cursor, tx));
     }
 
@@ -127,5 +128,13 @@ public final class DefaultTaskService implements TaskService {
     public Future<Void> reassign(TaskReassignmentCommand cmd) {
         Objects.requireNonNull(cmd, "cmd");
         return pool.withTransaction(tx -> txService.reassign(cmd, tx));
+    }
+
+    /** Refuses a filter that sets an assignee: {@code listAssignedTo} takes the assignee from the principals. */
+    private static void refuseAssigneeInFilter(TaskFilter filter) {
+        if (filter.assigneeUser() != null || filter.assigneeRole() != null || filter.assigneeQueue() != null) {
+            throw new IllegalArgumentException("listAssignedTo takes the assignee from the principals;"
+                    + " the filter must not set assigneeUser, assigneeRole or assigneeQueue");
+        }
     }
 }

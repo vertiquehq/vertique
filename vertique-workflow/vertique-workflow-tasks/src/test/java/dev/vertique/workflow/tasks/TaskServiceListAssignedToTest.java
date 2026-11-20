@@ -4,6 +4,7 @@
 package dev.vertique.workflow.tasks;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
@@ -96,6 +97,28 @@ class TaskServiceListAssignedToTest {
         assertThatNullPointerException().isThrownBy(() -> service.listAssignedTo(PRINCIPALS, null, CURSOR));
         assertThatNullPointerException().isThrownBy(() -> service.listAssignedTo(PRINCIPALS, FILTER, null));
         verifyNoInteractions(pool, txService);
+    }
+
+    @Test
+    @DisplayName("both services refuse a filter that sets an assignee before touching the store or the pool")
+    @SuppressWarnings("unchecked")
+    void refuseAssigneeInFilter() {
+        TaskStore<SqlClient> store = mock(TaskStore.class);
+        Pool pool = mock(Pool.class);
+        TransactionalTaskService<SqlClient> txService = mock(TransactionalTaskService.class);
+        SqlClient tx = mock(SqlClient.class);
+        var transactional = new TransactionalDefaultTaskService(store, mock(TransactionalTaskCallbacks.class));
+        var pooled = new DefaultTaskService(pool, txService);
+
+        for (TaskFilter filter : List.of(
+                TaskFilter.empty().withAssigneeUser("bob"),
+                TaskFilter.empty().withAssigneeRole("r"),
+                TaskFilter.empty().withAssigneeQueue("q"))) {
+            assertThatIllegalArgumentException()
+                    .isThrownBy(() -> transactional.listAssignedTo(PRINCIPALS, filter, CURSOR, tx));
+            assertThatIllegalArgumentException().isThrownBy(() -> pooled.listAssignedTo(PRINCIPALS, filter, CURSOR));
+        }
+        verifyNoInteractions(store, pool, txService);
     }
 
     @Test

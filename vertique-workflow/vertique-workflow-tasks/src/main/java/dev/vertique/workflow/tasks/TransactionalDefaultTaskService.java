@@ -92,6 +92,7 @@ public final class TransactionalDefaultTaskService implements TransactionalTaskS
         Objects.requireNonNull(filter, "filter");
         Objects.requireNonNull(cursor, "cursor");
         Objects.requireNonNull(tx, "tx");
+        refuseAssigneeInFilter(filter);
         return taskStore.findAssignedTo(principals, filter, cursor, tx);
     }
 
@@ -184,5 +185,13 @@ public final class TransactionalDefaultTaskService implements TransactionalTaskS
                         "SPI contract violation: taskReassigned returned STALE_NOOP for task '" + cmd.taskId()
                                 + "' — STALE_NOOP is not a valid reassignment result"));
         });
+    }
+
+    /** Refuses a filter that sets an assignee: {@code listAssignedTo} takes the assignee from the principals. */
+    private static void refuseAssigneeInFilter(TaskFilter filter) {
+        if (filter.assigneeUser() != null || filter.assigneeRole() != null || filter.assigneeQueue() != null) {
+            throw new IllegalArgumentException("listAssignedTo takes the assignee from the principals;"
+                    + " the filter must not set assigneeUser, assigneeRole or assigneeQueue");
+        }
     }
 }
