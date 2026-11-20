@@ -779,6 +779,10 @@ public Future<Response> handle(jakarta.ws.rs.core.SecurityContext sc) { ... }
 `RequestOriginConfig` is a Dagger binding, not a config-file section. The default trusts no proxy,
 so `clientIp` always equals `remoteIp` and forwarded scheme and host headers are ignored.
 
+Addresses in `remoteIp`, `clientIp` and `forwardedFor` are normalized: an IPv4-mapped IPv6 address
+becomes plain IPv4, and any other IPv6 address is written in its RFC 5952 canonical form
+(`2001:db8::1`: lowercase, no leading zeros, longest zero run compressed).
+
 ```java
 @Provides @Singleton
 RequestOriginConfig originConfig() {

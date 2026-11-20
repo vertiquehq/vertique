@@ -281,11 +281,13 @@ public final class RequestOriginCapturer {
     }
 
     /**
-     * Normalizes an IP address string, converting IPv6-mapped IPv4 addresses
-     * (e.g., {@code ::ffff:1.2.3.4}) to their plain IPv4 form.
+     * Normalizes an IP address string: an IPv4 or IPv4-mapped IPv6 address becomes plain dotted-quad
+     * (e.g., {@code ::ffff:1.2.3.4} becomes {@code 1.2.3.4}), and any other IPv6 address is rendered
+     * in the RFC 5952 canonical form (lowercase hex, no leading zeros, the longest run of two or more
+     * zero groups compressed to {@code ::}). A {@code %zone} suffix is kept as written.
      *
      * @param raw the raw IP string from the socket or XFF header entry
-     * @return normalized IP string; {@code raw} unchanged if not an IPv6-mapped IPv4 address
+     * @return normalized IP string; {@code raw} unchanged if it is not an IP literal
      */
     static String normalizeIp(String raw) {
         byte[] bytes = addressBytes(raw);
@@ -296,9 +298,54 @@ public final class RequestOriginCapturer {
         if (bytes.length == 4) {
             return (bytes[0] & 0xFF) + "." + (bytes[1] & 0xFF) + "." + (bytes[2] & 0xFF) + "." + (bytes[3] & 0xFF);
         }
-        // Pure IPv6 — return the raw string unchanged so addresses like "2001:db8::1" are
-        // not expanded to their full form.
-        return raw;
+        int percent = raw.indexOf('%');
+        return renderIpv6(bytes) + (percent >= 0 ? raw.substring(percent) : "");
+    }
+
+    /**
+     * Renders 16 address bytes as an RFC 5952 canonical IPv6 string.
+     *
+     * @param bytes the 16 address bytes
+     * @return the canonical text form
+     */
+    private static String renderIpv6(byte[] bytes) {
+        int[] groups = new int[8];
+        for (int i = 0; i < 8; i++) {
+            groups[i] = ((bytes[2 * i] & 0xFF) << 8) | (bytes[2 * i + 1] & 0xFF);
+        }
+        int bestStart = -1;
+        int bestLen = 0;
+        for (int i = 0; i < 8; ) {
+            if (groups[i] != 0) {
+                i++;
+                continue;
+            }
+            int j = i;
+            while (j < 8 && groups[j] == 0) {
+                j++;
+            }
+            if (j - i > bestLen) {
+                bestStart = i;
+                bestLen = j - i;
+            }
+            i = j;
+        }
+        if (bestLen < 2) {
+            bestStart = -1;
+        }
+        StringBuilder sb = new StringBuilder(39);
+        for (int i = 0; i < 8; i++) {
+            if (i == bestStart) {
+                sb.append("::");
+                i += bestLen - 1;
+                continue;
+            }
+            if (sb.length() > 0 && sb.charAt(sb.length() - 1) != ':') {
+                sb.append(':');
+            }
+            sb.append(Integer.toHexString(groups[i]));
+        }
+        return sb.toString();
     }
 
     /**
