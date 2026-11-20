@@ -22,7 +22,7 @@ The event stream is separate from workflow history. History is the engine's inte
 |---|---|
 | Event side-effect recorder | Persists workflow event envelopes to the outbox inside the workflow transaction |
 | Event outbox binding | Application-provided destination for event delivery |
-| Compose validator | Ensures the selected destination has a registered outbox handler |
+| Compose validator | Ensures the selected destination has a registered outbox handler, and refuses a `DELAYED_JOB` destination |
 
 When the module is absent, workflow event emission is optional and the engine continues to function. Task reminders are the exception: workflows with reminders require event delivery because reminders are event-only side effects.
 
@@ -136,7 +136,7 @@ static WorkflowEventOutboxBinding workflowEventBinding() {
 
 For a service destination, install the module that provides the `SERVICE` outbox destination handler.
 
-The `VALIDATE` startup phase runs `WorkflowEventsComposeValidator` with every other compose validator, so the component needs no accessor for it. A destination with no registered handler fails startup there.
+The `VALIDATE` startup phase runs `WorkflowEventsComposeValidator` with every other compose validator, so the component needs no accessor for it. A destination with no registered handler fails startup there, and so does a `DELAYED_JOB` destination: a delayed job needs a handler name and schedule per delivery that the binding does not carry. Use `SERVICE` or `KAFKA`.
 
 ---
 
