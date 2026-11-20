@@ -723,6 +723,48 @@ class VaultPropertySourceFactoryTest {
         }
     }
 
+    // --- Failure type ---
+
+    @Nested
+    @DisplayName("failure type")
+    class FailureType {
+
+        @Test
+        @DisplayName("an unreadable Kubernetes JWT file fails create with ConfigPropertySourceException")
+        void unreadableKubernetesJwtFileFailsAsConfigPropertySourceException() {
+            JsonObject config = minimalConfig("http://vault:8200", "secret/app", "")
+                    .put(
+                            "auth",
+                            new JsonObject()
+                                    .put("method", "kubernetes")
+                                    .put("role", "app")
+                                    .put("jwtPath", "/nonexistent/vault-jwt-token"));
+
+            assertThrows(
+                    ConfigPropertySourceException.class, () -> new VaultPropertySourceFactory().create("src", config));
+        }
+
+        @Test
+        @DisplayName("a non-object auth value fails create with ConfigPropertySourceException")
+        void nonObjectAuthFailsAsConfigPropertySourceException() {
+            JsonObject config =
+                    minimalConfig("http://vault:8200", "secret/app", "").put("auth", "token");
+
+            assertThrows(ConfigPropertySourceException.class, () -> factoryWithStub(Map.of())
+                    .create("src", config));
+        }
+
+        @Test
+        @DisplayName("a non-array paths value fails create with ConfigPropertySourceException")
+        void nonArrayPathsFailsAsConfigPropertySourceException() {
+            JsonObject config =
+                    new JsonObject().put("address", "http://vault:8200").put("paths", "secret/app");
+
+            assertThrows(ConfigPropertySourceException.class, () -> factoryWithStub(Map.of())
+                    .create("src", config));
+        }
+    }
+
     // --- Close is a no-op ---
 
     @Nested
