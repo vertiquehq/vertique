@@ -1495,11 +1495,12 @@ runtime or annotation vocabulary.
 - **The dispatch codecs are local-only.** `LocalMessageCodec` throws
   `UnsupportedOperationException` from both wire methods, so a clustered event bus fails loudly
   rather than degrading silently; `transform` returns the object reference unchanged, which means
-  no defensive copy occurs on a local hop. Registration of the `dispatch.envelope` and
-  `dispatch.result` codec names is owned by whichever deployment path an application installs —
-  `dev.vertique:vertique-services`, `dev.vertique:vertique-kafka-core`, or
-  `dev.vertique:vertique-job-delayed` — each tolerating an already-registered name. Core itself
-  registers neither, so `EventBusClient` is usable only once one of those modules has deployed.
+  no defensive copy occurs on a local hop. Registration of the codec names is owned by whichever
+  deployment path an application installs, each tolerating an already-registered name:
+  `dev.vertique:vertique-services` and `dev.vertique:vertique-kafka-core` register both
+  `dispatch.envelope` and `dispatch.result`, and `dev.vertique:vertique-job-delayed` registers
+  `dispatch.envelope` only. Core itself registers neither, so `EventBusClient` is usable only once
+  one of those modules has deployed.
 - **`PayloadSources` never copies.** Copy the array yourself before calling `buffered(byte[], …)`
   if you need immutability, and prefer `bufferedStream()` over `bufferedView()` on hot paths for
   non-`Buffer` backings.
