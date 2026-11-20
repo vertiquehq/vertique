@@ -8,13 +8,15 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.security.runtime` (identity-snapshot durable carriage + reconstruction), `dev.vertique.security.runtime.authz`, `dev.vertique.security.runtime.events`
 > **Artifact:** `vertique-security-runtime`
-> **Depends on:** security-core, core, context, config-core, resilience
+> **Depends on:** security-core, core, context, resilience
 
 Default in-process authorization engine, event fan-out wiring, and identity-snapshot durable-carriage/reconstruction pipeline for the Vertique security model. This module implements the API and SPI contracts declared in `dev.vertique:vertique-security-core` and supplies the Dagger modules that wire them. It carries no dependency on any transport module or Vert.x Web.
 
 It also provides the opt-in authorization-narrowing composition and the reconstructed-context authority modes — each behind its own opt-in Dagger module, degrading to a passthrough of the base engine when not installed.
 
 Config-backed policy and role-resolver contributions live in `dev.vertique:vertique-security-config`.
+
+This module does not put `vertique-config-core` on its consumers' classpath: it uses none of it in main code. An application that reached `vertique-config-core` only through this module declares it directly.
 
 This engine is Stable, and so are the SPIs it implements or wires for contributors, which
 `dev.vertique:vertique-security-core` owns. What is promised here is the wiring and the documented
@@ -598,6 +600,5 @@ static ServiceIdentityResolver serviceIdentityResolver() {
 - `dev.vertique:vertique-security-core` — all SPI interfaces and value types
 - `dev.vertique:vertique-core` — `OrderedExtension`, `ContextHolder`, durable-context types, the `ConfigParser` seam, exception roots
 - `dev.vertique:vertique-context` — the durable-context encoder/decoder multibinding sets the carriage module contributes into
-- `dev.vertique:vertique-config-core` — config parsing for the `identity.*` sections
 - `io.vertx:vertx-core` — `Future`, and the timer backing the Mode-2 resolution timeout
 - `com.google.dagger:dagger` — the `@Module`/`@Multibinds`/`@BindsOptionalOf` wiring this module ships
