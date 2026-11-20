@@ -327,7 +327,7 @@ Deserialized from the `management` section into `ManagementConfig`. Every field 
 }
 ```
 
-`healthCheckTimeoutSeconds` and `host` are validated when the verticle starts, not when configuration is parsed: a zero or negative timeout, or an explicitly `null` or blank `management.host`, fails the management verticle's deployment with `IllegalArgumentException` rather than at config-load time. Unknown properties in the `management` section are ignored.
+A zero or negative `healthCheckTimeoutSeconds` fails startup when the configuration is bound, with a `ConfigurationException` that names `management.healthCheckTimeoutSeconds` and no value. `host` is validated when the verticle starts: an explicitly `null` or blank `management.host` fails the management verticle's deployment with `IllegalArgumentException`. Unknown properties in the `management` section are ignored.
 
 With hierarchical property expansion, `management.port=9090` in a `.properties` source expands to the same nested object.
 
