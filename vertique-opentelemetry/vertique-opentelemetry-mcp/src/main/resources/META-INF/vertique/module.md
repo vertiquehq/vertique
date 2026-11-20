@@ -83,9 +83,10 @@ self-reference and adds no link — this is the shape a body reference identical
 `traceparent` header actually takes: the header shares the captured span's trace id (only the span id
 differs, since the captured span's own span id is freshly minted at `open` and never equals its
 parent's), so suppression compares trace id only, never full span identity. Malformed trace-state data
-(not well-formed W3C `key=value` entries) is caught and logged at WARN with a bounded diagnostic — the
-exception class name only, never the raw trace data — and adds no link; every other enrichment
-attribute is still recorded.
+(not well-formed W3C `key=value` entries) is caught and logged at DEBUG, not WARN, with a bounded
+diagnostic — the exception class name only, never the raw trace data — and adds no link; every other
+enrichment attribute is still recorded. The body trace value is client-supplied, so a client can
+trigger this at will and a WARN would let any client flood the operator's logs.
 
 **This observer performs no extraction of its own — the policy lives in `vertique-mcp-server`.**
 The MCP server module's `mcp.bodyTracePolicy` defaults to `IGNORE`

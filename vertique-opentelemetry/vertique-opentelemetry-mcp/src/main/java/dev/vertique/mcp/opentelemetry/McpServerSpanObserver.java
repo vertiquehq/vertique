@@ -71,7 +71,7 @@ import lombok.extern.slf4j.Slf4j;
  * span's own span id is freshly minted at {@code open} and never equals its parent's). Suppression
  * therefore compares trace id only, never full span identity — see {@link #addBodyTraceLink}.
  * Malformed body trace data (a {@code traceState} that does not parse as W3C {@code key=value}
- * entries) is caught, logged at WARN with a bounded diagnostic (the exception class name only — never
+ * entries) is caught, logged at DEBUG with a bounded diagnostic (the exception class name only — never
  * the raw trace data), and produces no link; every other enrichment attribute is still recorded. No
  * span status is ever set here: transport status remains owned by Vert.x HTTP tracing.
  *
@@ -84,8 +84,9 @@ import lombok.extern.slf4j.Slf4j;
  * obligation. No OpenTelemetry type crosses into {@code vertique-mcp-core} or
  * {@code vertique-micrometer-mcp} to make this work.
  *
- * <p>Every callback body is wrapped in try/catch that logs at WARN and swallows, so a misbehaving
- * OpenTelemetry implementation never affects MCP request processing.
+ * <p>Every callback body is wrapped in try/catch that logs at WARN and swallows (the body-trace link
+ * in {@code addBodyTraceLink} logs a malformed trace state at DEBUG), so a misbehaving OpenTelemetry
+ * implementation never affects MCP request processing.
  *
  * @see McpOpenTelemetryModule
  */
