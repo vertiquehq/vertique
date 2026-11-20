@@ -155,6 +155,7 @@ The literal's `equals`/`hashCode` conform to the `java.lang.annotation.Annotatio
 
 ```java
 @Generated("dev.vertique.codegen.aop.AopProcessor")
+@dev.vertique.core.codegen.Generated
 @Module
 public abstract class GeneratedAopModule {
 

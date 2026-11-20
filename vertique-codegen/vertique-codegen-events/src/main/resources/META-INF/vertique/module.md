@@ -103,6 +103,7 @@ Each publisher is placed in the **event type's own package** (not a shared LCP p
 
 ```java
 @Generated("dev.vertique.codegen.events.EventsProcessor")
+@dev.vertique.core.codegen.Generated
 @Module
 public abstract class GeneratedEventsModule {
 
