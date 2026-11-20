@@ -31,7 +31,8 @@ import java.util.UUID;
  * @param errorType     the simple class name of the failure the caller receives, after translation, and never its
  *                      message; {@code null} only when that class has no simple name
  * @param security      the security context bound to the call when it was made, or {@code null} when none was bound
- * @param occurredAt    when the failure was observed
+ * @param occurredAt    when the failure was observed, which can be later than the call; an
+ *                      {@link OutboxEntryChange} carries the call time instead
  */
 public record OutboxCommandFailure(
         UUID callId,

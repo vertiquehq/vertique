@@ -12,6 +12,11 @@ package dev.vertique.inboxoutbox.ops;
  * payload, headers, last-error text or message text. Nothing is reported to the relay's
  * {@link dev.vertique.inboxoutbox.OutboxPublishObserver}.
  *
+ * <p>{@code occurredAt} has one meaning per event: on {@link OutboxEntryChange} it is when the command was called,
+ * stamped with the security snapshot, and on {@link OutboxCommandFailure} it is when the failure was observed, which
+ * can be later. A failure report for a commit that could not be confirmed is not proof that the commit did not
+ * happen: read the entry to learn its state.
+ *
  * <p>Callbacks run on the thread that completes the command, which is not ordered relative to the caller's own result
  * future; a refusal before the transaction is reported on the calling thread. A callback must not block that thread.
  *
@@ -38,7 +43,7 @@ public interface OutboxOperationListener {
      * discard of an entry that was already discarded is still reported, with
      * {@link OutboxEntryChange#changed() changed} {@code false}.
      *
-     * <p>An {@link Exception} thrown by this callback is caught, logged, and swallowed; it does not affect the
+     * <p>A failure thrown by this callback is isolated as described for the interface; it does not affect the
      * command or the other listeners.
      *
      * @param change the committed command
@@ -50,7 +55,7 @@ public interface OutboxOperationListener {
      * than expected, hit a persistence failure, or its commit failed or could not be confirmed. It is reported once
      * per call, with the same {@link OutboxCommandFailure#callId() callId} the committed report would have carried.
      *
-     * <p>An {@link Exception} thrown by this callback is caught, logged, and swallowed; it does not affect the
+     * <p>A failure thrown by this callback is isolated as described for the interface; it does not affect the
      * command or the other listeners.
      *
      * @param failure the failed command

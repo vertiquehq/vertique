@@ -601,6 +601,44 @@ class PgOutboxOperationsIT {
         }
 
         @Test
+        @DisplayName("retrying an older entry makes it the head again: it is claimed while a later entry of the "
+                + "aggregate is still in flight, and the later pending entries wait behind it")
+        void retryRestoresTheHeadWithoutWaitingForInFlightSiblings() throws Exception {
+            for (String parked : new String[] {"DEAD_LETTER", "DISCARDED"}) {
+                String aggregate = "agg-" + parked;
+                long older = fixture.seed()
+                        .state(parked)
+                        .aggregate("Order", aggregate)
+                        .scheduledNull()
+                        .unclaimed()
+                        .available(BASE)
+                        .insert();
+                long inFlight = fixture.seed()
+                        .state("PROCESSING")
+                        .claimed(BASE, "node-other")
+                        .aggregate("Order", aggregate)
+                        .scheduledNull()
+                        .attempts(0, 20)
+                        .lastError(null)
+                        .errorType(null)
+                        .available(BASE)
+                        .insert();
+                long laterPending = pendingOf(aggregate);
+
+                await(operations.retry(older, OutboxEntryState.valueOf(parked)));
+                List<OutboxRecord> claimed = await(repository.claimBatch(10, repository.nodeId(), everything()));
+
+                assertEquals(
+                        List.of(older),
+                        claimed.stream().map(OutboxRecord::id).toList(),
+                        "the retried entry is the head and is claimed while the later one is in flight: " + parked);
+                assertEquals("PROCESSING", fixture.stateOf(older), parked);
+                assertEquals("PROCESSING", fixture.stateOf(inFlight), parked);
+                assertEquals("PENDING", fixture.stateOf(laterPending), "the later entry waits behind the retried one");
+            }
+        }
+
+        @Test
         @DisplayName("a discarded entry is never claimed, however old")
         void discardedIsNeverClaimed() throws Exception {
             long id = pendingOf("agg-x");

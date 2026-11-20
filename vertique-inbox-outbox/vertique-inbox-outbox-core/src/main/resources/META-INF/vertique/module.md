@@ -183,6 +183,8 @@ Relay state machine for outbox rows.
 | `DEAD_LETTER` | Exhausted attempts or permanent failure |
 | `DISCARDED` | Dropped by an operator through `OutboxOperations.discard`; never claimed by the relay and removed after the discarded retention period |
 
+`DISCARDED` is new: a `switch` over `OutboxEntryState` that has no default branch stops compiling until it handles it, and code that parses a stored state must accept it.
+
 ### `OutboxEnvelope`
 
 Immutable record passed to `OutboxDestinationHandler.publish()` at relay time.
@@ -309,7 +311,7 @@ The record is the canonical six-component form with `scopeKey` last; a public fi
 
 ### Reading and administering entries
 
-`OutboxQueryService` and `OutboxOperations` are the in-process API an administration adapter (for example a REST module) uses to look at outbox entries and act on them. They are programmatic only: this module exposes no endpoint, and neither service performs authorization or takes an acting identity. The adapter authorizes the caller and records who acted. Both administer the configured store as a whole and neither filters on nor returns an entry's `scopeKey`, so they are a platform-operator surface, not a scope-isolation boundary. Carrier, security and context metadata are never returned.
+`OutboxQueryService` and `OutboxOperations` are the in-process API an administration adapter (for example a REST module) uses to look at outbox entries and act on them. They are programmatic only: this module exposes no endpoint, and neither service performs authorization or takes an acting identity. The adapter authorizes the caller and records who acted. Both administer the configured store as a whole: they return an entry's `scopeKey` as a label but neither filters on it nor limits what a caller sees by it, so they are a platform-operator surface, not a scope-isolation boundary. Carrier, security and context metadata are never returned.
 
 ```java
 public interface OutboxQueryService {
@@ -330,8 +332,8 @@ public interface OutboxOperations {
 - **Order.** `OutboxSort` is `UPDATED_AT_DESC` (default), `UPDATED_AT_ASC`, `CREATED_AT_DESC` or `CREATED_AT_ASC`, always tie-broken by entry id in the same direction. `updatedAt` is when the entry entered its current state, so for a dead letter it is when it failed.
 - **Paging.** Keyset paging with `dev.vertique.db.query.PageCursor` and `PagedResult`, as in the workflow query service. A page size is 1 to 200 (`OutboxQueryService.MAX_PAGE_SIZE`); 50 is the default. A cursor that is not shaped like a listing cursor fails with `ValidationException`, but one is not bound to the query that produced it; an adapter that hands cursors to untrusted callers must bind them.
 - **Live reads.** Each page reads the live table, so an entry that changes state between two pages can be missed or repeated.
-- **Indexes.** `DEAD_LETTER` and `DISCARDED` listings are served by partial indexes, so listing dead letters stays cheap however large the table is. `PENDING` and `PROCESSING` entries are listed from the indexes the relay already uses, then sorted; that is cheap while the backlog is small. The listing indexes cover only the two states that rarely change, so they add nothing to the relay's insert, claim and publish path.
-- **What a row carries.** `OutboxEntrySummary` holds identity, state, destination, event and aggregate, attempt counts, `errorType`, `createdAt` and `updatedAt`. `OutboxEntryDetail` adds `availableAt`, `scheduledAt`, `publishedAt`, the relay lease (`claimedAt`, `claimedBy`) and `lastError` cut at 4096 characters with `lastErrorTruncated`. Neither carries payload, headers or metadata.
+- **Indexes.** `DEAD_LETTER` and `DISCARDED` listings are served by partial indexes, so listing dead letters stays cheap however large the table is. `PENDING` and `PROCESSING` entries have no index for the listing sorts, so each page reads and sorts every entry in the state: the cost follows the size of the backlog, and a backlog is largest when the relay is stopped. Against a table of 300,000 rows with 294,000 `PENDING` entries, a first page took about 45 ms on a local PostgreSQL 16; measure before relying on it at your size, and narrow the listing with a destination, event or aggregate filter or a time range when the backlog is large. The listing indexes cover only the two states that rarely change, so they add nothing to the relay's insert, claim and publish path.
+- **What a row carries.** `OutboxEntrySummary` holds identity, state, destination, event and aggregate, the `scopeKey` label (`default` when the entry selected none; a returned field, not a filter), attempt counts, `errorType`, `createdAt` and `updatedAt`. `OutboxEntryDetail` adds `availableAt`, `scheduledAt`, `publishedAt`, the relay lease (`claimedAt`, `claimedBy`) and `lastError` cut at 4096 characters with `lastErrorTruncated`. Neither carries payload, headers or metadata.
 - **Payload.** `getPayload` returns the stored JSON text and the application headers. The size check and the read are one statement, so content larger than `inboxOutbox.query.maxPayloadBytes` (default 1 MiB, at most 16 MiB) is never transferred and the call fails with `OutboxPayloadTooLargeException`.
 
 **Commands.** Each runs in its own transaction, locks the row, and takes the state the caller last saw, so a stale decision never acts on an entry that has moved on.
@@ -345,7 +347,11 @@ public interface OutboxOperations {
 - **A second retry** finds the entry `PENDING` and fails with `OutboxEntryStateException`; a caller can read that as "already requeued".
 - **Discarding `PENDING` drops a promise.** The row was recorded by a committed business transaction and nothing tells the code that recorded it, so for example a workflow still waits for the result of a discarded side effect. Discarding the oldest `PENDING` entry of an aggregate also releases the later entries of that aggregate to the relay.
 - **Retry can reorder an aggregate.** A retried entry is delivered after later entries of the same aggregate that were delivered while it was parked.
-- **Undo.** `retry` on a `DISCARDED` entry brings it back until the maintenance job removes it after `inboxOutbox.cleanup.discardedRetentionDays` (1 to 3650; a value outside that range fails when the config is built, because zero would purge every discarded entry at the next cleanup).
+- **Retry makes the entry the head of its aggregate again, at once.** The relay holds an aggregate's later entries behind its oldest `PENDING` or `PROCESSING` entry, and a retried entry is the oldest. So it can be claimed while a later entry of the same aggregate is still `PROCESSING`, and the older and the newer one are then delivered at the same time; the later `PENDING` entries wait until the retried one is delivered or dead-letters again, which can take its whole retry budget. Retry an entry whose aggregate must stay in order only when nothing later of that aggregate is in flight.
+- **A retried entry keeps its own attempt limit.** `retry` resets the attempt count but keeps the stored `maxAttempts`, so a later change of `inboxOutbox.relay.maxAttempts` does not apply to it.
+- **Dead-letter gauges.** An entry that is discarded or retried leaves the dead-letter count read by `OutboxQueueProbe`, and `DISCARDED` entries are not counted anywhere in the sample, so discarding a dead letter clears an alert on `vertique.outbox.dead.letters`.
+- **Undo.** `retry` on a `DISCARDED` entry brings it back until the maintenance job removes it after `inboxOutbox.cleanup.discardedRetentionDays` (1 to 3650; a value outside that range fails with `InboxOutboxConfigurationException` when the config is built, because zero would purge every discarded entry at the next cleanup).
+- **Upgrade every node before using `retry`.** The maintenance job runs on one node chosen by the cron coordination, and an earlier release's cleanup deleted dead letters by id without checking the state again, so it could delete an entry that `retry` had just requeued. Run the release that adds these services on every node that can run maintenance before any caller, including application code, retries an entry. An older node also does not purge `DISCARDED` entries.
 - **Failures from the store** leave the services as `InboxOutboxPersistenceException` with a message that carries no SQL, driver text or payload; `retryable()` is `true` for a lock timeout.
 
 #### Listening to commands
@@ -445,7 +451,7 @@ points below.
 
 Cleanup cadence is owned by the framework's cron infrastructure, not by the cleanup config block itself. The legacy `cleanupIntervalHours` field was removed from the cleanup config; configs that still set it are accepted (and the value ignored) via `@JsonIgnoreProperties`. Tune cadence via `cron.jobs.<id>.cron` — e.g. `cron.jobs.outbox-cleanup.cron` (default above) and `cron.jobs.outbox-stale-lease-recovery.cron`.
 
-Config classes: `OutboxRelayConfig` (`inboxOutbox.relay`), `InboxOutboxCleanupConfig` (`inboxOutbox.cleanup`), `OutboxQueryConfig` (`inboxOutbox.query`).
+Config classes: `OutboxRelayConfig` (`inboxOutbox.relay`), `InboxOutboxCleanupConfig` (`inboxOutbox.cleanup`), `OutboxQueryConfig` (`inboxOutbox.query`, a record). A value outside the accepted range of `maxPayloadBytes` or `discardedRetentionDays` fails with `InboxOutboxConfigurationException` naming the key.
 
 ---
 
