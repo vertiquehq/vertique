@@ -142,7 +142,10 @@ class InterceptorRecordsTest {
 
         // And no toString of any record prints a header value, a path, a query or an attribute value
         HttpClientResponseHead head = new HttpClientResponseHead(
-                200, "OK", MultiMap.caseInsensitiveMultiMap().add("X-Reply", SECRET));
+                200,
+                "OK",
+                MultiMap.caseInsensitiveMultiMap().add("X-Reply", SECRET).add("Set-Cookie", "sid=" + SECRET));
+        assertThat(head.headers().get("Set-Cookie")).isEqualTo("sid=" + SECRET);
         HttpClientAttemptCompletion done = completion(200, null, "call-1", 1, 5, Instant.now());
         for (String text : new String[] {
             original.toString(),

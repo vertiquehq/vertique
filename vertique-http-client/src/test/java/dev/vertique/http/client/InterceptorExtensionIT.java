@@ -392,6 +392,28 @@ class InterceptorExtensionIT {
 
     /** FR-016, supporting. */
     @Test
+    @DisplayName("the response head keeps every Set-Cookie value while its toString prints none")
+    void theResponseHeadKeepsEverySetCookieValueWhileItsToStringPrintsNone() {
+        // Given a server answering with two Set-Cookie headers and a recording interceptor
+        RecordingServer server = support.server((request, body) -> request.response()
+                .putHeader("Set-Cookie", List.<String>of("sid=" + SECRET + "; HttpOnly", "pref=dark"))
+                .end("ok"));
+        Recorder recorder = new Recorder("rec");
+        HttpClient client = build(builder(server.origin(), recorder));
+
+        // When the caller runs one call
+        await(client.execute(web -> web.get("/x").send()));
+
+        // Then the head handed to completion holds both values unredacted, in order
+        HttpClientResponseHead head = settled(recorder, 1).get(0).response();
+        assertThat(head.headers().getAll("Set-Cookie")).containsExactly("sid=" + SECRET + "; HttpOnly", "pref=dark");
+
+        // And its toString prints no header value
+        assertThat(head.toString()).doesNotContain(SECRET).doesNotContain("pref");
+    }
+
+    /** FR-016, supporting. */
+    @Test
     @DisplayName("the snapshot carries the credential an asynchronous source resolved for the last original-origin hop")
     void theSnapshotCarriesTheCredentialAnAsynchronousSourceResolvedForTheLastOriginalOriginHop() {
         // Given a source that answers from a timer with a new value per resolution, a server whose /start

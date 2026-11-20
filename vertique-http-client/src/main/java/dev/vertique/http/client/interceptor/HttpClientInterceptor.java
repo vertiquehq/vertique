@@ -53,7 +53,8 @@ public interface HttpClientInterceptor extends OrderedExtension {
      * <p>{@code request} is the client's immutable snapshot of the method, URI and headers as written,
      * taken after {@link #beforeRequest} ran, with framework identity, plus the headers the
      * {@code CredentialSource} set on a hop to the original origin. Nothing in it is redacted.
-     * {@code response} is a framework-built head, or {@code null} when no response head arrived.
+     * {@code response} is a framework-built head with every response header, {@code Set-Cookie} included, or
+     * {@code null} when no response head arrived.
      * {@code completion} carries the status when a head arrived, the failure as the caller sees it (or
      * {@code null} when the exchange completed with a response), the call id, the attempt ordinal, the
      * duration, the completion time and the final target (scheme, host and port only). A cancelled exchange

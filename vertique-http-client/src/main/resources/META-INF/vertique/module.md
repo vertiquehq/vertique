@@ -117,14 +117,13 @@ a completed response, a refused status, a bound exceeded, a timeout, a reset, a 
 redirect hop, a cancellation, and the refusals before sending (egress denial, credential failure, invalid header,
 refused request body, failed `beforeRequest`). `request` is an immutable snapshot of the method, URI and headers
 taken after `beforeRequest`, plus the headers the `CredentialSource` set on a hop to the original origin (unredacted;
-`beforeRequest` itself never sees a credential);
-`response` is a framework-built head without `Set-Cookie`, or `null` when none arrived; `completion` carries the
-status, the failure as the caller sees it, the call id, the attempt ordinal, the duration and the final target
-(scheme, host and port only), and, when the client captures bodies, the request and response bodies (see Request and
-response bodies). A throw of any interceptor, including `LinkageError`, `AssertionError` and
-`StackOverflowError`, is logged and swallowed and never changes the outcome or skips the next interceptor; a
-`LinkageError` is logged at error level at most once every five minutes per interceptor class. Callbacks may run on
-any thread and concurrently for different exchanges.
+`beforeRequest` itself never sees a credential); `response` is a framework-built head with every response header,
+`Set-Cookie` included, or `null` when none arrived; `completion` carries the status, the failure as the caller sees
+it, the call id, the attempt ordinal, the duration and the final target (scheme, host and port only), and, when the
+client captures bodies, the request and response bodies (see Request and response bodies). A throw of any
+interceptor, including `LinkageError`, `AssertionError` and `StackOverflowError`, is logged and swallowed and never
+changes the outcome or skips the next interceptor; a `LinkageError` is logged at error level at most once every
+five minutes per interceptor class. Callbacks may run on any thread and concurrently for different exchanges.
 
 Stated limits of `onAttemptCompleted`: a call refused by an open circuit or a full bulkhead, a call on a closed
 client and a call cancelled before its exchange began have no exchange and no notification; an exchange whose
@@ -162,8 +161,8 @@ client holds the bodies of every exchange of an attempt until the attempt ends.
 
 **Unredacted.** Bodies are delivered as written and received; the interceptor redacts what it stores or logs.
 The same holds for headers: the request snapshot carries the headers a `CredentialSource` added, such as
-`Authorization`, so an access token can be inspected when debugging. `toString` of the completion prints no body, and
-`toString` of the snapshot prints no header value.
+`Authorization`, so an access token can be inspected when debugging, and the response head keeps `Set-Cookie`.
+`toString` of the completion prints no body, and `toString` of the snapshot and of the head prints no header value.
 
 ```java
 import dev.vertique.core.payload.PayloadKind;
@@ -585,7 +584,7 @@ multibinding (see Wiring); the REST client does not use it.
 | `onAttemptCompleted(request, response, completion)` | Exactly once per exchange on every terminal path that reached the client | Never changes the outcome; exceptions, `LinkageError`, `AssertionError` and `StackOverflowError` are logged and swallowed |
 
 The records are immutable framework facts: `HttpClientRequestContext` (method, URI, headers, client name, call id,
-attributes; `with...` copies), `HttpClientResponseHead` (status, message, headers without `Set-Cookie`),
+attributes; `with...` copies), `HttpClientResponseHead` (status, message, every header including `Set-Cookie`),
 `HttpClientAttemptCompletion` (status, error, call id, attempt ordinal, duration, completion time, target,
 `requestBody`, `responseBody`) and
 `HttpClientAttemptTarget` (scheme, host, port). Their `toString` prints no header value, path, query or body.
