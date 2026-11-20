@@ -339,7 +339,8 @@ RestClientBuilder.create(vertx)
 
 Per-method status validation. It replaces any builder-level `expecting(...)`, and the 2xx rule with it:
 the listed statuses alone decide. The two forms are
-mutually exclusive.
+mutually exclusive: declaring both `value` and a range fails at `build()` with a
+`RestClientConfigurationException`.
 
 | Attribute | Default | Description |
 |-----------|---------|-------------|
@@ -1128,7 +1129,7 @@ client.getProduct("123")
 | Failure | Cause |
 |---|---|
 | `IllegalArgumentException` | not an interface; a method that does not return `Future<T>`; no base URL resolvable; any `@Url` placement rule violated |
-| `RestClientConfigurationException` | a parameter type with no resolvable converter; a JSON profile other than the reserved `system`, `vertique`, or `vertique-strict` selected on a standalone builder with no registry; a method-level `@JsonProfile` on a `@RestClient` interface; a `retry.backoffStrategy` FQCN that cannot be loaded or instantiated; a raw Vert.x duration key in the `webClient` bag; a second interface whose client name another interface on the same factory already holds, when at least one of them derived it from its simple class name |
+| `RestClientConfigurationException` | a parameter type with no resolvable converter; a JSON profile other than the reserved `system`, `vertique`, or `vertique-strict` selected on a standalone builder with no registry; a method-level `@JsonProfile` on a `@RestClient` interface; an `@ExpectedStatus` that declares both exact codes and a range; a `retry.backoffStrategy` FQCN that cannot be loaded or instantiated; a raw Vert.x duration key in the `webClient` bag; a second interface whose client name another interface on the same factory already holds, when at least one of them derived it from its simple class name |
 | `JsonProfileConfigurationException` | the selected profile id is unknown to the registry |
 | `ConfigurationException` | a blank `restClient.{name}` key, or `readTimeoutMs <= 0` |
 
