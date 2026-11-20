@@ -681,7 +681,7 @@ build time.
 | `jsonProfile` | unset | JSON mapper profile id for value deserialization |
 | `serdeProperties` | — | Serde and registry config; never passed to the Kafka client |
 | `properties` | — | Kafka-client property overrides for this consumer only |
-| `retry.maxRetries` | `3` | Must be `>= 0` |
+| `retry.maxRetries` | `3` | Must be `>= 0`; `0` sends the first failure straight to `exhaustedStrategy` with no retry |
 | `retry.backoffMs` | `1000` | Must be `>= 0` |
 | `retry.backoffMultiplier` | `2.0` | Must be `>= 1.0` |
 | `retry.maxBackoffMs` | `60000` | Must be `>= 0` |

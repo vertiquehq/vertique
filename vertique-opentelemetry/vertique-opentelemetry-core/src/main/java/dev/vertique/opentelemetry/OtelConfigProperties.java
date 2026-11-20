@@ -26,8 +26,8 @@ import java.util.Map;
  *       The {@code OTEL_SERVICE_NAME} environment variable will override this via autoconfigure's
  *       own precedence — no special handling is required here.</li>
  *   <li><strong>Flattening:</strong> the {@code tracing.otel} subtree is recursively flattened;
- *       nested {@link JsonObject} values are joined with {@code .}; leaf values are stringified;
- *       all keys are prefixed with {@code otel.}. Flattened entries overwrite seeds on key
+ *       nested {@link JsonObject} values are joined with {@code .}; leaf values are stringified,
+ *       except that a blank string counts as absent and is skipped; all keys are prefixed with {@code otel.}. Flattened entries overwrite seeds on key
  *       collision, so explicit config beats seeded defaults.</li>
  * </ol>
  */
@@ -94,7 +94,8 @@ final class OtelConfigProperties {
      * Recursively flattens a {@link JsonObject} subtree into the target map.
      *
      * <p>Nested objects are recursed with a dotted-prefix path. Leaf values are converted to
-     * strings via {@link Object#toString()}. All resulting keys are prefixed with {@code prefix}.
+     * strings via {@link Object#toString()}; a blank string leaf is treated as absent and skipped, so
+     * it never overwrites a seeded value. All resulting keys are prefixed with {@code prefix}.
      *
      * @param obj    the JSON object to flatten; never {@code null}
      * @param prefix the current key prefix (e.g. {@code "otel"} or {@code "otel.exporter"})
@@ -106,7 +107,7 @@ final class OtelConfigProperties {
             String qualifiedKey = prefix + "." + key;
             if (value instanceof JsonObject nested) {
                 flatten(nested, qualifiedKey, target);
-            } else if (value != null) {
+            } else if (value != null && !(value instanceof String text && text.isBlank())) {
                 target.put(qualifiedKey, value.toString());
             }
         }

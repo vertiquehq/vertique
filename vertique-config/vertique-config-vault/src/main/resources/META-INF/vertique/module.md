@@ -182,6 +182,7 @@ The factory discovered by `ServiceLoader`. Registered in `META-INF/services/dev.
 
 #### Invariants and Gotchas
 
+- A wrong-typed field (for example `auth` or `paths` that is not an object or array) also throws `ConfigPropertySourceException`, naming the field and never echoing its value. A gateway failure while logging in, such as an unreadable Kubernetes JWT file, is reported the same way.
 - `create()` is fail-closed: any declared path that returns 404 (not found), 403 (permission denied), a non-2xx HTTP status, or a TCP error throws `ConfigPropertySourceException` and aborts bootstrap. The default configured on a `${key:default}` placeholder is not used as a fallback.
 - Timeouts are converted from milliseconds to seconds via ceiling division; values below 1000 ms round up to 1 second.
 - `create()` is called from the single-threaded bootstrap path; no thread-safety is required.

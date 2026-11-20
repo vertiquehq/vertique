@@ -586,6 +586,31 @@ class MicrometerMetricsContributorTest {
             assertThrows(ConfigurationException.class, () -> contributor.contribute(builder, ctx));
             assertFalse(MeterRegistryHolder.bootstrapped(), "holder must remain unset after config-shape error");
         }
+
+        @Test
+        @DisplayName("metrics.enabled that is not a boolean → ConfigurationException; holder untouched")
+        void metricsEnabledNotABooleanThrowsConfigurationException() {
+            MicrometerMetricsContributor contributor =
+                    new MicrometerMetricsContributor(List.of(new FakeProvider("test", new SimpleMeterRegistry())));
+            BootstrapContext ctx = fakeContext(
+                    new JsonObject().put("metrics", new JsonObject().put("enabled", "maybe")), new VertxOptions());
+
+            assertThrows(ConfigurationException.class, () -> contributor.contribute(mock(VertxBuilder.class), ctx));
+            assertFalse(MeterRegistryHolder.bootstrapped(), "holder must remain unset after a malformed value");
+        }
+
+        @Test
+        @DisplayName("metrics.enabled given as the string \"false\" disables metrics, as the typed parse does")
+        void metricsEnabledStringFalseIsInert() throws Exception {
+            MicrometerMetricsContributor contributor =
+                    new MicrometerMetricsContributor(List.of(new FakeProvider("test", new SimpleMeterRegistry())));
+            VertxBuilder builder = mock(VertxBuilder.class);
+            BootstrapContext ctx = fakeContext(
+                    new JsonObject().put("metrics", new JsonObject().put("enabled", "false")), new VertxOptions());
+
+            assertSame(builder, contributor.contribute(builder, ctx));
+            assertFalse(MeterRegistryHolder.bootstrapped(), "a string-encoded false must disable metrics");
+        }
     }
 
     // --- Test 13: W4 — provider failure preserves backend name through contributor ---
