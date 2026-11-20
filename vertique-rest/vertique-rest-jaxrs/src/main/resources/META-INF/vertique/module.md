@@ -121,10 +121,15 @@ hierarchy (`class Things extends Base<String>`, including variables forwarded th
 supertypes) gets that concrete type for its parameter, body and return metadata — a path, query,
 header, cookie, or form parameter typed `ID` converts as `String`, a body `T` decodes as the bound
 type (nested arguments such as `List<Dto>` are kept for JSON decoding), and a `Future<? extends T>`
-return records the erased upper bound of the resolved `T`. A variable no class in the hierarchy
+return records the erased upper bound of the resolved `T`. A method's own type variable reports
+the erasure of its bound after the hierarchy's bindings are applied (`<M extends T>` with `T`
+bound to `Integer` reports `Integer`, `<M extends Number>` reports `Number`), an unbounded one
+reports `Object`, and an array of a bound variable reports the array of its raw type (`T[]` with
+`T` bound to `List<String>` is `List[]`). A variable no class in the hierarchy
 binds (a raw supertype, or `Base` used without arguments) keeps its erasure, so a scalar parameter
 of that type still fails startup with `UNRESOLVABLE_PARAM_CONVERTER`, and a body or return type
-bound by it is `Object`; override such a method with concrete parameter types. Reflective
+bound by it is the erasure of the variable's bound (`Object` when it is unbounded); override such a
+method with concrete parameter types. Reflective
 invocation still uses the declaration's erased signature. A
 default route's `operationId` is the same in every class that inherits
 it, and operationIds are unique per mount, so only one resource per mount can inherit a given
@@ -450,7 +455,7 @@ public record ParamMeta(
         ParamSource source,                     // ResourceMethodMeta.ParamSource — see the note below
         Class<?> type,
         @Nullable Class<?> componentType,       // element type for collection/array parameters
-        @Nullable Type genericType,             // full generic type for body parameters
+        @Nullable Type genericType,             // declared type for body, query, header and cookie parameters
         @Nullable String defaultValue,          // from @DefaultValue
         ParameterMetadata parameterMetadata) { … }
 ```
@@ -573,6 +578,7 @@ ambiguity with `jakarta.ws.rs.NotAuthorizedException` and `jakarta.ws.rs.Forbidd
 
 ### `RestExceptionMapper`
 
+Declared in `dev.vertique:vertique-rest-core` (`dev.vertique.rest.core`); this module wires it.
 The REST-layer `Throwable → Throwable` pre-translator that runs before the registry. It extends
 `dev.vertique.core.failure.FailureMapper` with covariant overrides so registrations chain:
 
@@ -754,9 +760,9 @@ Most REST extension points — `RouterMount`, `MountCustomizer`, `Middleware`, `
 `OperationHandlerContributor`, the three interceptor SPIs, `RequestBodyDecoder`,
 `ResponseBodyEncoder`, `ResponseProducer`, `ResponseSerializer`, `RestContextResolver`, and the
 parameter converters — are declared in `dev.vertique:vertique-rest-core` and documented there. The
-ones this module owns are below. `RequestValidationStrategy`, `OperationSchemaSource`, and
-`FileContentVerifier` are declared here but documented with their reference implementations in
-`dev.vertique:vertique-rest-validation`.
+ones this module owns are below. `RequestValidationStrategy` and `OperationSchemaSource` are declared
+here; `FileContentVerifier` is declared in `dev.vertique:vertique-rest-core`. Their reference
+implementations are documented in `dev.vertique:vertique-rest-validation`.
 
 `RequestValidationStrategy` gains a mount-aware `gateFor(op, schemas, MountMeta mount)` default
 overload alongside the original 2-arg form. `JaxRsRouteRegistrar` calls only the 3-arg form —
@@ -785,6 +791,7 @@ provenance: it stores the object as given and returns it by reference.
 
 ### `RestExceptionMapperCustomizer`
 
+Declared in `dev.vertique:vertique-rest-core` (`dev.vertique.rest.core`).
 Contributes `Throwable → Throwable` translations to the REST error pipeline.
 
 ```java
@@ -1128,12 +1135,11 @@ parameter, a `Content-Disposition` name or filename) escape `\` and `"`, and wri
 character other than a horizontal tab as `_` rather than deleting it, so a value can never carry a
 line break into a header and `evil.php` with U+0001 before the final `p` is not written as `evil.php`.
 
-Two adapters are visible to resource code:
-
-| Class | Purpose |
-|-------|---------|
-| `VertxFileUploadEntityPart` | `EntityPart` over a Vert.x `FileUpload`, reading the spooled temp file. `getContent()` is single-use. |
-| `FormFieldEntityPart` | `EntityPart` over a text form field value. `getContent()` is single-use. |
+Resource code receives `jakarta.ws.rs.core.EntityPart`. Every instance also implements `VertxEntityPart`
+(`dev.vertique:vertique-rest-core`), whose `getContentAsync()` reads the content without blocking the event
+loop. The two implementations behind it, `VertxFileUploadEntityPart` (over a spooled `FileUpload`) and
+`FormFieldEntityPart` (over a text field value), are INTERNAL: do not name them. `getContent()` and
+`getContentAsync()` are single-use.
 
 ### Example resources
 
@@ -2069,7 +2075,8 @@ Beyond what `RestCoreModule` and `JsonRuntimeModule` contribute:
 | `SyntheticOperationInstaller` | `@Binds` to a package-private implementation; INTERNAL; framework documentation module only; enforces a `SyntheticOperation` typed policy in the supported `AuthModule` and `SecurityModule` composition and refuses a restrictive one without it |
 | `Set<MountPublicationHook>` | `@Multibinds`; INTERNAL; empty by default; sibling framework modules contribute: the documentation module through `@ElementsIntoSet`, the `openapi-contract` validation module's contract-load check through `@IntoSet` |
 
-`dev.vertique.rest.jaxrs.runtime.MagicBytesVerifierModule` is a separate opt-in `@Module` that
+`dev.vertique.rest.validation.MagicBytesVerifierModule` (`dev.vertique:vertique-rest-validation`)
+is a separate opt-in `@Module` that
 contributes the built-in magic-byte `FileContentVerifier`. It fails closed on a declared content
 type that is present but unparsable, such as a wildcard type with a concrete subtype like `*/png`
 (rejection type `fileContentTypeMalformed`), reads a `q` or
@@ -2141,6 +2148,22 @@ composition view and the docs-module marker described under [`@RestApplication`]
 above, public only so the JAX-RS application composer, the mount composition validator, the OpenAPI
 documentation module, and the `openapi-contract` validation module's contract-load check can read or
 bind them.
+
+---
+
+## Moved types
+
+These types left this module and have no forwarding type here. Change the import:
+
+| Type | Now in |
+|---|---|
+| `FileContentVerifier`, `FileVerificationResult` | `dev.vertique.rest.core.request` (`vertique-rest-core`) |
+| `VertxEntityPart` | `dev.vertique.rest.core.request` (`vertique-rest-core`) |
+| `RestExceptionMapper`, `RestExceptionMapperCustomizer` | `dev.vertique.rest.core` (`vertique-rest-core`) |
+| `MagicBytesVerifierModule` | `dev.vertique.rest.validation` (`vertique-rest-validation`) |
+
+`RestModule` and `JaxRsRouterMount` stay here. `RestModule` still declares the empty multibindings
+`Set<FileContentVerifier>` and `Set<RestExceptionMapperCustomizer>` and assembles the `RestExceptionMapper`.
 
 ---
 

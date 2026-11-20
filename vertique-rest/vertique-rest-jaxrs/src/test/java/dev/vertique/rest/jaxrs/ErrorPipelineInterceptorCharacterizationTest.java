@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import dev.vertique.rest.core.ProblemDetail;
+import dev.vertique.rest.core.RestExceptionMapper;
 import dev.vertique.rest.core.interceptor.ErrorInterceptor;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import io.vertx.core.Future;

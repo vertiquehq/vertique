@@ -1131,7 +1131,8 @@ final class BranchTransitionEngine {
                 token.branchId(), // branchId
                 WorkflowScopes.DEFAULT,
                 htn.requireVersionStability(),
-                null); // reservationCommandId
+                null, // reservationCommandId
+                htn.taskType());
     }
 
     /**

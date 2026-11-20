@@ -118,6 +118,7 @@ Flyway migration:
 - `V002__index_job_executions_for_retention.sql` — the partial index `idx_job_executions_retention` that the execution retention job scans (see [Execution retention](#execution-retention)). The plain `CREATE INDEX` blocks every write to `job_executions` (enqueue, claim, completion) while it builds, so on a very large installation build it ahead of the upgrade with `CREATE INDEX CONCURRENTLY IF NOT EXISTS` and the same name and definition. The script sets `lock_timeout` to 30 s, which bounds only the wait for the lock, not the build, and it drops an index of that name that a cancelled concurrent build left invalid before it creates one. Every application that applies the migration gets the index, whether or not it includes `JobRetentionModule`
 
 - `V003__add_job_execution_scope.sql` — adds `job_executions.scope_key VARCHAR(255) NOT NULL DEFAULT 'default'`, so every existing row reads `default`. The default is a constant, so PostgreSQL 11 and later add the column without rewriting the table. The script sets `lock_timeout` to 30 s, which bounds only the wait for the table lock. No index and no check constraint are added.
+- `V004__add_job_execution_idempotency_key.sql` — adds the nullable `job_executions.idempotency_key VARCHAR(255)`, so every existing row reads `NULL`, and the partial unique index `idx_job_executions_idempotency_key` on `(handler, scope_key, idempotency_key)` that holds for every execution whose key is not `NULL` and whose state is not `SUCCEEDED`, `CANCELLED` or `DEAD_LETTER`. The column is added without a default, so no row is rewritten. The plain `CREATE UNIQUE INDEX` blocks every write to `job_executions` (enqueue, claim, completion) while it builds, so on a very large installation add the column and build the index ahead of the upgrade with `CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS` and the same name and definition. The script sets `lock_timeout` to 30 s, which bounds only the wait for the lock, not the build, and it drops an index of that name that a cancelled concurrent build left invalid before it creates one. The script can be rerun after a failure
 
 **The `V1` schema is frozen.** `vertique-job-postgresql` is Stable, so every later schema change ships
 as a new `V2+` migration file; `V1` is never edited again. A database that applied an earlier `V1`
@@ -128,7 +129,7 @@ would fail Flyway checksum validation, which is why the fold-back practice ends 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | `UUID PK` | Unique execution identifier |
-| `job_id` | `VARCHAR(255)` | Logical job identifier (stable across retries) |
+| `job_id` | `VARCHAR(255)` | Label for the job (stable across retries); not unique |
 | `job_type` | `VARCHAR(20)` | `CRON`, `DELAYED`, or `BATCH` |
 | `handler` | `VARCHAR(255)` | Event bus address of the handler |
 | `queue` | `VARCHAR(255)` | Logical queue name (default: `'default'`) |
@@ -146,6 +147,7 @@ would fail Flyway checksum validation, which is why the fold-back practice ends 
 | `last_error` | `TEXT` | Human-readable error message on failure |
 | `error_type` | `VARCHAR(500)` | Exception class name on failure |
 | `scope_key` | `VARCHAR(255)` | Scope label chosen at enqueue (default: `'default'`); not read by claim, retry, retention or cron de-duplication |
+| `idempotency_key` | `VARCHAR(255)` | Optional key chosen at enqueue (`NULL` when none); unique per handler and scope while the execution is unfinished (see the index below) |
 | `metadata` | `JSONB` | Durable context `DurableMetadata` document persisted as a `{"context": {namespace: {...}}}` carrier; written at enqueue time by `DelayedJobService`; read at dispatch time by `DelayedJobPoller` |
 | `created_at` | `TIMESTAMPTZ` | Row creation time |
 | `updated_at` | `TIMESTAMPTZ` | Last update time (also serves as heartbeat timestamp) |
@@ -158,7 +160,10 @@ would fail Flyway checksum validation, which is why the fold-back practice ends 
 | `idx_job_executions_heartbeat` | `updated_at` | `WHERE state = 'PROCESSING'` | Stale-job detection by coordinator |
 | `idx_job_executions_state` | `state, created_at DESC` | — | Dashboard queries by state |
 | `idx_job_executions_job_id` | `job_id, created_at DESC` | — | Dashboard queries by job |
+| `idx_job_executions_idempotency_key` | `handler, scope_key, idempotency_key` (UNIQUE) | `WHERE idempotency_key IS NOT NULL AND state NOT IN ('SUCCEEDED', 'CANCELLED', 'DEAD_LETTER')` | Delayed-job idempotency key: at most one unfinished execution per handler, scope and key; `FAILED` and `ABANDONED` stay unfinished because a retry can still re-enqueue them |
 | `idx_job_executions_cron_dedup` | `job_id, scheduled_at` (UNIQUE) | `WHERE job_type = 'CRON' AND state NOT IN ('DEAD_LETTER', 'CANCELLED')` | SINGLE_INSTANCE leader election — only one node wins the INSERT race |
+
+A keyed `save` (`JobExecution.idempotencyKey()` not `null`, plain or transactional) runs `INSERT ... ON CONFLICT (handler, scope_key, idempotency_key) WHERE <index predicate> DO NOTHING RETURNING id`. When the insert stores nothing, a second statement reads the unfinished holder and its id is returned; if the holder finished in between, the insert is repeated, at most three times in all, after which the future fails with `IllegalStateException`. The conflict path never updates the holder (`updated_at` is unchanged) and never raises a unique violation, so it cannot abort the caller's transaction. A cron execution never carries a key. Two limits follow from the design: a keyed `save` inside a `REPEATABLE READ` or `SERIALIZABLE` transaction whose snapshot predates the holder's commit cannot see the holder and fails with that `IllegalStateException`; and `updateState`, which does not check the transition model, can move a finished execution back to an unfinished state, which raises a unique violation if another execution has taken its key since.
 
 ### `job_logs`
 

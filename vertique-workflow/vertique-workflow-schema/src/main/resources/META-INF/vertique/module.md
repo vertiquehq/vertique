@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Workflow Schema Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.workflow.schema`
 > **Artifact:** `vertique-workflow-schema`
 > **Depends on:** workflow-core, json, json-schema, json-schema-validation, core
@@ -15,8 +15,10 @@ declares for its decisions and start payload, checks them when the definition is
 validates a submitted decision or start payload against the registered schema before the engine sees
 it.
 
-Beta means the registration behavior described here is implemented and tested, but the module is new
-and its surface may still change in a minor release. Pin the version you test against.
+Stable means the documented surface changes additively only: `WorkflowSchemaModule` and its bindings,
+`WorkflowPayloadSchemas` and its records, the registration checks, the validation answers and the state
+comparison described below. A break takes a replacement surface under the deprecation cycle. The engine
+needs this module on every node that runs the executor, so it is part of the workflow family's promise.
 
 ---
 
@@ -112,8 +114,10 @@ including tasks inside fork branches. For each distinct type name it does this o
    the message "cannot be loaded", the same wording the engine's class lookup gives.
 2. **Reuse the cache.** A type already resolved under the same profile is not generated again.
 3. **Find the class.** The payload type name is looked up in the `WorkflowTypeNames` index, where a class
-   named with `@WorkflowType` is found by its logical name. A name the index does not know is loaded as a
-   binary class name without initializing the class.
+   named with `@WorkflowType` is found by its logical name, and any indexed class by its binary name. A name
+   the index does not know is never loaded: the registration fails with the "cannot be loaded" message (see
+   Failures). The registry indexes a candidate's start and decision payload classes before the validator runs, so
+   a registered definition needs nothing more, and a packaged document's classes are indexed at bootstrap.
 4. **Generate the schema.** The canonical Draft 2020-12 document is produced with the input-profile
    schema generator under the process system profile (`JsonConfig.effectiveSystemProfile`).
 5. **Require an object.** The document must be object-shaped (see below).
@@ -175,9 +179,13 @@ linear-safe, or review them before they enter a payload type.
 ### Threading and class loading
 
 - Validators run synchronously on the registering thread. Call `publish` off the event loop.
-- Payload classes the type-name index does not know are loaded with this module's own class loader. Other workflow modules resolve
-  classes differently, so in an application with split class loaders the payload classes must be
-  visible from the loader that loads `vertique-workflow-schema`.
+- This module loads no class. It describes the classes the type-name index holds, so a split class-loader
+  layout needs nothing from it.
+- **Behaviour change.** An earlier version loaded a payload type name the index did not know as a binary class
+  name, without initializing it. A definition whose payload type is not in the index now fails registration with
+  `WorkflowDefinitionException`, message `definition '<id>' v<version> step '<step>' decision '<name>' payload type
+  '<name>' cannot be loaded`, naming no cause. Register the definition through the registry, which indexes its
+  payload classes, or list the class in a `WorkflowTypeCatalog`.
 
 ---
 

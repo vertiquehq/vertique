@@ -51,6 +51,27 @@ inherits the annotations of a generic super-interface declaration whose type var
 binds (`delete(String)` of a `Crud<String>` client inherits those of `Crud<ID>.delete(ID)`), under the
 Java override rules.
 
+An operation the interface inherits from a super-interface, with or without a redeclaration, is an
+operation of the client:
+
+- **Types** are the ones the interface binds: for `UserClient extends Crud<User, String>`, the
+  inherited `Future<T> get(ID id)` returns `User` and binds `id` as a `String`. A type variable of the
+  hierarchy that the interface leaves unbound resolves to its erasure.
+- **Nearest declaration wins.** A redeclaration's own verb, `@Path`, `@Consumes`, `@Produces`,
+  `@ExpectedStatus` and parameter bindings take precedence over the overridden declaration's; what it
+  leaves out it inherits.
+- **Type-level annotations** (`@Path`, `@Consumes`, `@Produces` and the resilience annotations) are read
+  from the client interface, so an inherited operation is sent under the client's `@Path`.
+- **One operation per override chain.** The redeclaration, the declaration it overrides and the bridge
+  the compiler adds are the same operation, so a call through the super-interface type reaches the
+  client. Override-equivalent declarations of unrelated interfaces are separate operations that share a
+  signature. A `default` method is not an operation.
+- **Method metadata reads the same annotations.** `MethodMetadata#findAnnotation` and `hasAnnotation` on an
+  operation (as seen by a capturer or the resilience pipeline) include the annotations of the declarations it
+  overrides. The generated static proxy and the reflective proxy treat inherited operations alike; a client
+  whose inherited operation is declared by an interface the generated proxy cannot name gets the reflective
+  proxy.
+
 ```java
 @RestClient(name = "user-service", value = "http://user-service:8080")
 @Path("/users")
@@ -100,15 +121,19 @@ callbacks described under [Extension Points](#extension-points).
  5. Build the Vert.x HttpRequest from the (possibly rewritten) URI
  6. Apply the effective timeout
  7. Send inside the circuit breaker when configured; the retry loop lives here
- 8. Apply the Expectation (@ExpectedStatus, or the builder default)
+ 8. Apply the Expectation (@ExpectedStatus, or the builder default; 2xx when neither is set).
+    A response it accepts continues, whatever its status; one it rejects fails with
+    RestClientResponseException. A 404 for Future<Optional<T>> is accepted before this check.
  9. [sync]  onResponse observers
 10. [async] afterResponse handlers — a failed future turns success into error
 11. Future<Optional<T>>: a 404 short-circuits to Optional.empty()
 12. Deserialize the body with the resolved per-client ObjectMapper
 13. Validate the deserialized object with BeanValidator when one is bound
 
-On failure anywhere in 7–13:
+On failure in 7–10:
 14. [async] recoverRequest handlers — the first success triggers exactly one recovery retry
+
+On failure anywhere in 7–13:
 15. [sync]  onError observers
 16. [async] transformError handlers — may replace the propagated error
 17. RestClientExceptionMapper translates transport failures into the typed hierarchy
@@ -162,7 +187,7 @@ and the optional `BeanValidator`.
 | `registerCapturer(RestClientContextCapturer<?>)` | Adds a per-client system-owned context capturer |
 | `exceptionMapper(RestClientExceptionMapper)` | Replaces the whole mapper, discarding prior `onFailure` registrations |
 | `onFailure(Class<T>, FailureTranslator<T>)` | Registers one translator on the current mapper; last registration wins per type |
-| `expecting(Expectation<HttpResponseHead>)` | Default response expectation; overridden per method by `@ExpectedStatus` |
+| `expecting(Expectation<HttpResponseHead>)` | Default response expectation; overridden per method by `@ExpectedStatus`. A response it accepts is a success whatever its status; a status-blind expectation (such as a content-type check) accepts every status, so combine it with `HttpResponseExpectation.SC_SUCCESS` to keep the 2xx rule |
 | `circuitBreaker(CircuitBreakerOptions)` | Builder-level baseline breaker (lowest priority) |
 | `retryPolicy(RestClientRetryPolicy)` | Policy consulted when `@Retry#retryOn` is empty; defaults to `DefaultRestClientRetryPolicy` |
 | `backoffStrategy(BackoffStrategy)` | Strategy used when `@Retry#backoff` is `BackoffStrategy.Default`; defaults to exponential (500 ms, ×2, cap 30 s) |
@@ -423,7 +448,54 @@ Future<Optional<Product>> findProduct(@PathParam("id") String id);
 ```
 
 `Future<Optional<T>>` is first class: a 404 becomes `Optional.empty()` without entering the failure
-pipeline or the expectation check.
+pipeline or the expectation check, whatever the expectation says.
+
+### Accepted and rejected statuses
+
+The effective expectation is the method's `@ExpectedStatus` when it names codes or a range, otherwise the
+builder's `expecting(...)`, otherwise "status 200 to 299". It runs once per attempt, inside the retry
+loop and the circuit breaker.
+
+- **Accepted means success, whatever the status.** A response the expectation passes is decoded as the
+  declared type, a 404 included when `@ExpectedStatus(404)` or `expecting(...)` accepts it.
+- **Rejected means `RestClientResponseException`, whatever the status.** A 2xx the expectation rejects
+  (a 200 when only 201 is declared) fails the same way as a 404 does when only 200 is declared. The
+  exception carries the status and the raw response body, and the expectation's failure as its cause.
+  The error body is never decoded as the declared type; read it with `bodyAs(...)` or `problemDetail(...)`.
+
+| Declared return | Accepted response | Rejected response |
+|---|---|---|
+| `Future<Void>` | `null`, body ignored | `RestClientResponseException` |
+| `Future<HttpClientResponse>` | the raw response, any status | `RestClientResponseException` |
+| `Future<Optional<T>>` | 404: empty. Other status: decoded, empty body gives empty | `RestClientResponseException` (never for a 404) |
+| `Future<T>` | decoded as `T`; empty body gives `null` | `RestClientResponseException` |
+
+The declared type is the contract for every accepted status. A body that does not fit it (an HTML 404
+from a gateway when `T` is a record) fails with `RestClientException` ("Failed to deserialize
+response"), which carries no status; a client that accepts 404 with a different body shape declares
+`Optional<T>`, `Void` or `HttpClientResponse`, or a type that fits both.
+
+```java
+@GET
+@Path("/{id}")
+@ExpectedStatus({200, 404})            // a missing item is an answer, not an error
+Future<HttpClientResponse> probe(@PathParam("id") String id);
+```
+
+Consequences to know:
+
+- **An accepted status is a success for the resilience pipeline.** An accepted 5xx is not retried,
+  is not counted by the circuit breaker, does not reach `recoverRequest` or `transformError`, and fires
+  `onResponse` rather than `onError` (unless decoding or validation then fails). A rejected response fires
+  `onError` and never `onResponse`. A 401 accepted by a
+  wide range never reaches a token-refresh `recoverRequest` interceptor.
+- **An expectation that does not look at the status accepts every status.** The builder's
+  `expecting(HttpResponseExpectation.JSON)` passes a 500 whose `Content-Type` is JSON, so that response
+  is now decoded as a success. Keep the 2xx rule with `expecting(HttpResponseExpectation.SC_SUCCESS.and(...))`.
+- **Ranges are half-open.** `@ExpectedStatus(min = 200, max = 400)` accepts 200 to 399.
+- **A rejected 2xx is a `RestClientResponseException`**, not a plain `RestClientException`; an
+  expectation that throws its own exception type has that type as the cause. A custom retry policy
+  written against `RestClientResponseException` sees these too.
 
 ### Outbound parameter conversion
 
@@ -993,7 +1065,8 @@ Generated static proxies inherit the resolved mapper; no extra wiring is require
 ```
 core.TechnicalException (→ 500)
 └── RestClientException
-    └── RestClientResponseException   — HTTP 4xx/5xx, or a failed @ExpectedStatus check
+    └── RestClientResponseException   — a response the expectation rejected: HTTP 4xx/5xx, or any status
+                                        the method's expectation does not accept
 
 core.UnavailableException (→ 503)
 └── RestClientUnavailableException
@@ -1009,9 +1082,22 @@ that follows an accepted `recoverRequest`: an open circuit, a bulkhead rejection
 and a closed runtime surface as `RestClientUnavailableException`; a timeout surfaces as
 `RestClientTimeoutException`. The original resilience exception is kept as the cause.
 
-`catch (RestClientException)` therefore catches **only** `RestClientResponseException`. Transport
+`catch (RestClientException)` therefore does not catch transport or resilience failures. It catches
+`RestClientResponseException`, and also the plain `RestClientException` the client raises for a request
+it could not build or serialize, a response body it could not decode ("Failed to deserialize
+response"), a failed resilience policy and a Vert.x failure the mapper has no translator for. Transport
 failures are caught at `RestClientUnavailableException` (or `core.UnavailableException`); wiring
-failures at `RestClientConfigurationException` (or `core.ConfigurationException`).
+failures at `RestClientConfigurationException` (or `core.ConfigurationException`). A bean-validation
+failure on the decoded response, and an exception an interceptor throws, reach the caller as themselves.
+
+| Situation | Exception |
+|---|---|
+| response received and rejected by the expectation (2xx when none is set) | `RestClientResponseException` |
+| response accepted, body cannot be decoded as the declared type | `RestClientException` |
+| connection refused, unknown host, reset | `RestClientConnectionException` |
+| request timeout | `RestClientTimeoutException` |
+| open circuit, bulkhead rejection or queue timeout, closed runtime | `RestClientUnavailableException` |
+| wiring or configuration | `RestClientConfigurationException` |
 
 `RestClientResponseException` carries the full request and response contexts:
 
@@ -1052,8 +1138,10 @@ configured or every client overrides it.
 
 ### Common mistakes
 
-- **Catching `RestClientException` and expecting transport errors.** It covers response failures only;
-  see the hierarchy above.
+- **Catching `RestClientException` and expecting transport errors.** It covers response, decoding and
+  build failures, not transport or resilience failures; see the hierarchy above.
+- **Setting a status-blind `expecting(...)` and expecting 4xx and 5xx to fail.** An expectation accepts
+  every status it passes; combine it with `HttpResponseExpectation.SC_SUCCESS`.
 - **Reading system context inside `beforeRequest`.** By then the dispatch may have hopped contexts.
   Framework modules capture at dispatch entry with `RestClientContextCapturer`.
 - **Expecting `onResponse` or `onError` to count attempts.** `onResponse` never fires on a transport

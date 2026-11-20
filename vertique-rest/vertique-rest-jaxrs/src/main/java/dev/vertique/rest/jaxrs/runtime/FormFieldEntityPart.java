@@ -3,6 +3,7 @@
 
 package dev.vertique.rest.jaxrs.runtime;
 
+import dev.vertique.rest.core.request.VertxEntityPart;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
 import jakarta.ws.rs.core.GenericType;

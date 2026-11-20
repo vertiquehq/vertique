@@ -393,7 +393,8 @@ final class TaskLifecycleService {
                 null, // branchId
                 inst.scopeKey(),
                 htn.requireVersionStability(),
-                null); // reservationCommandId
+                null, // reservationCommandId
+                htn.taskType());
     }
 
     /**

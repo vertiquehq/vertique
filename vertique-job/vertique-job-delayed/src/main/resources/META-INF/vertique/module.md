@@ -140,7 +140,8 @@ Lombok `@Builder` value object. Only `handler` is required.
 | `queue` | `"default"` | Logical queue name |
 | `priority` | `0` | Higher values claimed first |
 | `maxAttempts` | `3` | Attempts before dead-letter; must be in `[1, 1000]` |
-| `jobId` | auto-generated | Logical job id, stable across retries; generated as `delayed-<uuid>` when `null` |
+| `jobId` | auto-generated | Label for the job, stable across retries; generated as `delayed-<uuid>` when `null`. It is not unique and does not de-duplicate |
+| `idempotencyKey` | `null` | Makes the enqueue repeatable; see [Idempotent enqueue](#idempotent-enqueue). Must not be blank, at most 255 characters |
 | `metadata` | empty `DurableMetadata` | Durable propagation context; normally left alone |
 | `scopeKey` | `"default"` | Scope label stored with the execution; validated as a core `ScopeKey` at enqueue |
 
@@ -283,16 +284,43 @@ through it, and registration fails.
 
 Per-enqueue overrides; every field is nullable and `null` means "use the effective contract default".
 `runAt` (`Instant`), `queue` (`String`), `priority` (`Integer`), `maxAttempts` (`Integer`) and
-`jobId` (`String`, a stable id for idempotency) are the application-facing fields.
+`jobId` (`String`, a label, not an idempotency key) and `idempotencyKey` (`String`, see
+[Idempotent enqueue](#idempotent-enqueue)) are the application-facing fields.
 `premergedMetadata` is framework-internal — leave it `null`.
 
 ```java
 job.enqueue(payload, DelayedJobOptions.builder()
         .runAt(Instant.now().plusHours(1))
         .queue("priority")
-        .jobId("webhook-pay_123")
+        .idempotencyKey("welcome-email-user-42")
         .build());
 ```
+
+#### Idempotent enqueue
+
+An enqueue that carries an `idempotencyKey` (`DelayedJob#idempotencyKey`, `DelayedJobOptions#idempotencyKey`)
+creates an execution only if no unfinished execution of the same handler and scope already holds that key.
+When one does, the enqueue creates nothing and completes with **the existing execution's id**; the repeated
+enqueue's payload, `runAt`, queue, priority and context are discarded, not merged.
+
+- **Unfinished** means any state except `SUCCEEDED`, `CANCELLED` and `DEAD_LETTER`. An execution waiting
+  for a retry (`FAILED`, `ABANDONED`) still holds its key, so a retry never collides with a repeat.
+- **The key is released** as soon as the execution reaches one of those three states. Cancelling releases it at
+  once, even while the handler is still running. The next enqueue with the key then creates a new execution.
+- **Scope of the key.** The same key under another handler, or in another scope, is a different key. Two
+  executions of one handler on different queues share the key.
+- **Atomic.** One `INSERT ... ON CONFLICT DO NOTHING` decides, so concurrent enqueues of one key create one
+  execution, a held key never raises a database error, and the transaction of the `enqueue(job, SqlClient)`
+  variants stays usable. In a transaction, a concurrent enqueue of the same key waits for that transaction to
+  commit or roll back.
+- **Validation.** A blank key, or one longer than 255 characters, fails the enqueue with an
+  `IllegalArgumentException` that never repeats the key.
+- **Not a de-duplication window.** The key says nothing about executions that have finished: it does not stop a
+  repeat after the first run succeeded. To process each inbound event once, record it in the inbox
+  (`InboxService#processOnce`) and enqueue from the same transaction.
+
+`jobId` is only a label. It is stored unchanged, shows in logs and dashboards, and is not unique: two
+enqueues with the same `jobId` are two executions.
 
 ### DelayedJobClientFactory
 

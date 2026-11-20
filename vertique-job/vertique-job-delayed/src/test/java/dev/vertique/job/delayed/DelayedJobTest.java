@@ -62,6 +62,7 @@ class DelayedJobTest {
         void defaultJobIdIsNull() {
             DelayedJob job = DelayedJob.builder().handler("my-handler").build();
             assertNull(job.jobId());
+            assertNull(job.idempotencyKey());
         }
     }
 

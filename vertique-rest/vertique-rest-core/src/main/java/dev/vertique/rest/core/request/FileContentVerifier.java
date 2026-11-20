@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.jaxrs.validation;
+package dev.vertique.rest.core.request;
 
 import dev.vertique.core.extension.OrderedExtension;
 import io.vertx.core.Future;

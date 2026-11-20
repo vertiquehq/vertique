@@ -290,6 +290,20 @@ class DelayedJobClientProxyTest {
         }
 
         @Test
+        @DisplayName("options set idempotencyKey is passed through, and absent options carry none")
+        void optionsSetIdempotencyKey() {
+            proxy.enqueue(
+                    "payload",
+                    DelayedJobOptions.builder().idempotencyKey("key-1").build());
+            proxy.enqueue("payload", DelayedJobOptions.builder().build());
+
+            ArgumentCaptor<DelayedJob> captor = ArgumentCaptor.forClass(DelayedJob.class);
+            verify(jobService, org.mockito.Mockito.times(2)).enqueue(captor.capture());
+            assertEquals("key-1", captor.getAllValues().get(0).idempotencyKey());
+            assertNull(captor.getAllValues().get(1).idempotencyKey());
+        }
+
+        @Test
         @DisplayName("null option fields fall back to annotation defaults")
         void nullOptionFieldsFallBackToDefaults() {
             // All option fields are null — annotation defaults must be used

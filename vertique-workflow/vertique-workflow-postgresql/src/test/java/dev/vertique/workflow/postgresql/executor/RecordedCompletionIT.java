@@ -518,7 +518,7 @@ public class RecordedCompletionIT {
         ReviewFixture(String id, boolean requireStability) {
             super(id, wf -> {
                 wf.initialStep("review");
-                var task = wf.task("review").assignToRole("compliance");
+                var task = wf.task("review").assignToRole("compliance").taskType("approval");
                 if (requireStability) {
                     task = task.requireVersionStability();
                 }

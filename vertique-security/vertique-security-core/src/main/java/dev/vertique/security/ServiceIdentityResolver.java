@@ -1,16 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.security.runtime;
+package dev.vertique.security;
 
 import dev.vertique.core.context.DeferredExecutionOrigin;
-import dev.vertique.security.SecurityIdentity;
 
 /**
- * Functional seam that resolves the executing {@link SecurityIdentity} to use as the actor when
- * {@link IdentitySnapshotReconstructionInitializer} mints a service-only or reconstructed
- * {@link dev.vertique.security.SecurityContext} for a deferred dispatch, from the
- * deferred-execution provenance that proved the dispatch is deferred.
+ * Functional seam that resolves the executing {@link SecurityIdentity} to use as the actor when the
+ * runtime mints a service-only or reconstructed {@link SecurityContext} for a deferred dispatch,
+ * from the deferred-execution provenance that proved the dispatch is deferred.
+ *
+ * <p>An application binds its own resolver with a Dagger {@code @Provides} method; the runtime's
+ * identity-snapshot reconstruction module declares the binding as optional and falls back to a
+ * built-in default when none is bound.
  *
  * <p>The {@link DeferredExecutionOrigin} carries the provenance {@code kind} (delayed-job, cron, or
  * outbox-relay) and a {@code reference} — the specific job-type / cron-name / event-type — which is

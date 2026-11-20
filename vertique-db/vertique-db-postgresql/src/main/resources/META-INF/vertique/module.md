@@ -257,7 +257,7 @@ interface AppComponent {
 |------|-------|-------------|
 | `Pool` | `@Singleton` | PostgreSQL connection pool built from `DbPoolConfig` |
 | `PgDbExceptionMapper` | `@Singleton` | Pre-configured PostgreSQL exception mapper |
-| `PoolConnectHandler` | `@BindsOptionalOf` | Optional; provide via `@Provides` to initialize new connections |
+| `PoolConnectHandler` | `@BindsOptionalOf` | Optional; provide via `@Provides` to initialize new connections; its future must complete (see the db-core reference) |
 | `HealthCheck` | `@IntoSet` `@Readiness` | `DatabaseHealthCheck`, contributed automatically |
 
 ---

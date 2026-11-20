@@ -894,16 +894,14 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
                             reqCtx,
                             responseContext != null ? responseContext : RestClientResponseContext.from(response)));
         }
+        // A response the expectation accepts is a success whatever its status class; one it rejects is
+        // always a RestClientResponseException, with the expectation's failure as its cause.
         return Future.succeededFuture(response)
                 .expecting(expectation)
-                .recover(error -> Future.failedFuture(
-                        response.statusCode() >= 200 && response.statusCode() < 300
-                                ? error
-                                : new RestClientResponseException(
-                                        reqCtx,
-                                        responseContext != null
-                                                ? responseContext
-                                                : RestClientResponseContext.from(response))));
+                .recover(error -> Future.failedFuture(new RestClientResponseException(
+                        reqCtx,
+                        responseContext != null ? responseContext : RestClientResponseContext.from(response),
+                        error)));
     }
 
     private Expectation<HttpResponseHead> defaultExpectation(ClientMethodMeta meta) {
@@ -991,19 +989,13 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
             ClientMethodMeta meta,
             RestClientRequestContext reqCtx,
             @Nullable RestClientResponseContext resCtx) {
-        int status = response.statusCode();
-        RestClientResponseContext effectiveResCtx = resCtx != null ? resCtx : RestClientResponseContext.from(response);
-
         // Handle Optional<T> with 404 → Optional.empty()
-        if (meta.returnsOptional() && status == 404) {
+        if (meta.returnsOptional() && response.statusCode() == 404) {
             return Future.succeededFuture(Optional.empty());
         }
 
-        // Non-2xx without expectation become RestClientResponseException
-        if (status < 200 || status >= 300) {
-            return Future.failedFuture(new RestClientResponseException(reqCtx, effectiveResCtx));
-        }
-
+        // The response reaching this point was accepted by the expectation (2xx when none is set),
+        // so it is decoded as the declared type whatever its status.
         // Deserialize and validate
         try {
             Object result = deserializeSuccess(response, meta);

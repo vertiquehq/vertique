@@ -9,6 +9,7 @@ import dev.vertique.workflow.definition.expression.ExpressionEnv;
 import dev.vertique.workflow.definition.expression.ExpressionParseException;
 import dev.vertique.workflow.definition.expression.ExpressionProfile;
 import dev.vertique.workflow.definition.schema.CompensationStep;
+import dev.vertique.workflow.definition.schema.CompleteStep;
 import dev.vertique.workflow.definition.schema.DecisionStep;
 import dev.vertique.workflow.definition.schema.FailStep;
 import dev.vertique.workflow.definition.schema.ForkStep;
@@ -24,11 +25,14 @@ import dev.vertique.workflow.types.WorkflowTypeNames;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -67,6 +71,11 @@ import java.util.function.Supplier;
  *   <li>{@code SUBJECT_RESOLVER_UNKNOWN} — {@code subjectResolver} present but not registered.</li>
  *   <li>{@code INITIAL_STEP_UNKNOWN} — {@code initialStep} does not match any step id.</li>
  *   <li>{@code STEP_ID_DUPLICATE} — same step id appears more than once in the steps list.</li>
+ *   <li>{@code UNREACHABLE_STEP} — a step cannot be reached from {@code initialStep}. Reachability follows every
+ *       step reference: {@code next}, a wait-signal {@code timeout.next}, a human-task decision or due
+ *       {@code next}, a decision route {@code to} and {@code default}, a service step's {@code compensation}, a
+ *       fork's branch {@code startStep} and {@code join}, and a join's {@code next} and {@code onFailure}. One
+ *       violation per unreachable step; skipped when {@code initialStep} is not a step id.</li>
  *   <li>{@code STEP_NEXT_UNKNOWN} — a {@code next} reference does not resolve to any step id.</li>
  *   <li>{@code STEP_TARGET_SERVICE_FORMAT} — {@code target} field is blank on a
  *       {@link ServiceStep} or {@link CompensationStep}. Note: real service-target registry
@@ -368,6 +377,8 @@ public final class WorkflowDefinitionDocumentValidator {
             }
         }
 
+        checkReachability(doc, definitionId, definitionVersion, violations);
+
         // --- Step-level checks ---
         checkStepDuplicates(doc, violations);
         checkSignalDuplicates(doc, violations);
@@ -615,6 +626,102 @@ public final class WorkflowDefinitionDocumentValidator {
             violations.add(
                     new Violation(blankFallback(definitionId), definitionVersion, stepId, routeIndex, code, msg));
         }
+    }
+
+    /**
+     * Adds an {@code UNREACHABLE_STEP} violation for each step that no chain of step references reaches from
+     * {@code initialStep}. Skipped when the steps are missing or {@code initialStep} is not a step id, because
+     * {@code INITIAL_STEP_UNKNOWN} already reports that and every step would otherwise be flagged as well.
+     */
+    private static void checkReachability(
+            WorkflowDefinitionDocument doc, String definitionId, long definitionVersion, List<Violation> violations) {
+        if (doc.steps() == null || doc.initialStep() == null) {
+            return;
+        }
+        Map<String, StepNode> byId = new LinkedHashMap<>();
+        for (StepNode step : doc.steps()) {
+            if (step.id() != null && !step.id().isBlank()) {
+                byId.putIfAbsent(step.id(), step);
+            }
+        }
+        if (!byId.containsKey(doc.initialStep())) {
+            return;
+        }
+        Set<String> reached = new HashSet<>();
+        ArrayDeque<String> pending = new ArrayDeque<>();
+        reached.add(doc.initialStep());
+        pending.add(doc.initialStep());
+        while (!pending.isEmpty()) {
+            for (String target : successors(byId.get(pending.poll()))) {
+                if (target != null && byId.containsKey(target) && reached.add(target)) {
+                    pending.add(target);
+                }
+            }
+        }
+        for (String id : byId.keySet()) {
+            if (!reached.contains(id)) {
+                violations.add(new Violation(
+                        blankFallback(definitionId),
+                        definitionVersion,
+                        id,
+                        null,
+                        "UNREACHABLE_STEP",
+                        "step '" + id + "' cannot be reached from `initialStep` '" + doc.initialStep()
+                                + "'; no step references it"));
+            }
+        }
+    }
+
+    /** Returns every step id the step references, in document order; entries may be null. */
+    private static List<String> successors(StepNode step) {
+        List<String> targets = new ArrayList<>();
+        switch (step) {
+            case ServiceStep s -> {
+                targets.add(s.next());
+                targets.add(s.compensation());
+            }
+            case WaitSignalStep s -> {
+                targets.add(s.next());
+                if (s.timeout() != null) {
+                    targets.add(s.timeout().next());
+                }
+            }
+            case TimerStep s -> targets.add(s.next());
+            case HumanTaskStep s -> {
+                if (s.decisions() != null) {
+                    s.decisions().forEach(d -> targets.add(d.next()));
+                }
+                if (s.due() != null) {
+                    targets.add(s.due().next());
+                }
+            }
+            case DecisionStep s -> {
+                if (s.routes() != null) {
+                    s.routes().forEach(r -> targets.add(r.to()));
+                }
+                targets.add(s.defaultRoute());
+            }
+            case ForkStep s -> {
+                if (s.branches() != null) {
+                    s.branches().forEach(b -> targets.add(b.startStep()));
+                }
+                targets.add(s.join());
+            }
+            case JoinStep s -> {
+                targets.add(s.next());
+                targets.add(s.onFailure());
+            }
+            case CompensationStep s -> {
+                // Terminal: forwardStep names the step it undoes, not a successor.
+            }
+            case FailStep s -> {
+                // Terminal.
+            }
+            case CompleteStep s -> {
+                // Terminal.
+            }
+        }
+        return targets;
     }
 
     /**

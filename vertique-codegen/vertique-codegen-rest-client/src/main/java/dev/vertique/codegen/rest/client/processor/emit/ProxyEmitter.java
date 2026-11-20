@@ -187,10 +187,14 @@ public final class ProxyEmitter {
             // Use erased (raw) types for getDeclaredMethod — you cannot use .class on parameterized types
             List<VariableElement> params = new ArrayList<>(method.method().getParameters());
             CodeBlock.Builder getDeclaredMethod = CodeBlock.builder();
+            // The method may be one the interface inherits, so it is looked up on its own declaring
+            // interface; that is the Method key of the runtime scan.
+            ClassName declaringClassName =
+                    ClassName.get((TypeElement) method.method().getEnclosingElement());
             getDeclaredMethod.add(
                     "$L = $T.class.getDeclaredMethod($S",
                     constantName,
-                    clientClassName,
+                    declaringClassName,
                     method.method().getSimpleName().toString());
             for (VariableElement param : params) {
                 TypeName paramTypeName = resolveErasedTypeName(param.asType());
@@ -354,12 +358,13 @@ public final class ProxyEmitter {
                                 + "@return a {@link io.vertx.core.Future} completing with the deserialized response\n",
                         method.method().getSimpleName());
 
-        // Add parameters
-        for (VariableElement param : method.method().getParameters()) {
-            TypeName paramTypeName = resolveTypeName(param.asType());
-            builder.addParameter(
-                    ParameterSpec.builder(paramTypeName, param.getSimpleName().toString())
-                            .build());
+        // Add parameters, typed as members of the client interface (a bound type variable of an
+        // inherited declaration is the type the interface binds it to)
+        for (ParamModel param : method.params()) {
+            TypeName paramTypeName = resolveTypeName(param.type());
+            builder.addParameter(ParameterSpec.builder(
+                            paramTypeName, param.element().getSimpleName().toString())
+                    .build());
         }
 
         // Use a mangled local variable name to avoid colliding with user-supplied parameter names.

@@ -6,6 +6,7 @@ package dev.vertique.rest.jaxrs;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import dev.vertique.rest.core.ProblemDetail;
+import dev.vertique.rest.core.RestExceptionMapper;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpServer;

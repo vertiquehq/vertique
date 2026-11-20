@@ -31,8 +31,15 @@ public interface JobRepository {
     /**
      * Persists a new job execution record.
      *
+     * <p>An execution whose {@link JobExecution#idempotencyKey()} is not {@code null} is stored only if no
+     * unfinished execution of the same handler and scope holds that key. When one does, nothing is stored and the
+     * returned ID is the existing execution's. An execution is unfinished in every state except
+     * {@link JobState#SUCCEEDED}, {@link JobState#CANCELLED} and {@link JobState#DEAD_LETTER}. An
+     * implementation that cannot enforce the key must reject such an execution rather than store it.
+     *
      * @param execution the execution to save
-     * @return a future of the saved execution ID
+     * @return a future of the saved execution ID, or of the existing execution's ID when its idempotency key is
+     *         held by an unfinished execution
      */
     Future<UUID> save(JobExecution execution);
 

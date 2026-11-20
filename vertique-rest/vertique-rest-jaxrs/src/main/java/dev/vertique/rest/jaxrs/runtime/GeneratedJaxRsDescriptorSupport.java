@@ -6,11 +6,13 @@ package dev.vertique.rest.jaxrs.runtime;
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.core.util.AnnotationResolver;
+import dev.vertique.core.util.TypeResolver;
 import dev.vertique.rest.core.security.SecurityPolicyViolation;
 import dev.vertique.rest.core.security.SecurityPolicyViolationException;
 import dev.vertique.security.authz.AccessPolicyResolver;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
+import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -196,6 +198,44 @@ public final class GeneratedJaxRsDescriptorSupport {
         }
         method.setAccessible(true);
         return method;
+    }
+
+    /**
+     * Returns a method parameter's declared type resolved against the resource class, exactly as the
+     * reflective scanner reads it: a type variable bound by the resource class's generic supertypes is
+     * replaced by its binding, and one that nothing binds stays a type variable.
+     *
+     * <p>A generated descriptor calls this for a parameter type it cannot write out at compile time, such as
+     * one that mentions a type variable.
+     *
+     * @param resourceType the resource class the descriptor describes; must not be {@code null}
+     * @param method       the resolved resource method; must not be {@code null}
+     * @param index        the zero-based parameter index
+     * @return the resolved parameter type; never {@code null}
+     */
+    public Type resolvedParameterType(Class<?> resourceType, Method method, int index) {
+        return TypeResolver.resolveMemberType(resourceType, method.getParameters()[index].getParameterizedType());
+    }
+
+    /**
+     * Returns a method parameter's resolved declared type, locating the method by name and declared
+     * parameter types first.
+     *
+     * @param resourceType   the resource class the descriptor describes; must not be {@code null}
+     * @param name           the method name
+     * @param paramTypeFqns  the declared parameter types, in the form {@link #resolveMethod} accepts
+     * @param index          the zero-based parameter index
+     * @return the resolved parameter type; never {@code null}
+     * @throws IllegalStateException if the method cannot be found on {@code resourceType}
+     * @see #resolvedParameterType(Class, Method, int)
+     */
+    public Type resolvedParameterType(Class<?> resourceType, String name, String[] paramTypeFqns, int index) {
+        try {
+            return resolvedParameterType(resourceType, resolveMethod(resourceType, name, paramTypeFqns), index);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(
+                    "Cannot resolve the parameter type of " + resourceType.getName() + "#" + name, e);
+        }
     }
 
     // --- Effective annotation resolution ---

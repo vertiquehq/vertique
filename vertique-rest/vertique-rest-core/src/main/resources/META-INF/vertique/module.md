@@ -422,6 +422,21 @@ before creating upload files). `maxSizeBytes` is checked after Vert.x has writte
 `http.uploadsDirectory`. Part *count* is bounded separately at ingress by `http.maxFormFields`, so a
 request with more parts than that is rejected during decoding whatever their individual sizes.
 
+### `VertxEntityPart`
+
+A resource method that takes `jakarta.ws.rs.core.EntityPart` (or `List<EntityPart>`) receives instances that
+also implement `VertxEntityPart`, which adds a non-blocking accessor:
+
+```java
+public interface VertxEntityPart extends EntityPart {
+    Future<Buffer> getContentAsync();
+}
+```
+
+Prefer `getContentAsync()` on the event loop: `getContent()` blocks. Content is single-use, so a second call to
+either accessor throws `IllegalStateException`. The implementations behind the interface are framework-internal
+(`dev.vertique:vertique-rest-jaxrs`); cast to `VertxEntityPart`, never to an implementation class.
+
 ### Pagination
 
 Two response envelopes and their matching `@RequestParams` records.
@@ -1478,6 +1493,60 @@ Bind `HmacCursorCodec` (or your own) as a `@Singleton` and pass it to `CursorPag
 
 ---
 
+### `FileContentVerifier` and `FileVerificationResult`
+
+Optional deep check of an uploaded file part's content, beyond its declared content type. Contribute
+implementations through the empty `Set<FileContentVerifier>` multibinding that `RestModule` declares; the
+`web-validation` gate in `dev.vertique:vertique-rest-validation` runs them, which is also where the reference
+verifiers and the opt-in magic-byte module are documented.
+
+```java
+public interface FileContentVerifier extends OrderedExtension {
+    Future<FileVerificationResult> verify(FileUpload part);
+}
+
+public sealed interface FileVerificationResult {
+    static FileVerificationResult accepted();
+    static FileVerificationResult rejected(String detail, String type);
+    static FileVerificationResult rejected(String detail, String type, Map<String, Object> args);
+}
+```
+
+- **All must accept.** Every bound verifier runs for each applicable file part in `OrderedExtension` order. A
+  verifier that does not apply returns an already-completed `accepted()`.
+- **Event loop.** `verify` is called on the event loop and must not block it; use asynchronous file I/O or offload.
+- **Fail closed.** A synchronous throw, a `null` future or result, or exceeding `jaxrs.fileContentVerifierDeadlineMs`
+  maps to 500; a `rejected` result maps to 400. The deadline bounds the wait, not the verifier's own work, so a
+  scanner client needs its own deadline at or below it.
+- **Stateless and thread-safe.** The framework makes no instance-identity guarantee. Do not retain the `FileUpload`:
+  its temporary file is deleted when the response ends.
+- **Trusted extension.** Rejection text and arguments are not sanitized; keep secrets, filenames, temporary paths and
+  submitted content out of them.
+
+### `RestExceptionMapper` and `RestExceptionMapperCustomizer`
+
+`RestExceptionMapper` is the REST-layer `Throwable` to `Throwable` pre-translator that runs before the exception
+mapper registry; it extends `dev.vertique.core.failure.FailureMapper` with covariant `on(...)` overloads so
+registrations chain. No translation is pre-registered. Contribute translations with a
+`RestExceptionMapperCustomizer` in the `Set<RestExceptionMapperCustomizer>` multibinding:
+
+```java
+@FunctionalInterface
+public interface RestExceptionMapperCustomizer extends OrderedExtension {
+    void customize(RestExceptionMapper mapper);
+}
+
+@Provides @IntoSet
+static RestExceptionMapperCustomizer myTranslator() {
+    return mapper -> mapper.on(MyInfrastructureException.class,
+            ex -> new WebApplicationException("Upstream error", 502, ex));
+}
+```
+
+Customizers are applied as an ordered fold, so the one that sorts later wins for the same exception type. The
+Dagger wiring, the assembled instance and the error pipeline that consumes it are in
+`dev.vertique:vertique-rest-jaxrs`.
+
 ### Framework seams
 
 Eleven public types are named nowhere above because no application uses one — `RestContextMessages`,
@@ -1589,9 +1658,12 @@ When `enabled` is `false` (the default) no CORS handler is installed and every o
 | `jaxrs.validationPatternMaxChars` | `4096` | at least `1`, else startup fails; the most UTF-16 code units one string value or object key may have when it reaches a `pattern`, `patternProperties`, or pattern-bearing `propertyNames` position, or an `idn-hostname`, `idn-email`, or `regex` format, under the `web-validation` strategy — a longer one is rejected with 400 before that check runs |
 | `jaxrs.validationPatternMaxTotalChars` | `262144` | at least `1` and no smaller than `jaxrs.validationPatternMaxChars`, else startup fails; the most UTF-16 code units the strings and keys reaching those positions may add up to in one request — the request is rejected with 400 once the total exceeds it |
 | `jaxrs.fileContentVerifierDeadlineMs` | `5000` | must be `> 0`, else startup fails; per-invocation wait deadline for each bound `FileContentVerifier` future under `web-validation` — timeout fails closed (500) and stops the sequential chain; does not cancel verifier-owned work (see `vertique-rest-validation`) |
-| `jaxrs.autoEtag` | `false` | attach a weak ETag derived from the serialized body when none is set |
 | `jaxrs.jsonProfile` | *(none)* | must name a registered JSON mapper profile; resolution is method `@JsonProfile` → class `@JsonProfile` → this key → `json.jsonProfile` → the `vertique` floor |
 | `jaxrs.security.requireExplicitPolicy` | `false` | boolean; when `true`, every JAX-RS operation must declare an explicit security policy, else startup fails — details in the `vertique-rest-jaxrs` reference |
+
+`jaxrs.autoEtag` no longer exists: it never had an effect, so the key was removed. A configuration that
+still sets it starts normally and the value is ignored like any other unknown `jaxrs` key; no ETag is
+computed. Set an `ETag` header on the response where one is wanted.
 
 When `jaxrs.security.requireExplicitPolicy` is `true`, `RestCoreModule` logs one INFO line:
 `jaxrs.security.requireExplicitPolicy is enabled: explicit security policies are required for

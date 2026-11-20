@@ -879,18 +879,31 @@ from `DbExceptionMapper`.
 
 ### `PoolConnectHandler`
 
-`PoolConnectHandler extends Handler<SqlConnection>` runs once per newly established physical
-connection, before the connection is admitted to the pool. **The handler must call `conn.close()`
-when it finishes** — that call is the admission signal, and omitting it stalls pool growth.
+`PoolConnectHandler` runs once per newly established physical connection, before the connection is
+admitted to the pool. It returns a `Future<Void>`, and **the framework closes the connection (the
+admission signal) when that future completes** — the handler must not call `conn.close()` itself.
 
 ```java
 @Provides
 static PoolConnectHandler connectHandler() {
     return conn -> conn.query("SET TIME ZONE 'UTC'").execute()
             .compose(v -> conn.query("SET application_name = 'my-service'").execute())
-            .onComplete(ar -> conn.close());
+            .mapEmpty();
 }
 ```
+
+The handler must complete its future. The pool applies no time limit to it:
+
+- **A completed future admits the connection**, whether it succeeded or failed. A failed handler
+  does not reject the connection and does not fail the connect attempt, so a handler that must
+  guarantee its session settings has to make that failure visible itself (for example by failing
+  the application's startup check).
+- **A future that never completes keeps the connection out of the pool.** The connection holds one
+  of the pool's `maxPoolSize` slots, callers waiting for a connection fail with
+  `QueryTimeoutException` after `connectionTimeoutMs`, and the pool serves callers again only once
+  the future finally completes. Give a handler that talks to the database or to another service
+  its own timeout, for example `future.timeout(...)`, instead of relying on the pool; a timeout fails the
+  future, so the connection is then admitted as described above.
 
 ### `MigrationRunner`
 
@@ -971,7 +984,7 @@ compile-time constant or a developer-controlled string, never anything derived f
 | Statement runs outside its transaction | A builder inside `transaction().execute(...)` missing `.on(conn)` |
 | `ConnectionException` whose cause is `ConnectException`, `SocketException`, `ClosedChannelException` or `ClosedConnectionException` | The database refused, reset or dropped the connection, or `connectTimeoutMs` elapsed; check host, port and the server |
 | `QueryTimeoutException` caused by `Timeout waiting for connection` | Every pooled connection is busy for longer than `connectionTimeoutMs`; raise `maxPoolSize` or shorten the statements |
-| Pool never grows past the first connection | A `PoolConnectHandler` that does not call `conn.close()` |
+| `QueryTimeoutException` caused by `Timeout waiting for connection` while no query is running | A `PoolConnectHandler` whose future never completes holds the pool's connection out of service; give the handler its own timeout |
 | `ConfigurationException` naming `db.schemas` or `db.schemas.<key>` | `db.schemas` has a blank key, or a value that is null, not a string, or blank |
 | Generic parse failure for the `db` section | `db` or `db.schemas` is not an object |
 | Tables land in the default schema although `db.schemas` is set | The key is misspelled or does not match the instance name; `DbSchemas.mappings()` shows what was read |

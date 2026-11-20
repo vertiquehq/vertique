@@ -276,11 +276,15 @@ public class OutboxEntry {
         /**
          * Sets the entry's own attempt limit; an explicit JSON {@code null} leaves it unset.
          *
-         * @param maxAttempts maximum number of delivery attempts before dead-lettering
+         * @param maxAttempts maximum number of delivery attempts before dead-lettering; at least 1
          * @return this builder
+         * @throws IllegalArgumentException when {@code maxAttempts} is below 1
          */
         @JsonSetter(nulls = Nulls.SKIP)
         public OutboxEntryBuilder maxAttempts(int maxAttempts) {
+            if (maxAttempts < 1) {
+                throw new IllegalArgumentException("maxAttempts must be at least 1");
+            }
             this.maxAttempts = maxAttempts;
             return this;
         }

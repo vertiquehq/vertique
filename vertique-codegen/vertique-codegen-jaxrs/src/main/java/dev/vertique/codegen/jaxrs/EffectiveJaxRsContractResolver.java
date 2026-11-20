@@ -658,8 +658,7 @@ public final class EffectiveJaxRsContractResolver {
         List<javax.lang.model.element.VariableElement> annotationSources =
                 resolveParamAnnotationSources(concreteParam, paramIndex, method, resourceClass);
 
-        TypeMirror type = ((javax.lang.model.type.ExecutableType)
-                        ctx.types().asMemberOf((DeclaredType) resourceClass.asType(), method))
+        TypeMirror type = JaxRsHierarchy.memberTypeOf(ctx, resourceClass, method)
                 .getParameterTypes()
                 .get(paramIndex);
 
@@ -670,11 +669,13 @@ public final class EffectiveJaxRsContractResolver {
         TypeMirror componentType = resolvesComponentType(source) ? resolveComponentType(type) : null;
 
         // Bean param type
-        TypeMirror beanParamType = (source == JaxRsParamSource.BEAN_PARAM) ? type : null;
+        TypeMirror beanParamType =
+                (source == JaxRsParamSource.BEAN_PARAM) ? ctx.types().erasure(type) : null;
 
-        // Generic type for BODY params — capture the full parameterized type mirror so the emitter
-        // can emit a TypeReference-style token for generic bodies (e.g. List<Foo>)
-        TypeMirror genericType = (source == JaxRsParamSource.BODY) ? type : null;
+        // Generic type — the declared type as the resource class sees it, for the sources whose reflective
+        // counterpart records it (BODY, QUERY, HEADER and COOKIE); the emitters write it into ParamMeta
+        // so a generated descriptor reports what the runtime scanner reports.
+        TypeMirror genericType = reportsGenericType(source) ? type : null;
 
         // Per-parameter policies: start from the route-level chains, apply the parameter's own
         // hierarchy-merged overrides (an annotation declared only on an overridden method's
@@ -725,8 +726,7 @@ public final class EffectiveJaxRsContractResolver {
         // ordinal among the concrete parameter and the matching parameter of each declaration.
         JaxRsParamSource effective = JaxRsParamClassifier.classify(
                 concreteParam,
-                ((javax.lang.model.type.ExecutableType)
-                                ctx.types().asMemberOf((DeclaredType) resourceClass.asType(), method))
+                JaxRsHierarchy.memberTypeOf(ctx, resourceClass, method)
                         .getParameterTypes()
                         .get(paramIndex),
                 ctx.types(),
@@ -736,8 +736,7 @@ public final class EffectiveJaxRsContractResolver {
             if (paramIndex >= declaredParams.size()) continue;
             JaxRsParamSource declaredSource = JaxRsParamClassifier.classify(
                     declaredParams.get(paramIndex),
-                    ((javax.lang.model.type.ExecutableType)
-                                    ctx.types().asMemberOf((DeclaredType) resourceClass.asType(), method))
+                    JaxRsHierarchy.memberTypeOf(ctx, resourceClass, method)
                             .getParameterTypes()
                             .get(paramIndex),
                     ctx.types(),
@@ -923,6 +922,22 @@ public final class EffectiveJaxRsContractResolver {
         return switch (source) {
             case QUERY, HEADER, COOKIE, FORM, FILE_UPLOADS, ENTITY_PARTS -> true;
             case PATH, BODY, CONTEXT, PRECONDITIONS, BEAN_PARAM -> false;
+        };
+    }
+
+    /**
+     * Reports whether the reflective scanner records the declared type as a parameter's
+     * {@code genericType} for this source: {@code BODY}, {@code QUERY}, {@code HEADER} and
+     * {@code COOKIE}. Every other source passes {@code null} there, including {@code FORM}, whose
+     * {@code genericType} stays {@code null} on both paths.
+     *
+     * @param source the parameter's effective classification
+     * @return {@code true} when the contract carries the declared type as its generic type
+     */
+    private static boolean reportsGenericType(JaxRsParamSource source) {
+        return switch (source) {
+            case BODY, QUERY, HEADER, COOKIE -> true;
+            case PATH, FORM, FILE_UPLOADS, ENTITY_PARTS, CONTEXT, PRECONDITIONS, BEAN_PARAM -> false;
         };
     }
 

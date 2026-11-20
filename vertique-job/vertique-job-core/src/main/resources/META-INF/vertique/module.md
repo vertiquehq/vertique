@@ -39,7 +39,10 @@ audit or notification consumer that must see durable outcomes
 
 ### One logical job, one or many executions
 
-`jobId` is the **logical** identifier and is stable across retries; `JobExecution.id()` is the
+`jobId` is a **label** for the logical job, stable across retries and **not unique**: two enqueues with the
+same `jobId` are two executions. It is not an idempotency key. A delayed job that must not be enqueued twice
+carries an `idempotencyKey` instead (see `vertique-job-delayed`); inbound events are de-duplicated by the
+inbox. `JobExecution.id()` is the
 **execution** identifier. A delayed job reuses one execution row across all its attempts — `id` stays
 put and `attemptNumber` increments, so a specific attempt is `(id, attemptNumber)`. A cron fire
 creates a distinct row each time. `attemptNumber` is zero-based and `maxAttempts` is inclusive, so
@@ -383,6 +386,11 @@ Obligations an implementation must honour:
   implementation that takes part in recovery must apply the three predicates atomically.
 - `tryInsert(execution)` is an insert-if-absent used for cron `SINGLE_INSTANCE` leader election: all
   nodes race on the same `(jobId, scheduledAt)` and only the winner receives the generated id.
+- `save` of an execution whose `idempotencyKey` is not `null` stores it only if no unfinished execution
+  (any state except `SUCCEEDED`, `CANCELLED` and `DEAD_LETTER`) of the same handler and scope holds the key;
+  otherwise it stores nothing and returns the holder's id. A custom `JobRepository` that cannot enforce this
+  must reject such an execution instead of storing a duplicate. `vertique-job-delayed` is the only producer
+  of keys.
 - `saveSchedule` is an upsert — code is the source of truth and overwrites the stored row on every
   deploy. `removeServer` must tolerate a missing row.
 
@@ -391,12 +399,13 @@ component order is part of this contract:
 
 - `JobExecution(id, jobId, jobType, handler, queue, state, attemptNumber, maxAttempts, payload,
   priority, lockedBy, scheduledAt, enqueuedAt, startedAt, completedAt, errorMessage, errorType,
-  progress, parameters, attributes, metadata, scopeKey)` — 22 components; a public 21-argument
-  constructor without `scopeKey` remains and reads `default`. The compact constructor copies
+  progress, parameters, attributes, metadata, scopeKey, idempotencyKey)` — 23 components; public
+  22-argument (without `idempotencyKey`, reads no key) and 21-argument (also without `scopeKey`,
+  reads `default`) constructors remain. The compact constructor copies
   `parameters`/`attributes`, defaults `progress` to `ProgressSnapshot.EMPTY` and `metadata` to
   `DurableMetadata.empty()`, and maps a `null` `scopeKey` to `default`. A repository must persist
-  `scopeKey` with the execution and return it unchanged on every read. Copy-on-write helpers (each
-  carries `scopeKey`): `withState`, `withProgress`, `withPayload`,
+  `scopeKey` and `idempotencyKey` with the execution and return them unchanged on every read.
+  Copy-on-write helpers (each carries both): `withState`, `withProgress`, `withPayload`,
   `withLockedBy`, `withError`, `withStarted(Instant, String)`, `withCompleted(Instant)`.
 - `CronJobSchedule(jobId, cronExpression, handler, target, executionMode, timezone, enabled,
   overlapPolicy, maxAttempts, tracked, lastFiredAt, nextFireAt)` — 12 components, persisted for

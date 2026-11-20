@@ -270,7 +270,8 @@ ALTER TABLE workflow_tasks
     CHECK (status IN ('OPEN','COMPLETING','COMPLETED','CANCELLED','EXPIRED'));
 ALTER TABLE workflow_tasks
     ADD COLUMN IF NOT EXISTS reservation_command_id    BIGINT  NULL,
-    ADD COLUMN IF NOT EXISTS require_version_stability BOOLEAN NULL;
+    ADD COLUMN IF NOT EXISTS require_version_stability BOOLEAN NULL,
+    ADD COLUMN IF NOT EXISTS task_type                 TEXT    NULL;
 
 -- Timers: fired through commands, no longer through delayed jobs.
 ALTER TABLE workflow_timers ALTER COLUMN delayed_job_execution_id DROP NOT NULL;

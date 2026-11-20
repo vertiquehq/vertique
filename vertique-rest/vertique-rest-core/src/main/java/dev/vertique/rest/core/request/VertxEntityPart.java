@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.jaxrs.runtime;
+package dev.vertique.rest.core.request;
 
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
@@ -17,7 +17,7 @@ import jakarta.ws.rs.core.EntityPart;
  * <p>Like {@code getContent()}, {@code getContentAsync()} may only be called once per the
  * single-consumption contract; subsequent calls to either method throw {@link IllegalStateException}.
  *
- * <p>Both {@link VertxFileUploadEntityPart} and {@link FormFieldEntityPart} implement this
+ * <p>Both {@code VertxFileUploadEntityPart} and {@code FormFieldEntityPart} implement this
  * interface.
  */
 public interface VertxEntityPart extends EntityPart {
