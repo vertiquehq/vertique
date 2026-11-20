@@ -70,12 +70,17 @@ public final class MDC {
      * Useful for restoring MDC from a saved snapshot (e.g., across event bus boundaries).
      *
      * <p>Delegates to {@link MDCContexts#clear()} followed by {@link MDCContexts#putAll(Map)} when
-     * {@code values} is non-{@code null} and non-empty.
+     * {@code values} is non-{@code null} and non-empty. A {@code null} or empty map when there is
+     * nothing to clear (including outside a Vert.x context) is a no-op.
      *
      * @param values the new entries; may be {@code null} or empty to clear
      * @throws IllegalStateException if called outside a Vert.x duplicated context (when non-empty)
      */
     public static void setContextMap(Map<String, String> values) {
+        boolean noValues = values == null || values.isEmpty();
+        if (noValues && MDCContexts.copy().isEmpty()) {
+            return;
+        }
         MDCContexts.clear();
         if (values != null && !values.isEmpty()) {
             MDCContexts.putAll(values);

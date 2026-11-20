@@ -193,7 +193,8 @@ two-argument seam must be updated to supply that schema.
 ## Runtime behavior
 
 The cache runtime is fail-open: disabled caches, invalid or oversized keys, backend
-failures, and observer failures preserve the business invocation. A successful local
+failures, and observer failures (other than a `VirtualMachineError`, `ThreadDeath` or `LinkageError`,
+which is never caught) preserve the business invocation. A successful local
 miss may populate the provider-neutral `CacheStore`; a hit skips the target after the
 outer framework authorization boundary has run. Programmatic callers must invoke the handle
 only after their application authorization decision. The optional `CacheObserver` set is

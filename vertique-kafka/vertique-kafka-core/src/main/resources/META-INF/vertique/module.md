@@ -78,7 +78,7 @@ new group then reads all retained history. A binding that requires its strategie
 
 | Header | Direction | Meaning |
 |---|---|---|
-| `x-correlation-id` | read on consume | Seeds the record's correlation id. A record without it gets a generated UUID. Bound to MDC as `kafka.correlationId` for the dispatch |
+| `x-correlation-id` | read on consume | Seeds the record's correlation id. A record without it gets a generated UUID. Bound to MDC as `kafka.correlationId` for the dispatch, next to the framework's own `correlationId` key. The record's `kafka.consumer`, `kafka.topic`, `kafka.partition` and `kafka.offset` are bound for the same span, for handler and event-bus bindings alike |
 | the `matchHeader` of a route | read on consume | Selects a model-3 route |
 | `vertique-<namespace>` | read on consume | Decoded into the durable context that is bound for the dispatch. A value that is not a JSON object is skipped |
 | `x-dlq-source-topic` | written on DLQ publish | Original topic; kept when the record already carries all three source headers |

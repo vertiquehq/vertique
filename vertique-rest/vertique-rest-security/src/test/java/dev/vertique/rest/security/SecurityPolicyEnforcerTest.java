@@ -159,6 +159,9 @@ class SecurityPolicyEnforcerTest {
         SecurityContext ctx = mock(SecurityContext.class);
         when(ctx.authorization()).thenReturn(claims);
         when(ctx.origin()).thenReturn(Optional.empty());
+        when(ctx.identity())
+                .thenReturn(dev.vertique.security.SecurityIdentity.user(new dev.vertique.security.PrincipalRef(
+                        dev.vertique.security.PrincipalType.USER, "stub-user", Map.of())));
         return ctx;
     }
 
@@ -368,6 +371,22 @@ class SecurityPolicyEnforcerTest {
             verify(dp).decide(any(AuthorizationRequest.class));
             verify(rc).next();
             verify(rc, never()).fail(anyInt());
+        }
+
+        @Test
+        @DisplayName("bound anonymous identity on a Constrained route → ctx.fail(401)")
+        void anonymousIdentityOnConstrainedRouteFails401() {
+            SecurityPolicyEnforcer enforcer = buildDefaultEnforcer();
+
+            SecurityContext anon = stubSecCtx(AuthorizationClaims.empty());
+            when(anon.identity()).thenReturn(dev.vertique.security.SecurityIdentity.anonymous());
+            RoutingContext rc = stubRoutingContext(anon);
+
+            enforcer.createHandler(new SecurityPolicy.Constrained(List.of("admin"), List.of(), false))
+                    .handle(rc);
+
+            verify(rc).fail(401);
+            verify(rc, never()).next();
         }
 
         @Test

@@ -4,6 +4,7 @@
 package dev.vertique.cache;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.cache.spi.event.CacheOperation;
@@ -27,5 +28,28 @@ class CacheObservationSupportTest {
                 "profiles",
                 CacheOutcome.HIT,
                 System.nanoTime() - Duration.ofMillis(1).toNanos()));
+    }
+
+    @Test
+    void fatalObserverFailuresAreNotCaught() {
+        CacheObserver virtualMachineFailure = observation -> {
+            throw new InternalError("virtual machine failure");
+        };
+        CacheObserver linkageFailure = observation -> {
+            throw new NoClassDefFoundError("linkage failure");
+        };
+
+        assertThrows(InternalError.class, () -> emit(virtualMachineFailure));
+        assertThrows(LinkageError.class, () -> emit(linkageFailure));
+    }
+
+    private static void emit(CacheObserver observer) {
+        CacheObservationSupport.completed(
+                Set.of(observer),
+                "caffeine",
+                CacheOperation.GET,
+                "profiles",
+                CacheOutcome.HIT,
+                System.nanoTime() - Duration.ofMillis(1).toNanos());
     }
 }

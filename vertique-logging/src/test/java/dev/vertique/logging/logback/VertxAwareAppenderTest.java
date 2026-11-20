@@ -100,9 +100,20 @@ class VertxAwareAppenderTest {
      * @return a configured {@link LoggingEvent} instance with pre-set MDC
      */
     private LoggingEvent makeEvent(String message) {
+        return makeEvent(message, Level.INFO);
+    }
+
+    /**
+     * Creates a minimal {@link LoggingEvent} with the given message and level.
+     *
+     * @param message the log message
+     * @param level the event level
+     * @return a configured {@link LoggingEvent} instance with pre-set MDC
+     */
+    private LoggingEvent makeEvent(String message, Level level) {
         LoggingEvent event = new LoggingEvent();
         event.setLoggerContext(loggerContext);
-        event.setLevel(Level.INFO);
+        event.setLevel(level);
         event.setMessage(message);
         event.setLoggerName("test.logger");
         event.setTimeStamp(System.currentTimeMillis());
@@ -238,6 +249,50 @@ class VertxAwareAppenderTest {
 
         assertEquals(1, events.size(), "event should be delivered even with empty Vert.x MDC");
         testContext.completeNow();
+    }
+
+    @Test
+    @DisplayName("drops an INFO event once the queue fill exceeds the default discarding threshold")
+    void shouldDropLowPriorityEventAboveDiscardingThreshold() throws Exception {
+        // Given: an appender with a queue of 10 (default threshold: 20% of the queue size) whose delegate
+        // holds the worker thread until released, so the queue fills
+        CountDownLatch workerBusy = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        CapturingAppender holding = new CapturingAppender() {
+            @Override
+            protected void append(ILoggingEvent event) {
+                workerBusy.countDown();
+                try {
+                    release.await(5, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                super.append(event);
+            }
+        };
+        holding.setContext(loggerContext);
+        holding.start();
+        VertxAwareAppender small = new VertxAwareAppender();
+        small.setContext(loggerContext);
+        small.setQueueSize(10);
+        small.addAppender(holding);
+        small.start();
+        small.doAppend(makeEvent("first", Level.WARN));
+        assertTrue(workerBusy.await(5, TimeUnit.SECONDS), "the worker should pick up the first event");
+        for (int i = 0; i < 9; i++) {
+            small.doAppend(makeEvent("filler-" + i, Level.WARN));
+        }
+
+        // When: an INFO event arrives with one slot left in the queue
+        small.doAppend(makeEvent("low-priority"));
+        release.countDown();
+        small.stop();
+
+        // Then: the INFO event was dropped
+        List<String> delivered = holding.events().stream()
+                .map(ILoggingEvent::getFormattedMessage)
+                .toList();
+        assertFalse(delivered.contains("low-priority"), "an INFO event should be discarded above the threshold");
     }
 
     // --- Inner test double ---

@@ -258,7 +258,7 @@ readable by name from the returned `Row`.
 
 **Declare a unique tiebreaker.** When the leading order column is not unique, append a unique column
 (typically `id`) and name it with `.uniqueKey(...)`. Without `.uniqueKey(...)` the query logs a
-one-time WARN that pagination may skip or duplicate rows. A `uniqueKey` column that is not among the
+WARN, once per process, that pagination may skip or duplicate rows. A `uniqueKey` column that is not among the
 `orderBy` columns fails construction with `IllegalArgumentException`.
 
 **Backward navigation** uses `PagedResult.previousCursorToken()`: each order key's direction is
@@ -979,7 +979,7 @@ compile-time constant or a developer-controlled string, never anything derived f
 |---|---|
 | `IllegalArgumentException: At least one order key is required` | `PagedQuery` built without `orderBy(...)` |
 | `IllegalArgumentException: uniqueKey column '…' does not appear in the orderBy columns` | `.uniqueKey(...)` names a column not in `orderBy` |
-| WARN "no declared unique tiebreaker column" | `PagedQuery` executed without `.uniqueKey(...)`; pagination may skip or duplicate rows |
+| WARN "no declared unique tiebreaker column" (once per process) | `PagedQuery` executed without `.uniqueKey(...)`; pagination may skip or duplicate rows |
 | `IllegalArgumentException: Cursor keyset values count (…) does not match order keys count (…)` | Cursor reused against a query whose `orderBy` changed |
 | `IllegalStateException: Null value in column '…' … null handling is DISALLOW` | A result row has a null order-key value; use `.nullsFirst()` / `.nullsLast()` |
 | `IllegalArgumentException: Invalid cursor token` | Malformed, truncated, or foreign token from the client |

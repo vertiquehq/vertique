@@ -53,16 +53,27 @@ final class RateLimitSpanObserver implements RateLimitObserver {
             if (isBackendFailure(completed.outcome())) {
                 span.setStatus(StatusCode.ERROR);
             }
-        } catch (Throwable ignored) {
+        } catch (Throwable failure) {
+            rethrowIfFatal(failure);
             // Telemetry must never alter rate-limit admission decisions.
         } finally {
             if (span != null) {
                 try {
                     span.end();
-                } catch (Throwable ignored) {
+                } catch (Throwable failure) {
+                    rethrowIfFatal(failure);
                     // Telemetry must never alter rate-limit admission decisions.
                 }
             }
+        }
+    }
+
+    @SuppressWarnings("removal")
+    private static void rethrowIfFatal(Throwable failure) {
+        if (failure instanceof VirtualMachineError
+                || failure instanceof ThreadDeath
+                || failure instanceof LinkageError) {
+            throw (Error) failure;
         }
     }
 
