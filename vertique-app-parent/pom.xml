@@ -69,7 +69,7 @@ SPDX-License-Identifier: EUPL-1.2
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
-                    <version>3.6.0</version>
+                    <version>3.6.1</version>
                 </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
@@ -99,10 +99,13 @@ SPDX-License-Identifier: EUPL-1.2
             <plugin>
                 <groupId>com.diffplug.spotless</groupId>
                 <artifactId>spotless-maven-plugin</artifactId>
-                <version>3.10.3</version>
+                <version>3.11.0</version>
                 <configuration>
                     <java>
-                        <palantirJavaFormat/>
+                        <!-- Pinned to the formatter spotless 3.10.x defaulted to; spotless 3.11.0 defaults to a newer one that reflows code. -->
+                        <palantirJavaFormat>
+                            <version>2.80.0</version>
+                        </palantirJavaFormat>
                         <removeUnusedImports/>
                     </java>
                 </configuration>

@@ -20,8 +20,10 @@ import io.opentelemetry.api.trace.SpanContext;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
+import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.testing.junit5.OpenTelemetryExtension;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import io.opentelemetry.sdk.trace.samplers.Sampler;
 import jakarta.annotation.Nullable;
 import java.util.List;
@@ -114,9 +116,13 @@ class OpenTelemetryTraceReferenceResolverTest {
         void unsampledSpanYieldsPopulatedReference() {
             OpenTelemetryTraceReferenceResolver resolver = new OpenTelemetryTraceReferenceResolver();
 
-            // Build a separate SDK with alwaysOff sampler so spans are valid but not sampled
-            SdkTracerProvider tracerProvider =
-                    SdkTracerProvider.builder().setSampler(Sampler.alwaysOff()).build();
+            // Build a separate SDK with alwaysOff sampler so spans are valid but not sampled. A span
+            // processor is registered because the SDK hands out no-op tracers (invalid span contexts)
+            // when none is configured.
+            SdkTracerProvider tracerProvider = SdkTracerProvider.builder()
+                    .setSampler(Sampler.alwaysOff())
+                    .addSpanProcessor(SimpleSpanProcessor.create(InMemorySpanExporter.create()))
+                    .build();
             OpenTelemetrySdk sdk =
                     OpenTelemetrySdk.builder().setTracerProvider(tracerProvider).build();
 

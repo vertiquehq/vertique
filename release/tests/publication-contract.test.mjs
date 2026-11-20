@@ -409,7 +409,7 @@ describe('PublicVersionContractTest', () => {
     assert.ok(spotless, 'app-parent must give applications the formatter');
     assert.doesNotMatch(spotless[0], /<inherited>\s*false/, 'the formatter must be inherited by applications');
     assert.doesNotMatch(spotless[0], /<executions>/, 'the formatter must not be bound to the lifecycle');
-    assert.match(spotless[0], /<palantirJavaFormat\/>/, 'the formatter must use the framework style');
+    assert.match(spotless[0], /<palantirJavaFormat(\/>|>)/, 'the formatter must use the framework style');
     // ${project.version} would interpolate in the application that declares
     // this parent, so the BOM import is a second literal, held equal to the
     // artifact's own version.
