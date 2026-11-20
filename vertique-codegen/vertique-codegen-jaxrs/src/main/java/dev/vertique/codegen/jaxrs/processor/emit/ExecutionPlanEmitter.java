@@ -18,6 +18,7 @@ import dev.vertique.codegen.jaxrs.EffectiveMethodContract;
 import dev.vertique.codegen.jaxrs.EffectiveParamContract;
 import dev.vertique.codegen.jaxrs.JaxRsHierarchy;
 import dev.vertique.codegen.jaxrs.JaxRsParamSource;
+import dev.vertique.codegen.support.GeneratedMarker;
 import dev.vertique.codegen.support.Identifiers;
 import jakarta.annotation.Nullable;
 import java.io.IOException;
@@ -215,6 +216,7 @@ public final class ExecutionPlanEmitter {
                 .addAnnotation(AnnotationSpec.builder(ClassName.get(Generated.class))
                         .addMember("value", "$S", PROCESSOR_FQN)
                         .build())
+                .addAnnotation(GeneratedMarker.SPEC)
                 .addSuperinterface(EXECUTION_PLAN);
 
         for (FieldSpec sf : staticFields) {

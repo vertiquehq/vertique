@@ -19,6 +19,7 @@ import com.palantir.javapoet.TypeVariableName;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.meta.AnnotationLiteralEmitter;
 import dev.vertique.codegen.meta.MetadataEmitter;
+import dev.vertique.codegen.support.GeneratedMarker;
 import dev.vertique.codegen.support.Identifiers;
 import java.beans.Introspector;
 import java.io.IOException;
@@ -127,6 +128,7 @@ final class AopProxyEmitter {
         Map<String, AspectRef> aspects = collectAspects(interceptedMethods, aspectFqns);
 
         TypeSpec.Builder proxy = TypeSpec.classBuilder(proxySimpleName)
+                .addAnnotation(GeneratedMarker.SPEC)
                 .addModifiers(Modifier.PUBLIC, Modifier.FINAL)
                 .superclass(beanClass);
 

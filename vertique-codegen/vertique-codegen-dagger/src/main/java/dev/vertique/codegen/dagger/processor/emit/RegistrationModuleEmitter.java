@@ -15,6 +15,7 @@ import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.TypeVisibility;
 import dev.vertique.codegen.dagger.processor.Registration;
 import dev.vertique.codegen.dagger.processor.support.FilerWriter;
+import dev.vertique.codegen.support.GeneratedMarker;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -67,7 +68,8 @@ public final class RegistrationModuleEmitter {
                 .addModifiers(Modifier.PUBLIC, Modifier.ABSTRACT)
                 .addAnnotation(AnnotationSpec.builder(GENERATED)
                         .addMember("value", "$S", "dev.vertique.codegen.dagger.processor.AutoWireProcessor")
-                        .build());
+                        .build())
+                .addAnnotation(GeneratedMarker.SPEC);
         Set<String> methodNames = new HashSet<>();
         Set<ClassName> includes = new LinkedHashSet<>();
         int emittedCount = 0;

@@ -17,6 +17,7 @@ import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.sanitization.processor.scan.DtoModel;
 import dev.vertique.codegen.sanitization.processor.scan.FieldModel;
 import dev.vertique.codegen.sanitization.processor.scan.FieldModel.FieldKind;
+import dev.vertique.codegen.support.GeneratedMarker;
 import dev.vertique.codegen.support.Identifiers;
 import java.io.IOException;
 import java.util.ArrayDeque;
@@ -174,6 +175,7 @@ public final class InputProcessorEmitter {
                 .addAnnotation(AnnotationSpec.builder(ClassName.get(Generated.class))
                         .addMember("value", "$S", PROCESSOR_FQN)
                         .build())
+                .addAnnotation(GeneratedMarker.SPEC)
                 .addSuperinterface(processorInterface);
 
         for (FieldSpec sf : staticFields) {

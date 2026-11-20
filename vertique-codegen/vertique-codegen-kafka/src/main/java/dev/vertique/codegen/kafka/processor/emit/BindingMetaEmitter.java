@@ -17,6 +17,7 @@ import dev.vertique.codegen.kafka.processor.scan.KafkaSourceMethodModel;
 import dev.vertique.codegen.kafka.processor.scan.KafkaSourceModel;
 import dev.vertique.codegen.kafka.processor.scan.ListenerModel;
 import dev.vertique.codegen.kafka.processor.scan.RouteModel;
+import dev.vertique.codegen.support.GeneratedMarker;
 import dev.vertique.codegen.support.Identifiers;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -163,6 +164,7 @@ public final class BindingMetaEmitter {
                 .addAnnotation(AnnotationSpec.builder(Generated.class)
                         .addMember("value", "$S", PROCESSOR_FQN)
                         .build())
+                .addAnnotation(GeneratedMarker.SPEC)
                 .addJavadoc(
                         "Generated binding metadata companion for {@link $T}.\n\n"
                                 + "<p>Provides precomputed {@link $T} instances that allow\n"

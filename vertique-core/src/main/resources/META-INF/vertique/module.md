@@ -453,6 +453,28 @@ framework's own scanners provide the implementations.
 - `parameterTypes()` gives the erased signature without materializing `ParameterMetadata` objects;
   `parameters()` gives the full per-parameter view.
 
+### `@Generated` (`dev.vertique.core.codegen`)
+
+The class-file marker every Vertique annotation processor stamps on what it writes: each generated
+top-level and nested type, and each method of an anonymous class it emits inline (annotation
+literals and reflection-free `java.lang.reflect.Type` graphs). Application code does not use it.
+
+#### Invariants & Gotchas
+
+- It has `CLASS` retention: it is in the class file but not visible through reflection. Bytecode
+  tools read it. JaCoCo leaves out of coverage any class or method that carries a `CLASS`- or
+  `RUNTIME`-retention annotation whose simple name contains `Generated`, so generated code needs no
+  per-module JaCoCo exclude.
+- JaCoCo applies a class-level marker to that class file only, never to its nested or anonymous
+  classes. That is why generators mark nested types and anonymous-class methods individually. The
+  constructor of an anonymous class cannot be annotated, so one line per anonymous literal can
+  still show in a report.
+- Generators keep emitting `javax.annotation.processing.Generated` as well. It has `SOURCE`
+  retention, never reaches the class file, and serves source-level tools only.
+- Generated sources reference the marker, so code that runs a Vertique processor needs
+  `vertique-core` on its compile classpath. Every module that uses a Vertique processor already
+  depends on it.
+
 ### Resilience vocabulary
 
 The resilience annotation vocabulary and its declaration metadata are provided by

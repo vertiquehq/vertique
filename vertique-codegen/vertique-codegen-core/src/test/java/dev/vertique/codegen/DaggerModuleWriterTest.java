@@ -4,6 +4,7 @@
 package dev.vertique.codegen;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.palantir.javapoet.AnnotationSpec;
 import com.palantir.javapoet.ClassName;
@@ -43,7 +44,9 @@ class DaggerModuleWriterTest {
                 import dagger.Module;
                 import dagger.Provides;
                 import dagger.multibindings.IntoSet;
+                import dev.vertique.core.codegen.Generated;
 
+                @Generated
                 @Module
                 public abstract class GeneratedModule {
                   @Provides
@@ -72,7 +75,9 @@ class DaggerModuleWriterTest {
                 import dagger.Module;
                 import dagger.Provides;
                 import dagger.multibindings.IntoSet;
+                import dev.vertique.core.codegen.Generated;
 
+                @Generated
                 @Module
                 public abstract class GeneratedModule {
                   @Provides
@@ -104,8 +109,10 @@ class DaggerModuleWriterTest {
 
                 import dagger.Module;
                 import dagger.Provides;
+                import dev.vertique.core.codegen.Generated;
                 import jakarta.inject.Singleton;
 
+                @Generated
                 @Module
                 public abstract class GeneratedModule {
                   @Provides
@@ -133,7 +140,9 @@ class DaggerModuleWriterTest {
 
                 import dagger.BindsOptionalOf;
                 import dagger.Module;
+                import dev.vertique.core.codegen.Generated;
 
+                @Generated
                 @Module
                 public abstract class GeneratedModule {
                   @BindsOptionalOf
@@ -325,8 +334,10 @@ class DaggerModuleWriterTest {
 
                 import dagger.Binds;
                 import dagger.Module;
+                import dev.vertique.core.codegen.Generated;
                 import jakarta.inject.Singleton;
 
+                @Generated
                 @Module
                 public abstract class GeneratedModule {
                   @Binds
@@ -407,6 +418,7 @@ class DaggerModuleWriterTest {
                 import javax.annotation.processing.Generated;
 
                 @Generated("com.example.proc.MyProcessor")
+                @dev.vertique.core.codegen.Generated
                 @Module
                 public abstract class GeneratedModule {
                   @Binds
@@ -416,9 +428,12 @@ class DaggerModuleWriterTest {
         assertEquals(expected, file.toString());
     }
 
-    /** Without generatedBy, no @Generated marker is emitted — guards existing callers from regression. */
+    /**
+     * Without generatedBy, no javax {@code @Generated} marker is emitted, but the class-file marker
+     * always is: every module this writer builds is generated code.
+     */
     @Test
-    void withoutGeneratedBy_emitsNoGeneratedMarker() {
+    void withoutGeneratedBy_emitsOnlyClassFileMarker() {
         ClassName boundType = ClassName.get("com.example", "MyBean");
         ClassName implType = ClassName.get("com.example", "MyBean$AopProxy");
 
@@ -427,7 +442,10 @@ class DaggerModuleWriterTest {
                 .build();
 
         String source = file.toString();
-        assertEquals(false, source.contains("@Generated"), "Should not contain @Generated when generatedBy not called");
+        assertTrue(
+                source.contains("import dev.vertique.core.codegen.Generated;\n")
+                        && source.contains("@Generated\n@Module"),
+                "Should always carry the class-file marker");
         assertEquals(
                 false,
                 source.contains("javax.annotation.processing.Generated"),

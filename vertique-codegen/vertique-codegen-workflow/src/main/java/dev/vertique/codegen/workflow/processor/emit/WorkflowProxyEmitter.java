@@ -11,6 +11,7 @@ import com.palantir.javapoet.MethodSpec;
 import com.palantir.javapoet.TypeName;
 import com.palantir.javapoet.TypeSpec;
 import dev.vertique.codegen.CodegenContext;
+import dev.vertique.codegen.support.GeneratedMarker;
 import dev.vertique.codegen.support.Identifiers;
 import dev.vertique.codegen.workflow.processor.scan.ContractModel;
 import dev.vertique.codegen.workflow.processor.scan.OperationModel;
@@ -97,6 +98,7 @@ public final class WorkflowProxyEmitter {
                 .addAnnotation(AnnotationSpec.builder(Generated.class)
                         .addMember("value", "$S", PROCESSOR_FQN)
                         .build())
+                .addAnnotation(GeneratedMarker.SPEC)
                 .addJavadoc(
                         "Generated zero-reflection workflow client proxy for {@link $T}.\n\n"
                                 + "<p>Selected at runtime by {@code WorkflowClientFactory} when present on the\n"

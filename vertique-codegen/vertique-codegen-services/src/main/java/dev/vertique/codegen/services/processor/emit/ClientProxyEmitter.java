@@ -18,6 +18,7 @@ import dev.vertique.codegen.services.processor.ServiceAnnotations;
 import dev.vertique.codegen.services.processor.scan.ClientContractModel;
 import dev.vertique.codegen.services.processor.scan.OperationModel;
 import dev.vertique.codegen.services.processor.scan.ParamModel;
+import dev.vertique.codegen.support.GeneratedMarker;
 import dev.vertique.codegen.support.Identifiers;
 import java.io.IOException;
 import java.util.List;
@@ -264,6 +265,7 @@ public final class ClientProxyEmitter {
                 .addAnnotation(AnnotationSpec.builder(ClassName.get(Generated.class))
                         .addMember("value", "$S", PROCESSOR_FQN)
                         .build())
+                .addAnnotation(GeneratedMarker.SPEC)
                 .addSuperinterface(contractClass);
 
         // --- Transport fields ---

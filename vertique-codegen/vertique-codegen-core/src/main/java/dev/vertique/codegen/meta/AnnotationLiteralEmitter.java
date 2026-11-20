@@ -12,6 +12,7 @@ import com.palantir.javapoet.ParameterizedTypeName;
 import com.palantir.javapoet.TypeName;
 import com.palantir.javapoet.TypeSpec;
 import com.palantir.javapoet.WildcardTypeName;
+import dev.vertique.codegen.support.GeneratedMarker;
 import java.lang.annotation.Annotation;
 import java.util.Arrays;
 import java.util.List;
@@ -126,6 +127,7 @@ public final class AnnotationLiteralEmitter {
         List<Map.Entry<ExecutableElement, AnnotationValue>> values = orderedValues(mirror, elements);
 
         TypeSpec.Builder type = TypeSpec.classBuilder(literalClass.simpleName())
+                .addAnnotation(GeneratedMarker.SPEC)
                 .addModifiers(Modifier.PUBLIC, Modifier.FINAL)
                 .addSuperinterface(annClass);
 
@@ -464,17 +466,20 @@ public final class AnnotationLiteralEmitter {
         CodeBlock.Builder expression = CodeBlock.builder().add("new $T() {\n", ClassName.get(annotationType));
         for (Map.Entry<ExecutableElement, AnnotationValue> entry : values) {
             ExecutableElement member = entry.getKey();
+            expression.add("@$T ", GeneratedMarker.ANNOTATION);
             expression.add(
                     "@Override public $T $N() { return $L; }\n",
                     TypeName.get(member.getReturnType()),
                     member.getSimpleName().toString(),
                     valueLiteral(member.getReturnType(), entry.getValue(), elements, types));
         }
+        expression.add("@$T ", GeneratedMarker.ANNOTATION);
         expression.add(
                 "@Override public $T annotationType() { return $T.class; }\n",
                 ParameterizedTypeName.get(
                         ClassName.get(Class.class), WildcardTypeName.subtypeOf(ClassName.get(Annotation.class))),
                 ClassName.get(annotationType));
+        expression.add("@$T ", GeneratedMarker.ANNOTATION);
         expression.add(
                 "@Override public boolean equals(Object other) { return other instanceof $T that && ",
                 ClassName.get(annotationType));
@@ -496,7 +501,7 @@ public final class AnnotationLiteralEmitter {
                 expression.add("$T.equals($N(), that.$N())", java.util.Objects.class, name, name);
             }
         }
-        expression.add(";}\n@Override public int hashCode() { return ");
+        expression.add(";}\n@$T @Override public int hashCode() { return ", GeneratedMarker.ANNOTATION);
         first = true;
         for (Map.Entry<ExecutableElement, AnnotationValue> entry : values) {
             ExecutableElement member = entry.getKey();

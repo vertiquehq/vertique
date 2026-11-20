@@ -38,7 +38,10 @@ import javax.tools.ToolProvider;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-/** In-memory contract proof for nested annotation float/double equality and hashing. */
+/**
+ * In-memory contract proof for nested annotation float/double equality and hashing, and for the
+ * class-file marker on the literal and on the methods of each anonymous nested literal.
+ */
 class NestedAnnotationFloatingPointEqualityTest {
 
     private static final String NESTED_ANNOTATION_FQN = "com.example.NestedMembers";
@@ -83,6 +86,27 @@ class NestedAnnotationFloatingPointEqualityTest {
         assertFalse(negativeZero.equals(positiveZero), "nested equality must remain symmetric for signed zero");
     }
 
+    @Test
+    @DisplayName("the literal class and each anonymous nested literal carry the class-file marker")
+    void generatedLiteralClassFilesCarryClassFileMarker() throws Exception {
+        Map<String, byte[]> classBytes = compileFixture().classBytes();
+        Map<String, byte[]> literalClasses = new LinkedHashMap<>();
+        classBytes.forEach((name, bytes) -> {
+            // The literal itself, and the anonymous classes its constructor arguments compile to.
+            if (name.equals(LITERAL_FQN) || name.startsWith(FACTORY_FQN + "$")) {
+                literalClasses.put(name, bytes);
+            }
+        });
+
+        assertTrue(literalClasses.containsKey(LITERAL_FQN), "top-level literal compiled");
+        assertTrue(literalClasses.size() > 1, "nested literals compile to anonymous classes: " + classBytes.keySet());
+        assertFalse(
+                GeneratedMarkerStub.carriesMarker(classBytes.get(FACTORY_FQN)),
+                "hand-written factory carries no marker of its own");
+        literalClasses.forEach((name, bytes) ->
+                assertTrue(GeneratedMarkerStub.carriesMarker(bytes), name + " carries the class-file marker"));
+    }
+
     private static CompiledFixture compileFixture() throws IOException {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         if (compiler == null) {
@@ -100,6 +124,7 @@ class NestedAnnotationFloatingPointEqualityTest {
                     List.of("--release", "21"),
                     null,
                     List.of(
+                            GeneratedMarkerStub.source(),
                             source(NESTED_ANNOTATION_FQN, """
                                     package com.example;
                                     import java.lang.annotation.Retention;

@@ -13,6 +13,7 @@ import com.palantir.javapoet.TypeName;
 import com.palantir.javapoet.TypeSpec;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.SignalSourceNaming;
+import dev.vertique.codegen.support.GeneratedMarker;
 import dev.vertique.codegen.workflow.signal.SignalTargetScan.Target;
 import java.io.IOException;
 import java.util.List;
@@ -89,6 +90,7 @@ final class KafkaSignalSourceEmitter {
                 .addAnnotation(AnnotationSpec.builder(Generated.class)
                         .addMember("value", "$S", PROCESSOR_FQN)
                         .build())
+                .addAnnotation(GeneratedMarker.SPEC)
                 .addOriginatingElement(origin)
                 .addJavadoc(
                         "Generated Kafka signal source of {@link $T}.\n\n"

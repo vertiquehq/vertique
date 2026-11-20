@@ -9,6 +9,7 @@ import com.palantir.javapoet.MethodSpec;
 import com.palantir.javapoet.ParameterizedTypeName;
 import com.palantir.javapoet.TypeSpec;
 import dev.vertique.codegen.CodegenContext;
+import dev.vertique.codegen.support.GeneratedMarker;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
@@ -100,6 +101,7 @@ public final class ComponentFactoryEmitter {
                 .build();
 
         TypeSpec factory = TypeSpec.classBuilder(factorySimpleName)
+                .addAnnotation(GeneratedMarker.SPEC)
                 .addModifiers(Modifier.PUBLIC, Modifier.FINAL)
                 .addSuperinterface(ParameterizedTypeName.get(VERTIQUE_COMPONENT_FACTORY, componentType))
                 .addMethod(build)

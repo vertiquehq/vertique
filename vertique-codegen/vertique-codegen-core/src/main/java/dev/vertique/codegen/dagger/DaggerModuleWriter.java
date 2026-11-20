@@ -13,6 +13,7 @@ import com.palantir.javapoet.ParameterSpec;
 import com.palantir.javapoet.ParameterizedTypeName;
 import com.palantir.javapoet.TypeName;
 import com.palantir.javapoet.TypeSpec;
+import dev.vertique.codegen.support.GeneratedMarker;
 import java.beans.Introspector;
 import java.util.ArrayList;
 import java.util.List;
@@ -582,6 +583,7 @@ public final class DaggerModuleWriter {
                     .build());
         }
 
+        typeBuilder.addAnnotation(GeneratedMarker.SPEC);
         typeBuilder.addAnnotation(AnnotationSpec.builder(DAGGER_MODULE).build());
 
         if (!concrete) {

@@ -73,5 +73,11 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>jakarta.inject-api</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- The class-file marker every generated type carries (test scope only). -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-core</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>

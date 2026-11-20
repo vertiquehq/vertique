@@ -16,6 +16,7 @@ import dev.vertique.codegen.AnnotationMirrors;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.JaxRsAnnotations;
 import dev.vertique.codegen.jaxrs.JaxRsParamSource;
+import dev.vertique.codegen.support.GeneratedMarker;
 import dev.vertique.codegen.support.Identifiers;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -176,6 +177,7 @@ public final class BeanParamModelEmitter {
                 .addAnnotation(AnnotationSpec.builder(ClassName.get(Generated.class))
                         .addMember("value", "$S", PROCESSOR_FQN)
                         .build())
+                .addAnnotation(GeneratedMarker.SPEC)
                 .addSuperinterface(modelInterface);
 
         for (FieldSpec sf : staticFields) {

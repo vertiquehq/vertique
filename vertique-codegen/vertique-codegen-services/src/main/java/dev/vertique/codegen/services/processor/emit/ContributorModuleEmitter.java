@@ -12,6 +12,7 @@ import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.TypeVisibility;
 import dev.vertique.codegen.services.processor.scan.ClientContractModel;
 import dev.vertique.codegen.services.processor.scan.ContractModel;
+import dev.vertique.codegen.support.GeneratedMarker;
 import java.beans.Introspector;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -126,6 +127,7 @@ public final class ContributorModuleEmitter {
                 .addAnnotation(AnnotationSpec.builder(ClassName.get(Generated.class))
                         .addMember("value", "$S", PROCESSOR_FQN)
                         .build())
+                .addAnnotation(GeneratedMarker.SPEC)
                 .addAnnotation(AnnotationSpec.builder(DAGGER_MODULE).build());
 
         Map<String, ContractModel> contributors = uniqueContributors();

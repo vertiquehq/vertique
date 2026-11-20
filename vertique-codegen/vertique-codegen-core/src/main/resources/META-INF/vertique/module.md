@@ -257,6 +257,22 @@ Dagger types (`@Module`, `@Provides`, `@IntoSet`, `@Singleton`, `@BindsOptionalO
 
 ---
 
+### support.GeneratedMarker
+
+The class-file marker every emitter stamps on generated code. `GeneratedMarker.ANNOTATION` names
+`dev.vertique.core.codegen.Generated` by `ClassName` (`vertique-core` stays off the processor
+path), and `GeneratedMarker.SPEC` is the ready-made `AnnotationSpec`.
+
+- Add `SPEC` to every top-level **and** nested `TypeSpec` an emitter builds. JaCoCo does not carry a
+  class-level marker over to nested or anonymous classes.
+- Prefix each method of an inline anonymous class with `"@$T "` bound to `ANNOTATION`, as
+  `AnnotationLiteralEmitter` and `MetadataEmitter` do.
+- Keep the `javax.annotation.processing.Generated` marker next to it. It has `SOURCE` retention, so
+  JaCoCo cannot see it.
+- `DaggerModuleWriter.build()` always adds the marker, whether or not `generatedBy` was called.
+
+---
+
 ### support.Identifiers
 
 Stateless utility class for deriving Java identifiers during annotation processing.
