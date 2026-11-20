@@ -123,14 +123,14 @@ The two-argument `@Inject` constructor is unchanged and behaves as before. The c
 
 ### `MigrationException` (db-core)
 
-Runtime exception wrapping vendor-specific migration failures. Extends `VertiqueException` and optionally carries a partial `MigrationResult` if the migration engine reported progress before failing.
+Runtime exception wrapping vendor-specific migration failures. Extends `VertiqueException`. It can carry a partial `MigrationResult` for a runner that reports one; the Flyway runner never does, so `partialResult()` is `null` for its failures. A failed named run reports its progress through `MigrationRunException.report()` instead, which is `null` when the failure came before any report existed.
 
 ```java
 try {
     migrationRunner.migrate(vertx).await();
 } catch (MigrationException e) {
     log.error("Migration failed", e);
-    MigrationResult partial = e.partialResult(); // may be null
+    MigrationResult partial = e.partialResult(); // null for the Flyway runner
 }
 ```
 
