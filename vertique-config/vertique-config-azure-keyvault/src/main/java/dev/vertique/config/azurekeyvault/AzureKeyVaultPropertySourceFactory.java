@@ -49,7 +49,9 @@ import java.util.function.BiFunction;
  *       {@code clientId}, selects a specific user-assigned managed identity via
  *       {@link com.azure.identity.ManagedIdentityCredentialBuilder#clientId(String)}.</li>
  * </ul>
- * <p>Any other {@code method} value is a create-time error that names the invalid method.
+ * <p>A blank {@code method} counts as absent and selects {@code "default"}. Any other
+ * {@code method} value is a create-time error that names {@code auth.method} and does not echo
+ * the value.
  *
  * <h2>On-Demand Lookup</h2>
  * <p>Unlike the eager-load AWS Secrets source, this source issues one {@code getSecret} call per
@@ -69,7 +71,7 @@ import java.util.function.BiFunction;
  *
  * <h2>Redaction</h2>
  * <p>Error messages include field names and structural descriptions. They MUST NOT include any
- * resolved secret value or credentials.
+ * resolved secret value, credentials or rejected configured value.
  *
  * @see AzureKeyVaultPropertySource
  */
@@ -174,13 +176,15 @@ public class AzureKeyVaultPropertySourceFactory implements ConfigPropertySourceF
             authMethod = AzureCredentials.METHOD_DEFAULT;
             clientId = null;
         } else {
-            authMethod = auth.getString("method", AzureCredentials.METHOD_DEFAULT);
+            String configuredMethod = auth.getString("method");
+            authMethod = configuredMethod == null || configuredMethod.isBlank()
+                    ? AzureCredentials.METHOD_DEFAULT
+                    : configuredMethod;
             clientId = auth.getString("clientId");
             if (!AzureCredentials.METHOD_DEFAULT.equals(authMethod)
                     && !AzureCredentials.METHOD_MANAGED_IDENTITY.equals(authMethod)) {
                 throw new ConfigPropertySourceException(
-                        name,
-                        "unknown auth method '" + authMethod + "'; supported methods: 'default', 'managed-identity'");
+                        name, "field 'auth.method' must be one of: 'default', 'managed-identity'");
             }
         }
 

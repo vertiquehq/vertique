@@ -181,7 +181,7 @@ The factory discovered by `ServiceLoader`. Registered in `META-INF/services/dev.
 - Schema validation happens before the `SecretClient` is built. A malformed config is rejected with a descriptive error before any Azure SDK construction occurs.
 - The `SecretClient` is built once at `create()` time. SDK errors that surface at build time (e.g. malformed endpoint URL) fail the source immediately. Auth errors surface at the first vault call.
 - `create()` is called from the single-threaded bootstrap path; no thread-safety is required.
-- Unknown `auth.method` values are rejected at create time. Only `"default"` and `"managed-identity"` are accepted.
+- Unknown `auth.method` values are rejected at create time. Only `"default"` and `"managed-identity"` are accepted. The failure names `auth.method` and does not echo the value. A blank `auth.method` counts as absent and selects `"default"`.
 
 ### AzureKeyVaultPropertySource
 
