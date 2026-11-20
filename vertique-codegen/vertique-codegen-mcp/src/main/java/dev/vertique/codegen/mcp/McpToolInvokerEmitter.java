@@ -16,6 +16,7 @@ import com.palantir.javapoet.TypeSpec;
 import com.palantir.javapoet.WildcardTypeName;
 import dev.vertique.codegen.AnnotationMirrors;
 import dev.vertique.codegen.CodegenContext;
+import dev.vertique.codegen.support.GeneratedMarker;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
@@ -255,6 +256,7 @@ final class McpToolInvokerEmitter {
                 .addAnnotation(AnnotationSpec.builder(ClassName.get(Generated.class))
                         .addMember("value", "$S", McpToolProcessor.PROCESSOR_FQN)
                         .build())
+                .addAnnotation(GeneratedMarker.SPEC)
                 .addAnnotation(JAKARTA_SINGLETON)
                 .addSuperinterface(MCP_TOOL_INVOKER);
 
@@ -528,6 +530,7 @@ final class McpToolInvokerEmitter {
                 .addStatement("this.$N = $N", INPUT_FIELD, INPUT_FIELD);
 
         TypeSpec.Builder prepared = TypeSpec.classBuilder(preparedCallType)
+                .addAnnotation(GeneratedMarker.SPEC)
                 .addJavadoc("The prepared call for one {@code $L} invocation.\n", model.toolName())
                 .addModifiers(Modifier.PRIVATE, Modifier.FINAL)
                 .addSuperinterface(MCP_PREPARED_TOOL_CALL)
@@ -705,6 +708,7 @@ final class McpToolInvokerEmitter {
         });
 
         return TypeSpec.recordBuilder(inputType)
+                .addAnnotation(GeneratedMarker.SPEC)
                 .addJavadoc(
                         "The typed input carrier for {@code $L}: one component per input-schema member, named with a\n"
                                 + "collision-safe positional Java identifier ({@code argument0}, {@code argument1}, ...)\n"
@@ -782,6 +786,7 @@ final class McpToolInvokerEmitter {
      */
     private TypeSpec optionalProbe(ClassName optionalProbeType) {
         return TypeSpec.recordBuilder(optionalProbeType)
+                .addAnnotation(GeneratedMarker.SPEC)
                 .addJavadoc(
                         "Generated per-profile {@code Optional} materialization canary. Composition\n"
                                 + "materializes this record with omitted, explicit-null, and present {@code $L} cases\n"

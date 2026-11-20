@@ -16,6 +16,7 @@ import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.Diagnostics;
 import dev.vertique.codegen.PackageResolver;
 import dev.vertique.codegen.dagger.DaggerModuleWriter;
+import dev.vertique.codegen.support.GeneratedMarker;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -552,6 +553,7 @@ public final class EventsProcessor extends AbstractProcessor {
                 .build();
 
         TypeSpec publisherType = TypeSpec.classBuilder(publisherSimple)
+                .addAnnotation(GeneratedMarker.SPEC)
                 .addModifiers(Modifier.PUBLIC, Modifier.FINAL)
                 .superclass(ParameterizedTypeName.get(EVENT, eventTypeName))
                 .addMethod(ctor)

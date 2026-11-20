@@ -178,6 +178,7 @@ contract:
 
 ```java
 @Generated("dev.vertique.codegen.services.processor.ServiceContractProcessor")
+@dev.vertique.core.codegen.Generated
 @Module
 public abstract class GeneratedServicesModule {
 
@@ -255,6 +256,7 @@ For `com.example.DemoContract` (a source-root `@ServiceContract` interface) decl
 
 ```java
 @Generated("dev.vertique.codegen.services.processor.ServiceContractProcessor")
+@dev.vertique.core.codegen.Generated
 public final class DemoContract_ServiceClientProxy implements DemoContract {
 
     private final ServiceRequestSender _sender_;

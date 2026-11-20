@@ -29,6 +29,8 @@
  *   <li>{@link dev.vertique.core.codegen.MethodMetadata} — runtime metadata view of a method.
  *   <li>{@link dev.vertique.core.codegen.ParameterMetadata} — runtime metadata view of a method
  *       parameter.
+ *   <li>{@link dev.vertique.core.codegen.Generated} — the class-file marker generators stamp on the
+ *       code they write.
  * </ul>
  */
 package dev.vertique.core.codegen;

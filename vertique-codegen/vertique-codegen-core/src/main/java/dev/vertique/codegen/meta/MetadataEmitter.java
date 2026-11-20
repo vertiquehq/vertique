@@ -14,6 +14,7 @@ import com.palantir.javapoet.ParameterizedTypeName;
 import com.palantir.javapoet.TypeName;
 import com.palantir.javapoet.TypeSpec;
 import com.palantir.javapoet.WildcardTypeName;
+import dev.vertique.codegen.support.GeneratedMarker;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
@@ -183,6 +184,7 @@ public final class MetadataEmitter {
             List<List<AnnotationLiteralRef>> parameterAnnotations) {
         ClassName paramImpl = generatedName.nestedClass(PARAM_IMPL_SIMPLE_NAME);
         TypeSpec.Builder builder = TypeSpec.classBuilder(generatedName.simpleName())
+                .addAnnotation(GeneratedMarker.SPEC)
                 .addSuperinterface(METHOD_METADATA)
                 .addMethod(nameAccessor(method))
                 .addMethod(declaringTypeAccessor(method))
@@ -655,6 +657,7 @@ public final class MetadataEmitter {
     private static TypeSpec parameterMetadataImpl(ClassName paramImpl) {
         ArrayTypeName annotationArray = ArrayTypeName.of(ClassName.get(Annotation.class));
         return TypeSpec.classBuilder(paramImpl.simpleName())
+                .addAnnotation(GeneratedMarker.SPEC)
                 .addModifiers(Modifier.PRIVATE, Modifier.STATIC, Modifier.FINAL)
                 .addSuperinterface(PARAMETER_METADATA)
                 .addField(int.class, "index", Modifier.PRIVATE, Modifier.FINAL)
@@ -757,6 +760,7 @@ public final class MetadataEmitter {
 
         List<String> literalFieldNames = new ArrayList<>();
         TypeSpec.Builder builder = TypeSpec.classBuilder(generatedName.simpleName())
+                .addAnnotation(GeneratedMarker.SPEC)
                 .addModifiers(modifiers.toArray(Modifier[]::new))
                 .addSuperinterface(PARAMETER_METADATA);
         for (int i = 0; i < annotations.size(); i++) {
@@ -1050,13 +1054,21 @@ public final class MetadataEmitter {
         return CodeBlock.builder()
                 .add("new $T() {", ParameterizedType.class)
                 .add(
-                        "\n@Override public $T[] getActualTypeArguments() { return new $T[] {$L}; }",
+                        "\n@$T @Override public $T[] getActualTypeArguments() { return new $T[] {$L}; }",
+                        GeneratedMarker.ANNOTATION,
                         Type.class,
                         Type.class,
                         arguments)
-                .add("\n@Override public $T getRawType() { return $T.class; }", Type.class, ClassName.get((TypeElement)
-                        declared.asElement()))
-                .add("\n@Override public $T getOwnerType() { return $L; }", Type.class, owner)
+                .add(
+                        "\n@$T @Override public $T getRawType() { return $T.class; }",
+                        GeneratedMarker.ANNOTATION,
+                        Type.class,
+                        ClassName.get((TypeElement) declared.asElement()))
+                .add(
+                        "\n@$T @Override public $T getOwnerType() { return $L; }",
+                        GeneratedMarker.ANNOTATION,
+                        Type.class,
+                        owner)
                 .add("\n}")
                 .build();
     }
@@ -1068,7 +1080,8 @@ public final class MetadataEmitter {
         return CodeBlock.builder()
                 .add("new $T() {", java.lang.reflect.GenericArrayType.class)
                 .add(
-                        "\n@Override public $T getGenericComponentType() { return $L; }",
+                        "\n@$T @Override public $T getGenericComponentType() { return $L; }",
+                        GeneratedMarker.ANNOTATION,
                         Type.class,
                         genericTypeExpression(array.getComponentType(), types))
                 .add("\n}")
@@ -1088,11 +1101,16 @@ public final class MetadataEmitter {
         return CodeBlock.builder()
                 .add("new $T() {", WildcardType.class)
                 .add(
-                        "\n@Override public $T[] getUpperBounds() { return new $T[] {$L}; }",
+                        "\n@$T @Override public $T[] getUpperBounds() { return new $T[] {$L}; }",
+                        GeneratedMarker.ANNOTATION,
                         Type.class,
                         Type.class,
                         upper)
-                .add("\n@Override public $T[] getLowerBounds() { return $L; }", Type.class, lowerArray)
+                .add(
+                        "\n@$T @Override public $T[] getLowerBounds() { return $L; }",
+                        GeneratedMarker.ANNOTATION,
+                        Type.class,
+                        lowerArray)
                 .add("\n}")
                 .build();
     }

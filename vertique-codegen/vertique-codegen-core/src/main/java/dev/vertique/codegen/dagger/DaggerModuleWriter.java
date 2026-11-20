@@ -13,6 +13,7 @@ import com.palantir.javapoet.ParameterSpec;
 import com.palantir.javapoet.ParameterizedTypeName;
 import com.palantir.javapoet.TypeName;
 import com.palantir.javapoet.TypeSpec;
+import dev.vertique.codegen.support.GeneratedMarker;
 import java.beans.Introspector;
 import java.util.ArrayList;
 import java.util.List;
@@ -149,8 +150,8 @@ public final class DaggerModuleWriter {
      * <p>This matches the {@code @Generated} marker emitted by the sibling module emitters
      * (e.g. {@code ContributorModuleEmitter}, {@code BindingMetaEmitter}, {@code ProxyEmitter}),
      * which all reference {@link javax.annotation.processing.Generated}. When this method is never
-     * called, {@link #build()} emits no {@code @Generated} annotation, leaving existing callers
-     * unchanged.
+     * called, {@link #build()} emits no {@code javax} marker. The class-file marker
+     * {@code dev.vertique.core.codegen.Generated} is emitted either way.
      *
      * @param processorFqn the fully-qualified class name of the annotation processor generating this
      *                     module (e.g. {@code dev.vertique.codegen.aop.AopProcessor}); must not be
@@ -561,7 +562,9 @@ public final class DaggerModuleWriter {
      *
      * <p>When {@link #generatedBy(String)} was called, the generated type carries a class-level
      * {@code @javax.annotation.processing.Generated("<processorFqn>")} marker ahead of the
-     * {@code @Module} annotation; otherwise no {@code @Generated} marker is emitted.
+     * {@code @Module} annotation; otherwise no {@code javax} marker is emitted. The type always carries
+     * the class-file marker {@code dev.vertique.core.codegen.Generated}, which keeps it out of
+     * coverage reports.
      *
      * @return a {@link JavaFile} containing the generated {@code @Module} class
      */
@@ -582,6 +585,7 @@ public final class DaggerModuleWriter {
                     .build());
         }
 
+        typeBuilder.addAnnotation(GeneratedMarker.SPEC);
         typeBuilder.addAnnotation(AnnotationSpec.builder(DAGGER_MODULE).build());
 
         if (!concrete) {

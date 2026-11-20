@@ -13,6 +13,7 @@ import com.palantir.javapoet.TypeName;
 import com.palantir.javapoet.TypeSpec;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.delayed.processor.DelayedJobContractModel;
+import dev.vertique.codegen.support.GeneratedMarker;
 import dev.vertique.codegen.support.Identifiers;
 import java.io.IOException;
 import javax.annotation.processing.Generated;
@@ -88,6 +89,7 @@ public final class DelayedJobProxyEmitter {
                 .addAnnotation(AnnotationSpec.builder(Generated.class)
                         .addMember("value", "$S", PROCESSOR_FQN)
                         .build())
+                .addAnnotation(GeneratedMarker.SPEC)
                 .addJavadoc(
                         "Generated static delayed-job proxy for {@link $T}.\n\n"
                                 + "<p>Zero-reflection replacement for the JDK dynamic proxy; selected at runtime by\n"

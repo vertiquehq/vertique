@@ -19,6 +19,7 @@ import dev.vertique.codegen.services.processor.scan.ContractModel;
 import dev.vertique.codegen.services.processor.scan.ImplCandidate.ImplKind;
 import dev.vertique.codegen.services.processor.scan.OperationModel;
 import dev.vertique.codegen.services.processor.scan.ParamModel;
+import dev.vertique.codegen.support.GeneratedMarker;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -387,6 +388,7 @@ public final class ContributorEmitter {
                 .addAnnotation(AnnotationSpec.builder(ClassName.get(Generated.class))
                         .addMember("value", "$S", PROCESSOR_FQN)
                         .build())
+                .addAnnotation(GeneratedMarker.SPEC)
                 .addAnnotation(AnnotationSpec.builder(SINGLETON).build())
                 .addSuperinterface(SERVICE_CONTRACT_CONTRIBUTOR);
 

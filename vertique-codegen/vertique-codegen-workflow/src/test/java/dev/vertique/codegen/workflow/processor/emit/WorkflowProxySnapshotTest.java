@@ -55,6 +55,7 @@ class WorkflowProxySnapshotTest {
              * classpath. Delegates every contract method to {@code WorkflowOperations}.
              */
             @Generated("dev.vertique.codegen.workflow.processor.WorkflowContractProcessor")
+            @dev.vertique.core.codegen.Generated
             public final class OrderWorkflow_WorkflowClientProxy implements OrderWorkflow {
               private final WorkflowOperations ops;
 

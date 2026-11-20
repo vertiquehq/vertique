@@ -10,6 +10,7 @@ import com.palantir.javapoet.MethodSpec;
 import com.palantir.javapoet.TypeSpec;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.PackageResolver;
+import dev.vertique.codegen.support.GeneratedMarker;
 import dev.vertique.codegen.support.Identifiers;
 import java.beans.Introspector;
 import java.io.IOException;
@@ -106,6 +107,7 @@ final class McpToolsModuleEmitter {
                 .addAnnotation(AnnotationSpec.builder(ClassName.get(Generated.class))
                         .addMember("value", "$S", McpToolProcessor.PROCESSOR_FQN)
                         .build())
+                .addAnnotation(GeneratedMarker.SPEC)
                 .addAnnotation(DAGGER_MODULE);
 
         Set<String> usedMethodNames = new LinkedHashSet<>();

@@ -111,7 +111,7 @@ class AnnotationLiteralScalarKindsTest {
                     diagnostics,
                     List.of("--release", "21"),
                     null,
-                    List.of(source(ANNOTATION_FQN, """
+                    List.of(GeneratedMarkerStub.source(), source(ANNOTATION_FQN, """
                                     package com.example;
                                     import java.lang.annotation.Retention;
                                     import java.lang.annotation.RetentionPolicy;
