@@ -349,9 +349,12 @@ from `process` so Dagger, Lombok, and other processors see unmodified elements.
 
 ## Validation Failures
 
-Every rule below is a compile-time `ERROR` unless stated otherwise. All applicable validators run
-before the processor gives up on a candidate, so one build surfaces the complete list rather than one
-error per cycle.
+Every rule below is a compile-time `ERROR` unless stated otherwise. Once a candidate's contract is
+extracted, all applicable validators run together, so one build reports every violation they find for
+that candidate. A candidate whose contract cannot be extracted at all — for example an operation whose
+return type is not a `Future`, or one with a second payload parameter — stops at that error, and the
+checks that need the extracted contract run only after it is fixed, so a build can report further errors
+once the first ones are corrected.
 
 The **client proxy for that contract?** column states whether a *different, otherwise-valid* contract
 in the same compilation unit still gets its `{Contract}_ServiceClientProxy` (see
