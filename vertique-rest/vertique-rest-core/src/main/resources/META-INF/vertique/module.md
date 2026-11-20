@@ -558,6 +558,15 @@ arbitrary object serialized by the SSE encoder, not a pre-rendered string.
 `BufferOverflowPolicy.FAIL` fails the `send(...)` future when the buffer is full;
 `DROP_OLDEST` evicts the oldest buffered event instead.
 
+An `SseChannel` is not required to be thread-safe: all calls should be made from the Vert.x event-loop
+context that owns the channel. A producer running on another thread should hand each `send`, `complete`
+or `fail` call over to that context (for example with `Context#runOnContext`) instead of calling the
+channel directly.
+
+`complete()` drains buffered events to the consumer, then ends the stream and runs the `onClose`
+callbacks. `fail(cause)` is the abort path: it does not flush the buffer, signals `cause` to the
+consumer's exception handler and runs the `onClose` callbacks.
+
 ### `HeaderElement`, `MediaType` and `AcceptNegotiator`
 
 `HeaderElement` is the shared, typed parser for comma-separated header values of the shape
@@ -1133,8 +1142,9 @@ public interface ResponseSerializer {
 }
 ```
 
-The terminal wire-completion contract. The implementation ships in `vertique-rest-jaxrs`; replace it
-only to take over serialization orchestration entirely. It is called on the request's event-loop
+The terminal wire-completion contract. The implementation ships in `vertique-rest-jaxrs`, which
+binds it unconditionally, so it is not a replacement point: add a body format with a
+`ResponseBodyEncoder` instead. It is called on the request's event-loop
 context after the status and headers are written and after `transformResponse` hooks have run —
 empty-body and bare fallback paths bypass it. An implementation must not block the calling thread.
 
@@ -1720,7 +1730,7 @@ covers protected documents).
 
 | Key | Default | Constraint / notes |
 |---|---:|---|
-| `jaxrs.sse.keepAliveEnabled` | `true` | emit a periodic keep-alive comment on idle connections |
+| `jaxrs.sse.keepAliveEnabled` | `true` | emit a keep-alive comment at every `keepAliveIntervalMs` while the response streams, whether or not events are flowing |
 | `jaxrs.sse.keepAliveIntervalMs` | `15000` | |
 | `jaxrs.sse.defaultBufferSize` | `256` | per-channel buffer when no `SseChannelOptions` are supplied |
 | `jaxrs.sse.defaultOverflowPolicy` | `"FAIL"` | `FAIL` or `DROP_OLDEST` |
