@@ -111,13 +111,34 @@ class InterfaceTriggerMethodWeaveTest {
     }
 
     @Test
-    @DisplayName("an implementor that overrides an interface trigger method as final fails compilation")
+    @DisplayName("an implementor that overrides an interface trigger method as final fails with the AOP diagnostic")
     void rejectsAFinalOverrideOfAnInterfaceTriggerMethod() {
-        // The processor checks the annotated interface method, not the implementor's override, so the failure is
-        // the compiler's error on the generated proxy rather than the processor's own non-overrideable diagnostic.
-        ProcessorTestHarness.run(new AopProcessor(), interfaceTrigger(), crudAbstract(), finalOverrideImplementor())
+        var result = ProcessorTestHarness.run(
+                        new AopProcessor(), interfaceTrigger(), crudAbstract(), finalOverrideImplementor())
                 .assertFailed()
-                .assertErrorMessage("cannot override");
+                .assertErrorMessage("com.example.FinalOverrideResource.delete cannot be proxied for method AOP")
+                .assertErrorMessage("is a final method and cannot be overridden");
+        assertNoCompilerOverrideError(result);
+    }
+
+    @Test
+    @DisplayName("a final method inherited from a superclass that implements an interface trigger fails with the AOP"
+            + " diagnostic")
+    void rejectsAnInheritedFinalImplementationOfAnInterfaceTriggerMethod() {
+        var result = ProcessorTestHarness.run(
+                        new AopProcessor(), interfaceTrigger(), crudAbstract(), inheritedFinalImplementor())
+                .assertFailed()
+                .assertErrorMessage("com.example.InheritingResource.delete cannot be proxied for method AOP")
+                .assertErrorMessage("is a final method and cannot be overridden");
+        assertNoCompilerOverrideError(result);
+    }
+
+    private static void assertNoCompilerOverrideError(ProcessorTestHarness.Result result) {
+        assertFalse(
+                result.compilation().diagnostics().stream()
+                        .anyMatch(d -> d.getKind() == javax.tools.Diagnostic.Kind.ERROR
+                                && d.getMessage(null).contains("cannot override")),
+                "the compiler's own override error must not be what reports the shape");
     }
 
     private static javax.tools.JavaFileObject interfaceTrigger() {
@@ -206,6 +227,23 @@ class InterfaceTriggerMethodWeaveTest {
                     @Inject
                     public FinalOverrideResource() {}
                     @Override
+                    public final Future<String> delete(String id) {
+                        return Future.succeededFuture(id);
+                    }
+                }
+                """);
+    }
+
+    private static javax.tools.JavaFileObject inheritedFinalImplementor() {
+        return SourceFiles.inline("com.example.InheritingResource", """
+                package com.example;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+                public class InheritingResource extends FinalBase implements Crud {
+                    @Inject
+                    public InheritingResource() {}
+                }
+                class FinalBase {
                     public final Future<String> delete(String id) {
                         return Future.succeededFuture(id);
                     }

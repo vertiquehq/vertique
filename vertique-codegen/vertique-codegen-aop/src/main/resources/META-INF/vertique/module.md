@@ -68,7 +68,7 @@ The following bean and method shapes are rejected with a compile error:
 | Shape | Reason |
 |-------|--------|
 | `final` class | Cannot be subclassed by `Bean$AopProxy extends Bean` |
-| `final` intercepted method | Cannot be overridden by the proxy subclass |
+| `final` intercepted method | Cannot be overridden by the proxy subclass; this includes a `final` implementation of an interface trigger method, whether the bean declares or inherits it |
 | `private` intercepted method | Not visible to a subclass |
 | `static` intercepted method | Not an instance method; cannot be overridden |
 | Method with a type-variable `throws` clause (e.g., `<E extends IOException> ... throws E`) | The sync guard would emit a non-reifiable `instanceof E` |
