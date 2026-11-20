@@ -347,10 +347,9 @@ public abstract class OffsetPagedQuery<T> {
          * {@link OrderDirection#ASC} and {@link NullHandling#DISALLOW}. At least one column is
          * required.
          *
-         * <p>Argument and column-name failures are the same as for the three-argument overload.
-         *
          * @param columns the column names in sort priority order
          * @return this builder
+         * @throws IllegalArgumentException if columns is empty, contains null/blank names, or duplicates
          */
         public B orderBy(String... columns) {
             return orderBy(OrderDirection.ASC, NullHandling.DISALLOW, columns);
@@ -360,11 +359,10 @@ public abstract class OffsetPagedQuery<T> {
          * Sets the column ordering with a uniform direction. All columns use
          * {@link NullHandling#DISALLOW}. At least one column is required.
          *
-         * <p>Argument and column-name failures are the same as for the three-argument overload.
-         *
          * @param direction the sort direction for all columns
          * @param columns   the column names in sort priority order
          * @return this builder
+         * @throws IllegalArgumentException if columns is empty, contains null/blank names, or duplicates
          */
         public B orderBy(OrderDirection direction, String... columns) {
             return orderBy(direction, NullHandling.DISALLOW, columns);
@@ -378,10 +376,7 @@ public abstract class OffsetPagedQuery<T> {
          * @param nullHandling the null handling policy for all columns
          * @param columns      the column names in sort priority order
          * @return this builder
-         * @throws NullPointerException if the direction, the null handling or a column name is null
-         * @throws dev.vertique.db.exception.InvalidDataAccessUsageException if a column name is empty or is
-         *     not accepted as an SQL identifier
-         * @throws IllegalArgumentException if no column is given or a column is repeated
+         * @throws IllegalArgumentException if columns is empty, contains null/blank names, or duplicates
          */
         public B orderBy(OrderDirection direction, NullHandling nullHandling, String... columns) {
             Objects.requireNonNull(direction, "direction must not be null");

@@ -476,8 +476,8 @@ public abstract class PagedQuery<T> {
         }
 
         /**
-         * Sets the size of the first page returned by {@link #page()}; 20 when not set. A cursor
-         * handed to {@link #page(PageCursor)} supplies its own size, and that size is used.
+         * Sets the default page size. Used when no page size is specified in the cursor. Defaults to
+         * 20 if not set.
          *
          * @param pageSize the default page size
          * @return this builder
@@ -492,10 +492,9 @@ public abstract class PagedQuery<T> {
          * {@link OrderDirection#ASC} and {@link NullHandling#DISALLOW}. At least one column is
          * required.
          *
-         * <p>Fails as {@link #orderBy(OrderDirection, NullHandling, String...)} does.
-         *
          * @param columns the column names in sort priority order
          * @return this builder
+         * @throws IllegalArgumentException if columns is empty, contains null/blank names, or duplicates
          */
         public B orderBy(String... columns) {
             return orderBy(OrderDirection.ASC, NullHandling.DISALLOW, columns);
@@ -505,11 +504,10 @@ public abstract class PagedQuery<T> {
          * Sets the keyset column ordering with a uniform direction. All columns use
          * {@link NullHandling#DISALLOW}. At least one column is required.
          *
-         * <p>Invalid arguments fail as in the three-argument overload.
-         *
          * @param direction the sort direction for all columns
          * @param columns   the column names in sort priority order
          * @return this builder
+         * @throws IllegalArgumentException if columns is empty, contains null/blank names, or duplicates
          */
         public B orderBy(OrderDirection direction, String... columns) {
             return orderBy(direction, NullHandling.DISALLOW, columns);
@@ -523,10 +521,7 @@ public abstract class PagedQuery<T> {
          * @param nullHandling the null handling policy for all columns
          * @param columns      the column names in sort priority order
          * @return this builder
-         * @throws NullPointerException if an argument or a column name is null
-         * @throws dev.vertique.db.exception.InvalidDataAccessUsageException if a column name is blank or not a
-         *     safe SQL identifier
-         * @throws IllegalArgumentException if columns is empty or contains duplicates
+         * @throws IllegalArgumentException if columns is empty, contains null/blank names, or duplicates
          */
         public B orderBy(OrderDirection direction, NullHandling nullHandling, String... columns) {
             Objects.requireNonNull(direction, "direction must not be null");
