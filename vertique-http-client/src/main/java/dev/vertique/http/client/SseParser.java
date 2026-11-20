@@ -20,9 +20,11 @@ import java.util.function.Consumer;
  * {@code event}, {@code id} and {@code retry} and any other field is ignored. Text is decoded as UTF-8 when an
  * event is dispatched, so a character split between chunks survives.
  *
- * <p>Every raw byte since the last dispatched event counts against the bound, comments, ignored fields,
- * blocks that dispatch nothing and a partial line included. A count above the bound fails {@link #feed} with
- * an {@link HttpBodyLimitException} and leaves the parser unusable.
+ * <p>The bound counts the raw bytes of the event being assembled: every line since the last blank line, ignored
+ * fields included, and the current partial line. A finished comment line stops counting when it ends and a blank
+ * line restarts the count, so a stream of heartbeat comments never reaches the bound, while a single line or event
+ * over it still does and the buffered bytes stay bounded. A count above the bound fails {@link #feed} with an
+ * {@link HttpBodyLimitException} and leaves the parser unusable.
  *
  * <p>An instance is not thread safe.
  */
@@ -55,6 +57,9 @@ final class SseParser {
     private final Consumer<SseEvent> sink;
 
     private long counted;
+    /** The count when the current line began, so a finished comment line can be taken back out. */
+    private long lineStart;
+
     private boolean failed;
     private int bomMatched;
     private boolean atStreamStart = true;
@@ -77,7 +82,7 @@ final class SseParser {
     /**
      * Creates a parser.
      *
-     * @param maxEventBytes the most raw bytes allowed since the last dispatched event, above 0
+     * @param maxEventBytes the most raw bytes of the event being assembled, above 0
      * @param sink receives each completed event, synchronously and in order
      */
     SseParser(int maxEventBytes, Consumer<SseEvent> sink) {
@@ -94,7 +99,7 @@ final class SseParser {
      * @param bytes the array holding the bytes
      * @param offset the index of the first byte
      * @param length the number of bytes
-     * @throws HttpBodyLimitException when the raw bytes since the last dispatched event, those of this call
+     * @throws HttpBodyLimitException when the raw bytes of the event being assembled, the current partial line
      *     included, exceed the bound; the parser accepts no more bytes afterwards
      */
     void feed(byte[] bytes, int offset, int length) {
@@ -251,17 +256,23 @@ final class SseParser {
         Phase ended = phase;
         phase = Phase.LINE_START;
         switch (ended) {
-            case LINE_START -> dispatch();
+            case LINE_START -> {
+                // the event assembly ends here, whether or not it dispatches
+                counted = 0;
+                dispatch();
+            }
             case NAME -> {
                 field = resolveField();
                 applyField();
             }
             case VALUE_START, VALUE -> applyField();
             case COMMENT -> {
-                // a comment line has no field
+                // a finished comment line, such as a heartbeat, no longer counts against the bound
+                counted = lineStart;
             }
         }
         valueLength = 0;
+        lineStart = counted;
     }
 
     private void applyField() {
@@ -319,7 +330,6 @@ final class SseParser {
         eventName = null;
         retry = 0;
         if (event != null) {
-            counted = 0;
             sink.accept(event);
         }
     }

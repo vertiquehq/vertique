@@ -246,14 +246,15 @@ class SseStreamIT {
 
     /**
      * AC-029: an oversized or endless event fails the stream with the EVENT bound and resets the exchange,
-     * counting every raw byte since the last dispatch; a long stream of small events is not bounded in total.
+     * counting the raw bytes of the event being assembled; a long stream of small events or of heartbeat comments is
+     * not bounded in total.
      */
     @Test
     @DisplayName("an oversized or endless event fails the stream")
     void oversizedOrEndlessEventFailsTheStream() {
         // Given a client with maxEventBytes(1024) and a server whose paths write 2000 bytes that never end an event
-        // (a data line, a comment line, an unknown field, and comment blocks that dispatch nothing) and keep the
-        // response open, plus a path with 100 events of 100 bytes
+        // (a data line, a comment line and an unknown field) and keep the response open, plus a path with 100 events
+        // of 100 bytes and one with 2200 bytes of heartbeats followed by one event
         RecordingServer server = support.server((request, body) -> {
             HttpServerResponse response = eventStreamHead(request);
             byte[] payload =
@@ -261,16 +262,23 @@ class SseStreamIT {
                         case "/data" -> utf8("data: " + "a".repeat(2000));
                         case "/comment" -> utf8(": " + "a".repeat(2000));
                         case "/unknown" -> utf8("foo: " + "a".repeat(2000));
-                        case "/blocks" -> repeat(": c\n\n", 400);
+                        case "/heartbeats" -> utf8(":ping\n".repeat(200) + ": c\n\n".repeat(200) + "data: x\n\n");
                         default -> repeat("data: " + "a".repeat(92) + "\n\n", 100);
                     };
-            new Pump(response, payload, offset -> 100, request.path().equals("/many")).run();
+            new Pump(
+                            response,
+                            payload,
+                            offset -> 100,
+                            !request.path().equals("/data")
+                                    && !request.path().equals("/comment")
+                                    && !request.path().equals("/unknown"))
+                    .run();
         });
         HttpClient client = client(server, b -> b.maxEventBytes(1024));
 
-        // When the caller consumes events() on each of the four failing paths
+        // When the caller consumes events() on each of the three failing paths
         int run = 0;
-        for (String path : List.of("/data", "/comment", "/unknown", "/blocks")) {
+        for (String path : List.of("/data", "/comment", "/unknown")) {
             Reading reading = read(client, path);
             Throwable failure = awaitFailure(reading.head().completion());
 
@@ -290,6 +298,11 @@ class SseStreamIT {
         Reading many = read(client, "/many");
         await(many.head().completion());
         assertThat(many.events).hasSize(100);
+
+        // And 2200 bytes of heartbeat comments, also above 1024 bytes, complete with the one event after them
+        Reading beats = read(client, "/heartbeats");
+        await(beats.head().completion());
+        assertThat(beats.events).hasSize(1);
     }
 
     // --- AC-030 ---

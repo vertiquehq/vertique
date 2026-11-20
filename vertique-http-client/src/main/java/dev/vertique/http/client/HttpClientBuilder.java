@@ -179,9 +179,10 @@ public final class HttpClientBuilder {
     }
 
     /**
-     * Sets the most raw bytes of one server-sent event that {@link HttpStream#events()} accepts. Every byte
-     * since the last dispatched event counts, comments, ignored fields and a partial line included; above
-     * the bound the stream fails with {@code HttpBodyLimitException} (direction {@code EVENT}) and its
+     * Sets the most raw bytes of one server-sent event that {@link HttpStream#events()} accepts. The raw bytes of
+     * the event being assembled count: every line since the last blank line, ignored fields included, and the current
+     * partial line. A finished comment line, such as a heartbeat, stops counting, so a heartbeat-only stream never
+     * reaches the bound. Above the bound the stream fails with {@code HttpBodyLimitException} (direction {@code EVENT}) and its
      * exchange is reset. The default is 1048576 bytes.
      *
      * @param bytes the bound in bytes, above 0; checked when the client is built

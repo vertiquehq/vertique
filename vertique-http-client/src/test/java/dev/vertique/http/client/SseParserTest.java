@@ -250,12 +250,13 @@ class SseParserTest {
     // --- AC-029 (parser level) ---
 
     /**
-     * AC-029: the bound counts every raw byte since the last dispatched event, whatever the chunking, and
-     * a count equal to the bound is allowed; it restarts at each dispatch.
+     * AC-029: the bound counts the raw bytes of the event being assembled and the current partial line, whatever
+     * the chunking, and a count equal to the bound is allowed; it restarts at each blank line, and a finished
+     * comment line stops counting.
      */
     @Test
-    @DisplayName("the event bound counts raw bytes since the last dispatch")
-    void eventBoundCountsRawBytesSinceTheLastDispatch() {
+    @DisplayName("the event bound counts the raw bytes of the event being assembled")
+    void eventBoundCountsTheRawBytesOfTheEventBeingAssembled() {
         int bound = 64;
 
         // Given a partial data line of exactly 64 bytes: no failure, no event
@@ -270,21 +271,41 @@ class SseParserTest {
             assertThat(e.limitBytes()).isEqualTo(bound);
         });
 
-        // And a comment line, an unknown field and blank lines without data count the same way
+        // And a partial comment line and a partial unknown field count the same way, so one oversized line fails
         for (String prefix : List.of(": ", "foo: ")) {
             SseParser parser = new SseParser(bound, e -> events.add(of(e)));
             byte[] full = utf8(prefix + "a".repeat(bound - prefix.length()));
             assertThatCode(() -> parser.feed(full, 0, full.length)).doesNotThrowAnyException();
             assertThatThrownBy(() -> parser.feed(utf8("a"), 0, 1)).isInstanceOf(HttpBodyLimitException.class);
         }
-        SseParser blanks = new SseParser(bound, e -> events.add(of(e)));
-        byte[] comment = utf8(": c\n\n");
+        // And unknown-field lines of one event keep counting until the event ends
+        SseParser fields = new SseParser(bound, e -> events.add(of(e)));
+        byte[] field = utf8("foo: x\n");
         assertThatThrownBy(() -> {
                     for (int i = 0; i < 20; i++) {
-                        blanks.feed(comment, 0, comment.length);
+                        fields.feed(field, 0, field.length);
                     }
                 })
-                .as("bytes of blocks that dispatch nothing keep counting")
+                .as("lines of the event being assembled count")
+                .isInstanceOf(HttpBodyLimitException.class);
+
+        // And comment lines inside an event do not count once finished, but its data still does: two data lines of
+        // 27 bytes and a hundred heartbeats stay within 64, and a third data line goes over
+        SseParser mixed = new SseParser(bound, e -> events.add(of(e)));
+        byte[] heartbeat = utf8(":ping\n");
+        byte[] dataLine = utf8("data: " + "a".repeat(20) + "\n");
+        assertThatCode(() -> {
+                    for (int i = 0; i < 2; i++) {
+                        mixed.feed(heartbeat, 0, heartbeat.length);
+                        mixed.feed(dataLine, 0, dataLine.length);
+                    }
+                    for (int i = 0; i < 100; i++) {
+                        mixed.feed(heartbeat, 0, heartbeat.length);
+                    }
+                })
+                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> mixed.feed(dataLine, 0, dataLine.length))
+                .as("the data lines of one event reach the bound across comment lines")
                 .isInstanceOf(HttpBodyLimitException.class);
 
         // And the same bytes fail whether they arrive in one chunk or one byte at a time
@@ -307,6 +328,42 @@ class SseParserTest {
             restart.feed(small, 0, small.length);
         }
         assertThat(many).hasSize(100);
+    }
+
+    /**
+     * AC-029: finished comment lines do not count, so a stream that carries nothing but heartbeats, with LF, CRLF or
+     * CR endings and with or without blank lines, never reaches the bound, and an event after them still parses.
+     */
+    @Test
+    @DisplayName("a long heartbeat-only stream never reaches the event bound")
+    void aLongHeartbeatOnlyStreamNeverReachesTheEventBound() {
+        int bound = 64;
+        for (String beat : List.of(":ping\n", ":\r\n", ":keep-alive\r", ": hb\n\n", "\n")) {
+            // Given a parser with a bound of 64 bytes
+            List<Ev> events = new ArrayList<>();
+            SseParser parser = new SseParser(bound, e -> events.add(of(e)));
+            byte[] one = utf8(beat);
+
+            // When 200 000 heartbeats arrive, far more than 64 bytes in total, then one event
+            assertThatCode(() -> {
+                        for (int i = 0; i < 200_000; i++) {
+                            parser.feed(one, 0, one.length);
+                        }
+                    })
+                    .as("heartbeat %s", beat.replace("\r", "CR").replace("\n", "LF"))
+                    .doesNotThrowAnyException();
+            byte[] event = utf8("\ndata: after\n\n");
+            parser.feed(event, 0, event.length);
+
+            // Then only that event is delivered
+            assertThat(events).extracting(Ev::data).containsExactly("after");
+        }
+
+        // And one comment line over the bound still fails while it is being read
+        byte[] longComment = utf8(":" + "p".repeat(bound));
+        assertThatThrownBy(() -> new SseParser(bound, e -> {}).feed(longComment, 0, longComment.length))
+                .isInstanceOfSatisfying(HttpBodyLimitException.class, e -> assertThat(e.limitBytes())
+                        .isEqualTo(bound));
     }
 
     // --- NFR-002 ---

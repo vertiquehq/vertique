@@ -49,8 +49,8 @@ public interface HttpStream {
      *
      * <p>When the head's media type is not {@code text/event-stream}, the stream is cancelled at once:
      * {@link #completion()} fails with {@link dev.vertique.http.client.exception.SseProtocolException} and
-     * the exchange is reset. More raw bytes than {@code maxEventBytes} since the last dispatched event fail
-     * {@link #completion()} with {@link dev.vertique.http.client.exception.HttpBodyLimitException} (direction
+     * the exchange is reset. More raw bytes than {@code maxEventBytes} in the event being assembled (finished
+     * comment lines excluded, the current partial line included) fail {@link #completion()} with {@link dev.vertique.http.client.exception.HttpBodyLimitException} (direction
      * {@code EVENT}) and reset the exchange. {@link #completion()} succeeds once every event has been
      * delivered. Calling this method again returns the same stream.
      *
