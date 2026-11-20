@@ -59,13 +59,16 @@ public final class RestClientModuleEmitter {
      * <p>Each binding produces one {@code @Provides @Singleton} method. All methods are collected
      * into a single {@code GeneratedRestClientsModule} in the given package.
      *
-     * @param bindings    the non-empty list of REST client interface bindings; must not be
-     *                    {@code null} or empty
+     * @param allBindings the non-empty list of REST client interface bindings; must not be
+     *                    {@code null} or empty. A binding whose interface the module's package cannot
+     *                    reference is skipped with a mandatory warning
      * @param packageName the fully-qualified package name for the generated module; must not be
      *                    {@code null}
      */
-    public void emit(List<Binding> bindings, String packageName) {
-        if (hasSimpleNameCollisions(bindings)) {
+    public void emit(List<Binding> allBindings, String packageName) {
+        List<Binding> bindings =
+                ReferenceableBindings.filter(ctx, allBindings, packageName, Qualifier.REST_CLIENTS.moduleSimpleName);
+        if (bindings.isEmpty() || hasSimpleNameCollisions(bindings)) {
             return;
         }
         ClassName moduleName = ClassName.get(packageName, Qualifier.REST_CLIENTS.moduleSimpleName);
