@@ -11,6 +11,7 @@ import dev.vertique.core.context.ContextScopes;
 import dev.vertique.core.context.ContextValue;
 import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.mcp.lifecycle.McpErrorType;
+import dev.vertique.mcp.lifecycle.McpOutcome;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
@@ -163,6 +164,7 @@ class McpCompletionClaimIT {
     private static final String CLOSED_OBJECT_SCHEMA = "{\"type\":\"object\",\"additionalProperties\":false}";
     private static final String BEARER_SCHEME = "bearer";
     private static final String REROUTE_SCHEME = "reroute";
+    private static final String END_THEN_FAIL_SCHEME = "end-then-fail";
     private static final String BEARER_ALICE = "Bearer alice";
     private static final String BEARER_MALLORY = "Bearer mallory";
     private static final String UNTRUSTED_ORIGIN = "https://untrusted.example";
@@ -354,10 +356,10 @@ class McpCompletionClaimIT {
         // When: one admitted tools/call is sent to the MCP mount.
         HttpResponse<Buffer> response = awaitResponse("tools/call", callTool(OK_TOOL));
         boolean recorded = awaitBarrier(1);
+        completionListener.awaitCount(1, nextWaitNanos());
 
         // Then: the target decided the request's one rest-core event, and MCP, which opened an
-        // observation at begin, settled nothing. MCP's settlement hook runs before the barrier's end
-        // handler, so the "no MCP completion" assertion rests on the barrier.
+        // observation at begin, closed it as not settled by MCP without claiming the request.
         assertAll(
                 label,
                 block("witness", () -> {
@@ -374,7 +376,7 @@ class McpCompletionClaimIT {
                             .as("barrier recorded the rerouted request")
                             .isTrue();
                 }),
-                block("MCP", this::assertMcpOpenedButNeverSettled),
+                block("MCP", () -> assertMcpClosedNotSettledByMcp(expectedStatus)),
                 block("REST", () -> {
                     List<RestRequestCompletedEvent> events = restListener.events();
                     if (expectedEvent != EventKind.REST) {
@@ -455,10 +457,11 @@ class McpCompletionClaimIT {
         // When: one tools/call carries a credential the bearer handler rejects.
         HttpResponse<Buffer> response = awaitResponse("tools/call", callTool(OK_TOOL, BEARER_MALLORY));
         boolean recorded = awaitBarrier(1);
+        completionListener.awaitCount(1, nextWaitNanos());
 
-        // Then: the catch-all's failure handler, not MCP's, took the failure, so MCP never wrote or
-        // settled, and the unclaimed request has exactly one HTTP event. MCP's settlement hook returned on
-        // the succeeded outcome before the barrier recorded the request.
+        // Then: the catch-all's failure handler, not MCP's, took the failure, so MCP never wrote, and the
+        // unclaimed request has exactly one HTTP event. MCP's settlement hook closed the observation
+        // begin opened, once, as not settled by MCP.
         assertAll(
                 "failure taken by an earlier mount",
                 block("witness", () -> {
@@ -472,13 +475,45 @@ class McpCompletionClaimIT {
                             .isOne();
                     assertThat(recorded).as("barrier recorded the tools/call").isTrue();
                 }),
-                block("MCP", this::assertMcpOpenedButNeverSettled),
+                block("MCP", () -> assertMcpClosedNotSettledByMcp(401)),
                 block("REST", this::assertNoRestEvent),
                 block("HTTP", () -> {
                     List<String> events = httpListener.summaries();
                     assertThat(events).as("HTTP listener events").hasSize(1);
                     assertThat(events).as("HTTP listener events").containsExactly(summary(POST, MCP_PATH, 401));
                 }));
+    }
+
+    @Test
+    @DisplayName("a request whose response ends before its failure is settled once by MCP's failure handler")
+    void endedResponseThenFailureIsSettledOnceByMcpFailureHandler() throws Exception {
+        // Given: an authentication handler that ends the response and then throws, after begin.
+        startFixture(mcpMount(END_THEN_FAIL_SCHEME, new EndingThenFailingRouteAuthHandler()));
+
+        // When: one tools/call reaches that handler.
+        HttpResponse<Buffer> response = awaitResponse("tools/call", callTool(OK_TOOL));
+        completionListener.awaitCount(1, nextWaitNanos());
+        sendControl();
+        boolean recorded = awaitBarrier(2);
+
+        // Then: MCP's failure handler, not the end hook, settled the request: one rejected internal
+        // terminal and one completion. (rest-core's own end handler already ran inside end(), before the
+        // failure handler's claim, so it still reports the request; this test does not assert on that.)
+        assertAll(
+                "response ended before the failure",
+                block("witness", () -> {
+                    assertThat(response).as("tools/call response").isNotNull();
+                    assertThat(response.statusCode()).as("tools/call status").isEqualTo(200);
+                    assertThat(recorded).as("barrier recorded both requests").isTrue();
+                }),
+                block("MCP", () -> {
+                    assertMcpSettledOnce();
+                    McpRequestTerminalEvent terminal =
+                            observer.observation(0).terminals().get(0).event();
+                    assertThat(terminal.outcome()).as("terminal outcome").isEqualTo(McpOutcome.REJECTED);
+                    assertThat(terminal.errorType()).as("terminal error type").isEqualTo(McpErrorType.INTERNAL);
+                }),
+                block("REST", this::assertNoRestEvent));
     }
 
     @Test
@@ -1327,19 +1362,20 @@ class McpCompletionClaimIT {
                 .hasSize(1);
     }
 
-    /** One observation opened at {@code begin}, which received no terminal and no completion. */
-    private void assertMcpOpenedButNeverSettled() {
-        assertThat(observer.openCount()).as("MCP observations opened").isOne();
-        RecordedObservation observation = observer.observation(0);
-        assertThat(observation.terminals())
-                .as("terminals of the MCP observation")
-                .isEmpty();
-        assertThat(observation.completions())
-                .as("completions of the MCP observation")
-                .isEmpty();
-        assertThat(completionListener.events())
-                .as("MCP completion listener events")
-                .isEmpty();
+    /**
+     * One observation opened at {@code begin}, closed by exactly one terminal and one completion that
+     * record a cancelled, not-settled-by-MCP request answered by another handler with {@code status}.
+     */
+    private void assertMcpClosedNotSettledByMcp(int status) {
+        assertMcpSettledOnce();
+        McpRequestTerminalEvent terminal =
+                observer.observation(0).terminals().get(0).event();
+        assertThat(terminal.outcome()).as("outcome of the MCP terminal").isEqualTo(McpOutcome.CANCELLED);
+        assertThat(terminal.errorType()).as("error type of the MCP terminal").isEqualTo(McpErrorType.HTTP);
+        assertThat(terminal.httpStatus()).as("HTTP status of the MCP terminal").isEqualTo(status);
+        assertThat(completionListener.events().get(0).transportOutcome())
+                .as("transport outcome of the MCP completion")
+                .isEqualTo(McpTransportOutcome.WRITTEN);
     }
 
     private void assertNoRestEvent() {
@@ -1884,6 +1920,32 @@ class McpCompletionClaimIT {
         public Optional<Handler<RoutingContext>> createOptionalHandler() {
             return Optional.of(context -> {
                 context.reroute(target);
+            });
+        }
+    }
+
+    /**
+     * The one {@link RouteAuthHandler} of the {@code end-then-fail} scheme. Its optional handler ends
+     * the response and then throws, so the failure handler runs for a request whose response already
+     * ended.
+     */
+    private static final class EndingThenFailingRouteAuthHandler implements RouteAuthHandler {
+
+        @Override
+        public String schemeName() {
+            return END_THEN_FAIL_SCHEME;
+        }
+
+        @Override
+        public Handler<RoutingContext> createHandler() {
+            return context -> context.fail(401);
+        }
+
+        @Override
+        public Optional<Handler<RoutingContext>> createOptionalHandler() {
+            return Optional.of(context -> {
+                context.response().setStatusCode(200).end("ended");
+                throw new IllegalStateException("failed after the response ended");
             });
         }
     }

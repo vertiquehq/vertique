@@ -2998,7 +2998,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                     BranchToken cancelledBranch =
                             b.withClearedWait(BranchStatus.CANCELLED, b.currentStepId(), branchNow);
                     branchChain = branchChain
-                            .compose(v2 -> cancelBranchOwnedWaits(b, tx))
+                            .compose(v2 -> cancelBranchOwnedWaits(inst, b, tx))
                             .compose(v2 -> branchTokens
                                     .updateOptimistic(cancelledBranch, b.version(), tx)
                                     .mapEmpty());
@@ -3447,27 +3447,27 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     // ===================================================================================
 
     /**
-     * Cancels every open timer and every open task owned by the given branch, enforcing the
-     * lock-order invariant:
-     * {@code workflow_timers → workflow_tasks → workflow_branch_tokens → workflow_instances}.
+     * Cancels every open timer and every open task owned by the given branch. The caller holds the instance's
+     * execution lock; within it this helper takes the rows in the order
+     * {@code workflow_timers → workflow_tasks}, and the caller then updates the branch token.
      *
      * <p>This helper does NOT touch {@code workflow_branch_tokens}. Each call site is responsible
      * for the branch-token state transition that runs after this helper returns (e.g.,
      * {@link BranchStatus#SUPERSEDED} in {@link #supersedeNonTerminalSiblings} or
      * {@link BranchStatus#CANCELLED} in {@link #cancel(WorkflowInstanceId, String, SqlClient)}).
      *
-     * <p>Timers are cancelled first (by id, one per row lock) so that any concurrent
-     * timer command, which holds a {@code workflow_timers} lock before it calls into the engine,
-     * cannot race the branch-token update and deadlock.
-     *
      * <p>Package-visible for integration testing; not part of any public API.
      *
+     * <p>Each task it cancels gets a {@code TASK_CANCELLED} history entry and workflow event, as the
+     * task of a single-path instance does.
+     *
+     * @param inst the instance that owns the branch
      * @param branch the branch token identifying which timers and tasks to cancel
      * @param tx the active transaction
      * @return a {@link Future} that completes when all owned timers and tasks are in a terminal
      *     state
      */
-    Future<Void> cancelBranchOwnedWaits(BranchToken branch, SqlClient tx) {
+    Future<Void> cancelBranchOwnedWaits(WorkflowInstance inst, BranchToken branch, SqlClient tx) {
         // Step 1 — timers first (lock order: workflow_timers before workflow_tasks).
         return timerStore.findScheduledByBranchToken(branch.id(), tx).compose(timers -> {
             Future<Void> timerChain = Future.succeededFuture();
@@ -3488,7 +3488,16 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                         for (TaskRecord task : tasks) {
                             taskChain = taskChain
                                     .compose(v -> taskStore.markCancelled(task.taskId(), reason, now2, cancelActor, tx))
-                                    .mapEmpty();
+                                    .compose(transition -> taskLifecycle.appendTaskCancelledHistory(
+                                            inst, task.stepId(), task.taskId(), reason, cancelActor, now2, tx))
+                                    .compose(seq -> emitEvent(
+                                            inst,
+                                            WorkflowEventType.TASK_CANCELLED,
+                                            seq,
+                                            task.taskId(),
+                                            task.stepId(),
+                                            attrs("cause", reason, "cancelledBy", WorkflowActorMaps.toMap(cancelActor)),
+                                            tx));
                         }
                         return taskChain;
                     });

@@ -8,8 +8,13 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.vertique.kafka.config.KafkaConfig;
+import dev.vertique.services.ServiceContractRegistry;
+import dev.vertique.services.ServiceTargetResolver;
 import io.vertx.core.Future;
+import io.vertx.core.json.JsonObject;
 import java.util.List;
+import java.util.Set;
 import java.util.function.UnaryOperator;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -86,6 +91,29 @@ class KafkaConsumerBindingTargetTest {
             KafkaConsumerBinding<String> handling = binding(builder -> option.apply(builder.handler(HANDLER)));
             assertSame(HANDLER, handling.handler(), "a handler binding keeps its handler with the option");
         }
+    }
+
+    @Test
+    @DisplayName("registration refuses a binding that names neither a handler nor a target, naming the binding")
+    void registrationRefusesABindingNamingNeitherHandlerNorTarget() {
+        // Given: a binding that builds with no handler and no target
+        KafkaConsumerBinding<String> bare = binding(builder -> builder);
+        ServiceContractRegistry services = ServiceContractRegistry.build(Set.of(), KafkaTestSupport.configParser());
+
+        // When / Then: registration fails with a collected violation that names the binding
+        KafkaRegistrationException refusal = assertThrows(
+                KafkaRegistrationException.class,
+                () -> KafkaConsumerRegistry.build(
+                        Set.of(bare),
+                        Set.of(),
+                        services,
+                        ServiceTargetResolver.of(services),
+                        KafkaTestSupport.jsonSerdeRegistry(),
+                        KafkaConfig.fromConfig(
+                                new JsonObject().put("kafka", new JsonObject()), KafkaTestSupport.configParser())));
+        assertTrue(
+                refusal.violations().stream().anyMatch(violation -> violation.contains(BINDING_NAME)),
+                "a violation should name the binding, was: " + refusal.violations());
     }
 
     // --- Helpers ---

@@ -46,6 +46,10 @@ telemetry-library dependencies.
 The optional `vertique-micrometer-workflow` adapter consumes only the workflow executor observer SPI
 from `vertique-workflow-core` and the shared Micrometer registry, and no workflow module depends on it.
 
+The optional `vertique-micrometer-outbox` adapter consumes only the outbox publish observer SPI and the
+queue probe from `vertique-inbox-outbox-core` and the shared Micrometer registry, and no outbox module
+depends on it.
+
 `vertique-json-schema` owns transport-neutral Java `Type` -> JSON Schema 2020-12
 generation, built on Victools. It depends only on `vertique-core` plus Jackson,
 Victools, Jakarta Validation, and Swagger annotations — it has no dependency on
@@ -139,6 +143,12 @@ provider-neutral cache contracts and consumes `vertique-aop` and `vertique-core`
 the Caffeine and Redis provider modules depend on that neutral core. Shared Redis
 connection profiles and client lifecycle belong to `vertique-redis-core`, which is
 independent of cache-specific behavior so other Redis-backed capabilities can reuse it.
+
+`vertique-http-client` owns the governed outbound HTTP client: a Vert.x `WebClient` with a base
+URL, request header validation, and attempt-scoped calls. It consumes `vertique-core`,
+`vertique-resilience` and `vertx-web-client`, and adds no other third-party artifact. Outbound-HTTP
+consumers sit above it: `vertique-rest-client` builds its transport on it, while neither `vertique-core`
+nor `vertique-resilience` depends on it.
 
 `vertique-security-core` owns `AccessPolicy` and `@RequiresPolicy`. A policy is a public interface
 of direct security requirements. REST and the JAX-RS processor expand a selected policy into the

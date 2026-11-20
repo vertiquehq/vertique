@@ -144,8 +144,10 @@ public record ResourceMethodMeta(
      * @param source            where the parameter value comes from
      * @param type              the declared parameter type (raw class)
      * @param componentType     the element type for collection/multi-value parameters (nullable)
-     * @param genericType       the full generic type for body parameters, e.g. {@code List<MyPojo>}
-     *                          (nullable)
+     * @param genericType       the declared type resolved against the resource class, e.g. {@code
+     *                          List<MyPojo>}, for body, query, header and cookie parameters; a plain
+     *                          {@link Class} when the type has no type arguments, and {@code null} for every
+     *                          other source (nullable)
      * @param defaultValue      the value from {@code @DefaultValue} annotation (nullable); used when
      *                          the request supplies no value for this parameter
      * @param parameterMetadata the composed neutral parameter-metadata view supplying the parameter's

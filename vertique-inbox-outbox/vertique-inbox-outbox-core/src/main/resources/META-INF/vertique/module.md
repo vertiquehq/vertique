@@ -34,7 +34,7 @@ public interface InboxService {
 
 | Parameter | Description |
 |-----------|-------------|
-| `messageId` | Unique identifier for the inbound message (e.g., `x-message-id` header value) |
+| `messageId` | Unique identifier for the inbound message, chosen by the application — for example an id the producer carries in its own message header. The framework supplies no message id header: relay control stays out of `headers` (see [Header model](#header-model)) |
 | `source` | Logical source name (e.g., `"payments"`, `"orders"`) |
 | `tx` | Caller-provided transaction; dedup insert participates in this transaction |
 | `work` | Business logic to execute only for new messages |
@@ -46,7 +46,8 @@ Processing steps:
 
 ```java
 KafkaRecordContext record = KafkaRecordContext.current().orElseThrow();
-String messageId = Objects.requireNonNull(record.headers().asMap().get("x-message-id"), "x-message-id");
+// "event-id" is an application header the producer put in its OutboxEntry headers
+String messageId = Objects.requireNonNull(record.headers().asMap().get("event-id"), "event-id");
 
 pool.withTransaction(tx ->
     inboxService.processOnce(messageId, "payments", tx, () ->
@@ -101,6 +102,7 @@ Lombok `@Builder` value object describing a single outbound side-effect.
 | `destination` | Yes | Stable service target id, durable delayed-job target id, or Kafka topic |
 | `payload` | Yes | Jackson-serializable payload; stored as JSONB |
 | `headers` | No | Additional outbound metadata; may carry adapter-specific snapshot data. A `null` map given to the builder reads back as an empty map. Keys and values must not be `null`, and keys must not start with the reserved `vertique-` prefix — `OutboxService.publish` fails for such an entry. See [Header model](#header-model) |
+| `maxAttempts` | No | Attempts before the row dead-letters. An entry that sets none is stored with `inboxOutbox.relay.maxAttempts` (default `20`) when it is published through the PostgreSQL outbox service; an entry's own limit always wins, including `20`. `maxAttempts()` reads `20` for an entry without its own limit. The builder rejects a limit below `1` with `IllegalArgumentException`; reading one from JSON fails with a `JsonMappingException` caused by it |
 | `scheduledAt` | No | Time after which the relay may publish |
 | `availableAt` | No | Internal retry scheduling override; applications normally omit |
 | `scopeKey` | No | Scope label stored with the row; defaults to `"default"` (`ScopeKey.DEFAULT.value()`). `OutboxService.publish` validates it as a core `ScopeKey`. See [Scope](#scope) |
@@ -152,7 +154,7 @@ Domain record representing a persisted outbox row. Carries all relay state field
 | `eventType` | `String` | Event type |
 | `destination` | `String` | Stable target id or topic |
 | `destinationType` | `DestinationType` | Open value type; built-ins are `SERVICE`, `DELAYED_JOB`, `KAFKA`; adapter-declared types are also valid |
-| `payload` | `Object` | Deserialized payload (decoded from JSONB by `PayloadCodec`) |
+| `payload` | `Object` | Payload as read from JSONB storage — a `JsonObject`; a non-object payload is stored wrapped as `{"_v": …}`. Destination handlers decode it with `PayloadCodec.decode(JsonObject)` or `PayloadCodec.decode(JsonObject, Class)`, which unwrap the wrapper |
 | `headers` | `Map<String, String>` | Application/transport headers only (no framework keys); an unmodifiable copy — see [Header model](#header-model) |
 | `scheduledAt` | `Instant` | Optional scheduled publish time |
 | `availableAt` | `Instant` | Earliest publish time after backoff |
@@ -426,6 +428,24 @@ public class ExternalOutboxDestinationHandler implements OutboxDestinationHandle
     }
 }
 ```
+
+### `OutboxQueueProbe`
+
+Read-only SPI that returns the size of the outbox queue for monitoring. `sample()` returns a
+`Future<OutboxQueueSample>`; it claims, locks and changes nothing, and is meant to be called on a timer
+by one caller that does not start a new read while the last is running. The PostgreSQL module binds it to
+its repository; an application with its own `OutboxRepository` binds its own probe.
+
+`OutboxQueueSample` carries three components:
+
+| Component | Meaning |
+|-----------|---------|
+| `due` | `PENDING` entries whose scheduled time and retry delay have passed, whatever their destination type and whatever entries ahead of them in their aggregate |
+| `oldestDueAge` | How long the oldest due entry has been due; `Duration.ZERO` when none is due |
+| `deadLetter` | Entries in the `DEAD_LETTER` state |
+
+Entries waiting for a scheduled time or a retry delay are not counted as due. Entries in the `PROCESSING`
+state are neither due nor dead-lettered. `vertique-micrometer-outbox` publishes these figures as gauges.
 
 ### `OutboxPublishObserver`
 

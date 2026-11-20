@@ -271,6 +271,7 @@ class BranchTokenJoinStateTest {
             assertThat(f.status()).isNull();
             assertThat(f.waitType()).isNull();
             assertThat(f.forkStepId()).isNull();
+            assertThat(f.branchId()).isNull();
         }
 
         @Test
@@ -280,6 +281,17 @@ class BranchTokenJoinStateTest {
             assertThat(f.status()).isEqualTo(BranchStatus.RUNNING);
             assertThat(f.waitType()).isEqualTo(WaitType.SIGNAL);
             assertThat(f.forkStepId()).isEqualTo("fork");
+            assertThat(f.branchId())
+                    .as("the three-argument form leaves the branch id open")
+                    .isNull();
+        }
+
+        @Test
+        @DisplayName("constructed filter retains its branch id")
+        void constructedFilterRetainsBranchId() {
+            BranchTokenFilter f = new BranchTokenFilter(BranchStatus.RUNNING, WaitType.SIGNAL, "fork", "branch-a");
+            assertThat(f.branchId()).isEqualTo("branch-a");
+            assertThat(f).isEqualTo(new BranchTokenFilter(BranchStatus.RUNNING, WaitType.SIGNAL, "fork", "branch-a"));
         }
     }
 }

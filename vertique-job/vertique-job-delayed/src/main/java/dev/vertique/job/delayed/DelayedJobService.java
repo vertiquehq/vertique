@@ -44,6 +44,12 @@ import lombok.extern.slf4j.Slf4j;
  * {@code scheduled_at <= NOW()}, so future-scheduled jobs automatically become claimable at the
  * right time without a separate SCHEDULED state or timer-based state transition.
  *
+ * <p><strong>Idempotency key.</strong> A job that carries {@link DelayedJob#idempotencyKey()} is stored only when no
+ * unfinished execution of the same handler and scope already holds that key; otherwise the enqueue stores nothing
+ * and completes with the ID of the existing execution, and the new payload, schedule and context are discarded.
+ * The check is one {@code INSERT ... ON CONFLICT DO NOTHING}, so a held key never fails the enqueue and never
+ * aborts the transaction of {@link #enqueue(DelayedJob, SqlClient)}.
+ *
  * <p>The handler address stored on the {@link JobExecution} is resolved at enqueue time from the
  * {@link DelayedJobHandlerRegistrar}'s handler map. This ensures that the persisted address
  * matches the actual event bus address (from {@code ServiceMethodMeta.address()}) rather than
@@ -67,6 +73,9 @@ public class DelayedJobService {
      * Prevents handler names from being used as event-bus address injection vectors.
      */
     private static final Pattern VALID_HANDLER_NAME = Pattern.compile("^[a-zA-Z0-9._-]{1,128}$");
+
+    /** Longest idempotency key, the width of the {@code idempotency_key} column. */
+    private static final int MAX_IDEMPOTENCY_KEY_LENGTH = 255;
 
     /**
      * The identity-snapshot durable-context namespace. Mirrors
@@ -165,8 +174,9 @@ public class DelayedJobService {
      * time with zero jitter — no separate state-transition timer is needed.
      *
      * @param job the job to enqueue
-     * @return a future of the saved execution ID, or a failed future if the handler name is invalid
-     *         or unknown, if the scope key is {@code null} or invalid, or if a durable-context encoder rejects the enclosing capture operation
+     * @return a future of the saved execution ID, or of the existing execution's ID when the job's idempotency key
+     *         is held by an unfinished execution, or a failed future if the handler name is invalid
+     *         or unknown, if the scope key or idempotency key is {@code null} or invalid, or if a durable-context encoder rejects the enclosing capture operation
      *         (e.g. a durably-carried identity snapshot that would already be expired by
      *         {@link DelayedJob#runAt()}: doomed-expiry detection)
      */
@@ -202,8 +212,9 @@ public class DelayedJobService {
      *
      * @param job    the job to enqueue
      * @param client the SQL client (connection or transaction) to execute against
-     * @return a future of the saved execution ID, or a failed future if the handler name is invalid
-     *         or unknown, if the scope key is {@code null} or invalid, or if a durable-context encoder rejects the enclosing capture operation
+     * @return a future of the saved execution ID, or of the existing execution's ID when the job's idempotency key
+     *         is held by an unfinished execution, or a failed future if the handler name is invalid
+     *         or unknown, if the scope key or idempotency key is {@code null} or invalid, or if a durable-context encoder rejects the enclosing capture operation
      *         (e.g. a durably-carried identity snapshot that would already be expired by
      *         {@link DelayedJob#runAt()}: doomed-expiry detection)
      */
@@ -254,8 +265,9 @@ public class DelayedJobService {
      * snapshot to this row's carrier. See {@link #validatePremergedMetadata(DelayedJob)}.
      *
      * @param job the job to enqueue; {@link DelayedJob#metadata()} is persisted as-is
-     * @return a future of the saved execution ID, or a failed future if the handler name is invalid or
-     *         unknown, if the scope key is {@code null} or invalid, or if the pre-merged metadata carries the identity-snapshot namespace
+     * @return a future of the saved execution ID, or of the existing execution's ID when the job's idempotency key
+     *         is held by an unfinished execution, or a failed future if the handler name is invalid or
+     *         unknown, if the scope key or idempotency key is {@code null} or invalid, or if the pre-merged metadata carries the identity-snapshot namespace
      */
     public Future<UUID> enqueuePremerged(DelayedJob job) {
         try {
@@ -296,8 +308,9 @@ public class DelayedJobService {
      *
      * @param job    the job to enqueue; {@link DelayedJob#metadata()} is persisted as-is
      * @param client the SQL client (connection or transaction) to execute against
-     * @return a future of the saved execution ID, or a failed future if the handler name is invalid or
-     *         unknown, if the scope key is {@code null} or invalid, or if the pre-merged metadata carries the identity-snapshot namespace
+     * @return a future of the saved execution ID, or of the existing execution's ID when the job's idempotency key
+     *         is held by an unfinished execution, or a failed future if the handler name is invalid or
+     *         unknown, if the scope key or idempotency key is {@code null} or invalid, or if the pre-merged metadata carries the identity-snapshot namespace
      */
     public Future<UUID> enqueuePremerged(DelayedJob job, SqlClient client) {
         try {
@@ -322,12 +335,14 @@ public class DelayedJobService {
     // --- Validation ---
 
     /**
-     * Validates the handler name, {@code maxAttempts} and {@code scopeKey} fields of the given job.
+     * Validates the handler name, {@code maxAttempts}, {@code scopeKey} and {@code idempotencyKey} fields of the
+     * given job.
      *
      * @param job the job to validate
      * @throws IllegalArgumentException if the handler name is invalid, unknown, maxAttempts is
-     *                                  out of the [1, 1000] range, or the scope key is {@code null}
-     *                                  or not a valid {@link ScopeKey}
+     *                                  out of the [1, 1000] range, the scope key is {@code null}
+     *                                  or not a valid {@link ScopeKey}, or the idempotency key is
+     *                                  blank or longer than 255 characters
      */
     private void validateJob(DelayedJob job) {
         if (job.handler() == null || !VALID_HANDLER_NAME.matcher(job.handler()).matches()) {
@@ -343,6 +358,12 @@ public class DelayedJobService {
         }
         // ScopeKey messages never repeat the key, so the failure text stays free of caller-supplied scope text.
         ScopeKey.requireValid(job.scopeKey());
+        if (job.idempotencyKey() != null
+                && (job.idempotencyKey().isBlank() || job.idempotencyKey().length() > MAX_IDEMPOTENCY_KEY_LENGTH)) {
+            // The text never repeats the key: callers often derive it from business identifiers.
+            throw new IllegalArgumentException("idempotencyKey must not be blank and must be at most "
+                    + MAX_IDEMPOTENCY_KEY_LENGTH + " characters");
+        }
     }
 
     /**
@@ -494,6 +515,7 @@ public class DelayedJobService {
                 Map.of(), // parameters
                 Map.of(), // attributes
                 metadata,
-                boundScopeKey != null ? boundScopeKey : job.scopeKey());
+                boundScopeKey != null ? boundScopeKey : job.scopeKey(),
+                job.idempotencyKey());
     }
 }

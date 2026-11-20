@@ -4,6 +4,7 @@
 package dev.vertique.rest.jaxrs.validation;
 
 import dev.vertique.core.extension.OrderedExtension;
+import dev.vertique.rest.core.request.FileContentVerifier;
 import dev.vertique.rest.core.router.MountMeta;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 import io.vertx.core.Handler;

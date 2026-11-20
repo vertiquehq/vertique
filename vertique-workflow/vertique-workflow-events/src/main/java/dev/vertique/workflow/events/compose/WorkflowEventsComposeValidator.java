@@ -20,6 +20,9 @@ import java.util.stream.Collectors;
  *   <li>The app-supplied {@link WorkflowEventOutboxBinding} is non-null (effectively guaranteed by
  *       the record's compact constructor, which rejects null at construction time; documented here
  *       for completeness).</li>
+ *   <li>The binding's destination type is not {@link DestinationType#DELAYED_JOB}. A delayed job
+ *       needs a per-delivery handler name and schedule that a workflow event binding does not
+ *       carry, so every outbox row bound to one would fail permanently at delivery.</li>
  *   <li>The binding's {@link WorkflowEventOutboxBinding#destinationType()} has at least one
  *       registered {@link OutboxDestinationHandler} whose
  *       {@link OutboxDestinationHandler#destinationType()} matches. Without it, workflow
@@ -57,12 +60,23 @@ public final class WorkflowEventsComposeValidator implements ComposeValidator {
      *
      * @param handlers the full set of registered {@link OutboxDestinationHandler} instances
      * @param binding  the app-supplied outbox destination binding for workflow events
-     * @throws IllegalStateException if no registered handler's {@code destinationType()} matches
-     *                               the binding's chosen destination type
+     * @throws IllegalStateException if the binding targets a delayed job, or if no registered
+     *                               handler's {@code destinationType()} matches the binding's
+     *                               chosen destination type
      */
     @Inject
     public WorkflowEventsComposeValidator(Set<OutboxDestinationHandler> handlers, WorkflowEventOutboxBinding binding) {
+        validateDestinationSupported(binding.destinationType());
         validateHandlerPresent(handlers, binding.destinationType());
+    }
+
+    private static void validateDestinationSupported(DestinationType destinationType) {
+        if (DestinationType.DELAYED_JOB.equals(destinationType)) {
+            throw new IllegalStateException("vertique-workflow-events cannot route workflow events to a "
+                    + "DELAYED_JOB destination: a delayed job needs a handler name and schedule per delivery that "
+                    + "a WorkflowEventOutboxBinding does not carry, so every outbox row would fail at delivery. "
+                    + "Use SERVICE or KAFKA.");
+        }
     }
 
     /**

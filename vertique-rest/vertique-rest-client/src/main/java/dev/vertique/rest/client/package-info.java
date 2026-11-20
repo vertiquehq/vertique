@@ -3,7 +3,7 @@
 
 /**
  * Declarative REST client module that creates type-safe HTTP client proxies from JAX-RS-annotated
- * interfaces, backed by Vert.x WebClient.
+ * interfaces, backed by a governed Vert.x WebClient.
  *
  * <p>The primary entry point is {@link dev.vertique.rest.client.RestClientFactory}, which
  * creates proxy instances from interfaces annotated with

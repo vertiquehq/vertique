@@ -10,7 +10,7 @@ import java.util.List;
  * Programmatic validation API that validates objects against Jakarta Bean Validation
  * constraints and produces structured {@link ViolationDetail} results.
  *
- * <p>Use this for service-layer or event-bus-handler validation where HTTP context
+ * <p>Use this for programmatic validation in application code where HTTP context
  * is not available:
  * <pre>{@code
  * @Inject BeanValidator validator;
@@ -24,7 +24,7 @@ import java.util.List;
  * <p>For non-throwing validation, use {@link #check(Object)} which returns the
  * violation details list.
  *
- * <p>For method-level parameter validation (used by the REST and services layers), use
+ * <p>For method-level parameter validation (used by the REST layer), use
  * {@link #checkParameters} or {@link #validateParameters}.
  *
  * <p>Implementations are provided by the {@code validation} module.

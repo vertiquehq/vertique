@@ -18,8 +18,8 @@ import jakarta.ws.rs.core.Response;
  * hooks are invoked with both the original {@link jakarta.ws.rs.core.Response} and the
  * encoded {@link SerializedBody} for observability.
  *
- * <p>Contributed as a singleton via Dagger; override for entirely custom
- * serialization orchestration.
+ * <p>Contributed as a singleton by {@code RestModule}. Add body formats by contributing a
+ * {@link ResponseBodyEncoder}.
  */
 public interface ResponseSerializer {
 

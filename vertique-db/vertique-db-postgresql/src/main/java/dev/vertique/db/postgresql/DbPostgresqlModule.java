@@ -13,6 +13,7 @@ import dev.vertique.core.health.Readiness;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.PoolConnectHandler;
 import io.vertx.core.Vertx;
+import io.vertx.core.net.NetClientOptions;
 import io.vertx.pgclient.PgBuilder;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
@@ -85,13 +86,27 @@ public abstract class DbPostgresqlModule {
                 .setPoolCleanerPeriod(config.poolCleanerPeriodMs())
                 .setEventLoopSize(config.eventLoopSize());
 
-        var builder =
-                PgBuilder.pool().with(poolOptions).connectingTo(connectOptions).using(vertx);
+        var builder = PgBuilder.pool()
+                .with(poolOptions)
+                .with(netClientOptions(config))
+                .connectingTo(connectOptions)
+                .using(vertx);
 
         connectHandler.ifPresent(handler ->
                 builder.withConnectHandler(conn -> handler.handle(conn).onComplete(ar -> conn.close())));
 
         return builder.build();
+    }
+
+    /**
+     * Builds the transport options of the pool. Only the TCP connect timeout is set here; SSL
+     * settings stay on the connect options.
+     *
+     * @param config the pool configuration
+     * @return transport options carrying {@code connectTimeoutMs}
+     */
+    static NetClientOptions netClientOptions(DbPoolConfig config) {
+        return new NetClientOptions().setConnectTimeout(config.connectTimeoutMs());
     }
 
     /**

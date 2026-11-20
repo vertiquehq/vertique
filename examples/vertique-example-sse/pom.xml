@@ -46,6 +46,11 @@ SPDX-License-Identifier: EUPL-1.2
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-application</artifactId>
         </dependency>
+        <!-- Governed HTTP client: the integration test reads the job feed through a factory client -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-http-client</artifactId>
+        </dependency>
         <dependency>
             <groupId>jakarta.annotation</groupId>
             <artifactId>jakarta.annotation-api</artifactId>

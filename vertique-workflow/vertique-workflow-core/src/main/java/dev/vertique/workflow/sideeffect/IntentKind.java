@@ -10,9 +10,11 @@ package dev.vertique.workflow.sideeffect;
  * implementation owns each intent. Exactly one recorder must be registered per kind; the
  * {@code RecorderRouter} enforces this invariant at construction time.
  *
- * <p>Cycle 1 only handles {@link #SERVICE} intents. {@link #DELAYED_JOB} support is added in
- * cycle 2. {@link #WORKFLOW_EVENT} is added in cycle 4. Workflow timers are not side-effect intents;
- * the engine records them as timer commands.
+ * <p>The workflow modules ship a recorder for {@link #SERVICE} intents and one for
+ * {@link #WORKFLOW_EVENT} intents. {@link #DELAYED_JOB} and {@link #KAFKA} have no shipped recorder:
+ * an intent of either kind fails routing, and the transition rolls back, unless the application
+ * registers a recorder for that kind or declares the kind optional. Workflow timers are not
+ * side-effect intents; the engine records them as timer commands.
  */
 public enum IntentKind {
     /**
@@ -22,17 +24,17 @@ public enum IntentKind {
     SERVICE,
 
     /**
-     * Intent is delivered as a delayed job (cycle 2+). Not handled by the cycle-1 engine.
+     * Intent is delivered as a delayed job. No recorder for this kind ships with the workflow modules.
      */
     DELAYED_JOB,
 
     /**
-     * Intent is delivered to a Kafka topic (cycle 2+). Not handled by the cycle-1 engine.
+     * Intent is delivered to a Kafka topic. No recorder for this kind ships with the workflow modules.
      */
     KAFKA,
 
     /**
-     * Intent publishes a durable workflow lifecycle event via the outbox (cycle 4+). Handled by
+     * Intent publishes a durable workflow lifecycle event via the outbox. Handled by
      * the event recorder in {@code vertique-workflow-events}.
      */
     WORKFLOW_EVENT

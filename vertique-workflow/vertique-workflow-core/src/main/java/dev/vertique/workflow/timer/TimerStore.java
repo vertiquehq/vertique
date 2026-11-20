@@ -55,17 +55,19 @@ public interface TimerStore<TX> {
     Future<Optional<TimerRecord>> findById(UUID timerId, TX tx);
 
     /**
-     * Locks the timer row identified by {@code timerId} for update, returning the record if it
-     * is in {@link TimerStatus#SCHEDULED} status and therefore eligible for firing.
+     * Locks the timer row identified by {@code timerId} for update and returns the record
+     * whatever its status.
      *
-     * <p>Returns {@link Optional#empty()} when the timer does not exist or is already in a
-     * terminal status ({@code FIRED}, {@code CANCELLED}, or {@code FAILED}). The lock prevents
-     * concurrent fire attempts from applying the same timer twice.
+     * <p>Returns {@link Optional#empty()} only when the timer does not exist. A timer in
+     * {@code FIRED}, {@code CANCELLED} or {@code FAILED} status is returned like a
+     * {@link TimerStatus#SCHEDULED} one; the caller checks {@link TimerRecord#status()} and fires only a
+     * {@code SCHEDULED} timer. An implementation must not filter by status. The lock prevents concurrent fire
+     * attempts from applying the same timer twice.
      *
      * @param timerId the timer to lock
      * @param tx the active transaction context
-     * @return a {@link Future} containing the locked timer record, or empty if the timer is not
-     *     in {@code SCHEDULED} status
+     * @return a {@link Future} containing the locked timer record in its current status, or empty if
+     *     the timer does not exist
      */
     Future<Optional<TimerRecord>> lockForFiring(UUID timerId, TX tx);
 

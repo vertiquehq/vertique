@@ -236,10 +236,11 @@ public final class DurableContextPropagator {
      * Decodes metadata from the durable boundary's native carrier and authoritatively installs
      * typed bindings plus raw {@link DurablePropagationMetadata} into {@link ContextHolder}.
      *
-     * <p>Always binds {@link DurablePropagationMetadata} first. Then
-     * invokes each registered decoder with the full {@code metadata} document. Successfully decoded
-     * values are added to the binding map. Decode failures are logged at WARN level and do not
-     * prevent other decoders from binding their values.
+     * <p>Always binds {@link DurablePropagationMetadata}. Invokes each registered decoder with the
+     * full {@code metadata} document; a decoder receives the raw metadata and a decode context, not
+     * a holder value. Successfully decoded values are added to the same binding set as the raw
+     * metadata, and the whole set is installed together once every decoder has run. Decode failures
+     * are logged at WARN level and do not prevent other decoders from binding their values.
      *
      * <p><b>Authoritative semantics.</b> The metadata represents the full durable
      * snapshot taken at the boundary's producer site. Every type registered with the

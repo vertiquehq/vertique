@@ -170,11 +170,22 @@ trim() {
     printf '%s' "$value"
 }
 
-scanned_files=0
+# --- Candidate selection ---
+
+# Every pattern matches raw text, and each needs one of these literals: .listen(
+# (patterns 1 and 5), wireMockConfig() (2), .put("port", or .port(0) (3),
+# setPort(0) (4), 0.0.0.0 (5). A file holding none of them cannot violate the
+# policy, so one grep over the whole list selects the files the per-file scan
+# below must read, instead of spawning its matchers for every test source.
+# `|| true`: grep exits 1 when no file in a batch matches.
+{ tr '\n' '\0' < "$work_dir/test-sources.txt" \
+    | xargs -0 grep -lF -e '.listen(' -e 'wireMockConfig()' -e '.put("port",' -e '.port(0)' -e 'setPort(0)' -e '0.0.0.0' -- \
+    || true; } | LC_ALL=C sort > "$work_dir/candidates.txt"
+
+scanned_files="$(wc -l < "$work_dir/test-sources.txt" | tr -d '[:space:]')"
 
 while IFS= read -r source_file; do
     [[ -n "$source_file" ]] || continue
-    scanned_files=$((scanned_files + 1))
     relative_path="${source_file#"$repository_root"/}"
 
     # Pattern 1: every bare .listen(0) call site is reported.
@@ -216,7 +227,7 @@ while IFS= read -r source_file; do
             report_failure "$relative_path line $line_number sets .port(0) with no .host(...) on the same or the two adjacent lines; pin .host(\"127.0.0.1\"): $(trim "$offending_line")"
         fi
     done < <(unpinned_port_selectors "$source_file")
-done < "$work_dir/test-sources.txt"
+done < "$work_dir/candidates.txt"
 
 # --- Verdict ---
 

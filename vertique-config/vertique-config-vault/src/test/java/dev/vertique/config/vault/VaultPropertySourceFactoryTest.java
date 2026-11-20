@@ -150,20 +150,6 @@ class VaultPropertySourceFactoryTest {
         }
 
         @Test
-        @DisplayName("throws for unknown auth method; method string appears in message")
-        void unknownAuthMethodThrows() {
-            JsonObject config = new JsonObject()
-                    .put("address", "http://vault:8200")
-                    .put("auth", new JsonObject().put("method", "some-unknown-method"))
-                    .put("paths", new JsonArray().add(new JsonObject().put("path", "secret/app")));
-            VaultPropertySourceFactory factory = factoryWithStub(Map.of());
-            var ex = assertThrows(ConfigPropertySourceException.class, () -> factory.create("src", config));
-            assertTrue(
-                    ex.getMessage().contains("some-unknown-method"),
-                    "unknown method string is structural, safe to include in error");
-        }
-
-        @Test
         @DisplayName("throws for approle when roleId is missing")
         void appRoleMissingRoleIdThrows() {
             JsonObject config = new JsonObject()
@@ -719,6 +705,169 @@ class VaultPropertySourceFactoryTest {
             } finally {
                 rootLogger.detachAppender(appender);
                 appender.stop();
+            }
+        }
+    }
+
+    // --- Failure type ---
+
+    @Nested
+    @DisplayName("failure type")
+    class FailureType {
+
+        @Test
+        @DisplayName("an unreadable Kubernetes JWT file fails create with ConfigPropertySourceException")
+        void unreadableKubernetesJwtFileFailsAsConfigPropertySourceException() {
+            JsonObject config = minimalConfig("http://vault:8200", "secret/app", "")
+                    .put(
+                            "auth",
+                            new JsonObject()
+                                    .put("method", "kubernetes")
+                                    .put("role", "app")
+                                    .put("jwtPath", "/nonexistent/vault-jwt-token"));
+
+            assertThrows(
+                    ConfigPropertySourceException.class, () -> new VaultPropertySourceFactory().create("src", config));
+        }
+
+        @Test
+        @DisplayName("a non-object auth value fails create with ConfigPropertySourceException")
+        void nonObjectAuthFailsAsConfigPropertySourceException() {
+            JsonObject config =
+                    minimalConfig("http://vault:8200", "secret/app", "").put("auth", "token");
+
+            assertThrows(ConfigPropertySourceException.class, () -> factoryWithStub(Map.of())
+                    .create("src", config));
+        }
+
+        @Test
+        @DisplayName("a non-array paths value fails create with ConfigPropertySourceException")
+        void nonArrayPathsFailsAsConfigPropertySourceException() {
+            JsonObject config =
+                    new JsonObject().put("address", "http://vault:8200").put("paths", "secret/app");
+
+            assertThrows(ConfigPropertySourceException.class, () -> factoryWithStub(Map.of())
+                    .create("src", config));
+        }
+    }
+
+    // --- Blank values count as absent; failures carry no value ---
+
+    @Nested
+    @DisplayName("blank values and value-free failures")
+    class BlankValuesAndValueFreeFailures {
+
+        private VaultConnectionSettings capture(JsonObject config) {
+            VaultConnectionSettings[] captured = new VaultConnectionSettings[1];
+            new VaultPropertySourceFactory(
+                            settings -> {
+                                captured[0] = settings;
+                                return path -> Map.of();
+                            },
+                            key -> "VAULT_TOKEN".equals(key) ? STUB_VAULT_TOKEN : null)
+                    .create("src", config);
+            return captured[0];
+        }
+
+        private JsonObject base() {
+            return minimalConfig("http://vault:8200", "secret/app", "");
+        }
+
+        @Test
+        @DisplayName("a blank auth.method counts as absent and selects token auth")
+        void blankAuthMethodSelectsToken() {
+            JsonObject config = base().put("auth", new JsonObject().put("method", "  "));
+
+            assertInstanceOf(VaultAuthSettings.Token.class, capture(config).authSettings());
+        }
+
+        @Test
+        @DisplayName("an explicit null auth.method counts as absent and selects token auth")
+        void nullAuthMethodSelectsToken() {
+            JsonObject config = base().put("auth", new JsonObject().putNull("method"));
+
+            assertInstanceOf(VaultAuthSettings.Token.class, capture(config).authSettings());
+        }
+
+        @Test
+        @DisplayName("a blank auth.jwtPath counts as absent and takes the service-account default")
+        void blankJwtPathTakesDefault() {
+            JsonObject config = base().put(
+                            "auth",
+                            new JsonObject()
+                                    .put("method", "kubernetes")
+                                    .put("role", "app")
+                                    .put("jwtPath", " "));
+
+            var k = (VaultAuthSettings.Kubernetes) capture(config).authSettings();
+
+            assertEquals("/var/run/secrets/kubernetes.io/serviceaccount/token", k.jwtPath());
+        }
+
+        @Test
+        @DisplayName("an explicit null auth.jwtPath counts as absent and takes the service-account default")
+        void nullJwtPathTakesDefault() {
+            JsonObject config = base().put(
+                            "auth",
+                            new JsonObject()
+                                    .put("method", "kubernetes")
+                                    .put("role", "app")
+                                    .putNull("jwtPath"));
+
+            var k = (VaultAuthSettings.Kubernetes) capture(config).authSettings();
+
+            assertEquals("/var/run/secrets/kubernetes.io/serviceaccount/token", k.jwtPath());
+        }
+
+        @Test
+        @DisplayName("a blank namespace counts as absent")
+        void blankNamespaceIsAbsent() {
+            assertEquals(null, capture(base().put("namespace", "   ")).namespace());
+        }
+
+        @Test
+        @DisplayName("an unknown auth.method fails naming the path and does not echo the value")
+        void unknownAuthMethodDoesNotEchoValue() {
+            JsonObject config = base().put("auth", new JsonObject().put("method", "some-unknown-method"));
+
+            var ex = assertThrows(ConfigPropertySourceException.class, () -> factoryWithStub(Map.of())
+                    .create("src", config));
+
+            assertTrue(ex.getMessage().contains("auth.method"), "error must name the path: " + ex.getMessage());
+            assertFalse(ex.getMessage().contains("some-unknown-method"), "error must not echo the value");
+        }
+
+        @Test
+        @DisplayName("a rejected timeout names the field and does not echo the number")
+        void rejectedTimeoutDoesNotEchoNumber() {
+            JsonObject config = base().put("openTimeoutMs", -987654);
+
+            var ex = assertThrows(ConfigPropertySourceException.class, () -> factoryWithStub(Map.of())
+                    .create("src", config));
+
+            assertTrue(ex.getMessage().contains("openTimeoutMs"), "error must name the field: " + ex.getMessage());
+            assertFalse(ex.getMessage().contains("987654"), "error must not echo the value");
+        }
+
+        @Test
+        @DisplayName("an unreadable Kubernetes JWT file fails naming auth.jwtPath without echoing the path")
+        void unreadableJwtFileDoesNotEchoPath() {
+            String configured = "/nonexistent/vault-jwt-token";
+            JsonObject config = base().put(
+                            "auth",
+                            new JsonObject()
+                                    .put("method", "kubernetes")
+                                    .put("role", "app")
+                                    .put("jwtPath", configured));
+
+            var ex = assertThrows(
+                    ConfigPropertySourceException.class, () -> new VaultPropertySourceFactory().create("src", config));
+
+            assertTrue(ex.getMessage().contains("auth.jwtPath"), "error must name the path: " + ex.getMessage());
+            for (Throwable t = ex; t != null; t = t.getCause()) {
+                assertFalse(
+                        String.valueOf(t.getMessage()).contains("vault-jwt-token"),
+                        "no message in the chain may echo the configured path: " + t.getMessage());
             }
         }
     }

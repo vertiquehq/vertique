@@ -17,8 +17,7 @@ import jakarta.annotation.Nullable;
  *   <li>{@link #onRequest} — called after the request is built, before it is sent</li>
  *   <li>{@link #onResponse} — called after any HTTP response is received</li>
  *   <li>{@link #onError} — called on any failure (transport or response)</li>
- *   <li>{@link #onAttemptCompleted} — called once per physical HTTP attempt, before the
- *       retry/recovery decision</li>
+ *   <li>{@link #onAttemptCompleted} — called once per physical HTTP attempt when it completes</li>
  * </ul>
  *
  * <h3>Async handlers (can affect outcome)</h3>
@@ -96,20 +95,18 @@ public interface RestClientInterceptor extends OrderedExtension {
     /**
      * Synchronous observer fired when a physical HTTP attempt COMPLETES (its send future resolves) —
      * including attempts that get retried by the circuit breaker and attempts of a recovery re-dispatch.
-     * It fires from inside the send, BEFORE the retry/recovery decision, so every wire attempt that
-     * completes is observed (unlike {@link #onResponse}, which fires only when a response is received —
+     * It fires from inside the send, so every wire attempt that completes is observed (unlike {@link #onResponse}, which fires only when a response is received —
      * never on a transport failure — and {@link #onError}, which fires once after all retries). Suitable
      * for per-attempt audit / metrics.
      * Exactly one of {response, error} is non-null on the {@code completion}. Exceptions thrown by
      * this callback are caught, logged, and swallowed; they do not affect the enclosing operation.
      * Implementations MUST NOT block.
      *
-     * <p><strong>Circuit-breaker caveat:</strong> this hook observes <em>physical send completions</em>,
-     * not breaker-level outcomes. If the call runs inside a circuit breaker whose own timeout is shorter
-     * than the HTTP timeout, the breaker may fail the call before the send resolves — the send then fires
-     * this hook <em>late</em> (recording the physical attempt that did complete, after the caller already
-     * saw the breaker failure). If the breaker is <em>open</em>, the call is short-circuited with no send,
-     * so no attempt fires. For breaker-level attempt accounting, observe the breaker itself.
+     * <p>When an attempt reaches its timeout, the exchange is reset and the connection released, and the
+     * hook is notified once with a {@link java.util.concurrent.TimeoutException}, possibly after the
+     * retry or recovery decision. A method whose timeout is disabled is never reset. If a circuit breaker
+     * is <em>open</em>, the call is short-circuited with no send, so no attempt fires. For breaker-level
+     * attempt accounting, observe the breaker itself.
      *
      * @param request    the request context for this attempt
      * @param completion the attempt's completion facts (response/error, callId, ordinal, duration, completedAt, target)

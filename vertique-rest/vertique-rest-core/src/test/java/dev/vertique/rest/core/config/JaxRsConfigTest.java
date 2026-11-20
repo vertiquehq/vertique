@@ -66,4 +66,13 @@ class JaxRsConfigTest {
         assertEquals(250L, parsed.fileContentVerifierDeadlineMs());
         assertEquals("aggregate", parsed.validationMode(), "other keys keep their defaults");
     }
+
+    @Test
+    @DisplayName("a removed autoEtag key is ignored like any unknown jaxrs key")
+    void removedAutoEtagKeyIsIgnored() throws Exception {
+        JaxRsConfig parsed = new ObjectMapper()
+                .readValue("{\"autoEtag\": true, \"validationMode\": \"failFast\"}", JaxRsConfig.class);
+
+        assertEquals("failFast", parsed.validationMode(), "the other keys still bind");
+    }
 }

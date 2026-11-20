@@ -36,8 +36,7 @@ Pair it with:
 |---|---|
 | `dev.vertique:vertique-rest-auth-jwt` | Ready-made bearer-token `SecuritySchemeHandler` and `RouteAuthHandler` |
 | `dev.vertique:vertique-security-core` | The typed `SecurityContext` model, `AuthorizationClaims`, `@RequiresAction`, `AuthorizationPolicy` |
-| `dev.vertique:vertique-security-runtime` | `SecurityEventEmitter` and the `SecurityEventObserver` multibinding |
-| `dev.vertique:vertique-security-authz` | The action `Authorizer` engine that `@RequiresAction` requires |
+| `dev.vertique:vertique-security-runtime` | `SecurityEventEmitter`, the `SecurityEventObserver` multibinding, and `DefaultAuthorizer`, the action `Authorizer` engine that `@RequiresAction` requires |
 
 ---
 
@@ -699,7 +698,7 @@ What the two modules put in the graph, and where each instance comes from:
 | `AuthEnforcementCapability` | `AuthModule` | the install signal the route registrar checks before accepting restrictive annotations |
 | `CredentialRejectionReporter` | `AuthModule` | `DefaultCredentialRejectionReporter` |
 | `ChannelIdentityManager` | `AuthModule` | `DefaultChannelIdentityManager` |
-| `RequestOriginConfig` | `AuthModule` | `RequestOriginConfig.defaults()` |
+| `RequestOriginCapturer` | `AuthModule` | built from the application's `RequestOriginConfig` when it binds one, else from `RequestOriginConfig.defaults()`; `@Singleton` |
 | `Set<OperationHandlerContributor>` | `AuthModule` | identity resolution, authorization, and action-gate authentication contributors |
 | `Set<Middleware>` | `AuthModule` | `OriginCaptureMiddleware` |
 
@@ -720,9 +719,11 @@ application with `Resilience.create(vertx)` and not per enforcer.
 |---|---|---|
 | `SecurityClaimMapper` | three-convention JWT mapper | `@Provides SecurityClaimMapper` |
 | `AuthorizationDecisionPoint` | claims-based evaluation | `@Provides AuthorizationDecisionPoint` |
-| `CredentialRejectionReporter` | assembles and emits `CredentialRejectedEvent` | `@Provides CredentialRejectionReporter` |
-| `ChannelIdentityManager` | in-memory registry with expiry timers | `@Binds ChannelIdentityManager` |
 | `RequestOriginConfig` | trust no proxy | `@Provides @Singleton RequestOriginConfig` |
+
+`RequestOriginConfig` is the only origin binding an application replaces. `CredentialRejectionReporter` and
+`ChannelIdentityManager` are fixed `AuthModule` bindings, so supplying a second binding of either type fails
+the Dagger build with a duplicate binding.
 
 ---
 
@@ -759,7 +760,7 @@ public Future<Response> handle(jakarta.ws.rs.core.SecurityContext sc) { ... }
 
 | Annotation | Effect |
 |---|---|
-| `@DenyAll` | Always 403; wins over every other annotation |
+| `@DenyAll` | Always 403. A method-level `@DenyAll` overrides a class-level `@PermitAll`, `@RolesAllowed` or `@Authorized`. At the same level, `@DenyAll` together with `@PermitAll`, `@RolesAllowed` or `@Authorized` is a conflict, and so is `@DenyAll` together with `@RequiresAction` even across levels. A conflict fails the build (generated descriptors) or startup (reflective scan) |
 | `@PermitAll` | No authorization handler installed |
 | `@RolesAllowed("a", "b")` | OR — any one listed role is sufficient |
 | `@Authorized(scopes = "write")` | The listed scope is required |
@@ -777,6 +778,10 @@ public Future<Response> handle(jakarta.ws.rs.core.SecurityContext sc) { ... }
 
 `RequestOriginConfig` is a Dagger binding, not a config-file section. The default trusts no proxy,
 so `clientIp` always equals `remoteIp` and forwarded scheme and host headers are ignored.
+
+Addresses in `remoteIp`, `clientIp` and `forwardedFor` are normalized: an IPv4-mapped IPv6 address
+becomes plain IPv4, and any other IPv6 address is written in its RFC 5952 canonical form
+(`2001:db8::1`: lowercase, no leading zeros, longest zero run compressed).
 
 ```java
 @Provides @Singleton
@@ -811,6 +816,10 @@ Resolution rules:
   `X-Forwarded-For` chain (at least one accepted entry, and not rejected by `forwardedForCap`).
   A trusted proxy that sends `X-Forwarded-Proto` or `X-Forwarded-Host` without an `X-Forwarded-For`
   chain is ignored for scheme and host: both come from the connection.
+- A honoured `X-Forwarded-Proto` must be `http` or `https` (any case, stored lower-case); a
+  honoured `X-Forwarded-Host` must be a host name, IPv4 literal or bracketed IPv6 literal with an
+  optional `:port`. A blank, malformed or list-valued header is treated as absent, so that part
+  (scheme or host) comes from the connection while the rest of the origin is unaffected.
 
 A non-empty `trustedProxyCidrs` is what makes forwarded headers trustworthy. Setting
 `trustForwardedScheme` or `trustForwardedHost` without it changes nothing, and neither flag has an
@@ -902,7 +911,8 @@ There is no warn-only mode. Every validation failure stops startup.
 | 401 | — | Credential verification failed; the authentication handler reported and failed the request |
 | 401 | `AUTHENTICATION_REQUIRED` | No `SecurityContext` bound, or an anonymous actor on an `AuthenticatedOnly` or `Constrained` route |
 | 403 | `DENY_ALL` | `@DenyAll` |
-| 403 | the decision's own code | The decision point denied |
+| 401 | the decision's own code | The decision point denied a request whose identity is anonymous. The decision point still runs first, so an application that permits anonymous callers is unaffected |
+| 403 | the decision's own code | The decision point denied an authenticated identity |
 | 403 | `INTERNAL_AUTHZ_ERROR` | The decision point or `Authorizer` threw synchronously, returned a `null` future, or resolved to a `null` decision — a contract violation, fail-closed |
 | 503 | `INTERNAL_AUTHZ_ERROR` or `AUTHORITY_RESOLUTION_FAILED` | The decision point or `Authorizer` could not answer: it returned a failed future (with any exception), exceeded the configured [gate deadline](#authorization-gate-deadline-authorizationgateconfig), the `Resilience` runtime had closed, or it *returned* a decision whose reason code is `INTERNAL_AUTHZ_ERROR` (an engine-internal error) or `AUTHORITY_RESOLUTION_FAILED` (a Mode-2 principal-authority resolution failed or timed out) — fail-closed. The event keeps the decision's own reason code. The problem detail is the generic `Authorization is temporarily unavailable`, with a `Retry-After` of the gate deadline rounded up to whole seconds; the cause is logged, never returned |
 | 503 | — | A provider failed during the opt-in [Vert.x authorization import](#vertx-authorization-import-opt-in) — fail-closed: the `SecurityContext` is never bound and no partially imported claim is observable. The problem detail is the generic `Authorization is temporarily unavailable`; the failing provider id is logged, never returned |
@@ -960,6 +970,7 @@ code, plus `rolesSatisfied`, `actionSatisfied`, and `actionEvaluated` in `safeAt
 | `dev.vertique:vertique-security-runtime` | `SecurityEventEmitter`, `SecurityEventsModule`, `IdentitySnapshotCapture` |
 | `dev.vertique:vertique-context` | `ContextHolder` scopes and the service-dispatch context encoder/decoder seam |
 | `dev.vertique:vertique-logging` | MDC key binding for `userId`, `clientId`, and `authMethod` |
+| `dev.vertique:vertique-resilience` | The `Resilience` runtime whose timeout-only pipeline bounds the authorization gate |
 | `io.vertx:vertx-auth-common` | `AuthenticationHandler`, `User`, `AuthorizationProvider` |
 | `jakarta.ws.rs:jakarta.ws.rs-api` | The `jakarta.ws.rs.core.SecurityContext` bridge and the Jakarta security annotations |
 | `com.google.dagger:dagger` | Module wiring and multibindings |

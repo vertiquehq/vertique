@@ -10,6 +10,7 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.InboundContextInitializer;
 import dev.vertique.security.IdentityReconstruction;
+import dev.vertique.security.ServiceIdentityResolver;
 import jakarta.inject.Singleton;
 import java.util.Optional;
 

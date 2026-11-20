@@ -13,7 +13,8 @@ import java.lang.annotation.Target;
  *
  * <p>The annotated method is discovered at startup by {@link DelayedJobHandlerRegistrar}, which
  * scans service implementations via the {@link dev.vertique.services.ServiceContractRegistry}.
- * The handler name in the annotation maps to the event bus address {@code job.delayed.<name>}.
+ * The handler name in the annotation is the name jobs are enqueued under; a job is dispatched to
+ * the event bus address of the annotated service operation.
  *
  * <p>Place this annotation on the <em>implementation</em> method, not on the contract interface.
  *
@@ -39,7 +40,8 @@ import java.lang.annotation.Target;
 public @interface DelayedJobHandlerMethod {
 
     /**
-     * The handler name. Used as the event bus address suffix: {@code job.delayed.<name>}.
+     * The handler name that jobs are enqueued under. Jobs are dispatched to the event bus address
+     * of the annotated service operation, not to an address derived from this name.
      * Must be unique across all registered handlers.
      *
      * @return the handler name (must not be blank)

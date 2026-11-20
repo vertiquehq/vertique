@@ -140,6 +140,7 @@ public final class WorkflowEngineFactory {
         BranchTransitionEngine branchEngine = inboundExecScope == null
                 ? new BranchTransitionEngine(
                         branchTokens,
+                        instances,
                         dedup,
                         history,
                         recorderRouter,
@@ -152,6 +153,7 @@ public final class WorkflowEngineFactory {
                         signalWaits)
                 : new BranchTransitionEngine(
                         branchTokens,
+                        instances,
                         dedup,
                         history,
                         recorderRouter,

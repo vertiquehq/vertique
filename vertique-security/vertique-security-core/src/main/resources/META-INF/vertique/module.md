@@ -21,7 +21,7 @@ The runtime implementation lives in `dev.vertique:vertique-security-runtime`. Co
 Include `vertique-security-core` when a module needs to:
 
 - Read the typed security model from a `SecurityContext` (identity, authentication state, authorization claims, network origin)
-- Implement a custom `SecurityIdentityResolver`, `Authorizer`, `PolicyDefinitionSource`, `RolePolicyResolver`, `ActionContributor`, `AuthorizationNarrower`, `DelegationGrantValidator`, `PrincipalAuthorityResolver`, or `ChannelIdentityManager`
+- Implement a custom `SecurityIdentityResolver`, `Authorizer`, `PolicyDefinitionSource`, `RolePolicyResolver`, `ActionContributor`, `AuthorizationNarrower`, `DelegationGrantValidator`, `PrincipalAuthorityResolver`, `ServiceIdentityResolver`, or `ChannelIdentityManager`
 - Declare or reference an `ActionRef` for `@RequiresAction` enforcement
 - Declare authentication and scope requirements with `@Authorized` on supported framework surfaces
 - Observe security lifecycle events by implementing `SecurityEventObserver`
@@ -310,7 +310,7 @@ public record InvocationOrigin(String kind, Map<String, Object> attributes) impl
 }
 ```
 
-`kind` is a non-blank, transport-neutral ingress identifier drawn from `DispatchBoundary` values (e.g. `"rest"`, `"external"`, `"delayed-job"`, `"kafka"`, `"workflow"`) — centralizing the string constants there avoids typos. Implements `ContextValue` so an ingress boundary can bind a real `InvocationOrigin` as the ambient invocation origin on `ContextHolder`, and downstream authorization/snapshot-capture code reads it back via `contextHolder.current(InvocationOrigin.class)`. A caller that doesn't seed one gets `unspecified()`. Origin-aware policies and narrowers that allowlist interactive ingress must treat `unspecified` as deny — never as implied `"rest"`.
+`kind` is a non-blank, transport-neutral ingress identifier drawn from `DispatchBoundary` values (e.g. `"rest"`, `"delayed-job"`, `"kafka"`, `"workflow"`) — centralizing the string constants there avoids typos. Implements `ContextValue` so an ingress boundary can bind a real `InvocationOrigin` as the ambient invocation origin on `ContextHolder`, and downstream authorization/snapshot-capture code reads it back via `contextHolder.current(InvocationOrigin.class)`. A caller that doesn't seed one gets `unspecified()`. Origin-aware policies and narrowers that allowlist interactive ingress must treat `unspecified` as deny — never as implied `"rest"`.
 
 Service dispatch is root-ingress-aware rather than an unconditional overwrite: an already-present upstream origin is preserved, a propagated `DeferredExecutionOrigin` is mapped to an origin of the same `kind()` so deferred work stays distinguishable, and only when neither is present does it seed its own boundary. See `dev.vertique:vertique-services` for the full precedence.
 
@@ -906,6 +906,34 @@ public interface IdentityReconstruction {
 - **`isReconstructed(ctx)` is a descriptive convenience, not a trust decision.** It reads the `identity.reconstructed` string attribute from `ctx.authentication().safeAttributes()`, which any code populating `safeAttributes` can set. Never use it to decide authority; use `SecurityContext#reconstruction()`, whose marker only the framework's reconstruction path can produce.
 - **`IdentityReconstructionException`** carries a typed `reason()` (`SnapshotDegradationReason`) classifying which failure occurred, so a caller can bind a precise `SnapshotDegradationMarker` rather than a catch-all code. A `null` snapshot or a carrier mismatch defaults to `DECODE_FAILED`.
 - The reconstruction marker attributes (`identity.reconstructed`, `.mode`, `.capturedAt`, `.authenticatedAt`) are purely descriptive of how the authentication state was produced; setting them grants nothing. `.authenticatedAt` is the one a chained re-capture reads back, so the original authentication instant survives each hop.
+
+---
+
+### ServiceIdentityResolver
+
+Functional SPI that names the executing service identity used as the actor when the runtime mints a service-only or reconstructed `SecurityContext` for a deferred dispatch (delayed job, cron, inbox handler). An application binds its own resolver to choose which service identity acts for each execution path; with none bound, the runtime falls back to a built-in default.
+
+```java
+@FunctionalInterface
+public interface ServiceIdentityResolver {
+    SecurityIdentity resolve(DeferredExecutionOrigin origin);
+}
+```
+
+`DeferredExecutionOrigin` (`dev.vertique.core.context`) carries the provenance `kind()` (`delayed-job`, `cron`, `outbox-relay`) and a `reference()` — the job type, cron name or event type — which the built-in default turns into the identity's audit reason; a custom resolver chooses its own identity and reason. The resolver is consulted only when an origin is present; a dispatch with a snapshot but no origin gets a boundary-keyed system identity without calling it. Bind the resolver in an application module:
+
+```java
+@Provides @Singleton
+static ServiceIdentityResolver serviceIdentityResolver() {
+    return origin -> SystemIdentities.internal("job:" + origin.reference());
+}
+```
+
+#### Invariants & Gotchas
+
+- **Never `null`.** A `null` result fails the dispatch with a `NullPointerException`.
+- **Actor-only identity.** The resolved identity must carry no subject, delegation or client, or the dispatch fails with `IllegalArgumentException`; it must also be a `SYSTEM` or `SERVICE` principal, and any other principal type is rejected. The resolved identity is the actor, never an impersonation of the user whose snapshot was carried.
+- **Moved from the runtime module.** The interface previously lived in `dev.vertique.security.runtime` in `vertique-security-runtime`; it now lives in `dev.vertique.security` here, with no forwarding type left behind. Change the import to `dev.vertique.security.ServiceIdentityResolver`.
 
 ---
 

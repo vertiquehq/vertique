@@ -14,6 +14,7 @@ import dev.vertique.workflow.registry.WorkflowDefinitionValidator;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.schema.fixtures.ValidationPayloads;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import io.vertx.core.json.JsonObject;
 import java.util.Optional;
 import java.util.Set;
@@ -36,18 +37,20 @@ class CatalogCoherenceTest {
      * #REJECTED_ID}. The registry keeps its validators unordered, so one wrapper gives the order.
      */
     private DefaultWorkflowRegistry registryWithALaterValidator() {
+        DefaultWorkflowTypeNames names = new DefaultWorkflowTypeNames();
         PayloadSchemaRegistrationValidator schema = new PayloadSchemaRegistrationValidator(
                 PayloadSchemaTestProfiles.builtIn(),
                 PayloadSchemaTestProfiles.VERTIQUE,
                 Optional.of(Validations.BEAN_VALIDATOR),
-                cache);
+                cache,
+                names);
         WorkflowDefinitionValidator wrapper = candidate -> {
             schema.validate(candidate);
             if (REJECTED_ID.equals(candidate.plan().definitionId())) {
                 throw new WorkflowDefinitionException("a later validator rejects this definition");
             }
         };
-        return new DefaultWorkflowRegistry(null, Set.of(wrapper));
+        return new DefaultWorkflowRegistry(null, Set.of(wrapper), names);
     }
 
     @Test

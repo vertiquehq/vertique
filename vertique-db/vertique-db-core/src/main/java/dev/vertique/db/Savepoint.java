@@ -13,13 +13,21 @@ import java.util.regex.Pattern;
  * Scoped savepoint utility for partial rollback within an active transaction.
  *
  * <p>On success, the savepoint is released. On failure, the savepoint is rolled back to and the
- * original error is propagated. The surrounding transaction remains open in both cases.
+ * original error is propagated. The surrounding transaction remains open in both cases, provided the
+ * failure is not a failed SQL statement.
+ *
+ * <p>A SQL statement that fails inside the savepoint, such as a unique-key violation, fails the whole
+ * transaction: the PostgreSQL client does not commit it even when the work recovers from the failure
+ * and the savepoint is rolled back, and the future returned by the transaction fails. A savepoint
+ * therefore gives partial rollback for work that fails with something other than a failed statement.
  *
  * <pre>{@code
  * repository.transaction().serializable().execute(conn ->
  *     doPartOne(conn)
- *         .compose(v -> Savepoint.execute(conn, "sp1", c -> doRiskyWork(c)))
- *         .recover(err -> doFallback(conn))
+ *         // doRiskyWork fails with a non-SQL failure, such as a business-rule check
+ *         .compose(v -> Savepoint.execute(conn, "sp1", c -> doRiskyWork(c))
+ *             .recover(err -> Future.succeededFuture())) // writes made inside sp1 are undone
+ *         .compose(v -> doPartTwo(conn))
  * );
  * }</pre>
  *

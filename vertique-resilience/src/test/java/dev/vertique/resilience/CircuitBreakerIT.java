@@ -97,6 +97,50 @@ class CircuitBreakerIT {
     }
 
     @Test
+    @DisplayName("a HALF_OPEN probe through a retry-plus-breaker pipeline makes one attempt")
+    void halfOpenProbeThroughRetryPipelineMakesOneAttempt(Vertx vertx) throws Exception {
+        resilience = Resilience.create(vertx);
+        CircuitBreaker breaker = CircuitBreaker.builder(resilience, "retry-probe-state")
+                .maxFailures(1)
+                .resetTimeout(Duration.ofMillis(100))
+                .build();
+        ResiliencePipeline pipeline = resilience
+                .pipeline("retry-probe-operation")
+                .retry(retry -> retry.maxRetries(3).backoff(RetryBackoff.fixed(0)))
+                .circuitBreaker(breaker)
+                .build();
+        AtomicInteger attempts = new AtomicInteger();
+
+        assertFailure(pipeline.execute(() -> {
+            attempts.incrementAndGet();
+            return Future.failedFuture(new IllegalStateException("closed"));
+        }));
+        assertEquals(4, attempts.get(), "a CLOSED call keeps its full retry plan and counts one final failure");
+        assertInstanceOf(
+                CircuitOpenException.class,
+                awaitFailure(pipeline.execute(() -> Future.succeededFuture("not-admitted"))));
+
+        Thread.sleep(150L);
+        attempts.set(0);
+        assertFailure(pipeline.execute(() -> {
+            attempts.incrementAndGet();
+            return Future.failedFuture(new IllegalStateException("probe"));
+        }));
+        assertEquals(1, attempts.get(), "the HALF_OPEN probe must not retry");
+        assertInstanceOf(
+                CircuitOpenException.class, awaitFailure(pipeline.execute(() -> Future.succeededFuture("still-open"))));
+
+        Thread.sleep(150L);
+        attempts.set(0);
+        assertEquals("recovered", await(pipeline.execute(() -> {
+            attempts.incrementAndGet();
+            return Future.succeededFuture("recovered");
+        })));
+        assertEquals(1, attempts.get());
+        await(breaker.close());
+    }
+
+    @Test
     @DisplayName("fatal supplier errors fail publicly, reset the engine, and reach the context handler")
     void fatalSupplierIsDualDeliveredWithoutBreakerAccounting(Vertx vertx) throws Exception {
         resilience = Resilience.create(vertx);

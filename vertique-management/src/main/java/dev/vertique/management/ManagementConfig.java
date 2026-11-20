@@ -27,7 +27,8 @@ import lombok.extern.jackson.Jacksonized;
  * }
  * }</pre>
  *
- * <p>All fields have sensible defaults and are optional in the configuration.
+ * <p>All fields have sensible defaults and are optional in the configuration. A blank
+ * {@code host} counts as absent and takes the default.
  *
  * @see ManagementModule
  * @see ManagementVerticle
@@ -44,9 +45,22 @@ public class ManagementConfig {
     @Builder.Default
     private final int port = 9090;
 
+    /** The bind address used when {@code host} is absent, {@code null} or blank: all interfaces. */
+    private static final String DEFAULT_HOST = "0.0.0.0";
+
     /** Network interface the management server binds to. Defaults to {@code "0.0.0.0"} (all interfaces). */
     @Builder.Default
-    private final String host = "0.0.0.0";
+    private final String host = DEFAULT_HOST;
+
+    /**
+     * Returns the network interface the management server binds to. A {@code null} or blank
+     * configured value counts as absent and yields the default, {@code "0.0.0.0"}.
+     *
+     * @return the bind address, never {@code null} or blank
+     */
+    public String host() {
+        return host == null || host.isBlank() ? DEFAULT_HOST : host;
+    }
 
     /** Whether management endpoints are enabled (default {@code true}). */
     @Builder.Default

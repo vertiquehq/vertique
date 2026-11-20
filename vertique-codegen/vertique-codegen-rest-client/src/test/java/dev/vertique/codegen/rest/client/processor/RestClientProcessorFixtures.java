@@ -38,7 +38,9 @@ final class RestClientProcessorFixtures {
         return SourceFiles.inline("io.vertx.core.Future", """
                         package io.vertx.core;
 
-                        public interface Future<T> {}
+                        public interface Future<T> {
+                            static <T> Future<T> failedFuture(Throwable cause) { return null; }
+                        }
                         """);
     }
 

@@ -110,6 +110,10 @@ final class McpToolModelValidator {
             "java.time.ZoneOffset",
             "java.time.ZonedDateTime");
 
+    private static final String OPTIONAL = "java.util.Optional";
+
+    private static final String NOT_NULL = "jakarta.validation.constraints.NotNull";
+
     /** Container types whose JSON schema representation is derived from their type arguments. */
     private static final Set<String> CONTAINERS = Set.of(
             "java.lang.Iterable",
@@ -573,6 +577,32 @@ final class McpToolModelValidator {
                         .error(
                                 parameter,
                                 "@McpToolParam '%s' of @McpTool method %s.%s() must declare a non-blank description",
+                                protocolName,
+                                declaringType.getSimpleName(),
+                                method.getSimpleName());
+                return Optional.empty();
+            }
+            if (description.length() > McpToolDescriptor.MAX_DESCRIPTION_CHARS) {
+                ctx.diagnostics()
+                        .error(
+                                parameter,
+                                "@McpToolParam '%s' of @McpTool method %s.%s() has a description of %d characters;"
+                                        + " the protocol bound is %d",
+                                protocolName,
+                                declaringType.getSimpleName(),
+                                method.getSimpleName(),
+                                description.length(),
+                                McpToolDescriptor.MAX_DESCRIPTION_CHARS);
+                return Optional.empty();
+            }
+            if (erasureIs(type, OPTIONAL)
+                    && AnnotationMirrors.findByFqn(parameter, NOT_NULL).isPresent()) {
+                ctx.diagnostics()
+                        .error(
+                                parameter,
+                                "Parameter '%s' of @McpTool method %s.%s() is an Optional annotated @NotNull; an"
+                                        + " optional input cannot also be required — drop the @NotNull or the"
+                                        + " Optional",
                                 protocolName,
                                 declaringType.getSimpleName(),
                                 method.getSimpleName());

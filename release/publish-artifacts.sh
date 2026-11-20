@@ -23,7 +23,8 @@
 #     --mode snapshot|final \
 #     --version <version> \
 #     [--settings <settings.xml>] \
-#     [--parallelism <n>]
+#     [--parallelism <n>] \
+#     [--plugin-repository <dir>]
 
 set -euo pipefail
 
@@ -40,6 +41,8 @@ SETTINGS=""
 # Each deploy-file is a fresh Maven JVM that mostly waits on the target, so a
 # sequential loop over the allowlist dominates a publication's wall-clock.
 PARALLELISM=6
+# Empty: resolve the deploy plugin through a fresh temporary repository.
+PLUGIN_REPOSITORY=""
 
 die() { echo "publish-artifacts: $*" >&2; exit 1; }
 
@@ -52,6 +55,7 @@ while [[ $# -gt 0 ]]; do
     --version)          VERSION="${2:-}";          shift 2 ;;
     --settings)         SETTINGS="${2:-}";         shift 2 ;;
     --parallelism)      PARALLELISM="${2:-}";      shift 2 ;;
+    --plugin-repository) PLUGIN_REPOSITORY="${2:-}"; shift 2 ;;
     *) die "unrecognised argument: $1" ;;
   esac
 done
@@ -93,7 +97,20 @@ MVN="$REPO_ROOT/mvnw"
 # construction. So the deploy invocations get their own local repository, used
 # only to resolve the deploy plugin itself — the payload paths are passed
 # explicitly and are never resolved from it.
-PLUGIN_REPO="$(mktemp -d "${TMPDIR:-/tmp}/vertique-deploy-plugins.XXXXXX")"
+#
+# By default it is a fresh temporary directory, deleted on exit, so every run
+# downloads the plugin. --plugin-repository names a directory to use and keep
+# instead: one an earlier run populated spares that download.
+if [[ -n "$PLUGIN_REPOSITORY" ]]; then
+  mkdir -p "$PLUGIN_REPOSITORY"
+  PLUGIN_REPO="$(cd "$PLUGIN_REPOSITORY" && pwd)"
+  [[ "$PLUGIN_REPO" != "$(cd "$LOCAL_REPOSITORY" && pwd)" ]] \
+    || die "--plugin-repository must not be the --local-repository the payload is deployed from"
+  REMOVE_PLUGIN_REPO=""
+else
+  PLUGIN_REPO="$(mktemp -d "${TMPDIR:-/tmp}/vertique-deploy-plugins.XXXXXX")"
+  REMOVE_PLUGIN_REPO="$PLUGIN_REPO"
+fi
 
 # deploy-file needs no project, but Maven started inside the repository still
 # builds the reactor model before running it — resolving every import-scoped
@@ -116,7 +133,7 @@ UNIT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vertique-deploy-units.XXXXXX")"
 
 # Registered after every path exists, so `set -u` cannot trip on an unset name
 # while the trap runs.
-trap 'rm -rf "$PLAN_FILE" "$TSV_FILE" "$UNIT_DIR" "$PLUGIN_REPO" "$DEPLOY_DIR"' EXIT
+trap 'rm -rf "$PLAN_FILE" "$TSV_FILE" "$UNIT_DIR" ${REMOVE_PLUGIN_REPO:+"$REMOVE_PLUGIN_REPO"} "$DEPLOY_DIR"' EXIT
 
 node release/verify-publication.mjs \
   --deploy-plan "$LOCAL_REPOSITORY" \

@@ -12,9 +12,9 @@ import java.util.UUID;
 /**
  * Client-side interface for typed delayed job contracts.
  *
- * <p>Provides methods to enqueue jobs with typed payloads. Implementations are JDK dynamic
- * proxies created by {@link DelayedJobClientFactory} — user code should never implement this
- * interface directly.
+ * <p>Provides methods to enqueue jobs with typed payloads. Implementations are proxies (a generated
+ * static proxy, or a JDK dynamic proxy when none was generated) created by
+ * {@link DelayedJobClientFactory} — user code should never implement this interface directly.
  *
  * <p>Job configuration defaults (maxAttempts, queue, priority) are read from the
  * {@link DelayedJobContract} annotation on the extending interface, with runtime overrides

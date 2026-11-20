@@ -42,8 +42,8 @@ these counters:
 
 `CacheOperationCompleted`, `CacheLateCompletion`, and `CacheCleanupCompleted` events contain
 redacted, bounded values supplied by the cache modules. No key, identity, IP address, or exception
-message is ever used as a tag. Registry failures are swallowed, so telemetry cannot change cache operations or
-Redis cleanup behavior.
+message is ever used as a tag. Registry failures are swallowed, except a `VirtualMachineError`, `ThreadDeath` or
+`LinkageError`, which is never caught, so telemetry cannot change cache operations or Redis cleanup behavior.
 
 ## Key Classes
 

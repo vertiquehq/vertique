@@ -56,8 +56,9 @@ import java.util.Set;
  *   <li>{@link DelayedJobHandlerRegistrar} — scans service registry for
  *       {@link dev.vertique.job.delayed.DelayedJobHandlerMethod} annotations and typed
  *       {@link dev.vertique.job.delayed.DelayedJobExecutor} contributors</li>
- *   <li>{@link dev.vertique.job.delayed.DelayedJobClientFactory} — creates JDK dynamic proxies
- *       for {@link dev.vertique.job.delayed.DelayedJobClient} contract interfaces</li>
+ *   <li>{@link dev.vertique.job.delayed.DelayedJobClientFactory} — creates the proxies for
+ *       {@link dev.vertique.job.delayed.DelayedJobClient} contract interfaces, preferring a generated
+ *       static proxy and falling back to a JDK dynamic proxy</li>
  *   <li>{@link ServiceContractContributor} via {@code @IntoSet} — registers typed
  *       {@link dev.vertique.job.delayed.DelayedJobExecutor} instances as service contract entries</li>
  *   <li>{@link Set}&lt;{@link VerticleDeployment}&gt; via {@link ElementsIntoSet} — one
@@ -255,7 +256,7 @@ public abstract class DelayedJobModule {
     }
 
     /**
-     * Provides the {@link DelayedJobClientFactory} used to create JDK dynamic proxies for
+     * Provides the {@link DelayedJobClientFactory} used to create the proxies for
      * typed {@link dev.vertique.job.delayed.DelayedJobClient} contract interfaces.
      *
      * @param jobService        the delayed job service for enqueue delegation

@@ -10,7 +10,7 @@ import dev.vertique.micrometer.MetricsConfig;
 /**
  * Dagger module that contributes Micrometer REST server metrics components via multibinding.
  *
- * <p>Install this module alongside {@code RestCoreModule} (or {@code RestModule}) and
+ * <p>Install this module alongside {@code RestModule} (the JAX-RS mount) and
  * {@link dev.vertique.micrometer.MicrometerModule} in the application's Dagger component:
  *
  * <pre>{@code

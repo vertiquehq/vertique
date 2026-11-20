@@ -28,8 +28,8 @@ import org.slf4j.LoggerFactory;
 /**
  * Binds effective durable context for one binder-row engine drive.
  *
- * <p>Instance-owned single-path drives — signal, cancel, retry, migrate, {@code taskCompleted},
- * {@code taskReassigned} — route through {@link #withBound}, which implements the
+ * <p>Instance-owned single-path drives — {@code cancel} and {@code taskReassigned} — route through
+ * {@link #withBound}, which implements the
  * <b>bind gate</b> and <b>base-wins/instance-fill</b> model:
  *
  * <ul>

@@ -158,6 +158,6 @@ The adapter's SPI contributions are declared on their injectable implementations
 |---|---|
 | `vertique-rest-core` | Operation contributor, request interceptor, and completion-scope SPIs |
 | `vertique-core` | Shared extension ordering |
-| `vertique-codegen-core` | Codegen support for generated registrations |
+| `vertique-codegen-core` | Wiring annotations for this module's components; `provided`, so it is not on a consumer's runtime classpath |
 | `io.opentelemetry:opentelemetry-api` | `Span`, `SpanContext`, `StatusCode`, `AttributeKey` |
 | `io.opentelemetry:opentelemetry-semconv` | `HttpAttributes`, `ErrorAttributes` |

@@ -41,10 +41,20 @@ final class CacheObservationSupport {
         for (CacheObserver observer : observers) {
             try {
                 observer.onEvent(event);
-            } catch (Throwable ignored) {
+            } catch (Throwable failure) {
+                if (isFatal(failure)) {
+                    throw (Error) failure;
+                }
                 // Observer failures must never alter cache or business outcomes.
             }
         }
+    }
+
+    @SuppressWarnings("removal")
+    private static boolean isFatal(Throwable failure) {
+        return failure instanceof VirtualMachineError
+                || failure instanceof ThreadDeath
+                || failure instanceof LinkageError;
     }
 
     private static Duration elapsed(long startedAt) {

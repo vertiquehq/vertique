@@ -13,6 +13,7 @@ import dev.vertique.context.DefaultContextHolder;
 import dev.vertique.context.DurableContextMetadataRegistry;
 import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.core.context.DurableMetadata;
+import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.job.postgresql.PgJobRepository;
 import io.vertx.core.Future;
@@ -36,7 +37,8 @@ class DelayedJobServicePayloadRejectionTest {
 
     @BeforeEach
     void setUp() {
-        PgJobRepository repository = new PgJobRepository(mock(Pool.class), new PgDbExceptionMapper());
+        PgJobRepository repository =
+                new PgJobRepository(mock(Pool.class), new PgDbExceptionMapper(), DbSchemas.empty(), "test-node");
         DelayedJobHandlerRegistrar registrar = mock(DelayedJobHandlerRegistrar.class);
         when(registrar.handlerAddresses()).thenReturn(Map.of("my-handler", "test/my-svc/execute"));
         DefaultContextHolder holder = new DefaultContextHolder();

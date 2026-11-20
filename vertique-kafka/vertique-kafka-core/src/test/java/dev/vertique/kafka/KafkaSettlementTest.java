@@ -256,6 +256,26 @@ class KafkaSettlementTest {
         }
 
         @Test
+        @DisplayName("a consumer configured for zero retries dead-letters the first failure with no retry timer")
+        void zeroRetriesDeadLettersTheFirstFailure() {
+            KafkaSettlement.Settings settings = new KafkaSettlement.Settings(
+                    "test",
+                    1,
+                    ErrorStrategy.RETRY,
+                    new RetryConfig(0, 100L, 2.0, ErrorStrategy.DEAD_LETTER, 10_000L),
+                    false,
+                    1_000,
+                    null);
+            SettlementRig rig = new SettlementRig(settings);
+            rig.assign(P0).add(P0, 0);
+
+            rig.run(P0, 0).fail();
+
+            assertEquals(List.of(), rig.pendingTimers(), "no retry is scheduled");
+            assertEquals(1, rig.port.publishes.size());
+        }
+
+        @Test
         @DisplayName("a terminal failure is dead-lettered at once, without a retry")
         void terminalFailureSkipsTheRetries() {
             SettlementRig rig = new SettlementRig(settings(1, ErrorStrategy.RETRY, false));

@@ -32,6 +32,8 @@ import java.time.Instant;
  *     means no filter and matches every scope. This is a filter, not an isolation or
  *     authorization boundary: a caller that has not resolved a scope must not pass null
  *     expecting scoping.
+ * @param taskType filter by the logical task type the plan declared for the step (exact match); null means no
+ *     filter. A task created without a type matches no task type.
  */
 public record TaskFilter(
         @Nullable String assigneeUser,
@@ -43,7 +45,37 @@ public record TaskFilter(
         @Nullable String subjectType,
         @Nullable String subjectId,
         boolean includeArchived,
-        @Nullable String scopeKey) {
+        @Nullable String scopeKey,
+        @Nullable String taskType) {
+
+    /**
+     * Creates a filter without a task type constraint. Retained so existing callers keep compiling; equivalent to the
+     * canonical constructor with a {@code null} {@code taskType}.
+     */
+    public TaskFilter(
+            @Nullable String assigneeUser,
+            @Nullable String assigneeRole,
+            @Nullable String assigneeQueue,
+            @Nullable WorkflowInstanceId workflowId,
+            @Nullable TaskStatus status,
+            @Nullable Instant dueBefore,
+            @Nullable String subjectType,
+            @Nullable String subjectId,
+            boolean includeArchived,
+            @Nullable String scopeKey) {
+        this(
+                assigneeUser,
+                assigneeRole,
+                assigneeQueue,
+                workflowId,
+                status,
+                dueBefore,
+                subjectType,
+                subjectId,
+                includeArchived,
+                scopeKey,
+                null);
+    }
 
     /**
      * Creates a filter without a scope constraint. Retained so existing callers keep compiling;
@@ -69,6 +101,7 @@ public record TaskFilter(
                 subjectType,
                 subjectId,
                 includeArchived,
+                null,
                 null);
     }
 
@@ -98,7 +131,7 @@ public record TaskFilter(
      * @return an all-null {@code TaskFilter}
      */
     public static TaskFilter empty() {
-        return new TaskFilter(null, null, null, null, null, null, null, null, false, null);
+        return new TaskFilter(null, null, null, null, null, null, null, null, false, null, null);
     }
 
     // --- Fluent with* methods ---
@@ -120,7 +153,8 @@ public record TaskFilter(
                 subjectType,
                 subjectId,
                 includeArchived,
-                scopeKey);
+                scopeKey,
+                taskType);
     }
 
     /**
@@ -140,7 +174,8 @@ public record TaskFilter(
                 subjectType,
                 subjectId,
                 includeArchived,
-                scopeKey);
+                scopeKey,
+                taskType);
     }
 
     /**
@@ -160,7 +195,8 @@ public record TaskFilter(
                 subjectType,
                 subjectId,
                 includeArchived,
-                scopeKey);
+                scopeKey,
+                taskType);
     }
 
     /**
@@ -180,7 +216,8 @@ public record TaskFilter(
                 subjectType,
                 subjectId,
                 includeArchived,
-                scopeKey);
+                scopeKey,
+                taskType);
     }
 
     /**
@@ -200,7 +237,8 @@ public record TaskFilter(
                 subjectType,
                 subjectId,
                 includeArchived,
-                scopeKey);
+                scopeKey,
+                taskType);
     }
 
     /**
@@ -220,7 +258,8 @@ public record TaskFilter(
                 subjectType,
                 subjectId,
                 includeArchived,
-                scopeKey);
+                scopeKey,
+                taskType);
     }
 
     /**
@@ -240,7 +279,8 @@ public record TaskFilter(
                 subjectType,
                 subjectId,
                 includeArchived,
-                scopeKey);
+                scopeKey,
+                taskType);
     }
 
     /**
@@ -260,7 +300,8 @@ public record TaskFilter(
                 subjectType,
                 subjectId,
                 includeArchived,
-                scopeKey);
+                scopeKey,
+                taskType);
     }
 
     /**
@@ -283,7 +324,8 @@ public record TaskFilter(
                 subjectType,
                 subjectId,
                 includeArchived,
-                scopeKey);
+                scopeKey,
+                taskType);
     }
 
     /**
@@ -304,6 +346,28 @@ public record TaskFilter(
                 subjectType,
                 subjectId,
                 includeArchived,
-                scopeKey);
+                scopeKey,
+                taskType);
+    }
+
+    /**
+     * Returns a copy of this filter with the {@code taskType} field set.
+     *
+     * @param taskType the task type to match exactly; null removes the filter
+     * @return a new {@code TaskFilter} with the updated field
+     */
+    public TaskFilter withTaskType(@Nullable String taskType) {
+        return new TaskFilter(
+                assigneeUser,
+                assigneeRole,
+                assigneeQueue,
+                workflowId,
+                status,
+                dueBefore,
+                subjectType,
+                subjectId,
+                includeArchived,
+                scopeKey,
+                taskType);
     }
 }

@@ -38,6 +38,9 @@ behavior, not an error. No key, identity, or IP value is ever set as a span
 attribute. The adapter is subject to the same redaction constraint as the events it
 consumes; `policy` is the only per-request-shape attribute it emits.
 
+Tracer and span failures never alter an admission decision: they are caught and ignored, except a
+`VirtualMachineError`, `ThreadDeath` or `LinkageError`, which is never caught.
+
 When `tracing.enabled=false`, `OpenTelemetryModule` binds `OpenTelemetry.noop()`, so the
 `Tracer` this observer receives is a no-op: the adapter stays installed but inert, starts no
 recording spans, and exports nothing. This module owns no configuration keys of its own.

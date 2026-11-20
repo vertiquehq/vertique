@@ -11,8 +11,10 @@ import dev.vertique.core.codegen.ParameterMetadata;
 import dev.vertique.resilience.BackoffStrategy;
 import dev.vertique.resilience.annotation.Bulkhead;
 import dev.vertique.resilience.annotation.Retry;
+import dev.vertique.rest.client.ExpectedStatus;
 import dev.vertique.rest.client.HttpClientResponse;
 import dev.vertique.rest.client.Url;
+import dev.vertique.rest.client.exception.RestClientConfigurationException;
 import io.vertx.core.Future;
 import jakarta.ws.rs.BeanParam;
 import jakarta.ws.rs.Consumes;
@@ -390,6 +392,14 @@ class ClientInterfaceScannerTest {
         Item get(@PathParam("id") String id);
     }
 
+    @Path("/items")
+    interface BothStatusFormsClient {
+        @GET
+        @Path("/{id}")
+        @ExpectedStatus(value = 200, min = 200, max = 300)
+        Future<Item> get(@PathParam("id") String id);
+    }
+
     // --- Tests ---
 
     @Test
@@ -558,6 +568,15 @@ class ClientInterfaceScannerTest {
         assertThatThrownBy(() -> ClientInterfaceScanner.scan(NotAnInterface.class))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("REST client must be an interface");
+    }
+
+    @Test
+    @DisplayName("@ExpectedStatus declaring both the exact-code form and the range form is rejected at scan time")
+    void rejectsExpectedStatusDeclaringBothForms() {
+        assertThatThrownBy(() -> ClientInterfaceScanner.scan(BothStatusFormsClient.class))
+                .as("the two @ExpectedStatus forms are mutually exclusive")
+                .isInstanceOf(RestClientConfigurationException.class)
+                .hasMessageContaining("BothStatusFormsClient.get");
     }
 
     @Test

@@ -175,6 +175,54 @@ final class NotifyingJobRepository implements JobRepository {
                 .onSuccess(opt -> opt.ifPresent(this::notifyListeners));
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Forwards to the delegate's fenced write, so the fence is not lost behind this decorator, and
+     * notifies listeners exactly as {@link #completeExecution} does when a row transitioned.
+     */
+    @Override
+    public Future<Optional<JobExecution>> completeClaimedExecution(
+            UUID executionId,
+            String lockedBy,
+            int claimedAttempt,
+            JobState newState,
+            String errorMessage,
+            String errorType,
+            ProgressSnapshot progress) {
+        return delegate.completeClaimedExecution(
+                        executionId, lockedBy, claimedAttempt, newState, errorMessage, errorType, progress)
+                .onSuccess(opt -> opt.ifPresent(this::notifyListeners));
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Forwards to the delegate's fenced write, so the fence is not lost behind this decorator, and
+     * notifies listeners exactly as {@link #abandonAndScheduleRetry} does when a row transitioned.
+     */
+    @Override
+    public Future<Optional<JobExecution>> abandonClaimedAndScheduleRetry(
+            UUID executionId,
+            String lockedBy,
+            int claimedAttempt,
+            String errorMessage,
+            String errorType,
+            ProgressSnapshot progress,
+            Instant nextScheduledAt,
+            int nextAttempt) {
+        return delegate.abandonClaimedAndScheduleRetry(
+                        executionId,
+                        lockedBy,
+                        claimedAttempt,
+                        errorMessage,
+                        errorType,
+                        progress,
+                        nextScheduledAt,
+                        nextAttempt)
+                .onSuccess(opt -> opt.ifPresent(this::notifyListeners));
+    }
+
     /** {@inheritDoc} */
     @Override
     public Future<Optional<UUID>> tryInsert(JobExecution execution) {

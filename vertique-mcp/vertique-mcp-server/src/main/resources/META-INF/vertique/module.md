@@ -319,7 +319,10 @@ failure before the envelope was classified, still report `OTHER`.
 Failures taken by another mount, and reroutes by an application `RouteAuthHandler`, work as follows:
 
 - **Not settled by MCP** — a request MCP admits but does not settle completes as an ordinary
-  rest-core request with one completion event, and MCP emits no terminal or completion for it. An
+  rest-core request with one completion event, and MCP closes the observation it opened at `begin`
+  with one terminal and one completion that record the request as `CANCELLED` with error type
+  `HTTP`, the status the other handler wrote, and transport outcome `WRITTEN`. MCP does not claim
+  the request, so rest-core still reports its one event. An
   authentication or identity failure taken by the failure handler of another mount that is ordered
   ahead of the MCP mount and matches the request's path produces one `HttpRequestCompletedEvent`. A
   request an application `RouteAuthHandler` reroutes out of the MCP mount, and that completes
@@ -338,14 +341,12 @@ Failures taken by another mount, and reroutes by an application `RouteAuthHandle
   the first pass's coordinator and the writer claims it: it gets one MCP completion and no
   `HttpRequestCompletedEvent`.
 
-**Known limitation: an observation MCP never settles stays open.** For a request MCP admitted but
-does not settle (the failure taken by another mount, or the reroute out of the mount that completes
-normally, above), MCP emits no terminal or completion, so the lifecycle observation it opened at
-`begin`, when the request passed admission and before authentication, is never closed. Observers
-therefore see that observation opened with no completion, and the in-flight gauge
-`vertique.mcp.server.active` (`vertique-micrometer-mcp`) stays one higher for each such request.
-This behavior predates the completion claim, which neither causes nor changes it. Nothing closes such
-an abandoned observation today.
+**An observation MCP does not settle is still closed.** For a request MCP admitted but does not
+settle (the failure taken by another mount, or the reroute out of the mount that completes normally,
+above), the end of the request closes the lifecycle observation MCP opened at `begin`, so the
+in-flight gauge `vertique.mcp.server.active` (`vertique-micrometer-mcp`) returns to zero. Observers
+and completion listeners see that request's one terminal and one completion with the outcome
+described above, not an observation that never completes.
 
 **Completion scope bracketing.** Immediately before the completion coordinator
 dispatches the one completion event to every retained observation and completion listener, it opens
@@ -610,7 +611,9 @@ or a `tracestate` outside those bounds all yield no body trace context rather th
 each logged once as a bounded, non-leaking DEBUG diagnostic (never the raw `traceparent`/`tracestate`
 value) — a client-triggerable event on this anonymous-reachable path, not a framework or application
 contract violation, so it does not warrant WARN. When it runs, extraction happens at most once per
-request, in `McpRequestDispatcher#dispatch`, independent of negotiation's own outcome — a malformed or
+request, in `McpRequestDispatcher#dispatch`, only after the official `params` check and negotiation
+have both succeeded: a request rejected at either step is answered without extraction and carries no
+linked trace, even under `LINK`. Extraction does not depend on the negotiation keys, and a malformed or
 absent body trace reference never affects protocol admission. Every reference this codec produces is
 stamped with source label `mcp._meta`.
 
@@ -686,15 +689,17 @@ rejection and a stage 2–4 rejection already use — never a JSON-RPC protocol 
 interceptor class name, reason, or exception text. A zero-interceptor composition is valid and always
 permits.
 
-The wire bytes are identical across all three rejection stages, but the internal lifecycle
-classification is not: a stage 1 schema rejection and a stage 2–4 `McpInputRejectionException`
+The wire shape is the same across all three rejection stages — a text-only `isError=true` result —
+but the fixed message text differs: the four `Invalid tool arguments: ...` texts listed under
+[Request-time input pipeline](#request-time-input-pipeline) for stages 1–4, and `Tool call rejected`
+for a tool interceptor. The internal lifecycle
+classification differs as well: a stage 1 schema rejection and a stage 2–4 `McpInputRejectionException`
 settle as a completed `McpOutcome.TOOL_ERROR` (`McpErrorType.INPUT_VALIDATION` and
 `McpErrorType.INPUT_PROCESSING` respectively), while a tool-interceptor rejection settles as
 `McpOutcome.REJECTED`/`McpErrorType.INTERCEPTOR`/`resultType=NONE` — because no handler ever ran, not
 because the call failed after running one. An observer distinguishing "the input was rejected," "the
 handler ran and returned an error," and "the call was rejected before the handler ever ran" reads this
-from the terminal event's `errorType`/`outcome`, never from the response body, which cannot make that
-distinction.
+from the terminal event's `errorType`/`outcome` rather than by parsing the response text.
 
 ## Completion view binding
 
@@ -1219,12 +1224,15 @@ never the caller-supplied string — an unresolved name touches no real `McpTool
 would otherwise bound it before it reached every lifecycle observer and listener as internal
 telemetry except the wire's own very large string limit.
 
-**SSE selection precedes invocation, unconditionally.** Only once a call is both known and
-authorized does the dispatcher select request-scoped SSE (`Content-Type: text/event-stream`,
-`X-Accel-Buffering: no`) — as the first step, before the generated invoker's `prepare(...)` is ever
-called, and independently of how invocation later resolves. A synchronous `prepare`/`invoke` throw
-and a failed invocation future both settle through the bounded pre-encoded internal-error fallback,
-still SSE-framed: once SSE is selected the response never falls back to JSON. No response byte is
+**SSE selection precedes invocation, unconditionally.** Only once a call is known, authorized,
+carries every client capability the tool requires, and has been admitted by the rate-limit stage does
+the dispatcher select request-scoped SSE (`Content-Type: text/event-stream`, `X-Accel-Buffering: no`) —
+as the first step after admission, before the generated invoker's `prepare(...)` is ever called, and
+independently of how invocation later resolves. A missing required client capability answers a JSON
+HTTP `400` with JSON-RPC `-32021`, and a rate-limit rejection answers a JSON HTTP `429` or `503`;
+both are written as JSON before SSE is selected, so the earlier stage wins. A synchronous
+`prepare`/`invoke` throw and a failed invocation future both settle through the bounded pre-encoded
+internal-error fallback, still SSE-framed: once SSE is selected the response never falls back to JSON. No response byte is
 written until the complete SSE message — one `event: message` / `data:` block carrying the full
 JSON-RPC response — is ready; header mutation alone reaches no byte onto the wire because Vert.x
 defers sending them until the first `write`/`end`, and this dispatcher's only write is that one
@@ -1273,14 +1281,20 @@ and bounded-format input is bounded"). A long value at such a position therefore
 expression unchecked. Until this stage adopts an equivalent bound, keep a tool's pattern- or
 format-bearing input arguments small, or constrain them with `maxLength`.
 
-A failure at any of the four stages yields the same bounded outcome: one text-only, `isError=true`
+A failure at any of the four stages yields the same bounded outcome shape: one text-only, `isError=true`
 `CallToolResult` — never a JSON-RPC protocol error, and never a detail of which schema keyword,
 policy, or constraint failed. Stage 1 failures are written directly by the dispatcher; a stage 2–4
 failure is signalled by the generated invoker throwing the public
 `dev.vertique.mcp.tool.McpInputRejectionException` (public, not package-private here, because
 `prepare()` is generated into an arbitrary application package that cannot reach a package-private
-type in this module), which the dispatcher maps to the identical bounded outcome — so a
-caller cannot tell which of the four stages rejected a call from the response shape. Only after all
+type in this module), which the dispatcher maps to the same bounded outcome shape. Each stage answers
+its own fixed text, so a caller can tell which of the four stages rejected a call from the message:
+`Invalid tool arguments: schema validation failed` (stage 1, written by the dispatcher), and, from the
+generated invoker, `Invalid tool arguments: input sanitization failed` (stage 2), `Invalid tool
+arguments: materialization failed` (stage 3), and `Invalid tool arguments: constraint validation
+failed` (stage 4). These texts are fixed, so none of them carries a schema keyword, property name, or
+input value. A hand-written `prepare(...)` supplies its own already-safe message through the same exception,
+which the dispatcher returns verbatim. Only after all
 four stages succeed does the dispatcher bind the call's `toolContext` and `toolInput` for the
 [completion view](#completion-view-binding) and then run the [Tool interceptor
 stage](#tool-interceptor-stage); only once every tool interceptor permits does it call `invoke()`.

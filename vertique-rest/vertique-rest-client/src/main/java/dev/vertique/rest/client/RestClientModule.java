@@ -156,7 +156,7 @@ public abstract class RestClientModule {
     /**
      * Provides the singleton {@link RestClientFactory} for creating REST client proxies.
      *
-     * @param vertx the Vert.x instance for WebClient creation
+     * @param vertx the Vert.x instance for the governed WebClient clients
      * @param interceptors the global interceptors from multibinding
      * @param contextCapturers the system-owned context capturers from multibinding
      * @param configIndex the typed {@code name -> RestClientConfig} index seeded into every builder

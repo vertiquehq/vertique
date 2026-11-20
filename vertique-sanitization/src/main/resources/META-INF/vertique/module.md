@@ -118,7 +118,7 @@ Sanitizers remove or transform disallowed content. They are stateless and thread
 | `StripControlCharsSanitizer` | Removes C0 and C1 control characters (`U+0000`–`U+001F`, `U+007F`, `U+0080`–`U+009F`); preserves tab, LF, and CR |
 | `StripAllHtmlSanitizer` | Strips all HTML tags using OWASP Java HTML Sanitizer |
 | `BasicHtmlSanitizer` | Allows `<p>`, `<br>`, `<em>`, `<i>`, `<strong>`, `<b>`, `<ul>`, `<ol>`, `<li>`; strips everything else |
-| `LinksHtmlSanitizer` | Allows `BasicHtml` elements plus `<a href>` (http/https schemes only) |
+| `LinksHtmlSanitizer` | Allows `BasicHtml` elements plus `<a href>` (http, https and mailto schemes only) |
 | `RichTextHtmlSanitizer` | Allows `LinksHtml` elements plus headings, blockquote, code, pre, img |
 
 HTML sanitizers use [OWASP Java HTML Sanitizer](https://owasp.org/www-project-java-html-sanitizer/) with static singleton `PolicyFactory` instances (thread-safe).
@@ -200,7 +200,7 @@ For each string value in a structured body, the processing order is:
 5. Object-level sanitizers
 6. Field-level sanitizers
 
-Processing runs on the intermediate map representation (after JSON parsing, before DTO materialization). Skip annotations short-circuit the entire chain for that field.
+Processing runs on the intermediate map representation (after JSON parsing, before DTO materialization). A skip annotation empties only the chain of its own kind: `@SkipCanonicalization` removes the canonicalizer chain and `@SkipSanitization` removes the sanitizer chain, and neither disables the other. A skip stays set for every nested value below the element that declares it. A skip declared on an object type yields to a field that declares its own chain of that kind; a skip declared on the field itself always wins.
 
 ---
 

@@ -12,6 +12,7 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
+import dev.vertique.workflow.events.WorkflowEventType;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.plan.RaceSafetyTargetContributor;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
@@ -83,6 +84,8 @@ public class PgWorkflowEngineCancelBranchOwnedWaitsIT {
             .withDatabaseName("workflow_cancel_branch_waits_test")
             .withMigration("classpath:db/migration/workflow");
 
+    static final RecordedWorkflowEvents events = new RecordedWorkflowEvents();
+
     static Pool pool;
     static WorkflowEngineHandle engine;
     static PgTimerStore timerStore;
@@ -122,7 +125,7 @@ public class PgWorkflowEngineCancelBranchOwnedWaitsIT {
                 instances,
                 history,
                 dedup,
-                Set.of(),
+                Set.of(events),
                 Set.of(IntentKind.WORKFLOW_EVENT),
                 timerStore,
                 taskStore,
@@ -288,6 +291,14 @@ public class PgWorkflowEngineCancelBranchOwnedWaitsIT {
                     assertTrue(ar.succeeded(), "cascade must succeed: " + ar.cause());
                     String branchStatus = ar.result().iterator().next().getString("status");
                     assertEquals("CANCELLED", branchStatus, "active branch token must be CANCELLED by cancel()");
+                    // The branch-owned task is reported as cancelled, as the task of a single-path instance is
+                    var cancelled = events.of(workflowId, WorkflowEventType.TASK_CANCELLED);
+                    assertEquals(1, cancelled.size(), "the branch task's cancellation must be reported once");
+                    assertEquals(task.taskId(), cancelled.getFirst().taskId());
+                    assertEquals("task-step", cancelled.getFirst().stepId());
+                    assertEquals(
+                            "BRANCH_CANCELLED",
+                            cancelled.getFirst().attributes().get("cause"));
                     ctx.completeNow();
                 }));
     }

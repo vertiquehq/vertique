@@ -911,7 +911,8 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
     // --- Fire-and-Report ---
 
     /**
-     * Publishes a {@link Result} to the given event bus address for fire-and-report dispatch.
+     * Sends a {@link Result} point-to-point (one consumer) to the given event bus address for
+     * fire-and-report dispatch.
      * Used when {@link DispatchEnvelope#replyAddress()} is set instead of calling {@code message.reply()}.
      *
      * <p>Send failures are logged at WARN and do not affect the dispatch outcome.

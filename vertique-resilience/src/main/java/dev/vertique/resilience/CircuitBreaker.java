@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /** Independently executable local circuit breaker with explicit instance-owned state. */
@@ -30,8 +31,18 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
     private final AtomicBoolean closeStarted = new AtomicBoolean();
     private final Promise<Void> closePromise = Promise.promise();
     private final AtomicReference<CircuitState> lastObservedState = new AtomicReference<>(CircuitState.CLOSED);
+    private final CircuitFailureClassifier failureClassifier;
 
     private CircuitBreaker(Resilience resilience, String stateKey, CircuitBreakerConfig configuration) {
+        this(resilience, stateKey, configuration, null);
+    }
+
+    private CircuitBreaker(
+            Resilience resilience,
+            String stateKey,
+            CircuitBreakerConfig configuration,
+            CircuitFailureClassifier failureClassifier) {
+        this.failureClassifier = failureClassifier;
         this.resilience = Objects.requireNonNull(resilience, "resilience");
         this.stateKey = Objects.requireNonNull(stateKey, "stateKey");
         CircuitBreakerOptions options = new CircuitBreakerOptions()
@@ -167,6 +178,7 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
         private final String stateKey;
         private int maxFailures = 5;
         private Duration resetTimeout = Duration.ofSeconds(10);
+        private Predicate<? super Throwable> countsAsFailure;
         private boolean built;
 
         private Builder(Resilience resilience, String stateKey) {
@@ -199,6 +211,28 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
         }
 
         /**
+         * Sets which final failures count against this breaker.
+         *
+         * <p>A failure the predicate rejects surfaces to the caller unchanged and is recorded as a
+         * success, so it neither opens the breaker nor extends a failure streak. A predicate that throws
+         * counts the failure. Without a predicate every failure counts. A pipeline built through a
+         * framework adapter with its own classifier uses that classifier instead.
+         *
+         * <p>A failure the predicate rejects on the half-open trial counts as a success and closes the
+         * circuit, because the dependency answered. Fatal throwables pass through before the predicate
+         * runs. A breaker may be shared by several pipelines and threads, so the predicate must be
+         * non-blocking and thread-safe.
+         *
+         * @param counts returns {@code true} for a failure that counts
+         * @return this builder
+         */
+        public Builder countsAsFailure(Predicate<? super Throwable> counts) {
+            ensureMutable();
+            countsAsFailure = Objects.requireNonNull(counts, "counts");
+            return this;
+        }
+
+        /**
          * Builds the immutable breaker.
          *
          * @return the runtime-owned breaker
@@ -207,8 +241,12 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
             ensureMutable();
             built = true;
             resilience.ensureOpenForConstruction();
-            CircuitBreaker breaker =
-                    new CircuitBreaker(resilience, stateKey, CircuitBreakerConfig.of(maxFailures, resetTimeout));
+            Predicate<? super Throwable> counts = countsAsFailure;
+            CircuitBreaker breaker = new CircuitBreaker(
+                    resilience,
+                    stateKey,
+                    CircuitBreakerConfig.of(maxFailures, resetTimeout),
+                    counts == null ? null : counts::test);
             if (!resilience.register(breaker)) {
                 throw new IllegalStateException("Resilience runtime is closed");
             }
@@ -233,7 +271,9 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
         private final AtomicBoolean settled = new AtomicBoolean();
         private final AtomicBoolean invoked = new AtomicBoolean();
         private final ResilienceExecutionObservation observation;
+        private final ResilienceCancellation cancellation;
         private Runnable deregistration = () -> {};
+        private volatile Runnable cancellationRegistration = () -> {};
 
         private Execution(
                 Context context,
@@ -245,11 +285,12 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
                 ResilienceExecutionObservation observation) {
             this.context = context;
             this.operationKey = operationKey;
-            this.classifier = classifier;
+            this.classifier = classifier != null ? classifier : failureClassifier;
             this.operation = operation;
             this.contextOpen = contextOpen;
             this.executionRegistrar = executionRegistrar == null ? ignored -> () -> {} : executionRegistrar;
             this.observation = observation;
+            this.cancellation = observation == null ? null : observation.cancellation();
             this.deregistration = Objects.requireNonNull(
                     this.executionRegistrar.apply(this::requestClose), "execution deregistration handle");
         }
@@ -263,29 +304,70 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
                 settleClosed();
                 return;
             }
+            if (cancellation != null && cancellation.isCancelled()) {
+                settleFailure(cancellation.reason());
+                return;
+            }
             Future<EngineOutcome<T>> outcome;
             try {
                 outcome = engine.execute(() -> {
                     invoked.set(true);
-                    Future<T> supplied;
-                    try {
-                        supplied = Objects.requireNonNull(operation.get(), "operation returned null future");
-                    } catch (Exception failure) {
-                        return classifiedFailure(failure);
-                    } catch (Error fatal) {
-                        if (isFatal(fatal)) {
-                            return Future.succeededFuture(new EngineOutcome<>(null, fatal));
-                        }
-                        throw fatal;
-                    }
-                    return supplied.map(value -> new EngineOutcome<>(value, null))
-                            .recover(this::recoverFailure);
+                    return cancellation == null ? invokeOperation() : invokeCancellable();
                 });
             } catch (Throwable failure) {
                 handle(Future.failedFuture(failure));
                 return;
             }
             outcome.onComplete(ignored -> context.runOnContext(done -> handle(outcome)));
+        }
+
+        private Future<EngineOutcome<T>> invokeOperation() {
+            Future<T> supplied;
+            try {
+                supplied = Objects.requireNonNull(operation.get(), "operation returned null future");
+            } catch (Exception failure) {
+                return classifiedFailure(failure);
+            } catch (Error fatal) {
+                if (isFatal(fatal)) {
+                    return Future.succeededFuture(new EngineOutcome<>(null, fatal));
+                }
+                throw fatal;
+            }
+            return supplied.map(value -> new EngineOutcome<>(value, null)).recover(this::recoverFailure);
+        }
+
+        /**
+         * Runs the operation behind a gate the cancellation can settle. A cancelled execution is recorded
+         * so that it never closes the breaker: as a failure when the breaker is half-open, otherwise as
+         * a success that, like any success, resets the consecutive-failure count.
+         */
+        private Future<EngineOutcome<T>> invokeCancellable() {
+            Future<EngineOutcome<T>> attempt = invokeOperation();
+            Promise<EngineOutcome<T>> gate = Promise.promise();
+            cancellationRegistration =
+                    cancellation.onCancel(reason -> context.runOnContext(ignored -> recordCancelled(gate, reason)));
+            attempt.onComplete(outcome -> {
+                cancellationRegistration.run();
+                // A cancel that already happened wins over the operation's own late result, even when the
+                // queued cancel task has not run yet on the context.
+                Throwable cancelled = cancellation.reason();
+                if (cancelled != null) {
+                    recordCancelled(gate, cancelled);
+                } else if (outcome.succeeded()) {
+                    gate.tryComplete(outcome.result());
+                } else {
+                    gate.tryFail(outcome.cause());
+                }
+            });
+            return gate.future();
+        }
+
+        private void recordCancelled(Promise<EngineOutcome<T>> gate, Throwable reason) {
+            if (engine.state() == io.vertx.circuitbreaker.CircuitBreakerState.HALF_OPEN) {
+                gate.tryFail(reason);
+            } else {
+                gate.tryComplete(new EngineOutcome<>(null, reason));
+            }
         }
 
         private Future<EngineOutcome<T>> classifiedFailure(Throwable failure) {
@@ -358,6 +440,7 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
                 } finally {
                     resilience.remove(this);
                     deregistration.run();
+                    cancellationRegistration.run();
                 }
             }
         }
@@ -369,6 +452,7 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
                 } finally {
                     resilience.remove(this);
                     deregistration.run();
+                    cancellationRegistration.run();
                 }
             }
         }

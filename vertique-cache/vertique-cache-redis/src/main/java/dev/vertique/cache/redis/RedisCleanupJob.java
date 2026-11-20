@@ -26,6 +26,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -56,6 +57,9 @@ final class RedisCleanupJob {
     private final long firstRunJitterMillis;
     private final AtomicBoolean registered = new AtomicBoolean();
     private final AtomicInteger consecutiveFailures = new AtomicInteger();
+    private final AtomicBoolean firstRunPending = new AtomicBoolean(true);
+    private volatile long lastSweepStartedAt;
+    private volatile boolean sweptBefore;
 
     /**
      * Creates a cleanup job with explicit seams for topology, marker reads, timing, and observation.
@@ -185,6 +189,34 @@ final class RedisCleanupJob {
         }
     }
 
+    /**
+     * Decides whether a cron tick may start a sweep and how long to wait before it starts.
+     *
+     * <p>The first admitted tick of an instance waits for the instance's first-run jitter. While
+     * the job is backing off after failed sweeps, a tick that arrives before the retry delay has
+     * elapsed is skipped; the tick nearest the end of the delay runs.
+     *
+     * @return the milliseconds to wait before sweeping, or empty when this tick is skipped
+     */
+    OptionalLong admitTick() {
+        int failures = consecutiveFailures.get();
+        if (failures > 0 && sweptBefore && !retryDelayElapsed(failures)) {
+            return OptionalLong.empty();
+        }
+        return OptionalLong.of(firstRunPending.compareAndSet(true, false) ? firstRunJitterMillis : 0L);
+    }
+
+    private boolean retryDelayElapsed(int failures) {
+        long elapsedNanos;
+        try {
+            elapsedNanos = monotonicNanos.getAsLong() - lastSweepStartedAt;
+        } catch (RuntimeException failure) {
+            return true;
+        }
+        long toleranceNanos = CADENCE_MILLIS * 1_000_000L / 2;
+        return elapsedNanos >= retryDelayAfterFailures(failures).toNanos() - toleranceNanos;
+    }
+
     /** Releases this job's registration guard after the owning cron scheduler has stopped. */
     Future<Void> unregister() {
         registered.set(false);
@@ -201,6 +233,8 @@ final class RedisCleanupJob {
             state.failed = true;
             return finish(state);
         }
+        lastSweepStartedAt = startedAt;
+        sweptBefore = true;
 
         Future<List<RedisPrimaryNode>> nodes;
         try {

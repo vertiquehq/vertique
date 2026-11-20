@@ -255,7 +255,7 @@ class HistoryPayloadCorrelationStitchingTest {
                 .optionalIntentKinds(WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS)
                 .migrationRegistry(Optional.empty())
                 .propagator(propagator)
-                .typeNames(WorkflowEngineFactory.registryTypeNames(registry))
+                .typeNames(typeNamesHoldingObject())
                 .commands(new EmptyCommandRepository())
                 .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
                 .build());
@@ -493,7 +493,7 @@ class HistoryPayloadCorrelationStitchingTest {
                 .optionalIntentKinds(WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS)
                 .migrationRegistry(Optional.of(migrationRegistry))
                 .propagator(propagator)
-                .typeNames(WorkflowEngineFactory.registryTypeNames(registry))
+                .typeNames(typeNamesHoldingObject())
                 .commands(new EmptyCommandRepository())
                 .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
                 .build());
@@ -829,5 +829,15 @@ class HistoryPayloadCorrelationStitchingTest {
                     assertThat(payload.getString("commandCorrelationId")).isNull();
                     ctx.completeNow();
                 })));
+    }
+
+    /**
+     * The index of an engine over a mocked registry: the hand-built plans name {@code Object} as every payload
+     * type, and the index is the only place the engine resolves a payload type name.
+     */
+    private static dev.vertique.workflow.types.DefaultWorkflowTypeNames typeNamesHoldingObject() {
+        var names = new dev.vertique.workflow.types.DefaultWorkflowTypeNames();
+        names.add(null, java.util.List.of(Object.class));
+        return names;
     }
 }

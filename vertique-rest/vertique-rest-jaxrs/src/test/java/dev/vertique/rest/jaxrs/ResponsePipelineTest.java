@@ -94,7 +94,7 @@ class ResponsePipelineTest {
         // Wire terminations return futures the pipeline observes; individual tests override these.
         when(httpResponse.end()).thenReturn(Future.succeededFuture());
         when(httpResponse.end(anyString())).thenReturn(Future.succeededFuture());
-        when(httpResponse.reset()).thenReturn(Future.succeededFuture());
+        when(httpResponse.reset(2L)).thenReturn(Future.succeededFuture());
 
         responseHeaders = MultiMap.caseInsensitiveMultiMap();
         when(httpResponse.headers()).thenReturn(responseHeaders);
@@ -867,8 +867,8 @@ class ResponsePipelineTest {
         }
 
         @Test
-        @DisplayName("An already-failed completion future ends the response without hooks or a bare 500")
-        void immediateFailedFutureEndsResponseWithoutHooks() {
+        @DisplayName("An already-failed completion future resets the response without refiring hooks or a bare 500")
+        void immediateFailedFutureResetsResponseWithoutHooks() {
             // given a serializer that fails its completion future before returning
             RuntimeException cause = new RuntimeException("pipe failed on resume");
             when(serializer.serialize(any(), any())).thenReturn(Future.failedFuture(cause));
@@ -890,7 +890,7 @@ class ResponsePipelineTest {
                     cause,
                     RequestCompletionRecorder.recordedWireFailure(ctx),
                     "an immediately-failed completion future must still set the marker");
-            verify(httpResponse).end();
+            verify(httpResponse).reset(2L);
             assertEquals(1, observed.size(), "afterResponse must fire exactly once, at wire handoff");
             assertEquals(200, observed.get(0).getStatus(), "the single afterResponse reflects the handed-off outcome");
             verify(httpResponse, never()).setStatusCode(500);
@@ -906,7 +906,7 @@ class ResponsePipelineTest {
                 Promise<Void> wire = pendingWireCompletion();
                 AtomicReference<Context> cleanupContext = new AtomicReference<>();
                 CountDownLatch cleanupDone = new CountDownLatch(1);
-                when(httpResponse.end()).thenAnswer(invocation -> {
+                when(httpResponse.reset(2L)).thenAnswer(invocation -> {
                     cleanupContext.set(Vertx.currentContext());
                     cleanupDone.countDown();
                     return Future.succeededFuture();
@@ -956,7 +956,7 @@ class ResponsePipelineTest {
             wire.fail(new RuntimeException("stream aborted mid-body"));
 
             // then the stream is reset — ending would frame 10 bytes as a complete 100-byte body
-            verify(httpResponse).reset();
+            verify(httpResponse).reset(2L);
             verify(httpResponse, never()).end();
         }
 
@@ -978,7 +978,7 @@ class ResponsePipelineTest {
             wire.fail(new RuntimeException("connection died before the head flushed"));
 
             // then the stream is reset — an uncommitted head does not make the framing honest
-            verify(httpResponse).reset();
+            verify(httpResponse).reset(2L);
             verify(httpResponse, never()).end();
         }
 
@@ -999,7 +999,7 @@ class ResponsePipelineTest {
             wire.fail(new RuntimeException("stream aborted mid-body"));
 
             // then the stream is reset — 20 bytes cannot be framed as the declared 10
-            verify(httpResponse).reset();
+            verify(httpResponse).reset(2L);
             verify(httpResponse, never()).end();
         }
 
@@ -1019,15 +1019,15 @@ class ResponsePipelineTest {
             wire.fail(new RuntimeException("stream aborted mid-body"));
 
             // then the unverifiable framing is treated as unsatisfiable, not waved through
-            verify(httpResponse).reset();
+            verify(httpResponse).reset(2L);
             verify(httpResponse, never()).end();
         }
 
         @Test
-        @DisplayName("A fixed-length response whose bytes exactly match the declared length is ended cleanly")
-        void exactLengthCompletedResponseEndsCleanly() {
+        @DisplayName("A fixed-length response whose bytes exactly match the declared length is reset on failure")
+        void exactLengthFailedResponseIsReset() {
             // given a committed, non-chunked response whose written bytes satisfy the declared
-            // length exactly — the boundary the reset guard must not cross
+            // length exactly — the bytes initiated do not establish successful delivery
             Promise<Void> wire = pendingWireCompletion();
             when(httpResponse.headWritten()).thenReturn(true);
             when(httpResponse.isChunked()).thenReturn(false);
@@ -1039,9 +1039,9 @@ class ResponsePipelineTest {
             // when the wire write fails after the handoff
             wire.fail(new RuntimeException("failure reported after the last byte was written"));
 
-            // then the honestly-framed response is ended, never reset
-            verify(httpResponse).end();
-            verify(httpResponse, never()).reset();
+            // then the open response is reset
+            verify(httpResponse, never()).end();
+            verify(httpResponse).reset(2L);
         }
 
         @Test
@@ -1053,7 +1053,7 @@ class ResponsePipelineTest {
             when(httpResponse.isChunked()).thenReturn(false);
             when(httpResponse.bytesWritten()).thenReturn(10L);
             responseHeaders.set(HttpHeaders.CONTENT_LENGTH, "100");
-            when(httpResponse.reset()).thenReturn(Future.failedFuture(new RuntimeException("reset not delivered")));
+            when(httpResponse.reset(2L)).thenReturn(Future.failedFuture(new RuntimeException("reset not delivered")));
             HttpConnection connection = mock(HttpConnection.class);
             when(ctx.request().version()).thenReturn(HttpVersion.HTTP_1_1);
             when(ctx.request().connection()).thenReturn(connection);
@@ -1064,7 +1064,7 @@ class ResponsePipelineTest {
             wire.fail(new RuntimeException("stream aborted mid-body"));
 
             // then the connection carrying the un-framable response is closed as the last resort
-            verify(httpResponse).reset();
+            verify(httpResponse).reset(2L);
             verify(connection).close();
         }
 
@@ -1077,7 +1077,7 @@ class ResponsePipelineTest {
             when(httpResponse.isChunked()).thenReturn(false);
             when(httpResponse.bytesWritten()).thenReturn(10L);
             responseHeaders.set(HttpHeaders.CONTENT_LENGTH, "100");
-            when(httpResponse.reset()).thenReturn(Future.failedFuture(new RuntimeException("reset not delivered")));
+            when(httpResponse.reset(2L)).thenReturn(Future.failedFuture(new RuntimeException("reset not delivered")));
             HttpConnection connection = mock(HttpConnection.class);
             when(ctx.request().version()).thenReturn(HttpVersion.HTTP_2);
             when(ctx.request().connection()).thenReturn(connection);
@@ -1088,15 +1088,14 @@ class ResponsePipelineTest {
             wire.fail(new RuntimeException("stream aborted mid-body"));
 
             // then the multiplexed connection is left alone — closing it would kill sibling streams
-            verify(httpResponse).reset();
+            verify(httpResponse).reset(2L);
             verify(connection, never()).close();
         }
 
         @Test
-        @DisplayName("A truncated chunked response is still ended cleanly and never reset")
-        void chunkedTruncatedResponseStillEndedCleanly() {
-            // given a committed chunked response — its terminal zero-length chunk frames the
-            // truncation honestly, so no reset is warranted
+        @DisplayName("A truncated chunked response is reset")
+        void chunkedTruncatedResponseIsReset() {
+            // given a committed chunked response
             Promise<Void> wire = pendingWireCompletion();
             when(httpResponse.headWritten()).thenReturn(true);
             when(httpResponse.isChunked()).thenReturn(true);
@@ -1106,46 +1105,25 @@ class ResponsePipelineTest {
             // when the wire write fails after the handoff
             wire.fail(new RuntimeException("stream aborted mid-body"));
 
-            // then the response is ended, not reset
-            verify(httpResponse).end();
-            verify(httpResponse, never()).reset();
+            // then no successful terminator is sent
+            verify(httpResponse, never()).end();
+            verify(httpResponse).reset(2L);
         }
 
         @Test
-        @DisplayName("A terminal end() whose future fails resets the response as a backstop")
-        void endFailureBackstopResets() {
-            // given a response whose guarded terminal end() cannot complete (the connection is gone)
+        @DisplayName("A synchronous reset failure is guarded and closes the HTTP/1 connection")
+        void throwingResetIsGuarded() {
             Promise<Void> wire = pendingWireCompletion();
-            when(httpResponse.end()).thenReturn(Future.failedFuture(new RuntimeException("connection gone")));
-
+            when(httpResponse.reset(2L)).thenThrow(new IllegalStateException("reset failed"));
+            HttpConnection connection = mock(HttpConnection.class);
+            when(ctx.request().version()).thenReturn(HttpVersion.HTTP_1_1);
+            when(ctx.request().connection()).thenReturn(connection);
+            RuntimeException cause = new RuntimeException("stream aborted");
             pipeline.sendResponse(ctx, Response.ok("body").build());
 
-            // when the wire write fails after the handoff
-            wire.fail(new RuntimeException("stream aborted mid-body"));
-
-            // then the response that could not be ended is not left open
-            verify(httpResponse).end();
-            verify(httpResponse).reset();
-        }
-
-        @Test
-        @DisplayName("A terminal end() that throws (already-written race) is guarded and does not escape")
-        void throwingTerminalEndGuarded() {
-            // given a response whose terminal end() loses an already-written race and throws
-            Promise<Void> wire = pendingWireCompletion();
-            when(httpResponse.end()).thenThrow(new IllegalStateException("Response has already been written"));
-            RuntimeException cause = new RuntimeException("stream aborted mid-body");
-            pipeline.sendResponse(ctx, Response.ok("body").build());
-
-            // when the wire write fails after the handoff
-            assertDoesNotThrow(() -> wire.fail(cause), "a guarded terminal end() must never escape the observer");
-
-            // then the failure is still recorded and the end attempt was made
-            assertSame(
-                    cause,
-                    RequestCompletionRecorder.recordedWireFailure(ctx),
-                    "a throwing terminal end() must not prevent the marker from being recorded");
-            verify(httpResponse).end();
+            assertDoesNotThrow(() -> wire.fail(cause));
+            assertSame(cause, RequestCompletionRecorder.recordedWireFailure(ctx));
+            verify(connection).close();
         }
 
         @Test

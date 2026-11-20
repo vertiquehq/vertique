@@ -6,10 +6,13 @@ package dev.vertique.rest.client.meta;
 import dev.vertique.core.codegen.ParameterMetadata;
 import dev.vertique.core.codegen.ReflectiveMethodMetadata;
 import dev.vertique.core.codegen.ReflectiveParameterMetadata;
+import dev.vertique.core.util.AnnotationResolver;
+import dev.vertique.core.util.TypeResolver;
 import dev.vertique.resilience.annotation.ResilienceAnnotations;
 import dev.vertique.rest.client.ExpectedStatus;
 import dev.vertique.rest.client.HttpClientResponse;
 import dev.vertique.rest.client.Url;
+import dev.vertique.rest.client.exception.RestClientConfigurationException;
 import io.vertx.core.Expectation;
 import io.vertx.core.Future;
 import io.vertx.core.http.HttpResponseExpectation;
@@ -32,6 +35,7 @@ import jakarta.ws.rs.QueryParam;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.Field;
+import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
@@ -40,10 +44,12 @@ import java.lang.reflect.Type;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 
@@ -82,56 +88,151 @@ public final class ClientInterfaceScanner {
         }
 
         Map<Method, ClientMethodMeta> result = new LinkedHashMap<>();
+        List<Method> candidates = collectMethods(iface);
+        Map<Method, Method> bridges = bridgeDeclarations(iface);
+        Map<Method, Method> overriders = overriders(iface, candidates, new HashSet<>(bridges.values()));
 
-        for (Method method : collectMethods(iface)) {
-            String httpMethod = resolveHttpMethod(method);
-            if (httpMethod == null) {
-                log.debug("Skipping method {}.{}() — no HTTP verb annotation", iface.getSimpleName(), method.getName());
-                continue;
+        for (Method method : candidates) {
+            if (overriders.containsKey(method)) {
+                continue; // described by the method that overrides it, registered below
             }
-
-            String pathTemplate = resolvePath(iface, method);
-            List<ClientParamMeta> params = resolveParams(method);
-            validateUrlParam(iface, method, params);
-            ReturnTypeMeta returnType = resolveReturnType(method);
-            String consumesMediaType = resolveConsumes(iface, method);
-            String producesMediaType = resolveProduces(iface, method);
-            Expectation<HttpResponseHead> expectation = resolveExpectedStatus(method);
-            ResilienceAnnotations resilienceAnnotations = ResilienceAnnotations.resolve(method);
-
-            boolean hasUrlParam = params.stream().anyMatch(p -> p.source() == ClientParamMeta.ParamSource.URL);
-
-            List<ClientParamMeta> immutableParams = Collections.unmodifiableList(params);
-            List<ParameterMetadata> parameterMetadata = immutableParams.stream()
-                    .map(ClientParamMeta::parameterMetadata)
-                    .collect(Collectors.toUnmodifiableList());
-            ClientMethodMeta meta = new ClientMethodMeta(
-                    new ReflectiveMethodMetadata(method, parameterMetadata),
-                    httpMethod,
-                    pathTemplate,
-                    immutableParams,
-                    returnType.genericType(),
-                    returnType.rawType(),
-                    returnType.returnsVoid(),
-                    returnType.returnsRawResponse(),
-                    returnType.returnsOptional(),
-                    consumesMediaType,
-                    producesMediaType,
-                    expectation,
-                    resilienceAnnotations,
-                    hasUrlParam);
-
-            result.put(method, meta);
-
-            log.debug(
-                    "Discovered client method: {} {} -> {}.{}()",
-                    httpMethod,
-                    pathTemplate,
-                    iface.getSimpleName(),
-                    method.getName());
+            ClientMethodMeta meta = scanMethod(iface, method);
+            if (meta != null) {
+                result.put(method, meta);
+            }
         }
 
+        // A declaration that another method of the client overrides is the same operation: a caller
+        // holding the super-interface type reaches the proxy through that declaration's Method.
+        overriders.forEach((declaration, overrider) -> {
+            ClientMethodMeta meta = result.get(overrider);
+            if (meta != null) {
+                result.put(declaration, meta);
+            }
+        });
+
+        // The compiler adds a bridge to a redeclaration of a generic method; the JDK proxy hands the
+        // bridge to the invocation handler when the client is called through the super-interface type.
+        bridges.forEach((bridge, declaration) -> {
+            ClientMethodMeta meta = result.get(declaration);
+            if (meta != null) {
+                result.put(bridge, meta);
+            }
+        });
+
         return Collections.unmodifiableMap(result);
+    }
+
+    /**
+     * Builds the descriptor of one operation, or returns {@code null} when the method carries no
+     * HTTP verb. Annotations come from the method and from the declarations it overrides; types of
+     * hierarchy type variables are resolved as members of {@code iface}.
+     */
+    private static ClientMethodMeta scanMethod(Class<?> iface, Method method) {
+        List<Annotation> annotations = AnnotationResolver.resolveMethodAnnotations(method, iface);
+        String httpMethod = resolveHttpMethod(annotations);
+        if (httpMethod == null) {
+            log.debug("Skipping method {}.{}() — no HTTP verb annotation", iface.getSimpleName(), method.getName());
+            return null;
+        }
+
+        String pathTemplate = resolvePath(iface, annotations);
+        List<ClientParamMeta> params = resolveParams(iface, method);
+        validateUrlParam(iface, method, annotations, params);
+        ReturnTypeMeta returnType = resolveReturnType(iface, method);
+        String consumesMediaType = resolveConsumes(iface, annotations);
+        String producesMediaType = resolveProduces(iface, annotations);
+        Expectation<HttpResponseHead> expectation = resolveExpectedStatus(iface, method, annotations);
+        ResilienceAnnotations resilienceAnnotations = ResilienceAnnotations.resolve(iface, method);
+
+        boolean hasUrlParam = params.stream().anyMatch(p -> p.source() == ClientParamMeta.ParamSource.URL);
+
+        List<ClientParamMeta> immutableParams = Collections.unmodifiableList(params);
+        List<ParameterMetadata> parameterMetadata = immutableParams.stream()
+                .map(ClientParamMeta::parameterMetadata)
+                .collect(Collectors.toUnmodifiableList());
+        ClientMethodMeta meta = new ClientMethodMeta(
+                new ReflectiveMethodMetadata(method, parameterMetadata, annotations),
+                httpMethod,
+                pathTemplate,
+                immutableParams,
+                returnType.genericType(),
+                returnType.rawType(),
+                returnType.returnsVoid(),
+                returnType.returnsRawResponse(),
+                returnType.returnsOptional(),
+                consumesMediaType,
+                producesMediaType,
+                expectation,
+                resilienceAnnotations,
+                hasUrlParam);
+
+        log.debug(
+                "Discovered client method: {} {} -> {}.{}()",
+                httpMethod,
+                pathTemplate,
+                iface.getSimpleName(),
+                method.getName());
+        return meta;
+    }
+
+    /**
+     * Maps each compiler-generated bridge the interface lists to the super-interface declaration it
+     * bridges: the non-bridge method of the same name and erased parameter types. A bridge whose
+     * declaration cannot be found is not mapped.
+     */
+    private static Map<Method, Method> bridgeDeclarations(Class<?> iface) {
+        Map<Method, Method> result = new LinkedHashMap<>();
+        for (Method bridge : iface.getMethods()) {
+            if (!bridge.isBridge() || bridge.getDeclaringClass() == Object.class) {
+                continue;
+            }
+            for (Class<?> type : TypeResolver.getAllInterfaces(iface)) {
+                try {
+                    Method declaration = type.getDeclaredMethod(bridge.getName(), bridge.getParameterTypes());
+                    if (!declaration.isBridge() && !declaration.isSynthetic()) {
+                        result.put(bridge, declaration);
+                        break;
+                    }
+                } catch (NoSuchMethodException ignored) {
+                    // not declared by this interface
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Maps each candidate that another candidate overrides to the most specific overrider. A
+     * redeclaration such as {@code delete(String)} of {@code Crud<String>} has another erased
+     * signature than {@code Crud<ID>.delete(ID)}, so the class lists both.
+     */
+    private static Map<Method, Method> overriders(Class<?> iface, List<Method> candidates, Set<Method> bridged) {
+        Set<Method> listed = new HashSet<>(candidates);
+        listed.addAll(bridged);
+        Map<Method, Method> direct = new LinkedHashMap<>();
+        for (Method candidate : candidates) {
+            for (Method declaration : AnnotationResolver.inheritedDeclarations(candidate, iface)) {
+                // Only a declaration of a supertype is overridden. Override-equivalent declarations of
+                // unrelated interfaces are separate operations that happen to share a signature.
+                if (listed.contains(declaration)
+                        && declaration.getDeclaringClass() != candidate.getDeclaringClass()
+                        && declaration.getDeclaringClass().isAssignableFrom(candidate.getDeclaringClass())) {
+                    direct.putIfAbsent(declaration, candidate);
+                }
+            }
+        }
+        Map<Method, Method> result = new LinkedHashMap<>();
+        direct.forEach((declaration, overrider) -> {
+            // The overriding class is a strict subtype at every step, so the chain ends.
+            Method top = overrider;
+            Method next;
+            while ((next = direct.get(top)) != null) {
+                top = next;
+            }
+            result.put(declaration, top);
+        });
+        return result;
     }
 
     // --- Return Type Resolution ---
@@ -142,12 +243,16 @@ public final class ClientInterfaceScanner {
      * <p>If the type argument is {@code Optional<X>}, {@code returnsOptional} is set to
      * {@code true} and {@code X} is used as the actual response type.
      *
+     * <p>Type variables bound by the interface's hierarchy are resolved first, so {@code Future<T>}
+     * of {@code Base<T>} read through {@code Client extends Base<User>} yields {@code User}.
+     *
+     * @param iface the client interface the method is a member of
      * @param method the interface method
      * @return the resolved return type metadata
      * @throws IllegalArgumentException if the method does not return {@code Future<T>}
      */
-    private static ReturnTypeMeta resolveReturnType(Method method) {
-        Type returnType = method.getGenericReturnType();
+    private static ReturnTypeMeta resolveReturnType(Class<?> iface, Method method) {
+        Type returnType = TypeResolver.resolveMemberType(iface, method.getGenericReturnType());
         if (!(returnType instanceof ParameterizedType pt)
                 || !Future.class.isAssignableFrom((Class<?>) pt.getRawType())) {
             throw new IllegalArgumentException(String.format(
@@ -209,21 +314,38 @@ public final class ClientInterfaceScanner {
     // --- HTTP Method Resolution ---
 
     /**
-     * Resolves the HTTP verb string from a method's JAX-RS annotations. Supports
-     * {@code GET}, {@code POST}, {@code PUT}, {@code DELETE}, {@code PATCH}, and {@code HEAD}.
-     * Methods annotated with unsupported verbs (e.g. {@code OPTIONS}) are treated as having no
-     * verb and are skipped during scanning.
+     * Resolves the HTTP verb string from a method's JAX-RS annotations, taking the first verb found
+     * in the merged annotation list (the method's own, then those of the declarations it overrides).
+     * Supports {@code GET}, {@code POST}, {@code PUT}, {@code DELETE}, {@code PATCH}, and
+     * {@code HEAD}. Methods annotated with unsupported verbs (e.g. {@code OPTIONS}) are treated as
+     * having no verb and are skipped during scanning.
      *
-     * @param method the interface method
+     * @param annotations the merged method annotations
      * @return the HTTP verb (e.g. {@code "GET"}), or {@code null} if no verb annotation is present
      */
-    private static String resolveHttpMethod(Method method) {
-        if (method.isAnnotationPresent(GET.class)) return "GET";
-        if (method.isAnnotationPresent(POST.class)) return "POST";
-        if (method.isAnnotationPresent(PUT.class)) return "PUT";
-        if (method.isAnnotationPresent(DELETE.class)) return "DELETE";
-        if (method.isAnnotationPresent(PATCH.class)) return "PATCH";
-        if (method.isAnnotationPresent(HEAD.class)) return "HEAD";
+    private static String resolveHttpMethod(List<Annotation> annotations) {
+        for (Annotation annotation : annotations) {
+            Class<? extends Annotation> type = annotation.annotationType();
+            if (type == GET.class) return "GET";
+            if (type == POST.class) return "POST";
+            if (type == PUT.class) return "PUT";
+            if (type == DELETE.class) return "DELETE";
+            if (type == PATCH.class) return "PATCH";
+            if (type == HEAD.class) return "HEAD";
+        }
+        return null;
+    }
+
+    /**
+     * Returns the first annotation of the given type in a merged annotation sequence, so the
+     * nearest declaration wins.
+     */
+    private static <A extends Annotation> A first(Iterable<? extends Annotation> annotations, Class<A> type) {
+        for (Annotation annotation : annotations) {
+            if (annotation.annotationType() == type) {
+                return type.cast(annotation);
+            }
+        }
         return null;
     }
 
@@ -236,10 +358,12 @@ public final class ClientInterfaceScanner {
      *
      * @param iface the client interface
      * @param method the method being scanned
+     * @param annotations the merged method annotations
      * @param params the resolved parameter metadata
      * @throws IllegalArgumentException if validation fails
      */
-    private static void validateUrlParam(Class<?> iface, Method method, List<ClientParamMeta> params) {
+    private static void validateUrlParam(
+            Class<?> iface, Method method, List<Annotation> annotations, List<ClientParamMeta> params) {
         long urlCount = params.stream()
                 .filter(p -> p.source() == ClientParamMeta.ParamSource.URL)
                 .count();
@@ -255,7 +379,7 @@ public final class ClientInterfaceScanner {
             throw new IllegalArgumentException("@Url method " + method.getName()
                     + " must not have interface-level @Path on " + iface.getSimpleName());
         }
-        if (method.isAnnotationPresent(Path.class)) {
+        if (first(annotations, Path.class) != null) {
             throw new IllegalArgumentException("@Url method " + method.getName() + " must not have method-level @Path");
         }
         for (ClientParamMeta p : params) {
@@ -279,10 +403,10 @@ public final class ClientInterfaceScanner {
      * method-level {@link Path} annotations.
      *
      * @param iface the client interface
-     * @param method the interface method
+     * @param annotations the merged method annotations
      * @return the normalized path template (e.g. {@code "/users/{id}"})
      */
-    private static String resolvePath(Class<?> iface, Method method) {
+    private static String resolvePath(Class<?> iface, List<Annotation> annotations) {
         String basePath = "";
         Path classPath = iface.getAnnotation(Path.class);
         if (classPath != null) {
@@ -290,7 +414,7 @@ public final class ClientInterfaceScanner {
         }
 
         String methodPath = "";
-        Path methodPathAnn = method.getAnnotation(Path.class);
+        Path methodPathAnn = first(annotations, Path.class);
         if (methodPathAnn != null) {
             methodPath = methodPathAnn.value();
         }
@@ -331,17 +455,21 @@ public final class ClientInterfaceScanner {
      *   <li>Unannotated — request body (serialized as JSON)</li>
      * </ol>
      *
+     * <p>A parameter's annotations are its own plus those of the same parameter of every declaration
+     * the method overrides, and its type is resolved as a member of {@code iface}.
+     *
+     * @param iface the client interface the method is a member of
      * @param method the interface method
      * @return ordered list of parameter metadata
      */
-    private static List<ClientParamMeta> resolveParams(Method method) {
+    private static List<ClientParamMeta> resolveParams(Class<?> iface, Method method) {
         List<ClientParamMeta> params = new ArrayList<>();
         Parameter[] parameters = method.getParameters();
 
         for (int i = 0; i < parameters.length; i++) {
-            Parameter param = parameters[i];
-            ClientParamMeta meta = resolveParam(param, i);
-            params.add(meta);
+            Annotation[] annotations = AnnotationResolver.resolveParameterAnnotations(method, i, iface);
+            Type genericType = TypeResolver.resolveMemberType(iface, parameters[i].getParameterizedType());
+            params.add(resolveParam(parameters[i], i, annotations, genericType));
         }
 
         return params;
@@ -352,24 +480,28 @@ public final class ClientInterfaceScanner {
      *
      * @param param the method parameter
      * @param index the zero-based index of the parameter in the method signature
+     * @param annotations the merged parameter annotations
+     * @param genericType the parameter type resolved as a member of the client interface
      * @return the resolved parameter metadata
      */
-    private static ClientParamMeta resolveParam(Parameter param, int index) {
-        String defaultValue = resolveDefaultValue(param);
-        Type genericType = param.getParameterizedType();
-        Class<?> componentType = resolveComponentType(param.getType(), genericType);
+    private static ClientParamMeta resolveParam(
+            Parameter param, int index, Annotation[] annotations, Type genericType) {
+        List<Annotation> merged = List.of(annotations);
+        AnnotatedElement annotationSource = new MergedAnnotations(merged);
+        Class<?> rawType = rawClass(genericType, param.getType());
+        String defaultValue = defaultValue(merged);
+        Class<?> componentType = resolveComponentType(rawType, genericType);
 
-        if (param.isAnnotationPresent(Url.class)) {
-            if (param.getType() != URI.class) {
-                throw new IllegalArgumentException("@Url parameter must be java.net.URI, found: "
-                        + param.getType().getName());
+        if (first(merged, Url.class) != null) {
+            if (rawType != URI.class) {
+                throw new IllegalArgumentException("@Url parameter must be java.net.URI, found: " + rawType.getName());
             }
             // Reject @DefaultValue before the generic jakarta.ws.rs loop for a clearer message
-            if (param.isAnnotationPresent(DefaultValue.class)) {
+            if (first(merged, DefaultValue.class) != null) {
                 throw new IllegalArgumentException("@DefaultValue is not allowed on @Url parameters");
             }
             // Reject if any jakarta.ws.rs parameter-binding annotation is also present
-            for (Annotation ann : param.getAnnotations()) {
+            for (Annotation ann : merged) {
                 if (ann.annotationType().getPackageName().startsWith("jakarta.ws.rs")) {
                     throw new IllegalArgumentException("@Url is mutually exclusive with "
                             + ann.annotationType().getSimpleName() + " on the same parameter");
@@ -378,66 +510,70 @@ public final class ClientInterfaceScanner {
             return new ClientParamMeta(
                     null,
                     ClientParamMeta.ParamSource.URL,
-                    param.getType(),
+                    rawType,
                     genericType,
                     componentType,
                     null,
                     index,
-                    param);
+                    annotationSource);
         }
 
-        if (param.isAnnotationPresent(PathParam.class)) {
+        PathParam pathParam = first(merged, PathParam.class);
+        if (pathParam != null) {
             return new ClientParamMeta(
-                    param.getAnnotation(PathParam.class).value(),
+                    pathParam.value(),
                     ClientParamMeta.ParamSource.PATH,
-                    param.getType(),
+                    rawType,
                     genericType,
                     componentType,
                     defaultValue,
                     index,
-                    param);
+                    annotationSource);
         }
 
-        if (param.isAnnotationPresent(QueryParam.class)) {
+        QueryParam queryParam = first(merged, QueryParam.class);
+        if (queryParam != null) {
             return new ClientParamMeta(
-                    param.getAnnotation(QueryParam.class).value(),
+                    queryParam.value(),
                     ClientParamMeta.ParamSource.QUERY,
-                    param.getType(),
+                    rawType,
                     genericType,
                     componentType,
                     defaultValue,
                     index,
-                    param);
+                    annotationSource);
         }
 
-        if (param.isAnnotationPresent(HeaderParam.class)) {
+        HeaderParam headerParam = first(merged, HeaderParam.class);
+        if (headerParam != null) {
             return new ClientParamMeta(
-                    param.getAnnotation(HeaderParam.class).value(),
+                    headerParam.value(),
                     ClientParamMeta.ParamSource.HEADER,
-                    param.getType(),
+                    rawType,
                     genericType,
                     componentType,
                     defaultValue,
                     index,
-                    param);
+                    annotationSource);
         }
 
-        if (param.isAnnotationPresent(CookieParam.class)) {
+        CookieParam cookieParam = first(merged, CookieParam.class);
+        if (cookieParam != null) {
             return new ClientParamMeta(
-                    param.getAnnotation(CookieParam.class).value(),
+                    cookieParam.value(),
                     ClientParamMeta.ParamSource.COOKIE,
-                    param.getType(),
+                    rawType,
                     genericType,
                     componentType,
                     defaultValue,
                     index,
-                    param);
+                    annotationSource);
         }
 
-        if (param.isAnnotationPresent(BeanParam.class) || isRequestParams(param.getType())) {
-            List<ClientParamMeta> beanFields = expandBeanParam(param.getType(), index);
+        if (first(merged, BeanParam.class) != null || isRequestParams(rawType)) {
+            List<ClientParamMeta> beanFields = expandBeanParam(rawType, index);
             return new ClientParamMeta(
-                    new ReflectiveParameterMetadata(index, null, param.getType(), genericType, param),
+                    new ReflectiveParameterMetadata(index, null, rawType, genericType, annotationSource),
                     null,
                     ClientParamMeta.ParamSource.BEAN_PARAM,
                     null,
@@ -449,12 +585,55 @@ public final class ClientInterfaceScanner {
         return new ClientParamMeta(
                 null,
                 ClientParamMeta.ParamSource.BODY,
-                param.getType(),
+                rawType,
                 genericType,
                 componentType,
                 null,
                 index,
-                param);
+                annotationSource);
+    }
+
+    /**
+     * The erased class of a resolved type, or {@code fallback} (the declared erasure) when the type
+     * is a variable or wildcard the hierarchy leaves unbound.
+     */
+    private static Class<?> rawClass(Type type, Class<?> fallback) {
+        if (type instanceof Class<?> cls) {
+            return cls;
+        }
+        if (type instanceof ParameterizedType pt && pt.getRawType() instanceof Class<?> raw) {
+            return raw;
+        }
+        if (type instanceof GenericArrayType array) {
+            Class<?> component = rawClass(array.getGenericComponentType(), Object.class);
+            return component == Object.class && fallback.isArray()
+                    ? fallback
+                    : java.lang.reflect.Array.newInstance(component, 0).getClass();
+        }
+        return fallback;
+    }
+
+    /**
+     * An {@link AnnotatedElement} view over annotations merged from a parameter and the parameters
+     * it overrides, so lookups through the parameter metadata see inherited declarations.
+     */
+    private record MergedAnnotations(List<Annotation> annotations) implements AnnotatedElement {
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public <A extends Annotation> A getAnnotation(Class<A> annotationClass) {
+            return (A) first(annotations, annotationClass);
+        }
+
+        @Override
+        public Annotation[] getAnnotations() {
+            return annotations.toArray(new Annotation[0]);
+        }
+
+        @Override
+        public Annotation[] getDeclaredAnnotations() {
+            return getAnnotations();
+        }
     }
 
     /**
@@ -687,13 +866,13 @@ public final class ClientInterfaceScanner {
     }
 
     /**
-     * Resolves the {@link DefaultValue} annotation from a method parameter, if present.
+     * Resolves the {@link DefaultValue} annotation from a parameter's merged annotations, if present.
      *
-     * @param param the method parameter to inspect
+     * @param annotations the merged parameter annotations to inspect
      * @return the default value string, or {@code null} if absent
      */
-    private static String resolveDefaultValue(Parameter param) {
-        DefaultValue dv = param.getAnnotation(DefaultValue.class);
+    private static String defaultValue(List<Annotation> annotations) {
+        DefaultValue dv = first(annotations, DefaultValue.class);
         return dv != null ? dv.value() : null;
     }
 
@@ -716,11 +895,11 @@ public final class ClientInterfaceScanner {
      * or the interface. Defaults to {@code application/json}.
      *
      * @param iface the client interface
-     * @param method the interface method
+     * @param annotations the merged method annotations
      * @return the content type string
      */
-    private static String resolveConsumes(Class<?> iface, Method method) {
-        Consumes methodConsumes = method.getAnnotation(Consumes.class);
+    private static String resolveConsumes(Class<?> iface, List<Annotation> annotations) {
+        Consumes methodConsumes = first(annotations, Consumes.class);
         if (methodConsumes != null && methodConsumes.value().length > 0) {
             return methodConsumes.value()[0];
         }
@@ -736,11 +915,11 @@ public final class ClientInterfaceScanner {
      * the interface. Defaults to {@code application/json}.
      *
      * @param iface the client interface
-     * @param method the interface method
+     * @param annotations the merged method annotations
      * @return the accept media type string
      */
-    private static String resolveProduces(Class<?> iface, Method method) {
-        Produces methodProduces = method.getAnnotation(Produces.class);
+    private static String resolveProduces(Class<?> iface, List<Annotation> annotations) {
+        Produces methodProduces = first(annotations, Produces.class);
         if (methodProduces != null && methodProduces.value().length > 0) {
             return methodProduces.value()[0];
         }
@@ -758,13 +937,23 @@ public final class ClientInterfaceScanner {
      * {@link Expectation}. Returns {@code null} if no annotation is present or the annotation
      * specifies neither exact codes nor a range.
      *
-     * @param method the interface method
+     * @param iface the client interface, named in a configuration error
+     * @param method the client method, named in a configuration error
+     * @param annotations the merged method annotations
      * @return the resolved expectation, or {@code null}
+     * @throws RestClientConfigurationException if the annotation declares both the exact-code form
+     *     and the range form
      */
-    private static Expectation<HttpResponseHead> resolveExpectedStatus(Method method) {
-        ExpectedStatus ann = method.getAnnotation(ExpectedStatus.class);
+    private static Expectation<HttpResponseHead> resolveExpectedStatus(
+            Class<?> iface, Method method, List<Annotation> annotations) {
+        ExpectedStatus ann = first(annotations, ExpectedStatus.class);
         if (ann == null) {
             return null;
+        }
+        if (ann.value().length > 0 && (ann.min() >= 0 || ann.max() >= 0)) {
+            throw new RestClientConfigurationException("@ExpectedStatus on " + iface.getName() + "." + method.getName()
+                    + "() declares both exact codes (value) and a range (min/max); the two forms are"
+                    + " mutually exclusive");
         }
         if (ann.value().length > 0) {
             Expectation<HttpResponseHead> result = HttpResponseExpectation.status(ann.value()[0]);

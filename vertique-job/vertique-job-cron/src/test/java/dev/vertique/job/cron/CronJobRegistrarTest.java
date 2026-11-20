@@ -151,7 +151,17 @@ class CronJobRegistrarTest {
         final List<CronJobDefinition> registered = new ArrayList<>();
 
         CapturingScheduler(ServiceTargetResolver resolver) {
-            super(null, Set.of(), null, resolver, null, dev.vertique.context.DispatchEnvelopeBuilder.forTesting());
+            super(
+                    null,
+                    Set.of(),
+                    null,
+                    resolver,
+                    null,
+                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
+                    0L,
+                    0L,
+                    dev.vertique.context.DispatchEnvelopeBuilder.forTesting(),
+                    "test-node");
         }
 
         @Override

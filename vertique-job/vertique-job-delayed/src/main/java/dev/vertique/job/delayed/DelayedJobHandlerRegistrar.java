@@ -16,6 +16,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -46,6 +47,8 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 public class DelayedJobHandlerRegistrar {
+
+    private static final Pattern HANDLER_NAME = Pattern.compile("[a-zA-Z0-9._-]{1,128}");
 
     private final ServiceContractRegistry registry;
     private Map<String, String> handlerAddresses = Collections.emptyMap();
@@ -143,6 +146,11 @@ public class DelayedJobHandlerRegistrar {
                         continue;
                     }
 
+                    if (!isValidHandlerName(handlerName)) {
+                        violations.add(malformedNameViolation(handlerName, implClass.getSimpleName()));
+                        continue;
+                    }
+
                     // Check for duplicate handler names
                     if (registeredNames.contains(handlerName)) {
                         violations.add("Duplicate @DelayedJobHandlerMethod name '"
@@ -209,6 +217,29 @@ public class DelayedJobHandlerRegistrar {
      */
     public Map<String, Type> handlerPayloadTypes() {
         return handlerPayloadTypes;
+    }
+
+    /**
+     * Reports whether {@code handlerName} matches the documented handler-name pattern.
+     *
+     * @param handlerName the declared handler name
+     * @return {@code true} when the name is 1 to 128 characters of letters, digits, {@code .}, {@code _}
+     *     and {@code -}
+     */
+    private static boolean isValidHandlerName(String handlerName) {
+        return HANDLER_NAME.matcher(handlerName).matches();
+    }
+
+    /**
+     * Builds the registration violation for a handler name outside the documented pattern.
+     *
+     * @param handlerName the declared handler name
+     * @param declaredBy  the class declaring the handler
+     * @return the violation message
+     */
+    private static String malformedNameViolation(String handlerName, String declaredBy) {
+        return "Delayed job handler name '" + handlerName + "' declared by " + declaredBy
+                + " must match [a-zA-Z0-9._-]{1,128}";
     }
 
     /**

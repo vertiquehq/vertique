@@ -100,7 +100,7 @@ Without this normalization `Optional` would classify as a nested DTO and emit `d
 
 ## Runtime SPI Types (in `vertique-input-processing`)
 
-The following types live in `dev.vertique.input.processing` (artifact `vertique-input-processing`) as the stable public SPI. They are available at runtime regardless of whether `vertique-codegen-sanitization` is on the processor path.
+The following types live in `dev.vertique.input.processing` (artifact `vertique-input-processing`). All of them except `GeneratedInputProcessorDispatcher`, which is INTERNAL (see its section), are the stable public SPI. They are available at runtime regardless of whether `vertique-codegen-sanitization` is on the processor path.
 
 One type the emitted source references is **not** in that package: `InputFieldNameResolver` — the wire → Java property-name projection — is declared in `dev.vertique.core.sanitization` (artifact `vertique-core`) beside `InputLocation`, `Canonicalizer` and `Sanitizer`, and the emitter imports it from there.
 
@@ -180,7 +180,9 @@ public final class InputTraversalContext {
 }
 ```
 
-### `GeneratedInputProcessorDispatcher`
+### `GeneratedInputProcessorDispatcher` (INTERNAL)
+
+INTERNAL: this class is the handoff between generated code and the framework. Applications neither call nor implement it, and it is outside this module's compatibility promise. The generated `GeneratedInputProcessor.process(...)` receives it as a parameter, and the listing below shows how the handoff works, not a surface to depend on.
 
 Owns lookup and the reflective continuation. The default engine created by `InputObjectProcessor.createDefault(...)` constructs one dispatcher and self-bootstraps it with a `ReflectiveContinuation` that calls back into the reflective walker, preserving `InputTraversalContext` across the codegen↔reflection boundary.
 
@@ -233,13 +235,16 @@ Public class with public static helpers imported via `import static` in generate
 
 The following types are excluded from the discovery root set and never receive a generated processor:
 
-- `String`, `CharSequence`
+- `String`
 - `boolean`, `byte`, `short`, `int`, `long`, `float`, `double`, `char` (and their boxed wrappers)
 - `Number`, `BigDecimal`, `BigInteger`
-- `Character`
-- Any `java.time.*` type
+- Five `java.time` types: `LocalDate`, `LocalDateTime`, `OffsetDateTime`, `ZonedDateTime`, `Instant`
 - `UUID`
+- `OptionalInt`, `OptionalLong`, `OptionalDouble`
+- `Object`
 - Any `Enum` subtype
+
+The filter is exactly this list, not a package or a supertype test: `LocalTime`, `Duration`, the other `java.time` types and `CharSequence` are not in it.
 
 If a `@BODY` method parameter is one of the above types (or a `Collection<E>` / `E[]` whose element type resolves to one of the above), no processor is emitted for it. The scalar-type processing that happens at the route level (via `EffectiveInputPolicies`) is unaffected.
 
@@ -262,8 +267,10 @@ The processor emits `ERROR` when mutually exclusive annotations appear on the sa
 
 | Conflict | Diagnostic |
 |----------|------------|
-| `@Canonicalize` + `@SkipCanonicalization` on same field/type | `Conflicting canonicalization annotations on {element}: @Canonicalize and @SkipCanonicalization cannot be combined` |
-| `@Sanitize` + `@SkipSanitization` on same field/type | `Conflicting sanitization annotations on {element}: @Sanitize and @SkipSanitization cannot be combined` |
+| `@Canonicalize` + `@SkipCanonicalization` on same field/type | `{location} has both @Canonicalize and @SkipCanonicalization — these annotations are mutually exclusive` |
+| `@Sanitize` + `@SkipSanitization` on same field/type | `{location} has both @Sanitize and @SkipSanitization — these annotations are mutually exclusive` |
+
+`{location}` is the type's qualified name for a type-level conflict, and `{qualified type}#{name}` for a field or record component.
 
 ---
 
@@ -290,7 +297,7 @@ None. `vertique-codegen-sanitization` is a compile-time annotation processor wit
 | Artifact | Scope | Purpose |
 |----------|-------|---------|
 | `vertique-codegen-core` | compile | `CodegenContext`, `TypeResolver`, `AnnotationMirrors`, `Diagnostics`, `Identifiers` |
-| `vertique-input-processing` | compile | Runtime SPI the emitted source references (`GeneratedInputProcessor`, `GeneratedSupport`, `GeneratedInputProcessorDispatcher`, `ChainResolver`, `EffectiveInputPolicies`, `InputTraversalContext`) |
+| `vertique-input-processing` | compile | Runtime types the emitted source references (`GeneratedInputProcessor`, `GeneratedSupport`, `GeneratedInputProcessorDispatcher` (INTERNAL), `ChainResolver`, `EffectiveInputPolicies`, `InputTraversalContext`) |
 | `vertique-core` | compile (transitive) | `InputLocation`, `Canonicalizer`, `Sanitizer`, and `InputFieldNameResolver` — the sanitization vocabulary the emitted source imports |
 | `vertique-rest-core` | compile | REST-rooted discovery: `RestBodyDiscovery` uses `RestContextTypes` and the `RequestPreconditions`/`RequestParams` FQNs to classify resource-method parameters |
 | `com.palantir.javapoet:javapoet` | compile | Source generation (not on runtime classpath) |

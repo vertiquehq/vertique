@@ -24,18 +24,17 @@ Extends `PgSqlRepository` and implements `JobRepository`. All SQL operations use
 
 A version before scalar payloads cannot read a row holding a non-object payload, and such a row fails every claim of the batch that selects it. Finish rolling out before enqueuing scalar or list payloads, and drain those rows before rolling back. Rows with object payloads are unaffected in both directions.
 
-Generates a stable `nodeId` from the hostname and a random 8-character suffix, used as the `locked_by` value during job claiming and as the server identity for heartbeats.
+Stamps its node identity as `locked_by` on the executions it claims. `JobPostgresqlModule` passes the `@JobNodeId` value from `JobModule`, the same identity the `JobCoordinator` heartbeats under, so a surviving node's coordinator finds a dead node's claims by its heartbeat row. Build the repository by hand only with the node's `@JobNodeId` value as `nodeId`, so a coordinator can recover its claims.
+
+**Breaking change.** The two- and three-argument constructors, which generated their own `<hostname>-<8-char suffix>` value that no coordinator shared, are removed without a deprecation cycle, and with them the `@Inject` constructor: a component that did not include `JobPostgresqlModule` and relied on Dagger constructing `PgJobRepository` must include the module (which binds `@JobNodeId`) or provide the repository itself.
 
 **Constructors:**
 
 ```java
-@Inject
-public PgJobRepository(Pool pool, PgDbExceptionMapper exceptionMapper)
-
-public PgJobRepository(Pool pool, PgDbExceptionMapper exceptionMapper, DbSchemas schemas)
+public PgJobRepository(Pool pool, PgDbExceptionMapper exceptionMapper, DbSchemas schemas, String nodeId)
 ```
 
-The two-argument constructor leaves every table unqualified, so tables resolve through the connection's default schema. The three-argument constructor qualifies every job table (`job_executions`, `job_logs`, `job_schedules`, `job_server_heartbeats`) with the schema that `schemas` maps to `job`; with no `job` entry its SQL is the same as the two-argument constructor's. The mapping is validated when the repository is constructed: a schema that is not a single valid PostgreSQL identifier throws `IllegalArgumentException` before any query runs (see `PgTableNames` in `dev.vertique:vertique-db-postgresql`). SQL in this document is shown with unqualified table names.
+The constructor qualifies every job table (`job_executions`, `job_logs`, `job_schedules`, `job_server_heartbeats`) with the schema that `schemas` maps to `job`; with `DbSchemas.empty()` or no `job` entry the tables stay unqualified and resolve through the connection's default schema. It also takes the node identity to claim under and rejects a `null` or blank one with `IllegalArgumentException`. The mapping is validated when the repository is constructed: a schema that is not a single valid PostgreSQL identifier throws `IllegalArgumentException` before any query runs (see `PgTableNames` in `dev.vertique:vertique-db-postgresql`). SQL in this document is shown with unqualified table names.
 
 **Scope:** `save`, the transactional `save` and `tryInsert` write `JobExecution.scopeKey()` to `job_executions.scope_key`, and every read maps it back, so a custom `JobRepository` implementation must also persist `scopeKey` and return it unchanged, or its rows read `default`. Applications select the scope with `DelayedJobClientFactory.client(...).scope(...)` or `DelayedJob.scopeKey`; an unselected job is in `default`. The scope is a label, not authorization: it is not checked at enqueue, by id, or under a service principal, and the claim, retry, retention and cron de-duplication queries do not read it. Row scope and the ambient `ScopeContext` are independent, so a handler that partitions data chooses one source, compares the other when both are present, fails on a mismatch, and authorizes access itself.
 
@@ -61,6 +60,8 @@ This guarantees no two callers process the same execution and attributes the wor
 
 **`failAndScheduleRetry()`** and **`abandonAndScheduleRetry()`** share one private `markAndScheduleRetry(markState, …)` helper that runs both retry writes in one transaction (`transaction().execute(conn -> …)`): step 1 records `markState` (`FAILED` or `ABANDONED`) via the `RETURNING *` `SQL_COMPLETE` — subject to its state-pair guard, so it transitions only from a valid source (a `PROCESSING` row; an already-`ABANDONED` row passed to `abandonAndScheduleRetry` is rejected and yields empty) — and step 2 re-enqueues the same row via `SQL_SCHEDULE_RETRY` (`markState` → `ENQUEUED`). If step 1 transitioned no row the result is `Optional.empty()`; if step 2 unexpectedly updates no row the transaction rolls back so neither write persists. This guarantees a retryable execution is never left stranded in `FAILED` or `ABANDONED`.
 
+**`completeClaimedExecution()`** and **`abandonClaimedAndScheduleRetry()`** are the fenced variants dead-node recovery uses. They run the same writes with `AND state = 'PROCESSING' AND locked_by = <dead server> AND attempt = <attempt read>` added (`SQL_COMPLETE_CLAIMED`, and `SQL_SCHEDULE_RETRY_CLAIMED` for the re-enqueue; both statements of the retry transaction carry the fence). An execution that another node has claimed again since the coordinator read it, or that the same node has re-enqueued and claimed at a new attempt, matches no row and yields `Optional.empty()`.
+
 **`tryInsert()`** uses `ON CONFLICT (job_id, scheduled_at) WHERE job_type = 'CRON' AND state NOT IN ('DEAD_LETTER', 'CANCELLED') DO NOTHING RETURNING id` for SINGLE_INSTANCE leader election.
 
 **`serverHeartbeat()`** uses UPSERT to maintain one heartbeat row per server:
@@ -76,7 +77,7 @@ The `payload` column is returned as `JsonObject` (opaque JSONB). Callers that kn
 
 Package-private decorator that wraps the raw `PgJobRepository` and fires registered `JobExecutionStateTransitionListener`s after each confirmed persisted transition.
 
-All `JobRepository` methods except `completeExecution`, `failAndScheduleRetry`, and `abandonAndScheduleRetry` delegate verbatim to the inner repository. Those three delegate, then — when the returned `Optional` is present — build a curated `JobExecutionStateTransitionEvent` from the persisted `JobExecution` snapshot (the `FAILED`/`ABANDONED` mark snapshot for the retry ops) and call `onStateTransition` on each listener in sequence. Listener exceptions are isolated: a `RuntimeException` thrown by one listener is caught, logged as a warning, and does not prevent subsequent listeners from running or cause the future to fail.
+All `JobRepository` methods except `completeExecution`, `failAndScheduleRetry`, `abandonAndScheduleRetry`, `completeClaimedExecution`, and `abandonClaimedAndScheduleRetry` delegate verbatim to the inner repository. Those five delegate (the two claim-fenced ones to the inner repository's fenced implementation, carrying the claim owner and attempt), then — when the returned `Optional` is present — build a curated `JobExecutionStateTransitionEvent` from the persisted `JobExecution` snapshot (the `FAILED`/`ABANDONED` mark snapshot for the retry ops) and call `onStateTransition` on each listener in sequence. Listener exceptions are isolated: a `RuntimeException` thrown by one listener is caught, logged as a warning, and does not prevent subsequent listeners from running or cause the future to fail.
 
 Instances are constructed exclusively by `JobPostgresqlModule`; no application code constructs or injects this class directly.
 
@@ -96,7 +97,7 @@ The module provides three bindings:
 
 Automatically included by `DelayedJobModule`.
 
-**Compatibility note.** `PgJobRepository` is now provided by an explicit `@Provides` method. A component that includes this module and also provides `PgJobRepository` itself sees a duplicate binding; remove its own provider. The `@Inject` two-argument constructor remains for components that do not include this module.
+**Compatibility note.** `PgJobRepository` is now provided by an explicit `@Provides` method. A component that includes this module and also provides `PgJobRepository` itself sees a duplicate binding; remove its own provider.
 
 ```java
 @Component(modules = {DbPostgresqlModule.class, DbFlywayModule.class, JobPostgresqlModule.class, ...})
@@ -117,6 +118,7 @@ Flyway migration:
 - `V002__index_job_executions_for_retention.sql` — the partial index `idx_job_executions_retention` that the execution retention job scans (see [Execution retention](#execution-retention)). The plain `CREATE INDEX` blocks every write to `job_executions` (enqueue, claim, completion) while it builds, so on a very large installation build it ahead of the upgrade with `CREATE INDEX CONCURRENTLY IF NOT EXISTS` and the same name and definition. The script sets `lock_timeout` to 30 s, which bounds only the wait for the lock, not the build, and it drops an index of that name that a cancelled concurrent build left invalid before it creates one. Every application that applies the migration gets the index, whether or not it includes `JobRetentionModule`
 
 - `V003__add_job_execution_scope.sql` — adds `job_executions.scope_key VARCHAR(255) NOT NULL DEFAULT 'default'`, so every existing row reads `default`. The default is a constant, so PostgreSQL 11 and later add the column without rewriting the table. The script sets `lock_timeout` to 30 s, which bounds only the wait for the table lock. No index and no check constraint are added.
+- `V004__add_job_execution_idempotency_key.sql` — adds the nullable `job_executions.idempotency_key VARCHAR(255)`, so every existing row reads `NULL`, and the partial unique index `idx_job_executions_idempotency_key` on `(handler, scope_key, idempotency_key)` that holds for every execution whose key is not `NULL` and whose state is not `SUCCEEDED`, `CANCELLED` or `DEAD_LETTER`. The column is added without a default, so no row is rewritten. The plain `CREATE UNIQUE INDEX` blocks every write to `job_executions` (enqueue, claim, completion) while it builds, so on a very large installation add the column and build the index ahead of the upgrade with `CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS` and the same name and definition. The script sets `lock_timeout` to 30 s, which bounds only the wait for the lock, not the build, and it drops an index of that name that a cancelled concurrent build left invalid before it creates one. The script can be rerun after a failure
 
 **The `V1` schema is frozen.** `vertique-job-postgresql` is Stable, so every later schema change ships
 as a new `V2+` migration file; `V1` is never edited again. A database that applied an earlier `V1`
@@ -127,7 +129,7 @@ would fail Flyway checksum validation, which is why the fold-back practice ends 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | `UUID PK` | Unique execution identifier |
-| `job_id` | `VARCHAR(255)` | Logical job identifier (stable across retries) |
+| `job_id` | `VARCHAR(255)` | Label for the job (stable across retries); not unique |
 | `job_type` | `VARCHAR(20)` | `CRON`, `DELAYED`, or `BATCH` |
 | `handler` | `VARCHAR(255)` | Event bus address of the handler |
 | `queue` | `VARCHAR(255)` | Logical queue name (default: `'default'`) |
@@ -145,6 +147,7 @@ would fail Flyway checksum validation, which is why the fold-back practice ends 
 | `last_error` | `TEXT` | Human-readable error message on failure |
 | `error_type` | `VARCHAR(500)` | Exception class name on failure |
 | `scope_key` | `VARCHAR(255)` | Scope label chosen at enqueue (default: `'default'`); not read by claim, retry, retention or cron de-duplication |
+| `idempotency_key` | `VARCHAR(255)` | Optional key chosen at enqueue (`NULL` when none); unique per handler and scope while the execution is unfinished (see the index below) |
 | `metadata` | `JSONB` | Durable context `DurableMetadata` document persisted as a `{"context": {namespace: {...}}}` carrier; written at enqueue time by `DelayedJobService`; read at dispatch time by `DelayedJobPoller` |
 | `created_at` | `TIMESTAMPTZ` | Row creation time |
 | `updated_at` | `TIMESTAMPTZ` | Last update time (also serves as heartbeat timestamp) |
@@ -154,10 +157,13 @@ would fail Flyway checksum validation, which is why the fold-back practice ends 
 | Index | Columns | Partial condition | Purpose |
 |-------|---------|-------------------|---------|
 | `idx_job_executions_claim` | `queue, priority DESC, scheduled_at ASC` | `WHERE state = 'ENQUEUED'` | Job claiming query (poller and cron) |
-| `idx_job_executions_heartbeat` | `updated_at` | `WHERE state = 'PROCESSING'` | Stale-job detection by coordinator |
+| `idx_job_executions_heartbeat` | `updated_at` | `WHERE state = 'PROCESSING'` | Serves `findStale(heartbeatTimeout)`, which no framework component calls. The coordinator recovers a dead node's executions through the heartbeat table (`job_server_heartbeats`), not this index |
 | `idx_job_executions_state` | `state, created_at DESC` | — | Dashboard queries by state |
 | `idx_job_executions_job_id` | `job_id, created_at DESC` | — | Dashboard queries by job |
+| `idx_job_executions_idempotency_key` | `handler, scope_key, idempotency_key` (UNIQUE) | `WHERE idempotency_key IS NOT NULL AND state NOT IN ('SUCCEEDED', 'CANCELLED', 'DEAD_LETTER')` | Delayed-job idempotency key: at most one unfinished execution per handler, scope and key; `FAILED` and `ABANDONED` stay unfinished because a retry can still re-enqueue them |
 | `idx_job_executions_cron_dedup` | `job_id, scheduled_at` (UNIQUE) | `WHERE job_type = 'CRON' AND state NOT IN ('DEAD_LETTER', 'CANCELLED')` | SINGLE_INSTANCE leader election — only one node wins the INSERT race |
+
+A keyed `save` (`JobExecution.idempotencyKey()` not `null`, plain or transactional) runs `INSERT ... ON CONFLICT (handler, scope_key, idempotency_key) WHERE <index predicate> DO NOTHING RETURNING id`. When the insert stores nothing, a second statement reads the unfinished holder and its id is returned; if the holder finished in between, the insert is repeated, at most three times in all, after which the future fails with `IllegalStateException`. The conflict path never updates the holder (`updated_at` is unchanged) and never raises a unique violation, so it cannot abort the caller's transaction. A cron execution never carries a key. Two limits follow from the design: a keyed `save` inside a `REPEATABLE READ` or `SERIALIZABLE` transaction whose snapshot predates the holder's commit cannot see the holder and fails with that `IllegalStateException`; and `updateState`, which does not check the transition model, can move a finished execution back to an unfinished state, which raises a unique violation if another execution has taken its key since.
 
 ### `job_logs`
 
@@ -196,7 +202,7 @@ Cron schedule definitions written by `JobRepository.saveSchedule()` at startup. 
 | `max_attempts` | `INTEGER` | Max attempts per execution |
 | `tracked` | `BOOLEAN` | Whether executions are persisted |
 | `last_fired_at` | `TIMESTAMPTZ` | Last fire instant (for misfire detection) |
-| `next_fire_at` | `TIMESTAMPTZ` | Next computed fire instant |
+| `next_fire_at` | `TIMESTAMPTZ` | Next computed fire instant; stored by the startup upsert and refreshed after each tracked fire |
 | `created_at` | `TIMESTAMPTZ` | Row creation time |
 | `updated_at` | `TIMESTAMPTZ` | Last update time |
 

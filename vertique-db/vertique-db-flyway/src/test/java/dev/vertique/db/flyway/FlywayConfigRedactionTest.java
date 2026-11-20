@@ -15,8 +15,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link FlywayConfig} secret hygiene: the DDL password is readable after
- * deserialization, serialized as {@code "***"} by the config mapper (the write-only placeholders are
- * omitted, the {@code password=} parameter inside {@code jdbcUrl} is masked), and redacted in the class
+ * deserialization, serialized as {@code "***"} by the config mapper (the placeholders bag renders
+ * whole as {@code "***"}, the {@code password=} parameter inside {@code jdbcUrl} is masked), and redacted in the class
  * and builder {@code toString()}.
  */
 @DisplayName("FlywayConfig redaction")
@@ -49,7 +49,8 @@ class FlywayConfigRedactionTest {
     }
 
     @Test
-    @DisplayName("the config mapper masks the password, the password inside jdbcUrl, and omits the placeholders")
+    @DisplayName(
+            "the config mapper masks the password, the password inside jdbcUrl, and renders the placeholders whole as ***")
     void password_maskedByConfigMapper() throws Exception {
         String serialized = mapper.writeValueAsString(deserialized());
 
@@ -58,7 +59,8 @@ class FlywayConfigRedactionTest {
         assertFalse(serialized.contains(URL_SECRET), "a password embedded in the URL must not serialize");
         JsonObject json = new JsonObject(serialized);
         assertEquals("***", json.getString("password"));
-        assertFalse(json.containsKey("placeholders"), "placeholders key must not serialize");
+        assertEquals("***", json.getString("placeholders"), "the bag renders whole, keys and values hidden");
+        assertFalse(serialized.contains("appPassword"), "the bag's key must not serialize");
         assertEquals("ddl", json.getString("user"), "non-secret fields still serialize");
         assertEquals(
                 "jdbc:postgresql://db.example:5432/app?password=***&ssl=true",
