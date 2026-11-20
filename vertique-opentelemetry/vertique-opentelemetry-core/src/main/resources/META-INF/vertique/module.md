@@ -240,7 +240,7 @@ properties always win. The whole subtree is **inert on the reuse path**.
 |---|---|---|---|
 | `tracing.enabled` | boolean | `true` | Master switch. `false` installs the NOOP tracer and binds `OpenTelemetry.noop()`. |
 | `tracing.security.spanEvents` | boolean | `true` | Emit the security span events listed above. |
-| `tracing.otel.*` | object | — | Flattened to `otel.*` and supplied to `AutoConfiguredOpenTelemetrySdk`. |
+| `tracing.otel.*` | object | — | Flattened to `otel.*` and supplied to `AutoConfiguredOpenTelemetrySdk`. A blank string value counts as absent and is skipped, so it never overwrites a seeded value. |
 
 Two `otel.*` properties are seeded before the flatten step and can be overridden by it:
 `otel.metrics.exporter=none` (meters are Micrometer-owned) and `otel.logs.exporter=none`.

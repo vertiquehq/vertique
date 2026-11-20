@@ -192,6 +192,21 @@ class OtelConfigPropertiesTest {
 
             assertEquals("unknown-service", props.get("otel.service.name"), "blank service should fall back");
         }
+
+        @Test
+        @DisplayName("blank tracing.otel.service.name falls back to metrics.tags.service")
+        void blankTracingServiceNameFallsBackToMetricsTagsService() {
+            JsonObject root = new JsonObject()
+                    .put("metrics", new JsonObject().put("tags", new JsonObject().put("service", "orders")))
+                    .put(
+                            "tracing",
+                            new JsonObject()
+                                    .put("otel", new JsonObject().put("service", new JsonObject().put("name", "  "))));
+
+            Map<String, String> props = OtelConfigProperties.properties(root);
+
+            assertEquals("orders", props.get("otel.service.name"), "blank tracing service name should fall through");
+        }
     }
 
     // --- Test 8: malformed metrics.tags section throws ConfigurationException ---
