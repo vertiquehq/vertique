@@ -13,8 +13,11 @@ package dev.vertique.workflow.timer;
  *   SCHEDULED → FAILED
  * </pre>
  *
- * <p>All transitions from {@code SCHEDULED} are terminal — there is no transition back to
- * {@code SCHEDULED} once a timer leaves that state.
+ * <p>{@code FIRED} and {@code CANCELLED} are final. {@code FAILED} is final for the firing path: nothing
+ * fires a failed timer again by itself. One operation reverses it: when {@code retry} returns an
+ * instance that failed at a wait to {@code WAITING}, each timer of that instance whose last command
+ * failed goes from {@code FAILED} back to {@code SCHEDULED}, linked to a new command that keeps the
+ * original fire time.
  */
 public enum TimerStatus {
 
@@ -27,6 +30,6 @@ public enum TimerStatus {
     /** Timer was explicitly cancelled (e.g., signal arrived before the deadline). */
     CANCELLED,
 
-    /** The timer-fire attempt failed and will not be retried. */
+    /** The timer-fire attempt failed and is not tried again unless the instance is retried. */
     FAILED
 }

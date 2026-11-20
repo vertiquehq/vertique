@@ -11,7 +11,8 @@ import dev.vertique.workflow.registry.store.WorkflowScopes;
  * <p>An application registers migration handlers by contributing them into the Dagger
  * {@code Set<WorkflowMigrationHandler<?, ?>>} multibinding declared by
  * {@link WorkflowMigrationModule}. The {@link DefaultWorkflowMigrationRegistry} validates
- * contributed handlers in two phases:
+ * contributed handlers when it is built, and the engine checks the plans and state types when it
+ * runs a migration:
  *
  * <h3>At construction (Dagger graph build time)</h3>
  * <ul>
@@ -22,19 +23,20 @@ import dev.vertique.workflow.registry.store.WorkflowScopes;
  *       {@code (sourceScope, definitionId, fromVersion, targetScope, targetVersion)} key.</li>
  * </ul>
  *
- * <h3>Deferred to {@code find()} time</h3>
- * <p>The following rules are checked lazily when the engine resolves a handler, to allow
- * {@code v2} to be loaded and activated dynamically after Dagger graph construction while a
- * {@code v1 → v2} handler is already contributed:
+ * <h3>Where the migration executes</h3>
+ * <p>{@link WorkflowMigrationRegistry#find} answers from the handler index alone: it returns the handler
+ * registered for the key, or {@link java.util.Optional#empty()} when there is none, whether or not either
+ * definition version is resident, and it never throws for a version or a state type. This lets {@code v2} be
+ * loaded and activated dynamically after Dagger graph construction while a {@code v1 → v2} handler is already
+ * contributed. The engine checks the rest when it runs the migration:
  * <ul>
- *   <li>Both {@link #fromDefinitionVersion()} and {@link #targetDefinitionVersion()} must be
- *       registered in the {@link dev.vertique.workflow.registry.WorkflowRegistry}. If either is
- *       absent, {@code find()} returns {@link java.util.Optional#empty()}.</li>
+ *   <li>The plans of both {@link #fromDefinitionVersion()} and {@link #targetDefinitionVersion()} are
+ *       resolved from the {@link dev.vertique.workflow.registry.WorkflowRegistry} before the handler is
+ *       invoked.</li>
  *   <li>{@link #sourceStateType()} must exactly match the source plan's
- *       {@link dev.vertique.workflow.registry.RuntimeWorkflow#stateType()}. Mismatch throws
- *       {@link dev.vertique.workflow.exception.WorkflowMigrationStateTypeMismatchException}.</li>
- *   <li>{@link #targetStateType()} must exactly match the target plan's
- *       {@link dev.vertique.workflow.registry.RuntimeWorkflow#stateType()}. Same semantics.</li>
+ *       {@link dev.vertique.workflow.registry.RuntimeWorkflow#stateType()}, and {@link #targetStateType()}
+ *       must exactly match the target plan's. A mismatch refuses the migration with a state-type mismatch
+ *       rejection.</li>
  * </ul>
  *
  * <p>Implementations are typically {@code @Singleton} — they carry no per-instance state.
