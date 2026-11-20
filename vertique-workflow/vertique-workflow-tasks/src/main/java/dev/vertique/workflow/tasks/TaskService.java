@@ -67,6 +67,34 @@ public interface TaskService {
     Future<PagedResult<TaskRecord>> list(TaskFilter filter, PageCursor cursor);
 
     /**
+     * Returns a page of the tasks assigned to any of the caller's principals that also match every
+     * other field of the filter: the inbox query. Opens its own transaction.
+     *
+     * <p>A task is returned when {@link TaskAssignment#matches(TaskPrincipals)} is {@code true} for its
+     * current assignment, so the page holds the tasks assigned to the caller's user id, to any of its
+     * roles and to any of its queues, in one query. Principals that cannot match an assignment (any
+     * type but {@code USER}) return an empty page. Build the principals with a
+     * {@link dev.vertique.workflow.actor.TaskPrincipalsMapper} from the authenticated security
+     * context, never from request input.
+     *
+     * <p>This is a read: it authorizes nothing. The default fails the returned future with
+     * {@link UnsupportedOperationException}.
+     *
+     * @param principals the caller's principals; must not be null
+     * @param filter the other conditions, for example a status; must not be null and must not set
+     *     {@code assigneeUser}, {@code assigneeRole} or {@code assigneeQueue}
+     * @param cursor the keyset-pagination cursor; must not be null
+     * @return a {@link Future} resolving to a paged result of matching task records
+     * @throws NullPointerException if an argument is null
+     * @throws IllegalArgumentException if {@code filter} sets an assignee
+     */
+    default Future<PagedResult<TaskRecord>> listAssignedTo(
+            TaskPrincipals principals, TaskFilter filter, PageCursor cursor) {
+        return Future.failedFuture(
+                new UnsupportedOperationException(getClass().getName() + " does not implement listAssignedTo"));
+    }
+
+    /**
      * Returns the task with the given id, or empty if not found. Opens its own transaction.
      *
      * @param taskId the task id to look up; must not be null

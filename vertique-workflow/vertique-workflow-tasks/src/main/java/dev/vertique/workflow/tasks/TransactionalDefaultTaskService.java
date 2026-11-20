@@ -80,6 +80,21 @@ public final class TransactionalDefaultTaskService implements TransactionalTaskS
         return taskStore.findByFilter(filter, cursor, tx);
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Delegates directly to {@link TaskStore#findAssignedTo}.
+     */
+    @Override
+    public Future<PagedResult<TaskRecord>> listAssignedTo(
+            TaskPrincipals principals, TaskFilter filter, PageCursor cursor, SqlClient tx) {
+        Objects.requireNonNull(principals, "principals");
+        Objects.requireNonNull(filter, "filter");
+        Objects.requireNonNull(cursor, "cursor");
+        Objects.requireNonNull(tx, "tx");
+        return taskStore.findAssignedTo(principals, filter, cursor, tx);
+    }
+
     // --- Get ---
 
     /**

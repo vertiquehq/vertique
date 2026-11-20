@@ -63,6 +63,21 @@ public final class DefaultTaskService implements TaskService {
         return pool.withTransaction(tx -> txService.list(filter, cursor, tx));
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Opens a transaction with {@code pool.withTransaction} and delegates to
+     * {@link TransactionalTaskService#listAssignedTo}.
+     */
+    @Override
+    public Future<PagedResult<TaskRecord>> listAssignedTo(
+            TaskPrincipals principals, TaskFilter filter, PageCursor cursor) {
+        Objects.requireNonNull(principals, "principals");
+        Objects.requireNonNull(filter, "filter");
+        Objects.requireNonNull(cursor, "cursor");
+        return pool.withTransaction(tx -> txService.listAssignedTo(principals, filter, cursor, tx));
+    }
+
     // --- Get ---
 
     /**

@@ -625,6 +625,17 @@ Set `workflow.executor.enabled=false` for a node that only records. The adapter 
 
 The module exposes query services for workflow instances and branch state. These are read-model APIs for management screens and operational tools.
 
+`PgTaskStore.findAssignedTo` serves the task inbox (`TaskService.listAssignedTo`). It runs the
+`findByFilter` statement with one more, parenthesized predicate: `(assignee_type = 'USER' AND
+assignee_key = $n) OR (assignee_type = 'ROLE' AND assignee_key = ANY($m)) OR (assignee_type = 'QUEUE'
+AND assignee_key = ANY($k))`, leaving out the branch of an empty role or queue set, and `FALSE` for
+principals that cannot match an assignment. One statement serves the page, with the usual keyset order
+`(updated_at DESC, task_id ASC)`. The assignee kinds and the status are inlined as literals (constants
+and an enum name, never caller text), so with `status = OPEN` the planner reads the existing partial
+indexes `idx_workflow_tasks_open_by_user`, `_by_role` and `_by_queue` even under a generic prepared
+plan. No migration is added: other statuses have no assignee index and are served by the keyset index
+and a filter.
+
 Management REST endpoints are intentionally separate from this persistence module. A REST management module can layer on top of the query services and public operation APIs without coupling HTTP concerns into the engine.
 
 ---
