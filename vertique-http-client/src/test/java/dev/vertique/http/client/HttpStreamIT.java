@@ -470,10 +470,11 @@ class HttpStreamIT {
         AtomicReference<ReadStream<Buffer>> bodyStream = new AtomicReference<>();
         Future<HttpStream> future = client.stream(CallOptions.defaults(), web -> web.get("/flood"), null);
         future.onSuccess(stream -> {
-            context.set(Vertx.currentContext());
             ReadStream<Buffer> readStream = stream.body();
             bodyStream.set(readStream);
             readStream.handler(chunk -> {
+                // The handler runs on the stream's context; the onSuccess callback does not when the head arrived first
+                context.compareAndSet(null, Vertx.currentContext());
                 if (chunks.incrementAndGet() == 1) {
                     readStream.pause();
                 }
