@@ -882,7 +882,8 @@ class PgOutboxQueryServiceIT {
     @DisplayName("statements never select content")
     class Projections {
 
-        private static final List<String> NEVER_SELECTED = List.of("payload", "headers", "metadata", "carrier_id");
+        private static final List<String> NEVER_SELECTED =
+                List.of("payload", "headers", "metadata", "carrier_id", "last_error");
 
         private void assertNoneReferenced(String sql) {
             for (String column : NEVER_SELECTED) {
@@ -891,7 +892,8 @@ class PgOutboxQueryServiceIT {
         }
 
         @Test
-        @DisplayName("the list and detail statements reference neither payload, headers, metadata nor carrier")
+        @DisplayName(
+                "the list and detail statements reference no payload, headers, metadata, carrier or last error column")
         void listAndDetail() throws Exception {
             long id = fixture.seed().insert();
 
@@ -984,9 +986,7 @@ class PgOutboxQueryServiceIT {
                                 BASE.plusSeconds(5),
                                 publishedAt,
                                 state == OutboxEntryState.PROCESSING ? BASE.plusSeconds(6) : null,
-                                state == OutboxEntryState.PROCESSING ? "node-1" : null,
-                                "boom: gateway refused",
-                                false)),
+                                state == OutboxEntryState.PROCESSING ? "node-1" : null)),
                         detail,
                         state.name());
             }
@@ -1030,65 +1030,9 @@ class PgOutboxQueryServiceIT {
             assertNull(detail.publishedAt());
             assertNull(detail.claimedAt());
             assertNull(detail.claimedBy());
-            assertNull(detail.lastError());
             assertNull(detail.errorType());
-            assertFalse(detail.lastErrorTruncated());
             assertEquals(0, detail.attempt());
             assertEquals(20, detail.maxAttempts());
-        }
-
-        @Test
-        @DisplayName("a last error of exactly 4096 characters is returned whole and not flagged")
-        void lastErrorAtLimit() throws Exception {
-            long id = fixture.seed().lastError("e".repeat(4096)).insert();
-
-            OutboxEntryDetail detail = await(service.getById(id)).orElseThrow();
-
-            assertEquals("e".repeat(4096), detail.lastError());
-            assertFalse(detail.lastErrorTruncated());
-        }
-
-        @Test
-        @DisplayName("a longer last error is cut at 4096 characters and flagged, however long it is")
-        void lastErrorTruncated() throws Exception {
-            long justOver = fixture.seed().lastError("e".repeat(4097)).insert();
-            long huge = fixture.seed().lastError("x".repeat(100_000)).insert();
-
-            OutboxEntryDetail over = await(service.getById(justOver)).orElseThrow();
-            OutboxEntryDetail large = await(service.getById(huge)).orElseThrow();
-
-            assertEquals("e".repeat(4096), over.lastError());
-            assertTrue(over.lastErrorTruncated());
-            assertEquals("x".repeat(4096), large.lastError());
-            assertTrue(large.lastErrorTruncated());
-        }
-
-        @Test
-        @DisplayName("the cut counts characters, not bytes")
-        void lastErrorCutCountsCharacters() throws Exception {
-            long id = fixture.seed().lastError("é€".repeat(3000)).insert();
-
-            OutboxEntryDetail detail = await(service.getById(id)).orElseThrow();
-
-            assertEquals(4096, detail.lastError().length());
-            assertEquals("é€".repeat(2048), detail.lastError());
-            assertTrue(detail.lastErrorTruncated());
-        }
-
-        @Test
-        @DisplayName("a last error of supplementary characters is cut at 4096 characters, counted as code points")
-        void lastErrorWithSupplementaryCharacters() throws Exception {
-            long id = fixture.seed().lastError("\uD83D\uDE00".repeat(5000)).insert();
-            long fits = fixture.seed().lastError("\uD83D\uDE00".repeat(3000)).insert();
-
-            OutboxEntryDetail cut = await(service.getById(id)).orElseThrow();
-            OutboxEntryDetail whole = await(service.getById(fits)).orElseThrow();
-
-            assertEquals(4096, cut.lastError().codePointCount(0, cut.lastError().length()));
-            assertTrue(cut.lastErrorTruncated());
-            assertEquals(
-                    3000, whole.lastError().codePointCount(0, whole.lastError().length()));
-            assertFalse(whole.lastErrorTruncated());
         }
 
         @Test
@@ -1232,6 +1176,7 @@ class PgOutboxQueryServiceIT {
         void oversizedValueIsNotTransferred() throws Exception {
             long id = fixture.seed()
                     .payload("{\"v\": \"" + "x".repeat(50_000) + "\"}")
+                    .lastError("boom: quoted payload fragment")
                     .insert();
             RecordingPool pool = new RecordingPool(fixture.pool());
 
@@ -1245,6 +1190,8 @@ class PgOutboxQueryServiceIT {
             assertTrue(row.getLong("content_bytes") > 50_000);
             assertNull(row.getString("payload_text"), "the payload text was not sent");
             assertNull(row.getString("headers_text"), "the headers text was not sent");
+            assertNull(row.getString("last_error_text"), "the last error text was not sent");
+            assertNull(row.getBoolean("last_error_truncated"), "the truncation flag was not sent");
         }
 
         @Test
@@ -1261,6 +1208,8 @@ class PgOutboxQueryServiceIT {
                     fixture.string("SELECT payload::text FROM outbox WHERE id = ?", id), row.getString("payload_text"));
             assertEquals(
                     fixture.string("SELECT headers::text FROM outbox WHERE id = ?", id), row.getString("headers_text"));
+            assertEquals("boom: gateway refused", row.getString("last_error_text"));
+            assertEquals(Boolean.FALSE, row.getBoolean("last_error_truncated"));
         }
 
         @Test
@@ -1300,6 +1249,83 @@ class PgOutboxQueryServiceIT {
         }
 
         @Test
+        @DisplayName("a last error of exactly 4096 characters is returned whole and not flagged")
+        void lastErrorAtLimit() throws Exception {
+            long id = fixture.seed().lastError("e".repeat(4096)).insert();
+
+            OutboxEntryPayload payload = await(service.getPayload(id)).orElseThrow();
+
+            assertEquals("e".repeat(4096), payload.lastError());
+            assertFalse(payload.lastErrorTruncated());
+        }
+
+        @Test
+        @DisplayName("a longer last error is cut at 4096 characters and flagged, however long it is")
+        void lastErrorTruncated() throws Exception {
+            long justOver = fixture.seed().lastError("e".repeat(4097)).insert();
+            long huge = fixture.seed().lastError("x".repeat(100_000)).insert();
+
+            OutboxEntryPayload over = await(service.getPayload(justOver)).orElseThrow();
+            OutboxEntryPayload large = await(service.getPayload(huge)).orElseThrow();
+
+            assertEquals("e".repeat(4096), over.lastError());
+            assertTrue(over.lastErrorTruncated());
+            assertEquals("x".repeat(4096), large.lastError());
+            assertTrue(large.lastErrorTruncated());
+        }
+
+        @Test
+        @DisplayName("the cut counts characters, not bytes")
+        void lastErrorCutCountsCharacters() throws Exception {
+            long id = fixture.seed().lastError("é€".repeat(3000)).insert();
+
+            OutboxEntryPayload payload = await(service.getPayload(id)).orElseThrow();
+
+            assertEquals(4096, payload.lastError().length());
+            assertEquals("é€".repeat(2048), payload.lastError());
+            assertTrue(payload.lastErrorTruncated());
+        }
+
+        @Test
+        @DisplayName("a last error of supplementary characters is cut at 4096 characters, counted as code points")
+        void lastErrorWithSupplementaryCharacters() throws Exception {
+            long id = fixture.seed().lastError("\uD83D\uDE00".repeat(5000)).insert();
+            long fits = fixture.seed().lastError("\uD83D\uDE00".repeat(3000)).insert();
+
+            OutboxEntryPayload cut = await(service.getPayload(id)).orElseThrow();
+            OutboxEntryPayload whole = await(service.getPayload(fits)).orElseThrow();
+
+            assertEquals(4096, cut.lastError().codePointCount(0, cut.lastError().length()));
+            assertTrue(cut.lastErrorTruncated());
+            assertEquals(
+                    3000, whole.lastError().codePointCount(0, whole.lastError().length()));
+            assertFalse(whole.lastErrorTruncated());
+        }
+
+        @Test
+        @DisplayName("an entry without a last error returns it as null, not truncated")
+        void noLastError() throws Exception {
+            long id = fixture.seed().lastError(null).insert();
+
+            OutboxEntryPayload payload = await(service.getPayload(id)).orElseThrow();
+
+            assertNull(payload.lastError());
+            assertFalse(payload.lastErrorTruncated());
+        }
+
+        @Test
+        @DisplayName("the payload read returns the last error beside the payload and headers")
+        void returnsLastError() throws Exception {
+            long id = fixture.seed().insert();
+
+            OutboxEntryPayload payload = await(service.getPayload(id)).orElseThrow();
+
+            assertEquals("boom: gateway refused", payload.lastError());
+            assertFalse(payload.lastErrorTruncated());
+            assertEquals(Map.of("traceparent", "abc", "tenant", "t-1"), payload.headers());
+        }
+
+        @Test
         @DisplayName("the payload statement references neither metadata, scope nor carrier")
         void projection() throws Exception {
             long id = fixture.seed().insert();
@@ -1307,7 +1333,7 @@ class PgOutboxQueryServiceIT {
             await(recordedService.getPayload(id));
 
             String sql = recording.statements().get(0).sql();
-            for (String column : List.of("metadata", "scope_key", "carrier_id", "claimed_by", "last_error")) {
+            for (String column : List.of("metadata", "scope_key", "carrier_id", "claimed_by")) {
                 assertFalse(sql.contains(column), "must not reference " + column + ": " + sql);
             }
         }

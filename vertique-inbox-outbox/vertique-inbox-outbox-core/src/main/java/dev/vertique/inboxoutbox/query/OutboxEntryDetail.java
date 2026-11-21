@@ -3,7 +3,6 @@
 
 package dev.vertique.inboxoutbox.query;
 
-import dev.vertique.core.exception.ValidationException;
 import dev.vertique.core.scope.ScopeKey;
 import dev.vertique.inboxoutbox.DestinationType;
 import dev.vertique.inboxoutbox.OutboxEntryState;
@@ -11,12 +10,13 @@ import jakarta.annotation.Nullable;
 import java.time.Instant;
 
 /**
- * Everything the outbox records about one entry except its content: scheduling, the relay lease and the last
- * failure. It answers why an entry has not moved.
+ * Everything the outbox records about one entry except its content: scheduling and the relay lease. It answers where
+ * an entry is and when it can move.
  *
- * <p>The last error is read from the database at most {@value #MAX_LAST_ERROR_LENGTH} characters long;
- * {@link #lastErrorTruncated()} says whether there was more. The payload and headers are in
- * {@link OutboxEntryPayload}; carrier metadata is never returned. The scope key is returned as a label.
+ * <p>The application's last error text can quote payload fragments, so it is not here: it is returned with the
+ * payload and headers in {@link OutboxEntryPayload}, the read that needs the higher privilege. Only {@code errorType},
+ * the class name of the last failure's cause, is returned here. Carrier metadata is never returned. The scope key is
+ * returned as a label.
  *
  * @param entryId            identifier of the entry; positive
  * @param state              the entry's current state
@@ -37,9 +37,6 @@ import java.time.Instant;
  * @param publishedAt        when the entry was delivered, or {@code null}
  * @param claimedAt          when the relay took its current lease, or {@code null} when it holds none
  * @param claimedBy          the relay node that holds the lease, or {@code null} when none does
- * @param lastError          the last failure message, cut at {@value #MAX_LAST_ERROR_LENGTH} characters, or
- *                           {@code null}
- * @param lastErrorTruncated whether the stored last error was longer than what is returned
  */
 public record OutboxEntryDetail(
         long entryId,
@@ -59,18 +56,13 @@ public record OutboxEntryDetail(
         @Nullable Instant scheduledAt,
         @Nullable Instant publishedAt,
         @Nullable Instant claimedAt,
-        @Nullable String claimedBy,
-        @Nullable String lastError,
-        boolean lastErrorTruncated) {
-
-    /** Longest last error the detail returns, in characters. */
-    public static final int MAX_LAST_ERROR_LENGTH = 4096;
+        @Nullable String claimedBy) {
 
     /**
      * Creates a validated detail.
      *
-     * @throws dev.vertique.core.exception.ValidationException if a required component is absent, a number is out
-     *                                                         of range or the last error is too long
+     * @throws dev.vertique.core.exception.ValidationException if a required component is absent or a number is out
+     *                                                         of range
      */
     public OutboxEntryDetail {
         QueryChecks.positive(entryId, "entryId");
@@ -84,12 +76,9 @@ public record OutboxEntryDetail(
         QueryChecks.required(createdAt, "createdAt");
         QueryChecks.required(updatedAt, "updatedAt");
         QueryChecks.required(availableAt, "availableAt");
-        if (lastError != null && lastError.codePointCount(0, lastError.length()) > MAX_LAST_ERROR_LENGTH) {
-            throw new ValidationException("lastError must be at most " + MAX_LAST_ERROR_LENGTH + " characters");
-        }
     }
 
-    /** Returns a string without the last error, which can quote application data, so it cannot leak through logging. */
+    /** Returns a string with the entry id and state only, so no entry text can leak through logging. */
     @Override
     public String toString() {
         return "OutboxEntryDetail[entryId=" + entryId + ", state=" + state + "]";

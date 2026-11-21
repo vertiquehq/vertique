@@ -13,7 +13,7 @@ import java.time.Instant;
  * One row of an outbox entry listing: what the entry is, where it is going and how far it got.
  *
  * <p>It carries no payload, headers or metadata, and the error text of a failed entry is only in
- * {@link OutboxEntryDetail}. The scope key is returned as a label; the listing neither filters on it nor limits
+ * {@link OutboxEntryPayload}. The scope key is returned as a label; the listing neither filters on it nor limits
  * what a caller sees by it.
  *
  * @param entryId         identifier of the entry; positive

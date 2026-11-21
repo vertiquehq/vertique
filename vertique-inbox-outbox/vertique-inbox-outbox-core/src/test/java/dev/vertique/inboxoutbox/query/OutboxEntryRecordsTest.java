@@ -65,8 +65,7 @@ class OutboxEntryRecordsTest {
             int maxAttempts,
             Instant created,
             Instant updated,
-            Instant available,
-            String lastError) {
+            Instant available) {
         return new OutboxEntryDetail(
                 id,
                 state,
@@ -85,9 +84,7 @@ class OutboxEntryRecordsTest {
                 null,
                 null,
                 null,
-                null,
-                lastError,
-                false);
+                null);
     }
 
     @Nested
@@ -207,9 +204,7 @@ class OutboxEntryRecordsTest {
                     AT.plusSeconds(3),
                     AT.plusSeconds(4),
                     AT.plusSeconds(5),
-                    "node-1",
-                    "boom",
-                    true);
+                    "node-1");
 
             assertEquals(9, detail.entryId());
             assertEquals(OutboxEntryState.DEAD_LETTER, detail.state());
@@ -228,75 +223,11 @@ class OutboxEntryRecordsTest {
             assertEquals(AT.plusSeconds(4), detail.publishedAt());
             assertEquals(AT.plusSeconds(5), detail.claimedAt());
             assertEquals("node-1", detail.claimedBy());
-            assertEquals("boom", detail.lastError());
-            assertTrue(detail.lastErrorTruncated());
         }
 
         @Test
-        @DisplayName("the last error may be absent or exactly 4096 characters, and 4097 is rejected")
-        void lastErrorLimit() {
-            assertEquals(4096, OutboxEntryDetail.MAX_LAST_ERROR_LENGTH);
-            OutboxEntryDetail none =
-                    detail(1, OutboxEntryState.PENDING, DestinationType.SERVICE, "d", "e", 0, 0, AT, AT, AT, null);
-            OutboxEntryDetail atLimit = detail(
-                    1, OutboxEntryState.PENDING, DestinationType.SERVICE, "d", "e", 0, 0, AT, AT, AT, "x".repeat(4096));
-
-            assertNull(none.lastError());
-            assertEquals(4096, atLimit.lastError().length());
-            assertEquals(
-                    "lastError must be at most 4096 characters",
-                    message(() -> detail(
-                            1,
-                            OutboxEntryState.PENDING,
-                            DestinationType.SERVICE,
-                            "d",
-                            "e",
-                            0,
-                            0,
-                            AT,
-                            AT,
-                            AT,
-                            "x".repeat(4097))));
-        }
-
-        @Test
-        @DisplayName("the last error limit counts code points: 4096 supplementary characters fit and 4097 do not")
-        void lastErrorLimitCountsCodePoints() {
-            String emoji = "\uD83D\uDE00";
-
-            OutboxEntryDetail atLimit = detail(
-                    1,
-                    OutboxEntryState.PENDING,
-                    DestinationType.SERVICE,
-                    "d",
-                    "e",
-                    0,
-                    0,
-                    AT,
-                    AT,
-                    AT,
-                    emoji.repeat(4096));
-
-            assertEquals(8192, atLimit.lastError().length());
-            assertEquals(
-                    "lastError must be at most 4096 characters",
-                    message(() -> detail(
-                            1,
-                            OutboxEntryState.PENDING,
-                            DestinationType.SERVICE,
-                            "d",
-                            "e",
-                            0,
-                            0,
-                            AT,
-                            AT,
-                            AT,
-                            emoji.repeat(4097))));
-        }
-
-        @Test
-        @DisplayName("toString shows the entry id and state and never the last error")
-        void toStringHidesLastError() {
+        @DisplayName("toString shows the entry id and state and nothing else")
+        void toStringShowsIdAndState() {
             OutboxEntryDetail detail = detail(
                     42,
                     OutboxEntryState.DEAD_LETTER,
@@ -307,8 +238,7 @@ class OutboxEntryRecordsTest {
                     2,
                     AT,
                     AT,
-                    AT,
-                    "secret-last-error");
+                    AT);
 
             String text = detail.toString();
 
@@ -322,35 +252,27 @@ class OutboxEntryRecordsTest {
             OutboxEntryState state = OutboxEntryState.PENDING;
             DestinationType type = DestinationType.SERVICE;
 
-            assertEquals(
-                    "entryId must be positive",
-                    message(() -> detail(0, state, type, "d", "e", 0, 0, AT, AT, AT, null)));
-            assertEquals(
-                    "state must not be null", message(() -> detail(1, null, type, "d", "e", 0, 0, AT, AT, AT, null)));
+            assertEquals("entryId must be positive", message(() -> detail(0, state, type, "d", "e", 0, 0, AT, AT, AT)));
+            assertEquals("state must not be null", message(() -> detail(1, null, type, "d", "e", 0, 0, AT, AT, AT)));
             assertEquals(
                     "destinationType must not be null",
-                    message(() -> detail(1, state, null, "d", "e", 0, 0, AT, AT, AT, null)));
+                    message(() -> detail(1, state, null, "d", "e", 0, 0, AT, AT, AT)));
             assertEquals(
-                    "destination must not be null",
-                    message(() -> detail(1, state, type, null, "e", 0, 0, AT, AT, AT, null)));
+                    "destination must not be null", message(() -> detail(1, state, type, null, "e", 0, 0, AT, AT, AT)));
             assertEquals(
-                    "eventType must not be null",
-                    message(() -> detail(1, state, type, "d", null, 0, 0, AT, AT, AT, null)));
+                    "eventType must not be null", message(() -> detail(1, state, type, "d", null, 0, 0, AT, AT, AT)));
             assertEquals(
-                    "attempt must not be negative",
-                    message(() -> detail(1, state, type, "d", "e", -1, 0, AT, AT, AT, null)));
+                    "attempt must not be negative", message(() -> detail(1, state, type, "d", "e", -1, 0, AT, AT, AT)));
             assertEquals(
                     "maxAttempts must not be negative",
-                    message(() -> detail(1, state, type, "d", "e", 0, -1, AT, AT, AT, null)));
+                    message(() -> detail(1, state, type, "d", "e", 0, -1, AT, AT, AT)));
             assertEquals(
-                    "createdAt must not be null",
-                    message(() -> detail(1, state, type, "d", "e", 0, 0, null, AT, AT, null)));
+                    "createdAt must not be null", message(() -> detail(1, state, type, "d", "e", 0, 0, null, AT, AT)));
             assertEquals(
-                    "updatedAt must not be null",
-                    message(() -> detail(1, state, type, "d", "e", 0, 0, AT, null, AT, null)));
+                    "updatedAt must not be null", message(() -> detail(1, state, type, "d", "e", 0, 0, AT, null, AT)));
             assertEquals(
                     "availableAt must not be null",
-                    message(() -> detail(1, state, type, "d", "e", 0, 0, AT, AT, null, null)));
+                    message(() -> detail(1, state, type, "d", "e", 0, 0, AT, AT, null)));
         }
     }
 
@@ -361,7 +283,7 @@ class OutboxEntryRecordsTest {
         @Test
         @DisplayName("the payload and headers are kept")
         void valid() {
-            OutboxEntryPayload payload = new OutboxEntryPayload(3, "{\"a\":1}", Map.of("h", "v"));
+            OutboxEntryPayload payload = new OutboxEntryPayload(3, "{\"a\":1}", Map.of("h", "v"), null, false);
 
             assertEquals(3, payload.entryId());
             assertEquals("{\"a\":1}", payload.payloadJson());
@@ -371,7 +293,7 @@ class OutboxEntryRecordsTest {
         @Test
         @DisplayName("null headers read as an empty map and an empty payload text is accepted")
         void nullHeaders() {
-            OutboxEntryPayload payload = new OutboxEntryPayload(1, "", null);
+            OutboxEntryPayload payload = new OutboxEntryPayload(1, "", null, null, false);
 
             assertTrue(payload.headers().isEmpty());
             assertEquals("", payload.payloadJson());
@@ -381,7 +303,7 @@ class OutboxEntryRecordsTest {
         @DisplayName("the headers are copied and cannot be changed")
         void headersCopied() {
             Map<String, String> source = new HashMap<>(Map.of("h", "v"));
-            OutboxEntryPayload payload = new OutboxEntryPayload(1, "{}", source);
+            OutboxEntryPayload payload = new OutboxEntryPayload(1, "{}", source, null, false);
 
             source.put("x", "y");
 
@@ -398,22 +320,62 @@ class OutboxEntryRecordsTest {
             Map<String, String> nullKey = new HashMap<>();
             nullKey.put(null, "v");
 
-            assertEquals("entryId must be positive", message(() -> new OutboxEntryPayload(0, "{}", Map.of())));
-            assertEquals("entryId must be positive", message(() -> new OutboxEntryPayload(-4, "{}", Map.of())));
-            assertEquals("payloadJson must not be null", message(() -> new OutboxEntryPayload(1, null, Map.of())));
+            assertEquals(
+                    "entryId must be positive", message(() -> new OutboxEntryPayload(0, "{}", Map.of(), null, false)));
+            assertEquals(
+                    "entryId must be positive", message(() -> new OutboxEntryPayload(-4, "{}", Map.of(), null, false)));
+            assertEquals(
+                    "payloadJson must not be null",
+                    message(() -> new OutboxEntryPayload(1, null, Map.of(), null, false)));
             assertEquals(
                     "headers must not contain null keys or values",
-                    message(() -> new OutboxEntryPayload(1, "{}", nullValue)));
+                    message(() -> new OutboxEntryPayload(1, "{}", nullValue, null, false)));
             assertEquals(
                     "headers must not contain null keys or values",
-                    message(() -> new OutboxEntryPayload(1, "{}", nullKey)));
+                    message(() -> new OutboxEntryPayload(1, "{}", nullKey, null, false)));
+        }
+
+        @Test
+        @DisplayName("the last error and its truncation flag are kept")
+        void lastErrorKept() {
+            OutboxEntryPayload payload = new OutboxEntryPayload(3, "{}", Map.of(), "boom", true);
+
+            assertEquals("boom", payload.lastError());
+            assertTrue(payload.lastErrorTruncated());
+        }
+
+        @Test
+        @DisplayName("the last error may be absent or exactly 4096 characters, and 4097 is rejected")
+        void lastErrorLimit() {
+            assertEquals(4096, OutboxEntryPayload.MAX_LAST_ERROR_LENGTH);
+            OutboxEntryPayload none = new OutboxEntryPayload(1, "{}", Map.of(), null, false);
+            OutboxEntryPayload atLimit = new OutboxEntryPayload(1, "{}", Map.of(), "x".repeat(4096), false);
+
+            assertNull(none.lastError());
+            assertEquals(4096, atLimit.lastError().length());
+            assertEquals(
+                    "lastError must be at most 4096 characters",
+                    message(() -> new OutboxEntryPayload(1, "{}", Map.of(), "x".repeat(4097), true)));
+        }
+
+        @Test
+        @DisplayName("the last error limit counts code points: 4096 supplementary characters fit and 4097 do not")
+        void lastErrorLimitCountsCodePoints() {
+            String emoji = "\uD83D\uDE00";
+
+            OutboxEntryPayload atLimit = new OutboxEntryPayload(1, "{}", Map.of(), emoji.repeat(4096), false);
+
+            assertEquals(8192, atLimit.lastError().length());
+            assertEquals(
+                    "lastError must be at most 4096 characters",
+                    message(() -> new OutboxEntryPayload(1, "{}", Map.of(), emoji.repeat(4097), true)));
         }
 
         @Test
         @DisplayName("toString shows the entry id and never the content")
         void toStringHidesContent() {
-            OutboxEntryPayload payload =
-                    new OutboxEntryPayload(42, "{\"ssn\":\"secret-payload\"}", Map.of("auth", "secret-header"));
+            OutboxEntryPayload payload = new OutboxEntryPayload(
+                    42, "{\"ssn\":\"secret-payload\"}", Map.of("auth", "secret-header"), "secret-error", false);
 
             String text = payload.toString();
 
