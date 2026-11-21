@@ -107,6 +107,8 @@ import java.util.function.Supplier;
  *   <li>{@code ASSIGNMENT_RESOLVER_UNKNOWN} — for state-derived modes ({@code *-from-state}),
  *       the {@code resolver} id is not registered in the
  *       {@link dev.vertique.workflow.definition.callbacks.TaskAssignmentResolverRegistry}.</li>
+ *   <li>{@code TASK_TYPE_TOO_LONG} — a {@link HumanTaskStep} {@code taskType} is longer than 255
+ *       code points.</li>
  *   <li>{@code REMINDER_SHAPE_INVALID} — a {@link HumanTaskStep.ReminderBlock} has both
  *       {@code offsets} and {@code interval} set, or has an empty {@code offsets} list.</li>
  *   <li>{@code DUE_DATE_PARTIAL} — a {@link HumanTaskStep.DueBlock} is present but missing one or
@@ -155,6 +157,9 @@ import java.util.function.Supplier;
 public final class WorkflowDefinitionDocumentValidator {
 
     // --- Constants ---
+
+    /** The longest task type, in code points: the width of the {@code workflow_tasks.task_type} column. */
+    private static final int MAX_TASK_TYPE_CODE_POINTS = 255;
 
     private static final Set<String> VALID_ASSIGNMENT_MODES =
             Set.of("user", "role", "queue", "user-from-state", "role-from-state", "queue-from-state");
@@ -1476,6 +1481,18 @@ public final class WorkflowDefinitionDocumentValidator {
             @Nullable Class<?> resolvedStateType,
             List<Violation> violations) {
         String sid = step.id();
+
+        // Task type: must fit the workflow_tasks.task_type column
+        String taskType = step.taskType();
+        if (taskType != null && taskType.codePointCount(0, taskType.length()) > MAX_TASK_TYPE_CODE_POINTS) {
+            violations.add(new Violation(
+                    definitionId,
+                    definitionVersion,
+                    sid,
+                    null,
+                    "TASK_TYPE_TOO_LONG",
+                    "`taskType` is longer than " + MAX_TASK_TYPE_CODE_POINTS + " code points"));
+        }
 
         // Assignment
         if (step.assignment() != null) {
