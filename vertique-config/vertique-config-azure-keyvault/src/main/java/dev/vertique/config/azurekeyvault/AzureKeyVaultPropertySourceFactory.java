@@ -28,10 +28,10 @@ import java.util.function.BiFunction;
  * {
  *   "type": "azure-keyvault",
  *   "endpoint": "https://myvault.vault.azure.net",  // required, non-blank
- *   "prefix": "db.",                                 // optional; keys not starting with it are skipped
+ *   "prefix": "db.",                                 // optional; keys not starting with it are skipped; blank counts as absent
  *   "auth": {                                        // optional; default: {"method":"default"}
  *     "method": "default",                           // "default" or "managed-identity"
- *     "clientId": "my-client-id"                    // optional
+ *     "clientId": "my-client-id"                    // optional; blank counts as absent
  *   },
  *   "connectTimeoutMs": 5000,                        // optional; default 5000 ms; must be > 0
  *   "readTimeoutMs": 5000                            // optional; default 5000 ms; must be > 0
@@ -165,8 +165,8 @@ public class AzureKeyVaultPropertySourceFactory implements ConfigPropertySourceF
         }
         String canonicalEndpoint = validateAndCanonicaliseEndpoint(name, endpoint);
 
-        // --- prefix (optional) ---
-        String prefix = sourceConfig.getString("prefix");
+        // --- prefix (optional; a blank value counts as absent) ---
+        String prefix = nullIfBlank(sourceConfig.getString("prefix"));
 
         // --- auth block (optional; defaults to method="default") ---
         JsonObject auth = sourceConfig.getJsonObject("auth");
@@ -180,7 +180,7 @@ public class AzureKeyVaultPropertySourceFactory implements ConfigPropertySourceF
             authMethod = configuredMethod == null || configuredMethod.isBlank()
                     ? AzureCredentials.METHOD_DEFAULT
                     : configuredMethod;
-            clientId = auth.getString("clientId");
+            clientId = nullIfBlank(auth.getString("clientId"));
             if (!AzureCredentials.METHOD_DEFAULT.equals(authMethod)
                     && !AzureCredentials.METHOD_MANAGED_IDENTITY.equals(authMethod)) {
                 throw new ConfigPropertySourceException(
@@ -195,6 +195,10 @@ public class AzureKeyVaultPropertySourceFactory implements ConfigPropertySourceF
 
         return new AzureConnectionSettings(
                 endpoint, canonicalEndpoint, prefix, authMethod, clientId, connectTimeoutMs, readTimeoutMs);
+    }
+
+    private static String nullIfBlank(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 
     // --- Endpoint validation helpers ---
