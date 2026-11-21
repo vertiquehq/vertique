@@ -75,12 +75,13 @@ and parameter signature.
 
 An anchor on an interface method follows the method-AOP rule: it is woven onto the concrete
 implementors in the compilation, as on a class method, so a JAX-RS server resource interface or any
-other interface can carry `@Resilient` and its declarations for the resource that implements it. On a
-REST-client interface, which has no implementor, the anchor wraps the generated client call. On a
-service-contract interface the services dispatch pipeline applies the anchor once per call, so the
-processor does not weave it onto the contract's implementors: a call dispatched through the contract
-runs the policy once, and a direct in-process call on the implementor is not wrapped. Any other aspect
-declared on the same contract method is still woven.
+other interface can carry `@Resilient` and its declarations for the resource that implements it. A
+REST-client interface has no implementor, so its anchor wraps the generated client call. A
+service-contract interface anchor is applied once, by the services dispatch pipeline, and is not woven
+onto the contract's implementors; see the double-wrapping caveat below for a handler that declares
+resilience itself. A call dispatched through the contract runs the policy once, and a direct in-process
+call on the implementor is not wrapped. Any other aspect declared on the same contract method is still
+woven.
 
 The aspect does not intercept self-invocation or direct object construction. For a
 `ServiceHandler<C>` implementation, wire either the generated `ServiceContract` or the AOP
