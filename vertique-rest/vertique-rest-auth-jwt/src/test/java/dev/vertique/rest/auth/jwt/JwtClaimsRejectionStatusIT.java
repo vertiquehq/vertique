@@ -30,7 +30,9 @@ import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.ext.web.impl.UserContextInternal;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
+import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
@@ -217,6 +219,35 @@ public class JwtClaimsRejectionStatusIT {
                         + "response body: " + result.bodyText());
     }
 
+    @Test
+    @DisplayName("A claims rejection answers 401 ahead of the @Consumes gate")
+    void claimsRejectionPrecedesTheContentTypeGate() throws Exception {
+        REPORTED_REASON_CODES.clear();
+
+        // application/xml passes the API-wide media-type check but is not the operation's @Consumes type,
+        // so without the claims check running first the answer would be 415.
+        var response = client.post(server.actualPort(), "127.0.0.1", "/secure")
+                .putHeader("Authorization", "Bearer " + VALID_TOKEN)
+                .putHeader("Content-Type", "application/xml")
+                .sendBuffer(Buffer.buffer("<a/>"))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+
+        assertEquals(
+                401,
+                response.statusCode(),
+                "a claims rejection must be answered before the content-type gate; body was "
+                        + response.bodyAsString());
+        assertEquals("Bearer", response.getHeader("WWW-Authenticate"));
+        assertTrue(
+                REPORTED_REASON_CODES.contains(JwtClaimsValidatorContributor.REASON_CODE),
+                "the 401 must come from the claims rejection: reported reason codes were " + REPORTED_REASON_CODES);
+        assertFalse(
+                String.valueOf(response.bodyAsString()).contains(REJECTION_MESSAGE),
+                "the validator's message must not reach the client");
+    }
+
     // --- Harness ---
 
     /**
@@ -277,6 +308,20 @@ public class JwtClaimsRejectionStatusIT {
         @GET
         @Produces(MediaType.TEXT_PLAIN)
         public String secure() {
+            return "ok";
+        }
+
+        /**
+         * Handles {@code POST /secure}; declares a {@code @Consumes} type so the per-operation
+         * content-type gate exists on this route.
+         *
+         * @param body the request body
+         * @return a constant success payload
+         */
+        @POST
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        public String securePost(String body) {
             return "ok";
         }
     }

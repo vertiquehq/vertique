@@ -45,27 +45,22 @@ import lombok.extern.slf4j.Slf4j;
  * cannot occur with {@code @RequiresAction} (rejected at startup and compile time).
  *
  * <h3>Ordering</h3>
- * Priority {@value #PRIORITY} places this <em>before</em> every contributor that consumes the
- * authenticated user on an action-only route, so authentication runs first and the full chain
- * mirrors a normal authenticated route: authentication → claims-validation → identity-resolution →
- * authorization. Specifically it must run before:
- * <ul>
- *   <li>the JWT claims validator (priority {@code 50}, {@code rest-auth-jwt}'s
- *       {@code JwtClaimsValidatorContributor}), which skips when {@code ctx.user() == null} — were
- *       authentication to run after it on an action-only route, a custom
- *       {@code JwtClaimsValidator} (tenant binding, token version/revocation, a required custom
- *       claim) would be silently bypassed and a token it would reject let through;</li>
- *   <li>{@link IdentityResolutionContributor#PRIORITY} (80), so the auth handler appends evidence
- *       before the identity is resolved;</li>
- *   <li>authorization (100), so the action gate evaluates the resolved identity.</li>
- * </ul>
- * On a normal authenticated route Vert.x's OpenAPI security handler authenticates the caller before
- * <em>any</em> contributor runs, so the priority-50 validator already sees the user there; this
- * contributor exists only to give an action-only route (no OpenAPI security requirement) the same
- * "authenticate first" guarantee. {@code 40} is chosen below {@code 50} with headroom so an
- * application contributor can still slot between authentication and claims validation if needed.
- * Because all handlers are added via {@code route.addHandler(...)}, contributor priority order is the
- * route handler-chain order.
+ * This contributor reports {@link #authenticationStage()} {@code true}, so the router installs its
+ * handler right after the route's scheme authentication handlers (an action-only route declares none) and <em>before</em> the
+ * {@code @Consumes} check and request validation. An unauthenticated caller of an action-only route is
+ * therefore rejected with {@code 401} (and the scheme's {@code WWW-Authenticate} challenge) before any
+ * request content is examined, exactly as on a route that declares a security scheme. Authorization
+ * still runs after validation.
+ *
+ * <p>Within the authentication stage contributors run in priority order, so {@value #PRIORITY} places
+ * this one before the JWT claims validator ({@code 50}, which also reports {@code true} and skips when
+ * {@code ctx.user() == null}): were authentication to run after it, a custom
+ * {@code JwtClaimsValidator} (tenant binding, token version/revocation, a required custom claim) would
+ * be silently bypassed and a token it would reject let through. Identity resolution ({@link
+ * IdentityResolutionContributor#PRIORITY}, 80) and authorization (100) run later, with the other
+ * contributors, so the full chain is authentication → claims-validation → gates →
+ * identity-resolution → authorization. {@code 40} leaves headroom below {@code 50} for an application
+ * authentication-stage contributor to slot between authentication and claims validation.
  *
  * <h3>Fail-closed</h3>
  * When an action-only route needs authentication but no (or multiple ambiguous)
@@ -84,12 +79,11 @@ import lombok.extern.slf4j.Slf4j;
 public final class ActionGateAuthenticationContributor implements OperationHandlerContributor {
 
     /**
-     * Handler priority. Before the JWT claims validator (priority {@code 50}), identity resolution
-     * ({@link IdentityResolutionContributor#PRIORITY}, 80), and authorization (priority 100) so that
-     * on an action-only route authentication appends evidence and sets the user <em>before</em> any
-     * of them run — preserving the authentication → claims-validation → identity → authorization
-     * order that a normal authenticated route gets from Vert.x's OpenAPI security handler. {@code 40}
-     * keeps headroom below {@code 50} for an application contributor to interpose if required.
+     * Handler priority within the authentication stage. Before the JWT claims validator (priority
+     * {@code 50}) so that on an action-only route authentication appends evidence and sets the user
+     * <em>before</em> the claims check runs — the authentication → claims-validation order that a
+     * normal authenticated route gets from Vert.x's OpenAPI security handler. {@code 40} keeps
+     * headroom below {@code 50} for an application contributor to interpose if required.
      */
     public static final int PRIORITY = 40;
 
@@ -104,6 +98,16 @@ public final class ActionGateAuthenticationContributor implements OperationHandl
     @Inject
     public ActionGateAuthenticationContributor(Set<RouteAuthHandler> routeAuthHandlers) {
         this.routeAuthHandlers = Objects.requireNonNull(routeAuthHandlers, "routeAuthHandlers");
+    }
+
+    /**
+     * Runs in the authentication stage, ahead of the request gates.
+     *
+     * @return {@code true}
+     */
+    @Override
+    public boolean authenticationStage() {
+        return true;
     }
 
     /**

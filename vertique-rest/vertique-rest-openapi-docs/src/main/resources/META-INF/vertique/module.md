@@ -128,8 +128,8 @@ two values:
   authentication.
 - `PROTECTED`: every other valid policy, `@DenyAll` included. The document is served through the
   security chain of an equally annotated resource method: the authentication handler of
-  `@ApiDocs.securityScheme`, then every registered `OperationHandlerContributor` with the
-  requirements of the policy. A policy that denies everyone authenticates the reader, then refuses
+  `@ApiDocs.securityScheme`, then every registered `OperationHandlerContributor` (the
+  authentication-stage ones first) with the requirements of the policy. A policy that denies everyone authenticates the reader, then refuses
   it, so in a supported composition no reader gets the document; the document's own handler also
   refuses every request of a lone `@DenyAll` policy and never reads the store for it. See
   [Protected Documents](#protected-documents).
@@ -512,7 +512,8 @@ The route runs, in order:
    [Events and metrics](#events-and-metrics));
 2. the authentication handler of the scheme;
 3. every registered `OperationHandlerContributor`, application contributors included, in the order
-   resource routes use (phase, then priority), each given the operation's effective policy and the
+   resource routes use: the authentication-stage contributors first (the JWT claims validator, for
+   example), then the others, each group in phase then priority order, each given the operation's effective policy and the
    action the policy requires, if any;
 4. the document handler.
 
