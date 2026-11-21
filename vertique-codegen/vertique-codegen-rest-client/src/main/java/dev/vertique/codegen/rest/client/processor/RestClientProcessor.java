@@ -5,6 +5,7 @@ package dev.vertique.codegen.rest.client.processor;
 
 import dev.vertique.codegen.AnnotationMirrors;
 import dev.vertique.codegen.CodegenContext;
+import dev.vertique.codegen.Diagnostics;
 import dev.vertique.codegen.NoAutoWire;
 import dev.vertique.codegen.rest.client.processor.emit.BeanAccessorEmitter;
 import dev.vertique.codegen.rest.client.processor.emit.ProxyEmitter;
@@ -183,8 +184,18 @@ public final class RestClientProcessor extends AbstractProcessor {
                 allBeanModels.add(beanModel);
             }
 
-            // A declaring interface the generated class cannot name leaves the reflective proxy in charge.
-            if (!hasExternalBean && declaringTypesAccessible(model)) {
+            // A declaring interface the generated class cannot name is a compile error, not a silent
+            // fallback to the reflective proxy: a missing generated proxy must not go unnoticed.
+            TypeElement unnameable = firstUnnameableDeclaringType(model);
+            if (unnameable != null) {
+                ctx.diagnostics()
+                        .error(
+                                typeElement,
+                                Diagnostics.restClientDeclaringInterfaceNotNameable(
+                                        unnameable.getQualifiedName().toString(),
+                                        typeElement.getQualifiedName().toString(),
+                                        ctx.packageNameOf(model.clientType())));
+            } else if (!hasExternalBean) {
                 proxyEmitter.emit(model, beanModelsByFqn);
             }
         }
@@ -199,23 +210,24 @@ public final class RestClientProcessor extends AbstractProcessor {
     // --- Internal helpers ---
 
     /**
-     * Returns {@code true} when the generated proxy, which lives in the client's package, can name the
-     * interface that declares each operation: an inherited operation is looked up on its declaring
+     * Finds an interface the generated proxy, which lives in the client's package, cannot name among
+     * those that declare an operation: an inherited operation is looked up on its declaring
      * interface, which may be package-private to another package.
      *
      * @param model the scanned client interface
-     * @return {@code false} when some declaring interface is not accessible from the client's package
+     * @return the first declaring interface that is not accessible from the client's package, or
+     *     {@code null} when every one is
      */
-    private boolean declaringTypesAccessible(ClientInterfaceModel model) {
+    private TypeElement firstUnnameableDeclaringType(ClientInterfaceModel model) {
         String clientPackage = ctx.packageNameOf(model.clientType());
         for (var method : model.methods()) {
             if (method.method().getEnclosingElement() instanceof TypeElement declaring
                     && !declaring.equals(model.clientType())
                     && !accessibleFrom(declaring, clientPackage)) {
-                return false;
+                return declaring;
             }
         }
-        return true;
+        return null;
     }
 
     private boolean accessibleFrom(TypeElement type, String fromPackage) {

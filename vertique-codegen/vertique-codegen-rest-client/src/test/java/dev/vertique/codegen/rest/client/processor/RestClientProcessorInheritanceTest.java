@@ -215,8 +215,8 @@ class RestClientProcessorInheritanceTest {
     }
 
     @Test
-    @DisplayName("an operation declared by an interface the proxy cannot name leaves the reflective proxy in charge")
-    void inaccessibleDeclaringInterfaceGeneratesNoProxy() {
+    @DisplayName("an operation declared by an interface the proxy cannot name fails the compilation naming it")
+    void inaccessibleDeclaringInterfaceFailsCompilation() {
         var result = ProcessorTestHarness.run(
                 new RestClientProcessor(),
                 common(
@@ -249,9 +249,9 @@ class RestClientProcessorInheritanceTest {
                                 public interface UserClient extends dev.vertique.examples.other.Visible {}
                                 """)));
 
-        result.assertSuccess();
-        org.junit.jupiter.api.Assertions.assertThrows(
-                org.opentest4j.AssertionFailedError.class,
-                () -> result.assertGeneratedSourceContains(PROXY_FQN, "UserClient"));
+        result.assertFailed();
+        result.assertErrorMessage("dev.vertique.examples.other.Hidden");
+        result.assertErrorMessage("dev.vertique.examples.client.UserClient");
+        result.assertErrorMessage("dev.vertique.examples.client");
     }
 }
