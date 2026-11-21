@@ -677,6 +677,28 @@ public final class ProxyEmitter {
      * @param model the interface model to scan
      * @return map from bean FQN to its ClassName
      */
+    private Map<String, ClassName> collectBeanTypes(ClientInterfaceModel model) {
+        Map<String, ClassName> result = new LinkedHashMap<>();
+        for (TypeElement beanType : model.referencedBeans()) {
+            String fqn = beanType.getQualifiedName().toString();
+            if (!result.containsKey(fqn)) {
+                ClassName cn = resolveClassName(beanType.asType());
+                if (cn != null) {
+                    result.put(fqn, cn);
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Reports an error for the first type the proxy names that its package cannot name: the client
+     * interface, a declaring interface, a return or parameter type, or a {@code @BeanParam} type.
+     *
+     * @param model the client interface model
+     * @param packageName the package the proxy is generated into
+     * @return {@code true} when an error was reported and no proxy must be emitted
+     */
     private boolean reportUnnameableType(ClientInterfaceModel model, String packageName) {
         TypeElement clientType = model.clientType();
         if (reportIfUnnameable(clientType.asType(), clientType, packageName)) {
@@ -705,6 +727,7 @@ public final class ProxyEmitter {
         return false;
     }
 
+    /** Reports {@code type} against {@code source} when it is unnameable from {@code packageName}. */
     private boolean reportIfUnnameable(TypeMirror type, Element source, String packageName) {
         Optional<TypeElement> unnameable = UnnameableTypes.firstUnnameable(type, packageName);
         unnameable.ifPresent(found -> ctx.diagnostics()
@@ -716,20 +739,6 @@ public final class ProxyEmitter {
                         found.getQualifiedName(),
                         packageName));
         return unnameable.isPresent();
-    }
-
-    private Map<String, ClassName> collectBeanTypes(ClientInterfaceModel model) {
-        Map<String, ClassName> result = new LinkedHashMap<>();
-        for (TypeElement beanType : model.referencedBeans()) {
-            String fqn = beanType.getQualifiedName().toString();
-            if (!result.containsKey(fqn)) {
-                ClassName cn = resolveClassName(beanType.asType());
-                if (cn != null) {
-                    result.put(fqn, cn);
-                }
-            }
-        }
-        return result;
     }
 
     /**
