@@ -56,7 +56,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: "24"
+          node-version: "26"
 
       # Restore-only: required CI owns saving the Maven cache. PIT's own
       # artifacts are small and resolve from Maven Central when missing.
