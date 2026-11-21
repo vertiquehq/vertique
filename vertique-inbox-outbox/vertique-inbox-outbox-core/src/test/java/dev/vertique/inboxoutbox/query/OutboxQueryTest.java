@@ -41,6 +41,39 @@ class OutboxQueryTest {
     }
 
     @Nested
+    @DisplayName("visibleTo")
+    class VisibleTo {
+
+        @Test
+        @DisplayName("is absent by default, so the query lists every scope")
+        void absentByDefault() {
+            assertNull(valid().build().visibleTo());
+            assertNull(OutboxQuery.inStates(OutboxEntryState.DEAD_LETTER).visibleTo());
+        }
+
+        @Test
+        @DisplayName("the constructor without it keeps working and leaves it absent")
+        void retainedConstructor() {
+            OutboxQuery query = new OutboxQuery(
+                    Set.of(OutboxEntryState.PENDING), null, null, null, null, null, null, null, null, null, null);
+
+            assertNull(query.visibleTo());
+            assertEquals(OutboxSort.UPDATED_AT_DESC, query.sort());
+        }
+
+        @Test
+        @DisplayName("is carried as given and survives toBuilder")
+        void carried() {
+            OutboxCallerScopes scopes = OutboxCallerScopes.ofUser(Set.of("acme"));
+
+            OutboxQuery query = valid().visibleTo(scopes).build();
+
+            assertEquals(scopes, query.visibleTo());
+            assertEquals(scopes, query.toBuilder().destination("d").build().visibleTo());
+        }
+    }
+
+    @Nested
     @DisplayName("states")
     class States {
 
