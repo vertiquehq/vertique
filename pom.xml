@@ -122,8 +122,10 @@ SPDX-License-Identifier: EUPL-1.2
         <lettuce.version>7.9.0.RELEASE</lettuce.version>
         <dagger.version>2.60.1</dagger.version>
         <!-- Jackson 2.x line — the framework imports the Jackson 2 BOM (see dependencyManagement)
-             to stay on 2.x deliberately, since Vert.x 5.1 supports both 2.x and 3.x. Keep aligned
-             with the Jackson 2 line vertx-dependencies ships; the 2.x -> 3.x migration is separate. -->
+             to stay on 2.x deliberately, since Vert.x 5 supports both 2.x and 3.x. This version is
+             managed independently of vertx-dependencies and may run ahead of the 2.x release that
+             Vert.x ships; Jackson 2.x minors stay compatible, so the override is safe. The
+             2.x -> 3.x migration is separate. -->
         <jackson.version>2.23.0</jackson.version>
         <micrometer.version>1.17.2</micrometer.version>
         <opentelemetry.version>1.68.0</opentelemetry.version>
@@ -287,7 +289,7 @@ SPDX-License-Identifier: EUPL-1.2
                 <version>${lettuce.version}</version>
             </dependency>
 
-            <!-- Jackson BOM — explicitly pin the Jackson 2.x line. Vert.x 5.1 ships both Jackson 2.x
+            <!-- Jackson BOM — explicitly pin the Jackson 2.x line. Vert.x 5 ships both Jackson 2.x
                  and 3.x BOMs; importing the Jackson 2 BOM keeps the framework on 2.x deliberately.
                  The 2.x -> 3.x migration is tracked as a separate (riskier) effort. -->
             <dependency>
