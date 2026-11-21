@@ -35,7 +35,7 @@ import java.util.Map;
  * literal {@code "***"}, so a masked dump cannot be fed back as a secret. A string (a field, an
  * {@code Optional}, a list element or a bag entry) whose path
  * {@link ConfigSecretRenderer#isUriPath(String) names a URL} is serialized through
- * {@link ConfigSecretRenderer#redactUri(String)}, credentials masked and host and path visible; that
+ * {@link ConfigSecretRenderer#redactUri(String)}, credentials masked and host and path visible, as a bag's {@code toString()} renders it; that
  * masked form is not rejected on input.
  */
 public interface ConfigParser {

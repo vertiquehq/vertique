@@ -78,13 +78,13 @@ behind `ConfigParser` serializes it as `"***"` when set and omits it when absent
 the shared secret rule, `ConfigSecretRenderer` in `dev.vertique:vertique-core`), and `ConfigParser`
 rejects a literal `"***"` as its value. `placeholders` carries `@ConfigSecret` — a placeholder value may be
 a secret under any key, so the config mapper serializes the bag whole as `"***"` when non-empty (`{}` when empty). Only the config mapper masks;
-another `ObjectMapper` prints the password. `toString()` renders the password as `<redacted>`, the placeholder
-keys without their values, and a `password=` parameter in `jdbcUrl` masked, on the class and on its
-builder. The same holds for every nested `FlywayInstanceConfig`. The config mapper serializes `jdbcUrl`
-through `ConfigSecretRenderer.redactUri`: a `?password=` parameter and a `user:pass@` userinfo are
-masked, host, port and database stay visible. A `;password=` property (SQL Server, MySQL property
-style) or an Oracle thin `user/pass@host` form is dumped as given, although `toString()` masks the
-former. Prefer `user` and `password` over credentials embedded in `jdbcUrl`.
+another `ObjectMapper` prints the password. `toString()` renders the password as `<redacted>` and the placeholder
+keys without their values, on the class and on its builder. The same holds for every nested
+`FlywayInstanceConfig`. `jdbcUrl` is rendered the same way by `toString()` and by the config mapper, through
+`ConfigSecretRenderer.redactUri`: a `user:pass@` userinfo, an Oracle thin `user/pass@host` prefix, and a
+`password`, `pwd`, `passwd` or `sig` parameter, separated by `&` or `;` (SQL Server, MySQL property style),
+are masked as `***`; host, port and database stay visible. A password that contains an unescaped `;` or `&`
+ends there and the rest renders as given. Prefer `user` and `password` over credentials embedded in `jdbcUrl`.
 
 **Credential fallback:** When `user` or `password` are not set in `FlywayConfig`, `FlywayMigrationRunner` falls back to the pool credentials from `DbPoolConfig`, field by field. This lets applications use the same credentials for both migrations and runtime when a separate DDL user is not needed. Named instances select a complete user and password pair instead; see [Instance overrides](#instance-overrides).
 

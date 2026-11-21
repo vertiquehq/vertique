@@ -215,6 +215,28 @@ class ConfigSecretRendererTest {
         }
 
         @Test
+        @DisplayName("renders a credentialed URL at a URL-named path through redactUri, like the mapper dump")
+        void urlLeafRedacted() {
+            JsonObject bag = new JsonObject()
+                    .put("jdbcUrl", "jdbc:postgresql://u:URLSEKRIT@db/app?password=QSEKRIT&ssl=true")
+                    .put("address", "sftp://u:ADDRSEKRIT@host/in")
+                    .put("nested", new JsonObject().put("baseUrl", "https://u:NESTSEKRIT@host/p"))
+                    .put(
+                            "endpoints",
+                            new JsonArray().add("redis://u:ARRSEKRIT@h1:6379").add("redis://h2:6379"));
+
+            String rendered = ConfigSecretRenderer.redactBag(bag);
+
+            assertFalse(rendered.contains("URLSEKRIT"), rendered);
+            assertFalse(rendered.contains("QSEKRIT"), rendered);
+            assertFalse(rendered.contains("NESTSEKRIT"), rendered);
+            assertFalse(rendered.contains("ARRSEKRIT"), rendered);
+            assertTrue(rendered.contains("jdbc:postgresql://***@db/app?password=***&ssl=true"), rendered);
+            assertTrue(rendered.contains("redis://h2:6379"), "a URL without credentials stays as given");
+            assertTrue(rendered.contains("ADDRSEKRIT"), "a path that does not name a URL is copied as given");
+        }
+
+        @Test
         @DisplayName("does not mutate the input bag")
         void inputNotMutated() {
             JsonObject bag = new JsonObject().put("sasl.password", "SEKRIT");
@@ -321,6 +343,54 @@ class ConfigSecretRendererTest {
             assertFalse(redacted.contains("ss"), "password tail 'ss' must not leak");
             assertTrue(redacted.contains("host"), "host must remain visible");
             assertTrue(redacted.contains("/path"), "path must remain visible");
+        }
+
+        @Test
+        @DisplayName("treats ';' as a parameter separator, with or without a '?'")
+        void semicolonSeparatesParameters() {
+            assertEquals(
+                    "jdbc:sqlserver://h:1433;databaseName=app;user=sa;password=***;encrypt=true",
+                    ConfigSecretRenderer.redactUri(
+                            "jdbc:sqlserver://h:1433;databaseName=app;user=sa;password=SEKRIT;encrypt=true"));
+            assertEquals(
+                    "jdbc:mysql://h/db?useSSL=true;password=***&x=1",
+                    ConfigSecretRenderer.redactUri("jdbc:mysql://h/db?useSSL=true;password=SEKRIT&x=1"));
+            assertEquals("https://h/p;jsessionid=abc", ConfigSecretRenderer.redactUri("https://h/p;jsessionid=abc"));
+        }
+
+        @Test
+        @DisplayName("masks pwd, passwd and sig as whole parameter names only")
+        void shortCredentialNamesMasked() {
+            assertEquals(
+                    "x://h?pwd=***&PASSWD=***&sig=***&design=a&signal=b",
+                    ConfigSecretRenderer.redactUri("x://h?pwd=1&PASSWD=2&sig=3&design=a&signal=b"));
+            assertTrue(ConfigSecretRenderer.isSensitivePath("password"));
+            assertFalse(ConfigSecretRenderer.isSensitivePath("sig"), "the short names widen the URI rule only");
+        }
+
+        @Test
+        @DisplayName("masks the user/pass of an Oracle thin URL and leaves a credential-free one alone")
+        void oracleThinCredentialsMasked() {
+            assertEquals(
+                    "jdbc:oracle:thin:***@//h:1521/svc",
+                    ConfigSecretRenderer.redactUri("jdbc:oracle:thin:scott/TIGER@//h:1521/svc"));
+            assertEquals(
+                    "jdbc:oracle:thin:***@h:1521:orcl",
+                    ConfigSecretRenderer.redactUri("jdbc:oracle:thin:scott/TIGER@h:1521:orcl"));
+            assertEquals(
+                    "jdbc:oracle:thin:@//h:1521/svc", ConfigSecretRenderer.redactUri("jdbc:oracle:thin:@//h:1521/svc"));
+        }
+
+        @Test
+        @DisplayName("masks a Camel RAW value whole, even when it contains a separator")
+        void camelRawValueMasked() {
+            assertEquals(
+                    "ftp://h/in?username=a&password=***&delay=5",
+                    ConfigSecretRenderer.redactUri("ftp://h/in?username=a&password=RAW(se&c;ret)&delay=5"));
+            assertEquals(
+                    "ftp://h/in?password=***", ConfigSecretRenderer.redactUri("ftp://h/in?password=RAW{se)&c;ret}"));
+            assertEquals(
+                    "ftp://h/in?password=***", ConfigSecretRenderer.redactUri("ftp://h/in?password=RAW(unclosed&x"));
         }
 
         @Test
