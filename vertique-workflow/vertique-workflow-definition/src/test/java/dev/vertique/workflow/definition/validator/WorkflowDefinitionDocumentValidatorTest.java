@@ -1868,4 +1868,57 @@ class WorkflowDefinitionDocumentValidatorTest {
                         DocumentFormat.YAML))
                 .isInstanceOf(RuntimeException.class);
     }
+
+    @Test
+    void stepsReachedOnlyThroughReplyRoutesAreReachable() {
+        String yaml = """
+                definitionId: test-wf
+                definitionVersion: 1
+                stateType: %s
+                contract: %s
+                startPayloadType: %s
+                initialStateMapper: %s
+                initialStep: svc
+                steps:
+                  - id: svc
+                    type: service
+                    target: target
+                    payloadMapper: %s
+                    reply:
+                      payloadType: %s
+                      stateReducer: %s
+                      next: answered
+                      onFailure:
+                        stateReducer: %s
+                        next: refused
+                      timeout:
+                        after: PT1H
+                        onTimeoutMutator: %s
+                        next: expired
+                  - id: answered
+                    type: complete
+                  - id: refused
+                    type: complete
+                  - id: expired
+                    type: complete
+                  - id: orphan
+                    type: complete
+                """.formatted(
+                        STATE_FQN,
+                        CONTRACT_FQN,
+                        PAYLOAD_FQN,
+                        INIT_MAPPER_ID,
+                        PAYLOAD_MAPPER_ID,
+                        PAYLOAD_FQN,
+                        STATE_REDUCER_ID,
+                        STATE_REDUCER_ID,
+                        STATE_MUTATOR_ID);
+        var doc = ProductionParserFixture.parser().parse(yaml.getBytes(StandardCharsets.UTF_8), DocumentFormat.YAML);
+        assertThat(new WorkflowDefinitionDocumentValidator(fullLookup)
+                        .validate(doc)
+                        .toList())
+                .filteredOn(v -> "UNREACHABLE_STEP".equals(v.code()))
+                .extracting(Violation::stepId)
+                .containsExactly("orphan");
+    }
 }

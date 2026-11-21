@@ -680,6 +680,16 @@ public final class WorkflowDefinitionDocumentValidator {
             case ServiceStep s -> {
                 targets.add(s.next());
                 targets.add(s.compensation());
+                var reply = s.reply();
+                if (reply != null) {
+                    targets.add(reply.next());
+                    if (reply.onFailure() != null) {
+                        targets.add(reply.onFailure().next());
+                    }
+                    if (reply.timeout() != null) {
+                        targets.add(reply.timeout().next());
+                    }
+                }
             }
             case WaitSignalStep s -> {
                 targets.add(s.next());

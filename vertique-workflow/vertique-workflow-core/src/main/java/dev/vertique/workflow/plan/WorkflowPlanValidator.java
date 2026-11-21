@@ -89,7 +89,7 @@ public final class WorkflowPlanValidator {
                             || !names.add(name)
                             || (wait.reply() == null && ReplySignals.isReserved(name))) {
                         throw new WorkflowDefinitionException(
-                                "Invalid signal name '" + name + "' at step '" + wait.stepId() + "'");
+                                "Invalid signal name '" + name + "' at step '" + wait.stepId() + "' in " + label);
                     }
                 }
                 if (wait.reply() != null) {
@@ -99,7 +99,8 @@ public final class WorkflowPlanValidator {
                             || !dispatch.nextStepId().equals(wait.stepId())
                             || wait.correlationKeyCallbackId() != null
                             || (reply.completesLater() && wait.timeout() == null)) {
-                        throw new WorkflowDefinitionException("Invalid reply wait at step '" + wait.stepId() + "'");
+                        throw new WorkflowDefinitionException(
+                                "Invalid reply wait at step '" + wait.stepId() + "' in " + label);
                     }
                 }
             }

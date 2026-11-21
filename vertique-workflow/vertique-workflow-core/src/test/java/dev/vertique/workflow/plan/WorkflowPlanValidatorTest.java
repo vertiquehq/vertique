@@ -45,14 +45,15 @@ class WorkflowPlanValidatorTest {
 
     @org.junit.jupiter.params.ParameterizedTest(name = "{0}")
     @org.junit.jupiter.params.provider.MethodSource("brokenReplyPlans")
-    @DisplayName("invalid reply waits are refused naming the wait")
+    @DisplayName("invalid reply waits are refused naming the wait and the definition")
     void brokenReplyWaitIsRefusedNamingItsStep(String description, WorkflowPlan candidate, boolean valid) {
         if (valid) {
             assertThatCode(() -> emptyValidator().validate(candidate)).doesNotThrowAnyException();
         } else {
             assertThatThrownBy(() -> emptyValidator().validate(candidate))
                     .isInstanceOf(WorkflowDefinitionException.class)
-                    .hasMessageContaining("wait");
+                    .hasMessageContaining("wait")
+                    .hasMessageContaining("'test-def' v1");
         }
     }
 
