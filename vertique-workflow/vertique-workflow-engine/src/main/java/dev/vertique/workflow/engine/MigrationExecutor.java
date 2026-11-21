@@ -678,17 +678,12 @@ final class MigrationExecutor {
         if (migrationRegistry == null) {
             return Future.failedFuture(new Refused(CommandErrors.MigrationRejection.HANDLER_MISSING));
         }
-        Optional<dev.vertique.workflow.migration.WorkflowMigrationHandler<?, ?>> handlerOpt;
-        try {
-            handlerOpt = migrationRegistry.find(
-                    inst.definitionScopeKey(),
-                    inst.definitionId(),
-                    inst.definitionVersion(),
-                    targetScope,
-                    targetKey.definitionVersion());
-        } catch (dev.vertique.workflow.exception.WorkflowMigrationStateTypeMismatchException e) {
-            return Future.failedFuture(new Refused(CommandErrors.MigrationRejection.STATE_TYPE_MISMATCH));
-        }
+        Optional<dev.vertique.workflow.migration.WorkflowMigrationHandler<?, ?>> handlerOpt = migrationRegistry.find(
+                inst.definitionScopeKey(),
+                inst.definitionId(),
+                inst.definitionVersion(),
+                targetScope,
+                targetKey.definitionVersion());
         if (handlerOpt.isEmpty()) {
             return Future.failedFuture(new Refused(CommandErrors.MigrationRejection.HANDLER_MISSING));
         }
