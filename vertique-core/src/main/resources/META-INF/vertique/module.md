@@ -1375,7 +1375,9 @@ path: a field, an `Optional`, a list element, a bag entry. The rule covers `sche
 the Oracle thin form, and parameters after the first `?` or `;`, separated by `&` or `;`, with the
 userinfo percent-encoded: a raw `/`, `?` or `#` inside a password ends the authority early and leaves
 the rest visible, a credential value with an unescaped `;` or `&` ends there (write it as Camel
-`RAW(...)`, which is masked whole), only the first authority of a comma-joined value is masked, a
+`RAW(...)`, which is masked whole), a `@` inside a `;`-separated property value is read as the end of the
+userinfo, so the host is masked with it (over-masking, never a leak), an Oracle thin password that
+contains `?` or `;` is not recognized in the `@host:port:sid` form, only the first authority of a comma-joined value is masked, a
 scheme-less connection string is printed as given, a `java.net.URI`, `URL` or array-typed value is
 written as given, a URL under a name without one of the tokens (`address`, `host`) is not recognized,
 and a masked URL fed back to `ConfigParser` is not rejected (only the literal `"***"` at a secret path

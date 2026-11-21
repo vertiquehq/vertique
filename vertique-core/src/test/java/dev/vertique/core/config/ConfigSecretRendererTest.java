@@ -415,6 +415,17 @@ class ConfigSecretRendererTest {
         }
 
         @Test
+        @DisplayName("an Oracle thin URL without credentials is not altered by a later '@'")
+        void oracleWithoutCredentialsUnchanged() {
+            assertEquals(
+                    "jdbc:oracle:thin:@host:1521/a@b",
+                    ConfigSecretRenderer.redactUri("jdbc:oracle:thin:@host:1521/a@b"));
+            assertEquals(
+                    "jdbc:oracle:thin:@host:1521/svc?redirect=a@//b",
+                    ConfigSecretRenderer.redactUri("jdbc:oracle:thin:@host:1521/svc?redirect=a@//b"));
+        }
+
+        @Test
         @DisplayName("a RAW value ends at a ';' too, and an unclosed RAW on a non-credential parameter hides nothing")
         void rawValueBoundaries() {
             assertEquals(

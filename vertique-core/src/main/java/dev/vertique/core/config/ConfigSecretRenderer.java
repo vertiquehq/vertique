@@ -290,6 +290,9 @@ public final class ConfigSecretRenderer {
             return uri;
         }
         int from = ORACLE_THIN_PREFIX.length();
+        if (uri.length() == from || uri.charAt(from) == '@') {
+            return uri; // nothing between the prefix and the '@': no credentials
+        }
         int at = oracleCredentialEnd(uri, from);
         if (at <= from) {
             return uri;
