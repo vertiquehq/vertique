@@ -146,8 +146,8 @@ public final class PrometheusScrapeEndpoint implements ManagementEndpointContrib
             if (exemplarSpanContext.isPresent() && deferred.isPresent()) {
                 deferred.get().delegate(exemplarSpanContext.get());
             } else {
-                log.warn("Prometheus exemplars are enabled but no tracing span context is available, "
-                        + "so no exemplar will be attached to any sample");
+                log.warn("Prometheus exemplars are enabled but no tracing span context is bound to the "
+                        + "metrics backend, so no exemplar will be attached to any sample");
             }
         }
 

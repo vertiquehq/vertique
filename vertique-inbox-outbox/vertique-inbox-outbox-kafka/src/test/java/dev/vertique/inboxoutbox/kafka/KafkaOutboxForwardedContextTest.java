@@ -188,16 +188,49 @@ class KafkaOutboxForwardedContextTest {
     }
 
     @Test
-    @DisplayName("the configuration is read from the inboxOutbox.kafka section, and an absent section is the default")
+    @DisplayName(
+            "the module reads the configuration from the inboxOutbox.kafka section, and an absent section is the default")
     void readsTheKafkaSection() {
         ConfigParser parser = new DefaultConfigParser(DefaultConfigMapper.lenient());
+        JsonObject root = new JsonObject()
+                .put(
+                        "inboxOutbox",
+                        new JsonObject()
+                                .put(
+                                        "kafka",
+                                        new JsonObject()
+                                                .put(
+                                                        "outboundContextNamespaces",
+                                                        new io.vertx.core.json.JsonArray().add(IDENTITY))));
 
-        KafkaOutboxConfig listed = parser.parse(
-                new JsonObject().put("outboundContextNamespaces", new io.vertx.core.json.JsonArray().add(IDENTITY)),
-                KafkaOutboxConfig.class);
-        KafkaOutboxConfig absent = parser.parse(new JsonObject(), KafkaOutboxConfig.class);
+        KafkaOutboxConfig listed = TransactionalMessagingKafkaModule.kafkaOutboxConfig(root, parser);
+        KafkaOutboxConfig absent = TransactionalMessagingKafkaModule.kafkaOutboxConfig(new JsonObject(), parser);
 
         assertEquals(List.of(IDENTITY), listed.outboundContextNamespaces());
         assertEquals(null, absent.outboundContextNamespaces());
+    }
+
+    @Test
+    @DisplayName("a blank or repeated name in the section fails when the module builds the configuration")
+    void theModuleRejectsABadList() {
+        ConfigParser parser = new DefaultConfigParser(DefaultConfigMapper.lenient());
+        JsonObject root = new JsonObject()
+                .put(
+                        "inboxOutbox",
+                        new JsonObject()
+                                .put(
+                                        "kafka",
+                                        new JsonObject()
+                                                .put(
+                                                        "outboundContextNamespaces",
+                                                        new io.vertx.core.json.JsonArray()
+                                                                .add("correlation")
+                                                                .add("correlation"))));
+
+        InboxOutboxConfigurationException e = assertThrows(
+                InboxOutboxConfigurationException.class,
+                () -> TransactionalMessagingKafkaModule.kafkaOutboxConfig(root, parser));
+
+        assertTrue(e.getMessage().contains("inboxOutbox.kafka.outboundContextNamespaces[1]"), e.getMessage());
     }
 }

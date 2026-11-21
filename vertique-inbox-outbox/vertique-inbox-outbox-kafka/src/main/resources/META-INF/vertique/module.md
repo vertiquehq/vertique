@@ -134,7 +134,7 @@ through `OutboxPublishObserver` and the wire bytes through the producer capture 
 
 ## Module Dagger Bindings
 
-The module ships one binding. `KafkaOutboxDestinationHandler` is a `@Singleton` built through its
+The module ships two bindings. `KafkaOutboxDestinationHandler` is a `@Singleton` built through its
 `@Inject` constructor `(KafkaProducerFactory, ObjectMapper, KafkaOutboxConfig, DurableContextMetadataRegistry)`, and the module contributes it to the
 relay's handler set. The module also provides `KafkaOutboxConfig` from the `inboxOutbox.kafka` section of the application config; an absent section keeps the defaults:
 
