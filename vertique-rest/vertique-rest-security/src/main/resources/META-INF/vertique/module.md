@@ -67,10 +67,19 @@ own contributor relative to them:
 
 | Priority | Contributor | Artifact |
 |---|---|---|
-| 40 | `ActionGateAuthenticationContributor` | `vertique-rest-security` |
-| 50 | JWT claims validator | `vertique-rest-auth-jwt` |
+| 40 | `ActionGateAuthenticationContributor` (authentication stage) | `vertique-rest-security` |
+| 50 | JWT claims validator (authentication stage) | `vertique-rest-auth-jwt` |
 | 80 | `IdentityResolutionContributor` | `vertique-rest-security` |
 | 100 | `AuthorizationContributor` | `vertique-rest-security` |
+
+The two contributors marked *authentication stage* return `true` from
+`OperationHandlerContributor.authenticationStage()`, so the router runs them right after the route's
+scheme authentication handler(s) and before the `@Consumes` and validation gates; the others run after
+the gates. Priorities order contributors within their own stage. An unauthenticated caller of an
+action-only route is therefore answered `401` before the request body is examined, as on a route
+that declares a scheme; authorization (100) still runs after validation. Before this change the
+action-only authentication ran after the gates, so an unauthenticated request with a malformed body
+or the wrong content type received `400` or `415`; it now receives `401`.
 
 `OriginCaptureMiddleware` is the module's one ROOT-scoped `Middleware`. It runs before any
 authentication handler and stashes the resolved `RequestOrigin` so identity resolution and every

@@ -59,12 +59,37 @@ builds a `ResourceMethodMeta`, validates the declaration, and installs the per-o
 chain:
 
 ```
-operation-route identity (PlatformHandler) → auth handler(s) → @Consumes 415 gate → validation gate → OperationHandlerContributors → ResourceMethodInvoker
+operation-route identity (PlatformHandler) → auth handler(s) → authentication-stage contributors → @Consumes 415 gate → validation gate → OperationHandlerContributors → ResourceMethodInvoker
 ```
 
 The operation-route identity handler records the operation's route template and operation id for
 the request's completion event; as a Vert.x `PlatformHandler` it runs ahead of authentication, and
 it never fails a request.
+
+**Authentication runs before the request gates on every route.** The auth handler(s) install from the
+operation's security schemes. An *action-only* route — one whose only policy is `@RequiresAction`, so
+it declares no scheme — is authenticated by an authentication-stage contributor
+(`OperationHandlerContributor.authenticationStage()` returns `true`) that the router runs right after
+the scheme handlers, still ahead of the `@Consumes` and validation gates. The same stage carries a
+credential claims check such as the JWT claims validator. An unauthenticated caller, or one whose
+credential the claims check rejects, therefore gets `401` (with the scheme's `WWW-Authenticate`
+challenge and a body that does not echo the request) before any request content is examined, whatever
+the body or content type. An authenticated caller with a malformed body or the wrong content type still
+gets `400` or `415`. Authorization and identity resolution stay with the other contributors, after
+the gates, so a caller who is authenticated but not authorized still gets `400` for a malformed body
+and `403` otherwise. Publishing is unchanged: a `@RequiresAction`-only operation still declares no
+security requirement in the published contract.
+
+> **Behavior change.** Before this change an action-only route authenticated *after* the `@Consumes`
+> and validation gates, so an unauthenticated caller with a malformed body or the wrong content type
+> received `400` (with validation detail) or `415` instead of `401`, and a JWT claims rejection
+> received `400` or `415` on every route. Both now answer `401` first. Clients that relied on the old
+> status for an unauthenticated or claims-rejected request must expect `401`; nothing changes for an
+> authenticated caller.
+
+Only authentication and credential checks belong in the authentication stage. An application
+contributor that returns `true` runs in that stage in priority order, ahead of every contributor that
+returns `false`, and must not assume the `SecurityContext` is bound yet or read the request body.
 
 The `@Consumes` 415 gate checks body-carrying requests (POST, PUT, PATCH with a non-empty body)
 against the operation's declared media types. Wildcards are legal on the declaration only: a

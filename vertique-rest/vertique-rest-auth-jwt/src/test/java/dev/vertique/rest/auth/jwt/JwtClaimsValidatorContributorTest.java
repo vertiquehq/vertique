@@ -254,6 +254,20 @@ class JwtClaimsValidatorContributorTest {
 
             assertEquals(50, contributor.priority());
         }
+
+        @Test
+        @DisplayName("Runs in the authentication stage — a rejected token is a 401 ahead of the request gates")
+        void runsInTheAuthenticationStage() {
+            CorrelationContext correlation = stubCorrelation();
+            ContextHolder holder = holderWith(correlation);
+            SecurityEventEmitter emitter = new SecurityEventEmitter(Set.of());
+            DefaultCredentialRejectionReporter reporter = new DefaultCredentialRejectionReporter(holder, emitter);
+
+            JwtClaimsValidatorContributor contributor =
+                    new JwtClaimsValidatorContributor(claims -> {}, reporter, testValidationConfig());
+
+            assertEquals(true, contributor.authenticationStage());
+        }
     }
 
     @Nested

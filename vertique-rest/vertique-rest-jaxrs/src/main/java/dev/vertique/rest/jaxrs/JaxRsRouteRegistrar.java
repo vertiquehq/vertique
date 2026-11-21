@@ -581,6 +581,15 @@ public class JaxRsRouteRegistrar {
             // (fail-closed) rather than mounting with no authentication.
             applySecurity(meta.operationId(), route, descriptor.securityRequirementSets(), securityHandlers);
 
+            // (a-0) Authentication-stage contributors: the contributors that authenticate the caller
+            // outside the operation's declared security schemes (an action-only route declares none) or
+            // check the authenticated credential (its claims). They run right after the scheme
+            // handler(s), still ahead of the @Consumes gate and the validation gate, so every route that
+            // authenticates rejects an unauthenticated or rejected credential with 401 before any request
+            // content is examined. The remaining contributors run at (c).
+            contributeAuthenticationStage(
+                    route, meta.operationId(), descriptor, effectivePolicy, requiredAction, sortedContributors);
+
             // (a-1) Per-route @Consumes 415 check: installed only when the operation declares a
             // non-empty @Consumes list. Added after authentication (Vert.x USER-handler ordering
             // rule) and so runs after auth at request time. Operations with empty consumes() skip
@@ -1256,13 +1265,16 @@ public class JaxRsRouteRegistrar {
     }
 
     /**
-     * Calls every {@link OperationHandlerContributor} for one operation's route, in the given order,
-     * so each can append its handlers through a {@link PlainRouteRegistration} over {@code route}.
+     * Calls every {@link OperationHandlerContributor} that is not an authentication-stage one (see
+     * {@link OperationHandlerContributor#authenticationStage()}) for one operation's route, in the
+     * given order, so each can append its handlers through a {@link PlainRouteRegistration} over
+     * {@code route}. The authentication-stage contributors are called earlier, by
+     * {@link #contributeAuthenticationStage}.
      *
      * <p>All contributors receive one shared {@link OperationRegistrationContext} built from the
      * arguments; the order of {@code contributors} is the order their handlers are appended, and so
-     * the order they run at request time. An empty {@code contributors} list builds no context and
-     * appends nothing.
+     * the order they run at request time. When none of {@code contributors} is selected, no context is
+     * built and nothing is appended.
      *
      * <p>Package-private and static so every route the framework builds through the resource security
      * chain, a resource method's or a framework-owned synthetic operation's, runs this one contributor
@@ -1284,13 +1296,55 @@ public class JaxRsRouteRegistrar {
             SecurityPolicy policy,
             Optional<ActionRef> requiredAction,
             List<OperationHandlerContributor> contributors) {
-        if (contributors.isEmpty()) {
+        contribute(route, operationId, descriptor, policy, requiredAction, contributors, false);
+    }
+
+    /**
+     * Calls every authentication-stage {@link OperationHandlerContributor} (those whose
+     * {@link OperationHandlerContributor#authenticationStage()} is {@code true}) for one operation's
+     * route, in the given order, so each can append its handlers right after the operation's
+     * authentication handler(s) and ahead of the request gates.
+     *
+     * <p>{@link #contributeOperationHandlers} skips exactly these contributors, so every route is
+     * built by calling both, once each, at their two points in the chain: a route built through only
+     * one of them would silently lose the other group.
+     *
+     * @param route          the Vert.x route the contributors append their handlers to
+     * @param operationId    the operation's id, handed to the contributors unchanged
+     * @param descriptor     the operation's transport-neutral descriptor
+     * @param policy         the operation's effective security policy
+     * @param requiredAction the operation's resolved action gate, or {@link Optional#empty()} when it
+     *                       declares none
+     * @param contributors   all of the router's contributors, already sorted into the order they must run in
+     */
+    static void contributeAuthenticationStage(
+            Route route,
+            String operationId,
+            RestOperationDescriptor descriptor,
+            SecurityPolicy policy,
+            Optional<ActionRef> requiredAction,
+            List<OperationHandlerContributor> contributors) {
+        contribute(route, operationId, descriptor, policy, requiredAction, contributors, true);
+    }
+
+    private static void contribute(
+            Route route,
+            String operationId,
+            RestOperationDescriptor descriptor,
+            SecurityPolicy policy,
+            Optional<ActionRef> requiredAction,
+            List<OperationHandlerContributor> contributors,
+            boolean authenticationStage) {
+        List<OperationHandlerContributor> selected = contributors.stream()
+                .filter(c -> c.authenticationStage() == authenticationStage)
+                .toList();
+        if (selected.isEmpty()) {
             return;
         }
         RouteRegistration routeReg = new PlainRouteRegistration(route, descriptor);
         OperationRegistrationContext ctx =
                 new OperationRegistrationContext(operationId, policy, requiredAction, descriptor, routeReg);
-        for (OperationHandlerContributor contributor : contributors) {
+        for (OperationHandlerContributor contributor : selected) {
             contributor.contribute(ctx);
         }
     }

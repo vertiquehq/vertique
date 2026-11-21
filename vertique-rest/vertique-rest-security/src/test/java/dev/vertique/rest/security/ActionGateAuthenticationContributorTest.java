@@ -88,6 +88,15 @@ class ActionGateAuthenticationContributorTest {
                 "must run before identity resolution so evidence is appended first");
     }
 
+    @Test
+    @DisplayName("authenticationStage() is true — authentication runs ahead of the request gates")
+    void runsInTheAuthenticationStage() {
+        assertEquals(
+                true,
+                new ActionGateAuthenticationContributor(Set.of(new StubAuthHandler("bearerAuth")))
+                        .authenticationStage());
+    }
+
     @Nested
     @DisplayName("installs handler")
     class Installs {

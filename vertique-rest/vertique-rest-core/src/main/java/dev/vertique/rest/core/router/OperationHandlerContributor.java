@@ -69,6 +69,28 @@ public interface OperationHandlerContributor extends OrderedExtension {
     int priority();
 
     /**
+     * Reports whether this contributor takes part in authenticating the caller, so the router runs
+     * it right after the operation's authentication handler(s) and <em>before</em> the request gates
+     * (the {@code @Consumes} check and request validation) instead of with the other contributors.
+     *
+     * <p>A request that fails authentication, or whose credential fails a claims check, is then
+     * rejected with {@code 401} before any request content is examined, so an unauthenticated caller
+     * learns nothing about the request schema. Contributors reporting {@code true} run in the usual
+     * {@link OrderedExtension} order among themselves, and ahead of every contributor reporting
+     * {@code false}. Authorization and identity resolution stay with the {@code false} group, after
+     * the gates.
+     *
+     * <p>Reserved for authentication and credential checks. A contributor reporting {@code true} may
+     * run on a route that has no matched identity yet, so it must not assume the {@code SecurityContext}
+     * is bound and must not read the request body.
+     *
+     * @return {@code true} to run in the authentication stage; defaults to {@code false}
+     */
+    default boolean authenticationStage() {
+        return false;
+    }
+
+    /**
      * Contributes handlers to a single OpenAPI operation route.
      *
      * <p>Called once per operation during route registration. Implementations typically

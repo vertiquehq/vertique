@@ -11,6 +11,7 @@
   "types": {
     "dev.vertique.rest.security.ActionGateAuthenticationContributor": [
       "public dev.vertique.rest.security.ActionGateAuthenticationContributor(java.util.Set<dev.vertique.rest.core.security.RouteAuthHandler>)",
+      "public boolean dev.vertique.rest.security.ActionGateAuthenticationContributor.authenticationStage()",
       "public int dev.vertique.rest.security.ActionGateAuthenticationContributor.priority()",
       "public static final int dev.vertique.rest.security.ActionGateAuthenticationContributor.PRIORITY",
       "public void dev.vertique.rest.security.ActionGateAuthenticationContributor.contribute(dev.vertique.rest.core.router.OperationRegistrationContext)"
