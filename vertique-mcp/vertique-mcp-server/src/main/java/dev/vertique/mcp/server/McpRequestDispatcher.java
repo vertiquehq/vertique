@@ -80,6 +80,7 @@ import io.vertx.ext.web.RoutingContext;
 import io.vertx.json.schema.Validator;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
@@ -137,6 +138,7 @@ import java.util.function.Supplier;
  * same bounded terminal envelope, reported through the completion view's {@code toolOutput} only once that
  * envelope exists, and only then handed to the single terminal writer — a fixed order.
  */
+@Singleton
 final class McpRequestDispatcher {
     private static final String DISCOVER_METHOD = "server/discover";
     private static final String TOOLS_LIST_METHOD = "tools/list";

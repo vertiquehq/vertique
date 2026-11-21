@@ -319,15 +319,17 @@ failure before the envelope was classified, still report `OTHER`.
 **Failures after admission belong to MCP.** A failure raised after a request was admitted (after
 `begin` ran), by authentication, identity establishment or the dispatcher, is answered by MCP's own
 failure handler as an MCP error and settled once, with one MCP completion and no rest-core completion
-event. In an application composed by `HttpVerticle` with this module installed, the module registers
-that handler on the main router ahead of every mount and every application router customizer, so the
-failure handler of an earlier mount that matches the path, a REST mount for example, and an
-application failure handler on the main router never answer an admitted request. Only a failure of a
-request admitted in the current routing pass is taken: a failure before `begin` (admission and body-limit
-rejections), and a failure of a request an application handler rerouted out of the mount, stay with the
-handlers that match them. An application that builds its own main router must register
-`McpFailureOwnership` the same way, or an earlier failure handler answers the request instead and the
-request is handled as described under "Not settled by MCP".
+event. In an application composed by `HttpVerticle` with this module installed, the module contributes a
+`RouterCustomizer` that registers that handler on the main router ahead of every mount, every
+application router customizer and the ROOT middleware, so the failure handler of an earlier mount that
+matches the path, a REST mount for example, and an application failure handler on the main router never
+answer an admitted request. Only a failure of a request admitted in the current routing pass is taken: a
+failure before `begin` (admission and body-limit rejections), and a failure of a request an application
+handler rerouted out of the mount, stay with the handlers that match them. An application that builds its
+own main router must apply every `RouterCustomizer` of its component, as `HttpVerticle` does, ordered by
+phase; otherwise an earlier failure handler answers the request instead, and the request is handled as
+described under "Not settled by MCP". A route an application registers with an explicit Vert.x order below
+the framework's still runs first.
 
 Requests MCP admits but does not answer, and reroutes by an application `RouteAuthHandler`, work as
 follows:

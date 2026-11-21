@@ -47,7 +47,9 @@ final class McpFailureOwnership implements RouterCustomizer {
         if (!config.enabled()) {
             return;
         }
-        router.route(config.mountPath()).handler(dispatcher::startPass);
-        router.route(config.mountPath()).failureHandler(dispatcher::handleAdmittedFailure);
+        // Explicit orders put both routes ahead of every route that takes its order from registration,
+        // ROOT middleware included, so a pass is marked as started before anything else of the pass runs.
+        router.route(config.mountPath()).order(Integer.MIN_VALUE).handler(dispatcher::startPass);
+        router.route(config.mountPath()).order(Integer.MIN_VALUE + 1).failureHandler(dispatcher::handleAdmittedFailure);
     }
 }

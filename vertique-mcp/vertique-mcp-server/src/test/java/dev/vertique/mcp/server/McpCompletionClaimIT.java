@@ -614,6 +614,40 @@ class McpCompletionClaimIT {
     }
 
     @Test
+    @DisplayName("a failure on the second pass of a request rerouted back into MCP is answered by MCP")
+    void failureAfterReentryIsAnsweredByMcp() throws Exception {
+        // Given: a catch-all failure handler ahead of the MCP mount, and an authentication handler that
+        // reroutes the request back into the mount once and then fails it on the second pass.
+        CatchAllFailureHandlingRouter catchAll = new CatchAllFailureHandlingRouter();
+        ReenteringRouteAuthHandler reentering = new ReenteringRouteAuthHandler();
+        startFixture(catchAll.mount(), mcpMount(REENTER_SCHEME, reentering));
+
+        // When: one tools/call carries a credential the second pass rejects.
+        HttpResponse<Buffer> response = awaitResponse("tools/call", callTool(OK_TOOL, BEARER_MALLORY));
+        boolean recorded = awaitBarrier(1);
+        completionListener.awaitCount(1, nextWaitNanos());
+
+        // Then: MCP answered and settled once, on the second pass; the catch-all never ran.
+        assertAll(
+                "failure after re-entry",
+                block("witness", () -> {
+                    assertAnsweredByMcpAsAuthenticationFailure(response);
+                    assertThat(reentering.invocations())
+                            .as("authentication handler invocations")
+                            .isEqualTo(2);
+                    assertThat(catchAll.failures())
+                            .as("invocations of the catch-all's failure handler")
+                            .isZero();
+                    assertThat(recorded).as("barrier recorded the tools/call").isTrue();
+                }),
+                block("MCP", () -> assertMcpRejectedOnce(McpErrorType.AUTHENTICATION, 401)),
+                block("REST", this::assertNoRestEvent),
+                block("HTTP", () -> assertThat(httpListener.summaries())
+                        .as("HTTP listener events")
+                        .isEmpty()));
+    }
+
+    @Test
     @DisplayName("a request an authentication handler answers itself is reported by rest-core, not by MCP")
     void requestAnsweredByAnAuthenticationHandlerIsReportedByRestCore() throws Exception {
         // Given: an authentication handler that answers the admitted request itself, without failing.
