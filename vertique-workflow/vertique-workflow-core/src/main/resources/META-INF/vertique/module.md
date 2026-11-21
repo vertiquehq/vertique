@@ -451,6 +451,7 @@ Add the type catalog module that `vertique-codegen-workflow` generates (`Generat
 | `TransactionalWorkflowOperations<TX>` | Drive workflows inside an existing transaction, including delivery by key |
 | `RelayedSignals<TX>` | Record a signal that is already durable, such as one the outbox relay delivers, without the intake limit |
 | `TaskStore<TX>` | Store human task rows; `findByFilter` must honour every filter field, `assignedTo` included |
+| `WorkflowActorMapper` | Map a security identity to the workflow actor recorded with each command |
 | `TaskPrincipalsMapper` | Map the caller's security context to the user id, roles and queues tasks are assigned to |
 | `TransactionalTaskCallbacks<TX>` | Engine callback surface used by the task service |
 | `TimerStore<TX>` | Timer persistence; the timer row links to the command that fires it |
@@ -492,10 +493,12 @@ initiated the change.
 ```java
 public interface WorkflowActorMapper {
     WorkflowActor toWorkflowActor(SecurityIdentity identity);
+
+    static WorkflowActorMapper orDefault(Optional<WorkflowActorMapper> bound);
 }
 ```
 
-The default implementation (`DefaultWorkflowActorMapper`, bound by `WorkflowCoreModule`) applies these
+The default implementation (`DefaultWorkflowActorMapper`, used when the application binds no mapper) applies these
 mapping rules:
 
 | `PrincipalType` | `WorkflowActor` subtype |
@@ -506,12 +509,14 @@ mapping rules:
 | `ANONYMOUS` | `IllegalArgumentException` — workflow operations require a named actor |
 
 Anonymous identities must be rejected at the authorization layer before reaching the workflow engine.
-Override by providing a custom `@Provides WorkflowActorMapper` binding when a service principal
-should map to a specific system reason rather than a generic service id.
+`WorkflowCoreModule` declares the mapper with `@BindsOptionalOf`, so an application replaces it with a plain
+`@Provides WorkflowActorMapper` binding, for example when a service principal should map to a specific system reason
+rather than a generic service id. A consumer injects `Optional<WorkflowActorMapper>` and calls
+`WorkflowActorMapper.orDefault(bound)` once, which returns the application's binding or the default.
 
 ```java
 @Provides
-WorkflowActorMapper customActorMapper() {
+static WorkflowActorMapper customActorMapper() {
     return identity -> switch (identity.actor().type()) {
         case USER -> new WorkflowActor.User(identity.actor().id());
         case SERVICE -> new WorkflowActor.Service("billing-service");
