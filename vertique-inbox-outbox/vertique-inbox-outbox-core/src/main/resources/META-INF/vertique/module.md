@@ -197,7 +197,7 @@ Immutable record passed to `OutboxDestinationHandler.publish()` at relay time.
 | `aggregateType` / `aggregateId` / `eventType` | Row columns (used e.g. for the Kafka message key) |
 | `destination` / `payload` / `scheduledAt` / `attempt` / `createdAt` | Delivery fields from the row |
 | `headers` | Application/transport headers only (`OutboxEntry.headers`) — no framework keys; an unmodifiable copy — see [Header model](#header-model) |
-| `metadata` | `OutboxMetadata`: durable propagation context (`context`) plus delivery control (`delivery.outbox`: `OutboxRelayControl`, relay control projected from the row columns; `delivery.delayedJob`: scheduling) |
+| `metadata` | `OutboxMetadata`: durable propagation context (`context`) plus delivery control (`delivery.outbox`: `OutboxRelayControl`, relay control projected from the row columns; `delivery.delayedJob`: scheduling; `delivery.reply`: the internal reply control of a workflow reply row, when the row has one) |
 | `scopeKey` | Scope label read from the row; never `null` — a `null` component reads `default`. The relay does not bind it as the ambient `ScopeContext`. See [Scope](#scope) |
 
 The envelope is the canonical 12-component form with `scopeKey` last; a public 11-argument constructor without it remains and reads `default`.
@@ -410,7 +410,8 @@ A service may implement `OutboxPermanentFailure` on an exception to stop retries
 ### Framework seams
 
 `OutboxBackoff`, `RelayStrategy`, `OutboxDeliveryMetadata`,
-`DelayedJobControl`, `OutboxRelayControl`, and `TransactionalMessagingModule` are public for the
+`DelayedJobControl`, `OutboxRelayControl`, `OutboxReplyControl`, `OutboxOutcome`,
+`OutboxOutcomeConsumer`, and `TransactionalMessagingModule` are public for the
 inbox-outbox adapters and sibling framework modules; their Javadoc marks them INTERNAL and they are
 outside this module's compatibility promise. Applications install the store adapter module
 (`TransactionalMessagingPostgresqlModule`), which includes the core wiring, alongside the

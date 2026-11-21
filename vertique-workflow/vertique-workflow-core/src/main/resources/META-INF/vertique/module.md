@@ -86,7 +86,7 @@ public final class OrderFulfillmentDefinition
 
 ### Service call reply plans
 
-`call(stepId, targetId, payloadFactory)` describes a dispatch followed by a reply wait. Chain `onReply(replyType, reducer).toStepOnReply(next)` and `onFailure(reducer).toStepOnFailure(next)`; `onFailure()` leaves the state unchanged. `compensateWith(stepId)` is optional. The returned wait stage accepts the same timeout methods as `waitForSignal`; `completesLater()` requires a timeout. The generated wait step is named `<stepId>.reply`, so that id must not be declared separately. The call and its failure route must be completed before building the plan. The engine opens the reply wait when it dispatches; the workflow services module records the relay outcome.
+`call(stepId, targetId, payloadFactory)` describes a dispatch followed by a reply wait. Chain `onReply(replyType, reducer).toStepOnReply(next)` and `onFailure(reducer).toStepOnFailure(next)`; `onFailure()` leaves the state unchanged. `compensateWith(stepId)` is optional. The returned wait stage accepts the same timeout methods as `waitForSignal`; `completesLater()` requires a timeout, and `build()` does not check that: registration refuses a later completion without a timeout, and a generated reply signal name that is over 255 characters, with a `WorkflowDefinitionException` that names the step and the definition. The generated wait step is named `<stepId>.reply`, so that id must not be declared separately. The call and its failure route must be completed before building the plan. The engine opens the reply wait when it dispatches; the workflow services module records the relay outcome.
 
 ### Signal Wait Key
 
@@ -409,7 +409,7 @@ Common recorders:
 
 Missing required recorders fail the workflow transition rather than silently dropping work.
 
-`WorkflowSideEffectIntent.Correlation` carries `String definitionScopeKey` and `String scopeKey` directly after `definitionId`, and `Correlation.singlePath(...)` takes them in the same position: the scope of the definition the instance is pinned to and the scope the instance was started in. `WorkflowEventIntent` carries the same two components directly after `definitionVersion`, and neither may be `null`. There is no overload without them, so an emitter must name both scopes; recorders stamp them on event envelopes and on outbox headers. Callers that construct these records by component list must add the two values.
+`WorkflowSideEffectIntent.Correlation` carries `String definitionScopeKey` and `String scopeKey` directly after `definitionId`, and `Correlation.singlePath(...)` takes them in the same position: the scope of the definition the instance is pinned to and the scope the instance was started in. It ends with an optional `reply` component (`Correlation.Reply`: the reply wait's `waitId` and whether the call `completesLater`); it is non-null only when the intent belongs to a `call`, and a recorder then accepts a value-returning service target. The nine-component constructor leaves it `null`. `WorkflowEventIntent` carries the same two components directly after `definitionVersion`, and neither may be `null`. There is no overload without them, so an emitter must name both scopes; recorders stamp them on event envelopes and on outbox headers. Callers that construct these records by component list must add the two values.
 
 ---
 

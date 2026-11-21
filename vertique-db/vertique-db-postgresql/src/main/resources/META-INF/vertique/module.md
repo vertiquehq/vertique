@@ -27,10 +27,15 @@ Extends `DbExceptionMapper` with PostgreSQL-specific SQL state translations pre-
 | SQL state class `08` (any `08xxx`) | `ConnectionException` |
 | SQL state `23505` | `UniqueConstraintViolationException` (with constraint + table name) |
 | SQL state `23503` | `ForeignKeyViolationException` (with constraint + table name) |
+| SQL states `23502`, `23514` and `23P01` | `DataIntegrityViolationException` (with constraint + table name; not a unique or foreign-key subtype) |
 | SQL state `40001` | `OptimisticLockingFailureException` |
 | SQL state `40P01` | `DeadlockException` |
 | SQL state `55P03` (lock not available) | `PessimisticLockingFailureException` |
 | SQL state `57014` (statement timeout) | `QueryTimeoutException` |
+| SQL states `57P01`, `57P02`, `57P03` and `57P04` (operator intervention) | `ConnectionException` |
+| A state not named above that starts with `22`, `25`, `28`, `42` or `54` | `InvalidDataAccessUsageException` |
+| A state that starts with `53` or `58` | `TransientDataAccessException` |
+| Any other SQL state, or none | `DataAccessException` itself, with the received state (or `null`) |
 | `VertxException` with a message containing `"timeout"` in any case, such as `"Timeout waiting for connection"` when the pool is exhausted | `QueryTimeoutException` |
 | Network failures that are not database errors: `java.net.ConnectException` (connection refused, connect timeout), `java.net.SocketException` (connection reset), `java.nio.channels.ClosedChannelException` and `io.vertx.sqlclient.ClosedConnectionException` (connection closed) | `ConnectionException` (cause kept, no SQL state) |
 | `DataAccessException` | pass-through (identity) — inherited from `DbExceptionMapper` constructor |
