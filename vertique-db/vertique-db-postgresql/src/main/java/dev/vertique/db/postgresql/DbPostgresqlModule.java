@@ -137,7 +137,7 @@ public abstract class DbPostgresqlModule {
     /**
      * Contributes the step that closes the {@link Pool} this module provides into the
      * {@code Set<ApplicationShutdownStep>} multibinding, so the pool is released when the
-     * application stops, after the work that uses it.
+     * application stops, after the other shutdown steps and before verticles are undeployed.
      *
      * @param step the pool shutdown step
      * @return the step as an application shutdown contribution
