@@ -76,6 +76,9 @@ import java.util.function.Function;
  */
 public final class WorkflowBuilder<S> {
 
+    /** The longest task type, in code points: the width of the {@code workflow_tasks.task_type} column. */
+    private static final int MAX_TASK_TYPE_CODE_POINTS = 255;
+
     /**
      * Stable callback id for the plan-level {@link #subject(Function)} resolver. Plan-level (not
      * step-bound), so it does not flow through the per-step {@link #callbackId(String, String)}
@@ -1664,13 +1667,17 @@ public final class WorkflowBuilder<S> {
          * it, and task queries can filter on it. It labels the task and changes no flow, so it is not part of the
          * plan hash.
          *
-         * @param taskType the task type; must not be null or blank
+         * @param taskType the task type; must not be null or blank, and at most 255 code points
          * @return this builder for chaining
-         * @throws WorkflowDefinitionException if {@code taskType} is null or blank
+         * @throws WorkflowDefinitionException if {@code taskType} is null, blank or longer than 255 code points
          */
         public TaskBuilder taskType(String taskType) {
             if (taskType == null || taskType.isBlank()) {
                 throw new WorkflowDefinitionException("task '" + stepId + "': taskType must not be null or blank");
+            }
+            if (taskType.codePointCount(0, taskType.length()) > MAX_TASK_TYPE_CODE_POINTS) {
+                throw new WorkflowDefinitionException("task '" + stepId + "': taskType must be at most "
+                        + MAX_TASK_TYPE_CODE_POINTS + " code points");
             }
             this.taskType = taskType;
             return this;

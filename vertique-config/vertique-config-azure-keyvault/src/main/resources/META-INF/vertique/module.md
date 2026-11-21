@@ -104,8 +104,8 @@ The full per-source configuration block under `config.propertySources[*]`:
 | `type` | Yes | — | Must be `"azure-keyvault"` |
 | `name` | No | `azure-keyvault[{index}]` | Source instance name for diagnostics |
 | `endpoint` | Yes | — | Azure Key Vault endpoint URL (e.g. `https://myapp.vault.azure.net`). Non-blank and validated at `create()` time; see [Endpoint Validation](#endpoint-validation). |
-| `prefix` | No | none | Optional key prefix. When set, only keys starting with this prefix reach the vault. The prefix is stripped before the lookup — routing multiple sources via non-overlapping prefixes is the standard way to separate vault namespaces. |
-| `auth` | No | `{"method": "default"}` | Auth configuration object; see Auth Methods below. When absent entirely, defaults to `method: "default"` with no `clientId`. |
+| `prefix` | No | none | Optional key prefix. A blank string counts as absent. When set, only keys starting with this prefix reach the vault. The prefix is stripped before the lookup — routing multiple sources via non-overlapping prefixes is the standard way to separate vault namespaces. |
+| `auth` | No | `{"method": "default"}` | Auth configuration object; see Auth Methods below. When absent entirely, defaults to `method: "default"` with no `clientId`. A blank `clientId` counts as absent. |
 | `connectTimeoutMs` | No | 5000 | Connection timeout in milliseconds. Must be > 0. A blank string counts as absent and takes the default. Applied via `HttpClientOptions` to the underlying Netty client. |
 | `readTimeoutMs` | No | 5000 | Read and response timeout in milliseconds. Must be > 0. A blank string counts as absent and takes the default. Applied as both `readTimeout` and `responseTimeout` via `HttpClientOptions`, bounding per-chunk read time and total time-to-first-byte from the server. |
 

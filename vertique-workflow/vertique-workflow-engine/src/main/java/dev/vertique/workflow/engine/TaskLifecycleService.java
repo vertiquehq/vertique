@@ -1716,6 +1716,17 @@ final class TaskLifecycleService {
                 } catch (Exception e) {
                     return Future.<Void>failedFuture(e);
                 }
+                // Resolve the HumanTaskNode to get reminder spec for next scheduling. Check the spec
+                // BEFORE the counter moves: a node without reminders changes nothing.
+                WorkflowNode node = rw.nodeById().get(task.stepId());
+                if (!(node instanceof HumanTaskNode htn)) {
+                    return Future.<Void>failedFuture(new WorkflowDefinitionException(
+                            "Expected HumanTaskNode at step '" + task.stepId() + "' during branch reminderFired"));
+                }
+                ReminderSpec spec = htn.reminders();
+                if (spec == null) {
+                    return Future.succeededFuture();
+                }
                 // Atomically increment the reminder counter (gated on status='OPEN').
                 return taskStore.incrementRemindersFiredCount(taskId, tx).compose(maybeIndex -> {
                     if (maybeIndex.isEmpty()) {
@@ -1724,17 +1735,6 @@ final class TaskLifecycleService {
                     }
                     int reminderIndex = maybeIndex.get();
                     Instant now = clock.instant();
-
-                    // Resolve the HumanTaskNode to get reminder spec for next scheduling.
-                    WorkflowNode node = rw.nodeById().get(task.stepId());
-                    if (!(node instanceof HumanTaskNode htn)) {
-                        return Future.<Void>failedFuture(new WorkflowDefinitionException(
-                                "Expected HumanTaskNode at step '" + task.stepId() + "' during branch reminderFired"));
-                    }
-                    ReminderSpec spec = htn.reminders();
-                    if (spec == null) {
-                        return Future.succeededFuture();
-                    }
 
                     String histPayload = Json.encode(
                             new TaskReminderFiredHistoryPayload(task.stepId(), taskId, timerId, reminderIndex, now));

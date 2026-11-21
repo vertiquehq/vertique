@@ -88,4 +88,12 @@ public record TransactionalMessageContext(
         headers = headers != null ? Map.copyOf(headers) : Map.of();
         scopeKey = ScopeKey.orDefault(scopeKey);
     }
+
+    /** Masks the reply handle so that logging the whole record never prints it. */
+    @Override
+    public String toString() {
+        return "TransactionalMessageContext[messageId=" + messageId + ", eventType=" + eventType
+                + ", aggregateType=" + aggregateType + ", aggregateId=" + aggregateId + ", headers=" + headers
+                + ", scopeKey=" + scopeKey + ", replyHandle=" + (replyHandle == null ? "null" : "***") + "]";
+    }
 }

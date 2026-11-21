@@ -388,7 +388,7 @@ wf.task("editorial-review")
 
 Decisions carry typed payloads; `void.class`, as used for `approve` above, declares a decision with no payload.
 
-`taskType(String)` on the task builder sets an optional logical type such as `"approval"`. Every task the step creates carries it in `TaskRecord.taskType()`, and `TaskFilter.withTaskType(...)` lists tasks by it. The type labels the task and changes no flow, so it is not part of the plan hash: a plan that adds, changes or removes a task type keeps its hash. A blank type is refused. `HumanTaskNode` and `TaskRecord` gain the type as a trailing nullable component and keep their earlier constructors.
+`taskType(String)` on the task builder sets an optional logical type such as `"approval"`. Every task the step creates carries it in `TaskRecord.taskType()`, and `TaskFilter.withTaskType(...)` lists tasks by it. The type labels the task and changes no flow, so it is not part of the plan hash: a plan that adds, changes or removes a task type keeps its hash. A blank type, or one longer than 255 code points (the width of the task column), is refused. `HumanTaskNode` and `TaskRecord` gain the type as a trailing nullable component and keep their earlier constructors.
 
 When version stability is required, task completion compares the version the reviewer saw with the version snapshotted when the task was created. The engine does not read live domain content; applications remain responsible for authorization and for loading current object state.
 

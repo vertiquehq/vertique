@@ -171,7 +171,7 @@ Each step has an `id` and `type`. Common step fields:
 | `complete` | End successfully | none beyond `id` |
 | `fail` | End with failure and optional compensation | `errorType`, `messageFactory` |
 
-A `human-task` step's `taskType` is the logical type of the tasks it creates (for example `approval`). The compiler passes it to the plan's task node, every task the step creates carries it (`TaskRecord.taskType()`), and task lists filter on it with `TaskFilter.withTaskType(...)`. Omit it, or leave it blank, for a task with no type. It is not part of the plan hash, so a document that changes only its task type keeps the hash of its plan.
+A `human-task` step's `taskType` is the logical type of the tasks it creates (for example `approval`). The compiler passes it to the plan's task node, every task the step creates carries it (`TaskRecord.taskType()`), and task lists filter on it with `TaskFilter.withTaskType(...)`. Omit it, or leave it blank, for a task with no type. It is at most 255 code points, the width of the task column: the validator reports `TASK_TYPE_TOO_LONG` for a longer one, and `WorkflowBuilder.TaskBuilder#taskType` refuses it. It is not part of the plan hash, so a document that changes only its task type keeps the hash of its plan.
 
 Callback-like fields are string identifiers resolved against registries contributed by the application. The document never embeds Java lambdas or scripts.
 

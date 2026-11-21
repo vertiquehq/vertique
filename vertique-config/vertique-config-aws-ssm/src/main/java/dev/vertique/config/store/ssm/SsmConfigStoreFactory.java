@@ -28,7 +28,7 @@ import java.math.BigInteger;
  *   "endpointOverride": "http://...",// optional — for LocalStack / IT endpoints
  *   "recursive": true,               // optional — default true
  *   "withDecryption": true,          // optional — default true
- *   "prefix": "app",                 // optional — dot-separated re-root (e.g. "app" or "app.db")
+ *   "prefix": "app",                 // optional — dot-separated re-root (e.g. "app" or "app.db"); blank counts as absent
  *   "connectTimeoutMs": 5000,        // optional — default 5000
  *   "readTimeoutMs": 5000            // optional — default 5000
  * }
@@ -41,7 +41,7 @@ import java.math.BigInteger;
  * normalize to {@code "/myapp/prod/"}.
  *
  * <h2>Validation Exceptions</h2>
- * <p>Schema validation failures ({@code path} missing or blank; {@code prefix} blank or
+ * <p>Schema validation failures ({@code path} missing or blank; {@code prefix}
  * containing blank dot-segments such as {@code "a..b"}; negative/zero timeouts)
  * throw {@link IllegalArgumentException} from {@link #create(Vertx, JsonObject)}. The Vert.x
  * {@link io.vertx.config.ConfigRetriever} surfaces factory-creation failures as a load failure
@@ -134,8 +134,7 @@ public class SsmConfigStoreFactory implements ConfigStoreFactory {
         // all parameters regardless of application, environment, or account boundary.
         if ("/".equals(path)) {
             throw new IllegalArgumentException("AWS SSM store: 'path' must name at least one segment; "
-                    + "reading the entire parameter store is not allowed (got: '"
-                    + rawPath.trim() + "')");
+                    + "reading the entire parameter store is not allowed");
         }
 
         // --- region (optional) ---
@@ -150,18 +149,17 @@ public class SsmConfigStoreFactory implements ConfigStoreFactory {
         // --- withDecryption (default true) ---
         boolean withDecryption = config.getBoolean("withDecryption", true);
 
-        // --- prefix (optional, but if present must be non-blank with no blank dot-segments) ---
+        // --- prefix (optional; a blank value counts as absent; otherwise no blank dot-segments) ---
         String prefix = config.getString("prefix");
+        if (prefix != null && prefix.isBlank()) {
+            prefix = null;
+        }
         if (prefix != null) {
-            if (prefix.isBlank()) {
-                throw new IllegalArgumentException("AWS SSM store: field 'prefix' must not be blank when set");
-            }
             String[] prefixParts = prefix.split("\\.", -1);
             for (String part : prefixParts) {
                 if (part.isBlank()) {
                     throw new IllegalArgumentException(
-                            "AWS SSM store: field 'prefix' must not contain blank segments (e.g. 'a..b'); got: "
-                                    + prefix);
+                            "AWS SSM store: field 'prefix' must not contain blank segments (e.g. 'a..b')");
                 }
             }
         }

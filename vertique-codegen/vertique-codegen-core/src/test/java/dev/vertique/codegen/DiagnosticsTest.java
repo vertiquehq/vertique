@@ -419,7 +419,7 @@ class DiagnosticsTest {
     void workflowDefaultMethod_exactString() {
         assertEquals(
                 "Method helper in com.example.OrderWorkflow is a default method; default methods are not supported"
-                        + " on workflow contract interfaces in cycle 1.",
+                        + " on workflow contract interfaces.",
                 Diagnostics.workflowDefaultMethod("com.example.OrderWorkflow", "helper"));
     }
 

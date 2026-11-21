@@ -66,6 +66,19 @@ class RateLimitStorageIdentityTest {
         assertThat(physicalKeyOne).isNotEqualTo(physicalKeyTwo);
     }
 
+    /**
+     * Golden vector for an oversize component: a 300-character string is replaced by {@code h:}
+     * plus the lowercase-hex SHA-256 of {@code "S:"} followed by the raw payload. A change of the
+     * digest input would move every oversize key to a new quota keyspace.
+     */
+    @Test
+    void shouldPinOversizeComponentDigestAsGoldenLiteral() {
+        String oversize = RateLimitStorageIdentity.canonicalInput("policy-a", "r1", RateLimitKey.of("a".repeat(300)));
+
+        assertThat(oversize)
+                .isEqualTo("policy-a:r1:h:85e75dcfe1f8b49f4c9f9eeed06f5d7f2e1f4e3aaac49ec031d661b327d3c43d");
+    }
+
     /** Independent JDK {@link MessageDigest} reference computation so the test does not check itself. */
     private static String referenceFingerprint(String secret) {
         try {
