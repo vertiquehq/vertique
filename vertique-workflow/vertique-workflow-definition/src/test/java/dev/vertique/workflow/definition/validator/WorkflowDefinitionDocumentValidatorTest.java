@@ -911,28 +911,29 @@ class WorkflowDefinitionDocumentValidatorTest {
 
     // --- TASK_TYPE_TOO_LONG ---
 
-    @Test
-    @DisplayName("TASK_TYPE_TOO_LONG — taskType over 255 code points is refused, 255 is accepted")
-    void taskTypeLength() {
+    private WorkflowDefinitionViolations validateTaskType(int length) {
         HumanTaskStep.AssignmentBlock assignment = new HumanTaskStep.AssignmentBlock("role", "editor", null);
         HumanTaskStep.TaskDecisionBlock decision =
                 new HumanTaskStep.TaskDecisionBlock("approve", PAYLOAD_FQN, STATE_REDUCER_ID, "done");
-        for (int length : new int[] {255, 256}) {
-            List<StepNode> steps = List.of(
-                    new HumanTaskStep("task", "t".repeat(length), assignment, List.of(decision), null, null, null),
-                    new CompleteStep("done"));
-            WorkflowDefinitionDocument doc = new WorkflowDefinitionDocument(
-                    DEF_ID, DEF_VER, STATE_FQN, CONTRACT_FQN, PAYLOAD_FQN, INIT_MAPPER_ID, null, "task", steps);
+        List<StepNode> steps = List.of(
+                new HumanTaskStep("task", "t".repeat(length), assignment, List.of(decision), null, null, null),
+                new CompleteStep("done"));
+        WorkflowDefinitionDocument doc = new WorkflowDefinitionDocument(
+                DEF_ID, DEF_VER, STATE_FQN, CONTRACT_FQN, PAYLOAD_FQN, INIT_MAPPER_ID, null, "task", steps);
+        return new WorkflowDefinitionDocumentValidator(fullLookup).validate(doc);
+    }
 
-            WorkflowDefinitionViolations result = new WorkflowDefinitionDocumentValidator(fullLookup).validate(doc);
+    @Test
+    @DisplayName("TASK_TYPE_TOO_LONG — taskType of 256 code points is refused")
+    void taskTypeTooLong() {
+        assertThat(findFirstByCode(validateTaskType(256), "TASK_TYPE_TOO_LONG").stepId())
+                .isEqualTo("task");
+    }
 
-            if (length == 256) {
-                assertThat(findFirstByCode(result, "TASK_TYPE_TOO_LONG").stepId())
-                        .isEqualTo("task");
-            } else {
-                assertThat(result.violations()).noneMatch(v -> "TASK_TYPE_TOO_LONG".equals(v.code()));
-            }
-        }
+    @Test
+    @DisplayName("taskType of 255 code points is accepted")
+    void taskTypeAtLimit() {
+        assertThat(validateTaskType(255).violations()).noneMatch(v -> "TASK_TYPE_TOO_LONG".equals(v.code()));
     }
 
     // --- Rule 27: DUE_DATE_PARTIAL ---

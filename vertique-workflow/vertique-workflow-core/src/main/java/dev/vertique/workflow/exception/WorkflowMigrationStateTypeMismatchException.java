@@ -12,9 +12,7 @@ package dev.vertique.workflow.exception;
  * declaration. {@link dev.vertique.workflow.migration.DefaultWorkflowMigrationRegistry#find}
  * does not throw it, because it resolves no plan and checks no state type. The workflow engine
  * detects the mismatch when it runs a migration and refuses the attempt with the
- * state-type-mismatch rejection. A custom
- * {@link dev.vertique.workflow.migration.WorkflowMigrationRegistry} may use this exception to
- * report the same condition.
+ * state-type-mismatch rejection; it does not translate this exception.
  *
  * <p>The handler must be corrected and redeployed.
  */

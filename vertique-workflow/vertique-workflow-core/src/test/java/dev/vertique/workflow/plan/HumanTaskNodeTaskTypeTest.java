@@ -73,6 +73,18 @@ class HumanTaskNodeTaskTypeTest {
     }
 
     @Test
+    @DisplayName("a task type of 255 code points is accepted and 256 is rejected")
+    void taskTypeLengthIsBounded() {
+        assertThat(new HumanTaskNode("task", ROLE, List.of(APPROVE), null, null, null, null, false, "t".repeat(255))
+                        .taskType())
+                .hasSize(255);
+        assertThatThrownBy(() -> new HumanTaskNode(
+                        "task", ROLE, List.of(APPROVE), null, null, null, null, false, "t".repeat(256)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("255");
+    }
+
+    @Test
     @DisplayName("the DSL stamps the task type on the node and defaults to none")
     void dslSetsTaskType() {
         assertThat(node(plan(t -> t.taskType("approval"))).taskType()).isEqualTo("approval");

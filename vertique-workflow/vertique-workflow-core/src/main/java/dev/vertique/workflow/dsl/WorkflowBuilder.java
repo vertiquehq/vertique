@@ -76,14 +76,14 @@ import java.util.function.Function;
  */
 public final class WorkflowBuilder<S> {
 
+    /** The longest task type, in code points: the width of the {@code workflow_tasks.task_type} column. */
+    private static final int MAX_TASK_TYPE_CODE_POINTS = 255;
+
     /**
      * Stable callback id for the plan-level {@link #subject(Function)} resolver. Plan-level (not
      * step-bound), so it does not flow through the per-step {@link #callbackId(String, String)}
      * helper.
      */
-    /** The longest task type, in code points: the width of the {@code workflow_tasks.task_type} column. */
-    private static final int MAX_TASK_TYPE_CODE_POINTS = 255;
-
     private static final CallbackId SUBJECT_RESOLVER_ID = new CallbackId("$subject.resolver");
 
     // --- Internal state ---
