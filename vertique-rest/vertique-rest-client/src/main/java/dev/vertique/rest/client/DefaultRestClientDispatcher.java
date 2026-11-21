@@ -17,6 +17,7 @@ import dev.vertique.resilience.exception.ResiliencePolicyException;
 import dev.vertique.resilience.exception.ResilienceTimeoutException;
 import dev.vertique.rest.client.convert.ClientConversionContexts;
 import dev.vertique.rest.client.exception.RestClientException;
+import dev.vertique.rest.client.exception.RestClientResponseDecodingException;
 import dev.vertique.rest.client.exception.RestClientResponseException;
 import dev.vertique.rest.client.exception.RestClientTimeoutException;
 import dev.vertique.rest.client.exception.RestClientUnavailableException;
@@ -1002,7 +1003,7 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
         // is decoded as the declared type.
         // Deserialize and validate
         try {
-            Object result = deserializeSuccess(response, meta);
+            Object result = deserializeSuccess(response, meta, reqCtx, resCtx);
             if (beanValidator != null && result != null && !meta.returnsVoid() && !meta.returnsRawResponse()) {
                 Object toValidate =
                         meta.returnsOptional() && result instanceof Optional<?> opt ? opt.orElse(null) : result;
@@ -1038,10 +1039,17 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
      *
      * @param response the successful HTTP response
      * @param meta the method metadata
+     * @param reqCtx the request context
+     * @param resCtx the response context already captured; may be {@code null} defensively
      * @return the deserialized value, or {@code null} for void methods
+     * @throws RestClientResponseDecodingException if the body does not fit the declared type
      */
     @Nullable
-    private Object deserializeSuccess(HttpResponse<Buffer> response, ClientMethodMeta meta) {
+    private Object deserializeSuccess(
+            HttpResponse<Buffer> response,
+            ClientMethodMeta meta,
+            RestClientRequestContext reqCtx,
+            @Nullable RestClientResponseContext resCtx) {
         if (meta.returnsVoid()) {
             return null;
         }
@@ -1057,9 +1065,10 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
                     body.getBytes(), objectMapper.getTypeFactory().constructType(meta.responseType()));
             return meta.returnsOptional() ? Optional.ofNullable(value) : value;
         } catch (Exception e) {
-            throw new RestClientException(
-                    "Failed to deserialize response for "
-                            + meta.methodMetadata().name(),
+            throw new RestClientResponseDecodingException(
+                    meta.methodMetadata().name(),
+                    reqCtx,
+                    resCtx != null ? resCtx : RestClientResponseContext.from(response),
                     e);
         }
     }

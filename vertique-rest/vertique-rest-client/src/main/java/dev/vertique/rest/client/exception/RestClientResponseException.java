@@ -17,6 +17,9 @@ import java.util.Optional;
  * response (4xx or 5xx) when no expectation is set, or any status, a 2xx included, that a configured
  * {@link dev.vertique.rest.client.ExpectedStatus} or builder expectation does not accept.
  *
+ * <p>A subclass, {@link RestClientResponseDecodingException}, covers the opposite case: a response the
+ * expectation accepted whose body does not fit the declared return type.
+ *
  * <p>Carries the full request and response contexts so that interceptors, failure translators, and
  * callers can inspect or deserialize the error body. The request context provides method name and
  * client name for structured logging.
@@ -62,6 +65,25 @@ public class RestClientResponseException extends RestClientException {
                                 responseContext.statusCode(), responseContext.statusMessage(), cause.getMessage())
                         : String.format("HTTP %d %s", responseContext.statusCode(), responseContext.statusMessage()),
                 cause);
+        this.requestContext = requestContext;
+        this.responseContext = responseContext;
+    }
+
+    /**
+     * Creates a response exception with a caller-built message, for a subclass whose message must not
+     * echo the cause or the body.
+     *
+     * @param message the exception message
+     * @param requestContext the request context describing the request
+     * @param responseContext the response context containing the HTTP status, headers, and body
+     * @param cause the underlying failure; may be {@code null}
+     */
+    protected RestClientResponseException(
+            String message,
+            RestClientRequestContext requestContext,
+            RestClientResponseContext responseContext,
+            @Nullable Throwable cause) {
+        super(message, cause);
         this.requestContext = requestContext;
         this.responseContext = responseContext;
     }

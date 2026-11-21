@@ -479,9 +479,11 @@ It runs once per attempt, inside the retry loop and the circuit breaker.
 | `Future<T>` | decoded as `T`; empty body gives `null` | `RestClientResponseException` |
 
 The declared type is the contract for every accepted status. A body that does not fit it (an HTML 404
-from a gateway when `T` is a record) fails with `RestClientException` ("Failed to deserialize
-response"), which carries no status; a client that accepts 404 with a different body shape declares
-`Optional<T>`, `Void` or `HttpClientResponse`, or a type that fits both.
+from a gateway when `T` is a record) fails with `RestClientResponseDecodingException`, a subclass of
+`RestClientResponseException` that carries the status, headers and raw body. Its message names the
+method and the status ("Failed to deserialize response for `get` (HTTP 404)") and never contains body
+text; the decoder's failure is the cause. A client that accepts 404 with a different body shape
+declares `Optional<T>`, `Void` or `HttpClientResponse`, or a type that fits both.
 
 ```java
 @GET
@@ -504,6 +506,10 @@ Consequences to know:
 - **A rejected 2xx is a `RestClientResponseException`**, not a plain `RestClientException`; an
   expectation that throws its own exception type has that type as the cause. A custom retry policy
   written against `RestClientResponseException` sees these too.
+- **An accepted response that does not decode is a `RestClientResponseDecodingException`**, also a
+  `RestClientResponseException`. A handler that treats every `RestClientResponseException` as a
+  rejected response by status should check for the subclass first. Decoding happens after the retry
+  loop and the circuit breaker, so such a failure is not retried and not counted.
 
 ### Outbound parameter conversion
 
@@ -1074,7 +1080,9 @@ Generated static proxies inherit the resolved mapper; no extra wiring is require
 core.TechnicalException (→ 500)
 └── RestClientException
     └── RestClientResponseException   — a response the expectation rejected: HTTP 4xx/5xx, or any status
-                                        the method's expectation does not accept
+        │                               the method's expectation does not accept
+        └── RestClientResponseDecodingException — an accepted response whose body does not fit the
+                                        declared return type; carries the status, no body text in the message
 
 core.UnavailableException (→ 503)
 └── RestClientUnavailableException
@@ -1091,9 +1099,9 @@ and a closed runtime surface as `RestClientUnavailableException`; a timeout surf
 `RestClientTimeoutException`. The original resilience exception is kept as the cause.
 
 `catch (RestClientException)` therefore does not catch transport or resilience failures. It catches
-`RestClientResponseException`, and also the plain `RestClientException` the client raises for a request
-it could not build or serialize, a response body it could not decode ("Failed to deserialize
-response"), a failed resilience policy and a Vert.x failure the mapper has no translator for. Transport
+`RestClientResponseException` (a response body it could not decode included, as the subclass
+`RestClientResponseDecodingException`), and also the plain `RestClientException` the client raises for a
+request it could not build or serialize, a failed resilience policy and a Vert.x failure the mapper has no translator for. Transport
 failures are caught at `RestClientUnavailableException` (or `core.UnavailableException`); wiring
 failures at `RestClientConfigurationException` (or `core.ConfigurationException`). A bean-validation
 failure on the decoded response, and an exception an interceptor throws, reach the caller as themselves.
@@ -1101,7 +1109,7 @@ failure on the decoded response, and an exception an interceptor throws, reach t
 | Situation | Exception |
 |---|---|
 | response received and rejected by the expectation (2xx when none is set) | `RestClientResponseException` |
-| response accepted, body cannot be decoded as the declared type | `RestClientException` |
+| response accepted, body cannot be decoded as the declared type | `RestClientResponseDecodingException` (a `RestClientResponseException` with the status) |
 | connection refused, unknown host, reset | `RestClientConnectionException` |
 | request timeout | `RestClientTimeoutException` |
 | open circuit, bulkhead rejection or queue timeout, closed runtime | `RestClientUnavailableException` |
