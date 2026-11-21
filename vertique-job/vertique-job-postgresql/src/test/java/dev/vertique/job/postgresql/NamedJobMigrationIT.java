@@ -135,9 +135,9 @@ class NamedJobMigrationIT {
             MigrationReport first = await(migration.runner().run(vertx));
 
             // Then: both instances migrated once into their own schema and histories, the decoy is untouched
-            assertEveryInstanceMigrated(first, 4, 1);
+            assertEveryInstanceMigrated(first, 5, 1);
             assertObjectsLiveOnlyInTheirMappedSchemas();
-            assertEquals(List.of("1", "002", "003", "004"), versionedHistory(JOB_SCHEMA, JOB_HISTORY));
+            assertEquals(List.of("1", "002", "003", "004", "005"), versionedHistory(JOB_SCHEMA, JOB_HISTORY));
             assertEquals(List.of("1"), versionedHistory(APP_SCHEMA, APP_HISTORY));
             assertEquals(List.of("1"), column("SELECT count(*) FROM " + APP_SCHEMA + ".app_items"));
 
@@ -155,7 +155,7 @@ class NamedJobMigrationIT {
 
             // Then: no script is applied again
             assertEveryInstanceMigrated(second, 0, 0);
-            assertEquals(List.of("1", "002", "003", "004"), versionedHistory(JOB_SCHEMA, JOB_HISTORY));
+            assertEquals(List.of("1", "002", "003", "004", "005"), versionedHistory(JOB_SCHEMA, JOB_HISTORY));
             assertEquals(List.of("1"), versionedHistory(APP_SCHEMA, APP_HISTORY));
             assertDecoyDefaultSchemaUntouched();
         } finally {
@@ -496,7 +496,7 @@ class NamedJobMigrationIT {
                     "job".equals(name) ? jobApplied : appApplied,
                     result.migrationsApplied(),
                     name + " applied scripts");
-            assertEquals("job".equals(name) ? "004" : "1", result.currentVersion(), name + " current version");
+            assertEquals("job".equals(name) ? "005" : "1", result.currentVersion(), name + " current version");
         }
     }
 
@@ -906,7 +906,6 @@ class NamedJobMigrationIT {
                 "UTC",
                 true,
                 "SKIP",
-                3,
                 true,
                 null,
                 null);

@@ -199,7 +199,6 @@ public class CronServiceTargetDispatchIT {
                 null, // handlerAddress = null — the exact shape CronJobRegistrar derives for a service target
                 ExecutionMode.SINGLE_INSTANCE,
                 ZoneId.of("UTC"),
-                3,
                 null,
                 OverlapPolicy.SKIP,
                 true,
@@ -217,7 +216,6 @@ public class CronServiceTargetDispatchIT {
                 "UTC",
                 true,
                 "SKIP",
-                3,
                 true,
                 null,
                 null);

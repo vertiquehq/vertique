@@ -49,7 +49,6 @@ class CronConcurrencyManagerTest {
                 "test.overlap.address",
                 ExecutionMode.EVERY_INSTANCE,
                 ZoneId.of("UTC"),
-                3,
                 null,
                 overlapPolicy,
                 false,

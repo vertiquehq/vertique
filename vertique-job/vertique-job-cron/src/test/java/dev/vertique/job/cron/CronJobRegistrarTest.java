@@ -247,10 +247,9 @@ class CronJobRegistrarTest {
         }
 
         @Test
-        @DisplayName("an annotated job records one attempt; a leftover maxAttempts config entry is ignored")
-        void annotatedJobRecordsOneAttempt() {
-            // Cron never retries. A config override entry that still sets the removed maxAttempts key
-            // changes nothing.
+        @DisplayName("a leftover maxAttempts config entry on an annotated job is ignored")
+        void annotatedJobIgnoresLeftoverMaxAttempts() {
+            // The removed maxAttempts key is an unknown key like any other: the job still registers.
             JsonObject root = new JsonObject()
                     .put(
                             "cron",
@@ -268,7 +267,6 @@ class CronJobRegistrarTest {
             new CronJobRegistrar(scheduler, registry, resolver, cronConfig(root), null).scan();
 
             assertEquals(1, scheduler.registered.size());
-            assertEquals(1, scheduler.registered.get(0).maxAttempts(), "cron records one attempt");
         }
     }
 
@@ -347,8 +345,8 @@ class CronJobRegistrarTest {
         }
 
         @Test
-        @DisplayName("a config-only job records one attempt; a leftover maxAttempts entry is ignored")
-        void configOnlyJobRecordsOneAttempt() {
+        @DisplayName("a leftover maxAttempts entry on a config-only job is ignored")
+        void configOnlyJobIgnoresLeftoverMaxAttempts() {
             JsonObject root = new JsonObject()
                     .put(
                             "cron",
@@ -370,7 +368,6 @@ class CronJobRegistrarTest {
             new CronJobRegistrar(scheduler, registry, resolver, cronConfig(root), null).scan();
 
             assertEquals(1, scheduler.registered.size());
-            assertEquals(1, scheduler.registered.get(0).maxAttempts());
         }
 
         @Test

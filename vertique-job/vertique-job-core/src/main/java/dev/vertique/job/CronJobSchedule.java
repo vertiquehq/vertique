@@ -27,7 +27,6 @@ import java.time.Instant;
  * @param timezone       timezone ID used to evaluate the cron expression (e.g. {@code "UTC"})
  * @param enabled        whether the schedule is currently active
  * @param overlapPolicy  overlap policy name: {@code "SKIP"} or {@code "QUEUE_ONE"}
- * @param maxAttempts    attempt limit of one execution; cron never retries, so the cron registrar writes {@code 1}
  * @param tracked        whether individual executions are persisted to {@code job_executions}
  * @param lastFiredAt    the instant this job last fired, or {@code null} if it has never fired
  * @param nextFireAt     the computed next fire instant, or {@code null} if not yet computed
@@ -41,7 +40,6 @@ public record CronJobSchedule(
         String timezone,
         boolean enabled,
         String overlapPolicy,
-        int maxAttempts,
         boolean tracked,
         Instant lastFiredAt,
         Instant nextFireAt) {}

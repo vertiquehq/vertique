@@ -262,7 +262,7 @@ final class CronJobDispatcher {
                     executionId,
                     JobType.CRON,
                     0,
-                    job.maxAttempts(),
+                    CronJobDefinition.SINGLE_ATTEMPT,
                     "cron",
                     scheduledAt,
                     startedAt,

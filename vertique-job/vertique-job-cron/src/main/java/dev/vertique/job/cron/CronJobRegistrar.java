@@ -98,9 +98,6 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class CronJobRegistrar {
 
-    /** Cron never retries, so every job it registers records a single attempt. */
-    private static final int SINGLE_ATTEMPT = 1;
-
     private final CronScheduler scheduler;
     private final ServiceContractRegistry registry;
     private final CronConfig cronConfig;
@@ -333,7 +330,6 @@ public class CronJobRegistrar {
                         handlerAddress,
                         mode,
                         timezone,
-                        SINGLE_ATTEMPT,
                         null,
                         overlapPolicy,
                         tracked,
@@ -475,7 +471,6 @@ public class CronJobRegistrar {
                     handlerAddress,
                     mode,
                     timezone,
-                    SINGLE_ATTEMPT,
                     null,
                     overlapPolicy,
                     tracked,
@@ -614,7 +609,6 @@ public class CronJobRegistrar {
                 def.timezone().getId(),
                 true,
                 def.overlapPolicy().name(),
-                def.maxAttempts(),
                 def.tracked(),
                 null,
                 nextFire);
