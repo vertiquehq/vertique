@@ -6,7 +6,6 @@ package dev.vertique.rest.jaxrs;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -485,54 +484,34 @@ public class TypedSyntheticOperationIT {
     }
 
     @Test
-    @DisplayName("An action-only operation is refused at install when no route authentication handler exists")
-    void shouldRefuseAnActionOnlyOperationWithoutARouteAuthenticationHandler() throws Exception {
+    @DisplayName(
+            "An action-only operation installs without a route authentication handler: its scheme authenticates it")
+    void shouldInstallAnActionOnlyOperationWithoutARouteAuthenticationHandler() throws Exception {
         // Given the supported composition with a scheme handler but no route authentication handler
         SyntheticOperationInstaller installer =
                 DaggerTypedSyntheticComponents_WithoutRouteAuthHandler.create().syntheticOperationInstaller();
         try (TypedSyntheticInstallProbe probe = new TypedSyntheticInstallProbe()) {
-            // When an action-only operation is installed
-            RestConfigurationException refusal =
-                    probe.refusal(installer, "/typed/action", operation(TypedPolicies.Action.class, SCHEME));
-
-            // Then the action-gate authentication contributor refuses it, naming the missing handler,
-            // and the router keeps no route
-            IllegalStateException cause = assertInstanceOf(IllegalStateException.class, refusal.getCause());
-            assertTrue(cause.getMessage().contains("RouteAuthHandler"), cause.getMessage());
-
-            // And a roles-and-action operation, which the scheme handler already authenticates, installs
+            // When an action-only operation, which names its scheme, is installed
+            // Then it installs: the named scheme's handler authenticates it, so the action-gate
+            // authentication contributor, which needs the missing handler, does not run for it
+            assertEquals(1, probe.install(installer, "/typed/action", operation(TypedPolicies.Action.class, SCHEME)));
             assertEquals(
-                    1,
+                    2,
                     probe.install(
                             installer, "/typed/roles-action", operation(TypedPolicies.RolesAndAction.class, SCHEME)));
-
-            // And the refused operation id was released: the same id installs on the same router once
-            // the operation no longer needs the missing handler
-            SyntheticOperation sameId = SyntheticOperation.withPolicy(
-                    ORIGIN,
-                    "typed:" + TypedPolicies.Action.class.getSimpleName(),
-                    SCHEME,
-                    APPLICATION,
-                    TypedPolicies.RolesAndAction.class);
-            assertEquals(2, probe.install(installer, "/typed/action", sameId));
         }
     }
 
     @Test
-    @DisplayName("An action-only operation is refused at install when route authentication handlers are ambiguous")
-    void shouldRefuseAnActionOnlyOperationWithTwoRouteAuthenticationHandlers() throws Exception {
+    @DisplayName("An action-only operation installs when route authentication handlers are ambiguous: it uses none")
+    void shouldInstallAnActionOnlyOperationWithTwoRouteAuthenticationHandlers() throws Exception {
         // Given the supported composition with two route authentication handlers
         SyntheticOperationInstaller installer =
                 DaggerTypedSyntheticComponents_WithTwoRouteAuthHandlers.create().syntheticOperationInstaller();
         try (TypedSyntheticInstallProbe probe = new TypedSyntheticInstallProbe()) {
             // When an action-only operation is installed
-            RestConfigurationException refusal =
-                    probe.refusal(installer, "/typed/action", operation(TypedPolicies.Action.class, SCHEME));
-
-            // Then the action-gate authentication contributor refuses it as ambiguous and the router keeps no route
-            IllegalStateException cause = assertInstanceOf(IllegalStateException.class, refusal.getCause());
-            assertTrue(cause.getMessage().contains("multiple RouteAuthHandler"), cause.getMessage());
-            assertFalse(cause.getMessage().isBlank());
+            // Then it installs: it is authenticated by its scheme alone, so no route handler is selected
+            assertEquals(1, probe.install(installer, "/typed/action", operation(TypedPolicies.Action.class, SCHEME)));
         }
     }
 

@@ -81,6 +81,16 @@ that declares a scheme; authorization (100) still runs after validation. Before 
 action-only authentication ran after the gates, so an unauthenticated request with a malformed body
 or the wrong content type received `400` or `415`; it now receives `401`.
 
+`ActionGateAuthenticationContributor` installs its handler only when the operation declares no security
+scheme. A route that declares a scheme (`@SecurityRequirement`, with or without scopes) together with
+`@RequiresAction`, including a typed synthetic action-only operation, which names its scheme, is
+authenticated by that scheme's handler alone, so the credential is verified once and its
+`AuthenticationEvidence` is appended once. Before this change such a route was authenticated twice, and a
+typed operation of that kind also failed at install unless exactly one `RouteAuthHandler` was registered;
+it no longer needs one. The two checks were also both required, so a caller had to satisfy the declared
+scheme and the `RouteAuthHandler`; now only the declared scheme is required. An application that relied
+on that extra check for such a route must put it in the scheme's handler.
+
 `OriginCaptureMiddleware` is the module's one ROOT-scoped `Middleware`. It runs before any
 authentication handler and stashes the resolved `RequestOrigin` so identity resolution and every
 emitted event carry the caller's address even when authentication fails.
@@ -560,7 +570,7 @@ handlers reporting the same `schemeName()` fail startup.
 ### `RouteAuthHandler` (multibinding)
 
 Route-level authentication for transports with no OpenAPI security scheme — WebSocket endpoints and
-action-only `@RequiresAction` routes.
+action-only `@RequiresAction` routes that declare no scheme.
 
 ```java
 @Provides @IntoSet
@@ -908,7 +918,7 @@ provider that exceeds the bound fails the import with the generic 503 described 
 | `RestConfigurationException` | A declared security requirement with no matching `SecuritySchemeHandler` registered |
 | `RestConfigurationException` | `@PermitAll` on an operation that also declares a security requirement — conflicting intent |
 | `IllegalStateException` | Two `SecurityIdentityResolver`s share the same `(priority, id)` pair. Raised while the Dagger graph is constructed, not on first request |
-| `IllegalStateException` | An action-only `@RequiresAction` route with no `RouteAuthHandler` registered, or with more than one — JAX-RS has no per-route scheme selector, so the framework fails rather than guess |
+| `IllegalStateException` | An action-only `@RequiresAction` route that declares no security scheme, with no `RouteAuthHandler` registered or with more than one — JAX-RS has no per-route scheme selector, so the framework fails rather than guess. A route that declares a scheme is authenticated by that scheme's handler and needs no `RouteAuthHandler` |
 | `IllegalStateException` | A `SecurityPolicy.Constrained` with both empty roles and empty scopes. Raised at handler creation, not on first request |
 
 There is no warn-only mode. Every validation failure stops startup.

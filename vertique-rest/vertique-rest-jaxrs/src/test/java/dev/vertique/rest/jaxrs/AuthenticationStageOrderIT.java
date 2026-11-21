@@ -14,8 +14,10 @@ import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.router.OperationHandlerContributor;
 import dev.vertique.rest.core.router.OperationRegistrationContext;
+import dev.vertique.rest.core.routing.SecuritySchemeRegistry;
 import dev.vertique.rest.core.security.AuthEnforcementCapability;
 import dev.vertique.rest.core.security.RouteAuthHandler;
+import dev.vertique.rest.core.security.SecuritySchemeHandler;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 import dev.vertique.rest.jaxrs.validation.OperationSchemas;
 import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
@@ -135,6 +137,7 @@ class AuthenticationStageOrderIT {
                 .authEnforcementCapability(Optional.of(AuthEnforcementCapability.INSTANCE))
                 .actionRegistry(Optional.of(new TypedPolicyRoutingIT.KnownActions(WRITE)))
                 .authorizer(Optional.of(authorizer))
+                .securitySchemeHandlers(Set.of(new RecordingSchemeHandler()))
                 .validationStrategies(Set.of(gate))
                 .jaxRsConfig(JaxRsConfig.builder().validationStrategy(gate.id()).build())
                 .operationHandlerContributors(Set.of(
@@ -143,7 +146,7 @@ class AuthenticationStageOrderIT {
                         new RecordingContributor(),
                         new AuthorizationContributor(enforcer)))
                 .build();
-        Router api = factory.create("/*", "openapi.json", Set.of(new ItemResource()))
+        Router api = factory.create("/*", "openapi.json", Set.of(new ItemResource(), new SchemeItemResource()))
                 .createRouter(vertx)
                 .result();
         Router root = Router.router(vertx);
@@ -270,6 +273,27 @@ class AuthenticationStageOrderIT {
                 })));
     }
 
+    @Test
+    @DisplayName("a route with a scheme and an action is authenticated once, by its scheme handler")
+    void schemeAndActionRouteIsAuthenticatedOnce(VertxTestContext ctx) {
+        client.post(server.actualPort(), "127.0.0.1", "/scheme-items")
+                .as(BodyCodec.string())
+                .putHeader("Authorization", AUTHENTICATED)
+                .putHeader("X-Test-User", "alice")
+                .putHeader("Content-Type", "application/json")
+                .sendBuffer(io.vertx.core.buffer.Buffer.buffer("\"ok\""))
+                .onComplete(ctx.succeeding(r -> ctx.verify(() -> {
+                    assertEquals(200, r.statusCode(), r.bodyAsString());
+                    assertEquals(
+                            List.of("scheme-authentication"),
+                            LOG.stream()
+                                    .filter(entry -> entry.endsWith("authentication"))
+                                    .toList(),
+                            "the route's own scheme handler authenticates; the action-only handler must not run again");
+                    ctx.completeNow();
+                })));
+    }
+
     // --- harness ---
 
     private static Future<HttpResponse<String>> post(
@@ -339,6 +363,38 @@ class AuthenticationStageOrderIT {
         public String create(String body) {
             INVOKED.incrementAndGet();
             return "created";
+        }
+    }
+
+    /** Action and a declared scheme: authenticated by the scheme, so the action-only handler stays out. */
+    @Path("/scheme-items")
+    public static class SchemeItemResource {
+
+        @POST
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @io.swagger.v3.oas.annotations.security.SecurityRequirement(name = "bearerAuth")
+        @dev.vertique.security.authz.RequiresAction("order.item.write")
+        public String createWithScheme(String body) {
+            INVOKED.incrementAndGet();
+            return "created";
+        }
+    }
+
+    /** Scheme handler recording that the scheme authenticated the request. */
+    private static final class RecordingSchemeHandler implements SecuritySchemeHandler {
+
+        @Override
+        public String schemeName() {
+            return "bearerAuth";
+        }
+
+        @Override
+        public void configure(SecuritySchemeRegistry registry) {
+            registry.authenticationHandler(rc -> {
+                LOG.add("scheme-authentication");
+                rc.next();
+            });
         }
     }
 
