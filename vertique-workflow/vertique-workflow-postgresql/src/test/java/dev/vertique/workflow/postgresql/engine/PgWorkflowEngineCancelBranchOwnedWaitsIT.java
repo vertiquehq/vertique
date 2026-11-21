@@ -299,6 +299,10 @@ public class PgWorkflowEngineCancelBranchOwnedWaitsIT {
                     assertEquals(
                             "BRANCH_CANCELLED",
                             cancelled.getFirst().attributes().get("cause"));
+                    assertEquals(
+                            "branch-a",
+                            cancelled.getFirst().attributes().get("branchId"),
+                            "the event names the branch whose task was cancelled");
                     ctx.completeNow();
                 }));
     }

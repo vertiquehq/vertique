@@ -73,7 +73,7 @@ The two scope fields were added without changing `schemaVersion`. Adding fields 
 | `WORKFLOW_COMPENSATED` | Every compensation step is recorded and the instance becomes `COMPENSATED` |
 | `TASK_CREATED` | A human task is created and the workflow waits for an actor's decision |
 | `TASK_COMPLETED` | An actor's decision completes the task |
-| `TASK_CANCELLED` | A task is cancelled; `attributes.cause` is `WORKFLOW_CANCELLED` or `BRANCH_CANCELLED` |
+| `TASK_CANCELLED` | A task is cancelled; `attributes.cause` is `WORKFLOW_CANCELLED` or `BRANCH_CANCELLED`; when the cause is `BRANCH_CANCELLED`, `attributes.branchId` names the branch that owned the task |
 | `TASK_EXPIRED` | A task's due-date timer fires before the task is completed |
 | `TASK_REASSIGNED` | A task's assignment changes to another user, role or queue |
 | `TASK_REMINDER` | A task reminder timer fires; no workflow state changes |
@@ -173,7 +173,8 @@ Applications normally only provide the binding and destination handler.
 - **Branch-owned tasks are reported like the tasks of a single path.** A task created by a fork branch emits `TASK_CREATED`,
   completing it emits `TASK_COMPLETED`, its due date passing emits `TASK_EXPIRED`, and cancelling it (with its branch, or when
   the branch loses a race) emits `TASK_CANCELLED` with cause `BRANCH_CANCELLED`. Each event carries the sequence of the history
-  entry written with it; the cancellation of a branch's task writes a `TASK_CANCELLED` history entry, which it did not before.
+  entry written with it; the cancellation of a branch's task writes a `TASK_CANCELLED` history entry, which it did not before,
+  and its event carries `attributes.branchId`, the branch id of the branch that owned the task.
   **Behaviour change:** consumers that counted the task events of an instance with a fork now see these four for branch tasks.
 - **Attribution headers.** The outbox entry of an event a workflow segment emits carries only the attribution headers `x-workflow-actor-kind` and `x-workflow-attribution` (`VERIFIED`, `ABSENT` or `DEGRADED`), taken from the command the segment executes; the actor id, reason and party acted for are not sent to event consumers. They are for audit and logs. They are unauthenticated: anyone who can write an outbox record or publish to the broker can forge them, so a consumer must never treat them as the identity of the caller. The envelope is unchanged.
 - **Envelope contract is versioned.** External consumers depend on the v1 event envelope contract; breaking changes require a new envelope version, not field-shape changes in place.
