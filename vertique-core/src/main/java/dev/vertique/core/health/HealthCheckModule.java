@@ -3,9 +3,15 @@
 
 package dev.vertique.core.health;
 
+import dagger.BindsOptionalOf;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.Multibinds;
+import dev.vertique.core.VertxConfig;
+import dev.vertique.core.config.JsonConfigPaths;
+import dev.vertique.core.exception.ConfigurationException;
+import io.vertx.core.json.JsonObject;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -44,8 +50,22 @@ public abstract class HealthCheckModule {
     abstract Set<HealthCheck> readinessChecks();
 
     /**
-     * Provides the aggregator that evaluates either set in process, with the
-     * {@linkplain HealthCheckAggregator#DEFAULT_CHECK_TIMEOUT_SECONDS default} per-check timeout.
+     * Declares the application configuration root as an optional binding, so the aggregator can read
+     * the health-check timeout when a component binds the configuration and still resolves, with the
+     * default timeout, in a component that does not.
+     *
+     * @return the optional application configuration root
+     */
+    @BindsOptionalOf
+    @VertxConfig
+    abstract JsonObject optionalConfig();
+
+    /**
+     * Provides the aggregator that evaluates either set in process. Its per-check timeout is
+     * {@code management.healthCheckTimeoutSeconds} when the component binds the application
+     * configuration and sets that key, so an injected aggregator and the management probes give the
+     * same answer; otherwise it is the {@linkplain HealthCheckAggregator#DEFAULT_CHECK_TIMEOUT_SECONDS
+     * default}.
      * Inject it together with the qualified set to evaluate:
      * <pre>{@code
      * @Inject
@@ -55,13 +75,42 @@ public abstract class HealthCheckModule {
      * }</pre>
      *
      * <p>The binding is unscoped and the aggregator is stateless, so a component of any scope may
-     * include this module. A consumer that applies its own timeout constructs its own
+     * include this module. A consumer that applies a different timeout constructs its own
      * {@link HealthCheckAggregator#HealthCheckAggregator(long)}.
      *
-     * @return an aggregator with the default per-check timeout
+     * @param config the application configuration root, when the component binds one
+     * @return an aggregator with the configured, or else the default, per-check timeout
+     * @throws ConfigurationException if {@code management.healthCheckTimeoutSeconds} is set but is not
+     *     a positive whole number
      */
     @Provides
-    static HealthCheckAggregator healthCheckAggregator() {
-        return new HealthCheckAggregator();
+    static HealthCheckAggregator healthCheckAggregator(@VertxConfig Optional<JsonObject> config) {
+        return config.map(HealthCheckModule::configuredTimeoutSeconds)
+                .map(HealthCheckAggregator::new)
+                .orElseGet(HealthCheckAggregator::new);
+    }
+
+    /**
+     * Reads {@code management.healthCheckTimeoutSeconds} from the configuration root.
+     *
+     * @param config the application configuration root
+     * @return the configured timeout in seconds, or {@code null} when the key is absent
+     */
+    private static Long configuredTimeoutSeconds(JsonObject config) {
+        JsonObject management = JsonConfigPaths.navigateObject(config, "management");
+        if (!management.containsKey("healthCheckTimeoutSeconds")) {
+            return null;
+        }
+        Object value = management.getValue("healthCheckTimeoutSeconds");
+        long seconds;
+        if (value instanceof Integer || value instanceof Long || value instanceof Short || value instanceof Byte) {
+            seconds = ((Number) value).longValue();
+        } else {
+            throw new ConfigurationException("management.healthCheckTimeoutSeconds must be a whole number");
+        }
+        if (seconds <= 0) {
+            throw new ConfigurationException("management.healthCheckTimeoutSeconds must be positive");
+        }
+        return seconds;
     }
 }

@@ -847,10 +847,13 @@ name under the check's implementing class name.
 #### `HealthCheckAggregator` and `HealthReport`
 
 `HealthCheckAggregator` turns a check set into a verdict without an HTTP server. Inject it together
-with the qualified set to evaluate — `HealthCheckModule` binds it, unscoped, with the default
-five-second per-check timeout (`HealthCheckAggregator.DEFAULT_CHECK_TIMEOUT_SECONDS`) — or construct
-`new HealthCheckAggregator(checkTimeoutSeconds)` for another timeout; a zero or negative timeout is
-rejected with `IllegalArgumentException`.
+with the qualified set to evaluate — `HealthCheckModule` binds it, unscoped. Its per-check timeout is
+`management.healthCheckTimeoutSeconds` when the component binds the application configuration
+(`@VertxConfig JsonObject`) and sets that key, the same value the management probes use; otherwise it is the
+default five seconds (`HealthCheckAggregator.DEFAULT_CHECK_TIMEOUT_SECONDS`), and a component that does not bind the
+configuration still resolves it. A key that is not a positive whole number fails the binding with
+`ConfigurationException`. To use another timeout, construct `new HealthCheckAggregator(checkTimeoutSeconds)`; a zero
+or negative timeout is rejected with `IllegalArgumentException`.
 
 ```java
 @Singleton

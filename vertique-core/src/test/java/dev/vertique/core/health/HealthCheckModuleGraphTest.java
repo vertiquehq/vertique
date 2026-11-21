@@ -6,6 +6,11 @@ package dev.vertique.core.health;
 import static org.junit.jupiter.api.Assertions.*;
 
 import dagger.Component;
+import dagger.Module;
+import dagger.Provides;
+import dev.vertique.core.VertxConfig;
+import dev.vertique.core.exception.ConfigurationException;
+import io.vertx.core.json.JsonObject;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -42,7 +47,70 @@ class HealthCheckModuleGraphTest {
         assertTrue(aggregator.evaluate(component.readinessChecks()).result().isUp(), "an empty set evaluates UP");
     }
 
+    // --- Timeout from the application configuration ---
+
+    private static HealthCheckAggregator aggregatorFor(JsonObject config) {
+        return DaggerHealthCheckModuleGraphTest_ConfiguredComponent.builder()
+                .configModule(new ConfigModule(config))
+                .build()
+                .aggregator();
+    }
+
+    @Test
+    @DisplayName("the injected aggregator honours management.healthCheckTimeoutSeconds")
+    void aggregatorHonoursTheConfiguredTimeout() {
+        JsonObject config = new JsonObject().put("management", new JsonObject().put("healthCheckTimeoutSeconds", 12));
+
+        assertEquals(12L, aggregatorFor(config).checkTimeoutSeconds());
+    }
+
+    @Test
+    @DisplayName("a bound configuration without the key keeps the default timeout")
+    void aggregatorKeepsTheDefaultWhenTheKeyIsAbsent() {
+        assertEquals(
+                HealthCheckAggregator.DEFAULT_CHECK_TIMEOUT_SECONDS,
+                aggregatorFor(new JsonObject()).checkTimeoutSeconds());
+        assertEquals(
+                HealthCheckAggregator.DEFAULT_CHECK_TIMEOUT_SECONDS,
+                aggregatorFor(new JsonObject().put("management", new JsonObject().put("port", 9090)))
+                        .checkTimeoutSeconds());
+    }
+
+    @Test
+    @DisplayName("a zero, negative or non-integer timeout fails with a configuration error naming the key")
+    void aggregatorRejectsAnInvalidTimeout() {
+        for (Object bad : new Object[] {0, -3, "soon", 2.5}) {
+            JsonObject config =
+                    new JsonObject().put("management", new JsonObject().put("healthCheckTimeoutSeconds", bad));
+
+            ConfigurationException e = assertThrows(ConfigurationException.class, () -> aggregatorFor(config));
+
+            assertTrue(e.getMessage().startsWith("management.healthCheckTimeoutSeconds must be"), e.getMessage());
+            assertFalse(e.getMessage().contains("soon"), "the rejected text is never echoed");
+        }
+    }
+
     // --- Fixtures ---
+
+    @Module
+    static final class ConfigModule {
+        private final JsonObject config;
+
+        ConfigModule(JsonObject config) {
+            this.config = config;
+        }
+
+        @Provides
+        @VertxConfig
+        JsonObject config() {
+            return config;
+        }
+    }
+
+    @Component(modules = {HealthCheckModule.class, ConfigModule.class})
+    interface ConfiguredComponent {
+        HealthCheckAggregator aggregator();
+    }
 
     @Component(modules = HealthCheckModule.class)
     interface HealthGraphComponent {
