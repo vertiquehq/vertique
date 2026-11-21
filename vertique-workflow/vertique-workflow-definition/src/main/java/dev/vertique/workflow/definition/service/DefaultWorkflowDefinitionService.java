@@ -43,6 +43,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Candidate compilation and metadata facade over the durable definition registry.
@@ -55,6 +57,8 @@ import java.util.function.Supplier;
  */
 @Singleton
 public final class DefaultWorkflowDefinitionService implements WorkflowDefinitionService {
+
+    private static final Logger log = LoggerFactory.getLogger(DefaultWorkflowDefinitionService.class);
     private final WorkflowDefinitionPipeline pipeline;
     private final Provider<WorkflowRegistry> registryProvider;
     private final WorkflowDefinitionRegistryStore durable;
@@ -121,7 +125,8 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
      * Constructs the facade over the durable registry, its lifecycle and the typed policy, recording the security
      * identity of the caller of {@code load} as the actor of the candidate it stores. The identity is taken from the
      * current context on the calling thread and mapped by the application's {@link WorkflowActorMapper} when it binds
-     * one, by the default mapper otherwise. Without a bound {@link ContextHolder} no identity can be read and the
+     * one, by the default mapper otherwise; a mapper that fails leaves the candidate recorded without an actor, as the
+     * lifecycle does for its calls. Without a bound {@link ContextHolder} no identity can be read and the
      * candidate is recorded without an actor.
      */
     @Inject
@@ -223,7 +228,18 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
         if (holder.isEmpty()) return DefinitionChangeActor::unattributed;
         ContextHolder bound = holder.get();
         WorkflowActorMapper resolved = WorkflowActorMapper.orDefault(mapper);
-        return () -> DefinitionChangeActor.capture(bound, resolved);
+        return () -> {
+            try {
+                return DefinitionChangeActor.capture(bound, resolved);
+            } catch (RuntimeException failure) {
+                // the message can carry identity text, so only the class is logged; the lifecycle falls back the same
+                // way
+                log.warn(
+                        "The actor of a definition registration could not be captured ({}); it is stored as absent",
+                        failure.getClass().getName());
+                return DefinitionChangeActor.unattributed();
+            }
+        };
     }
 
     /** Refuses an operation that compiles and builds a document on a node that does not run the executor. */

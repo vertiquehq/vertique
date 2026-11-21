@@ -543,6 +543,27 @@ class DefinitionLifecycleEventsTest {
     }
 
     @Test
+    @DisplayName("the actor the store is given is the one of the call, not the one bound when the queue runs it")
+    void theStoreIsGivenTheActorOfTheCallNotOfTheQueue() {
+        // Given a queue held shut by an earlier task, and a store that notes the actors
+        Promise<Void> gate = Promise.promise();
+        queue.submit("wf", gate::future);
+        ActorSpy store = new ActorSpy();
+        seed(store, KEY);
+        var lifecycle = lifecycle(store, Set.of(), events());
+
+        // When alice calls, and the binding changes to bob before the queue runs the operation
+        Future<Void> result = lifecycle.deprecate(KEY);
+        actor.set(BOB);
+        assertThat(result.isComplete()).isFalse();
+        gate.complete();
+
+        // Then the store was given alice
+        assertThat(result.succeeded()).isTrue();
+        assertThat(store.seen).singleElement().asString().contains("alice").doesNotContain("bob");
+    }
+
+    @Test
     @DisplayName("a publication hands its actor to the claim and to the completion")
     void aPublicationHandsItsActorToTheClaimAndTheCompletion() {
         // Given a candidate whose document builds, and no listener

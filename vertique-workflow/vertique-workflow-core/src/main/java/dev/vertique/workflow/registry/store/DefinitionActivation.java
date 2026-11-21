@@ -24,7 +24,8 @@ import java.util.Objects;
  * @param targetScopeKey the scope that owns the named version: {@code scopeKey} itself or the default scope
  * @param version the positive version, in the target scope, that a start without a version runs
  * @param activatedAt the time the record was written
- * @param activatedBy who wrote the record, which {@code activatedAt} dates; {@code null} when it was not attributed.
+ * @param activatedBy who wrote the record, which {@code activatedAt} dates; {@code null} when it was not attributed or
+ *     when the read that produced this record does not select it (the start selection does not).
  *     The registry keeps only the current record, never a history of activations.
  */
 public record DefinitionActivation(

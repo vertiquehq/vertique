@@ -134,6 +134,19 @@ class DefinitionChangeActorTest {
     }
 
     @Test
+    @DisplayName("an actor's id, reason and subject are cleaned and cut so that they fit their columns")
+    void anActorIsCleanedAndBounded() {
+        DefinitionChangeActor actor = new DefinitionChangeActor(
+                new HistoryActor(HistoryActor.Kind.USER, "u\u0000-" + "x".repeat(400), "why\n"),
+                "s\u202E7",
+                HistoryAttribution.VERIFIED);
+
+        assertThat(actor.actor().id()).hasSize(255).startsWith("u-x");
+        assertThat(actor.actor().reason()).isEqualTo("why");
+        assertThat(actor.onBehalfOf()).isEqualTo("s7");
+    }
+
+    @Test
     @DisplayName("the system actor carries its reason, cleaned, and is verified")
     void theSystemActorCarriesItsReason() {
         DefinitionChangeActor system = DefinitionChangeActor.system("boot\nstrap");

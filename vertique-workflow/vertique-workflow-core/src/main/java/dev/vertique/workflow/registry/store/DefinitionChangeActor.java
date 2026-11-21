@@ -30,10 +30,16 @@ import java.util.Objects;
 public record DefinitionChangeActor(
         HistoryActor actor, @Nullable String onBehalfOf, HistoryAttribution attribution) {
 
-    /** Validates the required components. */
+    /**
+     * Validates the required components and cleans the actor's id and reason and the party it acted for the way a
+     * command's actor is cleaned: control characters, line and paragraph separators and format characters are removed
+     * and the text is cut at 255 code points, so a value always fits its column.
+     */
     public DefinitionChangeActor {
         Objects.requireNonNull(actor, "actor");
         Objects.requireNonNull(attribution, "attribution");
+        actor = new HistoryActor(actor.kind(), ActorText.clean(actor.id()), ActorText.clean(actor.reason()));
+        onBehalfOf = ActorText.clean(onBehalfOf);
     }
 
     /**
@@ -55,9 +61,7 @@ public record DefinitionChangeActor(
     public static DefinitionChangeActor system(String reason) {
         Objects.requireNonNull(reason, "reason");
         return new DefinitionChangeActor(
-                new HistoryActor(HistoryActor.Kind.SYSTEM, null, ActorText.clean(reason)),
-                null,
-                HistoryAttribution.VERIFIED);
+                new HistoryActor(HistoryActor.Kind.SYSTEM, null, reason), null, HistoryAttribution.VERIFIED);
     }
 
     /**
@@ -85,7 +89,6 @@ public record DefinitionChangeActor(
         String onBehalfOf = identity.subject()
                 .map(subject -> subject.id())
                 .filter(subjectId -> !subjectId.equals(actorId))
-                .map(ActorText::clean)
                 .orElse(null);
         HistoryAttribution attribution =
                 holder.current(SnapshotDegradationMarker.class).isPresent()
@@ -93,12 +96,11 @@ public record DefinitionChangeActor(
                         : HistoryAttribution.VERIFIED;
         HistoryActor logged =
                 switch (mapped) {
-                    case WorkflowActor.User user ->
-                        new HistoryActor(HistoryActor.Kind.USER, ActorText.clean(user.userId()), null);
+                    case WorkflowActor.User user -> new HistoryActor(HistoryActor.Kind.USER, user.userId(), null);
                     case WorkflowActor.Service service ->
-                        new HistoryActor(HistoryActor.Kind.SERVICE, ActorText.clean(service.serviceId()), null);
+                        new HistoryActor(HistoryActor.Kind.SERVICE, service.serviceId(), null);
                     case WorkflowActor.System system ->
-                        new HistoryActor(HistoryActor.Kind.SYSTEM, null, ActorText.clean(system.reason()));
+                        new HistoryActor(HistoryActor.Kind.SYSTEM, null, system.reason());
                 };
         return new DefinitionChangeActor(logged, onBehalfOf, attribution);
     }

@@ -113,6 +113,11 @@ public class DefinitionLastChangeActorIT {
             assertThat(activation.activatedBy()).isEqualTo(verified(HistoryActor.Kind.USER, "bob"));
             assertThat(activation.activatedAt()).isAfterOrEqualTo(before);
 
+            // And a later activation of the same record replaces who wrote it
+            as(vertx, scenario, user("bella"), () -> scenario.service().activate(DEFAULT, doc, DEFAULT, 1));
+            assertThat(scenario.activations(DEFAULT, doc).getFirst().activatedBy())
+                    .isEqualTo(verified(HistoryActor.Kind.USER, "bella"));
+
             // When it is taken off the default, deprecated and reinstated by users, and deprecated again with no
             // identity
             await(scenario.service().deactivateDefault(doc));
