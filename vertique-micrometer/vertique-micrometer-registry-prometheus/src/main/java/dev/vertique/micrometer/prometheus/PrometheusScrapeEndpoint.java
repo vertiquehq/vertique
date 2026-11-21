@@ -120,7 +120,9 @@ public final class PrometheusScrapeEndpoint implements ManagementEndpointContrib
      *
      * <p>If exemplars are enabled and both the optional span context and the published
      * {@link DeferredSpanContext} are present, the deferred span context is wired to the real
-     * implementation before any scrape request arrives (one-time setup at contribution time).
+     * implementation before any scrape request arrives (one-time setup at contribution time). If
+     * exemplars are enabled but either is missing, nothing can be attached, and one WARN log says
+     * so.
      *
      * <p>Each incoming scrape request re-resolves the backend registry from {@link PrometheusBackend}
      * so that a backend cleared after contribution time (e.g. during shutdown or bootstrap rollback)
@@ -139,8 +141,14 @@ public final class PrometheusScrapeEndpoint implements ManagementEndpointContrib
         }
 
         // --- Wire exemplar delegate if configured (one-time setup at contribution time) ---
-        if (config.exemplarsEnabled() && exemplarSpanContext.isPresent()) {
-            PrometheusBackend.spanContext().ifPresent(dsc -> dsc.delegate(exemplarSpanContext.get()));
+        if (config.exemplarsEnabled()) {
+            Optional<DeferredSpanContext> deferred = PrometheusBackend.spanContext();
+            if (exemplarSpanContext.isPresent() && deferred.isPresent()) {
+                deferred.get().delegate(exemplarSpanContext.get());
+            } else {
+                log.warn("Prometheus exemplars are enabled but no tracing span context is available, "
+                        + "so no exemplar will be attached to any sample");
+            }
         }
 
         // --- Mount scrape route ---

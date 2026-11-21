@@ -5,6 +5,10 @@ package dev.vertique.micrometer.prometheus;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import io.micrometer.prometheusmetrics.PrometheusConfig;
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
 import io.prometheus.metrics.model.registry.PrometheusRegistry;
@@ -16,6 +20,7 @@ import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.function.Function;
@@ -25,6 +30,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.slf4j.LoggerFactory;
 
 /**
  * Unit and integration tests for {@link PrometheusScrapeEndpoint}.
@@ -190,6 +196,75 @@ class PrometheusScrapeEndpointTest {
                     .orElseThrow(() -> new AssertionError("span context must be present"));
             assertEquals("trace-abc", deferred.getCurrentTraceId(), "delegate must be wired when exemplars enabled");
             assertEquals("span-def", deferred.getCurrentSpanId());
+        }
+    }
+
+    // --- Startup warning when nothing can be attached ---
+
+    @Nested
+    @DisplayName("exemplar startup warning")
+    class ExemplarStartupWarning {
+
+        private ListAppender<ILoggingEvent> appender;
+        private Logger endpointLogger;
+
+        @BeforeEach
+        void attachAppender() {
+            endpointLogger = (Logger) LoggerFactory.getLogger(PrometheusScrapeEndpoint.class);
+            appender = new ListAppender<>();
+            appender.start();
+            endpointLogger.addAppender(appender);
+        }
+
+        @AfterEach
+        void detachAppender() {
+            endpointLogger.detachAppender(appender);
+        }
+
+        private List<ILoggingEvent> warnings() {
+            return appender.list.stream()
+                    .filter(e -> e.getLevel() == Level.WARN)
+                    .toList();
+        }
+
+        @Test
+        @DisplayName("exemplars on, no span context → one WARN at startup")
+        void warnsOnceWhenNothingCanBeAttached(Vertx vertx) {
+            PrometheusScrapeConfig config =
+                    PrometheusScrapeConfig.builder().exemplarsEnabled(true).build();
+            publishFakeRegistry();
+
+            new PrometheusScrapeEndpoint(vertx, Optional.empty(), config).contribute(Router.router(vertx));
+
+            assertEquals(1, warnings().size(), "exactly one warning: " + warnings());
+            assertTrue(
+                    warnings().getFirst().getFormattedMessage().contains("exemplars are enabled"),
+                    warnings().getFirst().getFormattedMessage());
+        }
+
+        @Test
+        @DisplayName("exemplars on, span context present → no warning")
+        void noWarningWhenSpanContextIsPresent(Vertx vertx) {
+            PrometheusScrapeConfig config =
+                    PrometheusScrapeConfig.builder().exemplarsEnabled(true).build();
+            publishFakeRegistry();
+
+            new PrometheusScrapeEndpoint(vertx, Optional.of(fakeSpanContext("t", "s")), config)
+                    .contribute(Router.router(vertx));
+
+            assertTrue(warnings().isEmpty(), "no warning expected: " + warnings());
+        }
+
+        @Test
+        @DisplayName("exemplars off, no span context → no warning")
+        void noWarningWhenExemplarsAreOff(Vertx vertx) {
+            PrometheusScrapeConfig config =
+                    PrometheusScrapeConfig.builder().exemplarsEnabled(false).build();
+            publishFakeRegistry();
+
+            new PrometheusScrapeEndpoint(vertx, Optional.empty(), config).contribute(Router.router(vertx));
+
+            assertTrue(warnings().isEmpty(), "no warning expected: " + warnings());
         }
     }
 
