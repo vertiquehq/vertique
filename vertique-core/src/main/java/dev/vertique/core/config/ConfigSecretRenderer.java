@@ -251,7 +251,7 @@ public final class ConfigSecretRenderer {
      * JDBC URL ({@code jdbc:oracle:thin:user/pass@host…}), and the value of every parameter whose name
      * {@link #isSensitivePath(String) names a credential} or is {@code pwd}, {@code passwd} or
      * {@code sig}. Parameters are separated by {@code &} or {@code ;} and start at the first
-     * {@code ?} or {@code ;}, so the query of a web URL and the property list of a JDBC URL
+     * {@code ?} or {@code ;}, and the first {@code ?} also separates, so the query of a web URL and the property list of a JDBC URL
      * ({@code …:1433;password=…}) are masked by one rule. A value written {@code RAW(…)} or
      * {@code RAW{…}} (Camel) is masked whole, even when it contains a separator. The scheme, host, port,
      * and path are kept intact for debuggability.
@@ -274,7 +274,7 @@ public final class ConfigSecretRenderer {
         if (uri == null) {
             return "null";
         }
-        return redactParameters(redactUserinfo(redactOracleThin(uri)));
+        return redactUserinfo(redactParameters(redactOracleThin(uri)));
     }
 
     /**
@@ -290,11 +290,32 @@ public final class ConfigSecretRenderer {
             return uri;
         }
         int from = ORACLE_THIN_PREFIX.length();
-        int at = uri.indexOf('@', from);
+        int at = oracleCredentialEnd(uri, from);
         if (at <= from) {
             return uri;
         }
         return uri.substring(0, from) + MASK + uri.substring(at);
+    }
+
+    /**
+     * Finds the {@code @} that ends the credentials of an Oracle thin URL: the one in front of
+     * {@code //} or {@code (}, else the last one before the first {@code ?} or {@code ;}, so a password
+     * that contains {@code @} is masked whole.
+     */
+    private static int oracleCredentialEnd(String uri, int from) {
+        for (int i = from; i < uri.length(); i++) {
+            if (uri.startsWith("@//", i) || uri.startsWith("@(", i)) {
+                return i;
+            }
+        }
+        int end = uri.length();
+        for (int i = from; i < uri.length(); i++) {
+            if (uri.charAt(i) == '?' || uri.charAt(i) == ';') {
+                end = i;
+                break;
+            }
+        }
+        return uri.lastIndexOf('@', end - 1);
     }
 
     /**
@@ -351,29 +372,38 @@ public final class ConfigSecretRenderer {
         if (start < 0) {
             return uri;
         }
+        int queryStart = uri.indexOf('?');
         StringBuilder redacted = new StringBuilder(uri.length()).append(uri, 0, start);
         int delimiter = start;
         while (delimiter < uri.length()) {
             redacted.append(uri.charAt(delimiter));
             int nameStart = delimiter + 1;
-            int equals = -1;
-            int end = nameStart;
-            while (end < uri.length() && !isParameterSeparator(uri.charAt(end))) {
-                if (uri.charAt(end) == '=' && equals < 0) {
-                    equals = end;
-                    end = rawValueEnd(uri, end + 1);
+            int equals = nameStart;
+            while (equals < uri.length() && uri.charAt(equals) != '=' && !isSeparator(uri, equals, queryStart)) {
+                equals++;
+            }
+            int end = equals;
+            if (equals < uri.length() && uri.charAt(equals) == '=') {
+                boolean credential = isCredentialParameter(uri.substring(nameStart, equals));
+                end = credential ? rawValueEnd(uri, equals + 1) : equals + 1;
+                while (end < uri.length() && !isSeparator(uri, end, queryStart)) {
+                    end++;
+                }
+                if (credential) {
+                    redacted.append(uri, nameStart, equals + 1).append(MASK);
+                    delimiter = end;
                     continue;
                 }
-                end++;
             }
-            if (equals >= 0 && isCredentialParameter(uri.substring(nameStart, equals))) {
-                redacted.append(uri, nameStart, equals + 1).append(MASK);
-            } else {
-                redacted.append(uri, nameStart, end);
-            }
+            redacted.append(uri, nameStart, end);
             delimiter = end;
         }
         return redacted.toString();
+    }
+
+    private static boolean isSeparator(String uri, int index, int queryStart) {
+        char c = uri.charAt(index);
+        return c == '&' || c == ';' || index == queryStart;
     }
 
     private static int firstDelimiter(String uri) {
@@ -386,15 +416,12 @@ public final class ConfigSecretRenderer {
         return -1;
     }
 
-    private static boolean isParameterSeparator(char c) {
-        return c == '&' || c == ';';
-    }
-
     /**
      * Returns where a parameter value that starts at {@code from} ends when it is written as a Camel
-     * raw value, {@code RAW(…)} or {@code RAW{…}}: the closing bracket that is followed by {@code &} or
+     * raw value, {@code RAW(…)} or {@code RAW{…}}: the closing bracket that is followed by {@code &}, {@code ;} or
      * the end of the string, or the end of the string when there is none. Any other value ends where
-     * the caller finds a separator, so this returns {@code from} unchanged.
+     * the caller finds a separator, so this returns {@code from} unchanged. Only a credential's value
+     * needs its extent, so the caller asks for it only there.
      */
     private static int rawValueEnd(String uri, int from) {
         char close;
@@ -406,7 +433,8 @@ public final class ConfigSecretRenderer {
             return from;
         }
         for (int i = from + 4; i < uri.length(); i++) {
-            if (uri.charAt(i) == close && (i + 1 == uri.length() || uri.charAt(i + 1) == '&')) {
+            if (uri.charAt(i) == close
+                    && (i + 1 == uri.length() || uri.charAt(i + 1) == '&' || uri.charAt(i + 1) == ';')) {
                 return i + 1;
             }
         }

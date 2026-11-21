@@ -382,6 +382,48 @@ class ConfigSecretRendererTest {
         }
 
         @Test
+        @DisplayName("masks a password that contains '@' whole in a semicolon-style URL, keeping host and user")
+        void atSignInSemicolonPasswordMasked() {
+            assertEquals(
+                    "jdbc:sqlserver://host:1433;user=u;password=***;encrypt=true",
+                    ConfigSecretRenderer.redactUri("jdbc:sqlserver://host:1433;user=u;password=p@ss;encrypt=true"));
+            assertEquals(
+                    "jdbc:sqlserver://host:1433;databaseName=x;password=***",
+                    ConfigSecretRenderer.redactUri("jdbc:sqlserver://host:1433;databaseName=x;password=p@ss"));
+            assertEquals("http://h;password=***", ConfigSecretRenderer.redactUri("http://h;password=p@ss"));
+        }
+
+        @Test
+        @DisplayName("masks query credentials that follow a ';' path parameter")
+        void queryAfterPathParameterMasked() {
+            assertEquals(
+                    "http://h/p;jsessionid=1?password=***",
+                    ConfigSecretRenderer.redactUri("http://h/p;jsessionid=1?password=secret"));
+            assertEquals(
+                    "http://h/p;v=1?a=b&token=***", ConfigSecretRenderer.redactUri("http://h/p;v=1?a=b&token=secret"));
+        }
+
+        @Test
+        @DisplayName("an Oracle thin password that contains '@' is masked whole")
+        void oracleAtSignInPasswordMasked() {
+            assertEquals(
+                    "jdbc:oracle:thin:***@//host:1521/svc",
+                    ConfigSecretRenderer.redactUri("jdbc:oracle:thin:scott/p@ss@//host:1521/svc"));
+            assertEquals(
+                    "jdbc:oracle:thin:***@host:1521:orcl",
+                    ConfigSecretRenderer.redactUri("jdbc:oracle:thin:scott/p@ss@host:1521:orcl"));
+        }
+
+        @Test
+        @DisplayName("a RAW value ends at a ';' too, and an unclosed RAW on a non-credential parameter hides nothing")
+        void rawValueBoundaries() {
+            assertEquals(
+                    "jdbc:x://h;a=RAW(x);password=***",
+                    ConfigSecretRenderer.redactUri("jdbc:x://h;a=RAW(x);password=secret"));
+            assertEquals("x://h?a=RAW(x&password=***", ConfigSecretRenderer.redactUri("x://h?a=RAW(x&password=s"));
+        }
+
+        @Test
         @DisplayName("masks a Camel RAW value whole, even when it contains a separator")
         void camelRawValueMasked() {
             assertEquals(

@@ -1456,9 +1456,8 @@ public final class Diagnostics {
     public static String restClientDeclaringInterfaceNotNameable(
             String declaringFqn, String clientFqn, String clientPackage) {
         return ("%s declares an operation of REST client %s but is not accessible from package '%s', where the"
-                        + " generated proxy lives, so no proxy can be generated and the client would silently fall"
-                        + " back to the reflective proxy. Make the interface (and any enclosing type) public, or"
-                        + " move the client into its package.")
+                        + " generated proxy lives, so no proxy can be generated for the client. Make the interface (and"
+                        + " any enclosing type) public, or move the client into its package.")
                 .formatted(declaringFqn, clientFqn, clientPackage);
     }
 
