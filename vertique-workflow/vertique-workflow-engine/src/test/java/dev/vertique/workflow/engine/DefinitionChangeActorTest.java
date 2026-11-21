@@ -39,6 +39,13 @@ import org.junit.jupiter.params.provider.MethodSource;
  */
 class DefinitionChangeActorTest {
 
+    /** Characters the actor text rule removes, built at run time so that no source line carries them. */
+    private static final String RIGHT_TO_LEFT_OVERRIDE = Character.toString(0x202E);
+
+    private static final String ZERO_WIDTH = Character.toString(0x200B);
+    private static final String ZERO_WIDTH_JOINER = Character.toString(0x200D);
+    private static final String LINE_SEPARATOR = Character.toString(0x2028);
+
     /** Holds the values a test binds; reads only. */
     private static final class Held implements ContextHolder {
         private final Map<Class<?>, Object> values = new HashMap<>();
@@ -82,9 +89,10 @@ class DefinitionChangeActorTest {
                 Arguments.of("user", holding(user("u-1"))),
                 Arguments.of("service for a user", holding(serviceActingFor("svc-1", "u-7"))),
                 Arguments.of("system", holding(SystemIdentities.scheduledJob("nightly"))),
-                Arguments.of("hostile id", holding(user("u\u0000-‮1\n" + "x".repeat(400)))),
-                Arguments.of("id of format characters only", holding(user("​‍"))),
-                Arguments.of("hostile subject", holding(serviceActingFor("svc-1", "u\r\n7 "))),
+                Arguments.of(
+                        "hostile id", holding(user("u\u0000-" + RIGHT_TO_LEFT_OVERRIDE + "1\n" + "x".repeat(400)))),
+                Arguments.of("id of format characters only", holding(user(ZERO_WIDTH + ZERO_WIDTH_JOINER))),
+                Arguments.of("hostile subject", holding(serviceActingFor("svc-1", "u\r\n7" + LINE_SEPARATOR))),
                 Arguments.of(
                         "degraded snapshot",
                         holding(user("u-1"))
@@ -138,7 +146,7 @@ class DefinitionChangeActorTest {
     void anActorIsCleanedAndBounded() {
         DefinitionChangeActor actor = new DefinitionChangeActor(
                 new HistoryActor(HistoryActor.Kind.USER, "u\u0000-" + "x".repeat(400), "why\n"),
-                "s\u202E7",
+                "s" + RIGHT_TO_LEFT_OVERRIDE + "7",
                 HistoryAttribution.VERIFIED);
 
         assertThat(actor.actor().id()).hasSize(255).startsWith("u-x");
