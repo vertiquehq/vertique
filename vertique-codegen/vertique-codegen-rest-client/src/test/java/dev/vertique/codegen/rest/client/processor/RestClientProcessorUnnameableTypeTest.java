@@ -43,7 +43,8 @@ class RestClientProcessorUnnameableTypeTest {
                                 }
                                 """)));
 
-        result.assertFailed().assertErrorMessage("dev.vertique.examples.client.Api.Paging");
+        result.assertFailed()
+                .assertErrorMessage("dev.vertique.examples.client.Api.Paging is not accessible from package");
     }
 
     @Test
@@ -69,6 +70,7 @@ class RestClientProcessorUnnameableTypeTest {
                                 }
                                 """)));
 
-        result.assertFailed().assertErrorMessage("dev.vertique.examples.client.Api.Payload");
+        result.assertFailed()
+                .assertErrorMessage("dev.vertique.examples.client.Api.Payload is not accessible from package");
     }
 }
