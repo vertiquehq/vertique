@@ -65,6 +65,15 @@ class HealthCheckModuleGraphTest {
     }
 
     @Test
+    @DisplayName("a numeric string, as property sources deliver it, is read like the management probes read it")
+    void aggregatorReadsANumericString() {
+        JsonObject config =
+                new JsonObject().put("management", new JsonObject().put("healthCheckTimeoutSeconds", " 10 "));
+
+        assertEquals(10L, aggregatorFor(config).checkTimeoutSeconds());
+    }
+
+    @Test
     @DisplayName("a bound configuration without the key keeps the default timeout")
     void aggregatorKeepsTheDefaultWhenTheKeyIsAbsent() {
         assertEquals(
@@ -77,9 +86,9 @@ class HealthCheckModuleGraphTest {
     }
 
     @Test
-    @DisplayName("a zero, negative or non-integer timeout fails with a configuration error naming the key")
+    @DisplayName("a zero, negative or non-numeric timeout fails with a configuration error naming the key")
     void aggregatorRejectsAnInvalidTimeout() {
-        for (Object bad : new Object[] {0, -3, "soon", 2.5}) {
+        for (Object bad : new Object[] {0, -3, "0", "soon", true}) {
             JsonObject config =
                     new JsonObject().put("management", new JsonObject().put("healthCheckTimeoutSeconds", bad));
 

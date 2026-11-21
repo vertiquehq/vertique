@@ -103,8 +103,15 @@ public abstract class HealthCheckModule {
         }
         Object value = management.getValue("healthCheckTimeoutSeconds");
         long seconds;
-        if (value instanceof Integer || value instanceof Long || value instanceof Short || value instanceof Byte) {
-            seconds = ((Number) value).longValue();
+        if (value instanceof Number number) {
+            seconds = number.longValue();
+        } else if (value instanceof String text) {
+            // Property-source values arrive as strings; the management probes coerce them the same way.
+            try {
+                seconds = Long.parseLong(text.trim());
+            } catch (NumberFormatException e) {
+                throw new ConfigurationException("management.healthCheckTimeoutSeconds must be a whole number");
+            }
         } else {
             throw new ConfigurationException("management.healthCheckTimeoutSeconds must be a whole number");
         }
