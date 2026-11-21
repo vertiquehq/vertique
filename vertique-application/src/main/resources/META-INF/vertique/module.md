@@ -86,6 +86,7 @@ Framework modules contribute their own lifecycle work via Dagger `@IntoSet` mult
 |------|-------|--------|--------------|
 | `JsonSystemProfileInstallStep` | `CONFIGURE` | `JsonRuntimeModule` | Installs the `json.systemProfile` profile's `ObjectMapper` as the process JSON codec's mapper |
 | `ComposeValidationStep` | `VALIDATE` | `CoreLifecycleStepsModule` | Materializes the `Set<ComposeValidator>` multibinding, forcing construction of every validator |
+| `StartupReadinessCheck` | `AFTER_START` | `CoreLifecycleStepsModule` | Marks startup finished, last in the phase; it is also the `startup` readiness check, so `/health/ready` stays DOWN until every phase has run |
 | `FlywayMigrationStartupStep` | `MIGRATE` | `DbFlywayModule` | Runs `MigrationRunner.migrate(vertx)` — schema is migrated before INFRA/SERVICES/EDGE verticles deploy |
 | `ServiceDeploymentStartupStep` | `SERVICES` | `DispatchModule` | Deploys all service verticles via `ServiceDeploymentManager.deployAll()` |
 | `ServiceDeploymentShutdownStep` | `SERVICES` | `DispatchModule` | Undeploys service verticles (deregister-first) via `ServiceDeploymentManager.undeployAll()` |
@@ -156,8 +157,8 @@ public interface VertiqueApplicationComponent {
   multibinding set is materialized fails the returned future rather than escaping as a
   synchronous throw.
 - A component that does not include `CoreLifecycleStepsModule` will have no CONFIGURE or VALIDATE
-  steps. The multibinding declared in `DeployerModule` provides an empty-by-default `Set`, so the
-  build does not fail — but Jackson will not be configured and compose validators will not run.
+  steps and no startup readiness gate. The multibinding declared in `DeployerModule` provides an empty-by-default `Set`, so the
+  build does not fail — but Jackson will not be configured, compose validators will not run, and the readiness probe does not wait for startup to finish.
 
 ---
 
@@ -198,7 +199,7 @@ BOOTSTRAP  → deploy BOOTSTRAP-phase verticles
 INFRA      → deploy INFRA-phase verticles (management, health)
 SERVICES   → ServiceDeploymentStartupStep (from DispatchModule) → deploy SERVICES-phase verticles
 EDGE       → deploy EDGE-phase verticles (HTTP, WebSocket)
-AFTER_START → (no built-in steps; apps contribute post-start notifications etc. here)
+AFTER_START → StartupReadinessCheck (from CoreLifecycleStepsModule, last in the phase); apps contribute post-start notifications etc. here
 ```
 
 #### Invariants & Gotchas
