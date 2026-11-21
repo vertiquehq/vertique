@@ -81,15 +81,25 @@ class FlywayConfigRedactionTest {
         assertFalse(rendered.contains(PLACEHOLDER_SECRET), "placeholder value must not render");
         assertTrue(rendered.contains("placeholders=[appPassword]"), rendered);
         assertFalse(rendered.contains(URL_SECRET), "a password embedded in the URL must not render");
-        assertTrue(
-                rendered.contains("jdbcUrl=jdbc:postgresql://db.example:5432/app?password=<redacted>&ssl=true"),
-                rendered);
+        assertTrue(rendered.contains("jdbcUrl=jdbc:postgresql://db.example:5432/app?password=***&ssl=true"), rendered);
         assertFalse(FlywayConfig.builder()
                 .jdbcUrl("jdbc:postgresql://h/d?password=" + URL_SECRET)
                 .toString()
                 .contains(URL_SECRET));
         assertFalse(builderRendered.contains(PASSWORD));
         assertTrue(builderRendered.contains("password=<redacted>"));
+    }
+
+    @Test
+    @DisplayName("toString and the config mapper mask the same URL the same way, including ';password='")
+    void url_maskedIdenticallyByToStringAndMapper() throws Exception {
+        String url = "jdbc:sqlserver://db.example:1433;databaseName=app;password=" + URL_SECRET + ";encrypt=true";
+        FlywayConfig config = FlywayConfig.builder().jdbcUrl(url).build();
+        String expected = "jdbc:sqlserver://db.example:1433;databaseName=app;password=***;encrypt=true";
+
+        assertTrue(config.toString().contains("jdbcUrl=" + expected), config.toString());
+        assertTrue(FlywayConfig.builder().jdbcUrl(url).toString().contains("jdbcUrl=" + expected));
+        assertEquals(expected, new JsonObject(mapper.writeValueAsString(config)).getString("jdbcUrl"));
     }
 
     @Test

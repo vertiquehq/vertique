@@ -71,8 +71,10 @@ default method with a verb keeps that verb. The proxy keys each operation by the
 method it implements, which is the key of the runtime scan.
 
 When an operation is declared by an interface the generated proxy cannot name (package-private to another
-package, or nested in a private type), no proxy is generated for that client and the runtime reflective proxy
-applies.
+package, or nested in a private type), compilation fails with an error that names the declaring interface, the
+client and the package the proxy is generated in. Make the interface (and any enclosing type) public, or move
+the client into its package. No proxy is generated and the client does not silently fall back to the runtime
+reflective proxy.
 
 ### Generated `{Client}_RestClientProxy`
 

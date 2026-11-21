@@ -23,11 +23,10 @@ import java.util.Optional;
  * This class only fixes how a dotted path is built while walking a value, with the walk of
  * {@link ConfigSecretRenderer#redactBag(JsonObject)}: object keys extend the path with a {@code .}
  * separator, and array or collection elements inherit their parent's path (an index is not part of the
- * key shape the runtime flattens to). Two deliberate differences from {@code redactBag}: it prints
+ * key shape the runtime flattens to). One deliberate difference from {@code redactBag}: it prints
  * {@code "***"} for a {@code null} secret while serialization omits an absent secret, so
- * {@link #maskValue} drops a {@code null} sensitive entry; and it leaves a URL-named string leaf as
- * given, while {@link #maskValue} renders it through {@link ConfigSecretRenderer#redactUri(String)},
- * so a bag's {@code toString()} prints a URL as given where a config-mapper dump masks its credentials.
+ * {@link #maskValue} drops a {@code null} sensitive entry. A URL-named string leaf is rendered through
+ * {@link ConfigSecretRenderer#redactUri(String)} by both.
  */
 final class ConfigSecretPaths {
 

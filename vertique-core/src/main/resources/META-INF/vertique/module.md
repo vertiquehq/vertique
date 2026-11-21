@@ -1371,23 +1371,27 @@ look-alikes such as `keyStorePath` or `maxTokens`.
 `isUriPath` names the string fields the config mapper renders through `redactUri` instead of as given:
 a field whose dotted path contains `url`, `uri`, `endpoint` or `connectionstring` after lower-casing
 and separator stripping (`jdbcUrl`, `baseUrl`, `endpoints`, `connection-string`) has its authority
-userinfo and credential-named query-parameter values masked while scheme, host, port and path stay
-visible. A secret-named path wins (`tokenUrl` renders as `"***"`). The config mapper applies the rule
-to every string it walks at such a path — a field, an `Optional`, a list element, a bag entry — but
-`redactBag`, and so a bag's `toString()`, does not. The rule covers `scheme://user:pass@host` and
-`?name=value` forms only, with the userinfo percent-encoded: a raw `/`, `?` or `#` inside a password
-ends the authority early and leaves the rest visible, only the first authority of a comma-joined value
-is masked, a scheme-less or semicolon-style connection string is printed as given, a `java.net.URI`,
-`URL` or array-typed value is written as given, a URL under a name without one of the tokens
-(`address`, `host`) is not recognized, and a masked URL fed back to `ConfigParser` is not rejected
-(only the literal `"***"` at a secret path is).
+userinfo, Oracle thin `user/pass@` prefix and credential-named parameter values masked while scheme,
+host, port and path stay visible. A secret-named path wins (`tokenUrl` renders as `"***"`). The config
+mapper and `redactBag` — so a bag's `toString()` — apply the rule to every string they walk at such a
+path: a field, an `Optional`, a list element, a bag entry. The rule covers `scheme://user:pass@host`,
+the Oracle thin form, and parameters after the first `?` or `;`, separated by `&` or `;`, with the
+userinfo percent-encoded: a raw `/`, `?` or `#` inside a password ends the authority early and leaves
+the rest visible, a credential value with an unescaped `;` or `&` ends there (write it as Camel
+`RAW(...)`, which is masked whole), a `@` inside a `;`-separated property value is read as the end of the
+userinfo, so the host is masked with it (over-masking, never a leak), an Oracle thin password that
+contains `?` or `;` is not recognized in the `@host:port:sid` form, only the first authority of a comma-joined value is masked, a
+scheme-less connection string is printed as given, a `java.net.URI`, `URL` or array-typed value is
+written as given, a URL under a name without one of the tokens (`address`, `host`) is not recognized,
+and a masked URL fed back to `ConfigParser` is not rejected (only the literal `"***"` at a secret path
+is).
 
 | Method | Behavior |
 |---|---|
 | `isSensitivePath(String dottedPath)` | `true` when the lower-cased path contains `password`, `secret`, `token`, `passphrase`, `credential`, `jaas.config`, `user.info`, `private.key`, `keystore`, or `truststore`; or when its separator-stripped, lower-cased form contains `apikey`, `accesskey`, `secretkey`, `privatekey`, `jaasconfig`, or `userinfo` (so `privateKeyPem`, `private-key`, `private_key`, `jaasConfig`, `jaas-config`, `userInfo` and `user_info` all match). |
 | `isUriPath(String dottedPath)` | `true` when the separator-stripped, lower-cased path contains `url`, `uri`, `endpoint` or `connectionstring`. Biased towards matching: `security` and `during` match through `uri`; a wrong match costs at most a rewritten non-URL string that contains `//…@` or a credential-named `?name=value`, because `redactUri` returns an equal string otherwise. The token set may widen in a minor release and never narrows. |
-| `redactBag(JsonObject bag)` | Renders a bag as a log-safe `String`, descending through nested objects *and* arrays and masking every leaf whose full dotted path is sensitive. |
-| `redactUri(String uri)` | Masks authority userinfo (`user:pass` between `//` and `@`) and the value of any credential-bearing query parameter. Best-effort; never throws. |
+| `redactBag(JsonObject bag)` | Renders a bag as a log-safe `String`, descending through nested objects *and* arrays, masking every leaf whose full dotted path is sensitive and passing every string at a URL-named path through `redactUri`. |
+| `redactUri(String uri)` | Masks authority userinfo (`user:pass` between `//` and `@`), an Oracle thin `user/pass@` prefix, and the value of any credential-bearing parameter: a name `isSensitivePath` accepts, or `pwd`, `passwd`, `sig`; parameters start at the first `?` or `;` and are separated by `&` or `;`; a Camel `RAW(...)` or `RAW{...}` value is masked whole. Best-effort; never throws. |
 
 Matching is substring-based in both forms, so `ssl.trustStoreOptions.password` and `aws.access-key`
 are recognized at any depth.

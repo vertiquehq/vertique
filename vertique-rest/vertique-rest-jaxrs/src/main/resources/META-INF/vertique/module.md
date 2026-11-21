@@ -1822,7 +1822,7 @@ application's settings object. The section sits under `jaxrs`, but this module p
 
 | Key | Default | Constraint / notes |
 |---|---|---|
-| `jaxrs.applications.<name>.openapiPath` | the declaration's own `@RestApplication.openapiPath`, then `jaxrs.openapiPath` | string; overrides both when set. An absent key or an explicit `null` falls back to that precedence; an empty or whitespace-only value fails startup |
+| `jaxrs.applications.<name>.openapiPath` | the declaration's own `@RestApplication.openapiPath`, then `jaxrs.openapiPath` | string; overrides both when set. An absent key or an explicit `null` falls back to that precedence; an empty or whitespace-only value, or a value that is not a string, fails startup |
 
 ```json
 {
@@ -1854,9 +1854,9 @@ That strictness is a deliberate narrowing of the "unknown keys are ignored" rule
 `vertique-rest-core` applies to `jaxrs`, limited to the reserved name `applications`. Each of those
 failures, and a blank `openapiPath`, raises a `ConfigurationException` naming the offending
 configuration paths (for a miscased section name, the offending `jaxrs` keys), sorted, never their
-values. The section name is checked first, then shapes and keys, all before any `openapiPath`
-value is parsed, so blank values are reported only when no section-name, shape, or key problem
-remains (see [Startup failures](#startup-failures)).
+values. The section name is checked first, then shapes and keys, then non-string `openapiPath`
+values, all before any `openapiPath` value is parsed, so blank values are reported only when no
+section-name, shape, key, or non-string problem remains (see [Startup failures](#startup-failures)).
 
 ---
 
@@ -1939,21 +1939,22 @@ per-operation state on `operation().applicationName()` as well as the operationI
 
 Parsing `jaxrs.applications` (see [Per-application configuration](#per-application-configuration))
 raises `ConfigurationException`. The section-name, shape, key, and blank-value checks use the four
-messages below; `<keys>` lists every offending `jaxrs` key and `<paths>` every offending
-configuration path, each single-quoted, sorted, and comma-separated. An entry that passes those
-checks but cannot be bound — an `openapiPath` that is a JSON object or array, or a blank entry
-key — fails instead with the configuration parser's own
-message, which does not name the full configuration path. No message contains a configured value.
+messages below, and the non-string check after the key check; `<keys>` lists every offending `jaxrs` key
+and `<paths>` every offending configuration path, each single-quoted, sorted, and comma-separated. An
+entry that passes those checks but cannot be bound — a blank entry key — fails instead with the
+configuration parser's own message, which does not name the full configuration path. No message
+contains a configured value.
 
 | Condition | Message |
 |---|---|
 | A `jaxrs` key equals `applications` ignoring case but is spelled differently | `Miscased applications keys under 'jaxrs': <keys>; per-application settings belong under 'jaxrs.applications'` |
 | `jaxrs.applications` is present but not a JSON object (`null` included) | `'jaxrs.applications' must be a JSON object` |
 | An entry is not a JSON object (`null` included), or an entry carries a key other than `openapiPath` | `Invalid entries or keys under 'jaxrs.applications': <paths>; each entry must be a JSON object whose only key is 'openapiPath'` |
+| A configured `openapiPath` is present but not a JSON string (a number, boolean, object or array; `null` is accepted) | `Non-string values under 'jaxrs.applications': <paths>; set 'openapiPath' to a string location or omit it` |
 | A configured `openapiPath` is empty or only whitespace | `Blank values under 'jaxrs.applications': <paths>; set 'openapiPath' to a non-blank location or omit it` |
 
 In the third message a path is `jaxrs.applications.<name>` for an entry that is not an object and
-`jaxrs.applications.<name>.<key>` for a rejected key; in the fourth it is
+`jaxrs.applications.<name>.<key>` for a rejected key; in the fourth and fifth it is
 `jaxrs.applications.<name>.openapiPath`.
 
 `SecurityPolicyViolationException` is thrown immediately when a `SecurityPolicyValidator` is bound and

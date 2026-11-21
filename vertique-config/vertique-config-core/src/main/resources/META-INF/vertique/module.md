@@ -378,15 +378,18 @@ Absent any `@ConfigMapper` binding, the framework uses its own lenient default m
   entries masked at every depth, the walk `redactBag` applies to `toString()`, with `null` secret
   entries dropped. A string at a path `ConfigSecretRenderer.isUriPath` recognises (`jdbcUrl`,
   `baseUrl`, `endpoints`, `uri`, `connectionString`; a field, an `Optional`, a list element or a bag
-  entry) is written as `ConfigSecretRenderer.redactUri` renders it: `user:pass@` and credential-named
-  query-parameter values become `***`, scheme, host, port and path stay visible, and a URL without
-  credentials serializes as given. Secret wins over URL (`tokenUrl` renders as `"***"`). The URL rule
-  covers `scheme://user:pass@host` and `?name=value` forms only, with the userinfo percent-encoded — a
-  raw `/`, `?` or `#` inside a password ends the authority early, only the first authority of a
-  comma-joined value is masked, and a scheme-less or semicolon-style connection string, a
-  `java.net.URI`, `URL` or array-typed value, or a URL under a name without one of the tokens
-  (`address`) serializes as given — and it is one difference from `toString()`: `redactBag` leaves a
-  URL inside a bag as given. The
+  entry) is written as `ConfigSecretRenderer.redactUri` renders it: `user:pass@`, an Oracle thin
+  `user/pass@` prefix, and the values of credential-named parameters (`password`, `secret`, `token`
+  and the other secret names, plus `pwd`, `passwd` and `sig`, separated by `&` or `;`, a Camel `RAW(...)`
+  value masked whole) become `***`, scheme, host, port and path stay visible, and a URL without
+  credentials serializes as given. Secret wins over URL (`tokenUrl` renders as `"***"`). A bag's
+  `toString()` applies the same rule, so `redactBag` and the mapper dump agree. The URL rule covers
+  those forms only, with the userinfo percent-encoded — a raw `/`, `?` or `#` inside a password ends
+  the authority early, a credential value with an unescaped `;` or `&` ends there (write it as
+  `RAW(...)`), only the first authority of a comma-joined value is masked, and a scheme-less
+  connection string, a `java.net.URI`, `URL` or array-typed value, or a URL under a name without one of
+  the tokens (`address`) serializes as given. A masked URL fed back to `ConfigParser` is not rejected.
+  The
   live value is untouched, deserialization is untouched, and so is any other
   `ObjectMapper`: a record dumped through a REST or process mapper is not masked. A `@ConfigMapper`
   override gets the module too, provided it has not serialized anything before it is finalized; a

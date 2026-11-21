@@ -7,6 +7,7 @@ import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * Shared, array-aware redactor for log-safe rendering of config that may carry secrets.
@@ -23,9 +24,11 @@ import java.util.Locale;
  * <ul>
  *   <li>{@link #redactBag(JsonObject)} — recurses into both {@link JsonObject} and {@link JsonArray}
  *       to any depth, masking each leaf whose full dotted path {@link #isSensitivePath(String) names a
- *       secret}.</li>
+ *       secret} and rendering each string at a {@link #isUriPath(String) URL-named} path through
+ *       {@code redactUri}.</li>
  *   <li>{@link #redactUri(String)} — masks the authority userinfo (the {@code user:pass} between
- *       {@code //} and {@code @}) and the value of any credential-bearing query parameter.</li>
+ *       {@code //} and {@code @}), an Oracle thin {@code user/pass@} prefix, and the value of any
+ *       credential-bearing parameter, whether {@code &}-, {@code ;}- or {@code ?}-separated.</li>
  * </ul>
  *
  * <p>{@link #isUriPath(String)} is the companion predicate for the second shape: it names the dotted
@@ -87,6 +90,11 @@ public final class ConfigSecretRenderer {
      * masking) and never narrows.
      */
     private static final List<String> URI_TOKENS = List.of("url", "uri", "endpoint", "connectionstring");
+
+    /** Parameter names that mark a credential only as the whole name, in a URI. */
+    private static final Set<String> EXACT_CREDENTIAL_PARAMETERS = Set.of("pwd", "passwd", "sig");
+
+    private static final String ORACLE_THIN_PREFIX = "jdbc:oracle:thin:";
 
     private ConfigSecretRenderer() {}
 
@@ -164,6 +172,10 @@ public final class ConfigSecretRenderer {
      * descended into. Array elements inherit their parent's dotted path (the index is not part of the
      * key shape the runtime flattens to), so a sensitive array key masks every element.
      *
+     * <p>A string leaf whose path {@link #isUriPath(String) names a URL} is rendered through
+     * {@link #redactUri(String)}, the same rule the config mapper applies when it serializes a record, so a
+     * credentialed URL in a bag is masked in {@code toString()} and in a mapper dump alike.
+     *
      * <p>The input bag is never mutated — masking is applied to a deep copy used only for the returned
      * string. A {@code null} bag renders as {@code "null"}; an empty bag renders as {@code "{}"}.
      *
@@ -197,6 +209,8 @@ public final class ConfigSecretRenderer {
                 masked.put(key, redactObject(fullKey, nested));
             } else if (value instanceof JsonArray array) {
                 masked.put(key, redactArray(fullKey, array));
+            } else if (value instanceof CharSequence text && isUriPath(fullKey)) {
+                masked.put(key, redactUri(text.toString()));
             } else {
                 masked.put(key, value);
             }
@@ -206,9 +220,10 @@ public final class ConfigSecretRenderer {
 
     /**
      * Recursively builds a masked copy of {@code array}. Each element keeps the parent's dotted path
-     * (the array index is not part of the key shape), so object/array elements are descended into and
-     * scalar elements are copied verbatim (a sensitive array key is already handled by the caller,
-     * which masks the whole value before recursing here).
+     * (the array index is not part of the key shape), so object/array elements are descended into,
+     * string elements at a {@link #isUriPath(String) URL-named} path are rendered through
+     * {@link #redactUri(String)}, and other scalar elements are copied verbatim (a sensitive array key
+     * is already handled by the caller, which masks the whole value before recursing here).
      *
      * @param prefix the dotted-key prefix of the array (its owning key's full path)
      * @param array the current array node to mask
@@ -221,6 +236,8 @@ public final class ConfigSecretRenderer {
                 masked.add(redactObject(prefix, nested));
             } else if (value instanceof JsonArray nestedArray) {
                 masked.add(redactArray(prefix, nestedArray));
+            } else if (value instanceof CharSequence text && isUriPath(prefix)) {
+                masked.add(redactUri(text.toString()));
             } else {
                 masked.add(value);
             }
@@ -230,24 +247,78 @@ public final class ConfigSecretRenderer {
 
     /**
      * Returns a log-safe rendering of a URI with credentials masked: the authority <em>userinfo</em>
-     * (the {@code user:pass} between {@code //} and {@code @}) and the value of any query parameter
-     * whose name {@link #isSensitivePath(String) names a credential}. The scheme, host, port, and path
-     * are kept intact for debuggability.
+     * (the {@code user:pass} between {@code //} and {@code @}), the {@code user/pass} of an Oracle thin
+     * JDBC URL ({@code jdbc:oracle:thin:user/pass@host…}), and the value of every parameter whose name
+     * {@link #isSensitivePath(String) names a credential} or is {@code pwd}, {@code passwd} or
+     * {@code sig}. Parameters are separated by {@code &} or {@code ;} and start at the first
+     * {@code ?} or {@code ;}, and the first {@code ?} also separates, so the query of a web URL and the property list of a JDBC URL
+     * ({@code …:1433;password=…}) are masked by one rule. A value written {@code RAW(…)} or
+     * {@code RAW{…}} (Camel) is masked whole, even when it contains a separator. The scheme, host, port,
+     * and path are kept intact for debuggability.
+     *
+     * <p>Known limit: a credential value that contains an unescaped {@code ;} or {@code &} ends at
+     * that character, so the rest renders as given; write such a value as {@code RAW(…)}. A parameter
+     * name that is not one of the credential names above, such as {@code saslJaasConfig} in a camel-cased
+     * spelling the path predicate does not know, is not masked.
      *
      * <p>This is a best-effort string redaction that never throws: a {@code null} URI renders as
-     * {@code "null"}; a URI with no scheme, no userinfo, or no query is handled gracefully. It does not
-     * require a well-formed {@link java.net.URI} (Camel endpoint URIs frequently are not), so it
+     * {@code "null"}; a URI with no scheme, no userinfo, or no parameters is handled gracefully. It does
+     * not require a well-formed {@link java.net.URI} (Camel endpoint URIs frequently are not), so it
      * operates on the raw string rather than parsing.
      *
      * @param uri the URI to redact, or {@code null}
-     * @return the URI with userinfo and credential query-param values masked, or {@code "null"} when
+     * @return the URI with userinfo and credential parameter values masked, or {@code "null"} when
      *     {@code null}
      */
     public static String redactUri(String uri) {
         if (uri == null) {
             return "null";
         }
-        return redactQuery(redactUserinfo(uri));
+        return redactUserinfo(redactParameters(redactOracleThin(uri)));
+    }
+
+    /**
+     * Masks the {@code user/pass} (or bare {@code user}) of an Oracle thin JDBC URL, the text between
+     * {@code jdbc:oracle:thin:} and the {@code @} that follows it. A URL with nothing there
+     * ({@code jdbc:oracle:thin:@//host/service}) is returned unchanged.
+     *
+     * @param uri the URI string (never {@code null})
+     * @return the URI with any Oracle thin credentials replaced by {@link #MASK}
+     */
+    private static String redactOracleThin(String uri) {
+        if (!uri.regionMatches(true, 0, ORACLE_THIN_PREFIX, 0, ORACLE_THIN_PREFIX.length())) {
+            return uri;
+        }
+        int from = ORACLE_THIN_PREFIX.length();
+        if (uri.length() == from || uri.charAt(from) == '@') {
+            return uri; // nothing between the prefix and the '@': no credentials
+        }
+        int at = oracleCredentialEnd(uri, from);
+        if (at <= from) {
+            return uri;
+        }
+        return uri.substring(0, from) + MASK + uri.substring(at);
+    }
+
+    /**
+     * Finds the {@code @} that ends the credentials of an Oracle thin URL: the one in front of
+     * {@code //} or {@code (}, else the last one before the first {@code ?} or {@code ;}, so a password
+     * that contains {@code @} is masked whole.
+     */
+    private static int oracleCredentialEnd(String uri, int from) {
+        for (int i = from; i < uri.length(); i++) {
+            if (uri.startsWith("@//", i) || uri.startsWith("@(", i)) {
+                return i;
+            }
+        }
+        int end = uri.length();
+        for (int i = from; i < uri.length(); i++) {
+            if (uri.charAt(i) == '?' || uri.charAt(i) == ';') {
+                end = i;
+                break;
+            }
+        }
+        return uri.lastIndexOf('@', end - 1);
     }
 
     /**
@@ -291,35 +362,95 @@ public final class ConfigSecretRenderer {
     }
 
     /**
-     * Masks the value of every credential-bearing query parameter in a URI. The query is the substring
-     * after the first {@code ?}; each {@code &}-separated {@code name=value} pair whose name
-     * {@link #isSensitivePath(String) names a credential} has its value replaced with {@link #MASK}.
-     * A URI with no query string is returned unchanged.
+     * Masks the value of every credential-bearing parameter. Parameters start at the first {@code ?} or
+     * {@code ;} and are separated by {@code &} or {@code ;}; each {@code name=value} pair whose name is
+     * a {@link #isCredentialParameter(String) credential name} has its value replaced with {@link #MASK}.
+     * A URI with no parameters is returned unchanged, and every other character is copied as given.
      *
      * @param uri the URI string (never {@code null}; may already have userinfo masked)
-     * @return the URI with credential query-param values masked
+     * @return the URI with credential parameter values masked
      */
-    private static String redactQuery(String uri) {
-        int queryStart = uri.indexOf('?');
-        if (queryStart < 0) {
+    private static String redactParameters(String uri) {
+        int start = firstDelimiter(uri);
+        if (start < 0) {
             return uri;
         }
-        String base = uri.substring(0, queryStart);
-        String query = uri.substring(queryStart + 1);
-        StringBuilder redacted = new StringBuilder(base).append('?');
-        String[] params = query.split("&", -1);
-        for (int i = 0; i < params.length; i++) {
-            if (i > 0) {
-                redacted.append('&');
+        int queryStart = uri.indexOf('?');
+        StringBuilder redacted = new StringBuilder(uri.length()).append(uri, 0, start);
+        int delimiter = start;
+        while (delimiter < uri.length()) {
+            redacted.append(uri.charAt(delimiter));
+            int nameStart = delimiter + 1;
+            int equals = nameStart;
+            while (equals < uri.length() && uri.charAt(equals) != '=' && !isSeparator(uri, equals, queryStart)) {
+                equals++;
             }
-            String param = params[i];
-            int eq = param.indexOf('=');
-            if (eq >= 0 && isSensitivePath(param.substring(0, eq))) {
-                redacted.append(param, 0, eq + 1).append(MASK);
-            } else {
-                redacted.append(param);
+            int end = equals;
+            if (equals < uri.length() && uri.charAt(equals) == '=') {
+                boolean credential = isCredentialParameter(uri.substring(nameStart, equals));
+                end = credential ? rawValueEnd(uri, equals + 1) : equals + 1;
+                while (end < uri.length() && !isSeparator(uri, end, queryStart)) {
+                    end++;
+                }
+                if (credential) {
+                    redacted.append(uri, nameStart, equals + 1).append(MASK);
+                    delimiter = end;
+                    continue;
+                }
             }
+            redacted.append(uri, nameStart, end);
+            delimiter = end;
         }
         return redacted.toString();
+    }
+
+    private static boolean isSeparator(String uri, int index, int queryStart) {
+        char c = uri.charAt(index);
+        return c == '&' || c == ';' || index == queryStart;
+    }
+
+    private static int firstDelimiter(String uri) {
+        for (int i = 0; i < uri.length(); i++) {
+            char c = uri.charAt(i);
+            if (c == '?' || c == ';') {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Returns where a parameter value that starts at {@code from} ends when it is written as a Camel
+     * raw value, {@code RAW(…)} or {@code RAW{…}}: the closing bracket that is followed by {@code &}, {@code ;} or
+     * the end of the string, or the end of the string when there is none. Any other value ends where
+     * the caller finds a separator, so this returns {@code from} unchanged. Only a credential's value
+     * needs its extent, so the caller asks for it only there.
+     */
+    private static int rawValueEnd(String uri, int from) {
+        char close;
+        if (uri.startsWith("RAW(", from)) {
+            close = ')';
+        } else if (uri.startsWith("RAW{", from)) {
+            close = '}';
+        } else {
+            return from;
+        }
+        for (int i = from + 4; i < uri.length(); i++) {
+            if (uri.charAt(i) == close
+                    && (i + 1 == uri.length() || uri.charAt(i + 1) == '&' || uri.charAt(i + 1) == ';')) {
+                return i + 1;
+            }
+        }
+        return uri.length();
+    }
+
+    /**
+     * Returns {@code true} when a URI parameter name carries a credential: it
+     * {@link #isSensitivePath(String) names a secret} or equals, ignoring case, {@code pwd},
+     * {@code passwd} or {@code sig}. The three short names match whole only, because as substrings they
+     * would match {@code design} or {@code signal}.
+     */
+    private static boolean isCredentialParameter(String name) {
+        return isSensitivePath(name) || EXACT_CREDENTIAL_PARAMETERS.contains(name.toLowerCase(Locale.ROOT));
     }
 }
