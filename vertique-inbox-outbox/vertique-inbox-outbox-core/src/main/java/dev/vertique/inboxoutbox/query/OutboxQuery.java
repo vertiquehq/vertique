@@ -23,7 +23,9 @@ import lombok.Builder;
  * they are the largest set and no index serves their listing; {@code OutboxQueryService#getById} still reads one. Time ranges are inclusive at the start and exclusive at the end. A text
  * filter matches the whole stored value exactly.
  *
- * <p>The query does not filter on an entry's scope key; results carry it as a label.
+ * <p>The query filters on an entry's scope key only through {@link #visibleTo()}; results carry the scope key
+ * as a label. {@code visibleTo} is a filter built from the caller's authenticated context, and a caller that has not
+ * resolved its scopes must not pass {@code null} expecting scoping.
  *
  * @param states          the states to list; at least one, never {@link OutboxEntryState#PUBLISHED}, held as an
  *                        unmodifiable set
@@ -37,6 +39,10 @@ import lombok.Builder;
  * @param updatedFrom     only entries last changed at or after this instant, or {@code null}
  * @param updatedBefore   only entries last changed before this instant, or {@code null}
  * @param sort            the order; {@code null} reads as {@link OutboxSort#UPDATED_AT_DESC}
+ * @param visibleTo       only entries whose scope key is one of these scopes, or {@code null} for every scope.
+ *                        Scopes that cannot match an entry (any principal type but {@code USER}, or no scope key)
+ *                        match no entry; they never mean "no scope restriction". Build them from the authenticated
+ *                        security context, never from request input
  */
 @Builder(toBuilder = true)
 public record OutboxQuery(
@@ -50,10 +56,55 @@ public record OutboxQuery(
         @Nullable Instant createdBefore,
         @Nullable Instant updatedFrom,
         @Nullable Instant updatedBefore,
-        @Nullable OutboxSort sort) {
+        @Nullable OutboxSort sort,
+        @Nullable OutboxCallerScopes visibleTo) {
 
     /** Longest accepted text filter, in characters; the width of the stored columns. */
     public static final int MAX_TEXT_LENGTH = 255;
+
+    /**
+     * Creates a query without a visibility constraint. Retained so existing callers keep compiling; equivalent to
+     * the canonical constructor with a {@code null} {@code visibleTo}.
+     *
+     * @param states          the states to list
+     * @param destinationType only this destination type, or {@code null}
+     * @param destination     only this destination, or {@code null}
+     * @param eventType       only this event type, or {@code null}
+     * @param aggregateType   only this aggregate type, or {@code null}
+     * @param aggregateId     only this aggregate, or {@code null}
+     * @param createdFrom     only entries created at or after this instant, or {@code null}
+     * @param createdBefore   only entries created before this instant, or {@code null}
+     * @param updatedFrom     only entries last changed at or after this instant, or {@code null}
+     * @param updatedBefore   only entries last changed before this instant, or {@code null}
+     * @param sort            the order, or {@code null} for the default
+     * @throws ValidationException as the canonical constructor does
+     */
+    public OutboxQuery(
+            Set<OutboxEntryState> states,
+            @Nullable DestinationType destinationType,
+            @Nullable String destination,
+            @Nullable String eventType,
+            @Nullable String aggregateType,
+            @Nullable String aggregateId,
+            @Nullable Instant createdFrom,
+            @Nullable Instant createdBefore,
+            @Nullable Instant updatedFrom,
+            @Nullable Instant updatedBefore,
+            @Nullable OutboxSort sort) {
+        this(
+                states,
+                destinationType,
+                destination,
+                eventType,
+                aggregateType,
+                aggregateId,
+                createdFrom,
+                createdBefore,
+                updatedFrom,
+                updatedBefore,
+                sort,
+                null);
+    }
 
     /**
      * Creates a validated query.
@@ -99,6 +150,17 @@ public record OutboxQuery(
     public static OutboxQuery inStates(OutboxEntryState... states) {
         QueryChecks.required(states, "states");
         return new OutboxQuery(
-                new LinkedHashSet<>(Arrays.asList(states)), null, null, null, null, null, null, null, null, null, null);
+                new LinkedHashSet<>(Arrays.asList(states)),
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null);
     }
 }

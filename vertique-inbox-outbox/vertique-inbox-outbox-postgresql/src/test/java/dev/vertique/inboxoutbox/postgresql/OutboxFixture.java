@@ -250,6 +250,11 @@ final class OutboxFixture {
         Instant updatedAt = BASE.plusSeconds(100);
         String scopeKey = "scope-a";
 
+        Seed scopeKey(String value) {
+            this.scopeKey = value;
+            return this;
+        }
+
         Seed state(String value) {
             this.state = value;
             return this;

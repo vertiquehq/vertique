@@ -164,6 +164,19 @@ public class PgOutboxQueryService extends PgSqlRepository implements OutboxQuery
             filter(sql, params, " AND updated_at < $", toOffset(query.updatedBefore()));
         }
 
+        if (query.visibleTo() != null) {
+            if (query.visibleTo().canMatchEntries()) {
+                filter(
+                        sql,
+                        params,
+                        " AND scope_key = ANY($",
+                        query.visibleTo().scopeKeys().toArray(String[]::new));
+                sql.append(')');
+            } else {
+                sql.append(" AND FALSE");
+            }
+        }
+
         OutboxSort sort = query.sort();
         OrderKey primary = sort.ascending() ? OrderKey.asc(sort.column()) : OrderKey.desc(sort.column());
         OrderKey tiebreaker = sort.ascending() ? OrderKey.asc("id") : OrderKey.desc("id");

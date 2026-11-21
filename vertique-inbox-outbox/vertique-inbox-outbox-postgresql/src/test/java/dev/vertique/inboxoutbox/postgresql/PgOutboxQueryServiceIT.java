@@ -22,6 +22,7 @@ import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.inboxoutbox.DestinationType;
 import dev.vertique.inboxoutbox.OutboxEntryState;
 import dev.vertique.inboxoutbox.exception.InboxOutboxPersistenceException;
+import dev.vertique.inboxoutbox.query.OutboxCallerScopes;
 import dev.vertique.inboxoutbox.query.OutboxEntryDetail;
 import dev.vertique.inboxoutbox.query.OutboxEntryPayload;
 import dev.vertique.inboxoutbox.query.OutboxEntrySummary;
@@ -119,6 +120,66 @@ class PgOutboxQueryServiceIT {
     }
 
     // --- Listing: states ---
+
+    @Nested
+    @DisplayName("list: visible to the caller's scopes")
+    class VisibleScopes {
+
+        @Test
+        @DisplayName("only entries whose scope key is one of the caller's scopes are listed")
+        void onlyTheCallersScopes() throws Exception {
+            long a = fixture.seed().scopeKey("scope-a").insert();
+            long b = fixture.seed().scopeKey("scope-b").insert();
+            fixture.seed().scopeKey("scope-c").insert();
+            long standard = fixture.seed().scopeKey("default").insert();
+
+            List<Long> ids = listIds(deadLetters()
+                    .visibleTo(OutboxCallerScopes.ofUser(java.util.Set.of("scope-a", "scope-b", "default")))
+                    .build());
+
+            assertEquals(java.util.Set.of(a, b, standard), new java.util.HashSet<>(ids));
+        }
+
+        @Test
+        @DisplayName("scopes that cannot match an entry list nothing, and no scope restriction lists everything")
+        void emptyAndAbsent() throws Exception {
+            long a = fixture.seed().scopeKey("scope-a").insert();
+
+            assertEquals(
+                    List.of(),
+                    listIds(deadLetters()
+                            .visibleTo(OutboxCallerScopes.ofUser(java.util.Set.of()))
+                            .build()));
+            assertEquals(
+                    List.of(),
+                    listIds(deadLetters()
+                            .visibleTo(new OutboxCallerScopes(
+                                    dev.vertique.security.PrincipalType.SERVICE, java.util.Set.of("scope-a")))
+                            .build()));
+            assertEquals(List.of(a), listIds(deadLetters().build()));
+        }
+
+        @Test
+        @DisplayName("the scope filter combines with the other filters and with paging")
+        void combinesWithPaging() throws Exception {
+            long first = fixture.seed().scopeKey("scope-a").destination("x").insert();
+            fixture.seed().scopeKey("scope-b").destination("x").insert();
+            long second = fixture.seed().scopeKey("scope-a").destination("x").insert();
+            fixture.seed().scopeKey("scope-a").destination("y").insert();
+            OutboxQuery query = deadLetters()
+                    .destination("x")
+                    .visibleTo(OutboxCallerScopes.ofUser(java.util.Set.of("scope-a")))
+                    .sort(OutboxSort.CREATED_AT_ASC)
+                    .build();
+
+            PagedResult<OutboxEntrySummary> page = await(service.list(query, PageCursor.first(1)));
+            PagedResult<OutboxEntrySummary> next =
+                    await(service.list(query, PageCursor.fromToken(page.nextCursorToken())));
+
+            assertEquals(List.of(first), idsOf(page));
+            assertEquals(List.of(second), idsOf(next));
+        }
+    }
 
     @Nested
     @DisplayName("list: state filter")
