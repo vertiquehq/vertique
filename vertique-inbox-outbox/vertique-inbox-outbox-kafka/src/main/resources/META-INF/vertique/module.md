@@ -41,7 +41,7 @@ At relay time:
 3. Builds a Kafka record:
    - **Key:** `aggregateId` when present; `null` otherwise.
    - **Value:** the serialized payload bytes from step 2.
-   - **Headers:** application headers from `OutboxEntry.headers` (application-only), converted with `KafkaRecordHeaders.of(Map)` — one UTF-8 text header per map entry, in the map's iteration order; a `null` or empty map gives no application headers — followed by the durable propagation context projected to reserved `vertique-<namespace>` headers (e.g. `vertique-correlation`, `vertique-localization`) via `DurableMetadataHeaderCodec`. Relay control (message id, `eventType`, aggregate ids) is **not** emitted as headers — it is carried internally in `OutboxMetadata.delivery.outbox`.
+   - **Headers:** application headers from `OutboxEntry.headers` (application-only), converted with `KafkaRecordHeaders.of(Map)` — one UTF-8 text header per map entry, in the map's iteration order; a `null` or empty map gives no application headers — followed by the stored durable propagation context projected to reserved `vertique-<namespace>` headers (e.g. `vertique-correlation`, `vertique-localization`) via `DurableMetadataHeaderCodec`. The signed `identity-snapshot` namespace is not projected unless the configuration names it (see [Forwarded context](#forwarded-context)). Relay control (message id, `eventType`, aggregate ids) is **not** emitted as headers — it is carried internally in `OutboxMetadata.delivery.outbox`.
 4. Sends the record through the application's shared Kafka producer with `KafkaProducerFactory.sendForOutbox(topic, key, value, headers, context, entryId)`, passing the outbox entry id as the send's origin reference. Awaits producer acknowledgment.
 5. On success: returns `OutboxPublishResult.success()`.
 6. On transport/timeout/broker failure: returns `OutboxPublishResult.retryable(message, cause)`.
@@ -58,7 +58,7 @@ the send.
 | Header | Value |
 |--------|-------|
 | Application headers | `OutboxEntry.headers` (application-only), each entry sent as one UTF-8 text header. They come first on the record; the `vertique-<namespace>` headers follow |
-| `vertique-<namespace>` | One reserved header per bound durable-context namespace (e.g. `vertique-correlation`, `vertique-localization`), value = the namespace body as JSON, projected by `DurableMetadataHeaderCodec` |
+| `vertique-<namespace>` | One reserved header per forwarded durable-context namespace (e.g. `vertique-correlation`, `vertique-localization`), value = the namespace body as JSON, projected by `DurableMetadataHeaderCodec`. `vertique-identity-snapshot` is sent only when `inboxOutbox.kafka.outboundContextNamespaces` lists `identity-snapshot` |
 
 Relay/delivery control (`x-message-id`, `eventType`, `aggregateType`, `aggregateId`) is no longer
 emitted as Kafka headers — it lives in `OutboxMetadata.delivery.outbox` and is internal to the relay.
@@ -67,6 +67,25 @@ the reserved `vertique-` prefix is rejected: the entry is dead-lettered (`Outbox
 since the stored row cannot change.
 
 **Ordering note:** Kafka ordering guarantees are meaningful only within a partition. When `aggregateId` is used as the record key, all records for a given aggregate route to the same partition (by default Kafka partitioning), preserving per-aggregate order within that partition. Ordering across different aggregates or partitions is not guaranteed.
+
+### Forwarded context
+
+Which namespaces of the row's stored durable context leave the process as `vertique-<namespace>` headers is decided by `inboxOutbox.kafka.outboundContextNamespaces` (`KafkaOutboxConfig#outboundContextNamespaces`), the same key and meaning as `camel.endpoints.{ref}.outboundContextNamespaces` on the Camel destination. The key applies to every `KAFKA` outbox row sent by this node:
+
+- **Absent (the default):** every namespace the row holds except the signed `identity-snapshot`.
+- **A list:** exactly the listed namespaces, so the list replaces the default rather than adding to it. `[]` forwards no context header; a list that names `identity-snapshot` forwards the identity, and must also name every other namespace the topics should receive.
+
+```yaml
+inboxOutbox:
+  kafka:
+    outboundContextNamespaces: [correlation, localization, identity-snapshot]
+```
+
+The default is a short exclusion list, not an allowlist: a namespace added later is forwarded by default unless the framework adds it to the exclusions. For topics that readers outside the trust boundary can consume, set an explicit list and name only what the readers need. A blank or repeated name fails configuration parsing with `InboxOutboxConfigurationException`. A name no registered `DurableContextMetadataEncoder` owns fails the handler's construction with the same exception, so a misspelled list stops the node at startup instead of silently dropping a namespace; the message names `inboxOutbox.kafka.outboundContextNamespaces[i]` and the registered names, never the rejected text. The check needs the `DurableContextMetadataRegistry` binding, which every component that installs the outbox already has. The producer capture hook receives the headers as sent, so it sees the filtered context.
+
+The key governs the outbox relay only. Typed Kafka producers and the dead-letter send are unchanged.
+
+**Upgrading.** Rows queued before this version are delivered by the relay that runs after it, so they go out without the `vertique-identity-snapshot` header unless the configuration lists `identity-snapshot`. A Vertique consumer that relied on the header to restore the caller's identity must either be listed, or must authenticate the caller itself.
 
 **Delivery guarantee:** At-least-once. Consumers should use `InboxService` for deduplication if exactly-once semantics are required.
 
@@ -115,9 +134,9 @@ through `OutboxPublishObserver` and the wire bytes through the producer capture 
 
 ## Module Dagger Bindings
 
-The module ships one binding. `KafkaOutboxDestinationHandler` is a `@Singleton` built through its
-`@Inject` constructor `(KafkaProducerFactory, ObjectMapper)`, and the module contributes it to the
-relay's handler set:
+The module ships two bindings. `KafkaOutboxDestinationHandler` is a `@Singleton` built through its
+`@Inject` constructor `(KafkaProducerFactory, ObjectMapper, KafkaOutboxConfig, DurableContextMetadataRegistry)`, and the module contributes it to the
+relay's handler set. The module also provides `KafkaOutboxConfig` from the `inboxOutbox.kafka` section of the application config; an absent section keeps the defaults:
 
 ```java
 @Module
@@ -127,6 +146,9 @@ public abstract class TransactionalMessagingKafkaModule {
     static OutboxDestinationHandler kafkaHandler(KafkaOutboxDestinationHandler handler) {
         return handler;
     }
+
+    @Provides @Singleton
+    static KafkaOutboxConfig kafkaOutboxConfig(@VertxConfig JsonObject config, ConfigParser parser) { ... }
 }
 ```
 
@@ -151,7 +173,13 @@ The dependency required is `vertique-kafka-core` (provides `KafkaModule` and `Ka
 
 ## Configuration
 
-No Kafka-specific configuration in this module. Kafka producer settings (bootstrap servers, serializers, acks, etc.) are configured in the `kafka` module: connection scalars at the `kafka` root (e.g. `kafka.bootstrap.servers`), global properties under `kafka.properties`, and the global producer bag under `kafka.producer.properties`. Per-named-producer overrides live under `kafka.producers.{name}.*`. See `dev.vertique:vertique-kafka-core` for the full configuration reference.
+One key, under `inboxOutbox.kafka`:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `outboundContextNamespaces` | absent: every stored namespace except `identity-snapshot` | The stored durable-context namespaces a `KAFKA` outbox row forwards as `vertique-<namespace>` headers; an explicit list replaces the default (see [Forwarded context](#forwarded-context)) |
+
+Kafka producer settings (bootstrap servers, serializers, acks, etc.) are configured in the `kafka` module: connection scalars at the `kafka` root (e.g. `kafka.bootstrap.servers`), global properties under `kafka.properties`, and the global producer bag under `kafka.producer.properties`. Per-named-producer overrides live under `kafka.producers.{name}.*`. See `dev.vertique:vertique-kafka-core` for the full configuration reference.
 
 ---
 

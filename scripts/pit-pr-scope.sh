@@ -11,6 +11,11 @@
 #   bash scripts/pit-pr-scope.sh --base <ref>     # against another base
 #   bash scripts/pit-pr-scope.sh --dry-run        # print the Maven command only
 #   bash scripts/pit-pr-scope.sh --sandbox        # run PIT in a disposable container
+#   bash scripts/pit-pr-scope.sh --module <m>     # only that pilot module's classes
+#   bash scripts/pit-pr-scope.sh --list-modules   # print the changed pilot modules as a CI job matrix
+#
+# CI runs one job per changed pilot module (--module), so each module has its own
+# time limit and class budget; a local run without --module covers them all in one.
 #
 # The change is the diff from the merge base to the working tree; `git add -N`
 # a new file before running, untracked files are not seen. Undetected mutants
@@ -25,7 +30,8 @@
 # a snapshot of the working tree (scripts/pit-sandbox.sh).
 #
 # Environment:
-#   PIT_MAX_CLASSES   class budget; larger changes are skipped (default 25)
+#   PIT_MAX_CLASSES   class budget; larger changes are skipped (default 25); with
+#                     --module it counts that module's classes only
 #   PIT_MVN           Maven launcher (default ./mvnw, or scripts/pit-sandbox.sh with --sandbox)
 #   PIT_ALLOW_ROOT=1  run as root anyway
 #   PIT_EFFECTIVE_UID test seam replacing `id -u`
@@ -38,6 +44,8 @@ SELECTOR="$SCRIPT_DIR/pit-pr-scope.mjs"
 base="origin/main"
 dry_run=false
 sandbox=false
+only_module=""
+list_modules=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --base)
@@ -45,6 +53,10 @@ while [[ $# -gt 0 ]]; do
       base="$2"; shift 2 ;;
     --dry-run) dry_run=true; shift ;;
     --sandbox) sandbox=true; shift ;;
+    --module)
+      [[ $# -ge 2 && -n "$2" ]] || { echo 'pit-pr-scope: --module requires a module path' >&2; exit 1; }
+      only_module="$2"; shift 2 ;;
+    --list-modules) list_modules=true; shift ;;
     *) echo "pit-pr-scope: unrecognised argument: $1" >&2; exit 1 ;;
   esac
 done
@@ -79,9 +91,20 @@ merge_base="$(git merge-base "$base" HEAD)"
 git -c core.quotePath=false diff -U0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ \
   "$merge_base" -- '*/src/main/java/*.java' > "$out_dir/changes.diff"
 
+if [[ "$list_modules" == true ]]; then
+  # Lines for $GITHUB_OUTPUT: any=<bool> and matrix=<json>.
+  node "$SELECTOR" modules --diff "$out_dir/changes.diff"
+  exit 0
+fi
+
+module_args=()
+if [[ -n "$only_module" ]]; then
+  module_args=(--module "$only_module")
+fi
+
 # Captured first: a failure inside a command substitution assignment stops the
 # script, whereas a failing process substitution would be ignored.
-selection="$(node "$SELECTOR" select --diff "$out_dir/changes.diff" --max-classes "$max_classes" --out "$out_dir/selection.json")"
+selection="$(node "$SELECTOR" select --diff "$out_dir/changes.diff" --max-classes "$max_classes" --out "$out_dir/selection.json" ${module_args[@]+"${module_args[@]}"})"
 run=false
 modules=""
 target_classes=""

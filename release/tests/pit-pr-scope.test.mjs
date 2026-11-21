@@ -28,6 +28,7 @@ const {
   PILOT_MODULES,
   parseChangedLines,
   selectTargets,
+  changedPilotModules,
   parseMutations,
   sourcePathOf,
   buildReport,
@@ -188,6 +189,70 @@ describe('selectTargets', () => {
     const selection = selectTargets(files, { maxClasses: 1 });
     assert.equal(selection.run, false);
     assert.deepEqual(selection.skipped, { reason: 'budget', classes: 2, maxClasses: 1 });
+  });
+
+  it('selects only the named module and applies the budget to its classes alone', () => {
+    // Two classes overall exceed a budget of 1, but each module has one.
+    const resilience = selectTargets(files, { maxClasses: 1, module: 'vertique-resilience' });
+    assert.equal(resilience.module, 'vertique-resilience');
+    assert.deepEqual(resilience.modules, ['vertique-resilience']);
+    assert.deepEqual(resilience.classes, ['dev.vertique.resilience.RetryBackoff']);
+    assert.equal(resilience.run, true);
+    assert.equal(resilience.skipped, null);
+
+    const security = selectTargets(files, { maxClasses: 1, module: 'vertique-rest/vertique-rest-security' });
+    assert.deepEqual(security.modules, ['vertique-rest/vertique-rest-security']);
+    assert.deepEqual(security.classes, ['dev.vertique.rest.security.SecurityPolicyEnforcer']);
+    assert.equal(security.run, true);
+  });
+
+  it('skips a module whose own classes exceed the budget without touching another module', () => {
+    const many = [`${RESILIENCE}/A.java`, `${RESILIENCE}/B.java`, files[1]];
+    const resilience = selectTargets(many, { maxClasses: 1, module: 'vertique-resilience' });
+    assert.equal(resilience.run, false);
+    assert.deepEqual(resilience.skipped, { reason: 'budget', classes: 2, maxClasses: 1 });
+    assert.equal(selectTargets(many, { maxClasses: 1, module: 'vertique-rest/vertique-rest-security' }).run, true);
+  });
+
+  it('does not run a named module the change leaves alone', () => {
+    const selection = selectTargets(files, { maxClasses: 25, module: 'vertique-json-schema' });
+    assert.equal(selection.run, false);
+    assert.deepEqual(selection.classes, []);
+  });
+
+  it('rejects a module outside the pilot allowlist', () => {
+    assert.throws(() => selectTargets(files, { maxClasses: 25, module: 'vertique-core' }), /must be a pilot module/);
+  });
+});
+
+describe('changedPilotModules', () => {
+  it('names each pilot module with changed production classes once, with an artifact-safe slug', () => {
+    const modules = changedPilotModules([
+      `${RESILIENCE}/RetryBackoff.java`,
+      `${RESILIENCE}/Backoff.java`,
+      'vertique-rest/vertique-rest-security/src/main/java/dev/vertique/rest/security/SecurityPolicyEnforcer.java',
+    ]);
+    assert.deepEqual(modules, [
+      { module: 'vertique-resilience', slug: 'vertique-resilience' },
+      { module: 'vertique-rest/vertique-rest-security', slug: 'vertique-rest-vertique-rest-security' },
+    ]);
+  });
+
+  it('ignores tests, package-info, other modules and build files', () => {
+    assert.deepEqual(
+      changedPilotModules([
+        'vertique-resilience/src/test/java/dev/vertique/resilience/RetryBackoffTest.java',
+        'vertique-resilience/src/main/java/dev/vertique/resilience/package-info.java',
+        'vertique-core/src/main/java/dev/vertique/core/Json.java',
+        'pom.xml',
+      ]),
+      []
+    );
+  });
+
+  it('is independent of the class budget', () => {
+    const many = Array.from({ length: 40 }, (_, i) => `${RESILIENCE}/C${i}.java`);
+    assert.equal(changedPilotModules(many).length, 1);
   });
 });
 
@@ -549,6 +614,59 @@ describe('pit-pr-scope.sh', () => {
     assert.equal(allowed.status, 0, allowed.stderr);
   });
 
+  it('runs one module only and counts the budget per module with --module', () => {
+    const r = repo('per-module', {
+      [RETRY_BACKOFF]: CHANGED_SOURCE,
+      'vertique-rest/vertique-rest-security/src/main/java/dev/vertique/rest/security/SecurityPolicyEnforcer.java': 'class SecurityPolicyEnforcer {}\n',
+    });
+    const stub = stubMaven(r);
+    const result = runScript(r, ['--base', 'main', '--module', 'vertique-resilience'], { PIT_MVN: stub, PIT_MAX_CLASSES: '1' });
+    assert.equal(result.status, 0, result.stderr);
+    const args = readFileSync(path.join(r, 'mvn-args.txt'), 'utf8').split('\n');
+    assert.deepEqual(args.slice(0, 5), ['-ntp', '-T', '1', '-pl', 'vertique-resilience']);
+    assert.match(args.join('\n'), /-DtargetClasses=dev\.vertique\.resilience\.RetryBackoff,/);
+    assert.doesNotMatch(args.join('\n'), /SecurityPolicyEnforcer/);
+    assert.match(result.stdout, /## Mutation testing \(advisory\): `vertique-resilience`/);
+  });
+
+  it('prints the changed pilot modules as a job matrix with --list-modules and runs nothing', () => {
+    const r = repo('matrix', {
+      [RETRY_BACKOFF]: CHANGED_SOURCE,
+      'vertique-rest/vertique-rest-security/src/main/java/dev/vertique/rest/security/SecurityPolicyEnforcer.java': 'class SecurityPolicyEnforcer {}\n',
+      'vertique-core/src/main/java/dev/vertique/core/Json.java': 'class Json {}\n',
+    });
+    const stub = stubMaven(r);
+    const result = runScript(r, ['--base', 'main', '--list-modules'], { PIT_MVN: stub });
+    assert.equal(result.status, 0, result.stderr);
+    const lines = Object.fromEntries(result.stdout.trim().split('\n').map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
+    assert.equal(lines.any, 'true');
+    assert.deepEqual(JSON.parse(lines.matrix), {
+      include: [
+        { module: 'vertique-resilience', slug: 'vertique-resilience' },
+        { module: 'vertique-rest/vertique-rest-security', slug: 'vertique-rest-vertique-rest-security' },
+      ],
+    });
+    assert.equal(existsSync(path.join(r, 'mvn-args.txt')), false);
+  });
+
+  it('lists no module when no pilot class changed', () => {
+    const r = repo('matrix-none', { 'vertique-core/src/main/java/dev/vertique/core/Json.java': 'class Json {}\n' });
+    const result = runScript(r, ['--base', 'main', '--list-modules']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /^any=false$/m);
+    assert.match(result.stdout, /^matrix=\{"include":\[\]\}$/m);
+  });
+
+  it('rejects a --module outside the pilot allowlist and a --module without a value', () => {
+    const r = repo('bad-module', { [RETRY_BACKOFF]: CHANGED_SOURCE });
+    const unknown = runScript(r, ['--base', 'main', '--module', 'vertique-core']);
+    assert.notEqual(unknown.status, 0);
+    assert.match(unknown.stderr, /must be a pilot module/);
+    const bare = runScript(r, ['--module']);
+    assert.notEqual(bare.status, 0);
+    assert.match(bare.stderr, /--module requires a module path/);
+  });
+
   it('rejects unknown arguments and a --base without a ref', () => {
     const r = repo('args', { 'README.md': 'x\n' });
     const unknown = runScript(r, ['--nope']);
@@ -605,7 +723,14 @@ describe('MutationWorkflowContractTest', () => {
 
   it('delegatesToTheLocallyRunnableEntryPoint', () => {
     const bodies = runStepBodies(workflow());
-    assert.ok(bodies.includes('bash scripts/pit-pr-scope.sh --base HEAD^1'), 'mutation.yml must run the PR-scoped entry point against the merge commit\'s base parent');
+    assert.ok(
+      bodies.includes('bash scripts/pit-pr-scope.sh --base HEAD^1 --module "$PIT_MODULE"'),
+      'mutation.yml must run the PR-scoped entry point for one module against the merge commit\'s base parent'
+    );
+    assert.ok(
+      bodies.includes('bash scripts/pit-pr-scope.sh --base HEAD^1 --list-modules >> "$GITHUB_OUTPUT"'),
+      'mutation.yml must take the module matrix from the entry point'
+    );
     const ENTRY_POINT = /^(\.\/mvnw|bash\s+\S+\.sh|node\s+(--test\s+)?\S+\.mjs|npm\s+\S+)\b/;
     for (const body of bodies) {
       for (const command of body.split('\n').filter(Boolean)) {
@@ -617,11 +742,21 @@ describe('MutationWorkflowContractTest', () => {
 
   it('boundsTheRunAndKeepsTheReports', () => {
     const yaml = workflow();
-    const timeout = /^\s*timeout-minutes:\s*(\d+)\s*$/m.exec(yaml);
-    assert.ok(timeout && Number(timeout[1]) <= 30, 'mutation.yml must cap the job at 30 minutes or less');
+    const timeouts = [...yaml.matchAll(/^\s*timeout-minutes:\s*(\d+)\s*$/gm)].map(([, minutes]) => Number(minutes));
+    assert.equal(timeouts.length, 2, 'both jobs must be time-bounded');
+    assert.ok(timeouts.every((minutes) => minutes <= 30), 'mutation.yml must cap every job at 30 minutes or less');
     assert.match(yaml, /fetch-depth: 2/, 'the merge commit and its base parent must be fetched');
     assert.match(yaml, /persist-credentials: false/);
-    assert.match(yaml, /if: \$\{\{ always\(\) \}\}\n\s+uses: actions\/upload-artifact@\S+ # v[\d.]+\n\s+with:\n\s+name: mutation-reports\n\s+path: \|\n\s+target\/pit-pr\/\*\*\n\s+\*\*\/target\/pit-reports\/\*\*/);
+    assert.match(yaml, /if: \$\{\{ always\(\) \}\}\n\s+uses: actions\/upload-artifact@\S+ # v[\d.]+\n\s+with:\n\s+name: mutation-reports-\$\{\{ matrix\.slug \}\}\n\s+path: \|\n\s+target\/pit-pr\/\*\*\n\s+\*\*\/target\/pit-reports\/\*\*/);
+  });
+
+  it('splitsTheMutationJobPerChangedModuleWithoutLettingOneModuleStopTheOthers', () => {
+    const yaml = workflow();
+    assert.match(yaml, /^  mutation:\n(?:.*\n)*?    needs: modules\n/m, 'the mutation job must wait for the module selection');
+    assert.match(yaml, /if: \$\{\{ needs\.modules\.outputs\.any == 'true' \}\}/, 'an empty matrix must skip the job instead of failing it');
+    assert.match(yaml, /strategy:\n(?:\s+#.*\n)*\s+fail-fast: false\n\s+matrix: \$\{\{ fromJSON\(needs\.modules\.outputs\.matrix\) \}\}/);
+    assert.match(yaml, /env:\n\s+PIT_MODULE: \$\{\{ matrix\.module \}\}/, 'the module reaches the script through the environment, never through the shell text');
+    assert.match(yaml, /^concurrency:\n  group: mutation-\$\{\{ github\.event\.pull_request\.number \}\}\n  cancel-in-progress: true$/m);
   });
 
   it('staysOutOfTheRequiredCheck', () => {

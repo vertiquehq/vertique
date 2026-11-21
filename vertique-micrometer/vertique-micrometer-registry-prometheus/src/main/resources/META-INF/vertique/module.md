@@ -109,6 +109,9 @@ by `MicrometerPrometheusModule`.
   any route.
 - If exemplars are enabled (`metrics.prometheus.exemplars.enabled=true`) and a `SpanContext` is
   present in the Dagger graph, wires the `DeferredSpanContext` to the real implementation.
+  If exemplars are enabled but no `SpanContext` is present, nothing can be attached to any sample:
+  one WARN is logged at startup saying so (not per scrape), and scraping continues without
+  exemplars.
 - Mounts `GET {metrics.scrape.path}` on the management router.
 
 Per-request handling:

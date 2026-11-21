@@ -3647,7 +3647,13 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                                             seq,
                                             task.taskId(),
                                             task.stepId(),
-                                            attrs("cause", reason, "cancelledBy", WorkflowActorMaps.toMap(cancelActor)),
+                                            attrs(
+                                                    "cause",
+                                                    reason,
+                                                    "branchId",
+                                                    branch.branchId(),
+                                                    "cancelledBy",
+                                                    WorkflowActorMaps.toMap(cancelActor)),
                                             tx));
                         }
                         return taskChain;

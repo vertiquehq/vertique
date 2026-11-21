@@ -13,12 +13,17 @@
  *           keeps only the mutants on lines the change added.
  *
  * Usage:
- *   node scripts/pit-pr-scope.mjs select --diff <file> --max-classes <n> --out <selection.json>
+ *   node scripts/pit-pr-scope.mjs select --diff <file> --max-classes <n> --out <selection.json> [--module <m>]
+ *   node scripts/pit-pr-scope.mjs modules --diff <file>
  *   node scripts/pit-pr-scope.mjs report --diff <file> --selection <selection.json> --out-dir <dir>
  *
  * `select` prints `run=`, `modules=` and `targetClasses=` lines for the shell
- * entry point. `report` writes summary.md and summary.json and prints the
- * Markdown. The report is advisory: surviving mutants never fail it, while a
+ * entry point. With `--module` it considers only that pilot module's classes,
+ * and the class budget applies to them alone, so CI can give every changed
+ * module its own job. `modules` prints `any=` and a `matrix=` JSON object
+ * (`{"include":[{"module":...,"slug":...}]}`) naming the pilot modules that
+ * gained lines, ready for a CI job matrix. `report` writes summary.md and
+ * summary.json and prints the Markdown. The report is advisory: surviving mutants never fail it, while a
  * selected module without a PIT report does, so a broken run is never shown
  * as a clean one.
  *
@@ -81,7 +86,10 @@ export function parseChangedLines(diff) {
  * Selects the pilot production classes among `files` (repository-relative
  * paths) and decides whether the change fits the class budget.
  */
-export function selectTargets(files, { maxClasses, pilotModules = PILOT_MODULES }) {
+export function selectTargets(files, { maxClasses, pilotModules = PILOT_MODULES, module: onlyModule = null }) {
+  if (onlyModule !== null && !pilotModules.includes(onlyModule)) {
+    throw new Error(`--module must be a pilot module: ${pilotModules.join(', ')}`);
+  }
   const selected = [];
   const outOfScope = [];
   for (const file of [...files].sort()) {
@@ -90,6 +98,7 @@ export function selectTargets(files, { maxClasses, pilotModules = PILOT_MODULES 
     const [, module, classPath] = match;
     if (NOT_A_CLASS.has(path.posix.basename(classPath))) continue;
     if (pilotModules.includes(module)) {
+      if (onlyModule !== null && module !== onlyModule) continue;
       selected.push({ module, file, className: classPath.replaceAll('/', '.') });
     } else {
       outOfScope.push(file);
@@ -99,6 +108,7 @@ export function selectTargets(files, { maxClasses, pilotModules = PILOT_MODULES 
   const modules = [...new Set(selected.map((s) => s.module))].sort();
   const skipped = classes.length > maxClasses ? { reason: 'budget', classes: classes.length, maxClasses } : null;
   return {
+    module: onlyModule,
     run: classes.length > 0 && skipped === null,
     modules,
     classes,
@@ -107,6 +117,22 @@ export function selectTargets(files, { maxClasses, pilotModules = PILOT_MODULES 
     outOfScope,
     skipped,
   };
+}
+
+/**
+ * Lists the pilot modules that gained lines in a production class, ignoring the
+ * class budget, as a CI job matrix: one entry per module, with a `slug` that is
+ * safe in an artifact name.
+ */
+export function changedPilotModules(files, { pilotModules = PILOT_MODULES } = {}) {
+  const modules = new Set();
+  for (const file of files) {
+    const match = PRODUCTION_SOURCE.exec(file);
+    if (!match) continue;
+    if (NOT_A_CLASS.has(path.posix.basename(match[2]))) continue;
+    if (pilotModules.includes(match[1])) modules.add(match[1]);
+  }
+  return [...modules].sort().map((module) => ({ module, slug: module.replaceAll('/', '-') }));
 }
 
 function decode(text) {
@@ -191,7 +217,7 @@ function cell(text) {
 /** Renders the report as the Markdown shown in the job summary. */
 export function renderMarkdown(report) {
   const { selection, changed, wholeClass } = report;
-  const out = ['## Mutation testing (advisory)', ''];
+  const out = [selection.module ? `## Mutation testing (advisory): \`${selection.module}\`` : '## Mutation testing (advisory)', ''];
 
   if (selection.skipped) {
     out.push(
@@ -262,9 +288,12 @@ function main([command, ...rest]) {
   if (command === 'select') {
     const maxClasses = Number(requireArg(args, 'max-classes'));
     if (!Number.isInteger(maxClasses) || maxClasses < 1) throw new Error('--max-classes must be a positive integer');
-    const selection = selectTargets([...changedLines.keys()], { maxClasses });
+    const selection = selectTargets([...changedLines.keys()], { maxClasses, module: args.module ?? null });
     writeFileSync(requireArg(args, 'out'), `${JSON.stringify(selection, null, 2)}\n`);
     process.stdout.write(`run=${selection.run}\nmodules=${selection.modules.join(',')}\ntargetClasses=${selection.targetClasses}\n`);
+  } else if (command === 'modules') {
+    const include = changedPilotModules([...changedLines.keys()]);
+    process.stdout.write(`any=${include.length > 0}\nmatrix=${JSON.stringify({ include })}\n`);
   } else if (command === 'report') {
     const selection = JSON.parse(readFileSync(requireArg(args, 'selection'), 'utf8'));
     const xmlByModule = {};
@@ -285,7 +314,7 @@ function main([command, ...rest]) {
     writeFileSync(path.join(outDir, 'summary.json'), `${JSON.stringify(report, null, 2)}\n`);
     process.stdout.write(markdown);
   } else {
-    throw new Error(`unknown command: ${command ?? '(none)'}; expected select or report`);
+    throw new Error(`unknown command: ${command ?? '(none)'}; expected select, modules or report`);
   }
 }
 

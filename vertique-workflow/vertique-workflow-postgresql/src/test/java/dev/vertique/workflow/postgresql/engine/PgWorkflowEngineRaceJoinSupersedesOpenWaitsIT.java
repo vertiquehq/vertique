@@ -373,6 +373,10 @@ public class PgWorkflowEngineRaceJoinSupersedesOpenWaitsIT {
                     assertEquals(
                             "BRANCH_CANCELLED",
                             cancelled.getFirst().attributes().get("cause"));
+                    assertEquals(
+                            "b",
+                            cancelled.getFirst().attributes().get("branchId"),
+                            "the event names the losing branch");
                     ctx.completeNow();
                 }));
     }
