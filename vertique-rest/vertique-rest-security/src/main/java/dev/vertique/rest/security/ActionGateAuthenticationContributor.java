@@ -37,8 +37,11 @@ import lombok.extern.slf4j.Slf4j;
  * implies "authentication required".
  *
  * <h3>Scope: only the {@code None} + action gap</h3>
- * The handler is installed <strong>only</strong> when the policy is {@link SecurityPolicy.None} and a
- * {@code @RequiresAction} is present. For {@link SecurityPolicy.AuthenticatedOnly} and
+ * The handler is installed <strong>only</strong> when the policy is {@link SecurityPolicy.None}, a
+ * {@code @RequiresAction} is present, and the operation declares no security requirement. An operation
+ * that declares a scheme ({@code @SecurityRequirement}, with or without scopes) is authenticated by that
+ * scheme's handler, so authenticating it again here would verify the credential twice and append its
+ * {@link dev.vertique.security.AuthenticationEvidence} twice. For {@link SecurityPolicy.AuthenticatedOnly} and
  * {@link SecurityPolicy.Constrained} the route declares an OpenAPI security requirement, so the
  * OpenAPI-driven {@code SecuritySchemeHandler} already installs the auth handler; adding a second one
  * here would double-authenticate. {@link SecurityPolicy.PermitAll}/{@link SecurityPolicy.DenyAll}
@@ -122,8 +125,9 @@ public final class ActionGateAuthenticationContributor implements OperationHandl
 
     /**
      * Installs the selected {@link RouteAuthHandler} on the route when it is an action-only route
-     * ({@link SecurityPolicy.None} with a present {@code @RequiresAction}). Otherwise does nothing —
-     * either the route has no action gate, or its policy already drives an OpenAPI security handler.
+     * ({@link SecurityPolicy.None} with a present {@code @RequiresAction} and no declared security
+     * requirement). Otherwise does nothing — either the route has no action gate, or its policy or its
+     * declared scheme already drives an authentication handler.
      *
      * @param context the operation registration context carrying the route, policy, and resolved
      *                {@code @RequiresAction}; must not be {@code null}
@@ -133,7 +137,8 @@ public final class ActionGateAuthenticationContributor implements OperationHandl
     @Override
     public void contribute(OperationRegistrationContext context) {
         if (!(context.securityPolicy() instanceof SecurityPolicy.None)
-                || context.requiredAction().isEmpty()) {
+                || context.requiredAction().isEmpty()
+                || !context.operation().securityRequirementSets().isEmpty()) {
             return;
         }
 

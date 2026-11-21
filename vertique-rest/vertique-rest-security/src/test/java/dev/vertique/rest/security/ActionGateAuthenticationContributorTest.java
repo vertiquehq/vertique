@@ -13,7 +13,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import dev.vertique.rest.core.router.OperationRegistrationContext;
+import dev.vertique.rest.core.routing.RestOperationDescriptor;
 import dev.vertique.rest.core.routing.RouteRegistration;
+import dev.vertique.rest.core.routing.SecurityRequirement;
+import dev.vertique.rest.core.routing.SecurityRequirementSet;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.security.authz.ActionRef;
@@ -112,6 +115,7 @@ class ActionGateAuthenticationContributorTest {
             OperationRegistrationContext ctx = mock(OperationRegistrationContext.class);
             when(ctx.securityPolicy()).thenReturn(new SecurityPolicy.None());
             when(ctx.requiredAction()).thenReturn(Optional.of(CONTENT_READ));
+            declaring(ctx, List.of());
             when(ctx.route()).thenReturn(route);
             when(ctx.operationId()).thenReturn("getContent");
 
@@ -171,6 +175,7 @@ class ActionGateAuthenticationContributorTest {
             OperationRegistrationContext ctx = mock(OperationRegistrationContext.class);
             when(ctx.securityPolicy()).thenReturn(new SecurityPolicy.None());
             when(ctx.requiredAction()).thenReturn(Optional.of(CONTENT_READ));
+            declaring(ctx, List.of());
             when(ctx.operationId()).thenReturn("getContent");
 
             IllegalStateException ex = assertThrows(IllegalStateException.class, () -> contributor.contribute(ctx));
@@ -186,10 +191,34 @@ class ActionGateAuthenticationContributorTest {
             OperationRegistrationContext ctx = mock(OperationRegistrationContext.class);
             when(ctx.securityPolicy()).thenReturn(new SecurityPolicy.None());
             when(ctx.requiredAction()).thenReturn(Optional.of(CONTENT_READ));
+            declaring(ctx, List.of());
             when(ctx.operationId()).thenReturn("getContent");
 
             assertThrows(IllegalStateException.class, () -> contributor.contribute(ctx));
         }
+    }
+
+    @Test
+    @DisplayName("an action route that declares a security scheme installs nothing — the scheme authenticates it")
+    void declaredSchemeInstallsNothing() {
+        StubAuthHandler auth = new StubAuthHandler("bearerAuth");
+        ActionGateAuthenticationContributor contributor = new ActionGateAuthenticationContributor(Set.of(auth));
+        RouteRegistration route = mock(RouteRegistration.class);
+        OperationRegistrationContext ctx = mock(OperationRegistrationContext.class);
+        when(ctx.securityPolicy()).thenReturn(new SecurityPolicy.None());
+        when(ctx.requiredAction()).thenReturn(Optional.of(CONTENT_READ));
+        when(ctx.route()).thenReturn(route);
+        declaring(ctx, List.of(new SecurityRequirementSet(List.of(new SecurityRequirement("bearerAuth", List.of())))));
+
+        contributor.contribute(ctx);
+
+        verify(route, never()).addHandler(any());
+    }
+
+    private static void declaring(OperationRegistrationContext ctx, List<SecurityRequirementSet> sets) {
+        RestOperationDescriptor descriptor = mock(RestOperationDescriptor.class);
+        when(descriptor.securityRequirementSets()).thenReturn(sets);
+        when(ctx.operation()).thenReturn(descriptor);
     }
 
     @Test
