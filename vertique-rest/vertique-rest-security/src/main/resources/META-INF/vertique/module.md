@@ -87,7 +87,9 @@ scheme. A route that declares a scheme (`@SecurityRequirement`, with or without 
 authenticated by that scheme's handler alone, so the credential is verified once and its
 `AuthenticationEvidence` is appended once. Before this change such a route was authenticated twice, and a
 typed operation of that kind also failed at install unless exactly one `RouteAuthHandler` was registered;
-it no longer needs one.
+it no longer needs one. The two checks were also both required, so a caller had to satisfy the declared
+scheme and the `RouteAuthHandler`; now only the declared scheme is required. An application that relied
+on that extra check for such a route must put it in the scheme's handler.
 
 `OriginCaptureMiddleware` is the module's one ROOT-scoped `Middleware`. It runs before any
 authentication handler and stashes the resolved `RequestOrigin` so identity resolution and every
