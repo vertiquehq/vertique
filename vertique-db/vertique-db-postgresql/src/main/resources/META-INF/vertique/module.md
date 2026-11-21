@@ -259,6 +259,9 @@ interface AppComponent {
 | `PgDbExceptionMapper` | `@Singleton` | Pre-configured PostgreSQL exception mapper |
 | `PoolConnectHandler` | `@BindsOptionalOf` | Optional; provide via `@Provides` to initialize new connections; its future must complete (see the db-core reference) |
 | `HealthCheck` | `@IntoSet` `@Readiness` | `DatabaseHealthCheck`, contributed automatically |
+| `ApplicationShutdownStep` | `@IntoSet` | Closes the `Pool` when the application stops, contributed automatically |
+
+**Pool shutdown.** The module closes the pool it provides: its `ApplicationShutdownStep` runs in the `INFRA` phase at the lowest priority, so work that still uses the pool stops first. A component that runs the application's shutdown steps (the Vertique application runner does) releases the pool and its connections at stop; a component that does not run them keeps the previous behavior, where the pool is released only when Vert.x closes. Close a pool you create yourself with `Pool.close()`; the module closes only its own.
 
 ---
 

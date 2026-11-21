@@ -10,6 +10,7 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.core.health.HealthCheck;
 import dev.vertique.core.health.HealthCheckModule;
 import dev.vertique.core.health.Readiness;
+import dev.vertique.core.lifecycle.ApplicationShutdownStep;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.PoolConnectHandler;
 import io.vertx.core.Vertx;
@@ -131,5 +132,20 @@ public abstract class DbPostgresqlModule {
     @Readiness
     static HealthCheck databaseHealthCheck(DatabaseHealthCheck check) {
         return check;
+    }
+
+    /**
+     * Contributes the step that closes the {@link Pool} this module provides into the
+     * {@code Set<ApplicationShutdownStep>} multibinding, so the pool is released when the
+     * application stops, after the work that uses it.
+     *
+     * @param step the pool shutdown step
+     * @return the step as an application shutdown contribution
+     */
+    @Provides
+    @Singleton
+    @IntoSet
+    static ApplicationShutdownStep pgPoolShutdownStep(PgPoolShutdownStep step) {
+        return step;
     }
 }
