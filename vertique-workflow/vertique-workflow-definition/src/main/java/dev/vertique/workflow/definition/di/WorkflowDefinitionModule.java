@@ -4,10 +4,12 @@
 package dev.vertique.workflow.definition.di;
 
 import dagger.Binds;
+import dagger.BindsOptionalOf;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
+import dev.vertique.core.context.ContextHolder;
 import dev.vertique.workflow.definition.callbacks.BranchResultReducerContributor;
 import dev.vertique.workflow.definition.callbacks.BranchResultReducerRegistry;
 import dev.vertique.workflow.definition.callbacks.CorrelationKeyResolverContributor;
@@ -84,6 +86,17 @@ public abstract class WorkflowDefinitionModule {
     protected WorkflowDefinitionModule() {
         // Dagger instantiates the generated subclass.
     }
+
+    // --- Optional bindings ---
+
+    /**
+     * Declares the {@link ContextHolder} as optional, so that a graph without one still builds: the definition
+     * service then records the candidates it stores without an actor.
+     *
+     * @return the optional holder (Dagger-generated)
+     */
+    @BindsOptionalOf
+    abstract ContextHolder contextHolder();
 
     // --- Multibinds (empty-set defaults, one per registry + sources) ---
 

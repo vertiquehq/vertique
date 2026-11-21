@@ -18,6 +18,8 @@ import dev.vertique.workflow.exception.WorkflowNodeRoleException;
 import dev.vertique.workflow.history.HistoryAttribution;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionActivation;
+import dev.vertique.workflow.registry.store.DefinitionChangeActor;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
 import dev.vertique.workflow.registry.store.DefinitionLifecycleChange;
@@ -495,8 +497,8 @@ class DefinitionLifecycleEventsTest {
     }
 
     @Test
-    @DisplayName("with no listener bound the actor is never captured and the result is the operation's own")
-    void noListenerIsAPurePassThrough() {
+    @DisplayName("with no listener bound the result is the operation's own, and the actor is still captured per call")
+    void noListenerLeavesTheResultOfTheOperationAlone() {
         // Given events with no listener
         var lifecycle = lifecycle(store(), Set.of(), events());
 
@@ -504,10 +506,114 @@ class DefinitionLifecycleEventsTest {
         Future<Void> ok = lifecycle.deprecate(KEY);
         Future<Void> refused = lifecycle.deprecate(new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 9));
 
-        // Then the results are unchanged and nothing was captured
+        // Then the results are unchanged, and the actor was taken once per call for the registry to store
         assertThat(ok.succeeded()).isTrue();
         assertThat(refused.failed()).isTrue();
-        assertThat(captures).hasValue(0);
+        assertThat(captures).hasValue(2);
+    }
+
+    @Test
+    @DisplayName("every operation hands the actor of its call to the store, with no listener bound")
+    void everyOperationHandsTheActorToTheStore() {
+        // Given a store that notes the actor of each change it is given, and no listener
+        ActorSpy store = new ActorSpy();
+        seed(store, KEY);
+        seed(store, V2);
+        var lifecycle = lifecycle(store, Set.of(), events());
+        DefinitionChangeActor alice = new DefinitionChangeActor(
+                new HistoryActor(HistoryActor.Kind.USER, "alice", null), "carol", HistoryAttribution.VERIFIED);
+        DefinitionChangeActor bob = new DefinitionChangeActor(
+                new HistoryActor(HistoryActor.Kind.SERVICE, "bob", null), null, HistoryAttribution.DEGRADED);
+
+        // When alice deprecates and retires version 1 and activates version 2, and bob clears the default and
+        // deprecates 2
+        assertThat(lifecycle.deprecate(KEY).succeeded()).isTrue();
+        assertThat(lifecycle.retire(KEY).succeeded()).isTrue();
+        assertThat(lifecycle
+                        .activate(WorkflowScopes.DEFAULT, "wf", WorkflowScopes.DEFAULT, 2)
+                        .succeeded())
+                .isTrue();
+        actor.set(BOB);
+        assertThat(lifecycle.deactivateDefault("wf").succeeded()).isTrue();
+        assertThat(lifecycle.deprecate(V2).succeeded()).isTrue();
+
+        // Then each change reached the store with the actor of its own call
+        assertThat(store.seen)
+                .containsExactly("transition " + alice, "retire " + alice, "activation " + alice, "transition " + bob);
+    }
+
+    @Test
+    @DisplayName("a publication hands its actor to the claim and to the completion")
+    void aPublicationHandsItsActorToTheClaimAndTheCompletion() {
+        // Given a candidate whose document builds, and no listener
+        ActivationStore store = new ActivationStore();
+        store.completions.add(Future.succeededFuture());
+        WorkflowRegistry registry = new DefaultWorkflowRegistry();
+        var lifecycle = new DefaultWorkflowDefinitionLifecycle(
+                store,
+                () -> registry,
+                Set.of(publishingLoader()),
+                queue,
+                new WorkflowCodeDefinitionCatalog(),
+                Optional.empty(),
+                events());
+
+        // When alice publishes it
+        assertThat(lifecycle.publish(KEY).succeeded()).isTrue();
+
+        // Then the claim and the completion carry her
+        DefinitionChangeActor alice = new DefinitionChangeActor(
+                new HistoryActor(HistoryActor.Kind.USER, "alice", null), "carol", HistoryAttribution.VERIFIED);
+        assertThat(store.claimedBy).isEqualTo(alice);
+        assertThat(store.completedBy).isEqualTo(alice);
+    }
+
+    @Test
+    @DisplayName("a publication that fails hands its actor to the release of the claim")
+    void aFailedPublicationHandsItsActorToTheRelease() {
+        // Given a candidate whose completion fails
+        ActivationStore store = new ActivationStore();
+        store.completions.add(Future.failedFuture(new IllegalStateException("completion failed")));
+        WorkflowRegistry registry = new DefaultWorkflowRegistry();
+        var lifecycle = new DefaultWorkflowDefinitionLifecycle(
+                store,
+                () -> registry,
+                Set.of(publishingLoader()),
+                queue,
+                new WorkflowCodeDefinitionCatalog(),
+                Optional.empty(),
+                events());
+
+        // When it is published
+        assertThat(lifecycle.publish(KEY).failed()).isTrue();
+
+        // Then the claim was released as the caller
+        assertThat(store.releasedBy).isNotNull();
+        assertThat(store.releasedBy.actor().id()).isEqualTo("alice");
+    }
+
+    /** Notes the actor of each change it is given, then does what the in-memory store does. */
+    private static final class ActorSpy extends InMemoryWorkflowDefinitionRegistryStore {
+        final List<String> seen = new ArrayList<>();
+
+        @Override
+        public Future<Void> transition(
+                DefinitionKey key, DefinitionStatus from, DefinitionStatus to, DefinitionChangeActor actor) {
+            seen.add("transition " + actor);
+            return transition(key, from, to);
+        }
+
+        @Override
+        public Future<Void> retire(DefinitionKey key, DefinitionChangeActor actor) {
+            seen.add("retire " + actor);
+            return retire(key);
+        }
+
+        @Override
+        public synchronized Future<Void> putActivation(DefinitionActivation activation) {
+            seen.add("activation " + activation.activatedBy());
+            return super.putActivation(activation);
+        }
     }
 
     // --- Bootstrap ---

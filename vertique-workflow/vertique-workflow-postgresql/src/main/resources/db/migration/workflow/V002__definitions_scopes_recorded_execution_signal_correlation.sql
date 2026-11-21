@@ -57,6 +57,12 @@ CREATE TABLE IF NOT EXISTS workflow_definitions (
     loaded_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     status_changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- who made the last status change, in the shape of the instance history's actor; null when it was not attributed
+    status_actor_kind VARCHAR(20) NULL,
+    status_actor_id VARCHAR(255) NULL,
+    status_actor_reason VARCHAR(255) NULL,
+    status_on_behalf_of VARCHAR(255) NULL,
+    status_attribution VARCHAR(20) NULL,
     publish_token UUID,
     failure_reason VARCHAR(64),
     CONSTRAINT pk_workflow_definitions PRIMARY KEY (scope_key, definition_id, definition_version),
@@ -83,6 +89,12 @@ CREATE TABLE IF NOT EXISTS workflow_definition_activations (
     target_scope_key VARCHAR(255) NOT NULL,
     definition_version BIGINT NOT NULL,
     activated_at TIMESTAMPTZ NOT NULL,
+    -- who wrote the record, in the shape of the instance history's actor; null when it was not attributed
+    activation_actor_kind VARCHAR(20) NULL,
+    activation_actor_id VARCHAR(255) NULL,
+    activation_actor_reason VARCHAR(255) NULL,
+    activation_on_behalf_of VARCHAR(255) NULL,
+    activation_attribution VARCHAR(20) NULL,
     CONSTRAINT pk_workflow_definition_activations PRIMARY KEY (scope_key, definition_id),
     CONSTRAINT ck_workflow_definition_activations_version CHECK (definition_version > 0),
     CONSTRAINT ck_workflow_definition_activations_keys CHECK (

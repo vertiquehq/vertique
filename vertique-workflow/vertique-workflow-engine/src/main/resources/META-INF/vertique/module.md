@@ -225,6 +225,21 @@ caller's current `SecurityContext` (read through the `ContextHolder`, which defa
   snapshot that cannot be verified refuses the delivery under the default policy, and under `CONTINUE_WITHOUT_IDENTITY` the signal is
   recorded as `DEGRADED` and acts for no one. Without identity carriage the signal is recorded as `NONE`.
 
+- **Every instance command names its caller in the history.** The `START`, `RETRIED`, `CANCELLED` and `WORKFLOW_MIGRATED` entries,
+  like the signal, completion and reassignment entries, carry the actor and the attribution status of the command that caused them;
+  read them through `WorkflowInstanceHistoryService`, which returns the actor on every entry (`WorkflowOperations.query` keeps its
+  narrow history without it).
+
+### Who changed a definition
+
+The registry stores who made the last change of a definition row and of an activation record, next to the time of that change.
+`DefinitionLifecycleEvents` takes the actor of every call to `WorkflowDefinitionLifecycle` (`publish`, `deprecate`, `retire`,
+`reinstate`, `activate`) on the calling thread, from the same `ContextHolder` and `WorkflowActorMapper` as for a command, whether or
+not a `WorkflowDefinitionLifecycleListener` is bound, and hands it to the store in the same call, so it is written in the transaction
+that changes the row. The listener still receives every change with its actor; the full history of changes is the audit adapter's, not
+the registry's. Startup writes carry the system with the reason `bootstrap`. A call with no identity stores `NONE` with absent
+attribution, which replaces the actor of an earlier change.
+
 ### The decision log
 
 Every segment logs what the engine decided, in the segment's transaction and under the instance's execution lock, so a rolled-back

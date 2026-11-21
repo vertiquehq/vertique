@@ -12,6 +12,7 @@ import dev.vertique.workflow.exception.WorkflowNodeRoleException;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.ActivationClaim;
 import dev.vertique.workflow.registry.store.DefinitionActivation;
+import dev.vertique.workflow.registry.store.DefinitionChangeActor;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
 import dev.vertique.workflow.registry.store.DefinitionLifecycleChange.ActivationOperation;
@@ -122,35 +123,35 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
 
     @Override
     public Future<Void> publish(DefinitionKey key) {
-        return events.around(events.version(VersionOperation.PUBLISH, key), () -> {
+        return events.around(events.version(VersionOperation.PUBLISH, key), actor -> {
             Objects.requireNonNull(key, "key");
             requireExecutorNode("publish");
-            return queue.submit(key.definitionId(), () -> publishQueued(key));
+            return queue.submit(key.definitionId(), () -> publishQueued(key, actor));
         });
     }
 
     @Override
     public Future<Void> deprecate(DefinitionKey key) {
-        return events.around(events.version(VersionOperation.DEPRECATE, key), () -> {
+        return events.around(events.version(VersionOperation.DEPRECATE, key), actor -> {
             Objects.requireNonNull(key, "key");
-            return queue.submit(key.definitionId(), () -> commitDeprecation(key, true));
+            return queue.submit(key.definitionId(), () -> commitDeprecation(key, true, actor));
         });
     }
 
     @Override
     public Future<Void> retire(DefinitionKey key) {
-        return events.around(events.version(VersionOperation.RETIRE, key), () -> {
+        return events.around(events.version(VersionOperation.RETIRE, key), actor -> {
             Objects.requireNonNull(key, "key");
-            return queue.submit(key.definitionId(), () -> retireQueued(key));
+            return queue.submit(key.definitionId(), () -> retireQueued(key, actor));
         });
     }
 
     @Override
     public Future<Void> reinstate(DefinitionKey key) {
-        return events.around(events.version(VersionOperation.REINSTATE, key), () -> {
+        return events.around(events.version(VersionOperation.REINSTATE, key), actor -> {
             Objects.requireNonNull(key, "key");
             requireExecutorNode("reinstate");
-            return queue.submit(key.definitionId(), () -> reinstateQueued(key));
+            return queue.submit(key.definitionId(), () -> reinstateQueued(key, actor));
         });
     }
 
@@ -158,9 +159,9 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     public Future<Void> activate(String scopeKey, String definitionId, String targetScopeKey, long version) {
         return events.around(
                 events.activation(ActivationOperation.ACTIVATE, scopeKey, definitionId, targetScopeKey, version),
-                () -> {
-                    DefinitionActivation activation =
-                            new DefinitionActivation(scopeKey, definitionId, targetScopeKey, version, Instant.now());
+                actor -> {
+                    DefinitionActivation activation = new DefinitionActivation(
+                            scopeKey, definitionId, targetScopeKey, version, Instant.now(), actor);
                     return queue.submit(definitionId, () -> store.putActivation(activation));
                 });
     }
@@ -170,7 +171,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         return events.around(
                 events.activation(
                         ActivationOperation.DEACTIVATE_DEFAULT, WorkflowScopes.DEFAULT, definitionId, null, null),
-                () -> {
+                actor -> {
                     new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, 1);
                     return removeRecord(WorkflowScopes.DEFAULT, definitionId);
                 });
@@ -180,7 +181,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     public Future<Void> follow(String scopeKey, String definitionId) {
         return events.around(
                 events.activation(ActivationOperation.FOLLOW, scopeKey, definitionId, WorkflowScopes.DEFAULT, null),
-                () -> {
+                actor -> {
                     new DefinitionKey(scopeKey, definitionId, 1);
                     if (WorkflowScopes.DEFAULT.equals(scopeKey))
                         throw new IllegalArgumentException(
@@ -212,17 +213,17 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
      * Reads the row and reinstates it. A retired row has its executable source restored and checked, and then the
      * durable change is committed. A deprecated row needs no source check: its change is committed at once.
      */
-    private Future<Void> reinstateQueued(DefinitionKey key) {
+    private Future<Void> reinstateQueued(DefinitionKey key, DefinitionChangeActor actor) {
         return store.find(key).compose(found -> {
             WorkflowDefinitionRecord record =
                     found.orElseThrow(() -> failure(Reason.INVALID_TRANSITION, key, "definition not found"));
             DefinitionStatus status = record.status();
             if (status == DefinitionStatus.DEPRECATED) {
-                return commitReinstatement(record);
+                return commitReinstatement(record, actor);
             }
             if (status != DefinitionStatus.RETIRED)
                 throw failure(Reason.INVALID_TRANSITION, key, "cannot reinstate status " + status);
-            return restoreSource(record).compose(ignored -> commitReinstatement(record));
+            return restoreSource(record).compose(ignored -> commitReinstatement(record, actor));
         });
     }
 
@@ -287,10 +288,10 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
      * Commits the durable reinstatement. A failure whose outcome is unknown is decided by reading the row again: an
      * available row with the plan hash of the row that was read was committed, and any other row was not.
      */
-    private Future<Void> commitReinstatement(WorkflowDefinitionRecord record) {
+    private Future<Void> commitReinstatement(WorkflowDefinitionRecord record, DefinitionChangeActor actor) {
         Future<Void> transition;
         try {
-            transition = store.transition(record.key(), record.status(), DefinitionStatus.AVAILABLE);
+            transition = store.transition(record.key(), record.status(), DefinitionStatus.AVAILABLE, actor);
         } catch (RuntimeException failure) {
             transition = Future.failedFuture(failure);
         }
@@ -313,8 +314,8 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     /**
      * Commits the retirement. A retirement that fails is read back: a row that is retired means the commit won.
      */
-    private Future<Void> retireQueued(DefinitionKey key) {
-        return store.retire(key).recover(original -> {
+    private Future<Void> retireQueued(DefinitionKey key, DefinitionChangeActor actor) {
+        return store.retire(key, actor).recover(original -> {
             if (original instanceof Error) return Future.failedFuture(original);
             return store.find(key).transform(read -> {
                 boolean retired = read.succeeded()
@@ -330,7 +331,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     }
 
     /** Reads the current status, then moves an available row to deprecated; already deprecated is accepted. */
-    private Future<Void> commitDeprecation(DefinitionKey key, boolean retryOnConflict) {
+    private Future<Void> commitDeprecation(DefinitionKey key, boolean retryOnConflict, DefinitionChangeActor actor) {
         return store.find(key).compose(found -> {
             WorkflowDefinitionRecord record =
                     found.orElseThrow(() -> failure(Reason.INVALID_TRANSITION, key, "definition not found"));
@@ -338,31 +339,33 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
             if (status == DefinitionStatus.DEPRECATED) return Future.<Void>succeededFuture();
             if (status != DefinitionStatus.AVAILABLE)
                 throw failure(Reason.INVALID_TRANSITION, key, "cannot deprecate status " + status);
-            return store.transition(key, status, DefinitionStatus.DEPRECATED).recover(original -> {
-                if (original instanceof Error) return Future.failedFuture(original);
-                // A failed transition may still have committed, so re-read before deciding.
-                return store.find(key).transform(read -> {
-                    if (read.failed()) {
-                        if (read.cause() != original) original.addSuppressed(read.cause());
-                        return Future.<Void>failedFuture(original);
-                    }
-                    DefinitionStatus now =
-                            read.result().map(WorkflowDefinitionRecord::status).orElse(null);
-                    if (now == DefinitionStatus.DEPRECATED) return Future.<Void>succeededFuture();
-                    // The status moved between the read and the transition: decide again once.
-                    boolean moved = original instanceof WorkflowDefinitionLifecycleException refusal
-                            && refusal.reason() == Reason.INVALID_TRANSITION
-                            && now == DefinitionStatus.AVAILABLE;
-                    return retryOnConflict && moved
-                            ? commitDeprecation(key, false)
-                            : Future.<Void>failedFuture(original);
-                });
-            });
+            return store.transition(key, status, DefinitionStatus.DEPRECATED, actor)
+                    .recover(original -> {
+                        if (original instanceof Error) return Future.failedFuture(original);
+                        // A failed transition may still have committed, so re-read before deciding.
+                        return store.find(key).transform(read -> {
+                            if (read.failed()) {
+                                if (read.cause() != original) original.addSuppressed(read.cause());
+                                return Future.<Void>failedFuture(original);
+                            }
+                            DefinitionStatus now = read.result()
+                                    .map(WorkflowDefinitionRecord::status)
+                                    .orElse(null);
+                            if (now == DefinitionStatus.DEPRECATED) return Future.<Void>succeededFuture();
+                            // The status moved between the read and the transition: decide again once.
+                            boolean moved = original instanceof WorkflowDefinitionLifecycleException refusal
+                                    && refusal.reason() == Reason.INVALID_TRANSITION
+                                    && now == DefinitionStatus.AVAILABLE;
+                            return retryOnConflict && moved
+                                    ? commitDeprecation(key, false, actor)
+                                    : Future.<Void>failedFuture(original);
+                        });
+                    });
         });
     }
 
-    private Future<Void> publishQueued(DefinitionKey key) {
-        Attempt attempt = new Attempt(key);
+    private Future<Void> publishQueued(DefinitionKey key, DefinitionChangeActor actor) {
+        Attempt attempt = new Attempt(key, actor);
         return store.find(key)
                 .<Void>compose(found -> {
                     WorkflowDefinitionRecord record =
@@ -371,7 +374,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                     if (record.kind() != DefinitionKind.DOCUMENT)
                         throw failure(
                                 Reason.INVALID_TRANSITION, key, "CODE definitions register from deployed sources");
-                    return store.claim(key)
+                    return store.claim(key, actor)
                             .compose(claim -> {
                                 attempt.claim = claim;
                                 return store.find(key);
@@ -420,7 +423,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         Future<Void> completion;
         attempt.completing = true;
         try {
-            completion = store.complete(attempt.claim).mapEmpty();
+            completion = store.complete(attempt.claim, attempt.actor).mapEmpty();
         } catch (RuntimeException failure) {
             completion = Future.failedFuture(failure);
         }
@@ -436,7 +439,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     private Future<Void> compensate(Attempt attempt, Throwable original) {
         Future<Void> release;
         try {
-            release = store.release(attempt.claim);
+            release = store.release(attempt.claim, attempt.actor);
         } catch (RuntimeException failure) {
             release = Future.failedFuture(failure);
         }
@@ -462,6 +465,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
 
     private static final class Attempt {
         final DefinitionKey key;
+        final DefinitionChangeActor actor;
         ActivationClaim claim;
         WorkflowDefinitionRecord record;
         PersistedDefinitionLoader loader;
@@ -470,8 +474,9 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
 
         Throwable definitiveCompletionFailure;
 
-        Attempt(DefinitionKey key) {
+        Attempt(DefinitionKey key, DefinitionChangeActor actor) {
             this.key = key;
+            this.actor = actor;
         }
     }
 }

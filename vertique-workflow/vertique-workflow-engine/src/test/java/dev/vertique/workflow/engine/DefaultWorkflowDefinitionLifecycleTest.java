@@ -15,6 +15,7 @@ import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.ActivationClaim;
 import dev.vertique.workflow.registry.store.DefinitionActivation;
+import dev.vertique.workflow.registry.store.DefinitionChangeActor;
 import dev.vertique.workflow.registry.store.DefinitionFailure;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
@@ -1180,6 +1181,9 @@ class DefaultWorkflowDefinitionLifecycleTest {
         int claims;
         int completes;
         int releases;
+        DefinitionChangeActor claimedBy;
+        DefinitionChangeActor completedBy;
+        DefinitionChangeActor releasedBy;
 
         @Override
         public Future<Optional<WorkflowDefinitionRecord>> find(DefinitionKey key) {
@@ -1191,6 +1195,24 @@ class DefaultWorkflowDefinitionLifecycleTest {
         public Future<ActivationClaim> claim(DefinitionKey key) {
             claims++;
             return Future.succeededFuture(new ActivationClaim(key, UUID.randomUUID()));
+        }
+
+        @Override
+        public Future<ActivationClaim> claim(DefinitionKey key, DefinitionChangeActor actor) {
+            claimedBy = actor;
+            return claim(key);
+        }
+
+        @Override
+        public Future<Void> complete(ActivationClaim claim, DefinitionChangeActor actor) {
+            completedBy = actor;
+            return complete(claim);
+        }
+
+        @Override
+        public Future<Void> release(ActivationClaim claim, DefinitionChangeActor actor) {
+            releasedBy = actor;
+            return release(claim);
         }
 
         @Override

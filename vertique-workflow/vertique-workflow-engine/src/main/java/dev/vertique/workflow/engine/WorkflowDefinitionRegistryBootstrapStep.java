@@ -19,6 +19,7 @@ import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DeclaredSignalNames;
+import dev.vertique.workflow.registry.store.DefinitionChangeActor;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
@@ -91,6 +92,7 @@ import org.slf4j.LoggerFactory;
 @Singleton
 final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartupStep {
     private static final Logger log = LoggerFactory.getLogger(WorkflowDefinitionRegistryBootstrapStep.class);
+    private static final DefinitionChangeActor BOOTSTRAP_ACTOR = DefinitionChangeActor.system("bootstrap");
     private static final Set<DefinitionStatus> LIVE = Set.of(DefinitionStatus.AVAILABLE, DefinitionStatus.DEPRECATED);
     private static final Comparator<WorkflowDefinitionRecord> LISTING_ORDER = Comparator.comparing(
                     (WorkflowDefinitionRecord record) -> record.key().definitionId())
@@ -240,7 +242,8 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                         origin.nameBinding(),
                         null);
                 return store.find(origin.key()).compose(previous -> work(() -> bindDocument(origin, source, previous))
-                        .compose(bound -> store.upsertDocument(bound, origin.document(), origin.activateOnDeploy())
+                        .compose(bound -> store.upsertDocument(
+                                        byBootstrap(bound), origin.document(), origin.activateOnDeploy())
                                 .compose(outcome -> reconcileResult(bound, previous, outcome)
                                         .onSuccess(done -> events.bootstrapped(bound.key(), outcome)))
                                 .compose(done -> fillSchemas(bound, previous))));
@@ -314,7 +317,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                 return store.find(key).compose(previous -> {
                     WorkflowDefinitionRecord bound = withCodeSchemas(applyStoredBinding(source, previous));
                     return store.upsertCode(
-                                    bound,
+                                    byBootstrap(bound),
                                     definition.definition() == null
                                             || definition.definition().activateOnDeploy())
                             .compose(outcome -> reconcileResult(bound, previous, outcome)
@@ -324,6 +327,26 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
             }));
         }
         return chain;
+    }
+
+    /** The record as startup writes it: its status is set by the system, whose reason is {@code bootstrap}. */
+    private static WorkflowDefinitionRecord byBootstrap(WorkflowDefinitionRecord record) {
+        return new WorkflowDefinitionRecord(
+                record.key(),
+                record.kind(),
+                record.contractName(),
+                record.stateTypeName(),
+                record.planHash(),
+                record.status(),
+                record.provenance(),
+                record.documentFormat(),
+                record.createdAt(),
+                record.statusChangedAt(),
+                record.nameBinding(),
+                record.failure(),
+                record.signalNames(),
+                record.startSchema(),
+                BOOTSTRAP_ACTOR);
     }
 
     /** Whether the stored row of a version holds a name binding that can apply to the record about to be written. */
