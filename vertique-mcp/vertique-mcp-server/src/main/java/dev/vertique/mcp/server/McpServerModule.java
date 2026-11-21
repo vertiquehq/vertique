@@ -16,6 +16,7 @@ import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.tool.McpToolInvoker;
 import dev.vertique.ratelimit.RateLimiters;
 import dev.vertique.rest.core.config.HttpConfig;
+import dev.vertique.rest.core.router.RouterCustomizer;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
@@ -166,5 +167,16 @@ public abstract class McpServerModule {
                 toolRegistry,
                 originCapturer,
                 authorizer);
+    }
+
+    /**
+     * Contributes the main-router customization that makes MCP answer every failure of a request it
+     * admitted, ahead of any earlier mount's or application's failure handler.
+     */
+    @Provides
+    @Singleton
+    @IntoSet
+    static RouterCustomizer failureOwnership(McpServerConfig config, McpRequestDispatcher dispatcher) {
+        return new McpFailureOwnership(config, dispatcher);
     }
 }

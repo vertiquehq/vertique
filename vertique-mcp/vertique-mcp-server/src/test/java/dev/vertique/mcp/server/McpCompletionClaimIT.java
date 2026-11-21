@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextScopes;
 import dev.vertique.core.context.ContextValue;
+import dev.vertique.core.extension.ExtensionPhase;
 import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.mcp.lifecycle.McpErrorType;
 import dev.vertique.mcp.lifecycle.McpOutcome;
@@ -35,7 +36,11 @@ import dev.vertique.rest.core.events.RequestCompletionRecorder;
 import dev.vertique.rest.core.events.RestRequestCompletedEvent;
 import dev.vertique.rest.core.events.RestRequestCompletedListener;
 import dev.vertique.rest.core.events.RestRequestCompletionEmitter;
+import dev.vertique.rest.core.middleware.Middleware;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
+import dev.vertique.rest.core.router.HttpVerticle;
+import dev.vertique.rest.core.router.RouterCustomizer;
+import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.routing.RestOperationDescriptor;
 import dev.vertique.rest.core.routing.SecurityRequirementSet;
 import dev.vertique.rest.core.security.RouteAuthHandler;
@@ -66,6 +71,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpServer;
+import io.vertx.core.http.HttpServerOptions;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.User;
@@ -95,6 +101,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.stream.Collectors;
@@ -165,12 +172,15 @@ class McpCompletionClaimIT {
     private static final String BEARER_SCHEME = "bearer";
     private static final String REROUTE_SCHEME = "reroute";
     private static final String END_THEN_FAIL_SCHEME = "end-then-fail";
+    private static final String THROWING_SCHEME = "throwing";
+    private static final String ANSWERING_SCHEME = "answering";
     private static final String BEARER_ALICE = "Bearer alice";
     private static final String BEARER_MALLORY = "Bearer mallory";
     private static final String UNTRUSTED_ORIGIN = "https://untrusted.example";
     private static final String SSE_PREFIX = "event: message\ndata: ";
     private static final String REROUTED_BODY = "rerouted";
     private static final String CATCH_ALL_FAILURE_BODY = "catch-all failure";
+    private static final String TARGET_FAILURE_BODY = "target failure";
     private static final String POST = "POST";
     private static final String REENTER_SCHEME = "reenter";
     private static final String ALICE = "alice";
@@ -205,6 +215,7 @@ class McpCompletionClaimIT {
     private final RecordingCompletionListener completionListener = new RecordingCompletionListener();
     private final HangingTool hangingTool = new HangingTool();
 
+    private McpFailureOwnership mcpFailureOwnership;
     private HttpServer server;
     private HttpClient rawClient;
     private WebClient client;
@@ -447,8 +458,8 @@ class McpCompletionClaimIT {
     }
 
     @Test
-    @DisplayName("a failure after begin that an earlier mount's failure handler takes produces one HTTP event")
-    void failureTakenByEarlierMountFailureHandlerProducesOneHttpEvent() throws Exception {
+    @DisplayName("a failure after begin is answered by MCP, not by the failure handler of an earlier mount")
+    void failureAfterBeginIsAnsweredByMcpNotByAnEarlierMount() throws Exception {
         // Given: a catch-all sub-router with a failure handler, mounted ahead of the MCP mount, whose
         // bearer handler fails an unknown credential after begin.
         CatchAllFailureHandlingRouter catchAll = new CatchAllFailureHandlingRouter();
@@ -459,29 +470,217 @@ class McpCompletionClaimIT {
         boolean recorded = awaitBarrier(1);
         completionListener.awaitCount(1, nextWaitNanos());
 
-        // Then: the catch-all's failure handler, not MCP's, took the failure, so MCP never wrote, and the
-        // unclaimed request has exactly one HTTP event. MCP's settlement hook closed the observation
-        // begin opened, once, as not settled by MCP.
+        // Then: MCP answered the admitted request and settled it once; the
+        // catch-all's failure handler never ran, and rest-core reports nothing for the request.
         assertAll(
-                "failure taken by an earlier mount",
+                "failure taken by MCP",
+                block("witness", () -> {
+                    assertAnsweredByMcpAsAuthenticationFailure(response);
+                    assertThat(catchAll.failures())
+                            .as("invocations of the catch-all's failure handler")
+                            .isZero();
+                    assertThat(recorded).as("barrier recorded the tools/call").isTrue();
+                }),
+                block("MCP", () -> assertMcpRejectedOnce(McpErrorType.AUTHENTICATION, 401)),
+                block("REST", this::assertNoRestEvent),
+                block("HTTP", () -> assertThat(httpListener.summaries())
+                        .as("HTTP listener events")
+                        .isEmpty()));
+    }
+
+    @Test
+    @DisplayName("deployed through HttpVerticle, MCP answers a failure after begin ahead of an application customizer")
+    void httpVerticleOrdersMcpFailureOwnershipAheadOfApplicationFailureHandlers() throws Exception {
+        // Given: HttpVerticle composes the main router from the MCP module's own customizer, an
+        // application customizer in the application phase with the lowest priority that registers a
+        // failure handler, and a catch-all mount with a failure handler ordered ahead of the MCP mount.
+        AtomicInteger applicationFailures = new AtomicInteger();
+        CatchAllFailureHandlingRouter catchAll = new CatchAllFailureHandlingRouter();
+        Mount mcp = mcpMount(BEARER_SCHEME, new FailingBearerRouteAuthHandler());
+        startThroughHttpVerticle(
+                List.of(mcpFailureOwnership, new ApplicationFailureCustomizer(applicationFailures)),
+                catchAll.mount(),
+                mcp);
+
+        // When: one tools/call carries a credential the bearer handler rejects.
+        HttpResponse<Buffer> response = awaitResponse("tools/call", callTool(OK_TOOL, BEARER_MALLORY));
+        boolean recorded = awaitBarrier(1);
+        completionListener.awaitCount(1, nextWaitNanos());
+
+        // Then: MCP answered and settled once; neither application handler ran.
+        assertAll(
+                "failure after begin through HttpVerticle",
+                block("witness", () -> {
+                    assertAnsweredByMcpAsAuthenticationFailure(response);
+                    assertThat(applicationFailures.get())
+                            .as("invocations of the application's failure handler")
+                            .isZero();
+                    assertThat(catchAll.failures())
+                            .as("invocations of the catch-all's failure handler")
+                            .isZero();
+                    assertThat(recorded).as("barrier recorded the tools/call").isTrue();
+                }),
+                block("MCP", () -> assertMcpRejectedOnce(McpErrorType.AUTHENTICATION, 401)),
+                block("REST", this::assertNoRestEvent),
+                block("HTTP", () -> assertThat(httpListener.summaries())
+                        .as("HTTP listener events")
+                        .isEmpty()));
+    }
+
+    @Test
+    @DisplayName("deployed through HttpVerticle, a request that does not fail is unaffected by MCP failure ownership")
+    void httpVerticleLeavesARequestThatDoesNotFailUnaffected() throws Exception {
+        // Given: HttpVerticle composes the MCP module's customizer ahead of a catch-all failure handler.
+        CatchAllFailureHandlingRouter catchAll = new CatchAllFailureHandlingRouter();
+        Mount mcp = mcpMount();
+        startThroughHttpVerticle(List.of(mcpFailureOwnership), catchAll.mount(), mcp);
+
+        // When: one admitted tools/call is sent and answered.
+        HttpResponse<Buffer> response = awaitResponse("tools/call", callTool(OK_TOOL));
+        boolean recorded = awaitBarrier(1);
+        completionListener.awaitCount(1, nextWaitNanos());
+
+        // Then: MCP answered it normally and no failure handler ran.
+        assertAll(
+                "request that does not fail through HttpVerticle",
+                block("witness", () -> {
+                    assertAnsweredSuccessfully(response);
+                    assertThat(catchAll.failures())
+                            .as("invocations of the catch-all's failure handler")
+                            .isZero();
+                    assertThat(recorded).as("barrier recorded the tools/call").isTrue();
+                }),
+                block("MCP", this::assertMcpSettledOnce),
+                block("REST", this::assertNoRestEvent),
+                block("HTTP", () -> assertThat(httpListener.summaries())
+                        .as("HTTP listener events")
+                        .isEmpty()));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("applicationFailureHandlers")
+    @DisplayName("an application failure handler on the main router does not take a failure after begin")
+    void applicationFailureHandlerDoesNotTakeFailureAfterBegin(
+            String label, RouteAuthHandler failingHandler, McpErrorType errorType, int status) throws Exception {
+        // Given: an application failure handler registered on the main router, where an application
+        // router customizer registers it, ahead of every mount; the MCP mount's handler fails after begin.
+        AtomicInteger applicationFailures = new AtomicInteger();
+        startFixture(
+                List.of(),
+                List.of(router -> router.route().failureHandler(context -> {
+                    applicationFailures.incrementAndGet();
+                    context.response().setStatusCode(context.statusCode()).end(CATCH_ALL_FAILURE_BODY);
+                })),
+                mcpMount(failingHandler.schemeName(), failingHandler));
+
+        // When: one tools/call reaches the failing handler.
+        HttpResponse<Buffer> response = awaitResponse("tools/call", callTool(OK_TOOL, BEARER_MALLORY));
+        boolean recorded = awaitBarrier(1);
+        completionListener.awaitCount(1, nextWaitNanos());
+
+        // Then: MCP answered and settled the request once; the application's handler never ran.
+        assertAll(
+                label,
                 block("witness", () -> {
                     assertThat(response).as("tools/call response").isNotNull();
-                    assertThat(response.statusCode()).as("tools/call status").isEqualTo(401);
-                    assertThat(response.bodyAsString()).as("tools/call body").isEqualTo(CATCH_ALL_FAILURE_BODY);
-                    assertThat(catchAll.failures())
-                            .as(
-                                    "invocations of the catch-all's failure handler (catch-all entries: %d)",
-                                    catchAll.entries())
+                    assertThat(response.statusCode()).as("tools/call status").isEqualTo(status);
+                    assertThat(String.valueOf(response.bodyAsString()))
+                            .as("tools/call body")
+                            .doesNotContain(CATCH_ALL_FAILURE_BODY);
+                    assertThat(applicationFailures.get())
+                            .as("invocations of the application's failure handler")
+                            .isZero();
+                    assertThat(recorded).as("barrier recorded the tools/call").isTrue();
+                }),
+                block("MCP", () -> assertMcpRejectedOnce(errorType, status)),
+                block("REST", this::assertNoRestEvent),
+                block("HTTP", () -> assertThat(httpListener.summaries())
+                        .as("HTTP listener events")
+                        .isEmpty()));
+    }
+
+    private static Stream<Arguments> applicationFailureHandlers() {
+        return Stream.of(
+                Arguments.of(
+                        "fail(401) from the authentication handler",
+                        new FailingBearerRouteAuthHandler(),
+                        McpErrorType.AUTHENTICATION,
+                        401),
+                Arguments.of(
+                        "an exception thrown by the authentication handler",
+                        new ThrowingRouteAuthHandler(),
+                        McpErrorType.INTERNAL,
+                        500));
+    }
+
+    @Test
+    @DisplayName("a request an authentication handler answers itself is reported by rest-core, not by MCP")
+    void requestAnsweredByAnAuthenticationHandlerIsReportedByRestCore() throws Exception {
+        // Given: an authentication handler that answers the admitted request itself, without failing.
+        startFixture(mcpMount(ANSWERING_SCHEME, new AnsweringRouteAuthHandler()));
+
+        // When: one tools/call reaches that handler.
+        HttpResponse<Buffer> response = awaitResponse("tools/call", callTool(OK_TOOL));
+        boolean recorded = awaitBarrier(1);
+        completionListener.awaitCount(1, nextWaitNanos());
+
+        // Then: rest-core reports the request once; MCP only closes its observation as not settled.
+        assertAll(
+                "request answered by an authentication handler",
+                block("witness", () -> {
+                    assertThat(response).as("tools/call response").isNotNull();
+                    assertThat(response.statusCode()).as("tools/call status").isEqualTo(200);
+                    assertThat(response.bodyAsString()).as("tools/call body").isEqualTo("answered");
+                    assertThat(recorded).as("barrier recorded the tools/call").isTrue();
+                }),
+                block("MCP", () -> assertMcpClosedNotSettledByMcp(200)),
+                block("REST", this::assertNoRestEvent),
+                block("HTTP", () -> assertThat(httpListener.summaries())
+                        .as("HTTP listener events")
+                        .containsExactly(summary(POST, MCP_PATH, 200))));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("failingRerouteTargets")
+    @DisplayName("a request rerouted out of MCP whose target then fails is answered by the target")
+    void requestReroutedOutAndFailingThereIsAnsweredByItsTarget(String label, String targetMount, String target)
+            throws Exception {
+        // Given: the MCP mount, whose authentication handler reroutes after begin, and a target mount
+        // ordered ahead of it whose operation route fails and whose failure handler answers.
+        FailingRerouteTargetRouter targetRouter = new FailingRerouteTargetRouter(targetMount);
+        startFixture(targetRouter.mount(), mcpMount(REROUTE_SCHEME, new ReroutingRouteAuthHandler(target)));
+
+        // When: one admitted tools/call is sent to the MCP mount.
+        HttpResponse<Buffer> response = awaitResponse("tools/call", callTool(OK_TOOL));
+        boolean recorded = awaitBarrier(1);
+        completionListener.awaitCount(1, nextWaitNanos());
+
+        // Then: the target's failure handler answered, MCP wrote nothing and only closed its
+        // observation as not settled by MCP, and rest-core reports the request for the target.
+        assertAll(
+                label,
+                block("witness", () -> {
+                    assertThat(response).as("tools/call response").isNotNull();
+                    assertThat(response.statusCode()).as("tools/call status").isEqualTo(500);
+                    assertThat(response.bodyAsString()).as("tools/call body").isEqualTo(TARGET_FAILURE_BODY);
+                    assertThat(targetRouter.failures())
+                            .as("invocations of the target's failure handler")
                             .isOne();
                     assertThat(recorded).as("barrier recorded the tools/call").isTrue();
                 }),
-                block("MCP", () -> assertMcpClosedNotSettledByMcp(401)),
-                block("REST", this::assertNoRestEvent),
-                block("HTTP", () -> {
-                    List<String> events = httpListener.summaries();
-                    assertThat(events).as("HTTP listener events").hasSize(1);
-                    assertThat(events).as("HTTP listener events").containsExactly(summary(POST, MCP_PATH, 401));
-                }));
+                block("MCP", () -> assertMcpClosedNotSettledByMcp(500)),
+                block("REST", () -> assertThat(restListener.events())
+                        .as("REST listener events")
+                        .hasSize(1)),
+                block("HTTP", () -> assertThat(httpListener.summaries())
+                        .as("HTTP listener events")
+                        .isEmpty()));
+    }
+
+    private static Stream<Arguments> failingRerouteTargets() {
+        return Stream.of(
+                Arguments.of("target outside the MCP mount path", "/failing/*", "/failing/op"),
+                Arguments.of("target under the MCP mount path", "/mcp/failing/*", "/mcp/failing/op"));
     }
 
     @Test
@@ -1036,6 +1235,24 @@ class McpCompletionClaimIT {
      */
     private void startFixture(List<Handler<RoutingContext>> applicationRootMiddleware, Mount... mounts)
             throws Exception {
+        startFixture(applicationRootMiddleware, List.of(), mounts);
+    }
+
+    /**
+     * As above, and applies {@code applicationRouterCustomizers} to the main router where {@code
+     * HttpVerticle} applies the before-mounts router customizers: after the ROOT middleware and ahead of
+     * every mount.
+     *
+     * @param applicationRootMiddleware ROOT handlers that run where application ROOT middleware runs
+     * @param applicationRouterCustomizers application customizations of the main router
+     * @param mounts the sub-router mounts, in mount order
+     * @throws Exception if a router or the server does not start within the wait budget
+     */
+    private void startFixture(
+            List<Handler<RoutingContext>> applicationRootMiddleware,
+            List<Consumer<Router>> applicationRouterCustomizers,
+            Mount... mounts)
+            throws Exception {
         Router mainRouter = Router.router(vertx);
         RequestContextLifecycle lifecycle = new RequestContextLifecycle();
         mainRouter.route(lifecycle.path()).handler(lifecycle);
@@ -1045,11 +1262,55 @@ class McpCompletionClaimIT {
         mainRouter.route(emitter.path()).handler(emitter);
         applicationRootMiddleware.forEach(
                 middleware -> mainRouter.route(ROOT_PATH).handler(middleware));
+        // The MCP module's own customizer runs first, as in HttpVerticle: its phase is SYSTEM_FIRST.
+        if (mcpFailureOwnership != null) {
+            mcpFailureOwnership.customize(mainRouter);
+        }
+        applicationRouterCustomizers.forEach(customizer -> customizer.accept(mainRouter));
         for (Mount mount : mounts) {
             mainRouter.route(mount.path()).subRouter(awaitSetup(mount.router().apply(vertx)));
         }
         server = awaitSetup(vertx.createHttpServer().requestHandler(mainRouter).listen(0, LOOPBACK));
         port = server.actualPort();
+        rawClient = vertx.createHttpClient();
+        client = WebClient.wrap(rawClient);
+    }
+
+    /**
+     * Composes the main router with the real {@link HttpVerticle} and deploys it on a loopback port 0:
+     * {@link RequestContextLifecycle}, the completion barrier and the completion emitter as ROOT
+     * middleware, {@code customizers} as router customizers, and {@code mounts} as router mounts.
+     *
+     * @param customizers the router customizers {@code HttpVerticle} orders and applies
+     * @param mounts the sub-router mounts
+     * @throws Exception if the verticle does not deploy within the wait budget
+     */
+    private void startThroughHttpVerticle(List<RouterCustomizer> customizers, Mount... mounts) throws Exception {
+        RestRequestCompletionEmitter emitter = new RestRequestCompletionEmitter(
+                Optional.empty(), NO_OP_CONTEXT_HOLDER, Set.of(restListener), Set.of(httpListener), Set.of());
+        Set<RouterMount> routerMounts = new java.util.LinkedHashSet<>();
+        for (Mount mount : mounts) {
+            Router router = awaitSetup(mount.router().apply(vertx));
+            routerMounts.add(new RouterMount() {
+                @Override
+                public String mountPath() {
+                    return mount.path();
+                }
+
+                @Override
+                public Future<Router> createRouter(Vertx ignored) {
+                    return Future.succeededFuture(router);
+                }
+            });
+        }
+        HttpVerticle verticle = new HttpVerticle(
+                new HttpServerOptions().setHost(LOOPBACK).setPort(0),
+                new java.util.LinkedHashSet<>(customizers),
+                Set.of(new RequestContextLifecycle(), new BarrierMiddleware(barrier), emitter),
+                routerMounts,
+                Set.of());
+        awaitSetup(vertx.deployVerticle(verticle));
+        port = ((Number) vertx.sharedData().getLocalMap("vertique").get("http.port")).intValue();
         rawClient = vertx.createHttpClient();
         client = WebClient.wrap(rawClient);
     }
@@ -1107,21 +1368,23 @@ class McpCompletionClaimIT {
                 .idleTimeoutSeconds(60)
                 .maxBodySize(MAX_BODY_BYTES)
                 .build();
+        McpRequestDispatcher dispatcher = new McpRequestDispatcher(
+                config,
+                securityRuntime,
+                Set.of(observer),
+                Set.of(completionListener),
+                Set.of(),
+                Set.of(),
+                httpConfig,
+                registry,
+                policyEnforcer,
+                NO_OP_CONTEXT_HOLDER,
+                new CorrelationContextFactory(Optional.empty()));
+        mcpFailureOwnership = new McpFailureOwnership(config, dispatcher);
         McpRouterMount mount = new McpRouterMount(
                 config,
                 new McpServerConfigValidator(),
-                new McpRequestDispatcher(
-                        config,
-                        securityRuntime,
-                        Set.of(observer),
-                        Set.of(completionListener),
-                        Set.of(),
-                        Set.of(),
-                        httpConfig,
-                        registry,
-                        policyEnforcer,
-                        NO_OP_CONTEXT_HOLDER,
-                        new CorrelationContextFactory(Optional.empty())),
+                dispatcher,
                 Set.of(routeAuthHandlers),
                 new IdentityResolutionMiddleware(
                         Set.of(identityResolver),
@@ -1376,6 +1639,25 @@ class McpCompletionClaimIT {
         assertThat(completionListener.events().get(0).transportOutcome())
                 .as("transport outcome of the MCP completion")
                 .isEqualTo(McpTransportOutcome.WRITTEN);
+    }
+
+    /** The response MCP writes for a rejected credential: a 401 that is not the catch-all handler's. */
+    private static void assertAnsweredByMcpAsAuthenticationFailure(@Nullable HttpResponse<Buffer> response) {
+        assertThat(response).as("tools/call response").isNotNull();
+        assertThat(response.statusCode()).as("tools/call status").isEqualTo(401);
+        assertThat(String.valueOf(response.bodyAsString()))
+                .as("tools/call body")
+                .doesNotContain(CATCH_ALL_FAILURE_BODY);
+    }
+
+    /** MCP settled the request once, by rejecting it with {@code errorType} and {@code status}. */
+    private void assertMcpRejectedOnce(McpErrorType errorType, int status) {
+        assertMcpSettledOnce();
+        McpRequestTerminalEvent terminal =
+                observer.observation(0).terminals().get(0).event();
+        assertThat(terminal.outcome()).as("outcome of the MCP terminal").isEqualTo(McpOutcome.REJECTED);
+        assertThat(terminal.errorType()).as("error type of the MCP terminal").isEqualTo(errorType);
+        assertThat(terminal.httpStatus()).as("HTTP status of the MCP terminal").isEqualTo(status);
     }
 
     private void assertNoRestEvent() {
@@ -1886,6 +2168,127 @@ class McpCompletionClaimIT {
 
         CompletableFuture<Void> hangingEntered() {
             return hangingEntered;
+        }
+    }
+
+    /** An application router customizer, in the application phase with the lowest priority. */
+    private static final class ApplicationFailureCustomizer implements RouterCustomizer {
+        private final AtomicInteger failures;
+
+        ApplicationFailureCustomizer(AtomicInteger failures) {
+            this.failures = failures;
+        }
+
+        @Override
+        public int priority() {
+            return Integer.MIN_VALUE;
+        }
+
+        @Override
+        public void customize(Router router) {
+            router.route().failureHandler(context -> {
+                failures.incrementAndGet();
+                context.response().setStatusCode(context.statusCode()).end(CATCH_ALL_FAILURE_BODY);
+            });
+        }
+    }
+
+    /** Registers the barrier as ROOT middleware right after the lifecycle and ahead of the emitter. */
+    private static final class BarrierMiddleware implements Middleware {
+        private final CompletionBarrier barrier;
+
+        BarrierMiddleware(CompletionBarrier barrier) {
+            this.barrier = barrier;
+        }
+
+        @Override
+        public ExtensionPhase phase() {
+            return ExtensionPhase.SYSTEM_FIRST;
+        }
+
+        @Override
+        public int priority() {
+            return RequestContextLifecycle.ORDER + 2;
+        }
+
+        @Override
+        public void handle(RoutingContext context) {
+            barrier.handle(context);
+        }
+    }
+
+    /**
+     * A reroute target mounted at {@code mountPath}, ordered ahead of the MCP mount. Its {@code /op}
+     * route stands in for a JAX-RS operation route: it records {@link #TARGET_OPERATION}, then fails the
+     * request with 500, and the router's failure handler answers with {@link #TARGET_FAILURE_BODY}.
+     */
+    private static final class FailingRerouteTargetRouter {
+        private final String mountPath;
+        private final AtomicInteger failures = new AtomicInteger();
+
+        FailingRerouteTargetRouter(String mountPath) {
+            this.mountPath = mountPath;
+        }
+
+        Mount mount() {
+            return new Mount(mountPath, vertx -> {
+                Router router = Router.router(vertx);
+                router.post("/op")
+                        .handler(RequestCompletionRecorder.operationRouteHandler(TARGET_OPERATION))
+                        .handler(context -> context.fail(500));
+                router.route().failureHandler(context -> {
+                    failures.incrementAndGet();
+                    context.response().setStatusCode(500).end(TARGET_FAILURE_BODY);
+                });
+                return Future.succeededFuture(router);
+            });
+        }
+
+        int failures() {
+            return failures.get();
+        }
+    }
+
+    /** The one {@link RouteAuthHandler} of the {@code answering} scheme: it answers the request itself. */
+    private static final class AnsweringRouteAuthHandler implements RouteAuthHandler {
+
+        @Override
+        public String schemeName() {
+            return ANSWERING_SCHEME;
+        }
+
+        @Override
+        public Handler<RoutingContext> createHandler() {
+            return context -> context.fail(401);
+        }
+
+        @Override
+        public Optional<Handler<RoutingContext>> createOptionalHandler() {
+            return Optional.of(context -> context.response().setStatusCode(200).end("answered"));
+        }
+    }
+
+    /**
+     * The one {@link RouteAuthHandler} of the {@code throwing} scheme. Its optional handler throws, so
+     * Vert.x Web fails the request with 500 after {@code begin}.
+     */
+    private static final class ThrowingRouteAuthHandler implements RouteAuthHandler {
+
+        @Override
+        public String schemeName() {
+            return THROWING_SCHEME;
+        }
+
+        @Override
+        public Handler<RoutingContext> createHandler() {
+            return context -> context.fail(401);
+        }
+
+        @Override
+        public Optional<Handler<RoutingContext>> createOptionalHandler() {
+            return Optional.of(context -> {
+                throw new IllegalStateException("failed after begin");
+            });
         }
     }
 
