@@ -198,7 +198,7 @@ BOOTSTRAP  → deploy BOOTSTRAP-phase verticles
 INFRA      → deploy INFRA-phase verticles (management, health)
 SERVICES   → ServiceDeploymentStartupStep (from DispatchModule) → deploy SERVICES-phase verticles
 EDGE       → deploy EDGE-phase verticles (HTTP, WebSocket)
-AFTER_START → (no built-in steps; apps contribute post-start notifications etc. here)
+AFTER_START → StartupReadinessCheck (from CoreLifecycleStepsModule, last in the phase); apps contribute post-start notifications etc. here
 ```
 
 #### Invariants & Gotchas

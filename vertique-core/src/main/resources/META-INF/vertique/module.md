@@ -970,6 +970,16 @@ whatever the constructor throws, reported as a failed `VALIDATE`-phase startup. 
 run, the application component must include `CoreLifecycleStepsModule` and be driven by the standard
 lifecycle runner in `dev.vertique:vertique-application`.
 
+### `StartupReadinessCheck`
+
+`dev.vertique.core.lifecycle.StartupReadinessCheck` (final, `@Singleton`) is the readiness gate for startup. It is
+both a `HealthCheck` named `startup` and an `ApplicationStartupStep` in `AFTER_START` with the highest priority, so it
+runs after every other `AFTER_START` step. `CoreLifecycleStepsModule` contributes the one instance to both sets, the
+check under `@Readiness`. The check is `DOWN` (`"starting"`) until that step has run, so the readiness probe of an
+application with `ManagementModule` is not `UP` before every verticle phase, and so every API listener, has
+completed. It stays `UP` afterwards; a failed startup is torn down and never reaches it. A host that includes the
+module but never runs the lifecycle runner stays not-ready.
+
 ### `Canonicalizer` and `Sanitizer`
 
 String normalization (semantics-preserving) and content removal (not semantics-preserving) applied

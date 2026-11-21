@@ -7,6 +7,8 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
+import dev.vertique.core.health.HealthCheck;
+import dev.vertique.core.health.Readiness;
 import jakarta.inject.Singleton;
 import java.util.Set;
 
@@ -18,6 +20,10 @@ import java.util.Set;
  * {@link LifecyclePhase#VALIDATE VALIDATE} step wired automatically:
  * {@link ComposeValidationStep} forces construction of every {@link ComposeValidator} for fail-fast
  * graph-composition validation.
+ *
+ * <p>The module also contributes {@link StartupReadinessCheck}, as a {@code @Readiness} check and as the last
+ * {@link LifecyclePhase#AFTER_START AFTER_START} step, so the readiness probe of an application with
+ * {@code ManagementModule} stays {@code DOWN} until the runner has finished every phase.
  *
  * <p>The step is contributed {@code @IntoSet ApplicationStartupStep}. Dagger merges multibinding
  * contributions across modules, so this entry joins the {@code Set<ApplicationStartupStep>}
@@ -57,5 +63,34 @@ public abstract class CoreLifecycleStepsModule {
     @IntoSet
     static ApplicationStartupStep composeValidationStep(ComposeValidationStep step) {
         return step;
+    }
+
+    /**
+     * Contributes the startup readiness gate as a startup step: it marks the application started in the last
+     * {@link LifecyclePhase#AFTER_START} step.
+     *
+     * @param check the singleton gate
+     * @return the gate as an {@link ApplicationStartupStep}
+     */
+    @Provides
+    @Singleton
+    @IntoSet
+    static ApplicationStartupStep startupReadinessStep(StartupReadinessCheck check) {
+        return check;
+    }
+
+    /**
+     * Contributes the same singleton gate as a readiness check, so {@code /health/ready} is {@code DOWN} until the
+     * runner has finished every phase.
+     *
+     * @param check the singleton gate
+     * @return the gate as a {@link HealthCheck}
+     */
+    @Provides
+    @Singleton
+    @IntoSet
+    @Readiness
+    static HealthCheck startupReadinessCheck(StartupReadinessCheck check) {
+        return check;
     }
 }

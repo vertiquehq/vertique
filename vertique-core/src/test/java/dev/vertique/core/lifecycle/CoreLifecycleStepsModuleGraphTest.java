@@ -33,18 +33,22 @@ import org.junit.jupiter.api.Test;
 class CoreLifecycleStepsModuleGraphTest {
 
     @Test
-    @DisplayName("A component whose only module is CoreLifecycleStepsModule resolves the single startup step")
+    @DisplayName("A component whose only module is CoreLifecycleStepsModule resolves its startup steps")
     void componentWithOnlyCoreLifecycleStepsModuleResolvesStartupSteps() {
         CoreLifecycleGraphComponent component =
                 DaggerCoreLifecycleStepsModuleGraphTest_CoreLifecycleGraphComponent.create();
 
         Set<ApplicationStartupStep> steps = component.startupSteps();
 
-        assertEquals(1, steps.size(), "CoreLifecycleStepsModule must contribute exactly one startup step");
+        assertEquals(2, steps.size(), "CoreLifecycleStepsModule must contribute the compose and the readiness step");
 
         ApplicationStartupStep composeStep = stepOfType(steps, ComposeValidationStep.class);
 
         assertEquals(LifecyclePhase.VALIDATE, composeStep.phase(), "ComposeValidationStep must run in VALIDATE");
+        assertEquals(
+                LifecyclePhase.AFTER_START,
+                stepOfType(steps, StartupReadinessCheck.class).phase(),
+                "StartupReadinessCheck must run in AFTER_START");
     }
 
     @Test
