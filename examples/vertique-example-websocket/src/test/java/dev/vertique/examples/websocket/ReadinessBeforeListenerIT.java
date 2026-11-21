@@ -5,7 +5,6 @@ package dev.vertique.examples.websocket;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.application.VertiqueApplicationBootstrap;
@@ -29,8 +28,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * Holds startup inside the edge phase, after the management server is serving and before the API listener binds,
- * and checks what the readiness probe says in that window.
+ * Holds startup twice, and checks what the readiness probe says in each window: inside the edge phase, after the
+ * management server is serving and before the API listener binds, and inside the post-start phase, after the API
+ * listener is bound and before startup has finished.
  *
  * <p>The management server deploys in the infrastructure phase and the API server in the edge phase. A readiness
  * probe that answers 200 while the API port still refuses connections sends traffic to a process that cannot serve it.
@@ -53,17 +53,22 @@ class ReadinessBeforeListenerIT {
         }
     }
 
-    private static int readyStatus(HttpClient client, int managementPort) throws Exception {
+    private record Probe(int status, String body) {}
+
+    private static Probe ready(HttpClient client, int managementPort) throws Exception {
         HttpRequest request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + managementPort + "/health/ready"))
                 .timeout(Duration.ofSeconds(5))
                 .build();
-        return client.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        return new Probe(response.statusCode(), response.body());
     }
 
     @Test
-    @DisplayName("readiness does not report 200 while the API listener is not bound")
-    void notReadyBeforeApiListens() throws Exception {
-        HoldEdgeModule.Hold.reset();
+    @DisplayName("readiness is not UP while the API listener is unbound or startup is unfinished")
+    void notReadyBeforeApiListensOrStartupFinishes() throws Exception {
+        HoldEdgeModule.Holds.reset();
+        HoldEdgeModule.Hold edge = HoldEdgeModule.Holds.edge;
+        HoldEdgeModule.Hold afterStart = HoldEdgeModule.Holds.afterStart;
         int httpPort = freePort();
         int managementPort = freePort();
         JsonObject config = new JsonObject()
@@ -75,23 +80,45 @@ class ReadinessBeforeListenerIT {
             Future<VertiqueApplicationHandle<HeldEdgeComponent>> started = VertiqueApplicationBootstrap.start(
                     VertiqueRuntime.of(vertx, config), new HeldEdgeComponentVertiqueComponentFactory());
 
-            assertTrue(HoldEdgeModule.Hold.reached.await(30, TimeUnit.SECONDS), "startup reached the edge phase");
-
-            int held = readyStatus(client, managementPort);
+            assertTrue(awaitOrFailure(edge, started), "startup reached the edge phase");
+            Probe inEdge = ready(client, managementPort);
             assertFalse(accepts(httpPort), "the API listener binds only after the edge phase starts");
-            assertNotEquals(200, held, "readiness while the API port refuses connections");
+            assertEquals(503, inEdge.status(), "readiness while the API port refuses connections");
+            assertTrue(inEdge.body().contains("\"startup\""), inEdge.body());
 
-            HoldEdgeModule.Hold.release.complete();
+            edge.release.complete();
+            assertTrue(awaitOrFailure(afterStart, started), "startup reached the post-start phase");
+            Probe inAfterStart = ready(client, managementPort);
+            assertTrue(accepts(httpPort), "every verticle is deployed before the post-start phase");
+            assertEquals(
+                    503, inAfterStart.status(), "readiness waits for startup to finish, not only for the listener");
+            assertTrue(inAfterStart.body().contains("\"startup\""), inAfterStart.body());
+
+            afterStart.release.complete();
             VertiqueApplicationHandle<HeldEdgeComponent> handle =
                     started.toCompletionStage().toCompletableFuture().get(30, TimeUnit.SECONDS);
 
             assertTrue(accepts(httpPort), "the API listener is bound once startup completes");
-            assertEquals(200, readyStatus(client, managementPort));
+            assertEquals(200, ready(client, managementPort).status());
 
             handle.shutdown().toCompletionStage().toCompletableFuture().get(30, TimeUnit.SECONDS);
         } finally {
-            HoldEdgeModule.Hold.release.tryComplete();
+            edge.release.tryComplete();
+            afterStart.release.tryComplete();
             vertx.close().toCompletionStage().toCompletableFuture().get(30, TimeUnit.SECONDS);
         }
+    }
+
+    /** Waits for a hold to be reached, giving up early when startup has already failed. */
+    private static boolean awaitOrFailure(HoldEdgeModule.Hold hold, Future<?> started) throws InterruptedException {
+        for (int i = 0; i < 300; i++) {
+            if (hold.reached.await(100, TimeUnit.MILLISECONDS)) {
+                return true;
+            }
+            if (started.failed()) {
+                throw new AssertionError("startup failed before the hold", started.cause());
+            }
+        }
+        return false;
     }
 }

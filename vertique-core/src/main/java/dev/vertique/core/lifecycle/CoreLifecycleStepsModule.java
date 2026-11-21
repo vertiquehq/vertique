@@ -36,7 +36,7 @@ import java.util.Set;
  * contributes a validator. Modules that own a compose validator contribute it via
  * {@code @Provides @IntoSet ComposeValidator}.
  *
- * <p>This module is <em>self-contained</em>: it includes no other module, and its only step depends
+ * <p>This module is <em>self-contained</em>: it includes no other module, and its steps depend
  * on nothing beyond the multibinding it declares here.
  */
 @Module

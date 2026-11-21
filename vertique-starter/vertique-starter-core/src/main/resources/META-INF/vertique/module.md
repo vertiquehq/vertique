@@ -44,7 +44,7 @@ a second time.
 | `dev.vertique.core.VertxModule` | `vertique-core` | the `Vertx` instance and the root `@VertxConfig` `JsonObject` |
 | `dev.vertique.config.parser.ConfigParsingModule` | `vertique-config-core` | the canonical `ConfigParser` and its dedicated config `ObjectMapper` |
 | `dev.vertique.deploy.DeployerModule` | `vertique-deploy` | the `VerticleDeployment`, `ApplicationStartupStep`, and `ApplicationShutdownStep` multibinding sets |
-| `dev.vertique.core.lifecycle.CoreLifecycleStepsModule` | `vertique-core` | the `VALIDATE` compose step and the `ComposeValidator` multibinding. The `CONFIGURE` step is not part of the core starter: it arrives with `dev.vertique.json.JsonRuntimeModule`, which the REST modules include |
+| `dev.vertique.core.lifecycle.CoreLifecycleStepsModule` | `vertique-core` | the `VALIDATE` compose step, the `AFTER_START` `StartupReadinessCheck` (also the `startup` readiness check) and the `ComposeValidator` multibinding. The `CONFIGURE` step is not part of the core starter: it arrives with `dev.vertique.json.JsonRuntimeModule`, which the REST modules include |
 
 Dagger applies `@Module(includes = …)` recursively, so a component that names
 `CoreApplicationModule` reaches all four transitively. `VertxModule` is stateful and therefore

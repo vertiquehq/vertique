@@ -13,39 +13,62 @@ import io.vertx.core.Promise;
 import java.util.concurrent.CountDownLatch;
 
 /**
- * Contributes a startup step in the edge phase, which runs before the edge verticles deploy, and keeps it pending
- * until the test releases it.
+ * Contributes two startup steps the test holds pending: one in the edge phase, which runs before the edge verticles
+ * deploy, and one in the post-start phase, which runs after every verticle is deployed and just before the readiness
+ * gate.
  */
 @Module
 abstract class HoldEdgeModule {
 
-    /** The latch that tells the test the step is running and the promise that lets it finish. */
+    /** A latch that tells the test a step is running and the promise that lets it finish. */
     static final class Hold {
-        static volatile CountDownLatch reached = new CountDownLatch(1);
-        static volatile Promise<Void> release = Promise.promise();
+        final CountDownLatch reached = new CountDownLatch(1);
+        final Promise<Void> release = Promise.promise();
+    }
 
-        private Hold() {}
+    /** The edge-phase hold and the post-start hold of the current test run. */
+    static final class Holds {
+        static volatile Hold edge = new Hold();
+        static volatile Hold afterStart = new Hold();
+
+        private Holds() {}
 
         static void reset() {
-            reached = new CountDownLatch(1);
-            release = Promise.promise();
+            edge = new Hold();
+            afterStart = new Hold();
         }
+    }
+
+    private static ApplicationStartupStep step(LifecyclePhase phase, int priority, boolean edge) {
+        return new ApplicationStartupStep() {
+            @Override
+            public LifecyclePhase phase() {
+                return phase;
+            }
+
+            @Override
+            public int priority() {
+                return priority;
+            }
+
+            @Override
+            public Future<Void> start() {
+                Hold hold = edge ? Holds.edge : Holds.afterStart;
+                hold.reached.countDown();
+                return hold.release.future();
+            }
+        };
     }
 
     @Provides
     @IntoSet
     static ApplicationStartupStep holdEdge() {
-        return new ApplicationStartupStep() {
-            @Override
-            public LifecyclePhase phase() {
-                return LifecyclePhase.EDGE;
-            }
+        return step(LifecyclePhase.EDGE, 0, true);
+    }
 
-            @Override
-            public Future<Void> start() {
-                Hold.reached.countDown();
-                return Hold.release.future();
-            }
-        };
+    @Provides
+    @IntoSet
+    static ApplicationStartupStep holdAfterStart() {
+        return step(LifecyclePhase.AFTER_START, Integer.MAX_VALUE - 1, false);
     }
 }

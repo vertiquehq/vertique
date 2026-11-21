@@ -978,7 +978,7 @@ runs after every other `AFTER_START` step. `CoreLifecycleStepsModule` contribute
 check under `@Readiness`. The check is `DOWN` (`"starting"`) until that step has run, so the readiness probe of an
 application with `ManagementModule` is not `UP` before every verticle phase, and so every API listener, has
 completed. It stays `UP` afterwards; a failed startup is torn down and never reaches it. A host that includes the
-module but never runs the lifecycle runner stays not-ready.
+module but never runs the lifecycle runner stays not-ready. The `@Readiness Set<HealthCheck>` always holds `startup`, so an in-process evaluation of that set before the gate step has run, including from inside startup, reports `DOWN`.
 
 ### `Canonicalizer` and `Sanitizer`
 
