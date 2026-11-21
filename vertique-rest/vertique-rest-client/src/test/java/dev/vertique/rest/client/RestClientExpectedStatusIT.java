@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
 import dev.vertique.resilience.annotation.Retry;
-import dev.vertique.rest.client.exception.RestClientException;
+import dev.vertique.rest.client.exception.RestClientResponseDecodingException;
 import dev.vertique.rest.client.exception.RestClientResponseException;
 import dev.vertique.rest.client.interceptor.RestClientInterceptor;
 import dev.vertique.rest.client.interceptor.RestClientRequestContext;
@@ -137,8 +137,15 @@ class RestClientExpectedStatusIT {
                 .build(ItemClient.class)
                 .value()
                 .onComplete(ctx.failing(err -> ctx.verify(() -> {
-                    assertThat(err).isExactlyInstanceOf(RestClientException.class);
-                    assertThat(err.getMessage()).contains("Failed to deserialize");
+                    assertThat(err).isExactlyInstanceOf(RestClientResponseDecodingException.class);
+                    RestClientResponseDecodingException decoding = (RestClientResponseDecodingException) err;
+                    assertThat(decoding.statusCode()).isEqualTo(404);
+                    assertThat(decoding.responseBody().toString()).isEqualTo("<html>gateway</html>");
+                    assertThat(decoding.getMessage())
+                            .contains("Failed to deserialize")
+                            .contains("404")
+                            .doesNotContain("gateway");
+                    assertThat(decoding.getCause()).isNotNull();
                     ctx.completeNow();
                 })));
     }

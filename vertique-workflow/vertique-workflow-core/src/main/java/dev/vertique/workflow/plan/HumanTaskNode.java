@@ -96,7 +96,7 @@ public record HumanTaskNode(
      * @throws NullPointerException if {@code stepId}, {@code assignment}, or {@code decisions} is
      *     null
      * @throws IllegalArgumentException if {@code decisions} is empty, if the due-date triplet
-     *     is partially set, or if {@code taskType} is blank
+     *     is partially set, or if {@code taskType} is blank or longer than 255 code points
      */
     public HumanTaskNode {
         Objects.requireNonNull(stepId, "stepId");
@@ -105,6 +105,9 @@ public record HumanTaskNode(
         decisions = List.copyOf(decisions);
         if (taskType != null && taskType.isBlank()) {
             throw new IllegalArgumentException("taskType must not be blank; use null for no task type");
+        }
+        if (taskType != null && taskType.codePointCount(0, taskType.length()) > 255) {
+            throw new IllegalArgumentException("taskType must be at most 255 code points");
         }
         if (decisions.isEmpty()) {
             throw new IllegalArgumentException("HumanTaskNode requires at least one decision");

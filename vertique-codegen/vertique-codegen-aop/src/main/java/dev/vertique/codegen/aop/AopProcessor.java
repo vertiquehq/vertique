@@ -71,6 +71,8 @@ import javax.lang.model.util.ElementFilter;
 public final class AopProcessor extends AbstractProcessor {
 
     private static final String ASPECT_FQN = "dev.vertique.aop.Aspect";
+    static final String RESILIENT_FQN = "dev.vertique.resilience.annotation.Resilient";
+    private static final String SERVICE_CONTRACT_FQN = "dev.vertique.services.ServiceContract";
     private static final String SCOPE_FQN = "jakarta.inject.Scope";
     private static final String JAVAX_SCOPE_FQN = "javax.inject.Scope";
     private static final String ASSISTED_INJECT_FQN = "dagger.assisted.AssistedInject";
@@ -79,6 +81,10 @@ public final class AopProcessor extends AbstractProcessor {
     private static final String FUTURE_FQN = "io.vertx.core.Future";
 
     private CodegenContext ctx;
+
+    /** Per bean, the interface methods whose {@code @Resilient} anchor the services pipeline applies. */
+    private final Map<TypeElement, Set<ExecutableElement>> servicesOwned = new LinkedHashMap<>();
+
     private AopProxyEmitter proxyEmitter;
     private GeneratedAopModuleEmitter moduleEmitter;
     private InjectConstructorValidator injectConstructorValidator;
@@ -196,7 +202,12 @@ public final class AopProcessor extends AbstractProcessor {
 
                 Optional<ExecutableElement> injectCtor = ctx.injectConstructor(bean);
                 ClassName proxy = proxyEmitter.emit(
-                        bean, injectCtor.orElseThrow(), entry.getValue(), aspectFqns, emittedLiteralFqns);
+                        bean,
+                        injectCtor.orElseThrow(),
+                        entry.getValue(),
+                        aspectFqns,
+                        servicesOwned.getOrDefault(bean, Set.of()),
+                        emittedLiteralFqns);
                 moduleEmitter.add(bean, proxy, scopeOf(bean));
             }
         }
@@ -497,6 +508,7 @@ public final class AopProcessor extends AbstractProcessor {
 
     private Map<TypeElement, List<ExecutableElement>> collectBeans(Set<String> triggerFqns, RoundEnvironment roundEnv) {
         Map<TypeElement, List<ExecutableElement>> beans = new LinkedHashMap<>();
+        servicesOwned.clear();
         // De-duplicate annotated elements that carry more than one trigger type.
         Set<ExecutableElement> seenAnnotated = new LinkedHashSet<>();
         for (String triggerFqn : triggerFqns) {
@@ -518,7 +530,7 @@ public final class AopProcessor extends AbstractProcessor {
                 } else if (enclosing.getKind() == ElementKind.INTERFACE && enclosing instanceof TypeElement iface) {
                     for (TypeElement impl : implementingClasses(iface, roundEnv)) {
                         if (isConcreteMember(impl, method)) {
-                            addInterceptedMethod(beans, impl, methodForWeaving(impl, method, triggerFqns));
+                            addInterfaceMethod(beans, impl, method, triggerFqns);
                         }
                     }
                 }
@@ -556,6 +568,53 @@ public final class AopProcessor extends AbstractProcessor {
             });
         }
         return beans;
+    }
+
+    /**
+     * Weaves an interface method onto {@code bean}, leaving out the {@code @Resilient} anchor of a
+     * service-contract operation.
+     *
+     * <p>The services dispatch pipeline applies a contract operation's resilience once, so weaving
+     * the same interface anchor onto the contract's implementor would run the policy twice. An
+     * interface method that is an operation of a {@code @ServiceContract} the bean implements is
+     * not added when {@code @Resilient} is its only aspect trigger; when it also carries other
+     * aspect triggers it is added and recorded in {@link #servicesOwned} so the emitter leaves
+     * {@code @Resilient} out of its chain. The decision is made before de-duplication, so the method
+     * never takes the slot of another interface's method with the same signature.
+     */
+    private void addInterfaceMethod(
+            Map<TypeElement, List<ExecutableElement>> beans,
+            TypeElement bean,
+            ExecutableElement method,
+            Set<String> triggerFqns) {
+        ExecutableElement woven = methodForWeaving(bean, method, triggerFqns);
+        boolean serviceOwned = woven.getEnclosingElement().getKind() == ElementKind.INTERFACE
+                && triggerFqns.contains(RESILIENT_FQN)
+                && hasAspectTrigger(woven, Set.of(RESILIENT_FQN))
+                && isServiceContractOperation(bean, woven);
+        if (serviceOwned) {
+            Set<String> otherTriggers = new LinkedHashSet<>(triggerFqns);
+            otherTriggers.remove(RESILIENT_FQN);
+            if (!hasAspectTrigger(woven, otherTriggers)) {
+                return;
+            }
+            servicesOwned.computeIfAbsent(bean, k -> new LinkedHashSet<>()).add(woven);
+        }
+        addInterceptedMethod(beans, bean, woven);
+    }
+
+    /**
+     * Returns {@code true} when {@code method} is an operation (declared or inherited) of a
+     * {@code @ServiceContract} interface that {@code bean} implements.
+     */
+    private boolean isServiceContractOperation(TypeElement bean, ExecutableElement method) {
+        for (TypeElement iface : allInterfaces(bean)) {
+            if (AnnotationMirrors.isPresent(iface, SERVICE_CONTRACT_FQN)
+                    && ctx.elements().getAllMembers(iface).contains(method)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -630,7 +689,7 @@ public final class AopProcessor extends AbstractProcessor {
         for (TypeElement iface : allInterfaces(type)) {
             for (ExecutableElement method : ElementFilter.methodsIn(iface.getEnclosedElements())) {
                 if (hasAspectTrigger(method, triggerFqns) && isConcreteMember(type, method)) {
-                    addInterceptedMethod(beans, type, methodForWeaving(type, method, triggerFqns));
+                    addInterfaceMethod(beans, type, method, triggerFqns);
                 }
             }
         }

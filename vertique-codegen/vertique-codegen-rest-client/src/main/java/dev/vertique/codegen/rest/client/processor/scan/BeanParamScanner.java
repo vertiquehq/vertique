@@ -147,12 +147,11 @@ public final class BeanParamScanner {
         Set<String> declaredNames = new HashSet<>();
         LinkedHashMap<String, ParamModel> fieldsByJavaName = new LinkedHashMap<>();
         boolean fullyGeneratable = true;
-        // The generated accessor lives in {@link CodegenContext#outputPackage(TypeElement)} (which
-        // honors any -Avertique.codegen.package override). Use that — not the bean's declaring
-        // package — for the same-package access check, otherwise an override that relocates the
-        // accessor to a foreign package would emit uncompilable {@code bean.field} expressions for
-        // package-private fields in the bean's real package.
-        String accessorPackage = ctx.outputPackage(beanType);
+        // The generated accessor always lives in the bean's own package: the output-package option
+        // does not relocate it. Use the bean's origin package for the same-package access check, so
+        // package-private and protected fields are read directly only when the accessor really
+        // shares their package.
+        String accessorPackage = ctx.packageNameOf(beanType);
 
         TypeElement current = beanType;
         while (current != null && !isObjectType(current)) {

@@ -25,7 +25,8 @@ import java.util.Objects;
  *       before reaching the workflow engine</li>
  * </ul>
  *
- * <p>Bound as the {@link WorkflowActorMapper} implementation by {@link dev.vertique.workflow.di.WorkflowCoreModule}.
+ * <p>Used as the {@link WorkflowActorMapper} when the application binds none; see
+ * {@link WorkflowActorMapper#orDefault(java.util.Optional)}.
  */
 @Singleton
 public final class DefaultWorkflowActorMapper implements WorkflowActorMapper {

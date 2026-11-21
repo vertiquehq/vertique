@@ -78,7 +78,8 @@ public record IdentitySnapshotConfig(
         if (anyRequired && (maxCarrierLifetimeMs == null || maxSnapshotLifetimeMs == null)) {
             throw new ConfigurationException("identity.snapshot.carriageRequirements declares a REQUIRED target, but "
                     + "maxCarrierLifetimeMs and maxSnapshotLifetimeMs must both be configured — a "
-                    + "never-expiring REQUIRED snapshot would be a standing bearer credential");
+                    + "REQUIRED snapshot without a configured budget would stay valid for the default "
+                    + "24 hours, a standing bearer credential");
         }
     }
 

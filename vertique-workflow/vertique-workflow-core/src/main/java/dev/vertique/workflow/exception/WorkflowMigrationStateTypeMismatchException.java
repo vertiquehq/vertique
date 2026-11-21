@@ -4,17 +4,17 @@
 package dev.vertique.workflow.exception;
 
 /**
- * Thrown by {@link dev.vertique.workflow.migration.DefaultWorkflowMigrationRegistry#find} when
- * a registered {@link dev.vertique.workflow.migration.WorkflowMigrationHandler} declares a source
- * or target state type that does not match the corresponding plan's runtime state type.
+ * Signals that a registered {@link dev.vertique.workflow.migration.WorkflowMigrationHandler}
+ * declares a source or target state type that does not match the corresponding plan's runtime
+ * state type.
  *
- * <p>This is a configuration error — the handler was registered with an incorrect state-type
- * declaration. The mismatch is detected lazily at {@code find()} time because plan versions may
- * be dynamically activated after the Dagger graph is built, making it impossible to validate
- * state types at construction time.
+ * <p>This is a configuration error: the handler was registered with an incorrect state-type
+ * declaration. {@link dev.vertique.workflow.migration.DefaultWorkflowMigrationRegistry#find}
+ * does not throw it, because it resolves no plan and checks no state type. The workflow engine
+ * detects the mismatch when it runs a migration and refuses the attempt with the
+ * state-type-mismatch rejection; it does not translate this exception.
  *
- * <p>Callers receiving this exception should surface it as an operation invariant violation and
- * fail the migration attempt. The handler must be corrected and redeployed.
+ * <p>The handler must be corrected and redeployed.
  */
 public class WorkflowMigrationStateTypeMismatchException extends WorkflowDefinitionException {
 

@@ -16,6 +16,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.vertique.context.DurableContextMetadataRegistry;
 import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.inboxoutbox.DestinationType;
 import dev.vertique.inboxoutbox.OutboxDeliveryMetadata;
@@ -32,6 +33,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -60,7 +62,11 @@ class KafkaOutboxDestinationHandlerTest {
 
     @BeforeEach
     void setUp() {
-        handler = new KafkaOutboxDestinationHandler(producerFactory, objectMapper);
+        handler = new KafkaOutboxDestinationHandler(
+                producerFactory,
+                objectMapper,
+                KafkaOutboxConfig.defaults(),
+                new DurableContextMetadataRegistry(Set.of(), Set.of()));
     }
 
     // --- Helpers ---

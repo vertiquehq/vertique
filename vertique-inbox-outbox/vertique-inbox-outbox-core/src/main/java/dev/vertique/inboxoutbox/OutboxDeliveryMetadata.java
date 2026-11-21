@@ -34,6 +34,16 @@ public record OutboxDeliveryMetadata(
         this(outbox, delayedJob, Optional.empty());
     }
 
+    /**
+     * Describes which controls are present without printing their values, so that logging the
+     * whole record never prints a reply handle.
+     */
+    @Override
+    public String toString() {
+        return "OutboxDeliveryMetadata[outbox=" + outbox + ", delayedJob=" + delayedJob + ", reply="
+                + (reply.isPresent() ? "Optional[***]" : "Optional.empty") + "]";
+    }
+
     /** JSON key for the persisted reply control. */
     public static final String REPLY_KEY = "reply";
 

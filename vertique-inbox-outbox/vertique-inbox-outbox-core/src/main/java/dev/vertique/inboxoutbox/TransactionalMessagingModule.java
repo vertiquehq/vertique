@@ -3,9 +3,11 @@
 
 package dev.vertique.inboxoutbox;
 
+import dagger.BindsOptionalOf;
 import dagger.Module;
 import dagger.multibindings.Multibinds;
 import dev.vertique.inboxoutbox.ops.OutboxOperationListener;
+import dev.vertique.inboxoutbox.query.OutboxCallerScopesMapper;
 import java.util.Set;
 
 /**
@@ -44,4 +46,13 @@ public abstract class TransactionalMessagingModule {
      */
     @Multibinds
     abstract Set<OutboxOperationListener> outboxOperationListeners();
+
+    /**
+     * Declares the optional application binding of {@link OutboxCallerScopesMapper}. A consumer injects
+     * {@code Optional<OutboxCallerScopesMapper>} and falls back to
+     * {@link dev.vertique.inboxoutbox.query.DefaultOutboxCallerScopesMapper} when the application binds none, so an
+     * application replaces the default with a plain {@code @Provides OutboxCallerScopesMapper}.
+     */
+    @BindsOptionalOf
+    abstract OutboxCallerScopesMapper outboxCallerScopesMapper();
 }

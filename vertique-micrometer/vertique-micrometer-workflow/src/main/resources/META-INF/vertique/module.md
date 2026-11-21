@@ -10,8 +10,8 @@ SPDX-License-Identifier: EUPL-1.2
 > **Artifact:** `vertique-micrometer-workflow`
 > **Depends on:** `vertique-micrometer-core`, `vertique-workflow-core`, micrometer-core
 
-Provides the explicit Micrometer adapter for workflow executor events and signal source outcomes. It contributes one
-`WorkflowExecutorObserver` and one `SignalSourceObserver` through `MicrometerWorkflowModule`; workflow modules remain independent of
+Provides the explicit Micrometer adapter for workflow executor events, signal source outcomes and service reply outcomes. It contributes one
+`WorkflowExecutorObserver`, one `SignalSourceObserver` and one `ReplyOutcomeObserver` through `MicrometerWorkflowModule`; workflow modules remain independent of
 Micrometer and applications choose whether to install this adapter. The module owns no configuration
 keys: it follows `metrics.enabled` through the optional `MetricsConfig` binding.
 
@@ -86,6 +86,13 @@ Public final `@Singleton` observer of signal source outcomes, contributed to the
 multibinding that `WorkflowSourceModule` in `vertique-workflow-services` declares. Applications normally obtain
 it through the module rather than constructing it.
 
+### ReplyOutcomeMetricsObserver
+
+Public final `@Singleton` observer of service reply outcomes, contributed to the `Set<ReplyOutcomeObserver>`
+multibinding that `WorkflowReplyModule` in `vertique-workflow-services` declares. It counts outcomes in
+`vertique.workflow.reply.outcomes` with only an `outcome` tag: `recorded`, `duplicate`, `stale` or `refused`, and carries no
+payload or handle. Applications normally obtain it through the module rather than constructing it.
+
 ### WorkflowExecutorMetricsObserver
 
 Public final `@Singleton` observer. It switches exhaustively over the sealed event hierarchy, so a new
@@ -100,6 +107,7 @@ constructing it.
 | `MetricsConfig` | optional | Declared for adapter enablement checks |
 | `WorkflowExecutorObserver` | `@IntoSet` | Micrometer workflow executor observer |
 | `SignalSourceObserver` | `@IntoSet` | Micrometer signal source outcome observer |
+| `ReplyOutcomeObserver` | `@IntoSet` | Micrometer reply outcome observer |
 
 The simple SPI contribution is declared on the injectable implementation with `@RegisterIntoSet`.
 During the provider build, `vertique-codegen-dagger` emits `GeneratedRegistrationsModule`, which this
@@ -116,7 +124,5 @@ module includes explicitly. Configuration, registry and optional bindings remain
 | Artifact | Purpose |
 |---|---|
 | `vertique-micrometer-core` | Provides the application `MeterRegistry` and metrics configuration when `MicrometerModule` is installed |
-| `vertique-workflow-core` | Provides `WorkflowExecutorObserver`, the sealed `WorkflowExecutorEvent` vocabulary, and `SignalSourceObserver` with `SignalSourceEvent` |
+| `vertique-workflow-core` | Provides `WorkflowExecutorObserver`, the sealed `WorkflowExecutorEvent` vocabulary, `SignalSourceObserver` with `SignalSourceEvent`, and `ReplyOutcomeObserver` |
 | `micrometer-core` | Supplies counters, timers, gauges, tags and registry APIs |
-
-`ReplyOutcomeMetricsObserver` counts reply outcomes in `vertique.workflow.reply.outcomes` with only an `outcome` tag: `recorded`, `duplicate`, `stale`, or `refused`. It carries no payload or handle.

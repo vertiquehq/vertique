@@ -4,6 +4,8 @@
 package dev.vertique.workflow.actor;
 
 import dev.vertique.security.SecurityIdentity;
+import java.util.Objects;
+import java.util.Optional;
 
 /**
  * SPI for mapping a {@link SecurityIdentity} to a {@link WorkflowActor}.
@@ -15,6 +17,10 @@ import dev.vertique.security.SecurityIdentity;
  * <p>The default implementation is {@link DefaultWorkflowActorMapper}. Applications may provide
  * a custom binding to remap identities differently (e.g., when a SERVICE principal should map to
  * a specific {@link WorkflowActor.System} reason rather than a generic service id).
+ *
+ * <p>{@code WorkflowCoreModule} declares this type with {@code @BindsOptionalOf}, so an application
+ * binding is optional. A consumer injects {@code Optional<WorkflowActorMapper>} and resolves it with
+ * {@link #orDefault(Optional)}, which returns the application's binding or the default.
  *
  * @see WorkflowActor
  * @see DefaultWorkflowActorMapper
@@ -32,4 +38,16 @@ public interface WorkflowActorMapper {
      *                                  does not permit to initiate workflow operations)
      */
     WorkflowActor toWorkflowActor(SecurityIdentity identity);
+
+    /**
+     * Returns the application's mapper when it binds one, the {@link DefaultWorkflowActorMapper}
+     * otherwise. This is the one place a consumer resolves the optional binding.
+     *
+     * @param bound the injected optional binding; must not be {@code null}
+     * @return the mapper to use; never {@code null}
+     * @throws NullPointerException if {@code bound} is {@code null}
+     */
+    static WorkflowActorMapper orDefault(Optional<WorkflowActorMapper> bound) {
+        return Objects.requireNonNull(bound, "bound").orElseGet(DefaultWorkflowActorMapper::new);
+    }
 }

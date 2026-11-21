@@ -67,9 +67,9 @@ public final class WorkflowPlanValidator {
     }
 
     /**
-     * Validates the plan against the fork/join rules.
+     * Validates the plan against the signal-name, reply-wait and fork/join rules.
      *
-     * <p>Plans without {@code ForkNode}/{@code JoinNode} are accepted unchanged.
+     * <p>A plan that breaks none of them is accepted unchanged. A refusal names the plan's definition id and version.
      *
      * @param plan the plan to validate
      * @throws WorkflowDefinitionException on the first rule violation
@@ -89,7 +89,7 @@ public final class WorkflowPlanValidator {
                             || !names.add(name)
                             || (wait.reply() == null && ReplySignals.isReserved(name))) {
                         throw new WorkflowDefinitionException(
-                                "Invalid signal name '" + name + "' at step '" + wait.stepId() + "'");
+                                "Invalid signal name '" + name + "' at step '" + wait.stepId() + "' in " + label);
                     }
                 }
                 if (wait.reply() != null) {
@@ -99,7 +99,8 @@ public final class WorkflowPlanValidator {
                             || !dispatch.nextStepId().equals(wait.stepId())
                             || wait.correlationKeyCallbackId() != null
                             || (reply.completesLater() && wait.timeout() == null)) {
-                        throw new WorkflowDefinitionException("Invalid reply wait at step '" + wait.stepId() + "'");
+                        throw new WorkflowDefinitionException(
+                                "Invalid reply wait at step '" + wait.stepId() + "' in " + label);
                     }
                 }
             }

@@ -162,7 +162,7 @@ Each message is the text of the matching `Diagnostics#workflow*` formatter, show
 | Blank, over-long or control-character `@WorkflowContract.value()` | ERROR | `The contract name of com.acme.OrderWorkflow is invalid: it is blank` (an over-long name is reported as `longer than 255 code points` and one with a control character as `not free of control characters`; the name is never echoed) |
 | Zero or more than one `@WorkflowStart` method | ERROR | `Contract com.acme.OrderWorkflow must have exactly one @WorkflowStart method; found 0` |
 | Duplicate signal name across clean `@WorkflowSignal` methods | ERROR | `Duplicate @WorkflowSignal("cancel") methods on com.acme.OrderWorkflow; signal names must be unique within a contract` |
-| `default` method on contract | ERROR | `Method helper in com.acme.OrderWorkflow is a default method; default methods are not supported on workflow contract interfaces in cycle 1.` |
+| `default` method on contract | ERROR | `Method helper in com.acme.OrderWorkflow is a default method; default methods are not supported on workflow contract interfaces.` |
 | Multiple operation-role annotations on one method | ERROR | `Method start on com.acme.OrderWorkflow has conflicting workflow annotations; a method must have at most one of @WorkflowStart, @WorkflowSignal, @WorkflowQuery` |
 | No operation-role annotation on a method | ERROR | `Method doSomething in com.acme.OrderWorkflow has no workflow role annotation; declare exactly one of @WorkflowStart, @WorkflowSignal, or @WorkflowQuery.` |
 | `@WorkflowStart` has a `WorkflowInstanceId` parameter | ERROR | `Method start in com.acme.OrderWorkflow: @WorkflowStart must not have a WorkflowInstanceId parameter; start always creates a new instance` |

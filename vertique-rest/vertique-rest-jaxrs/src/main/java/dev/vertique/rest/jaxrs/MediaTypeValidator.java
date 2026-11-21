@@ -7,6 +7,8 @@ import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.response.ResponseBodyEncoder;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.streams.ReadStream;
+import jakarta.ws.rs.core.Response;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
@@ -32,12 +34,16 @@ import lombok.extern.slf4j.Slf4j;
 class MediaTypeValidator {
 
     /**
-     * Target types probed at startup. The declared parameter or return type is not available to
-     * the validator, so a media type counts as supported when any decoder or encoder accepts it for
-     * any of these: the built-in decoders and encoders are keyed on the target type as well as the
-     * media type, and no single type is accepted by all of them.
+     * Target types probed for a decoder, and for an encoder whose response type is not known
+     * statically. The declared parameter type is not available to the validator, so a media type
+     * counts as supported when any decoder accepts it for any of these: the built-in decoders are
+     * keyed on the target type as well as the media type, and no single type is accepted by all of
+     * them.
      */
     private static final List<Class<?>> PROBE_TYPES = List.of(Object.class, String.class, Buffer.class, byte[].class);
+
+    /** Types a value declared as a supertype may turn out to be at run time, beyond the declared type. */
+    private static final List<Class<?>> RUNTIME_BODY_TYPES = List.of(String.class, Buffer.class, byte[].class);
 
     private MediaTypeValidator() {}
 
@@ -46,11 +52,17 @@ class MediaTypeValidator {
      * least one matching {@link RequestBodyDecoder}, and every declared {@code @Produces} media
      * type has at least one matching {@link ResponseBodyEncoder}.
      *
-     * <p>Validation is performed by calling {@link RequestBodyDecoder#canDecode(Class, String)}
-     * and {@link ResponseBodyEncoder#canEncode(Class, String)} with each of {@code Object},
-     * {@code String}, {@code Buffer} and {@code byte[]} as the target type, since the actual
-     * parameter or return type is not known at startup. A media type is supported when any
-     * decoder or encoder accepts it for any of those types.
+     * <p>A {@code @Consumes} type is checked with {@link RequestBodyDecoder#canDecode(Class, String)}
+     * for each of {@code Object}, {@code String}, {@code Buffer} and {@code byte[]}, since the
+     * parameter type is not known at startup; it is supported when any decoder accepts it for any
+     * of those types.
+     *
+     * <p>A {@code @Produces} type is checked with {@link ResponseBodyEncoder#canEncode(Class, String)}
+     * for the method's declared response type, plus {@code String}, {@code Buffer} and
+     * {@code byte[]} when the declared type is a supertype of them, because a value of such a type
+     * may be one of those at run time. A method whose response type is unknown ({@code Object},
+     * {@code Response}, void or not recorded) or is a {@code ReadStream}, whose element type only the
+     * runtime class reveals, is checked with the four types a decoder is.
      *
      * <p>When {@code mode} is {@code "OFF"} (case-insensitive), this method returns immediately
      * without performing any checks.
@@ -89,11 +101,15 @@ class MediaTypeValidator {
             }
 
             for (String type : mediaTypes.produces()) {
-                if (!anyEncoderSupports(encoders, type)) {
+                List<Class<?>> probeTypes = encoderProbeTypes(method.responseBodyType());
+                if (!anyEncoderSupports(encoders, probeTypes, type)) {
                     violations.add("Operation '" + method.operationId()
                             + "' declares @Produces(\""
                             + type
-                            + "\") but no ResponseBodyEncoder supports it");
+                            + "\") but no ResponseBodyEncoder supports it"
+                            + (probeTypes == PROBE_TYPES
+                                    ? ""
+                                    : " for response type " + probeTypes.get(0).getTypeName()));
                 }
             }
         }
@@ -113,7 +129,31 @@ class MediaTypeValidator {
         return decoders.stream().anyMatch(d -> PROBE_TYPES.stream().anyMatch(t -> d.canDecode(t, type)));
     }
 
-    private static boolean anyEncoderSupports(List<ResponseBodyEncoder> encoders, String type) {
-        return encoders.stream().anyMatch(e -> PROBE_TYPES.stream().anyMatch(t -> e.canEncode(t, type)));
+    private static boolean anyEncoderSupports(
+            List<ResponseBodyEncoder> encoders, List<Class<?>> probeTypes, String type) {
+        return encoders.stream().anyMatch(e -> probeTypes.stream().anyMatch(t -> e.canEncode(t, type)));
+    }
+
+    /**
+     * Returns the types to probe encoders with: the declared response type first, followed by the
+     * body types a value of that declared type could be at run time. An unknown response type returns
+     * {@link #PROBE_TYPES}, which callers detect by identity.
+     */
+    private static List<Class<?>> encoderProbeTypes(Class<?> responseType) {
+        if (responseType == null
+                || responseType == void.class
+                || responseType == Void.class
+                || Response.class.isAssignableFrom(responseType)
+                || ReadStream.class.isAssignableFrom(responseType)) {
+            return PROBE_TYPES;
+        }
+        List<Class<?>> types = new ArrayList<>();
+        types.add(responseType);
+        for (Class<?> runtimeType : RUNTIME_BODY_TYPES) {
+            if (responseType != runtimeType && responseType.isAssignableFrom(runtimeType)) {
+                types.add(runtimeType);
+            }
+        }
+        return types;
     }
 }

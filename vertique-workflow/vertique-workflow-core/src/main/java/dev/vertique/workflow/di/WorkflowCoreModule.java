@@ -8,7 +8,6 @@ import dagger.BindsOptionalOf;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.Multibinds;
-import dev.vertique.workflow.actor.DefaultWorkflowActorMapper;
 import dev.vertique.workflow.actor.TaskPrincipalsMapper;
 import dev.vertique.workflow.actor.WorkflowActorMapper;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
@@ -238,19 +237,18 @@ public abstract class WorkflowCoreModule {
     abstract RaceSafetyTargetRegistry raceSafetyTargetRegistry(DefaultRaceSafetyTargetRegistry impl);
 
     /**
-     * Binds the {@link WorkflowActorMapper} interface to the {@link DefaultWorkflowActorMapper}
-     * singleton.
+     * Declares the optional application binding of {@link WorkflowActorMapper}. A consumer injects
+     * {@code Optional<WorkflowActorMapper>} and resolves it with
+     * {@link WorkflowActorMapper#orDefault(Optional)}, which falls back to
+     * {@link dev.vertique.workflow.actor.DefaultWorkflowActorMapper} when the application binds none, so an
+     * application replaces the default with a plain {@code @Provides WorkflowActorMapper}.
      *
-     * <p>The default mapper translates {@code USER}/{@code SERVICE}/{@code SYSTEM} identities
-     * to the corresponding {@link dev.vertique.workflow.actor.WorkflowActor} permits. Anonymous
-     * identities are rejected loudly — workflow operations require a named actor.
-     *
-     * @param impl the default implementation
-     * @return the mapper bound as the SPI interface
+     * <p>The default mapper translates {@code USER}/{@code SERVICE}/{@code SYSTEM} identities to the
+     * corresponding {@link dev.vertique.workflow.actor.WorkflowActor} permits. Anonymous identities are
+     * rejected loudly — workflow operations require a named actor.
      */
-    @Binds
-    @Singleton
-    abstract WorkflowActorMapper workflowActorMapper(DefaultWorkflowActorMapper impl);
+    @BindsOptionalOf
+    abstract WorkflowActorMapper workflowActorMapper();
 
     /**
      * Declares the optional application binding of {@link TaskPrincipalsMapper}. A consumer injects

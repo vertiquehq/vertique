@@ -909,6 +909,33 @@ class WorkflowDefinitionDocumentValidatorTest {
         assertViolationCode(result, "REMINDER_SHAPE_INVALID");
     }
 
+    // --- TASK_TYPE_TOO_LONG ---
+
+    private WorkflowDefinitionViolations validateTaskType(int length) {
+        HumanTaskStep.AssignmentBlock assignment = new HumanTaskStep.AssignmentBlock("role", "editor", null);
+        HumanTaskStep.TaskDecisionBlock decision =
+                new HumanTaskStep.TaskDecisionBlock("approve", PAYLOAD_FQN, STATE_REDUCER_ID, "done");
+        List<StepNode> steps = List.of(
+                new HumanTaskStep("task", "t".repeat(length), assignment, List.of(decision), null, null, null),
+                new CompleteStep("done"));
+        WorkflowDefinitionDocument doc = new WorkflowDefinitionDocument(
+                DEF_ID, DEF_VER, STATE_FQN, CONTRACT_FQN, PAYLOAD_FQN, INIT_MAPPER_ID, null, "task", steps);
+        return new WorkflowDefinitionDocumentValidator(fullLookup).validate(doc);
+    }
+
+    @Test
+    @DisplayName("TASK_TYPE_TOO_LONG — taskType of 256 code points is refused")
+    void taskTypeTooLong() {
+        assertThat(findFirstByCode(validateTaskType(256), "TASK_TYPE_TOO_LONG").stepId())
+                .isEqualTo("task");
+    }
+
+    @Test
+    @DisplayName("taskType of 255 code points is accepted")
+    void taskTypeAtLimit() {
+        assertThat(validateTaskType(255).violations()).noneMatch(v -> "TASK_TYPE_TOO_LONG".equals(v.code()));
+    }
+
     // --- Rule 27: DUE_DATE_PARTIAL ---
 
     @Test
@@ -1701,6 +1728,61 @@ class WorkflowDefinitionDocumentValidatorTest {
                     new CompleteStep("join-failed"));
 
             assertThat(unreachable(validate("route", steps))).isEmpty();
+        }
+
+        @Test
+        @DisplayName("a step reached only through a service reply route is not reported")
+        void stepsReachedOnlyThroughReplyRoutesAreReachable() {
+            String yaml = """
+                    definitionId: test-wf
+                    definitionVersion: 1
+                    stateType: %s
+                    contract: %s
+                    startPayloadType: %s
+                    initialStateMapper: %s
+                    initialStep: svc
+                    steps:
+                      - id: svc
+                        type: service
+                        target: target
+                        payloadMapper: %s
+                        reply:
+                          payloadType: %s
+                          stateReducer: %s
+                          next: answered
+                          onFailure:
+                            stateReducer: %s
+                            next: refused
+                          timeout:
+                            after: PT1H
+                            onTimeoutMutator: %s
+                            next: expired
+                      - id: answered
+                        type: complete
+                      - id: refused
+                        type: complete
+                      - id: expired
+                        type: complete
+                      - id: orphan
+                        type: complete
+                    """.formatted(
+                            STATE_FQN,
+                            CONTRACT_FQN,
+                            PAYLOAD_FQN,
+                            INIT_MAPPER_ID,
+                            PAYLOAD_MAPPER_ID,
+                            PAYLOAD_FQN,
+                            STATE_REDUCER_ID,
+                            STATE_REDUCER_ID,
+                            STATE_MUTATOR_ID);
+            var doc =
+                    ProductionParserFixture.parser().parse(yaml.getBytes(StandardCharsets.UTF_8), DocumentFormat.YAML);
+            assertThat(new WorkflowDefinitionDocumentValidator(fullLookup)
+                            .validate(doc)
+                            .toList())
+                    .filteredOn(v -> "UNREACHABLE_STEP".equals(v.code()))
+                    .extracting(Violation::stepId)
+                    .containsExactly("orphan");
         }
 
         @Test

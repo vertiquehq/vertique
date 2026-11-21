@@ -270,6 +270,25 @@ class AzureKeyVaultPropertySourceFactoryTest {
         }
 
         @Test
+        @DisplayName("a blank auth.clientId counts as absent")
+        void blankClientIdCountsAsAbsent() {
+            AzureConnectionSettings settings = parsedSettings(minimalConfig("https://v.vault.azure.net")
+                    .put(
+                            "auth",
+                            new JsonObject().put("method", "managed-identity").put("clientId", "  ")));
+
+            assertTrue(settings.clientId() == null, "a blank clientId must be treated as absent");
+        }
+
+        @Test
+        @DisplayName("a blank prefix counts as absent")
+        void blankPrefixCountsAsAbsent() {
+            AzureConnectionSettings settings = parsedSettings(configWithPrefix("https://v.vault.azure.net", "  "));
+
+            assertTrue(settings.prefix() == null, "a blank prefix must be treated as absent");
+        }
+
+        @Test
         @DisplayName("method='default' with clientId — clientId is passed through")
         void defaultMethodWithClientId() {
             AzureConnectionSettings settings = parsedSettings(minimalConfig("https://v.vault.azure.net")

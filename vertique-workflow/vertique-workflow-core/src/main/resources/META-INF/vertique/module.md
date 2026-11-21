@@ -86,7 +86,7 @@ public final class OrderFulfillmentDefinition
 
 ### Service call reply plans
 
-`call(stepId, targetId, payloadFactory)` describes a dispatch followed by a reply wait. Chain `onReply(replyType, reducer).toStepOnReply(next)` and `onFailure(reducer).toStepOnFailure(next)`; `onFailure()` leaves the state unchanged. `compensateWith(stepId)` is optional. The returned wait stage accepts the same timeout methods as `waitForSignal`; `completesLater()` requires a timeout. The generated wait step is named `<stepId>.reply`, so that id must not be declared separately. The call and its failure route must be completed before building the plan. The engine opens the reply wait when it dispatches; the workflow services module records the relay outcome.
+`call(stepId, targetId, payloadFactory)` describes a dispatch followed by a reply wait. Chain `onReply(replyType, reducer).toStepOnReply(next)` and `onFailure(reducer).toStepOnFailure(next)`; `onFailure()` leaves the state unchanged. `compensateWith(stepId)` is optional. The returned wait stage accepts the same timeout methods as `waitForSignal`; `completesLater()` requires a timeout, and `build()` does not check that: registration refuses a later completion without a timeout, and a generated reply signal name that is over 255 characters, with a `WorkflowDefinitionException` that names the step and the definition. The generated wait step is named `<stepId>.reply`, so that id must not be declared separately. The call and its failure route must be completed before building the plan. The engine opens the reply wait when it dispatches; the workflow services module records the relay outcome.
 
 ### Signal Wait Key
 
@@ -388,7 +388,7 @@ wf.task("editorial-review")
 
 Decisions carry typed payloads; `void.class`, as used for `approve` above, declares a decision with no payload.
 
-`taskType(String)` on the task builder sets an optional logical type such as `"approval"`. Every task the step creates carries it in `TaskRecord.taskType()`, and `TaskFilter.withTaskType(...)` lists tasks by it. The type labels the task and changes no flow, so it is not part of the plan hash: a plan that adds, changes or removes a task type keeps its hash. A blank type is refused. `HumanTaskNode` and `TaskRecord` gain the type as a trailing nullable component and keep their earlier constructors.
+`taskType(String)` on the task builder sets an optional logical type such as `"approval"`. Every task the step creates carries it in `TaskRecord.taskType()`, and `TaskFilter.withTaskType(...)` lists tasks by it. The type labels the task and changes no flow, so it is not part of the plan hash: a plan that adds, changes or removes a task type keeps its hash. A blank type, or one longer than 255 code points (the width of the task column), is refused. `HumanTaskNode` and `TaskRecord` gain the type as a trailing nullable component and keep their earlier constructors.
 
 When version stability is required, task completion compares the version the reviewer saw with the version snapshotted when the task was created. The engine does not read live domain content; applications remain responsible for authorization and for loading current object state.
 
@@ -409,7 +409,7 @@ Common recorders:
 
 Missing required recorders fail the workflow transition rather than silently dropping work.
 
-`WorkflowSideEffectIntent.Correlation` carries `String definitionScopeKey` and `String scopeKey` directly after `definitionId`, and `Correlation.singlePath(...)` takes them in the same position: the scope of the definition the instance is pinned to and the scope the instance was started in. `WorkflowEventIntent` carries the same two components directly after `definitionVersion`, and neither may be `null`. There is no overload without them, so an emitter must name both scopes; recorders stamp them on event envelopes and on outbox headers. Callers that construct these records by component list must add the two values.
+`WorkflowSideEffectIntent.Correlation` carries `String definitionScopeKey` and `String scopeKey` directly after `definitionId`, and `Correlation.singlePath(...)` takes them in the same position: the scope of the definition the instance is pinned to and the scope the instance was started in. It ends with an optional `reply` component (`Correlation.Reply`: the reply wait's `waitId` and whether the call `completesLater`); it is non-null only when the intent belongs to a `call`, and a recorder then accepts a value-returning service target. The nine-component constructor leaves it `null`. `WorkflowEventIntent` carries the same two components directly after `definitionVersion`, and neither may be `null`. There is no overload without them, so an emitter must name both scopes; recorders stamp them on event envelopes and on outbox headers. Callers that construct these records by component list must add the two values.
 
 ---
 
@@ -451,6 +451,7 @@ Add the type catalog module that `vertique-codegen-workflow` generates (`Generat
 | `TransactionalWorkflowOperations<TX>` | Drive workflows inside an existing transaction, including delivery by key |
 | `RelayedSignals<TX>` | Record a signal that is already durable, such as one the outbox relay delivers, without the intake limit |
 | `TaskStore<TX>` | Store human task rows; `findByFilter` must honour every filter field, `assignedTo` included |
+| `WorkflowActorMapper` | Map a security identity to the workflow actor recorded with each command |
 | `TaskPrincipalsMapper` | Map the caller's security context to the user id, roles and queues tasks are assigned to |
 | `TransactionalTaskCallbacks<TX>` | Engine callback surface used by the task service |
 | `TimerStore<TX>` | Timer persistence; the timer row links to the command that fires it |
@@ -492,10 +493,12 @@ initiated the change.
 ```java
 public interface WorkflowActorMapper {
     WorkflowActor toWorkflowActor(SecurityIdentity identity);
+
+    static WorkflowActorMapper orDefault(Optional<WorkflowActorMapper> bound);
 }
 ```
 
-The default implementation (`DefaultWorkflowActorMapper`, bound by `WorkflowCoreModule`) applies these
+The default implementation (`DefaultWorkflowActorMapper`, used when the application binds no mapper) applies these
 mapping rules:
 
 | `PrincipalType` | `WorkflowActor` subtype |
@@ -506,12 +509,14 @@ mapping rules:
 | `ANONYMOUS` | `IllegalArgumentException` — workflow operations require a named actor |
 
 Anonymous identities must be rejected at the authorization layer before reaching the workflow engine.
-Override by providing a custom `@Provides WorkflowActorMapper` binding when a service principal
-should map to a specific system reason rather than a generic service id.
+`WorkflowCoreModule` declares the mapper with `@BindsOptionalOf`, so an application replaces it with a plain
+`@Provides WorkflowActorMapper` binding, for example when a service principal should map to a specific system reason
+rather than a generic service id. A consumer injects `Optional<WorkflowActorMapper>` and calls
+`WorkflowActorMapper.orDefault(bound)` once, which returns the application's binding or the default.
 
 ```java
 @Provides
-WorkflowActorMapper customActorMapper() {
+static WorkflowActorMapper customActorMapper() {
     return identity -> switch (identity.actor().type()) {
         case USER -> new WorkflowActor.User(identity.actor().id());
         case SERVICE -> new WorkflowActor.Service("billing-service");

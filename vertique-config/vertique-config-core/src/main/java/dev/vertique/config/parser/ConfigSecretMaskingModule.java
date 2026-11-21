@@ -55,17 +55,19 @@ import java.util.OptionalLong;
  * <p>A {@link CharSequence} at a path that {@link ConfigSecretRenderer#isUriPath(String) names a URL}
  * ({@code jdbcUrl}, {@code baseUrl}, {@code endpoints}, {@code uri}) — a field, an {@link Optional},
  * a list element or a bag entry — is written as {@link ConfigSecretRenderer#redactUri(String)} renders
- * it: the authority userinfo and credential-named query-parameter values are masked, scheme, host,
- * port and path stay visible. A URL without credentials, and any other string, serializes as given
+ * it: the authority userinfo, an Oracle thin {@code user/pass@} prefix and credential-named parameter
+ * values are masked, scheme, host, port and path stay visible. A URL without credentials, and any other string, serializes as given
  * through the regular writer. The secret rule wins: a path that is both ({@code tokenUrl}) renders as
- * {@code "***"}. This is one difference from {@code toString()}: {@code redactBag} does not apply the
- * URL rule to bag leaves. A masked bag or URL is written through the provider's default serializer for
+ * {@code "***"}; {@code redactBag} applies the same URL rule to bag leaves in {@code toString()}.
+ * A masked bag or URL is written through the provider's default serializer for
  * its value, so a property-level serializer annotation on such a field is bypassed.
  *
- * <p>The URL rule covers {@code scheme://user:pass@host} and {@code ?name=value} forms only, with the
- * userinfo percent-encoded: a raw {@code /}, {@code ?} or {@code #} inside a password ends the
- * authority early, only the first authority of a comma-joined value is masked, and a scheme-less or
- * semicolon-style connection string, a {@link java.net.URI}, {@link java.net.URL} or array-typed value,
+ * <p>The URL rule covers {@code scheme://user:pass@host}, the Oracle thin form and parameters after the
+ * first {@code ?} or {@code ;} (separated by {@code &} or {@code ;}), with the userinfo
+ * percent-encoded: a raw {@code /}, {@code ?} or {@code #} inside a password ends the authority
+ * early, a credential value with an unescaped {@code ;} or {@code &} ends there, only the first
+ * authority of a comma-joined value is masked, and a scheme-less connection string,
+ * a {@link java.net.URI}, {@link java.net.URL} or array-typed value,
  * and a URL under a name without one of the tokens ({@code address}) serialize as given.
  * Deserialization is untouched; the matching guard on input is
  * {@code ConfigParser}'s rejection of a literal {@code "***"} at a sensitive path, which does not

@@ -636,17 +636,25 @@ class SsmConfigStoreFactoryTest {
     class PrefixValidation {
 
         @Test
-        @DisplayName("blank prefix throws IllegalArgumentException")
-        void blankPrefixThrows(Vertx vertx) {
+        @DisplayName("blank prefix counts as absent and applies no re-root")
+        void blankPrefixCountsAsAbsent(Vertx vertx, VertxTestContext ctx) {
+            when(gateway.fetchAll("/myapp/prod/", true, true))
+                    .thenReturn(List.of(stringParam("/myapp/prod/key", "value")));
+
             JsonObject config = configWithPath("/myapp/prod/").put("prefix", "   ");
-            assertThrows(IllegalArgumentException.class, () -> factory.create(vertx, config));
+            ConfigStore store = factory.create(vertx, config);
+            store.get().onComplete(ctx.succeeding(buf -> {
+                assertEquals("value", new JsonObject(buf).getString("key"));
+                ctx.completeNow();
+            }));
         }
 
         @Test
-        @DisplayName("prefix with blank dot-segment (e.g. 'a..b') throws IllegalArgumentException")
+        @DisplayName("prefix with blank dot-segment (e.g. 'a..b') throws without echoing the value")
         void blankDotSegmentThrows(Vertx vertx) {
-            JsonObject config = configWithPath("/myapp/prod/").put("prefix", "a..b");
-            assertThrows(IllegalArgumentException.class, () -> factory.create(vertx, config));
+            JsonObject config = configWithPath("/myapp/prod/").put("prefix", "secret..value");
+            var ex = assertThrows(IllegalArgumentException.class, () -> factory.create(vertx, config));
+            assertFalse(ex.getMessage().contains("secret"), "message must not echo the rejected prefix");
         }
 
         @Test
@@ -684,6 +692,7 @@ class SsmConfigStoreFactoryTest {
             JsonObject config = new JsonObject().put("path", "/");
             var ex = assertThrows(IllegalArgumentException.class, () -> factory.create(vertx, config));
             assertTrue(ex.getMessage().contains("segment"), "error must explain that at least one segment is required");
+            assertFalse(ex.getMessage().contains("got:"), "message must not echo the rejected path");
         }
 
         @Test

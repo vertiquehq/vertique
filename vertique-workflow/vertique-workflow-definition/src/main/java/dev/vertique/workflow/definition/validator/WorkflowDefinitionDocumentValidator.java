@@ -74,8 +74,8 @@ import java.util.function.Supplier;
  *   <li>{@code STEP_ID_DUPLICATE} — same step id appears more than once in the steps list.</li>
  *   <li>{@code UNREACHABLE_STEP} — a step cannot be reached from {@code initialStep}. Reachability follows every
  *       step reference: {@code next}, a wait-signal {@code timeout.next}, a human-task decision or due
- *       {@code next}, a decision route {@code to} and {@code default}, a service step's {@code compensation}, a
- *       fork's branch {@code startStep} and {@code join}, and a join's {@code next} and {@code onFailure}. One
+ *       {@code next}, a decision route {@code to} and {@code default}, a service step's {@code compensation},
+ *       {@code reply.next}, {@code reply.onFailure.next} and {@code reply.timeout.next}, a fork's branch {@code startStep} and {@code join}, and a join's {@code next} and {@code onFailure}. One
  *       violation per unreachable step; skipped when {@code initialStep} is not a step id.</li>
  *   <li>{@code STEP_NEXT_UNKNOWN} — a {@code next} reference does not resolve to any step id.</li>
  *   <li>{@code STEP_TARGET_SERVICE_FORMAT} — {@code target} field is blank on a
@@ -107,6 +107,8 @@ import java.util.function.Supplier;
  *   <li>{@code ASSIGNMENT_RESOLVER_UNKNOWN} — for state-derived modes ({@code *-from-state}),
  *       the {@code resolver} id is not registered in the
  *       {@link dev.vertique.workflow.definition.callbacks.TaskAssignmentResolverRegistry}.</li>
+ *   <li>{@code TASK_TYPE_TOO_LONG} — a {@link HumanTaskStep} {@code taskType} is longer than 255
+ *       code points.</li>
  *   <li>{@code REMINDER_SHAPE_INVALID} — a {@link HumanTaskStep.ReminderBlock} has both
  *       {@code offsets} and {@code interval} set, or has an empty {@code offsets} list.</li>
  *   <li>{@code DUE_DATE_PARTIAL} — a {@link HumanTaskStep.DueBlock} is present but missing one or
@@ -155,6 +157,9 @@ import java.util.function.Supplier;
 public final class WorkflowDefinitionDocumentValidator {
 
     // --- Constants ---
+
+    /** The longest task type, in code points: the width of the {@code workflow_tasks.task_type} column. */
+    private static final int MAX_TASK_TYPE_CODE_POINTS = 255;
 
     private static final Set<String> VALID_ASSIGNMENT_MODES =
             Set.of("user", "role", "queue", "user-from-state", "role-from-state", "queue-from-state");
@@ -680,6 +685,16 @@ public final class WorkflowDefinitionDocumentValidator {
             case ServiceStep s -> {
                 targets.add(s.next());
                 targets.add(s.compensation());
+                var reply = s.reply();
+                if (reply != null) {
+                    targets.add(reply.next());
+                    if (reply.onFailure() != null) {
+                        targets.add(reply.onFailure().next());
+                    }
+                    if (reply.timeout() != null) {
+                        targets.add(reply.timeout().next());
+                    }
+                }
             }
             case WaitSignalStep s -> {
                 targets.add(s.next());
@@ -1476,6 +1491,18 @@ public final class WorkflowDefinitionDocumentValidator {
             @Nullable Class<?> resolvedStateType,
             List<Violation> violations) {
         String sid = step.id();
+
+        // Task type: must fit the workflow_tasks.task_type column
+        String taskType = step.taskType();
+        if (taskType != null && taskType.codePointCount(0, taskType.length()) > MAX_TASK_TYPE_CODE_POINTS) {
+            violations.add(new Violation(
+                    definitionId,
+                    definitionVersion,
+                    sid,
+                    null,
+                    "TASK_TYPE_TOO_LONG",
+                    "`taskType` is longer than " + MAX_TASK_TYPE_CODE_POINTS + " code points"));
+        }
 
         // Assignment
         if (step.assignment() != null) {

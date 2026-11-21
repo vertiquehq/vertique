@@ -100,6 +100,93 @@ class MediaTypeValidatorTest {
         assertDoesNotThrow(() -> MediaTypeValidator.validate(List.of(method), DECODERS, ENCODERS, "STRICT"));
     }
 
+    record Widget(String name) {}
+
+    @Test
+    @DisplayName("Should report a @Produces type that no built-in encoder writes for the method's real response type")
+    void shouldReportUnwritableProducesForTheRealResponseType() {
+        ResourceMethodMeta method = method("widget", List.of(), List.of("application/pdf"));
+        when(method.responseBodyType()).thenAnswer(invocation -> Widget.class);
+
+        RestConfigurationException ex = assertThrows(
+                RestConfigurationException.class,
+                () -> MediaTypeValidator.validate(List.of(method), DECODERS, ENCODERS, "STRICT"));
+
+        assertTrue(ex.getMessage().contains("@Produces(\"application/pdf\")"), ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("Should accept a @Produces type an encoder writes for the declared response type")
+    void shouldAcceptProducesWrittenForTheDeclaredType() {
+        ResourceMethodMeta json = method("json", List.of(), List.of("application/json"));
+        when(json.responseBodyType()).thenAnswer(invocation -> Widget.class);
+        ResourceMethodMeta text = method("text", List.of(), List.of("text/plain"));
+        when(text.responseBodyType()).thenAnswer(invocation -> String.class);
+        ResourceMethodMeta binary = method("binary", List.of(), List.of("application/pdf"));
+        when(binary.responseBodyType()).thenAnswer(invocation -> byte[].class);
+
+        assertDoesNotThrow(
+                () -> MediaTypeValidator.validate(List.of(json, text, binary), DECODERS, ENCODERS, "STRICT"));
+    }
+
+    @Test
+    @DisplayName("Should name the response type in a @Produces mismatch")
+    void shouldNameTheResponseTypeInTheMismatch() {
+        ResourceMethodMeta method = method("widget", List.of(), List.of("application/pdf"));
+        when(method.responseBodyType()).thenAnswer(invocation -> Widget.class);
+
+        RestConfigurationException ex = assertThrows(
+                RestConfigurationException.class,
+                () -> MediaTypeValidator.validate(List.of(method), DECODERS, ENCODERS, "STRICT"));
+
+        assertTrue(ex.getMessage().contains("for response type " + Widget.class.getTypeName()), ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("Should keep the permissive probe when the response type is not fixed")
+    void shouldProbePermissivelyForAnUnfixedResponseType() {
+        ResourceMethodMeta object = method("object", List.of(), List.of("application/pdf"));
+        when(object.responseBodyType()).thenAnswer(invocation -> Object.class);
+        ResourceMethodMeta response = method("response", List.of(), List.of("application/pdf"));
+        when(response.responseBodyType()).thenAnswer(invocation -> jakarta.ws.rs.core.Response.class);
+        ResourceMethodMeta voided = method("voided", List.of(), List.of("application/pdf"));
+        when(voided.responseBodyType()).thenAnswer(invocation -> Void.class);
+        ResourceMethodMeta unknown = method("unknown", List.of(), List.of("application/pdf"));
+
+        assertDoesNotThrow(() ->
+                MediaTypeValidator.validate(List.of(object, response, voided, unknown), DECODERS, ENCODERS, "STRICT"));
+    }
+
+    @Test
+    @DisplayName("Should accept a raw ReadStream response type, whose element type only the runtime class reveals")
+    void shouldProbePermissivelyForAReadStreamResponseType() {
+        ResourceMethodMeta method = method("download", List.of(), List.of("application/octet-stream"));
+        when(method.responseBodyType()).thenAnswer(invocation -> io.vertx.core.streams.ReadStream.class);
+
+        List<ResponseBodyEncoder> encoders = new java.util.ArrayList<>(ENCODERS);
+        encoders.add(new ReadStreamBodyEncoder());
+
+        assertDoesNotThrow(() -> MediaTypeValidator.validate(List.of(method), DECODERS, encoders, "STRICT"));
+    }
+
+    @Test
+    @DisplayName("Should accept a supertype response type when a value of it could be written by a built-in encoder")
+    void shouldProbeRuntimeBodyTypesOfASupertype() {
+        ResourceMethodMeta method = method("chars", List.of(), List.of("application/pdf"));
+        when(method.responseBodyType()).thenAnswer(invocation -> CharSequence.class);
+
+        assertDoesNotThrow(() -> MediaTypeValidator.validate(List.of(method), DECODERS, ENCODERS, "STRICT"));
+    }
+
+    @Test
+    @DisplayName("Should only log a @Produces mismatch in WARN mode")
+    void shouldOnlyWarnOnAProducesMismatch() {
+        ResourceMethodMeta method = method("widget", List.of(), List.of("application/pdf"));
+        when(method.responseBodyType()).thenAnswer(invocation -> Widget.class);
+
+        assertDoesNotThrow(() -> MediaTypeValidator.validate(List.of(method), DECODERS, ENCODERS, "WARN"));
+    }
+
     private static ResourceMethodMeta method(String operationId, List<String> consumes, List<String> produces) {
         ResourceMethodMeta meta = mock(ResourceMethodMeta.class);
         when(meta.operationId()).thenReturn(operationId);

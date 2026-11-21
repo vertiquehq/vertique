@@ -74,7 +74,7 @@ The probe endpoints evaluate their set through `HealthCheckAggregator` from `dev
 - Every check in the set runs concurrently; the endpoint waits for all of them to settle, whatever their outcome. The one exception is a check that throws an `Error` while starting — see the last bullet.
 - The overall status is UP only when every individual check is UP.
 - An empty check set is UP with an empty `checks` array.
-- Each check is bounded by a per-check timeout (`healthCheckTimeoutSeconds`, default 5); a timed-out check counts as DOWN. The aggregator instance `HealthCheckModule` binds for injection uses the aggregator's own default of 5 seconds, not `healthCheckTimeoutSeconds`; a caller that wants the probes' timeout constructs `new HealthCheckAggregator(config.healthCheckTimeoutSeconds())`.
+- Each check is bounded by a per-check timeout (`healthCheckTimeoutSeconds`, default 5); a timed-out check counts as DOWN. The aggregator instance `HealthCheckModule` binds for injection reads `management.healthCheckTimeoutSeconds` from the application configuration, so an injected consumer and the probes use the same timeout; a component that does not bind the configuration gets the aggregator's default of 5 seconds.
 - A check that returns a failed future, or that throws an **exception** synchronously from `check()`, is reported as DOWN carrying the throwable's message — or its fully qualified class name when the throwable has no message. A check that returns `null` instead of a future is DOWN the same way; a check whose future completes with a `null` result is DOWN with no `data`. A check that throws an `Error` rather than an exception from `check()` or `name()` is not attributable to one entry and degrades the whole probe to the terse `{"status":"DOWN","checks":[]}` body. Because checks are started in sequence, such an `Error` also prevents the checks after it from starting at all and abandons those already in flight.
 - Rendering is the endpoint's own step on top of the report. A check whose result data cannot be rendered as JSON is reported DOWN by the endpoint even though the `HealthReport` entry is UP, so the HTTP status is decided from the rendered entries, and data that breaks the response as a whole degrades the probe to the terse body (see Invariants & Gotchas).
 
@@ -195,7 +195,7 @@ Dagger qualifier annotations (`@Qualifier`, runtime-retained, valid on methods, 
 
 ### HealthCheckModule
 
-The abstract Dagger module in `dev.vertique.core.health` that declares both `@Multibinds` sets and binds `HealthCheckAggregator` with its default timeout. Any module that contributes or consumes health checks must include it — directly or transitively. `ManagementModule` includes it, as do the Dagger modules of `dev.vertique:vertique-db-postgresql` and `dev.vertique:vertique-services`.
+The abstract Dagger module in `dev.vertique.core.health` that declares both `@Multibinds` sets and binds `HealthCheckAggregator`, with the timeout from `management.healthCheckTimeoutSeconds` when the component binds the application configuration and the default otherwise. Any module that contributes or consumes health checks must include it — directly or transitively. `ManagementModule` includes it, as do the Dagger modules of `dev.vertique:vertique-db-postgresql` and `dev.vertique:vertique-services`.
 
 ### HealthCheckAggregator and HealthReport
 

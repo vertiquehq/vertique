@@ -46,7 +46,7 @@ import java.util.Set;
  * <p>Validation rules (each violation throws {@link WorkflowProxyContractException}):
  * <ul>
  *   <li>Interface must be annotated with {@code @WorkflowContract}</li>
- *   <li>Default methods are not supported on workflow contract interfaces (cycle-1 constraint);
+ *   <li>Default methods are not supported on workflow contract interfaces (the proxy cannot forward them);
  *       every non-{@link Object} method must carry exactly one role annotation</li>
  *   <li>Every non-default, non-{@link Object} method must carry exactly one of
  *       {@code @WorkflowStart}, {@code @WorkflowSignal}, or {@code @WorkflowQuery}</li>
@@ -118,13 +118,13 @@ public final class WorkflowProxyValidator {
         Set<String> signalNames = new HashSet<>();
 
         for (Method method : methods) {
-            // Default methods are not supported in cycle 1 — the proxy cannot forward invocations
+            // Default methods are not supported — the proxy cannot forward invocations
             // to the default implementation without MethodHandles.privateLookupIn machinery.
             if (method.isDefault()) {
                 throw new WorkflowProxyContractException(
                         "Method " + method.getName() + " in " + contractInterface.getName()
                                 + " is a default method; default methods are not supported on workflow"
-                                + " contract interfaces in cycle 1.");
+                                + " contract interfaces.");
             }
 
             WorkflowStart ws = method.getAnnotation(WorkflowStart.class);

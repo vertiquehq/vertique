@@ -4,6 +4,7 @@
 package dev.vertique.inboxoutbox;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -82,6 +83,20 @@ class OutboxMetadataTest {
                     OutboxDeliveryMetadata.empty(),
                     OutboxDeliveryMetadata.fromJson(
                             OutboxDeliveryMetadata.empty().toJson()));
+        }
+
+        @Test
+        @DisplayName("toString of the reply control, the delivery metadata and the metadata masks the handle")
+        void toStringMasksReplyHandle() {
+            var control = new OutboxReplyControl("secret-handle", true);
+            var delivery = new OutboxDeliveryMetadata(
+                    java.util.Optional.empty(), java.util.Optional.empty(), java.util.Optional.of(control));
+            var metadata = new OutboxMetadata(DurableMetadata.of("correlation", new JsonObject()), delivery);
+
+            assertEquals("OutboxReplyControl[handle=***, completesLater=true]", control.toString());
+            assertFalse(delivery.toString().contains("secret-handle"), delivery.toString());
+            assertTrue(delivery.toString().contains("reply=Optional[***]"), delivery.toString());
+            assertFalse(metadata.toString().contains("secret-handle"), metadata.toString());
         }
 
         @Test

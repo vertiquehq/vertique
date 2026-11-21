@@ -167,7 +167,7 @@ Every recorded command carries who asked for it: `actor_kind`, `actor_id`, `acto
 `attribution_status`. The engine takes them once, when the command is recorded and in the recording caller's transaction, from the
 caller's current `SecurityContext` (read through the `ContextHolder`, which defaults to `DefaultContextHolder`) and the
 `WorkflowActorMapper` (default `DefaultWorkflowActorMapper`). Both can be replaced on `WorkflowEngineParts.Builder`
-(`contextHolder`, `actorMapper`); a Dagger graph supplies them through its `ContextHolder` and `WorkflowActorMapper` bindings.
+(`contextHolder`, `actorMapper`); a Dagger graph supplies them through its `ContextHolder` binding and an optional `WorkflowActorMapper` binding (the default applies when the application binds none).
 
 | Caller | Logged as | `attribution_status` |
 |---|---|---|

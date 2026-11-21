@@ -10,7 +10,7 @@
  * {@link dev.vertique.inboxoutbox.query.OutboxQueryConfig}. Changing an entry is
  * {@link dev.vertique.inboxoutbox.ops.OutboxOperations}.
  *
- * <p>The service performs no authorization and reads the configured store as a whole: it does not filter on an
- * entry's scope key and returns it only as a label. Stored carrier, security and context metadata are never returned.
+ * <p>The service performs no authorization. It filters on an entry's scope key only when
+ * {@link dev.vertique.inboxoutbox.query.OutboxQuery#visibleTo()} is set and returns it as a label. Stored carrier, security and context metadata are never returned.
  */
 package dev.vertique.inboxoutbox.query;

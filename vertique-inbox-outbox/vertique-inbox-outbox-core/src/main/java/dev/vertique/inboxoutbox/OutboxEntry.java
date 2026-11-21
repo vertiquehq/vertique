@@ -250,7 +250,8 @@ public class OutboxEntry {
 
     /**
      * Returns an entry that keeps this entry's own attempt limit, or takes {@code defaultMaxAttempts}
-     * when it has none. Every other field is carried over unchanged.
+     * when it has none. Every other field is carried over unchanged, except the internal reply
+     * control, which a copy does not carry: its {@code reply()} is {@code null}.
      *
      * @param defaultMaxAttempts the limit for an entry that set none
      * @return this entry when it has its own limit; otherwise a copy with {@code defaultMaxAttempts}

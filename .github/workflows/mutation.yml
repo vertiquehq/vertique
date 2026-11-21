@@ -9,6 +9,9 @@
 # a slow or flaky advisory run must never touch the required result, and
 # undetected mutants never fail this job. A failed PIT run does, visibly.
 #
+# One job per changed pilot module, so each module has its own time limit and
+# class budget and a large change in one module cannot starve another.
+#
 # Read-only and secret-free like required CI. All logic lives in
 # scripts/pit-pr-scope.sh, which runs locally with the same semantics.
 # Mutants execute with real side effects; this ephemeral, non-root runner is
@@ -36,14 +39,44 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  mutation:
-    name: PR-scoped mutation testing
+  # Names the pilot modules this pull request adds production lines to. Needs
+  # only Node, so it is quick and starts no Maven.
+  modules:
+    name: Select changed pilot modules
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 30
+    timeout-minutes: 5
+    outputs:
+      any: ${{ steps.select.outputs.any }}
+      matrix: ${{ steps.select.outputs.matrix }}
     steps:
       # pull_request checks out the merge commit; its first parent is the base
       # it was merged onto, so HEAD^1..HEAD is exactly this PR's change in the
       # code that PIT mutates. Depth 2 fetches both.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "26"
+
+      - id: select
+        run: bash scripts/pit-pr-scope.sh --base HEAD^1 --list-modules >> "$GITHUB_OUTPUT"
+
+  mutation:
+    name: Mutation testing (${{ matrix.module }})
+    needs: modules
+    if: ${{ needs.modules.outputs.any == 'true' }}
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 30
+    strategy:
+      # One module's failed or slow run says nothing about another's.
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.modules.outputs.matrix) }}
+    env:
+      PIT_MODULE: ${{ matrix.module }}
+    steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
@@ -72,7 +105,7 @@ jobs:
             maven-${{ runner.os }}-
 
       - name: Mutate changed pilot classes
-        run: bash scripts/pit-pr-scope.sh --base HEAD^1
+        run: bash scripts/pit-pr-scope.sh --base HEAD^1 --module "$PIT_MODULE"
 
       # Kept on failure too: the HTML report shows every mutant of the changed
       # classes, not only those on added lines.
@@ -80,7 +113,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: mutation-reports
+          name: mutation-reports-${{ matrix.slug }}
           path: |
             target/pit-pr/**
             **/target/pit-reports/**

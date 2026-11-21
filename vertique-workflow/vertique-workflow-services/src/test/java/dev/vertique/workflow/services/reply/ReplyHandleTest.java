@@ -10,11 +10,23 @@ import org.junit.jupiter.api.Test;
 
 class ReplyHandleTest {
     @Test
+    void toStringMasksTheHandle() {
+        ReplyHandle handle = new ReplyHandle(
+                UUID.fromString("01234567-89ab-cdef-0123-456789abcdef"),
+                UUID.fromString("fedcba98-7654-3210-fedc-ba9876543210"));
+
+        assertThat(handle.toString())
+                .isEqualTo("ReplyHandle[***]")
+                .doesNotContain("01234567")
+                .doesNotContain("fedcba98");
+    }
+
+    @Test
     void parsesCanonicalHandleAndRefusesOversizedInputWithoutItsValue() {
         ReplyHandle handle = new ReplyHandle(
                 UUID.fromString("01234567-89ab-cdef-0123-456789abcdef"),
                 UUID.fromString("fedcba98-7654-3210-fedc-ba9876543210"));
-        String encoded = handle.toString();
+        String encoded = handle.encode();
         assertThat(encoded).hasSize(73);
         assertThat(ReplyHandle.parse(encoded)).isEqualTo(handle);
 

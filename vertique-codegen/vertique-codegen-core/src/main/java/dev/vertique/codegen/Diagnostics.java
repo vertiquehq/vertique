@@ -886,7 +886,7 @@ public final class Diagnostics {
      */
     public static String workflowDefaultMethod(String contractFqn, String methodName) {
         return ("Method %s in %s is a default method; default methods are not supported on workflow"
-                        + " contract interfaces in cycle 1.")
+                        + " contract interfaces.")
                 .formatted(methodName, contractFqn);
     }
 
@@ -1442,6 +1442,23 @@ public final class Diagnostics {
                         + " enclosing type) public, set -A%s to a package it is visible from, or list it in a"
                         + " hand-written catalog contributed with a @Provides @IntoSet method.")
                 .formatted(annotation, typeFqn, modulePackage, moduleName, packageOption);
+    }
+
+    /**
+     * Returns the error message for a REST client operation declared by an interface that the generated
+     * proxy, which lives in the client's package, cannot name.
+     *
+     * @param declaringFqn  the fully-qualified name of the interface that declares the operation
+     * @param clientFqn     the fully-qualified name of the {@code @RestClient} interface
+     * @param clientPackage the package the generated proxy is generated in
+     * @return the formatted error message
+     */
+    public static String restClientDeclaringInterfaceNotNameable(
+            String declaringFqn, String clientFqn, String clientPackage) {
+        return ("%s declares an operation of REST client %s but is not accessible from package '%s', where the"
+                        + " generated proxy lives, so no proxy can be generated for the client. Make the interface (and"
+                        + " any enclosing type) public, or move the client into its package.")
+                .formatted(declaringFqn, clientFqn, clientPackage);
     }
 
     /**

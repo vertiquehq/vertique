@@ -50,7 +50,9 @@ Pull requests that change production Java get a non-required "Mutation
 (advisory)" check. For classes in the pilot modules (listed in
 `scripts/pit-pr-scope.mjs`) it runs [PIT](https://pitest.org) on the changed
 classes and lists the mutants on added lines that no unit test detects. It never
-blocks a merge. For each listed
+blocks a merge. Each pilot
+module the change touches runs as its own job with its own time limit and class
+budget. For each listed
 mutant, add an assertion that fails when the line changes as described, or say
 in the review why the mutant cannot change behavior.
 
@@ -61,6 +63,7 @@ bash scripts/pit-pr-scope.sh
 ```
 
 It compares against `origin/main`; from a fork, pass `--base upstream/main`.
+Add `--module <module>` to mutate one pilot module only, as CI does.
 
 PIT executes mutated code for real, including code that deletes files. With
 Docker available, add `--sandbox` to run it in a throwaway container against a

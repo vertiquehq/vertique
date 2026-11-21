@@ -27,10 +27,15 @@ Extends `DbExceptionMapper` with PostgreSQL-specific SQL state translations pre-
 | SQL state class `08` (any `08xxx`) | `ConnectionException` |
 | SQL state `23505` | `UniqueConstraintViolationException` (with constraint + table name) |
 | SQL state `23503` | `ForeignKeyViolationException` (with constraint + table name) |
+| SQL states `23502`, `23514` and `23P01` | `DataIntegrityViolationException` (with constraint + table name; not a unique or foreign-key subtype) |
 | SQL state `40001` | `OptimisticLockingFailureException` |
 | SQL state `40P01` | `DeadlockException` |
 | SQL state `55P03` (lock not available) | `PessimisticLockingFailureException` |
 | SQL state `57014` (statement timeout) | `QueryTimeoutException` |
+| SQL states `57P01`, `57P02`, `57P03` and `57P04` (operator intervention) | `ConnectionException` |
+| A state not named above that starts with `22`, `25`, `28`, `42` or `54` | `InvalidDataAccessUsageException` |
+| A state that starts with `53` or `58` | `TransientDataAccessException` |
+| Any other SQL state, or none | `DataAccessException` itself, with the received state (or `null`) |
 | `VertxException` with a message containing `"timeout"` in any case, such as `"Timeout waiting for connection"` when the pool is exhausted | `QueryTimeoutException` |
 | Network failures that are not database errors: `java.net.ConnectException` (connection refused, connect timeout), `java.net.SocketException` (connection reset), `java.nio.channels.ClosedChannelException` and `io.vertx.sqlclient.ClosedConnectionException` (connection closed) | `ConnectionException` (cause kept, no SQL state) |
 | `DataAccessException` | pass-through (identity) — inherited from `DbExceptionMapper` constructor |
@@ -259,6 +264,9 @@ interface AppComponent {
 | `PgDbExceptionMapper` | `@Singleton` | Pre-configured PostgreSQL exception mapper |
 | `PoolConnectHandler` | `@BindsOptionalOf` | Optional; provide via `@Provides` to initialize new connections; its future must complete (see the db-core reference) |
 | `HealthCheck` | `@IntoSet` `@Readiness` | `DatabaseHealthCheck`, contributed automatically |
+| `ApplicationShutdownStep` | `@IntoSet` | Closes the `Pool` when the application stops, contributed automatically |
+
+**Pool shutdown.** The module closes the pool it provides: its `ApplicationShutdownStep` runs in the `INFRA` phase at the lowest priority, so the other shutdown steps run first. Verticles are undeployed after all shutdown steps, so a request that reaches a verticle in that window sees a closed pool. A component that runs the application's shutdown steps (the Vertique application runner does) releases the pool and its connections at stop; a component that does not run them keeps the previous behavior, where the pool is released only when Vert.x closes. Close a pool you create yourself with `Pool.close()`; the module closes only its own.
 
 ---
 

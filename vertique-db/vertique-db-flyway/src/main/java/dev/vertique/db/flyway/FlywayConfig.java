@@ -6,10 +6,10 @@ package dev.vertique.db.flyway;
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import dev.vertique.core.config.ConfigSecret;
+import dev.vertique.core.config.ConfigSecretRenderer;
 import dev.vertique.core.json.KeyedBy;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Pattern;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.experimental.Accessors;
@@ -215,7 +215,7 @@ public class FlywayConfig {
     @Override
     public String toString() {
         return "FlywayConfig[mode=" + mode
-                + ", jdbcUrl=" + redactJdbcUrl(jdbcUrl)
+                + ", jdbcUrl=" + ConfigSecretRenderer.redactUri(jdbcUrl)
                 + ", user=" + user
                 + ", password=" + (password != null ? "<redacted>" : "null")
                 + ", locations=" + locations
@@ -231,13 +231,6 @@ public class FlywayConfig {
                 + ", instances=" + instances
                 + ", lockRetryCount=" + lockRetryCount
                 + "]";
-    }
-
-    private static final Pattern URL_PASSWORD = Pattern.compile("([;&?]password=)[^;&]*");
-
-    /** Masks a {@code password=} query parameter so a credential embedded in the URL never renders. */
-    private static String redactJdbcUrl(String url) {
-        return url == null ? "null" : URL_PASSWORD.matcher(url).replaceAll("$1<redacted>");
     }
 
     /**
@@ -263,7 +256,7 @@ public class FlywayConfig {
 
         @Override
         public String toString() {
-            return "FlywayConfig.FlywayConfigBuilder[jdbcUrl=" + redactJdbcUrl(jdbcUrl)
+            return "FlywayConfig.FlywayConfigBuilder[jdbcUrl=" + ConfigSecretRenderer.redactUri(jdbcUrl)
                     + ", user=" + user
                     + ", password=" + (password != null ? "<redacted>" : "null")
                     + ", instances=" + instances
