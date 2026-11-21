@@ -8,6 +8,7 @@ import dev.vertique.workflow.engine.history.CapturedActor;
 import dev.vertique.workflow.engine.history.ListenerDispatch;
 import dev.vertique.workflow.engine.spi.CommandActor;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
+import dev.vertique.workflow.registry.store.DefinitionChangeActor;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionLifecycleChange;
 import dev.vertique.workflow.registry.store.DefinitionLifecycleChange.ActivationChange;
@@ -27,6 +28,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -43,7 +45,8 @@ import org.slf4j.LoggerFactory;
  * called, not when it completes. For an activation, {@code targetScopeKey} is the scope that owns the version for
  * {@code ACTIVATE}, the default scope for {@code FOLLOW} and {@code null} for {@code DEACTIVATE_DEFAULT}.
  *
- * <p>With no listener bound the wrappers only call the operation: no actor is captured and nothing is built.
+ * <p>The actor is captured for every call, because the registry stores who made the last change of a row; with no
+ * listener bound nothing else is built.
  */
 @Singleton
 final class DefinitionLifecycleEvents {
@@ -73,14 +76,9 @@ final class DefinitionLifecycleEvents {
         this.clock = clock;
     }
 
-    /** Returns events with no listener, which only call the operations they are given. */
+    /** Returns events with no listener: the operations they are given run with no actor. */
     static DefinitionLifecycleEvents disabled() {
-        return new DefinitionLifecycleEvents(
-                Set.of(),
-                () -> {
-                    throw new IllegalStateException("no listener is bound");
-                },
-                Clock.systemUTC());
+        return new DefinitionLifecycleEvents(Set.of(), CommandActor::none, Clock.systemUTC());
     }
 
     boolean enabled() {
@@ -88,18 +86,22 @@ final class DefinitionLifecycleEvents {
     }
 
     /**
-     * Runs a lifecycle operation and reports its outcome.
+     * Runs a lifecycle operation, hands it the actor captured on the calling thread, and reports its outcome to the
+     * listeners.
      *
-     * @param factory builds the change from the actor captured here, or {@code null} when the arguments do not
-     *                allow a change to be built, so only the operation runs
-     * @param start   starts the operation, on the calling thread; an exception it throws becomes a failed future
+     * @param factory builds the change from the captured actor, or {@code null} when the arguments do not allow a
+     *                change to be built, so only the operation runs
+     * @param start   starts the operation on the calling thread with the actor of the call, which the operation
+     *                records next to the change it makes; an exception it throws becomes a failed future
      * @return the future of the operation, unchanged
      */
-    Future<Void> around(@Nullable ChangeFactory factory, Supplier<Future<Void>> start) {
-        DefinitionLifecycleChange change = enabled() && factory != null ? build(factory) : null;
+    Future<Void> around(@Nullable ChangeFactory factory, Function<DefinitionChangeActor, Future<Void>> start) {
+        CapturedActor captured = CapturedActor.capture(actors);
+        DefinitionLifecycleChange change = enabled() && factory != null ? build(factory, captured) : null;
         Future<Void> result;
         try {
-            result = start.get();
+            result = start.apply(
+                    new DefinitionChangeActor(captured.actor(), captured.onBehalfOf(), captured.attribution()));
         } catch (RuntimeException failure) {
             result = Future.failedFuture(failure);
         }
@@ -116,9 +118,9 @@ final class DefinitionLifecycleEvents {
     }
 
     /** Builds the change on the calling thread; arguments that cannot form a change are the operation's to refuse. */
-    private @Nullable DefinitionLifecycleChange build(ChangeFactory factory) {
+    private @Nullable DefinitionLifecycleChange build(ChangeFactory factory, CapturedActor actor) {
         try {
-            return factory.build(UUID.randomUUID(), CapturedActor.capture(actors), clock.instant());
+            return factory.build(UUID.randomUUID(), actor, clock.instant());
         } catch (RuntimeException invalid) {
             return null;
         }

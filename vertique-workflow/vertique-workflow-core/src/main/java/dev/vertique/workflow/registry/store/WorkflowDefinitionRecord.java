@@ -37,6 +37,8 @@ import java.util.Objects;
  *     defensively
  * @param startSchema the JSON Schema of the version's start payload; {@code null} when the row was written without
  *     schema production or the version declares no start payload; copied defensively
+ * @param statusChangedBy who made the last status change, which {@code statusChangedAt} dates; {@code null} when it was
+ *     not attributed. The registry keeps only the last change, never a history of changes.
  */
 public record WorkflowDefinitionRecord(
         DefinitionKey key,
@@ -52,7 +54,59 @@ public record WorkflowDefinitionRecord(
         Map<String, String> nameBinding,
         @Nullable DefinitionFailure failure,
         @Nullable JsonObject signalNames,
-        @Nullable JsonObject startSchema) {
+        @Nullable JsonObject startSchema,
+        @Nullable DefinitionChangeActor statusChangedBy) {
+
+    /**
+     * Constructs a record that carries no attribution of its last status change.
+     *
+     * @param key the scoped identity of the definition version
+     * @param kind whether the definition comes from code or from a document
+     * @param contractName the logical name of the definition's contract
+     * @param stateTypeName the logical name of the definition's state type
+     * @param planHash the plan hash, 64 lowercase hexadecimal characters
+     * @param status the lifecycle status
+     * @param provenance where the definition was loaded from
+     * @param documentFormat the document format of a document definition, otherwise {@code null}
+     * @param createdAt when the row was created
+     * @param statusChangedAt when the status last changed
+     * @param nameBinding the name binding the plan hash was computed with
+     * @param failure why the version is marked failing, or {@code null}
+     * @param signalNames the signal names the version declares, or {@code null}
+     * @param startSchema the JSON Schema of the version's start payload, or {@code null}
+     */
+    public WorkflowDefinitionRecord(
+            DefinitionKey key,
+            DefinitionKind kind,
+            String contractName,
+            String stateTypeName,
+            String planHash,
+            DefinitionStatus status,
+            DefinitionProvenance provenance,
+            @Nullable String documentFormat,
+            Instant createdAt,
+            Instant statusChangedAt,
+            Map<String, String> nameBinding,
+            @Nullable DefinitionFailure failure,
+            @Nullable JsonObject signalNames,
+            @Nullable JsonObject startSchema) {
+        this(
+                key,
+                kind,
+                contractName,
+                stateTypeName,
+                planHash,
+                status,
+                provenance,
+                documentFormat,
+                createdAt,
+                statusChangedAt,
+                nameBinding,
+                failure,
+                signalNames,
+                startSchema,
+                null);
+    }
 
     /**
      * Constructs a record that carries neither signal names nor a start schema.
@@ -96,6 +150,7 @@ public record WorkflowDefinitionRecord(
                 statusChangedAt,
                 nameBinding,
                 failure,
+                null,
                 null,
                 null);
     }

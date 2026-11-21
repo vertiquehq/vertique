@@ -5,8 +5,12 @@ package dev.vertique.workflow.postgresql.executor;
 
 import static dev.vertique.workflow.postgresql.executor.ExecutorFixture.await;
 
+import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.db.DbPoolConfig;
+import dev.vertique.security.SecurityContext;
+import dev.vertique.security.SecurityContexts;
+import dev.vertique.security.SecurityIdentity;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.migration.DefaultWorkflowMigrationRegistry;
@@ -87,6 +91,48 @@ public final class MigrationScenario implements AutoCloseable {
     public void migrate() {
         await(f.caller(() -> node.pool.withTransaction(tx -> node.engine.migrate(id, 2L, tx))));
         idle();
+    }
+
+    /**
+     * Records the migration in a transaction of its own under the identity, commits it and runs the executor until the
+     * instance is idle.
+     *
+     * @param caller the identity the call runs under
+     */
+    public void migrateAs(SecurityIdentity caller) {
+        await(f.caller(() -> {
+            ContextHolder.Scope bound =
+                    f.fixture.holder().bind(SecurityContext.class, SecurityContexts.unauthenticated(caller));
+            return node.pool
+                    .withTransaction(tx -> node.engine.migrate(id, 2L, tx))
+                    .onComplete(ignored -> bound.close());
+        }));
+        idle();
+    }
+
+    /**
+     * Makes the wait work again, records a retry in a transaction of its own under the identity, commits it and runs
+     * the executor until the instance is idle.
+     *
+     * @param caller the identity the call runs under
+     */
+    public void retryAs(SecurityIdentity caller) {
+        f.timeoutBroken.set(false);
+        await(f.caller(() -> {
+            ContextHolder.Scope bound =
+                    f.fixture.holder().bind(SecurityContext.class, SecurityContexts.unauthenticated(caller));
+            return node.pool.withTransaction(tx -> node.engine.retry(id, tx)).onComplete(ignored -> bound.close());
+        }));
+        idle();
+    }
+
+    /**
+     * Returns the instance.
+     *
+     * @return the id of the instance the scenario runs
+     */
+    public WorkflowInstanceId id() {
+        return id;
     }
 
     public void failAtWait() {

@@ -250,6 +250,7 @@ Future<List<PendingCommand>> openCommands(WorkflowInstanceId id);
   definition its writer recorded, which is null for most and the target for the entry that logs the migration. An entry that already
   records a value keeps it. An entry written outside a segment can also have a null `commandId` or `definitionKey`.
 - **`query()` stays narrow.** The history in the `WorkflowView` that `WorkflowOperations.query` returns carries the five original components and the stored `entryVersion`; every other new component is null there. Only this service returns the enriched entry.
+- **Every instance command is attributed.** The `START`, `RETRIED`, `CANCELLED` and `WORKFLOW_MIGRATED` entries, and the entries of signals, completions and reassignments, carry the actor and attribution status of the command that caused them, taken from the caller's identity when the command was recorded.
 - **Reading is not authorized here.** Entries name actors and carry state patches, and open commands carry stored failure text. The framework performs no authorization on these reads; the application authorizes them before exposing them.
 - **No lock.** The service reads on a pooled connection outside any caller transaction and takes no execution lock.
 
@@ -880,6 +881,20 @@ record is accepted, no definition row changes, other scopes' records stay), `fol
 non-default scope's record (`follow` on the default scope fails with `IllegalArgumentException`), and
 `activations(scopeKey)`. The records are durable: every operation goes through the registry store, and the engine
 requires one.
+
+**Who made the last change.** A `WorkflowDefinitionRecord` carries `statusChangedBy` and a `DefinitionActivation` carries
+`activatedBy`, each a `DefinitionChangeActor(actor, onBehalfOf, attribution)` in the shape the instance history uses (`actor` is a
+`HistoryActor`, `attribution` a `HistoryAttribution`), dated by `statusChangedAt` and `activatedAt`. Both are trailing components:
+the constructors without them stay and leave them `null`, which a row written before the actor was stored also reads as. The registry
+keeps only the last change of a row, never a history: the next change replaces the actor, a refused change leaves it as it was, and
+removing an activation record (`deactivateDefault`, `follow`) leaves no row to name anyone. The actor is taken from the calling
+identity through the `WorkflowActorMapper`, never from a payload: a registered document (`WorkflowDefinitionService.load`), a
+lifecycle call and a stale-publication reset made by the system on startup all store theirs, and startup stores the system with the
+reason `bootstrap`. `DefinitionChangeActor.capture(holder, mapper)` takes it from a `ContextHolder`; `unattributed()` and
+`system(reason)` build the other two. The store gains `claim`, `complete`, `release`, `transition` and `retire` overloads with a
+trailing `DefinitionChangeActor`; their defaults drop the actor and call the older method, so a store written before them keeps
+working without recording it. A full history of definition changes is the `WorkflowDefinitionLifecycleListener`'s, which receives
+every change with its actor.
 
 **Auto-activation.** `WorkflowDefinition.activateOnDeploy()` (default `true`) decides whether a version becomes the default
 scope's current version when it is first published at deployment. With a durable store, a code version or packaged document

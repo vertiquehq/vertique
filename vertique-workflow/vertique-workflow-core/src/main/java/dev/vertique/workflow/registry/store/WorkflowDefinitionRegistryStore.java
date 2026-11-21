@@ -123,6 +123,18 @@ public interface WorkflowDefinitionRegistryStore {
     Future<ActivationClaim> claim(DefinitionKey key);
 
     /**
+     * Claims a candidate for publication and records who made the change. A store that does not keep the actor
+     * ignores it; the default drops the actor and calls {@link #claim(DefinitionKey)}.
+     *
+     * @param key   scoped definition key to claim
+     * @param actor who made the change
+     * @return the claim
+     */
+    default Future<ActivationClaim> claim(DefinitionKey key, DefinitionChangeActor actor) {
+        return claim(key);
+    }
+
+    /**
      * Completes the current publication claim when its token still matches: the claimed row becomes
      * {@code AVAILABLE} and its token is cleared. No other row changes, so any number of versions and scopes of one
      * id stay available together.
@@ -133,6 +145,18 @@ public interface WorkflowDefinitionRegistryStore {
     Future<Void> complete(ActivationClaim claim);
 
     /**
+     * Completes a claimed publication and records who made the change. The default drops the actor and calls
+     * {@link #complete(ActivationClaim)}.
+     *
+     * @param claim the claim to complete
+     * @param actor who made the change
+     * @return a future completed after the status changed
+     */
+    default Future<Void> complete(ActivationClaim claim, DefinitionChangeActor actor) {
+        return complete(claim);
+    }
+
+    /**
      * Returns a matching publication attempt to candidate status. A claim with an obsolete or mismatched
      * token has no effect.
      *
@@ -140,6 +164,18 @@ public interface WorkflowDefinitionRegistryStore {
      * @return a future completed when the matching claim is released
      */
     Future<Void> release(ActivationClaim claim);
+
+    /**
+     * Releases a claim and records who made the change. The default drops the actor and calls
+     * {@link #release(ActivationClaim)}.
+     *
+     * @param claim the claim to release
+     * @param actor who made the change
+     * @return a future completed after the claim is released
+     */
+    default Future<Void> release(ActivationClaim claim, DefinitionChangeActor actor) {
+        return release(claim);
+    }
 
     /**
      * Conditionally moves one definition from an expected status to a new status under the definition id
@@ -166,6 +202,21 @@ public interface WorkflowDefinitionRegistryStore {
     Future<Void> transition(DefinitionKey key, DefinitionStatus from, DefinitionStatus to);
 
     /**
+     * Moves a definition between statuses and records who made the change next to the time of the change. The default
+     * drops the actor and calls {@link #transition(DefinitionKey, DefinitionStatus, DefinitionStatus)}.
+     *
+     * @param key   scoped definition key
+     * @param from  the expected current status
+     * @param to    the new status
+     * @param actor who made the change
+     * @return a future completed after the status changed
+     */
+    default Future<Void> transition(
+            DefinitionKey key, DefinitionStatus from, DefinitionStatus to, DefinitionChangeActor actor) {
+        return transition(key, from, to);
+    }
+
+    /**
      * Retires one definition under the definition id lock. A {@code CANDIDATE} row is retired directly. A
      * {@code DEPRECATED} row is retired as soon as no instance pinned to exactly this definition version is still
      * pending, running, waiting or compensating, archived instances included, however recently it was deprecated.
@@ -174,8 +225,8 @@ public interface WorkflowDefinitionRegistryStore {
      * {@link dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException} reason
      * {@code INVALID_TRANSITION}, and a row that is still pinned fails with reason {@code PINNED_INSTANCES}. A
      * default-scope row that the default scope's activation record of the id names is refused as an invalid
-     * transition before those checks. A refusal changes no row, and a success changes only this row's status and
-     * status change time.
+     * transition before those checks. A refusal changes no row, and a success changes only this row's status, status
+     * change time and the actor of that change.
      *
      * @param key scoped definition key to retire
      * @return a future completed after the store-owned transaction commits
@@ -183,10 +234,22 @@ public interface WorkflowDefinitionRegistryStore {
     Future<Void> retire(DefinitionKey key);
 
     /**
+     * Retires a definition and records who made the change. The default drops the actor and calls
+     * {@link #retire(DefinitionKey)}.
+     *
+     * @param key   scoped definition key
+     * @param actor who made the change
+     * @return a future completed after the status changed
+     */
+    default Future<Void> retire(DefinitionKey key, DefinitionChangeActor actor) {
+        return retire(key);
+    }
+
+    /**
      * Resets the stale publication attempts of one definition id to candidate status, as startup does. Under the
      * definition id lock, every row of the id that is {@code PUBLISHING} and whose last status change is older than
      * twice the configured staleness bound, measured by the database clock after the lock is held, becomes
-     * {@code CANDIDATE} with its claim token cleared and its status change time refreshed. Younger publication
+     * {@code CANDIDATE} with its claim token cleared, its status change time refreshed and its actor set to the system. Younger publication
      * attempts and rows in other statuses are not touched.
      *
      * @param definitionId the definition id whose stale publication attempts are reset

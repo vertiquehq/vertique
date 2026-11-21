@@ -71,7 +71,7 @@ final class StartSelectionRead {
             List<DefinitionActivation> records = new ArrayList<>();
             for (Row row : rows) {
                 if (ACTIVATION.equals(row.getString("row_kind"))) {
-                    records.add(PgWorkflowDefinitionRegistryStore.activation(row));
+                    records.add(PgWorkflowDefinitionRegistryStore.activationWithoutActor(row));
                 } else {
                     versions.add(version(row));
                 }

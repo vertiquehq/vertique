@@ -351,6 +351,8 @@ public final class ManagedDefinitionDatabase {
 
         WorkflowDefinitionService definitionService();
 
+        dev.vertique.core.context.ContextHolder contextHolder();
+
         dev.vertique.workflow.ops.WorkflowOperations workflowOperations();
 
         dev.vertique.workflow.ops.WorkflowExecutionProbe executionProbe();

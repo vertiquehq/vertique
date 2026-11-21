@@ -5,17 +5,14 @@ package dev.vertique.workflow.engine.executor;
 
 import dev.vertique.context.DefaultContextHolder;
 import dev.vertique.core.context.ContextHolder;
-import dev.vertique.security.PrincipalType;
-import dev.vertique.security.SecurityContext;
-import dev.vertique.security.SecurityIdentity;
-import dev.vertique.security.SnapshotDegradationMarker;
 import dev.vertique.workflow.actor.ActorText;
 import dev.vertique.workflow.actor.DefaultWorkflowActorMapper;
-import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.actor.WorkflowActorMapper;
 import dev.vertique.workflow.engine.spi.CommandActor;
 import dev.vertique.workflow.executor.WorkflowExecutorEvent;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
+import dev.vertique.workflow.registry.store.DefinitionChangeActor;
+import dev.vertique.workflow.state.HistoryActor;
 import io.vertx.core.Future;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
@@ -111,31 +108,17 @@ public final class CommandActors {
      * @throws RuntimeException whatever the actor mapper throws for the identity, unchanged
      */
     public CommandActor capture() {
-        SecurityIdentity identity = holder.current(SecurityContext.class)
-                .map(SecurityContext::identity)
-                .orElse(null);
-        if (identity == null || identity.actor().type() == PrincipalType.ANONYMOUS) {
-            return CommandActor.none();
-        }
-        WorkflowActor mapped = mapper.toWorkflowActor(identity);
-        String actorId = identity.actor().id();
-        String onBehalfOf = identity.subject()
-                .map(subject -> subject.id())
-                .filter(subjectId -> !subjectId.equals(actorId))
-                .map(CommandActors::clean)
-                .orElse(null);
-        CommandActor.Attribution attribution =
-                holder.current(SnapshotDegradationMarker.class).isPresent()
-                        ? CommandActor.Attribution.DEGRADED
-                        : CommandActor.Attribution.VERIFIED;
-        return switch (mapped) {
-            case WorkflowActor.User user ->
-                new CommandActor(CommandActor.Kind.USER, clean(user.userId()), null, onBehalfOf, attribution);
-            case WorkflowActor.Service service ->
-                new CommandActor(CommandActor.Kind.SERVICE, clean(service.serviceId()), null, onBehalfOf, attribution);
-            case WorkflowActor.System system ->
-                new CommandActor(CommandActor.Kind.SYSTEM, null, clean(system.reason()), onBehalfOf, attribution);
-        };
+        // The one rule that maps an identity to an actor lives with the registry's actor, so that a command and a
+        // stored
+        // definition change name a caller the same way.
+        DefinitionChangeActor actor = DefinitionChangeActor.capture(holder, mapper);
+        HistoryActor logged = actor.actor();
+        return new CommandActor(
+                CommandActor.Kind.valueOf(logged.kind().name()),
+                logged.id(),
+                logged.reason(),
+                actor.onBehalfOf(),
+                CommandActor.Attribution.valueOf(actor.attribution().name()));
     }
 
     /**

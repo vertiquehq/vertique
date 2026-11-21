@@ -7,6 +7,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.vertique.core.context.ContextHolder;
+import dev.vertique.core.context.ContextValue;
+import dev.vertique.security.PrincipalRef;
+import dev.vertique.security.PrincipalType;
+import dev.vertique.security.SecurityContext;
+import dev.vertique.security.SecurityContexts;
+import dev.vertique.security.SecurityIdentity;
+import dev.vertique.workflow.actor.DefaultWorkflowActorMapper;
+import dev.vertique.workflow.actor.WorkflowActorMapper;
 import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.definition.callbacks.DefaultBranchResultReducerRegistry;
 import dev.vertique.workflow.definition.callbacks.DefaultFailMessageFactoryRegistry;
@@ -36,7 +45,9 @@ import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegist
 import dev.vertique.workflow.engine.testsupport.NoOpWorkflowDefinitionLifecycle;
 import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
+import dev.vertique.workflow.history.HistoryAttribution;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionChangeActor;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
@@ -44,6 +55,7 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
+import dev.vertique.workflow.state.HistoryActor;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
@@ -349,6 +361,90 @@ class DefaultWorkflowDefinitionServiceTest {
         assertThat(stored.getAllValues())
                 .extracting(WorkflowDefinitionRecord::key)
                 .containsExactly(new DefinitionKey("t1", "t2:svc-order", 1L), new DefinitionKey("a:b", "svc-item", 1L));
+    }
+
+    /** Holds the values a test binds; reads only. */
+    private static final class Held implements ContextHolder {
+        private final java.util.Map<Class<?>, Object> values = new java.util.HashMap<>();
+
+        Held with(Class<?> type, Object value) {
+            values.put(type, value);
+            return this;
+        }
+
+        @Override
+        public <T> Optional<T> current(Class<T> type) {
+            return Optional.ofNullable(values.get(type)).map(type::cast);
+        }
+
+        @Override
+        public <T extends ContextValue> Scope bind(Class<T> type, T value) {
+            throw new UnsupportedOperationException("the service only reads the context");
+        }
+    }
+
+    private DefinitionChangeActor registeredBy(ContextHolder holder, WorkflowActorMapper mapper) {
+        WorkflowDefinitionRegistryStore durable = Mockito.mock(WorkflowDefinitionRegistryStore.class);
+        Mockito.when(durable.insertCandidate(
+                        Mockito.any(WorkflowDefinitionRecord.class), Mockito.any(WorkflowDefinitionDocument.class)))
+                .thenReturn(io.vertx.core.Future.succeededFuture());
+        DefaultWorkflowDefinitionService durableService = new DefaultWorkflowDefinitionService(
+                buildPipeline(),
+                () -> new DefaultWorkflowRegistry(),
+                durable,
+                new NoOpWorkflowDefinitionLifecycle(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.of(holder),
+                Optional.of(mapper));
+
+        ServiceTestHelpers.await(durableService.load(
+                WorkflowScopes.DEFAULT,
+                yamlFor("svc-order", 1, SvcOrderContract.class),
+                DocumentFormat.YAML,
+                testMeta()));
+
+        ArgumentCaptor<WorkflowDefinitionRecord> stored = ArgumentCaptor.forClass(WorkflowDefinitionRecord.class);
+        Mockito.verify(durable).insertCandidate(stored.capture(), Mockito.any());
+        return stored.getValue().statusChangedBy();
+    }
+
+    @Test
+    @DisplayName("a durable load stores the identity of the caller as the actor of the candidate")
+    void aDurableLoadStoresTheCallersIdentity() {
+        Held holder = new Held()
+                .with(
+                        SecurityContext.class,
+                        SecurityContexts.unauthenticated(SecurityIdentity.user(
+                                new PrincipalRef(PrincipalType.USER, "alice", java.util.Map.of()))));
+
+        DefinitionChangeActor actor = registeredBy(holder, new DefaultWorkflowActorMapper());
+
+        assertThat(actor.actor()).isEqualTo(new HistoryActor(HistoryActor.Kind.USER, "alice", null));
+        assertThat(actor.attribution()).isEqualTo(HistoryAttribution.VERIFIED);
+    }
+
+    @Test
+    @DisplayName("a durable load with no identity stores the candidate as unattributed")
+    void aDurableLoadWithNoIdentityIsUnattributed() {
+        assertThat(registeredBy(new Held(), new DefaultWorkflowActorMapper()))
+                .isEqualTo(DefinitionChangeActor.unattributed());
+    }
+
+    @Test
+    @DisplayName("a mapper that fails does not refuse the load: the candidate is stored without an actor")
+    void aFailingMapperDoesNotRefuseTheLoad() {
+        Held holder = new Held()
+                .with(
+                        SecurityContext.class,
+                        SecurityContexts.unauthenticated(SecurityIdentity.user(
+                                new PrincipalRef(PrincipalType.USER, "alice", java.util.Map.of()))));
+        WorkflowActorMapper failing = identity -> {
+            throw new IllegalArgumentException("alice cannot be mapped");
+        };
+
+        assertThat(registeredBy(holder, failing)).isEqualTo(DefinitionChangeActor.unattributed());
     }
 
     @Nested

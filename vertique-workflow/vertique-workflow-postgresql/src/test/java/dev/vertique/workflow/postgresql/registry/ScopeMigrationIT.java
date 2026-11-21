@@ -193,7 +193,29 @@ public class ScopeMigrationIT {
             // of their own scope
             assertThat(catalog.columnNames("workflow_definition_activations"))
                     .containsExactly(
-                            "scope_key", "definition_id", "target_scope_key", "definition_version", "activated_at");
+                            "scope_key",
+                            "definition_id",
+                            "target_scope_key",
+                            "definition_version",
+                            "activated_at",
+                            "activation_actor_kind",
+                            "activation_actor_id",
+                            "activation_actor_reason",
+                            "activation_on_behalf_of",
+                            "activation_attribution");
+
+            // And who made the last change is kept in nullable columns next to the time of the change
+            assertThat(catalog.columnShape("workflow_definition_activations", "activation_actor_id"))
+                    .isEqualTo("character varying|255|YES|null");
+            assertThat(catalog.columnNames("workflow_definitions"))
+                    .contains(
+                            "status_actor_kind",
+                            "status_actor_id",
+                            "status_actor_reason",
+                            "status_on_behalf_of",
+                            "status_attribution");
+            assertThat(catalog.columnShape("workflow_definitions", "status_attribution"))
+                    .isEqualTo("character varying|20|YES|null");
             assertThat(catalog.primaryKey("workflow_definition_activations"))
                     .isEqualTo("PRIMARY KEY (scope_key, definition_id)");
             assertThat(catalog.columnShape("workflow_definition_activations", "target_scope_key"))
