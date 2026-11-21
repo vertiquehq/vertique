@@ -9,15 +9,16 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * A type the generated companion's package cannot name must not make the generated source fail to
- * compile: the generated registration modules skip such a binding with a warning, and the REST-client
- * proxy and {@code BeanParamAccessor} emitters must either skip it the same way or leave the build intact.
+ * A type the generated companion's package cannot name would make the generated source fail to
+ * compile far from the cause. Unlike the registration modules, which skip such a binding with a
+ * warning, the REST-client proxy and {@code BeanParamAccessor} emitters refuse it with a compile error
+ * that names the type.
  */
 class RestClientProcessorUnnameableTypeTest {
 
     @Test
-    @DisplayName("a private nested @BeanParam type does not make the generated proxy or accessor fail to compile")
-    void privateNestedBeanParam_doesNotBreakTheCompilation() {
+    @DisplayName("a private nested @BeanParam type is refused with an error naming the type")
+    void privateNestedBeanParam_isRefusedWithAnErrorNamingTheType() {
         var result = ProcessorTestHarness.run(
                 new RestClientProcessor(),
                 RestClientProcessorFixtures.allStubsWith(SourceFiles.inline("dev.vertique.examples.client.Api", """
@@ -42,6 +43,32 @@ class RestClientProcessorUnnameableTypeTest {
                                 }
                                 """)));
 
-        result.assertSuccess();
+        result.assertFailed().assertErrorMessage("dev.vertique.examples.client.Api.Paging");
+    }
+
+    @Test
+    @DisplayName("a private nested body type is refused with an error naming the type")
+    void privateNestedBodyType_isRefusedWithAnErrorNamingTheType() {
+        var result = ProcessorTestHarness.run(
+                new RestClientProcessor(),
+                RestClientProcessorFixtures.allStubsWith(SourceFiles.inline("dev.vertique.examples.client.Api", """
+                                package dev.vertique.examples.client;
+
+                                import dev.vertique.rest.client.RestClient;
+                                import io.vertx.core.Future;
+                                import jakarta.ws.rs.GET;
+
+                                public final class Api {
+                                    private record Payload(String name) {}
+
+                                    @RestClient
+                                    public interface Users {
+                                        @GET
+                                        Future<Payload> get();
+                                    }
+                                }
+                                """)));
+
+        result.assertFailed().assertErrorMessage("dev.vertique.examples.client.Api.Payload");
     }
 }

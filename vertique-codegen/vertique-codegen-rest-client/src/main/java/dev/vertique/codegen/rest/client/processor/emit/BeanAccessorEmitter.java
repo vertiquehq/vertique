@@ -19,6 +19,7 @@ import dev.vertique.codegen.support.Identifiers;
 import java.io.IOException;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import javax.annotation.processing.Generated;
 import javax.lang.model.element.Modifier;
@@ -135,6 +136,18 @@ public final class BeanAccessorEmitter {
         // Always use the origin package — never the -Avertique.codegen.package override —
         // so the emitted FQN matches what GeneratedNames.companionFqn() looks up at runtime.
         String packageName = ctx.packageNameOf(beanType);
+        Optional<TypeElement> unnameable = UnnameableTypes.firstUnnameable(beanType.asType(), packageName);
+        if (unnameable.isPresent()) {
+            ctx.diagnostics()
+                    .error(
+                            beanType,
+                            "%s is not accessible from package '%s', where the generated bean accessor is"
+                                    + " written. Make the type (and any enclosing type) accessible from that"
+                                    + " package.",
+                            unnameable.get().getQualifiedName(),
+                            packageName);
+            return;
+        }
         // Use Identifiers.generatedClassName to flatten nested types:
         // e.g. Outer.Inner -> Outer_Inner_BeanParamAccessor (not Inner_BeanParamAccessor)
         String generatedSimpleName = Identifiers.generatedClassName(beanType, "_BeanParamAccessor");

@@ -26,7 +26,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import javax.annotation.processing.Generated;
+import javax.lang.model.element.Element;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
@@ -147,6 +149,12 @@ public final class ProxyEmitter {
         // the addSuperinterface call and getDeclaredMethod references compile with the right type.
         ClassName clientClassName = ClassName.get(clientType);
         String generatedFqn = packageName + "." + generatedSimpleName;
+
+        // A type the proxy's package cannot name makes the generated source fail to compile, so
+        // refuse it here with an error naming the type rather than skipping the proxy.
+        if (reportUnnameableType(model, packageName)) {
+            return;
+        }
 
         // Collect unique bean types referenced by BEAN params (deduped by type FQN)
         Map<String, ClassName> beanTypesByFqn = collectBeanTypes(model);
@@ -669,6 +677,47 @@ public final class ProxyEmitter {
      * @param model the interface model to scan
      * @return map from bean FQN to its ClassName
      */
+    private boolean reportUnnameableType(ClientInterfaceModel model, String packageName) {
+        TypeElement clientType = model.clientType();
+        if (reportIfUnnameable(clientType.asType(), clientType, packageName)) {
+            return true;
+        }
+        for (MethodModel method : model.methods()) {
+            Element declaring = method.method().getEnclosingElement();
+            if (declaring instanceof TypeElement declaringType
+                    && reportIfUnnameable(declaringType.asType(), method.method(), packageName)) {
+                return true;
+            }
+            if (reportIfUnnameable(method.returnType(), method.method(), packageName)) {
+                return true;
+            }
+            for (ParamModel param : method.params()) {
+                if (reportIfUnnameable(param.type(), param.element(), packageName)) {
+                    return true;
+                }
+            }
+        }
+        for (TypeElement beanType : model.referencedBeans()) {
+            if (reportIfUnnameable(beanType.asType(), beanType, packageName)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean reportIfUnnameable(TypeMirror type, Element source, String packageName) {
+        Optional<TypeElement> unnameable = UnnameableTypes.firstUnnameable(type, packageName);
+        unnameable.ifPresent(found -> ctx.diagnostics()
+                .error(
+                        source,
+                        "%s is not accessible from package '%s', where the generated REST client proxy is"
+                                + " written. Make the type (and any enclosing type) accessible from that"
+                                + " package.",
+                        found.getQualifiedName(),
+                        packageName));
+        return unnameable.isPresent();
+    }
+
     private Map<String, ClassName> collectBeanTypes(ClientInterfaceModel model) {
         Map<String, ClassName> result = new LinkedHashMap<>();
         for (TypeElement beanType : model.referencedBeans()) {
