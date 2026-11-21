@@ -10,4 +10,10 @@ public record OutboxReplyControl(String handle, boolean completesLater) {
     public OutboxReplyControl {
         Objects.requireNonNull(handle, "handle");
     }
+
+    /** Masks the handle so that logging the whole record never prints it. */
+    @Override
+    public String toString() {
+        return "OutboxReplyControl[handle=***, completesLater=" + completesLater + "]";
+    }
 }

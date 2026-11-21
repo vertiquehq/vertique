@@ -114,7 +114,7 @@ public final class OutboxSideEffectRecorder implements WorkflowSideEffectRecorde
         if (meta.oneWay()) {
             return Future.failedFuture(new IllegalStateException("Workflow service-dispatch target '"
                     + intent.targetId()
-                    + "' is @OneWay; cycle 1 only supports request/reply targets that return Future<Void>."));
+                    + "' is @OneWay; only request/reply targets that return Future<Void> are supported."));
         }
         if (intent.correlation().reply() == null && !isVoidReturn(meta)) {
             return Future.failedFuture(new IllegalStateException("Workflow service-dispatch target '"
@@ -169,7 +169,7 @@ public final class OutboxSideEffectRecorder implements WorkflowSideEffectRecorde
                                                         intent.correlation()
                                                                 .reply()
                                                                 .waitId())
-                                                .toString(),
+                                                .encode(),
                                         intent.correlation().reply().completesLater()))
                 .scopeKey(intent.correlation().scopeKey())
                 .build();

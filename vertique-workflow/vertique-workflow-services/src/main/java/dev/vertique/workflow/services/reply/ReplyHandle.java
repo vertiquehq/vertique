@@ -31,8 +31,18 @@ public record ReplyHandle(UUID instanceId, UUID waitId) {
         }
     }
 
+    /**
+     * Encodes this handle in the form {@link #parse(String)} reads.
+     *
+     * @return the encoded handle
+     */
+    public String encode() {
+        return instanceId + ":" + waitId;
+    }
+
+    /** Masks the handle so that logging the whole record never prints it; use {@link #encode()} to read it. */
     @Override
     public String toString() {
-        return instanceId + ":" + waitId;
+        return "ReplyHandle[***]";
     }
 }
