@@ -79,7 +79,9 @@ other interface can carry `@Resilient` and its declarations for the resource tha
 REST-client interface has no implementor, so its anchor wraps the generated client call. A
 service-contract interface anchor is applied once, by the services dispatch pipeline, and is not woven
 onto the contract's implementors; see the double-wrapping caveat below for a handler that declares
-resilience itself.
+resilience itself. A call dispatched through the contract runs the policy once, and a direct in-process
+call on the implementor is not wrapped. Any other aspect declared on the same contract method is still
+woven.
 
 The aspect does not intercept self-invocation or direct object construction. For a
 `ServiceHandler<C>` implementation, wire either the generated `ServiceContract` or the AOP

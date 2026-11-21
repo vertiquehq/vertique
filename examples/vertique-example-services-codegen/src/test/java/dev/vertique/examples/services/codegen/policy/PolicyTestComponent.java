@@ -15,9 +15,14 @@ import dev.vertique.examples.services.codegen.policy.PolicyFixtures.Effects;
 import dev.vertique.examples.services.codegen.policy.PolicyFixtures.Eligibility;
 import dev.vertique.examples.services.codegen.policy.PolicyFixtures.RecordingAuthorizer;
 import dev.vertique.examples.services.codegen.policy.resource.GeneratedJaxRsResourcesModule;
+import dev.vertique.examples.services.codegen.policy.service.GeneratedAopModule;
 import dev.vertique.examples.services.codegen.policy.service.GeneratedServicesModule;
 import dev.vertique.examples.services.codegen.policy.service.PolicyHandlerService;
 import dev.vertique.examples.services.codegen.policy.service.PolicyService;
+import dev.vertique.examples.services.codegen.policy.service.ResilientAttempts;
+import dev.vertique.examples.services.codegen.policy.service.ResilientService;
+import dev.vertique.resilience.aop.ResilienceAopModule;
+import dev.vertique.resilience.dagger.ResiliencePoliciesModule;
 import dev.vertique.rest.auth.jwt.JwtAuthModule;
 import dev.vertique.rest.jaxrs.RestModule;
 import dev.vertique.rest.security.VertxAuthorizationImportModule;
@@ -46,7 +51,10 @@ import jakarta.inject.Singleton;
             VertxAuthorizationImportModule.class,
             PolicyTestModule.class,
             GeneratedJaxRsResourcesModule.class,
-            GeneratedServicesModule.class
+            GeneratedServicesModule.class,
+            ResiliencePoliciesModule.class,
+            ResilienceAopModule.class,
+            GeneratedAopModule.class
         })
 interface PolicyTestComponent extends VertiqueApplicationComponent {
 
@@ -63,6 +71,20 @@ interface PolicyTestComponent extends VertiqueApplicationComponent {
      * @return the client
      */
     PolicyHandlerService policyHandlerService();
+
+    /**
+     * Returns the generated client of the contract that carries its resilience on the interface.
+     *
+     * @return the client
+     */
+    ResilientService resilientService();
+
+    /**
+     * Returns the counter of the resilient implementation's body runs.
+     *
+     * @return the counter
+     */
+    ResilientAttempts resilientAttempts();
 
     /**
      * Returns the business effect log.

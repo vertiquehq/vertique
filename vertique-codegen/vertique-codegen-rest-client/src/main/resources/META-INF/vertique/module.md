@@ -76,6 +76,12 @@ client and the package the proxy is generated in. Make the interface (and any en
 the client into its package. No proxy is generated and the client does not silently fall back to the runtime
 reflective proxy.
 
+Any other type the proxy or an accessor names must be reachable from the package it is generated into: the
+client interface, parameter, return and body types (type arguments included) and `@BeanParam` types. The
+processor does not skip a binding it cannot name; it fails the compilation with an error that names the type
+(for example a private nested `@BeanParam` or body type). Make the type, and every type enclosing it,
+accessible from that package.
+
 ### Generated `{Client}_RestClientProxy`
 
 Generates `{ClientSimpleName}_RestClientProxy` in the origin interface's package. Key properties of the generated class:
@@ -279,6 +285,11 @@ Both paths fail fast: the returned future fails with `RestClientException` ("Fai
 ## Pitfalls
 
 - **External `@BeanParam` types skip proxy emission for the interface.** If any `@BeanParam` type on an interface is not in the current compilation unit, the processor cannot scan its fields, so the entire `{Client}_RestClientProxy` is not emitted. A compile-time `WARNING` is emitted for the external type. The interface falls back to the JDK proxy at runtime, exactly as without the processor.
+
+- **A type the generated package cannot name is a compile error.** Unlike the registration modules, which skip such
+  a binding with a warning, the proxy and bean-accessor emitters refuse a `private` nested (or otherwise
+  unreachable) client, parameter, return, body or `@BeanParam` type with an error naming the type. Widen its
+  visibility or move it.
 
 - **Lombok remains explicit.** The public application parent does not activate Lombok. A project
   that uses it appends the Lombok processor path as the explicit opt-in documented in
