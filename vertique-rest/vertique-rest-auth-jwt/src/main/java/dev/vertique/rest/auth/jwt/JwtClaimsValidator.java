@@ -17,8 +17,9 @@ import java.util.Map;
  * </ul>
  *
  * <p>The validator is invoked by {@link JwtClaimsValidatorContributor}, which adds a per-operation
- * handler at priority 50, after the standard JWT authentication succeeds and before identity
- * resolution and authorization. If the validator throws a {@link SecurityException}, the request is
+ * handler at priority 50 in the authentication stage: after the standard JWT authentication succeeds,
+ * ahead of the request gates (so a rejected token is answered {@code 401} before the per-route {@code @Consumes}
+ * and validation gates run), and before identity resolution and authorization. If the validator throws a {@link SecurityException}, the request is
  * rejected with {@code 401 Unauthorized}.
  *
  * <p>Example — require a {@code tenant_id} claim:

@@ -334,9 +334,11 @@ public abstract class AuthModule {
      *
      * <p>Installs a {@link RouteAuthHandler} on an action-only route ({@code SecurityPolicy.None}
      * carrying {@code @RequiresAction}) at priority
-     * {@link ActionGateAuthenticationContributor#PRIORITY} — before the JWT claims validator (50),
-     * identity resolution (80), and authorization (100) — so the caller is authenticated and
-     * {@link dev.vertique.security.AuthenticationEvidence} is appended before any of them run.
+     * {@link ActionGateAuthenticationContributor#PRIORITY} in the authentication stage — right after
+     * the scheme handlers (an action-only route has none), before the {@code @Consumes} and validation gates, the JWT claims
+     * validator (50), identity resolution (80), and authorization (100) — so the caller is
+     * authenticated and {@link dev.vertique.security.AuthenticationEvidence} is appended before any of
+     * them run.
      * Without it, an action-only route would get no OpenAPI security handler and the gate would see
      * an anonymous identity (silent bypass).
      *

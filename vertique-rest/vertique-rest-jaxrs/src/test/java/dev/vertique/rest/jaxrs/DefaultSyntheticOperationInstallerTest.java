@@ -363,6 +363,36 @@ class DefaultSyntheticOperationInstallerTest {
                 contributor100, contributor45, invocationOrder, "apidocs:authenticated:json", "authOnly");
     }
 
+    @Test
+    @DisplayName("Authentication-stage contributors run before the other contributors on a synthetic route")
+    void authenticationStageContributorsRunFirst() {
+        List<String> invocationOrder = new ArrayList<>();
+        // The stage contributor has the HIGHER priority number, so only the stage partition puts it first.
+        CapturingContributor stage = new CapturingContributor(50, "stage", invocationOrder, true);
+        CapturingContributor plain = new CapturingContributor(10, "plain", invocationOrder, false);
+        JaxRsRouterMount.Factory factory = TestFactories.builder()
+                .securitySchemeHandlers(Set.of(new StubSchemeHandler(SCHEME, true)))
+                .authEnforcementCapability(Optional.of(AuthEnforcementCapability.INSTANCE))
+                .operationHandlerContributors(new LinkedHashSet<>(List.of(plain, stage)))
+                .build();
+
+        new DefaultSyntheticOperationInstaller(factory)
+                .install(
+                        Router.router(vertx),
+                        "/management/openapi.json",
+                        List.of(HttpMethod.GET),
+                        SyntheticOperation.withRoles(
+                                ORIGIN, "apidocs:management:json", SCHEME, APPLICATION, List.of("admin")),
+                        NOOP_TERMINAL);
+
+        assertEquals(
+                List.of("stage:apidocs:management:json", "plain:apidocs:management:json"),
+                invocationOrder,
+                "the authentication-stage contributor must be called first, whatever the priorities");
+        assertEquals(1, stage.callCount("apidocs:management:json"), "the stage contributor must run exactly once");
+        assertEquals(1, plain.callCount("apidocs:management:json"), "the plain contributor must run exactly once");
+    }
+
     private void assertContributorParity(
             CapturingContributor contributor100,
             CapturingContributor contributor45,
@@ -590,10 +620,22 @@ class DefaultSyntheticOperationInstallerTest {
         private final Map<String, OperationRegistrationContext> capturedByOperationId = new LinkedHashMap<>();
         private final Map<String, Integer> callCounts = new LinkedHashMap<>();
 
+        private final boolean authenticationStage;
+
         CapturingContributor(int priority, String label, List<String> invocationOrder) {
+            this(priority, label, invocationOrder, false);
+        }
+
+        CapturingContributor(int priority, String label, List<String> invocationOrder, boolean authenticationStage) {
             this.priority = priority;
             this.label = label;
             this.invocationOrder = invocationOrder;
+            this.authenticationStage = authenticationStage;
+        }
+
+        @Override
+        public boolean authenticationStage() {
+            return authenticationStage;
         }
 
         @Override

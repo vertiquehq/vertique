@@ -900,6 +900,7 @@ Appends a handler to one operation's chain during route registration.
 ```java
 public interface OperationHandlerContributor extends OrderedExtension {
     @Override int priority();                       // abstract: must be declared
+    default boolean authenticationStage() { return false; }
     void contribute(OperationRegistrationContext context);
 }
 ```
@@ -924,13 +925,20 @@ static OperationHandlerContributor quotaGate(QuotaService quotas) {
 }
 ```
 
+`authenticationStage()` decides where in the chain a contributor runs. The default, `false`, runs it
+after the request gates (the `@Consumes` check and request validation), in priority order. `true` runs
+it in the authentication stage, right after the operation's scheme authentication handler(s) and
+**before** the gates, ahead of every contributor returning `false`. Reserve it for authentication and
+credential checks: a request that fails there is answered `401` before the per-route `@Consumes` and validation gates run, so an unauthenticated caller learns nothing about the request schema. A contributor in that
+stage must not assume the `SecurityContext` is bound yet and must not act on the request body, which is unauthenticated content.
+
 Framework contributors occupy these priorities; choose a band that does not collide, and place any
 contributor that reads an authenticated identity above 100:
 
 | Priority | Contributor | Module |
 |---:|---|---|
-| 40 | action-gate authentication | `vertique-rest-security` |
-| 50 | JWT claims validation | `vertique-rest-auth-jwt` |
+| 40 | action-gate authentication (authentication stage) | `vertique-rest-security` |
+| 50 | JWT claims validation (authentication stage) | `vertique-rest-auth-jwt` |
 | 80 | identity resolution | `vertique-rest-security` |
 | 100 | authorization | `vertique-rest-security` |
 | 360 | server-span enrichment | `vertique-opentelemetry-rest` |

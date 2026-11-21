@@ -29,8 +29,10 @@ import lombok.extern.slf4j.Slf4j;
  *       with {@code 401 Unauthorized}</li>
  * </ol>
  *
- * <p>Priority: 50 — runs before authorization (100) and SecurityContext bridging (200),
- * ensuring invalid tokens are rejected before any further processing.
+ * <p>Runs in the authentication stage ({@link #authenticationStage()}), right after the route's
+ * authentication handler and before the {@code @Consumes} check and request validation, so a token the
+ * validator rejects gets {@code 401} before the per-route {@code @Consumes} and validation gates run. Priority 50 orders it
+ * after the action-only authentication contributor (40) and before the other contributors.
  *
  * <p>The rejection event emission mirrors the pattern used by
  * {@link JwtBearerSecuritySchemeHandler} for token-level failures, so claims validation
@@ -69,8 +71,18 @@ public class JwtClaimsValidatorContributor implements OperationHandlerContributo
     }
 
     /**
-     * Returns the priority of this contributor.
-     * Runs at priority 50 — before identity resolution (80) and authorization (100).
+     * Runs in the authentication stage, ahead of the request gates.
+     *
+     * @return {@code true}
+     */
+    @Override
+    public boolean authenticationStage() {
+        return true;
+    }
+
+    /**
+     * Returns the priority of this contributor within the authentication stage: after the
+     * action-only authentication contributor (40).
      *
      * @return {@code 50}
      */
