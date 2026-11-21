@@ -46,7 +46,7 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <h3>Ordering</h3>
  * This contributor reports {@link #authenticationStage()} {@code true}, so the router installs its
- * handler right after the route's (absent) scheme authentication handlers and <em>before</em> the
+ * handler right after the route's scheme authentication handlers (an action-only route declares none) and <em>before</em> the
  * {@code @Consumes} check and request validation. An unauthenticated caller of an action-only route is
  * therefore rejected with {@code 401} (and the scheme's {@code WWW-Authenticate} challenge) before any
  * request content is examined, exactly as on a route that declares a security scheme. Authorization

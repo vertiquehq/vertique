@@ -31,7 +31,7 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>Runs in the authentication stage ({@link #authenticationStage()}), right after the route's
  * authentication handler and before the {@code @Consumes} check and request validation, so a token the
- * validator rejects gets {@code 401} before any request content is examined. Priority 50 orders it
+ * validator rejects gets {@code 401} before the per-route {@code @Consumes} and validation gates run. Priority 50 orders it
  * after the action-only authentication contributor (40) and before the other contributors.
  *
  * <p>The rejection event emission mirrors the pattern used by

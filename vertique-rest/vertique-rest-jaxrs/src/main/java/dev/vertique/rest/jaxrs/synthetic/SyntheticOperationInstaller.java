@@ -14,8 +14,8 @@ import java.util.List;
  * INTERNAL: installs framework-owned synthetic operations through the resource security chain.
  *
  * <p>An installed route runs exactly the chain an equally annotated JAX-RS resource method gets:
- * the scheme's authentication handler, then every registered {@code OperationHandlerContributor} in
- * resource order with the same effective security policy, then the caller's terminal handler. The
+ * the scheme's authentication handler, then the authentication-stage {@code OperationHandlerContributor}s,
+ * then every other registered contributor in resource order with the same effective security policy, then the caller's terminal handler. The
  * contributors receive a descriptor that reports the synthetic security annotations the policy is
  * built from, the literal route path as its route template, no media types, and no required action.
  *
@@ -35,8 +35,8 @@ public interface SyntheticOperationInstaller {
 
     /**
      * Installs one route answering {@code methods} at {@code path} on {@code router}: the
-     * scheme's authentication handler, every registered {@code OperationHandlerContributor} in
-     * resource order with the effective policy of an equally annotated resource method, then
+     * scheme's authentication handler, the authentication-stage {@code OperationHandlerContributor}s,
+     * every other registered contributor in resource order with the effective policy of an equally annotated resource method, then
      * {@code terminal}.
      *
      * <p>Every check runs before the router gains any route, so a rejected operation leaves the

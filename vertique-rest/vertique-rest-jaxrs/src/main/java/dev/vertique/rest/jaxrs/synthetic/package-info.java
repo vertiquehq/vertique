@@ -6,8 +6,8 @@
  * security chain.
  *
  * <p>An installed route runs exactly the chain an equally annotated JAX-RS resource method gets:
- * the scheme's authentication handler, every registered {@code OperationHandlerContributor} in
- * resource order, then a caller-supplied terminal handler. {@link
+ * the scheme's authentication handler, the authentication-stage {@code OperationHandlerContributor}s,
+ * every other registered contributor in resource order, then a caller-supplied terminal handler. {@link
  * dev.vertique.rest.jaxrs.synthetic.SyntheticOperation} describes one such operation and {@link
  * dev.vertique.rest.jaxrs.synthetic.SyntheticOperationInstaller} installs it. The implementation is a
  * package-private type in {@code dev.vertique.rest.jaxrs}, bound by {@code @Binds} in {@code

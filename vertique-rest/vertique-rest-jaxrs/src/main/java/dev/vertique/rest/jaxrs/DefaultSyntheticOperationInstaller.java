@@ -63,8 +63,9 @@ import org.slf4j.LoggerFactory;
  * synthetic descriptor as the request's route identity, so a request rejected by authentication or
  * authorization still completes as a REST operation completion carrying that descriptor), the
  * scheme's authentication handler ({@link
- * JaxRsRouteRegistrar#applySecurity}; none for a public typed operation that names no scheme), every
- * registered contributor in {@link
+ * JaxRsRouteRegistrar#applySecurity}; none for a public typed operation that names no scheme), the
+ * authentication-stage contributors ({@link JaxRsRouteRegistrar#contributeAuthenticationStage}), every
+ * other registered contributor in {@link
  * JaxRsRouterMount.Factory#sortedOperationHandlerContributors() resource order} with the effective
  * policy and the required action, if any ({@link JaxRsRouteRegistrar#contributeOperationHandlers}), the
  * caller's terminal handler, and a failure handler that ends every failure with a problem body and

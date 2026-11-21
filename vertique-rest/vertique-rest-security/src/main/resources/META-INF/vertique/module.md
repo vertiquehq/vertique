@@ -76,7 +76,7 @@ The two contributors marked *authentication stage* return `true` from
 `OperationHandlerContributor.authenticationStage()`, so the router runs them right after the route's
 scheme authentication handler(s) and before the `@Consumes` and validation gates; the others run after
 the gates. Priorities order contributors within their own stage. An unauthenticated caller of an
-action-only route is therefore answered `401` before the request body is examined, as on a route
+action-only route is therefore answered `401` before the per-route `@Consumes` and validation gates run, as on a route
 that declares a scheme; authorization (100) still runs after validation. Before this change the
 action-only authentication ran after the gates, so an unauthenticated request with a malformed body
 or the wrong content type received `400` or `415`; it now receives `401`.

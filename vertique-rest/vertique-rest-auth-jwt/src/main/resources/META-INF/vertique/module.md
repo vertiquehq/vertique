@@ -577,7 +577,7 @@ static JwtClaimsValidator tenantValidator() {
 
 Registered as a per-operation handler by `JwtClaimsValidatorContributor` at contributor priority
 **50** in the authentication stage — right after authentication and before the `@Consumes` and
-validation gates, so a rejected token is answered `401` before any request content is examined (it
+validation gates, so a rejected token is answered `401` before the per-route `@Consumes` and validation gates run (it
 used to run after the gates, so a rejected token with a malformed body received `400` or `415`).
 Authorization (100) still runs after the gates. Throwing any exception emits a
 `JWT_CLAIMS_INVALID` rejection and fails the request with 401; returning normally lets it through.

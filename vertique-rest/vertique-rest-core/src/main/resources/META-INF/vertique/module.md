@@ -929,9 +929,8 @@ static OperationHandlerContributor quotaGate(QuotaService quotas) {
 after the request gates (the `@Consumes` check and request validation), in priority order. `true` runs
 it in the authentication stage, right after the operation's scheme authentication handler(s) and
 **before** the gates, ahead of every contributor returning `false`. Reserve it for authentication and
-credential checks: a request that fails there is answered `401` before any request content is
-examined, so an unauthenticated caller learns nothing about the request schema. A contributor in that
-stage must not assume the `SecurityContext` is bound yet and must not read the request body.
+credential checks: a request that fails there is answered `401` before the per-route `@Consumes` and validation gates run, so an unauthenticated caller learns nothing about the request schema. A contributor in that
+stage must not assume the `SecurityContext` is bound yet and must not act on the request body, which is unauthenticated content.
 
 Framework contributors occupy these priorities; choose a band that does not collide, and place any
 contributor that reads an authenticated identity above 100:

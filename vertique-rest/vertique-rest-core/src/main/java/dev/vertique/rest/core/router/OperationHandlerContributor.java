@@ -14,8 +14,11 @@ import dev.vertique.core.extension.OrderedExtension;
  * assurance checks, etc.) with deterministic ordering.
  *
  * <p>Contributors are sorted by the {@link OrderedExtension} ordering contract — phase first,
- * then {@link #priority()} ascending, then {@link #orderKey()} as a stable tie-break.
- * The operation invoker is always added last, after all contributors have run.
+ * then {@link #priority()} ascending, then {@link #orderKey()} as a stable tie-break. Contributors
+ * whose {@link #authenticationStage()} is {@code true} run first, right after the route's
+ * authentication handler(s) and ahead of the request gates; the others follow the gates. The ordering
+ * contract applies within each of those two groups. The operation invoker is always added last,
+ * after all contributors have run.
  *
  * <p>Unlike the other {@link OrderedExtension} sub-interfaces, {@link #priority()} is
  * <em>abstract</em> here — every contributor must explicitly choose a priority band.
@@ -74,15 +77,18 @@ public interface OperationHandlerContributor extends OrderedExtension {
      * (the {@code @Consumes} check and request validation) instead of with the other contributors.
      *
      * <p>A request that fails authentication, or whose credential fails a claims check, is then
-     * rejected with {@code 401} before any request content is examined, so an unauthenticated caller
+     * rejected with {@code 401} before the per-route {@code @Consumes} and validation gates run, so an unauthenticated caller
      * learns nothing about the request schema. Contributors reporting {@code true} run in the usual
      * {@link OrderedExtension} order among themselves, and ahead of every contributor reporting
      * {@code false}. Authorization and identity resolution stay with the {@code false} group, after
      * the gates.
      *
-     * <p>Reserved for authentication and credential checks. A contributor reporting {@code true} may
-     * run on a route that has no matched identity yet, so it must not assume the {@code SecurityContext}
-     * is bound and must not read the request body.
+     * <p>Reserved for authentication and credential checks. A contributor reporting {@code true} runs
+     * before identity resolution, so it must not assume the {@code SecurityContext} is bound, and it
+     * must not act on the request body, which is unauthenticated content. Within the stage the order is
+     * by priority: a contributor ordered before the framework's own authentication (priority 40 on an
+     * action-only route) sees no authenticated user yet, so a credential check that skips when there is
+     * no user would pass unauthenticated requests; such a contributor should fail the request instead.
      *
      * @return {@code true} to run in the authentication stage; defaults to {@code false}
      */
