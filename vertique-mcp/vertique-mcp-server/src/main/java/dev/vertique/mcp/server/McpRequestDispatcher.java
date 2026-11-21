@@ -80,6 +80,7 @@ import io.vertx.ext.web.RoutingContext;
 import io.vertx.json.schema.Validator;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
@@ -137,6 +138,7 @@ import java.util.function.Supplier;
  * same bounded terminal envelope, reported through the completion view's {@code toolOutput} only once that
  * envelope exists, and only then handed to the single terminal writer — a fixed order.
  */
+@Singleton
 final class McpRequestDispatcher {
     private static final String DISCOVER_METHOD = "server/discover";
     private static final String TOOLS_LIST_METHOD = "tools/list";
@@ -274,6 +276,7 @@ final class McpRequestDispatcher {
 
     private static final String KEY_PREFIX = McpRequestDispatcher.class.getName();
     static final String COMPLETION_COORDINATOR_KEY = KEY_PREFIX + ".completionCoordinator";
+    private static final String ADMITTED_PASS_KEY = KEY_PREFIX + ".admittedPass";
     static final String TERMINAL_FALLBACK_BODY_KEY = KEY_PREFIX + ".terminalFallbackBody";
     static final String SSE_SELECTED_KEY = KEY_PREFIX + ".sseSelected";
     private static final String STARTED_AT_KEY = KEY_PREFIX + ".startedAt";
@@ -648,11 +651,12 @@ final class McpRequestDispatcher {
      * reporting that request's completion itself: in the terminal writer, the private five-argument
      * {@code write} every MCP response goes through, a {@code reject} after this method included; and
      * in the end handler {@link #registerSettlementHooks} registers, for a disconnect or a reset. This
-     * method makes no claim, because admitting a request does not commit MCP to settling it: a failure
-     * raised after this point can be taken by the failure handler of an earlier mount that matches
-     * the path, and an application {@code RouteAuthHandler} can reroute the request out of this
-     * mount. MCP then never settles the request, and a claim made here would leave it with no
-     * completion event from either side. An admission rejection on a request's first entry into the
+     * method makes no claim, because admitting a request does not commit MCP to settling it: an
+     * application {@code RouteAuthHandler} can reroute the request out of this mount, or answer it
+     * itself, and MCP then never settles the request, so a claim made here would leave it with no
+     * completion event from either side. A failure raised after this point does not escape MCP when the
+     * application composes the main router with {@link McpFailureOwnership}: it reaches {@link
+     * #handleAdmittedFailure}, so the writer settles and claims the request. An admission rejection on a request's first entry into the
      * mount makes no claim either: it is written before this method runs, so the writer finds no
      * coordinator of the request, and the request completes as an ordinary rest-core request with one
      * completion event. A request rejected at re-admission after a reroute back into the mount owns the
@@ -679,7 +683,9 @@ final class McpRequestDispatcher {
     void begin(RoutingContext context) {
         Instant startedAt = startedAt(context);
         bindCorrelation(context);
-        if (ownedCoordinator(context) != null) {
+        McpCompletionCoordinator reentered = ownedCoordinator(context);
+        if (reentered != null) {
+            context.put(ADMITTED_PASS_KEY, reentered);
             context.next();
             return;
         }
@@ -697,6 +703,7 @@ final class McpRequestDispatcher {
         byte[] terminalFallback = sseFrame(boundedSseErrorResponse(null, INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE));
         coordinator.bindTerminalResponseBytes(terminalFallback.length);
         context.put(COMPLETION_COORDINATOR_KEY, coordinator);
+        context.put(ADMITTED_PASS_KEY, coordinator);
         context.put(TERMINAL_FALLBACK_BODY_KEY, terminalFallback);
         context.put(REQUEST_CONTEXT_KEY, owningContext);
         if (coordinator.hasListeners()) {
@@ -3324,6 +3331,43 @@ final class McpRequestDispatcher {
         reject(context, McpMethod.OTHER, McpErrorType.AUTHENTICATION, status >= 400 ? status : 401, null);
     }
 
+    /**
+     * Starts a routing pass that matches the MCP mount path: no request is admitted by this pass until
+     * {@link #begin} runs in it, so a failure raised in a pass that never reaches the MCP router, such
+     * as one a route of another mount answers after a reroute, is not MCP's. Registered on the main
+     * router by {@link McpFailureOwnership} so it runs on every pass, ahead of every mount.
+     *
+     * @param context the main router's routing context
+     */
+    void startPass(RoutingContext context) {
+        context.remove(ADMITTED_PASS_KEY);
+        context.next();
+    }
+
+    /**
+     * Takes a failure raised after {@link #begin} admitted the request in the current routing pass, and
+     * leaves every other failure to the next failure handler.
+     *
+     * <p>Vert.x Web restarts failure-handler lookup from the main router whenever a handler of a mounted
+     * router fails the request, so the failure handler of an earlier mount that matches the path, or an
+     * application failure handler on the main router, would otherwise answer an admitted request
+     * with its own error response and leave MCP's observation unsettled. {@link McpFailureOwnership}
+     * registers this method ahead of every mount so MCP answers its own admitted request. The request
+     * counts as admitted only while this pass's {@link #begin} holds the coordinator the request owns,
+     * which excludes a request that was rerouted out of the mount, that never reached {@code begin}, and
+     * one whose coordinator belongs to another request.
+     *
+     * @param context the main router's failing routing context
+     */
+    void handleAdmittedFailure(RoutingContext context) {
+        McpCompletionCoordinator coordinator = ownedCoordinator(context);
+        if (coordinator == null || context.get(ADMITTED_PASS_KEY) != coordinator) {
+            context.next();
+            return;
+        }
+        handleFailure(context);
+    }
+
     /** Completes failures from optional authentication and identity establishment without leakage. */
     void handleFailure(RoutingContext context) {
         if (context.response().ended()) {
@@ -3583,9 +3627,10 @@ final class McpRequestDispatcher {
      * write that won or from a failed progress write), or this settlement completes the stalled write.
      * It never claims on a succeeded outcome, because
      * MCP settles a normal end only through its own write path, which has already claimed: a request
-     * that ended normally without that write, because an earlier mount's failure handler took it or a
-     * reroute took it out of this mount, is not MCP's to report, and rest-core reports it instead; MCP only closes the observation it
-     * opened, without a claim. Neither {@link #begin} nor an admission rejection on a request's first entry into the mount
+     * that ended normally without that write, because a reroute took it out of this mount or a handler of
+     * the mount answered it, is not MCP's to report, and rest-core reports it instead; MCP only closes
+     * the observation it opened, without a claim, as a cancelled completion with error type {@link
+     * McpErrorType#HTTP} that the module documents as the marker of such a request. Neither {@link #begin} nor an admission rejection on a request's first entry into the mount
      * claims: {@link #begin} runs before MCP knows it will settle the request, and such an admission
      * rejection is written before any coordinator or hook exists. The claim reaches the emitter in time, because this hook is registered in {@link #begin},
      * after the emitter's own end handler, and Vert.x Web runs end handlers in reverse registration

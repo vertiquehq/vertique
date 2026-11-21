@@ -717,9 +717,10 @@ final class McpCompletionCoordinator {
      * Settles a request that ended normally without this MCP coordinator settling it, so the observation
      * {@code begin} opened is closed instead of staying open for good.
      *
-     * <p>This happens when an earlier mount's failure handler takes a failure raised after {@code begin},
-     * or when a route handler reroutes the request out of the MCP mount: another handler wrote the
-     * response, MCP never reached its own write path, and no disconnect or reset will follow. The
+     * <p>This happens when a route handler reroutes the request out of the MCP mount, when a handler of
+     * the mount answers it itself, or, in a composition that does not apply {@link
+     * McpFailureOwnership}, when an earlier mount's failure handler takes a failure raised after {@code
+     * begin}: another handler wrote the response, MCP never reached its own write path, and no disconnect or reset will follow. The
      * settlement runs one context turn later, never inline, because the end handlers can run inside the
      * response's own {@code end()} call, before a handler that ended the response and then failed has
      * thrown: the failure handler of the same turn must settle that request with its own terminal first.

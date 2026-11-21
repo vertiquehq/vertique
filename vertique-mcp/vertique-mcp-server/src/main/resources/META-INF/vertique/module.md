@@ -316,19 +316,33 @@ request therefore counts under the `tools/call` metrics and span dimensions and 
 evidence capture like any other `tools/call`. An authentication or authorization rejection, and a
 failure before the envelope was classified, still report `OTHER`.
 
-Failures taken by another mount, and reroutes by an application `RouteAuthHandler`, work as follows:
+**Failures after admission belong to MCP.** A failure raised after a request was admitted (after
+`begin` ran), by authentication, identity establishment or the dispatcher, is answered by MCP's own
+failure handler as an MCP error and settled once, with one MCP completion and no rest-core completion
+event. In an application composed by `HttpVerticle` with this module installed, the module contributes a
+`RouterCustomizer` that registers that handler on the main router ahead of every mount, every
+application router customizer and the ROOT middleware, so the failure handler of an earlier mount that
+matches the path, a REST mount for example, and an application failure handler on the main router never
+answer an admitted request. Only a failure of a request admitted in the current routing pass is taken: a
+failure before `begin` (admission and body-limit rejections), and a failure of a request an application
+handler rerouted out of the mount, stay with the handlers that match them. An application that builds its
+own main router must apply every `RouterCustomizer` of its component, as `HttpVerticle` does, ordered by
+phase; otherwise an earlier failure handler answers the request instead, and the request is handled as
+described under "Not settled by MCP". A route an application registers with an explicit Vert.x order below
+the framework's still runs first.
 
-- **Not settled by MCP** — a request MCP admits but does not settle completes as an ordinary
-  rest-core request with one completion event, and MCP closes the observation it opened at `begin`
+Requests MCP admits but does not answer, and reroutes by an application `RouteAuthHandler`, work as
+follows:
+
+- **Not settled by MCP** — a request MCP admits but does not settle, because an application
+  `RouteAuthHandler` reroutes it out of the mount or answers it itself, completes as an ordinary
+  rest-core request with one completion event: a `RestRequestCompletedEvent` for a JAX-RS operation
+  route target, an `HttpRequestCompletedEvent` otherwise. MCP closes the observation it opened at `begin`
   with one terminal and one completion that record the request as `CANCELLED` with error type
-  `HTTP`, the status the other handler wrote, and transport outcome `WRITTEN`. MCP does not claim
-  the request, so rest-core still reports its one event. An
-  authentication or identity failure taken by the failure handler of another mount that is ordered
-  ahead of the MCP mount and matches the request's path produces one `HttpRequestCompletedEvent`. A
-  request an application `RouteAuthHandler` reroutes out of the MCP mount, and that completes
-  normally on its new target, produces that target's one rest-core completion event: a
-  `RestRequestCompletedEvent` for a JAX-RS operation route, an `HttpRequestCompletedEvent`
-  otherwise.
+  `HTTP`, the status the other handler wrote, and transport outcome `WRITTEN`. That combination
+  is the documented marker of a request MCP did not report: a completion listener that reports
+  requests, such as `vertique-audit-mcp`, skips it, because rest-core reports the request. MCP does not
+  claim the request.
 - **Rerouted out, then disconnected** — a request rerouted out of the MCP mount to a path no
   operation route matches, whose connection is lost before the response ends, is settled by MCP as
   disconnected or reset, and that MCP completion is its one completion event.
@@ -342,7 +356,7 @@ Failures taken by another mount, and reroutes by an application `RouteAuthHandle
   `HttpRequestCompletedEvent`.
 
 **An observation MCP does not settle is still closed.** For a request MCP admitted but does not
-settle (the failure taken by another mount, or the reroute out of the mount that completes normally,
+settle (the reroute out of the mount that completes normally, or the answer by an application handler,
 above), the end of the request closes the lifecycle observation MCP opened at `begin`, so the
 in-flight gauge `vertique.mcp.server.active` (`vertique-micrometer-mcp`) returns to zero. Observers
 and completion listeners see that request's one terminal and one completion with the outcome
