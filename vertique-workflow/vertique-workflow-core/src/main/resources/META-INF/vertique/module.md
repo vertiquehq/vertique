@@ -446,7 +446,7 @@ Add the type catalog module that `vertique-codegen-workflow` generates (`Generat
 | `WorkflowSideEffectRecorder<TX>` | Persist workflow side-effect intents |
 | `TransactionalWorkflowOperations<TX>` | Drive workflows inside an existing transaction, including delivery by key |
 | `RelayedSignals<TX>` | Record a signal that is already durable, such as one the outbox relay delivers, without the intake limit |
-| `TaskStore<TX>` | Store human task rows; `findAssignedTo` is a default method that refuses until a store implements it |
+| `TaskStore<TX>` | Store human task rows; `findByFilter` must honour every filter field, `assignedTo` included |
 | `TaskPrincipalsMapper` | Map the caller's security context to the user id, roles and queues tasks are assigned to |
 | `TransactionalTaskCallbacks<TX>` | Engine callback surface used by the task service |
 | `TimerStore<TX>` | Timer persistence; the timer row links to the command that fires it |
@@ -520,8 +520,13 @@ WorkflowActorMapper customActorMapper() {
 ### TaskPrincipals and TaskPrincipalsMapper
 
 A task inbox needs three things: the caller's principals, the rule that decides whether an assignment
-names one of them, and a query for every task that does. The first two live here; the query is
-`TaskService.listAssignedTo` in `vertique-workflow-tasks`, stored by `TaskStore.findAssignedTo`.
+names one of them, and a query for every task that does. All three live here; the query is the
+`assignedTo` component of `TaskFilter`, run through `TaskService.list`:
+
+```java
+TaskPrincipals me = TaskPrincipalsMapper.orDefault(mapper).toTaskPrincipals(securityContext);
+tasks.list(TaskFilter.empty().withAssignedTo(me).withStatus(TaskStatus.OPEN), PageCursor.first(20));
+```
 
 ```java
 public record TaskPrincipals(String userId, PrincipalType principalType, Set<String> roles, Set<String> queues) {
@@ -1263,8 +1268,8 @@ Behaviors that are load-bearing for correct use and not obvious from method sign
 - **Listener events are not authorization input.** An event with `HistoryAttribution.DEGRADED` or `ABSENT` was not attributed to a verified identity.
 - **A listener makes a call wait for the instance lock.** With a `WorkflowHistoryListener` bound, even a duplicate signal waits for the instance's execution lock, and a lock timeout fails the call with a retryable `WorkflowPersistenceException`.
 - **Human task DSL guard rails.** A task step's decision list must be non-empty with unique decision names (enforced by the `HumanTaskNode` compact constructor). The optional due-date triplet (`dueDate`, `onDueMutator`, `dueNextStepId`) is all-or-nothing — supplying a partial subset is rejected at construction.
-- **Assigned-to query stays outside `TaskFilter`.** `TaskStore.findAssignedTo` and `TaskService.listAssignedTo` take `TaskPrincipals` next to a `TaskFilter` for the other fields and refuse a filter that sets an assignee. Principals that cannot match an assignment return an empty page, never every task, and, among the tasks that pass the filter's other fields and its archived-instance rule, the query returns exactly those `TaskAssignment.matches` accepts. An implementation of a store or service written before these methods fails the call with `UnsupportedOperationException` instead of ignoring the principals.
-- **`TaskFilter` single-assignee-kind guard.** At most one of `assigneeUser` / `assigneeRole` / `assigneeQueue` may be set, mirroring the single-`assignee_type` storage shape. Use `TaskFilter.empty()` plus `with*` copies to compose filters. The optional `scopeKey` filter is an exact match, not validated, and `null` means every scope. The optional `taskType` filter is an exact match on the task type the step declared; a task created without a type matches no task type.
+- **`assignedTo` filter.** `TaskFilter.withAssignedTo(TaskPrincipals)` lists the tasks assigned to the caller's user id, any of its roles or any of its queues, in one query, combined with the other fields. Among the tasks that pass those fields and the archived-instance rule, the query returns exactly those `TaskAssignment.matches` accepts. Principals that cannot match an assignment (any type but `USER`) match no task, never every task. `TaskFilter` gains `assignedTo` as a trailing nullable component and keeps its earlier constructors; record patterns that deconstruct it by component list must add it. A `TaskStore` must honour the component: ignoring it would list every task.
+- **`TaskFilter` single-assignee-kind guard.** At most one of `assigneeUser` / `assigneeRole` / `assigneeQueue` / `assignedTo` may be set, mirroring the single-`assignee_type` storage shape. Use `TaskFilter.empty()` plus `with*` copies to compose filters. The optional `scopeKey` filter is an exact match, not validated, and `null` means every scope. The optional `taskType` filter is an exact match on the task type the step declared; a task created without a type matches no task type.
 - **Version-stable approvals.** `.requireVersionStability()` on a task captures `subject_version` at task creation; completion fails with `WorkflowStaleSubjectVersionException` when the reviewer's `reviewedSubjectVersion` does not match the snapshot. Creating a stability-required task with a null `subject_version` fails with `WorkflowSubjectVersionUnavailableException`.
 - **Subject resolver precedence.** An explicit `StartCommand.subjectRef` wins; otherwise a definition-level `.subject(...)` resolver is invoked with the initial state. A configured resolver returning `null` is a contract violation (`WorkflowDefinitionException`), not a silent "no subject".
 - **`WorkflowActor` is required on every task mutation command.** `TaskCompletionCommand` and `TaskReassignmentCommand` reject null / blank actor identity through their compact constructors. Blank `reason` is normalized to `null` before the command is fingerprinted for idempotency.

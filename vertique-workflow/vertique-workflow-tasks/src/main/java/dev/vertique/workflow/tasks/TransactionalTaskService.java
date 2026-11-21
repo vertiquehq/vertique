@@ -73,28 +73,6 @@ public interface TransactionalTaskService<TX> {
     Future<PagedResult<TaskRecord>> list(TaskFilter filter, PageCursor cursor, TX tx);
 
     /**
-     * Returns a page of the tasks assigned to any of the caller's principals that also match every
-     * other field of the filter, within the supplied transaction. The rules are those of
-     * {@link TaskService#listAssignedTo}.
-     *
-     * <p>The default fails the returned future with {@link UnsupportedOperationException}.
-     *
-     * @param principals the caller's principals; must not be null
-     * @param filter the other conditions; must not be null and must not set {@code assigneeUser},
-     *     {@code assigneeRole} or {@code assigneeQueue}
-     * @param cursor the keyset-pagination cursor; must not be null
-     * @param tx the active transaction context; must not be null
-     * @return a {@link Future} resolving to a paged result of matching task records
-     * @throws NullPointerException if an argument is null
-     * @throws IllegalArgumentException if {@code filter} sets an assignee
-     */
-    default Future<PagedResult<TaskRecord>> listAssignedTo(
-            TaskPrincipals principals, TaskFilter filter, PageCursor cursor, TX tx) {
-        return Future.failedFuture(
-                new UnsupportedOperationException(getClass().getName() + " does not implement listAssignedTo"));
-    }
-
-    /**
      * Returns the task with the given id, or empty if not found, within the supplied transaction.
      *
      * @param taskId the task id to look up; must not be null

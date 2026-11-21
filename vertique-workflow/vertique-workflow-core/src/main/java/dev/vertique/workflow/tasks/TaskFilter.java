@@ -34,6 +34,10 @@ import java.time.Instant;
  *     expecting scoping.
  * @param taskType filter by the logical task type the plan declared for the step (exact match); null means no
  *     filter. A task created without a type matches no task type.
+ * @param assignedTo filter to the tasks assigned to any of these principals: the user id, one of the roles or one
+ *     of the queues, as {@link TaskAssignment#matches(TaskPrincipals)} decides; null means no filter. Principals
+ *     that cannot match an assignment (any type but {@code USER}) match no task; they never mean "no assignee
+ *     restriction". Build them from the authenticated security context, never from request input.
  */
 public record TaskFilter(
         @Nullable String assigneeUser,
@@ -46,7 +50,39 @@ public record TaskFilter(
         @Nullable String subjectId,
         boolean includeArchived,
         @Nullable String scopeKey,
-        @Nullable String taskType) {
+        @Nullable String taskType,
+        @Nullable TaskPrincipals assignedTo) {
+
+    /**
+     * Creates a filter without an assigned-to constraint. Retained so existing callers keep compiling; equivalent to
+     * the canonical constructor with a {@code null} {@code assignedTo}.
+     */
+    public TaskFilter(
+            @Nullable String assigneeUser,
+            @Nullable String assigneeRole,
+            @Nullable String assigneeQueue,
+            @Nullable WorkflowInstanceId workflowId,
+            @Nullable TaskStatus status,
+            @Nullable Instant dueBefore,
+            @Nullable String subjectType,
+            @Nullable String subjectId,
+            boolean includeArchived,
+            @Nullable String scopeKey,
+            @Nullable String taskType) {
+        this(
+                assigneeUser,
+                assigneeRole,
+                assigneeQueue,
+                workflowId,
+                status,
+                dueBefore,
+                subjectType,
+                subjectId,
+                includeArchived,
+                scopeKey,
+                taskType,
+                null);
+    }
 
     /**
      * Creates a filter without a task type constraint. Retained so existing callers keep compiling; equivalent to the
@@ -107,19 +143,22 @@ public record TaskFilter(
 
     /**
      * Validates that at most one of {@code assigneeUser} / {@code assigneeRole} /
-     * {@code assigneeQueue} is set. A row in {@code workflow_tasks} has exactly one
-     * {@code assignee_type}, so combining two would always return zero rows; rather than silently
-     * masking the misuse, fail loud at filter construction.
+     * {@code assigneeQueue} / {@code assignedTo} is set. A row in {@code workflow_tasks} has exactly one
+     * {@code assignee_type}, so combining two single kinds would always return zero rows, and combining one with
+     * {@code assignedTo} would silently narrow the caller's principals; rather than masking the misuse, fail loud at
+     * filter construction.
      */
     public TaskFilter {
         int assigneeCount = 0;
         if (assigneeUser != null) assigneeCount++;
         if (assigneeRole != null) assigneeCount++;
         if (assigneeQueue != null) assigneeCount++;
+        if (assignedTo != null) assigneeCount++;
         if (assigneeCount > 1) {
             throw new IllegalArgumentException(
-                    "TaskFilter accepts at most one of assigneeUser/assigneeRole/assigneeQueue;"
-                            + " a task row has a single assignee_type. Use a separate query per assignee kind.");
+                    "TaskFilter accepts at most one of assigneeUser/assigneeRole/assigneeQueue/assignedTo;"
+                            + " a task row has a single assignee_type. Use assignedTo for a user, its roles and its"
+                            + " queues together.");
         }
     }
 
@@ -131,7 +170,7 @@ public record TaskFilter(
      * @return an all-null {@code TaskFilter}
      */
     public static TaskFilter empty() {
-        return new TaskFilter(null, null, null, null, null, null, null, null, false, null, null);
+        return new TaskFilter(null, null, null, null, null, null, null, null, false, null, null, null);
     }
 
     // --- Fluent with* methods ---
@@ -154,7 +193,8 @@ public record TaskFilter(
                 subjectId,
                 includeArchived,
                 scopeKey,
-                taskType);
+                taskType,
+                assignedTo);
     }
 
     /**
@@ -175,7 +215,8 @@ public record TaskFilter(
                 subjectId,
                 includeArchived,
                 scopeKey,
-                taskType);
+                taskType,
+                assignedTo);
     }
 
     /**
@@ -196,7 +237,8 @@ public record TaskFilter(
                 subjectId,
                 includeArchived,
                 scopeKey,
-                taskType);
+                taskType,
+                assignedTo);
     }
 
     /**
@@ -217,7 +259,8 @@ public record TaskFilter(
                 subjectId,
                 includeArchived,
                 scopeKey,
-                taskType);
+                taskType,
+                assignedTo);
     }
 
     /**
@@ -238,7 +281,8 @@ public record TaskFilter(
                 subjectId,
                 includeArchived,
                 scopeKey,
-                taskType);
+                taskType,
+                assignedTo);
     }
 
     /**
@@ -259,7 +303,8 @@ public record TaskFilter(
                 subjectId,
                 includeArchived,
                 scopeKey,
-                taskType);
+                taskType,
+                assignedTo);
     }
 
     /**
@@ -280,7 +325,8 @@ public record TaskFilter(
                 subjectId,
                 includeArchived,
                 scopeKey,
-                taskType);
+                taskType,
+                assignedTo);
     }
 
     /**
@@ -301,7 +347,8 @@ public record TaskFilter(
                 subjectId,
                 includeArchived,
                 scopeKey,
-                taskType);
+                taskType,
+                assignedTo);
     }
 
     /**
@@ -325,7 +372,8 @@ public record TaskFilter(
                 subjectId,
                 includeArchived,
                 scopeKey,
-                taskType);
+                taskType,
+                assignedTo);
     }
 
     /**
@@ -347,7 +395,8 @@ public record TaskFilter(
                 subjectId,
                 includeArchived,
                 scopeKey,
-                taskType);
+                taskType,
+                assignedTo);
     }
 
     /**
@@ -368,6 +417,32 @@ public record TaskFilter(
                 subjectId,
                 includeArchived,
                 scopeKey,
-                taskType);
+                taskType,
+                assignedTo);
+    }
+
+    /**
+     * Returns a copy of this filter with the {@code assignedTo} field set: the inbox filter, the tasks assigned to
+     * the caller's user id, to any of its roles or to any of its queues.
+     *
+     * @param assignedTo the caller's principals; null removes the filter
+     * @return a new {@code TaskFilter} with the updated field
+     * @throws IllegalArgumentException if this filter sets {@code assigneeUser}, {@code assigneeRole} or
+     *     {@code assigneeQueue} and {@code assignedTo} is not null
+     */
+    public TaskFilter withAssignedTo(@Nullable TaskPrincipals assignedTo) {
+        return new TaskFilter(
+                assigneeUser,
+                assigneeRole,
+                assigneeQueue,
+                workflowId,
+                status,
+                dueBefore,
+                subjectType,
+                subjectId,
+                includeArchived,
+                scopeKey,
+                taskType,
+                assignedTo);
     }
 }

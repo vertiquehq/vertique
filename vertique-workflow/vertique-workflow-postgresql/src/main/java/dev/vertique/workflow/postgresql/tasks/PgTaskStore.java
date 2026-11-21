@@ -36,7 +36,6 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -421,38 +420,18 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
      *
      * <p>Executes a non-locking SELECT with an optional JOIN to {@code workflow_instances} for
      * subject filters. The keyset pagination uses {@code (updated_at DESC, task_id ASC)}.
+     *
+     * <p>An {@code assignedTo} filter adds one parenthesized predicate: the task's
+     * {@code (assignee_type, assignee_key)} pair is the user id, one of the roles or one of the queues,
+     * as an {@code OR} of up to three branches, the role and queue values bound as text arrays. A branch
+     * for an empty set is left out. For principals that cannot match an assignment the predicate is
+     * {@code FALSE}, so the page is empty. With {@code assignedTo} the assignee kinds and the status are
+     * inlined as literals (constants and an enum name, never caller text), so the planner can match the
+     * partial indexes on open tasks of each assignee kind even under a generic prepared plan.
      */
     @Override
     public Future<PagedResult<TaskRecord>> findByFilter(TaskFilter filter, PageCursor cursor, SqlClient tx) {
-        return page(buildQuery(filter, null), cursor, tx);
-    }
-
-    /**
-     * {@inheritDoc}
-     *
-     * <p>Runs the {@link #findByFilter} statement with one more predicate: the task's
-     * {@code (assignee_type, assignee_key)} pair is the user id, one of the roles or one of the queues,
-     * as a parenthesized {@code OR} of up to three branches, the role and queue values bound as text
-     * arrays. A branch for an empty set is left out. For principals that cannot match an assignment
-     * the predicate is {@code FALSE}, so the page is empty.
-     *
-     * <p>The assignee kinds and the status are inlined as literals (constants and an enum name, never
-     * caller text), so the planner can match the partial indexes on open tasks of each assignee kind
-     * even under a generic prepared plan. Open tasks are served by those indexes; other statuses
-     * by the keyset index and a filter.
-     */
-    @Override
-    public Future<PagedResult<TaskRecord>> findAssignedTo(
-            TaskPrincipals principals, TaskFilter filter, PageCursor cursor, SqlClient tx) {
-        Objects.requireNonNull(principals, "principals");
-        Objects.requireNonNull(filter, "filter");
-        Objects.requireNonNull(cursor, "cursor");
-        Objects.requireNonNull(tx, "tx");
-        if (filter.assigneeUser() != null || filter.assigneeRole() != null || filter.assigneeQueue() != null) {
-            throw new IllegalArgumentException("findAssignedTo takes the assignee from the principals;"
-                    + " the filter must not set assigneeUser, assigneeRole or assigneeQueue");
-        }
-        return page(buildQuery(filter, principals), cursor, tx);
+        return page(buildQuery(filter), cursor, tx);
     }
 
     /**
@@ -465,14 +444,14 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
     record FilterQuery(String sql, List<Object> params) {}
 
     /**
-     * Builds the statement of {@link #findByFilter} and, when {@code principals} is not null, of
-     * {@link #findAssignedTo}. Package-private so the plan of the statement can be checked.
+     * Builds the statement of {@link #findByFilter}. Package-private so the plan of the statement can be
+     * checked.
      *
      * @param filter the filter
-     * @param principals the caller's principals, or {@code null} for no principals predicate
      * @return the statement and its parameters
      */
-    FilterQuery buildQuery(TaskFilter filter, @Nullable TaskPrincipals principals) {
+    FilterQuery buildQuery(TaskFilter filter) {
+        TaskPrincipals principals = filter.assignedTo();
         // The subject filters (subjectType, subjectId) need a JOIN to workflow_instances.
         // The joined side is a narrowed projection of workflow_instances (only the columns the
         // filters read) so workflow_instances.updated_at is never visible: the keyset WHERE

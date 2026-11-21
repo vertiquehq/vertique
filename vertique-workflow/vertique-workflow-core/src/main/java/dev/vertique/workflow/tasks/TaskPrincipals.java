@@ -12,7 +12,7 @@ import java.util.Set;
  * with the type of the principal they were taken from.
  *
  * <p>A {@link TaskAssignment} matches these principals through {@link TaskAssignment#matches}, and
- * {@code TaskService#listAssignedTo} returns the tasks whose assignment matches them. Only a
+ * {@link TaskFilter#withAssignedTo(TaskPrincipals)} lists the tasks whose assignment matches them. Only a
  * {@link PrincipalType#USER} principal ever matches: a service, system or anonymous caller matches no
  * assignment, whatever ids, roles or queues it carries.
  *

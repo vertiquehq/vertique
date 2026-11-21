@@ -30,7 +30,6 @@ class TaskStoreShapeTest {
             "markExpired",
             "reassign",
             "findByFilter",
-            "findAssignedTo",
             "findById",
             "findOpenByBranchToken",
             "incrementRemindersFiredCount");
@@ -39,8 +38,6 @@ class TaskStoreShapeTest {
     @DisplayName("TaskStore declares exactly the expected SPI method names")
     void taskStoreHasExpectedMethods() {
         Set<String> declared = Arrays.stream(TaskStore.class.getDeclaredMethods())
-                // Coverage instrumentation adds a synthetic initializer to an interface with a default method.
-                .filter(method -> !method.isSynthetic())
                 .map(Method::getName)
                 .collect(Collectors.toSet());
 

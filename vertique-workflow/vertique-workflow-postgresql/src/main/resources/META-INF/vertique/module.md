@@ -625,8 +625,8 @@ Set `workflow.executor.enabled=false` for a node that only records. The adapter 
 
 The module exposes query services for workflow instances and branch state. These are read-model APIs for management screens and operational tools.
 
-`PgTaskStore.findAssignedTo` serves the task inbox (`TaskService.listAssignedTo`). It runs the
-`findByFilter` statement with one more, parenthesized predicate: `(assignee_type = 'USER' AND
+`PgTaskStore.findByFilter` serves the task inbox. A `TaskFilter.assignedTo` adds one parenthesized
+predicate: `(assignee_type = 'USER' AND
 assignee_key = $n) OR (assignee_type = 'ROLE' AND assignee_key = ANY($m)) OR (assignee_type = 'QUEUE'
 AND assignee_key = ANY($k))`, leaving out the branch of an empty role or queue set, and `FALSE` for
 principals that cannot match an assignment. One statement serves the page, with the usual keyset order

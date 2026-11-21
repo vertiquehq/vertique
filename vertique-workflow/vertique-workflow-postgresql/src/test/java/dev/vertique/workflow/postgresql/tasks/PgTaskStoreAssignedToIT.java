@@ -4,7 +4,6 @@
 package dev.vertique.workflow.postgresql.tasks;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
@@ -53,7 +52,8 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Integration tests for {@link PgTaskStore#findAssignedTo} against a real PostgreSQL instance: the
+ * Integration tests for the {@code assignedTo} filter of {@link PgTaskStore#findByFilter} against a real
+ * PostgreSQL instance: the
  * caller's user id, roles and queues in one query, composition with the other filter fields, paging
  * across assignee kinds, the empty page of a principal that is not a user, and the plan of the
  * statement on open tasks.
@@ -234,19 +234,6 @@ class PgTaskStoreAssignedToIT {
     }
 
     @Test
-    @DisplayName("refuses a filter that sets an assignee")
-    void refusesAssigneeInFilter() {
-        PageCursor cursor = PageCursor.first(10);
-        assertThatIllegalArgumentException()
-                .isThrownBy(
-                        () -> store.findAssignedTo(ALICE, TaskFilter.empty().withAssigneeUser("bob"), cursor, pool));
-        assertThatIllegalArgumentException()
-                .isThrownBy(() -> store.findAssignedTo(ALICE, TaskFilter.empty().withAssigneeRole("r"), cursor, pool));
-        assertThatIllegalArgumentException()
-                .isThrownBy(() -> store.findAssignedTo(ALICE, TaskFilter.empty().withAssigneeQueue("q"), cursor, pool));
-    }
-
-    @Test
     @DisplayName("on open tasks the generic plan reads the partial assignee indexes")
     void openTasksUseThePartialIndexes() {
         WorkflowInstanceId wf = instance(null);
@@ -260,7 +247,8 @@ class PgTaskStoreAssignedToIT {
                 .execute(Tuple.of(wf.value())));
         await(pool.query("ANALYZE workflow_tasks").execute());
 
-        PgTaskStore.FilterQuery query = store.buildQuery(TaskFilter.empty().withStatus(TaskStatus.OPEN), ALICE);
+        PgTaskStore.FilterQuery query =
+                store.buildQuery(TaskFilter.empty().withStatus(TaskStatus.OPEN).withAssignedTo(ALICE));
         String plan = await(pool.withConnection(conn -> explainGeneric(conn, query)));
 
         assertThat(plan)
@@ -299,7 +287,7 @@ class PgTaskStoreAssignedToIT {
     }
 
     private static List<TaskRecord> findAll(TaskPrincipals principals, TaskFilter filter, int pageSize) {
-        return collect(cursor -> store.findAssignedTo(principals, filter, cursor, pool), pageSize);
+        return collect(cursor -> store.findByFilter(filter.withAssignedTo(principals), cursor, pool), pageSize);
     }
 
     private static List<TaskRecord> findAllByFilter(TaskFilter filter) {

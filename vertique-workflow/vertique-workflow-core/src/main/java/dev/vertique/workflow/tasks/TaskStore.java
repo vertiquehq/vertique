@@ -156,34 +156,6 @@ public interface TaskStore<TX> {
     Future<PagedResult<TaskRecord>> findByFilter(TaskFilter filter, PageCursor cursor, TX tx);
 
     /**
-     * Queries the tasks assigned to any of the caller's principals that also match every other field
-     * of the filter, returning a single page ordered like {@link #findByFilter}.
-     *
-     * <p>A task is returned when {@link TaskAssignment#matches(TaskPrincipals)} is {@code true} for
-     * its current assignment: it is assigned to the user id, to one of the roles, or to one of the
-     * queues. Principals that cannot match an assignment (any type but {@code USER}) return an empty
-     * page; they never mean "no assignee restriction". An implementation runs one query for the page,
-     * not one per principal.
-     *
-     * <p>The default fails the returned future with {@link UnsupportedOperationException}, so a store
-     * written before this method refuses the query instead of ignoring the principals.
-     *
-     * @param principals the caller's principals; must not be null
-     * @param filter the other conditions; must not set {@code assigneeUser}, {@code assigneeRole} or
-     *     {@code assigneeQueue}
-     * @param cursor the page cursor specifying page size and optional keyset position
-     * @param tx the active transaction context
-     * @return a {@link Future} resolving to the paged result
-     * @throws NullPointerException if an argument is null
-     * @throws IllegalArgumentException if {@code filter} sets an assignee
-     */
-    default Future<PagedResult<TaskRecord>> findAssignedTo(
-            TaskPrincipals principals, TaskFilter filter, PageCursor cursor, TX tx) {
-        return Future.failedFuture(
-                new UnsupportedOperationException(getClass().getName() + " does not implement findAssignedTo"));
-    }
-
-    /**
      * Retrieves the task row identified by {@code taskId} without acquiring a row lock.
      *
      * @param taskId the task id to look up
