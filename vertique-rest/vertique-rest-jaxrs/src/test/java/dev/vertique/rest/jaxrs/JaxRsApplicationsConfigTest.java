@@ -150,6 +150,15 @@ class JaxRsApplicationsConfigTest {
                         """,
                         rejected(invalidEntries("'jaxrs.applications.api.bogus', 'jaxrs.applications.mgmt'"))),
                 arguments(
+                        "a non-string openapiPath names its path, not its value",
+                        """
+                        {"api":{"openapiPath":{"zq7":1}},"mgmt":{"openapiPath":5},"web":{"openapiPath":true},"cdn":{"openapiPath":["zq7"]}}
+                        """,
+                        rejected(
+                                nonStringValues(
+                                        "'jaxrs.applications.api.openapiPath', 'jaxrs.applications.cdn.openapiPath',"
+                                                + " 'jaxrs.applications.mgmt.openapiPath', 'jaxrs.applications.web.openapiPath'"))),
+                arguments(
                         "control: an entry with openapiPath parses",
                         """
                         {"api":{"openapiPath":"a.json"}}
@@ -340,6 +349,11 @@ class JaxRsApplicationsConfigTest {
     private static String invalidEntries(String quotedPaths) {
         return "Invalid entries or keys under 'jaxrs.applications': " + quotedPaths
                 + "; each entry must be a JSON object whose only key is 'openapiPath'";
+    }
+
+    private static String nonStringValues(String quotedPaths) {
+        return "Non-string values under 'jaxrs.applications': " + quotedPaths
+                + "; set 'openapiPath' to a string location or omit it";
     }
 
     private static String blankValues(String quotedPaths) {

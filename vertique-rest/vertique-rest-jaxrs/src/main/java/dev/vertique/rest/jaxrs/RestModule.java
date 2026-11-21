@@ -799,7 +799,8 @@ public abstract class RestModule {
      *       then {@code jaxrs.applications}, when present, must be a JSON object ({@code null}
      *       included in the rejection); every entry {@code jaxrs.applications.<name>} must be a
      *       JSON object; and {@code openapiPath}, compared case-sensitively, is the only key an
-     *       entry may carry.</li>
+     *       entry may carry. Once the keys pass, an {@code openapiPath} that is present but not a
+     *       JSON string (or {@code null}) fails naming its path.</li>
      *   <li>A keyed-object parse through {@link ConfigParser#parseKeyedObject(JsonObject, String,
      *       Class)}, which injects each entry's key into {@link RestApplicationConfig#name()}; an
      *       entry it cannot deserialize fails with the parser's own message.</li>
@@ -814,8 +815,8 @@ public abstract class RestModule {
      * @throws ConfigurationException when {@code jaxrs} or {@code jaxrs.applications} is present but
      *     not a JSON object, a {@code jaxrs} key equals {@code applications} ignoring case but is
      *     not spelled exactly {@code applications}, an entry is not a JSON object, an entry carries
-     *     a key other than {@code openapiPath}, an entry cannot be parsed, or a configured
-     *     {@code openapiPath} is blank
+     *     a key other than {@code openapiPath}, an {@code openapiPath} is not a string, an entry
+     *     cannot be parsed, or a configured {@code openapiPath} is blank
      */
     static List<RestApplicationConfig> parseJaxRsApplications(JsonObject config, ConfigParser parser) {
         JsonObject jaxrs = JsonConfigPaths.navigateObject(config, "jaxrs");
@@ -836,8 +837,9 @@ public abstract class RestModule {
      * @param jaxrs the {@code jaxrs} section, already navigated to a {@link JsonObject}
      * @throws ConfigurationException when a {@code jaxrs} key equals {@code applications} ignoring
      *     case but is not spelled exactly {@code applications}, when {@code jaxrs.applications} is
-     *     present but not a JSON object, or when any entry is not a JSON object or carries a key
-     *     other than {@code openapiPath}
+     *     present but not a JSON object, or when any entry is not a JSON object, carries a key
+     *     other than {@code openapiPath}, or has an {@code openapiPath} that is neither a string
+     *     nor {@code null}
      */
     private static void checkApplicationKeys(JsonObject jaxrs) {
         Set<String> miscased = new TreeSet<>();
@@ -858,6 +860,7 @@ public abstract class RestModule {
             throw new ConfigurationException("'jaxrs.applications' must be a JSON object");
         }
         Set<String> invalid = new TreeSet<>();
+        Set<String> nonString = new TreeSet<>();
         for (String name : applications.fieldNames()) {
             String entryPath = "jaxrs.applications." + name;
             if (!(applications.getValue(name) instanceof JsonObject entry)) {
@@ -867,6 +870,8 @@ public abstract class RestModule {
             for (String key : entry.fieldNames()) {
                 if (!key.equals("openapiPath")) {
                     invalid.add(entryPath + "." + key);
+                } else if (entry.getValue(key) != null && !(entry.getValue(key) instanceof String)) {
+                    nonString.add(entryPath + "." + key);
                 }
             }
         }
@@ -874,6 +879,11 @@ public abstract class RestModule {
             throw new ConfigurationException("Invalid entries or keys under 'jaxrs.applications': "
                     + quoteJoin(invalid)
                     + "; each entry must be a JSON object whose only key is 'openapiPath'");
+        }
+        if (!nonString.isEmpty()) {
+            throw new ConfigurationException("Non-string values under 'jaxrs.applications': "
+                    + quoteJoin(nonString)
+                    + "; set 'openapiPath' to a string location or omit it");
         }
     }
 

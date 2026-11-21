@@ -531,6 +531,12 @@ which the typed description already says more precisely, so the description wins
 deserializes as map-like or collection-like is described exactly as if it declared no any-setter:
 Jackson never routes a key to that any-setter, so describing it would reject legal map entries.
 
+**Known gap.** A class-level `@Schema(additionalProperties = FALSE)` on a bean that is bound
+case-insensitively is not honored when the bean is described only through the plain case-insensitive
+inline path (no member-level annotation, no any-setter): the description omits
+`additionalProperties: false` for it, so the schema admits unknown keys that the annotation says to
+reject. The annotation closes the object on every other path.
+
 ### Reserved names beside described extras
 
 Where extra keys are described on a case-sensitively bound type, the document also carries
