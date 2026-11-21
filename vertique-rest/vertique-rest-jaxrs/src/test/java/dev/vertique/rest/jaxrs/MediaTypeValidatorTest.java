@@ -158,6 +158,18 @@ class MediaTypeValidatorTest {
     }
 
     @Test
+    @DisplayName("Should accept a raw ReadStream response type, whose element type only the runtime class reveals")
+    void shouldProbePermissivelyForAReadStreamResponseType() {
+        ResourceMethodMeta method = method("download", List.of(), List.of("application/octet-stream"));
+        when(method.responseBodyType()).thenAnswer(invocation -> io.vertx.core.streams.ReadStream.class);
+
+        List<ResponseBodyEncoder> encoders = new java.util.ArrayList<>(ENCODERS);
+        encoders.add(new ReadStreamBodyEncoder());
+
+        assertDoesNotThrow(() -> MediaTypeValidator.validate(List.of(method), DECODERS, encoders, "STRICT"));
+    }
+
+    @Test
     @DisplayName("Should accept a supertype response type when a value of it could be written by a built-in encoder")
     void shouldProbeRuntimeBodyTypesOfASupertype() {
         ResourceMethodMeta method = method("chars", List.of(), List.of("application/pdf"));

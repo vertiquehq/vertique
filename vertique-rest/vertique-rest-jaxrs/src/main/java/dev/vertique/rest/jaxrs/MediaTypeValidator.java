@@ -7,6 +7,7 @@ import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.response.ResponseBodyEncoder;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.streams.ReadStream;
 import jakarta.ws.rs.core.Response;
 import java.util.ArrayList;
 import java.util.List;
@@ -60,7 +61,8 @@ class MediaTypeValidator {
      * for the method's declared response type, plus {@code String}, {@code Buffer} and
      * {@code byte[]} when the declared type is a supertype of them, because a value of such a type
      * may be one of those at run time. A method whose response type is unknown ({@code Object},
-     * {@code Response}, void or not recorded) is checked with the four types a decoder is.
+     * {@code Response}, void or not recorded) or is a {@code ReadStream}, whose element type only the
+     * runtime class reveals, is checked with the four types a decoder is.
      *
      * <p>When {@code mode} is {@code "OFF"} (case-insensitive), this method returns immediately
      * without performing any checks.
@@ -141,7 +143,8 @@ class MediaTypeValidator {
         if (responseType == null
                 || responseType == void.class
                 || responseType == Void.class
-                || Response.class.isAssignableFrom(responseType)) {
+                || Response.class.isAssignableFrom(responseType)
+                || ReadStream.class.isAssignableFrom(responseType)) {
             return PROBE_TYPES;
         }
         List<Class<?>> types = new ArrayList<>();
