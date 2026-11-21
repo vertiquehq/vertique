@@ -6,7 +6,9 @@ package dev.vertique.workflow.postgresql;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -52,18 +54,36 @@ import dev.vertique.workflow.contract.SignalDedupKey;
 import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
+import dev.vertique.workflow.engine.executor.CommandErrors;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
+import dev.vertique.workflow.engine.spi.ClaimedCommand;
+import dev.vertique.workflow.engine.spi.CommandActor;
+import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.DedupClaim;
+import dev.vertique.workflow.engine.spi.DispositionResult;
+import dev.vertique.workflow.engine.spi.InstanceFailureListener;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
+import dev.vertique.workflow.engine.spi.ParkedSignal;
+import dev.vertique.workflow.engine.spi.QueueCounts;
+import dev.vertique.workflow.engine.spi.RecordedTimer;
+import dev.vertique.workflow.engine.spi.SegmentCommand;
+import dev.vertique.workflow.engine.spi.SettledCommand;
+import dev.vertique.workflow.engine.spi.SignalWaitRecord;
 import dev.vertique.workflow.engine.spi.StartDedupResult;
+import dev.vertique.workflow.engine.spi.TaskReservations;
+import dev.vertique.workflow.engine.spi.TimerCommandSpec;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
+import dev.vertique.workflow.engine.spi.WorkflowSignalWaitRepository;
+import dev.vertique.workflow.history.PendingCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
 import dev.vertique.workflow.postgresql.engine.WorkflowMigrationsModule;
 import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
+import dev.vertique.workflow.postgresql.executor.PgWorkflowCommandRepository;
 import dev.vertique.workflow.postgresql.query.PgBranchTokenQueryService;
 import dev.vertique.workflow.postgresql.query.PgWorkflowInstanceQueryService;
 import dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore;
@@ -72,8 +92,10 @@ import dev.vertique.workflow.postgresql.repository.PgJoinStateRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
+import dev.vertique.workflow.postgresql.repository.PgWorkflowSignalWaitRepository;
 import dev.vertique.workflow.postgresql.retention.PgWorkflowRetentionRepository;
 import dev.vertique.workflow.postgresql.retention.PgWorkflowRetentionService;
+import dev.vertique.workflow.postgresql.tasks.PgTaskReservations;
 import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.query.WorkflowInstanceQuery;
@@ -141,6 +163,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -327,6 +350,9 @@ public class PgWorkflowSchemaIT {
             exerciseTimerStore(runtime, instances, branches, openTask);
             exerciseDefinitionRegistry(runtime);
             exerciseRetentionAndArchivedFilters(runtime);
+            exerciseSignalWaitRepository(runtime, instances);
+            exerciseTaskReservations(runtime, instances);
+            exerciseCommandRepository(runtime);
 
             // Then: the decoy schema is exactly as it was, and no new object appeared outside the mapping
             assertDecoyUntouched(decoyBefore, WORKFLOW_TABLES);
@@ -500,6 +526,18 @@ public class PgWorkflowSchemaIT {
         PgWorkflowDefinitionRegistryStore pgWorkflowDefinitionRegistryStore();
 
         WorkflowDefinitionRegistryStore workflowDefinitionRegistryStore();
+
+        PgWorkflowSignalWaitRepository pgWorkflowSignalWaitRepository();
+
+        WorkflowSignalWaitRepository<SqlClient> workflowSignalWaitRepository();
+
+        PgTaskReservations pgTaskReservations();
+
+        TaskReservations<SqlClient> taskReservations();
+
+        PgWorkflowCommandRepository pgWorkflowCommandRepository();
+
+        WorkflowCommandRepository<SqlClient> workflowCommandRepository();
 
         PgWorkflowRetentionRepository pgWorkflowRetentionRepository();
 
@@ -849,6 +887,24 @@ public class PgWorkflowSchemaIT {
                 runtime.pgWorkflowDefinitionRegistryStore(),
                 runtime.workflowDefinitionRegistryStore(),
                 runtime.workflowDefinitionRegistryStore());
+        assertOneScopedInstance(
+                "signal-wait repository",
+                runtime.pgWorkflowSignalWaitRepository(),
+                runtime.pgWorkflowSignalWaitRepository(),
+                runtime.workflowSignalWaitRepository(),
+                runtime.workflowSignalWaitRepository());
+        assertOneScopedInstance(
+                "task reservations",
+                runtime.pgTaskReservations(),
+                runtime.pgTaskReservations(),
+                runtime.taskReservations(),
+                runtime.taskReservations());
+        assertOneScopedInstance(
+                "command repository",
+                runtime.pgWorkflowCommandRepository(),
+                runtime.pgWorkflowCommandRepository(),
+                runtime.workflowCommandRepository(),
+                runtime.workflowCommandRepository());
         assertOneScopedInstance(
                 "retention repository",
                 runtime.pgWorkflowRetentionRepository(),
@@ -1549,6 +1605,926 @@ public class PgWorkflowSchemaIT {
                 .updateOptimistic(settled, instance.version(), tx)));
     }
 
+    // --- Signal wait repository ---
+
+    private static final String WAIT_CONTRACT = "schema-placement-contract";
+    private static final String WAIT_SIGNAL = "signal-a";
+
+    /** Writes, replaces, reads and deletes wait records, including the read that joins the instance table. */
+    private static void exerciseSignalWaitRepository(RuntimeComponent runtime, LifecycleInstances instances)
+            throws Exception {
+        PgWorkflowSignalWaitRepository waits = runtime.pgWorkflowSignalWaitRepository();
+        WorkflowInstanceId subject = instances.withSubject().id();
+        WorkflowInstanceId plain = instances.plain().id();
+        String definitionId = FORK_JOIN_DEFINITION.definitionId();
+        String key = unique("wait-key");
+
+        // Given: two waits of one instance, one of another, and one of an instance that has ended, all with one key
+        WorkflowInstance ended = newInstance(definitionId, null, null);
+        inTransaction(runtime, tx -> runtime.pgWorkflowInstanceRepository().insert(ended, tx));
+        settle(runtime, ended, WorkflowStatus.COMPLETED);
+        SignalWaitRecord main = signalWait(subject, "wait-a", "", "", SCOPE_KEY, key);
+        SignalWaitRecord branch = signalWait(subject, "wait-b", FORK_STEP, "b", SCOPE_KEY, key);
+        SignalWaitRecord other = signalWait(plain, "wait-a", "", "", WorkflowScopes.DEFAULT, key);
+        SignalWaitRecord closed = signalWait(ended.id(), "wait-a", "", "", WorkflowScopes.DEFAULT, key);
+        for (SignalWaitRecord wait : List.of(main, branch, other, closed)) {
+            inTransaction(runtime, tx -> waits.write(wait, tx));
+        }
+        assertEquals(4, mappedRows("workflow_signal_waits", "correlation_key", key));
+        assertEquals(SCOPE_KEY, mappedValue("workflow_signal_waits", "wait_id", main.waitId(), "scope_key"));
+
+        // Then: the open read joins the mapped instance table, so the wait of the ended instance is left out
+        List<SignalWaitRecord> open =
+                inTransaction(runtime, tx -> waits.findOpen(WAIT_CONTRACT, WAIT_SIGNAL, key, null, null, tx));
+        assertEquals(2, open.size(), "the match limit applies to the three open waits");
+        assertFalse(waitIds(open).contains(closed.waitId()), "the wait of an ended instance is not open");
+        assertEquals(
+                Set.of(main.waitId(), branch.waitId()),
+                waitIds(inTransaction(
+                        runtime, tx -> waits.findOpen(WAIT_CONTRACT, WAIT_SIGNAL, key, null, SCOPE_KEY, tx))));
+        assertEquals(
+                Set.of(other.waitId()),
+                waitIds(inTransaction(
+                        runtime,
+                        tx -> waits.findOpen(
+                                WAIT_CONTRACT, WAIT_SIGNAL, key, definitionId, WorkflowScopes.DEFAULT, tx))));
+        assertEquals(
+                Set.of(),
+                waitIds(inTransaction(
+                        runtime,
+                        tx -> waits.findOpen(WAIT_CONTRACT, WAIT_SIGNAL, key, "no-such-definition", null, tx))));
+
+        // Then: point and instance reads find the mapped rows
+        assertEquals(
+                main,
+                inTransaction(runtime, tx -> waits.findById(main.waitId(), tx)).orElseThrow());
+        assertEquals(
+                Set.of(main.waitId(), branch.waitId()),
+                waitIds(inTransaction(runtime, tx -> waits.findByInstance(subject, tx))));
+
+        // When: a wait entered again at the same address is written
+        SignalWaitRecord replaced = signalWait(subject, "wait-a", "", "", SCOPE_KEY, key);
+        inTransaction(runtime, tx -> waits.write(replaced, tx));
+
+        // Then: it holds the address in place of the earlier one
+        assertTrue(
+                inTransaction(runtime, tx -> waits.findById(main.waitId(), tx)).isEmpty());
+        assertEquals(0, mappedRows("workflow_signal_waits", "wait_id", main.waitId()));
+        assertEquals(1, mappedRows("workflow_signal_waits", "wait_id", replaced.waitId()));
+        assertEquals(
+                Set.of(replaced.waitId(), branch.waitId()),
+                waitIds(inTransaction(runtime, tx -> waits.findByInstance(subject, tx))));
+
+        // When / Then: one address is deleted once, then every wait of the other instances
+        assertTrue(flag(runtime, tx -> waits.delete(subject, "wait-b", FORK_STEP, "b", tx)));
+        assertFalse(flag(runtime, tx -> waits.delete(subject, "wait-b", FORK_STEP, "b", tx)));
+        assertEquals(1, mappedRows("workflow_signal_waits", "instance_id", subject));
+        inTransaction(runtime, tx -> waits.deleteAll(plain, tx));
+        inTransaction(runtime, tx -> waits.deleteAll(ended.id(), tx));
+        assertEquals(0, mappedRows("workflow_signal_waits", "instance_id", plain));
+        assertEquals(0, mappedRows("workflow_signal_waits", "instance_id", ended.id()));
+        assertEquals(1, mappedRows("workflow_signal_waits", "correlation_key", key));
+    }
+
+    private static SignalWaitRecord signalWait(
+            WorkflowInstanceId instance,
+            String stepId,
+            String forkStepId,
+            String branchId,
+            String scopeKey,
+            String key) {
+        return new SignalWaitRecord(
+                UUID.randomUUID(),
+                instance,
+                stepId,
+                forkStepId,
+                branchId,
+                scopeKey,
+                WAIT_CONTRACT,
+                FORK_JOIN_DEFINITION.definitionId(),
+                WAIT_SIGNAL,
+                key,
+                Instant.now().truncatedTo(ChronoUnit.MICROS));
+    }
+
+    private static Set<UUID> waitIds(List<SignalWaitRecord> waits) {
+        return waits.stream().map(SignalWaitRecord::waitId).collect(Collectors.toSet());
+    }
+
+    // --- Task reservations ---
+
+    /** Moves a task between OPEN and COMPLETING through both conditional updates, each applied and refused. */
+    private static void exerciseTaskReservations(RuntimeComponent runtime, LifecycleInstances instances)
+            throws Exception {
+        PgTaskReservations reservations = runtime.pgTaskReservations();
+        TaskRecord task = openTask(instances.plain().id(), "reserve", new TaskAssignment.User("alice"), null);
+        inTransaction(runtime, tx -> runtime.pgTaskStore().insertOpen(task, tx));
+        String taskId = task.taskId().toString();
+
+        // reserving applies to an open task once
+        assertTrue(flag(runtime, tx -> reservations.markCompleting(taskId, 41L, tx)));
+        assertEquals("COMPLETING", mappedValue("workflow_tasks", "task_id", task.taskId(), "status"));
+        assertEquals("41", mappedValue("workflow_tasks", "task_id", task.taskId(), "reservation_command_id"));
+        assertFalse(flag(runtime, tx -> reservations.markCompleting(taskId, 42L, tx)));
+        assertFalse(flag(
+                runtime, tx -> reservations.markCompleting(UUID.randomUUID().toString(), 43L, tx)));
+        assertEquals("41", mappedValue("workflow_tasks", "task_id", task.taskId(), "reservation_command_id"));
+
+        // reopening applies only for the command that holds the reservation
+        assertFalse(flag(runtime, tx -> reservations.reopen(taskId, 42L, tx)));
+        assertEquals("COMPLETING", mappedValue("workflow_tasks", "task_id", task.taskId(), "status"));
+        assertTrue(flag(runtime, tx -> reservations.reopen(taskId, 41L, tx)));
+        assertEquals("OPEN", mappedValue("workflow_tasks", "task_id", task.taskId(), "status"));
+        assertNull(mappedValue("workflow_tasks", "task_id", task.taskId(), "reservation_command_id"));
+        assertFalse(flag(runtime, tx -> reservations.reopen(taskId, 41L, tx)));
+    }
+
+    // --- Command repository ---
+
+    /**
+     * Runs the command repository against fresh instances, one scenario per instance. The commands table holds
+     * only the commands these scenarios record, so a scenario finds its heads by command id.
+     */
+    private static void exerciseCommandRepository(RuntimeComponent runtime) throws Exception {
+        CommandSteps steps = new CommandSteps(runtime);
+        exerciseCommandLifecycle(steps);
+        exerciseSignalCommands(steps);
+        exerciseDeferralAndTransientRetry(steps);
+        exerciseEndedInstanceClaims(steps);
+        exerciseDeadLetters(steps);
+        exerciseTimerAndCompletionCommands(steps);
+        exerciseCancellationAndRearm(steps);
+        exerciseAttributionAndDefinitionNames(steps);
+        exerciseCommandProbes(steps);
+    }
+
+    /** Start command: queue sequence, record, peek, claim, fence, release, transient retry and completion. */
+    private static void exerciseCommandLifecycle(CommandSteps steps) throws Exception {
+        RuntimeComponent runtime = steps.runtime;
+        PgWorkflowCommandRepository commands = steps.commands;
+        WorkflowInstance instance = steps.instance();
+        WorkflowInstanceId id = instance.id();
+        String key = unique("start-key");
+
+        // the execution lock is taken, and taken again by the transaction that holds it
+        assertTrue(
+                flag(runtime, tx -> commands.lockInstance(id, tx).compose(locked -> commands.tryLockInstance(id, tx))));
+
+        // the queue row is created on first use and hands out consecutive sequence numbers
+        assertEquals(1L, sequenceNumber(runtime, tx -> commands.nextQueueSequence(id, tx)));
+        long start = steps.start(instance, key);
+        assertEquals("2", steps.commandValue(start, "seq"));
+        assertEquals("PENDING", steps.state(start));
+        assertEquals("alice", steps.commandValue(start, "actor_id"));
+        assertEquals("3", mappedValue("workflow_command_queues", "workflow_id", id, "next_seq"));
+        assertFalse(flag(runtime, tx -> commands.hasDeadLetters(id, tx)));
+        SegmentCommand recorded =
+                inTransaction(runtime, tx -> commands.readStart(id, tx)).orElseThrow();
+        assertEquals(start, recorded.commandId());
+        assertEquals(key, recorded.dedupKey());
+
+        // the command is at the head of its instance, and its first claim spends one attempt
+        CommandHead head = steps.head(start);
+        assertEquals(id, head.workflowId());
+        assertEquals("START", head.kind());
+        assertFalse(head.instanceEnded());
+        assertEquals(FORK_JOIN_DEFINITION.definitionId(), head.definitionId());
+        assertEquals(1, await(commands.countRunnable(id)));
+        ClaimedCommand first = steps.claim(start);
+        assertEquals(1, first.attempts());
+        assertEquals(CommandSteps.NODE, steps.commandValue(start, "claimed_by"));
+        assertEquals(1, await(commands.countRunnable(id)), "a claim under its lease still counts as runnable");
+
+        // the fence reads the command under its token, and release gives the attempt back
+        SegmentCommand fenced =
+                inTransaction(runtime, tx -> commands.fence(first, tx)).orElseThrow();
+        assertEquals(key, fenced.dedupKey());
+        assertEquals(CommandActor.Kind.USER, fenced.actor().kind());
+        assertTrue(await(commands.release(first)));
+        assertFalse(await(commands.release(first)));
+        assertEquals("PENDING", steps.state(start));
+        assertEquals("0", steps.commandValue(start, "attempts"));
+
+        // a transient failure gives the attempt back and keeps the command pending
+        ClaimedCommand second = steps.claim(start);
+        assertEquals(1, await(commands.retryTransient(second, count -> 0L, "transient failure")));
+        assertEquals("1", steps.commandValue(start, "transient_count"));
+        assertEquals("0", steps.commandValue(start, "attempts"));
+
+        // the command completes under its token, and only once
+        ClaimedCommand third = steps.claim(start);
+        assertEquals(1, rowsChanged(runtime, tx -> commands.complete(start, third.token(), tx)));
+        assertEquals(0, rowsChanged(runtime, tx -> commands.complete(start, third.token(), tx)));
+        assertEquals("COMPLETE", steps.state(start));
+
+        // the open-signal count is raised up to its limit and lowered again, never below zero
+        assertTrue(flag(runtime, tx -> commands.raiseOpenSignals(id, 1, tx)));
+        assertFalse(flag(runtime, tx -> commands.raiseOpenSignals(id, 1, tx)));
+        assertEquals(1, steps.openSignals(instance));
+        inTransaction(runtime, tx -> commands.lowerOpenSignals(id, tx));
+        inTransaction(runtime, tx -> commands.lowerOpenSignals(id, tx));
+        assertEquals(0, steps.openSignals(instance));
+    }
+
+    /** Signal commands: record, park, requeue and settle in every way, with the open-signal count following. */
+    private static void exerciseSignalCommands(CommandSteps steps) throws Exception {
+        RuntimeComponent runtime = steps.runtime;
+        PgWorkflowCommandRepository commands = steps.commands;
+        WorkflowInstance instance = steps.instance();
+        WorkflowInstanceId id = instance.id();
+
+        // a claimed signal is parked; every parked read finds it
+        long first = steps.signal(instance, "signal-a");
+        assertEquals(1, steps.openSignals(instance));
+        ClaimedCommand firstClaim = steps.claim(first);
+        assertEquals(1, rowsChanged(runtime, tx -> commands.park(first, firstClaim.token(), tx)));
+        assertEquals("PARKED", steps.state(first));
+        assertEquals("0", steps.commandValue(first, "attempts"));
+        assertEquals(List.of(first), parkedIds(inTransaction(runtime, tx -> commands.parkedSignals(id, tx))));
+        assertEquals(
+                List.of(first),
+                parkedIds(inTransaction(runtime, tx -> commands.parkedSignalsAt(id, "signal-a", null, null, tx))));
+        assertEquals(
+                List.of(),
+                parkedIds(inTransaction(runtime, tx -> commands.parkedSignalsAt(id, "other", null, null, tx))));
+        SegmentCommand parked =
+                inTransaction(runtime, tx -> commands.readParked(id, first, tx)).orElseThrow();
+        assertEquals("SIGNAL", parked.kind());
+        assertTrue(parked.payloadJson().contains("value"));
+        assertEquals("alice", parked.actor().id());
+        assertFalse(flag(runtime, tx -> commands.wasParked(id, first, tx)));
+        assertEquals(1, await(commands.findParked(id)).size());
+
+        // requeueing makes it pending again; parked once more, it is settled and frees its slot
+        assertEquals(1, rowsChanged(runtime, tx -> commands.requeueParked(first, tx)));
+        assertEquals("PENDING", steps.state(first));
+        assertEquals(0, rowsChanged(runtime, tx -> commands.requeueParked(first, tx)));
+        ClaimedCommand again = steps.claim(first);
+        assertEquals(1, rowsChanged(runtime, tx -> commands.park(first, again.token(), tx)));
+        assertEquals(1, rowsChanged(runtime, tx -> commands.settleParked(first, "REJECTED", "no longer needed", tx)));
+        assertEquals("REJECTED", steps.state(first));
+        assertEquals("no longer needed", steps.commandValue(first, "last_error"));
+        assertEquals(0, steps.openSignals(instance));
+        assertTrue(
+                inTransaction(runtime, tx -> commands.readParked(id, first, tx)).isEmpty());
+
+        // a claimed signal is rejected, rejected with a reason, made stale, or cancelled, each once
+        ClaimedCommand rejected = steps.claimedSignal(instance);
+        assertEquals(1, rowsChanged(runtime, tx -> commands.reject(rejected.commandId(), rejected.token(), tx)));
+        assertEquals(0, rowsChanged(runtime, tx -> commands.reject(rejected.commandId(), rejected.token(), tx)));
+        assertEquals("REJECTED", steps.state(rejected.commandId()));
+        ClaimedCommand explained = steps.claimedSignal(instance);
+        assertEquals(
+                1,
+                rowsChanged(
+                        runtime,
+                        tx -> commands.reject(explained.commandId(), explained.token(), "rejected for a reason", tx)));
+        assertEquals("rejected for a reason", steps.commandValue(explained.commandId(), "last_error"));
+        ClaimedCommand stale = steps.claimedSignal(instance);
+        assertEquals(
+                1,
+                rowsChanged(runtime, tx -> commands.stale(stale.commandId(), stale.token(), "wait entry closed", tx)));
+        assertEquals("STALE", steps.state(stale.commandId()));
+        ClaimedCommand cancelled = steps.claimedSignal(instance);
+        assertEquals(
+                1,
+                rowsChanged(runtime, tx -> commands.cancel(cancelled.commandId(), cancelled.token(), "withdrawn", tx)));
+        assertEquals("CANCELLED", steps.state(cancelled.commandId()));
+
+        // a deterministic failure of a signal rejects it and logs the rejection; a second disposition finds no claim
+        ClaimedCommand failing = steps.claimedSignal(instance);
+        assertEquals(
+                DispositionResult.REJECTED,
+                await(commands.failCommand(
+                        failing,
+                        CommandErrors.Reason.DETERMINISTIC_FAILURE.name(),
+                        "segment failed",
+                        InstanceFailureListener.none())));
+        assertEquals("REJECTED", steps.state(failing.commandId()));
+        assertEquals(1, mappedRows("workflow_history", "command_id", failing.commandId()));
+        assertEquals(
+                DispositionResult.CLAIM_LOST,
+                await(commands.failCommand(
+                        failing,
+                        CommandErrors.Reason.DETERMINISTIC_FAILURE.name(),
+                        "segment failed",
+                        InstanceFailureListener.none())));
+        assertEquals(0, steps.openSignals(instance), "every settled signal freed its slot");
+
+        // a branch signal is parked and found only at its own address; it keeps its slot
+        long branchSignal = steps.signal(instance, "signal-b", FORK_STEP, "b", null);
+        ClaimedCommand branchClaim = steps.claim(branchSignal);
+        assertEquals(1, rowsChanged(runtime, tx -> commands.park(branchSignal, branchClaim.token(), tx)));
+        List<ParkedSignal> atBranch =
+                inTransaction(runtime, tx -> commands.parkedSignalsAt(id, "signal-b", FORK_STEP, "b", tx));
+        assertEquals(List.of(branchSignal), parkedIds(atBranch));
+        assertEquals(FORK_STEP, atBranch.get(0).forkStepId());
+        assertEquals("b", atBranch.get(0).branchId());
+        assertEquals(
+                List.of(),
+                parkedIds(inTransaction(runtime, tx -> commands.parkedSignalsAt(id, "signal-b", null, null, tx))));
+        assertEquals(List.of(branchSignal), parkedIds(inTransaction(runtime, tx -> commands.parkedSignals(id, tx))));
+        assertEquals(1, steps.openSignals(instance));
+    }
+
+    /** A deferred start, and a start that a transient failure puts back with a long backoff. */
+    private static void exerciseDeferralAndTransientRetry(CommandSteps steps) throws Exception {
+        PgWorkflowCommandRepository commands = steps.commands;
+
+        // the first deferral of a head writes one history entry and moves its availability into the future
+        WorkflowInstance deferred = steps.instance();
+        long deferredStart = steps.start(deferred, unique("deferred-key"));
+        CommandHead head = steps.head(deferredStart);
+        assertEquals(1, await(commands.defer(head)));
+        assertEquals("DEFERRED", steps.state(deferredStart));
+        assertEquals("1", steps.commandValue(deferredStart, "deferral_count"));
+        assertEquals("true", steps.commandValue(deferredStart, "available_at > now()"));
+        assertEquals(1, mappedRows("workflow_history", "command_id", deferredStart));
+        assertEquals(0, await(commands.defer(head)), "a deferred command is not claimable until its backoff ends");
+        assertEquals(1, await(commands.findDeferred(deferred.id())).size());
+        assertEquals(0, await(commands.findNotYetAvailable(deferred.id())).size());
+        assertEquals(0, await(commands.countRunnable(deferred.id())));
+        assertEquals(1, await(commands.findStuck(deferred.id(), 0)).size());
+
+        // a transient failure with a long backoff leaves the command pending but not yet available
+        WorkflowInstance backedOff = steps.instance();
+        long backedOffStart = steps.start(backedOff, unique("backoff-key"));
+        ClaimedCommand claim = steps.claim(backedOffStart);
+        assertEquals(1, await(commands.retryTransient(claim, count -> 60_000L, "transient failure")));
+        assertEquals(0, await(commands.retryTransient(claim, count -> 60_000L, "again")), "the claim is gone");
+        assertEquals("PENDING", steps.state(backedOffStart));
+        assertEquals("transient failure", steps.commandValue(backedOffStart, "last_error"));
+        List<PendingCommand> notYet = await(commands.findNotYetAvailable(backedOff.id()));
+        assertEquals(1, notYet.size());
+        assertEquals("PENDING", notYet.get(0).state());
+        assertEquals(0, await(commands.findDeferred(backedOff.id())).size());
+
+        // the earliest availability that the wake-up reads is a positive delay
+        long delayMs = await(commands.findEarliestAvailabilityDelayMs()).orElseThrow();
+        assertTrue(delayMs > 0, "the earliest pending or deferred command is not yet available: " + delayMs);
+    }
+
+    /** Heads of ended instances are settled by the claim: rejected for a completed one, cancelled for a cancelled one. */
+    private static void exerciseEndedInstanceClaims(CommandSteps steps) throws Exception {
+        RuntimeComponent runtime = steps.runtime;
+
+        // a start that meets a completed instance is rejected and logged
+        WorkflowInstance completed = steps.instance();
+        long start = steps.start(completed, unique("ended-key"));
+        settle(runtime, completed, WorkflowStatus.COMPLETED);
+        assertTrue(steps.head(start).instanceEnded());
+        ClaimedCommand rejected = steps.tryClaim(steps.head(start), 60, 3, InstanceFailureListener.none())
+                .orElseThrow();
+        assertEquals(ClaimedCommand.Result.SETTLED_INSTANCE_ENDED, rejected.result());
+        assertEquals("REJECTED", steps.state(start));
+        assertEquals(1, mappedRows("workflow_history", "command_id", start));
+
+        // a completion and a timer that meet a cancelled instance are cancelled with it
+        WorkflowInstance cancelled = steps.instance();
+        TaskRecord task = steps.task(cancelled);
+        long completion = steps.completion(cancelled, task);
+        RecordedTimer timer = steps.timer(
+                cancelled,
+                TimerPurpose.STANDALONE,
+                "timer-step",
+                new TimerCommandSpec.FireTime.After(Duration.ZERO),
+                null,
+                List.of());
+        settle(runtime, cancelled, WorkflowStatus.CANCELLED);
+        ClaimedCommand cancelledCompletion = steps.tryClaim(
+                        steps.head(completion), 60, 3, InstanceFailureListener.none())
+                .orElseThrow();
+        assertEquals(ClaimedCommand.Result.SETTLED_INSTANCE_ENDED, cancelledCompletion.result());
+        assertEquals("CANCELLED", steps.state(completion));
+        assertEquals("CANCELLED", mappedValue("workflow_tasks", "task_id", task.taskId(), "status"));
+        assertEquals("INSTANCE_ENDED", mappedValue("workflow_tasks", "task_id", task.taskId(), "cancellation_reason"));
+        ClaimedCommand cancelledTimer = steps.tryClaim(
+                        steps.head(timer.commandId()), 60, 3, InstanceFailureListener.none())
+                .orElseThrow();
+        assertEquals(ClaimedCommand.Result.SETTLED_INSTANCE_ENDED, cancelledTimer.result());
+        assertEquals("CANCELLED", steps.state(timer.commandId()));
+        assertEquals("CANCELLED", mappedValue("workflow_timers", "timer_id", timer.timerId(), "status"));
+    }
+
+    /** Dead letters: a spent start fails its instance, a spent signal is offered again, and an end settles leftovers. */
+    private static void exerciseDeadLetters(CommandSteps steps) throws Exception {
+        RuntimeComponent runtime = steps.runtime;
+        PgWorkflowCommandRepository commands = steps.commands;
+
+        // a start that spent its attempts is dead-lettered and fails its instance once
+        WorkflowInstance failing = steps.instance();
+        long start = steps.start(failing, unique("dead-key"));
+        List<String> failures = new ArrayList<>();
+        InstanceFailureListener<SqlClient> listener = (failed, sequence, reasonCode, message, tx) -> {
+            failures.add(reasonCode);
+            return Future.succeededFuture();
+        };
+        steps.deadLetter(start, listener);
+        assertEquals("DEAD", steps.state(start));
+        assertEquals("FAILED", mappedValue("workflow_instances", "id", failing.id(), "status"));
+        assertEquals(List.of("ATTEMPTS_EXHAUSTED"), failures);
+        assertTrue(flag(runtime, tx -> commands.hasDeadLetters(failing.id(), tx)));
+        assertTrue(flag(runtime, tx -> commands.wasParked(failing.id(), start, tx)));
+
+        // superseding the dead start settles it and logs it
+        assertEquals(1, rowsChanged(runtime, tx -> commands.supersedeDeadStart(failing.id(), tx)));
+        assertEquals(0, rowsChanged(runtime, tx -> commands.supersedeDeadStart(failing.id(), tx)));
+        assertEquals("SUPERSEDED", steps.state(start));
+        assertFalse(flag(runtime, tx -> commands.hasDeadLetters(failing.id(), tx)));
+
+        // a dead-lettered signal frees its slot, and offering it again takes the slot back
+        WorkflowInstance reoffered = steps.instance();
+        long signal = steps.signal(reoffered, "signal-a");
+        steps.deadLetter(signal, InstanceFailureListener.none());
+        assertEquals("DEAD", steps.state(signal));
+        assertEquals(0, steps.openSignals(reoffered));
+        assertTrue(flag(runtime, tx -> commands.wasParked(reoffered.id(), signal, tx)));
+        assertEquals(1, rowsChanged(runtime, tx -> commands.reofferDeadLetters(reoffered.id(), tx)));
+        assertEquals("PENDING", steps.state(signal));
+        assertEquals("0", steps.commandValue(signal, "attempts"));
+        assertEquals(1, steps.openSignals(reoffered));
+
+        // a dead-lettered signal that stays dead is what the stuck read and the counts report
+        WorkflowInstance stuck = steps.instance();
+        long stuckSignal = steps.signal(stuck, "signal-a");
+        steps.deadLetter(stuckSignal, InstanceFailureListener.none());
+        List<PendingCommand> stuckCommands = await(commands.findStuck(stuck.id(), 86_400));
+        assertEquals(1, stuckCommands.size());
+        assertEquals("DEAD", stuckCommands.get(0).state());
+        assertEquals("SIGNAL", stuckCommands.get(0).kind());
+
+        // when the instance ends, its parked and dead-lettered commands are settled, and so are their task and timer
+        WorkflowInstance leftovers = steps.instance();
+        long parkedSignal = steps.signal(leftovers, "signal-a");
+        ClaimedCommand parkedClaim = steps.claim(parkedSignal);
+        assertEquals(1, rowsChanged(runtime, tx -> commands.park(parkedSignal, parkedClaim.token(), tx)));
+        TaskRecord task = steps.task(leftovers);
+        long completion = steps.completion(leftovers, task);
+        RecordedTimer timer = steps.timer(
+                leftovers,
+                TimerPurpose.STANDALONE,
+                "timer-step",
+                new TimerCommandSpec.FireTime.After(Duration.ZERO),
+                null,
+                List.of());
+        steps.deadLetter(completion, InstanceFailureListener.none());
+        steps.deadLetter(timer.commandId(), InstanceFailureListener.none());
+        assertEquals("COMPLETING", mappedValue("workflow_tasks", "task_id", task.taskId(), "status"));
+        settle(runtime, leftovers, WorkflowStatus.COMPLETED);
+        assertEquals(3, rowsChanged(runtime, tx -> commands.settleEnded(leftovers.id(), tx)));
+        assertEquals(0, rowsChanged(runtime, tx -> commands.settleEnded(leftovers.id(), tx)));
+        for (long settled : List.of(parkedSignal, completion, timer.commandId())) {
+            assertEquals("REJECTED", steps.state(settled));
+        }
+        assertEquals("CANCELLED", mappedValue("workflow_tasks", "task_id", task.taskId(), "status"));
+        assertEquals("CANCELLED", mappedValue("workflow_timers", "timer_id", timer.timerId(), "status"));
+        assertEquals(0, steps.openSignals(leftovers));
+        assertEquals(1, mappedRows("workflow_history", "command_id", parkedSignal));
+        assertEquals(2, mappedRows("workflow_history", "command_id", completion));
+        assertEquals(2, mappedRows("workflow_history", "command_id", timer.commandId()));
+    }
+
+    /** Timer and completion commands: a timeout racing a signal, the unsettled targets, and a failed reservation. */
+    private static void exerciseTimerAndCompletionCommands(CommandSteps steps) throws Exception {
+        RuntimeComponent runtime = steps.runtime;
+        PgWorkflowCommandRepository commands = steps.commands;
+
+        // a timeout whose fire time precedes a later signal blocks that signal at its wait
+        WorkflowInstance waiting = steps.instance();
+        Instant past = Instant.now().minus(Duration.ofHours(1));
+        RecordedTimer timeout = steps.timer(
+                waiting,
+                TimerPurpose.SIGNAL_TIMEOUT,
+                "wait-a",
+                new TimerCommandSpec.FireTime.At(past),
+                null,
+                List.of("signal-a"));
+        assertEquals("TIMEOUT", steps.commandValue(timeout.commandId(), "timer_kind"));
+        assertEquals("SCHEDULED", mappedValue("workflow_timers", "timer_id", timeout.timerId(), "status"));
+        assertEquals(
+                String.valueOf(timeout.commandId()),
+                mappedValue("workflow_timers", "timer_id", timeout.timerId(), "command_id"));
+        long signal = steps.signal(waiting, "signal-a");
+        assertEquals(
+                Set.of(signal),
+                inTransaction(
+                        runtime, tx -> commands.deadlineBlocked(waiting.id(), "wait-a", null, List.of(signal), tx)));
+        assertEquals(
+                Set.of(),
+                inTransaction(
+                        runtime,
+                        tx -> commands.deadlineBlocked(waiting.id(), "other-step", null, List.of(signal), tx)));
+        assertEquals(
+                Set.of(),
+                inTransaction(runtime, tx -> commands.deadlineBlocked(waiting.id(), "wait-a", null, List.of(), tx)));
+        List<String> targets = inTransaction(runtime, tx -> commands.unsettledTargets(waiting.id(), "SIGNAL", tx));
+        assertEquals(1, targets.size());
+        assertTrue(targets.get(0).contains("signal-a"));
+        assertEquals(
+                1,
+                inTransaction(runtime, tx -> commands.unsettledTargets(waiting.id(), "TIMER", tx))
+                        .size());
+
+        // a task being completed is live, and a deterministic failure of its completion reopens it
+        WorkflowInstance completing = steps.instance();
+        TaskRecord task = steps.task(completing);
+        RecordedTimer reminder = steps.timer(
+                completing,
+                TimerPurpose.TASK_REMINDER,
+                "review",
+                new TimerCommandSpec.FireTime.After(Duration.ofHours(1)),
+                task.taskId(),
+                List.of());
+        assertEquals("REMINDER", steps.commandValue(reminder.commandId(), "timer_kind"));
+        assertEquals(List.of(task.taskId()), inTransaction(runtime, tx -> commands.liveTasks(completing.id(), tx)));
+        long completion = steps.completion(completing, task);
+        assertEquals(List.of(task.taskId()), inTransaction(runtime, tx -> commands.liveTasks(completing.id(), tx)));
+        assertEquals("COMPLETING", mappedValue("workflow_tasks", "task_id", task.taskId(), "status"));
+        ClaimedCommand claim = steps.claim(completion);
+        assertEquals(
+                DispositionResult.REJECTED,
+                await(commands.failCommand(
+                        claim,
+                        CommandErrors.Reason.DETERMINISTIC_FAILURE.name(),
+                        "decision failed",
+                        InstanceFailureListener.none())));
+        assertEquals("REJECTED", steps.state(completion));
+        assertEquals("OPEN", mappedValue("workflow_tasks", "task_id", task.taskId(), "status"));
+        assertNull(mappedValue("workflow_tasks", "task_id", task.taskId(), "reservation_command_id"));
+    }
+
+    /** Cancelling every command of an instance, and re-arming a timer whose command failed. */
+    private static void exerciseCancellationAndRearm(CommandSteps steps) throws Exception {
+        RuntimeComponent runtime = steps.runtime;
+        PgWorkflowCommandRepository commands = steps.commands;
+        CommandActor canceller = new CommandActor(
+                CommandActor.Kind.SERVICE, "canceller", "instance cancelled", null, CommandActor.Attribution.VERIFIED);
+
+        // Given: one pending command of every kind, a signal that answers a wait among them
+        WorkflowInstance instance = steps.instance();
+        UUID waitId = UUID.randomUUID();
+        String replyKey = unique("reply-key");
+        long signal = steps.signal(instance, "reply-signal", null, null, waitId.toString(), replyKey);
+        assertEquals(
+                Optional.of("reply-signal"),
+                inTransaction(runtime, tx -> commands.recordedReplyName(instance.id(), waitId, replyKey, tx)));
+        assertEquals(
+                Optional.empty(),
+                inTransaction(
+                        runtime, tx -> commands.recordedReplyName(instance.id(), UUID.randomUUID(), replyKey, tx)));
+        TaskRecord task = steps.task(instance);
+        long completion = steps.completion(instance, task);
+        long retry = inTransaction(runtime, tx -> commands.recordRetry(instance.id(), CommandSteps.REQUESTER, tx));
+        long migration = inTransaction(
+                runtime, tx -> commands.recordMigration(instance.id(), 2L, "scope-b", CommandSteps.REQUESTER, tx));
+        RecordedTimer timer = steps.timer(
+                instance,
+                TimerPurpose.STANDALONE,
+                "timer-step",
+                new TimerCommandSpec.FireTime.After(Duration.ofHours(1)),
+                null,
+                List.of());
+        assertEquals("RETRY", steps.commandValue(retry, "kind"));
+        assertEquals("MIGRATION", steps.commandValue(migration, "kind"));
+        assertEquals("scope-b", steps.commandValue(migration, "target_json->>'scope'"));
+
+        // When: the instance's commands are cancelled
+        List<SettledCommand> settled = inTransaction(runtime, tx -> commands.cancelAll(instance.id(), canceller, tx));
+
+        // Then: each is cancelled and logged under the canceller, and the signal's slot is free
+        assertEquals(
+                List.of(signal, completion, retry, migration, timer.commandId()),
+                settled.stream().map(SettledCommand::commandId).toList());
+        assertEquals(task.taskId(), settled.get(1).taskId());
+        assertEquals(timer.timerId(), settled.get(4).timerId());
+        for (SettledCommand command : settled) {
+            assertEquals("CANCELLED", steps.state(command.commandId()));
+        }
+        assertEquals(0, steps.openSignals(instance));
+        assertEquals(5, mappedRows("workflow_history", "workflow_id", instance.id()));
+        assertEquals(
+                List.of("SERVICE"),
+                column(
+                        "SELECT DISTINCT actor_kind FROM " + MAPPED_SCHEMA
+                                + ".workflow_history WHERE workflow_id = ?::uuid",
+                        instance.id().value()));
+
+        // Given: a timer whose command failed, which fails its instance
+        WorkflowInstance failed = steps.instance();
+        RecordedTimer failedTimer = steps.timer(
+                failed,
+                TimerPurpose.STANDALONE,
+                "timer-step",
+                new TimerCommandSpec.FireTime.After(Duration.ZERO),
+                null,
+                List.of());
+        ClaimedCommand claim = steps.claim(failedTimer.commandId());
+        assertEquals(
+                DispositionResult.APPLIED,
+                await(commands.failCommand(
+                        claim,
+                        CommandErrors.Reason.DETERMINISTIC_FAILURE.name(),
+                        "timer handler failed",
+                        InstanceFailureListener.none())));
+        assertEquals("FAILED", steps.state(failedTimer.commandId()));
+        assertEquals("FAILED", mappedValue("workflow_timers", "timer_id", failedTimer.timerId(), "status"));
+        assertEquals("FAILED", mappedValue("workflow_instances", "id", failed.id(), "status"));
+
+        // When / Then: re-arming records a new command for the timer and schedules it again, once
+        assertEquals(1, rowsChanged(runtime, tx -> commands.rearmTimers(failed.id(), tx)));
+        assertEquals("SCHEDULED", mappedValue("workflow_timers", "timer_id", failedTimer.timerId(), "status"));
+        assertEquals(2, mappedRows("workflow_commands", "timer_id", failedTimer.timerId()));
+        assertNotEquals(
+                String.valueOf(failedTimer.commandId()),
+                mappedValue("workflow_timers", "timer_id", failedTimer.timerId(), "command_id"));
+        assertEquals(0, rowsChanged(runtime, tx -> commands.rearmTimers(failed.id(), tx)));
+    }
+
+    /** History attribution, the legacy baseline mark, and the signal names a definition declares. */
+    private static void exerciseAttributionAndDefinitionNames(CommandSteps steps) throws Exception {
+        RuntimeComponent runtime = steps.runtime;
+        PgWorkflowCommandRepository commands = steps.commands;
+        PgWorkflowHistoryRepository history = runtime.pgWorkflowHistoryRepository();
+        WorkflowInstance instance = steps.instance();
+        WorkflowInstanceId id = instance.id();
+        long start = steps.start(instance, unique("attribution-key"));
+        CommandActor system = CommandActor.system("migration");
+
+        // an entry that names a command takes that command's actor and the pinned definition
+        String namesCommand = "{\"commandId\":" + start + "}";
+        inTransaction(runtime, tx -> history.append(historyEntry(id, 1, WorkflowEntryType.START, namesCommand), tx));
+        SegmentCommand segment = new SegmentCommand(start, id, "START", null, null, null);
+        DefinitionKey pinned = new DefinitionKey(WorkflowScopes.DEFAULT, FORK_JOIN_DEFINITION.definitionId(), 1L);
+        inTransaction(
+                runtime, tx -> commands.attributeSegmentHistory(id, 1, CommandSteps.FALLBACK, segment, pinned, tx));
+        assertEquals("USER", historyValue(id, 1, "actor_kind"));
+        assertEquals("alice", historyValue(id, 1, "actor_id"));
+        assertEquals(String.valueOf(start), historyValue(id, 1, "command_id"));
+        assertEquals(pinned.definitionId(), historyValue(id, 1, "definition_id"));
+
+        // an entry that names none takes the fallback, which pins no definition without a segment
+        inTransaction(runtime, tx -> history.append(historyEntry(id, 2, WorkflowEntryType.RETRIED), tx));
+        inTransaction(runtime, tx -> commands.attributeSegmentHistory(id, 2, CommandSteps.FALLBACK, tx));
+        assertEquals("SERVICE", historyValue(id, 2, "actor_kind"));
+        assertEquals("fallback-service", historyValue(id, 2, "actor_id"));
+        assertNull(historyValue(id, 2, "definition_id"));
+
+        // a plain attribution gives its actor to the entries from a sequence on that have none
+        inTransaction(runtime, tx -> history.append(historyEntry(id, 3, WorkflowEntryType.COMPLETED), tx));
+        inTransaction(runtime, tx -> commands.attributeHistory(id, 1, system, tx));
+        assertEquals("SYSTEM", historyValue(id, 3, "actor_kind"));
+        assertEquals("migration", historyValue(id, 3, "actor_reason"));
+        assertEquals("USER", historyValue(id, 1, "actor_kind"), "an attributed entry is left as it was");
+
+        // the legacy baseline mark is consumed once
+        execute("UPDATE " + MAPPED_SCHEMA + ".workflow_instances SET baseline_logged = FALSE WHERE id = '" + id.value()
+                + "'");
+        assertTrue(flag(runtime, tx -> commands.consumeLegacyBaseline(id, tx)));
+        assertFalse(flag(runtime, tx -> commands.consumeLegacyBaseline(id, tx)));
+        assertEquals("true", mappedValue("workflow_instances", "id", id, "baseline_logged"));
+
+        // the declared signal names come from the definition row, for the instance and for a branch
+        execute("UPDATE " + MAPPED_SCHEMA + ".workflow_definitions SET signal_names_json ="
+                + " '{\"instance\":[\"signal-a\"],\"branches\":{\"fork/b\":[\"signal-b\"]}}'::jsonb"
+                + " WHERE definition_id = '" + REGISTRY_DEFINITION + "' AND definition_version = 1");
+        DefinitionKey declared = new DefinitionKey(WorkflowScopes.DEFAULT, REGISTRY_DEFINITION, 1);
+        assertEquals(
+                Optional.of(List.of("signal-a")),
+                inTransaction(runtime, tx -> commands.declaredSignalNames(declared, null, null, tx)));
+        assertEquals(
+                Optional.of(List.of("signal-b")),
+                inTransaction(runtime, tx -> commands.declaredSignalNames(declared, FORK_STEP, "b", tx)));
+        assertEquals(
+                Optional.empty(),
+                inTransaction(
+                        runtime,
+                        tx -> commands.declaredSignalNames(
+                                new DefinitionKey(WorkflowScopes.DEFAULT, REGISTRY_DEFINITION, 2), null, null, tx)));
+        assertEquals(
+                Optional.empty(),
+                inTransaction(
+                        runtime,
+                        tx -> commands.declaredSignalNames(
+                                new DefinitionKey(WorkflowScopes.DEFAULT, "no-such-definition", 1), null, null, tx)));
+    }
+
+    /** The reads of the execution probe and the intake and wake-up counts, over what the scenarios left behind. */
+    private static void exerciseCommandProbes(CommandSteps steps) throws Exception {
+        PgWorkflowCommandRepository commands = steps.commands;
+
+        // the heads are bounded by the limit, which must be positive
+        List<CommandHead> heads = await(commands.peek(1000));
+        assertFalse(heads.isEmpty());
+        assertEquals(1, await(commands.peek(1)).size());
+        assertThrows(IllegalArgumentException.class, () -> commands.peek(0));
+
+        // the queue counts agree with the table
+        QueueCounts counts = await(commands.countQueue(86_400));
+        assertEquals(countCommands("state = 'PARKED'"), counts.parked());
+        assertTrue(counts.parked() >= 1, "the branch signal stays parked");
+        assertEquals(countCommands("state = 'DEAD'"), counts.deadLettered());
+        assertTrue(counts.deadLettered() >= 1, "the spent signal stays dead-lettered");
+        assertEquals(counts.deadLettered(), counts.stuck(), "nothing unsettled is a day old");
+        assertTrue(counts.available() >= 1);
+
+        // the runnable, due and listed reads cover every instance when none is given
+        assertTrue(await(commands.countRunnable(null)) >= heads.size());
+        long due = countCommands("state IN ('PENDING','DEFERRED') AND available_at <= now()");
+        assertTrue(await(commands.countDue(1000)) >= due);
+        assertEquals(1L, await(commands.countDue(1)));
+        assertThrows(IllegalArgumentException.class, () -> commands.countDue(0));
+        assertEquals(counts.parked(), await(commands.findParked(null)).size());
+        assertFalse(await(commands.findDeferred(null)).isEmpty());
+        assertFalse(await(commands.findNotYetAvailable(null)).isEmpty());
+        List<PendingCommand> stuck = await(commands.findStuck(null, 86_400));
+        assertEquals(counts.deadLettered(), stuck.size());
+        assertTrue(stuck.stream().allMatch(command -> "DEAD".equals(command.state())));
+        assertTrue(await(commands.findEarliestAvailabilityDelayMs()).isPresent());
+    }
+
+    private static long countCommands(String condition) throws SQLException {
+        return Long.parseLong(column("SELECT count(*) FROM " + MAPPED_SCHEMA + ".workflow_commands WHERE " + condition)
+                .get(0));
+    }
+
+    private static List<Long> parkedIds(List<ParkedSignal> signals) {
+        return signals.stream().map(ParkedSignal::commandId).toList();
+    }
+
+    private static String historyValue(WorkflowInstanceId workflowId, long sequence, String expression)
+            throws SQLException {
+        List<String> values = column(
+                "SELECT (" + expression + ")::text FROM " + MAPPED_SCHEMA
+                        + ".workflow_history WHERE workflow_id = ?::uuid AND sequence = ?::bigint",
+                workflowId.value(),
+                sequence);
+        assertEquals(1, values.size(), "exactly one mapped history entry " + sequence + " of " + workflowId.value());
+        return values.get(0);
+    }
+
+    /** Fresh instances and the repository calls that put one command or task in a known state. */
+    private static final class CommandSteps {
+
+        static final String NODE = "schema-placement-node";
+        static final CommandActor REQUESTER = new CommandActor(
+                CommandActor.Kind.USER, "alice", "requested", "manager", CommandActor.Attribution.VERIFIED);
+        static final CommandActor FALLBACK = new CommandActor(
+                CommandActor.Kind.SERVICE, "fallback-service", null, null, CommandActor.Attribution.VERIFIED);
+
+        private static final int LEASE_SECONDS = 60;
+        private static final int MAX_ATTEMPTS = 3;
+        private static final int OPEN_SIGNAL_LIMIT = 100;
+        private static final int PEEK_LIMIT = 1000;
+
+        final RuntimeComponent runtime;
+        final PgWorkflowCommandRepository commands;
+
+        CommandSteps(RuntimeComponent runtime) {
+            this.runtime = runtime;
+            this.commands = runtime.pgWorkflowCommandRepository();
+        }
+
+        /** Inserts a running instance of the fan-out definition. */
+        WorkflowInstance instance() throws Exception {
+            WorkflowInstance instance = newInstance(FORK_JOIN_DEFINITION.definitionId(), null, null);
+            inTransaction(runtime, tx -> runtime.pgWorkflowInstanceRepository().insert(instance, tx));
+            return instance;
+        }
+
+        long start(WorkflowInstance instance, String dedupKey) throws Exception {
+            return inTransaction(
+                    runtime,
+                    tx -> commands.recordStart(
+                            instance.id(), dedupKey, "{\"order\":1}", "{\"definition\":\"fanout\"}", REQUESTER, tx));
+        }
+
+        long signal(WorkflowInstance instance, String name) throws Exception {
+            return signal(instance, name, null, null, null);
+        }
+
+        long signal(WorkflowInstance instance, String name, String forkStepId, String branchId, String waitId)
+                throws Exception {
+            return signal(instance, name, forkStepId, branchId, waitId, unique("signal-key"));
+        }
+
+        /** Counts a signal against the instance's open-signal limit and records it. */
+        long signal(
+                WorkflowInstance instance,
+                String name,
+                String forkStepId,
+                String branchId,
+                String waitId,
+                String dedupKey)
+                throws Exception {
+            return inTransaction(runtime, tx -> commands.raiseOpenSignals(instance.id(), OPEN_SIGNAL_LIMIT, tx)
+                    .compose(raised -> commands.recordSignal(
+                            instance.id(),
+                            name,
+                            forkStepId,
+                            branchId,
+                            waitId,
+                            dedupKey,
+                            "{\"value\":1}",
+                            "{\"carrier\":true}",
+                            "{\"source\":\"schema-placement\"}",
+                            REQUESTER,
+                            tx)));
+        }
+
+        /** Records a signal and claims it. */
+        ClaimedCommand claimedSignal(WorkflowInstance instance) throws Exception {
+            return claim(signal(instance, "signal-a"));
+        }
+
+        /** Inserts an open task of the instance. */
+        TaskRecord task(WorkflowInstance instance) throws Exception {
+            TaskRecord task = openTask(instance.id(), "review", new TaskAssignment.User("alice"), null);
+            inTransaction(runtime, tx -> runtime.pgTaskStore().insertOpen(task, tx));
+            return task;
+        }
+
+        /** Records a completion of the task and reserves the task for it in the same transaction. */
+        long completion(WorkflowInstance instance, TaskRecord task) throws Exception {
+            long completion = inTransaction(runtime, tx -> commands.recordCompletion(
+                            instance.id(),
+                            task.taskId(),
+                            unique("completion-key"),
+                            "{\"decision\":\"approve\"}",
+                            "{\"decision\":\"approve\"}",
+                            REQUESTER,
+                            tx)
+                    .compose(id -> runtime.pgTaskReservations()
+                            .markCompleting(task.taskId().toString(), id, tx)
+                            .map(reserved -> id)));
+            assertEquals("COMPLETING", mappedValue("workflow_tasks", "task_id", task.taskId(), "status"));
+            assertEquals(
+                    String.valueOf(completion),
+                    mappedValue("workflow_tasks", "task_id", task.taskId(), "reservation_command_id"));
+            return completion;
+        }
+
+        RecordedTimer timer(
+                WorkflowInstance instance,
+                TimerPurpose purpose,
+                String stepId,
+                TimerCommandSpec.FireTime fireTime,
+                UUID taskId,
+                List<String> signalNames)
+                throws Exception {
+            TimerCommandSpec spec = new TimerCommandSpec(
+                    instance.id(), purpose, stepId, taskId, null, null, null, fireTime, signalNames);
+            return inTransaction(runtime, tx -> commands.recordTimer(spec, tx));
+        }
+
+        /** The peeked head of the command, which must be claimable now. */
+        CommandHead head(long commandId) throws Exception {
+            return await(commands.peek(PEEK_LIMIT)).stream()
+                    .filter(head -> head.commandId() == commandId)
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError("command " + commandId + " is not a claimable head"));
+        }
+
+        Optional<ClaimedCommand> tryClaim(
+                CommandHead head, int leaseSeconds, int maxAttempts, InstanceFailureListener<SqlClient> failures)
+                throws Exception {
+            return await(commands.claim(head, NODE, leaseSeconds, maxAttempts, failures));
+        }
+
+        /** Claims the command for a lease, which must succeed. */
+        ClaimedCommand claim(long commandId) throws Exception {
+            ClaimedCommand claim = tryClaim(
+                            head(commandId), LEASE_SECONDS, MAX_ATTEMPTS, InstanceFailureListener.none())
+                    .orElseThrow();
+            assertTrue(claim.isClaim(), "claimed command " + commandId);
+            return claim;
+        }
+
+        /**
+         * Spends the command's only attempt under a lease that ends at once, then claims it again, which
+         * dead-letters it.
+         */
+        void deadLetter(long commandId, InstanceFailureListener<SqlClient> failures) throws Exception {
+            CommandHead head = head(commandId);
+            assertTrue(tryClaim(head, 0, 1, failures).orElseThrow().isClaim());
+            ClaimedCommand dead = tryClaim(head, 0, 1, failures).orElseThrow();
+            assertEquals(ClaimedCommand.Result.DEAD_LETTERED, dead.result());
+            assertTrue(dead.leaseLapsed());
+        }
+
+        String state(long commandId) throws SQLException {
+            return commandValue(commandId, "state");
+        }
+
+        String commandValue(long commandId, String expression) throws SQLException {
+            return mappedValue("workflow_commands", "id", commandId, expression);
+        }
+
+        int openSignals(WorkflowInstance instance) throws SQLException {
+            return Integer.parseInt(
+                    mappedValue("workflow_command_queues", "workflow_id", instance.id(), "open_signals"));
+        }
+    }
+
     // --- Shared caller transaction ---
 
     /** One unit of caller work: workflow rows, an outbox entry and an application order. */
@@ -1908,7 +2884,12 @@ public class PgWorkflowSchemaIT {
     }
 
     private static WorkflowHistoryEntry historyEntry(WorkflowInstanceId id, long sequence, WorkflowEntryType type) {
-        return new WorkflowHistoryEntry(id, sequence, type, "{\"sequence\":" + sequence + "}", Instant.now());
+        return historyEntry(id, sequence, type, "{\"sequence\":" + sequence + "}");
+    }
+
+    private static WorkflowHistoryEntry historyEntry(
+            WorkflowInstanceId id, long sequence, WorkflowEntryType type, String payloadJson) {
+        return new WorkflowHistoryEntry(id, sequence, type, payloadJson, Instant.now());
     }
 
     private static BranchToken newBranch(
@@ -2098,6 +3079,12 @@ public class PgWorkflowSchemaIT {
     private static int rowsChanged(RuntimeComponent runtime, Function<SqlConnection, Future<Integer>> update)
             throws Exception {
         return inTransaction(runtime, update);
+    }
+
+    /** Runs a boolean-valued store call in its own caller transaction. */
+    private static boolean flag(RuntimeComponent runtime, Function<SqlConnection, Future<Boolean>> call)
+            throws Exception {
+        return inTransaction(runtime, call);
     }
 
     /** Runs a dedup claim in its own caller transaction and returns whether it inserted a new claim. */
