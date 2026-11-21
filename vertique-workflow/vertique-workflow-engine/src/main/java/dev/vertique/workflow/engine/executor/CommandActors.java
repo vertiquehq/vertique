@@ -21,6 +21,7 @@ import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 
@@ -60,13 +61,24 @@ public final class CommandActors {
     private final ExecutorEvents events;
 
     /**
+     * Creates the capture for a Dagger graph: the application's mapper when it binds one, the default otherwise.
+     *
+     * @param holder    the holder the current security context is read from
+     * @param bound     the application's mapper binding, if any
+     * @param observers the executor observers that receive an actor-absent event for every recording with no actor
+     */
+    @Inject
+    CommandActors(ContextHolder holder, Optional<WorkflowActorMapper> bound, Set<WorkflowExecutorObserver> observers) {
+        this(holder, WorkflowActorMapper.orDefault(bound), observers);
+    }
+
+    /**
      * Creates the capture with the observers that are told about a recording with no actor.
      *
      * @param holder    the holder the current security context is read from
      * @param mapper    the mapper from a security identity to a workflow actor
      * @param observers the executor observers that receive an actor-absent event for every recording with no actor
      */
-    @Inject
     public CommandActors(ContextHolder holder, WorkflowActorMapper mapper, Set<WorkflowExecutorObserver> observers) {
         this.holder = Objects.requireNonNull(holder, "holder");
         this.mapper = Objects.requireNonNull(mapper, "mapper");

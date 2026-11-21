@@ -163,4 +163,14 @@ class DefaultWorkflowActorMapperTest {
                 .isThrownBy(() -> mapper.toWorkflowActor(null))
                 .withMessageContaining("identity");
     }
+
+    @Test
+    @DisplayName("orDefault returns the application's mapper when bound, the default otherwise")
+    void orDefault() {
+        WorkflowActorMapper custom = identity -> new WorkflowActor.Service("custom");
+
+        assertThat(WorkflowActorMapper.orDefault(Optional.of(custom))).isSameAs(custom);
+        assertThat(WorkflowActorMapper.orDefault(Optional.empty())).isInstanceOf(DefaultWorkflowActorMapper.class);
+        assertThatNullPointerException().isThrownBy(() -> WorkflowActorMapper.orDefault(null));
+    }
 }
