@@ -6,7 +6,12 @@ package dev.vertique.inboxoutbox.kafka;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
+import dev.vertique.core.VertxConfig;
+import dev.vertique.core.config.ConfigParser;
+import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.inboxoutbox.OutboxDestinationHandler;
+import io.vertx.core.json.JsonObject;
+import jakarta.inject.Singleton;
 
 /**
  * Dagger module that wires the Kafka adapter for transactional messaging.
@@ -20,6 +25,9 @@ import dev.vertique.inboxoutbox.OutboxDestinationHandler;
  * through {@link dev.vertique.kafka.producer.KafkaProducerCaptureHook}, which sees an outbox send
  * with origin {@link dev.vertique.kafka.producer.KafkaSendOrigin#OUTBOX} and the entry id as the
  * origin reference.
+ *
+ * <p>Also provides {@link KafkaOutboxConfig}, read from the {@code inboxOutbox.kafka} section of the
+ * application config; an absent section keeps the default forwarded context.
  *
  * <p>Include this module alongside {@code TransactionalMessagingPostgresqlModule} in your
  * Dagger component to activate Kafka delivery:
@@ -49,5 +57,25 @@ public abstract class TransactionalMessagingKafkaModule {
     @IntoSet
     static OutboxDestinationHandler kafkaHandler(KafkaOutboxDestinationHandler handler) {
         return handler;
+    }
+
+    /**
+     * Provides {@link KafkaOutboxConfig} as a Dagger {@link Singleton} binding.
+     *
+     * <p>Deserialised from the {@code inboxOutbox.kafka} section of the application config; an absent
+     * section yields the defaults.
+     *
+     * @param config the application configuration root
+     * @param parser the injected config parser
+     * @return the Kafka outbox configuration
+     * @throws dev.vertique.inboxoutbox.exception.InboxOutboxConfigurationException when
+     *     {@code inboxOutbox.kafka.outboundContextNamespaces} holds a blank or repeated name
+     */
+    @Provides
+    @Singleton
+    static KafkaOutboxConfig kafkaOutboxConfig(@VertxConfig JsonObject config, ConfigParser parser) {
+        return parser.parse(
+                JsonConfigPaths.navigateObject(JsonConfigPaths.navigateObject(config, "inboxOutbox"), "kafka"),
+                KafkaOutboxConfig.class);
     }
 }

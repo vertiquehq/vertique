@@ -4,18 +4,27 @@
 package dev.vertique.inboxoutbox.kafka;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.vertique.context.DurableContextMetadataRegistry;
+import dev.vertique.core.context.DurableContextMetadataEncoder;
+import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.inboxoutbox.ClaimScope;
 import dev.vertique.inboxoutbox.DestinationType;
 import dev.vertique.inboxoutbox.OutboxDestinationHandler;
 import dev.vertique.inboxoutbox.OutboxEnvelope;
 import dev.vertique.inboxoutbox.OutboxPublishResult;
 import dev.vertique.inboxoutbox.PayloadCodec;
+import dev.vertique.inboxoutbox.exception.InboxOutboxConfigurationException;
 import dev.vertique.kafka.KafkaRecordHeaders;
 import dev.vertique.kafka.producer.KafkaProducerFactory;
 import io.vertx.core.Future;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -33,6 +42,17 @@ import lombok.extern.slf4j.Slf4j;
  * original producer's context (not the relay poller's ambient context) crosses the boundary. The
  * entry id is passed to that send as its origin reference, so a producer capture hook can tell
  * which outbox entry the wire bytes belong to.
+ *
+ * <h2>Forwarded context</h2>
+ * <p>Which namespaces of the stored durable context leave the process as
+ * {@code vertique-<namespace>} headers is decided by
+ * {@link KafkaOutboxConfig#outboundContextNamespaces()}. Without the key, the handler forwards
+ * every namespace the row holds except the signed {@value #IDENTITY_SNAPSHOT_NAMESPACE} namespace;
+ * an explicit list forwards exactly the listed namespaces, so an empty list forwards none and a list
+ * naming {@value #IDENTITY_SNAPSHOT_NAMESPACE} forwards the identity. A listed name that no encoder
+ * of the {@link DurableContextMetadataRegistry} owns fails construction with an
+ * {@link InboxOutboxConfigurationException}, so a misspelled list stops the node at startup instead
+ * of silently dropping a namespace.
  *
  * <p>The payload is serialized from the {@link io.vertx.core.json.JsonObject} via Jackson.
  * Serialization failures produce a {@link OutboxPublishResult#permanent(String, Throwable)
@@ -52,21 +72,74 @@ import lombok.extern.slf4j.Slf4j;
 @Singleton
 public class KafkaOutboxDestinationHandler implements OutboxDestinationHandler {
 
+    /**
+     * The identity-snapshot durable-context namespace. Mirrors the name the security runtime's
+     * encoder writes; the default exclusion covers it because the signed identity must not reach a
+     * topic that can be read outside the process unless the configuration names it.
+     */
+    static final String IDENTITY_SNAPSHOT_NAMESPACE = "identity-snapshot";
+
+    /**
+     * The namespaces a handler without an explicit {@code outboundContextNamespaces} list never
+     * forwards. Every other namespace the row holds is forwarded by default, so a future sensitive
+     * namespace is kept inside the process only by being added here or by listing what may be sent.
+     */
+    static final Set<String> NEVER_FORWARDED_BY_DEFAULT = Set.of(IDENTITY_SNAPSHOT_NAMESPACE);
+
     // --- Dependencies ---
 
     private final KafkaProducerFactory producerFactory;
     private final ObjectMapper objectMapper;
+
+    /** The explicit allowlist, or {@code null} for the default. */
+    private final Set<String> outboundContextNamespaces;
 
     /**
      * Creates a new Kafka outbox destination handler.
      *
      * @param producerFactory the shared Kafka producer factory used to send records
      * @param objectMapper    the Jackson object mapper used to serialize the outbox payload
+     * @param config          the Kafka outbox configuration, which decides the forwarded context
+     * @param registry        the durable-context registry whose encoders own the namespace names a
+     *                        configured list may use
+     * @throws InboxOutboxConfigurationException if a listed namespace is not registered; the message
+     *                                           names the configuration path, the position and the
+     *                                           registered names
      */
     @Inject
-    KafkaOutboxDestinationHandler(KafkaProducerFactory producerFactory, ObjectMapper objectMapper) {
+    KafkaOutboxDestinationHandler(
+            KafkaProducerFactory producerFactory,
+            ObjectMapper objectMapper,
+            KafkaOutboxConfig config,
+            DurableContextMetadataRegistry registry) {
         this.producerFactory = producerFactory;
         this.objectMapper = objectMapper;
+        this.outboundContextNamespaces = validatedAllowlist(config, registry);
+    }
+
+    /**
+     * Checks every listed name against the namespaces the registered encoders own.
+     *
+     * @param config   the Kafka outbox configuration
+     * @param registry the durable-context registry
+     * @return the explicit allowlist, or {@code null} when the configuration keeps the default
+     */
+    private static Set<String> validatedAllowlist(KafkaOutboxConfig config, DurableContextMetadataRegistry registry) {
+        List<String> listed = config.outboundContextNamespaces();
+        if (listed == null) {
+            return null;
+        }
+        Set<String> registered = new TreeSet<>();
+        for (DurableContextMetadataEncoder<?> encoder : registry.encoders()) {
+            registered.add(encoder.namespace());
+        }
+        for (int i = 0; i < listed.size(); i++) {
+            if (!registered.contains(listed.get(i))) {
+                throw new InboxOutboxConfigurationException(KafkaOutboxConfig.OUTBOUND_CONTEXT_NAMESPACES_PATH + "[" + i
+                        + "] names a durable-context namespace no registered encoder owns; registered: " + registered);
+            }
+        }
+        return Collections.unmodifiableSet(new LinkedHashSet<>(listed));
     }
 
     // --- OutboxDestinationHandler ---
@@ -156,7 +229,13 @@ public class KafkaOutboxDestinationHandler implements OutboxDestinationHandler {
         // and so producer capture hooks see KafkaSendOrigin.OUTBOX and the entry id for this send.
         // The converted application headers are forwarded unchanged, followed by the context headers.
         return producerFactory
-                .sendForOutbox(topic, key, value, headers, envelope.metadata().context(), entryId)
+                .sendForOutbox(
+                        topic,
+                        key,
+                        value,
+                        headers,
+                        forwardedContext(envelope.metadata().context()),
+                        entryId)
                 .map(metadata -> (OutboxPublishResult) OutboxPublishResult.success())
                 .recover(err -> {
                     // A reserved-prefix collision is an authoring bug in the application headers: the
@@ -182,6 +261,29 @@ public class KafkaOutboxDestinationHandler implements OutboxDestinationHandler {
     }
 
     // --- Internal ---
+
+    /**
+     * Reduces the row's stored context to the namespaces this handler forwards.
+     *
+     * @param stored the row's stored durable context
+     * @return the context to project as headers: without {@link #NEVER_FORWARDED_BY_DEFAULT} when the
+     *         configuration keeps the default, or exactly the listed namespaces otherwise
+     */
+    private DurableMetadata forwardedContext(DurableMetadata stored) {
+        DurableMetadata forwarded = stored;
+        for (String namespace : stored.namespaces()) {
+            if (namespace.isBlank()) {
+                continue; // without("") would throw; a blank key is not a namespace and carries nothing
+            }
+            boolean keep = outboundContextNamespaces == null
+                    ? !NEVER_FORWARDED_BY_DEFAULT.contains(namespace)
+                    : outboundContextNamespaces.contains(namespace);
+            if (!keep) {
+                forwarded = forwarded.without(namespace);
+            }
+        }
+        return forwarded;
+    }
 
     /**
      * Converts the envelope's text header map to Kafka record headers: one UTF-8 text header per
