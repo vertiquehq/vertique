@@ -185,6 +185,8 @@ Runs `@SupportedAnnotationTypes("*")` (wildcard) so it receives all annotations 
 
 Trigger methods enclosed by an `ElementKind.CLASS` are collected on that class. A trigger annotation on an interface method — including an inherited `default` method — is woven onto every concrete implementing class in the same compilation that inherits or overrides the method: the implementor receives the `$AopProxy`, and proxyability / constructor validation run against that class. An interface alone is never treated as a subclass-proxy bean; when no concrete implementor is present, no proxy is generated for the interface-hosted trigger.
 
+One exception: a `@Resilient` anchor on an operation of a `@ServiceContract` interface (declared on the contract or inherited from a parent interface) is not woven onto the contract's implementors, because the services dispatch pipeline already applies it once per call. The implementor receives no proxy for that method when `@Resilient` is its only trigger; when the method carries other triggers they are still woven and only `@Resilient` is left out of the chain. A `@Resilient` declared on the implementing class's own method is woven as usual, and every other interface keeps the rule above.
+
 The module (`GeneratedAopModule`) is emitted in the **first round that yields any binding**, not in the `processingOver()` round. This ensures the module exists before Dagger's `ComponentProcessingStep` validates a `@Component` that references it.
 
 ### `AopProxyEmitter`

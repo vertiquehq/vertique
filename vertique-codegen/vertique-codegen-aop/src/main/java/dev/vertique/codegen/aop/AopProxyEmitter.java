@@ -72,6 +72,8 @@ final class AopProxyEmitter {
 
     private static final String GENERATOR_NAMESPACE = "Aop";
 
+    private static final String RESILIENT_FQN = "dev.vertique.resilience.annotation.Resilient";
+
     // --- Framework SPI ClassName constants (referenced, rendered into generated source) ---
     private static final ClassName INVOCATIONS = ClassName.get("dev.vertique.aop", "Invocations");
     private static final ClassName METHOD_INTERCEPTOR = ClassName.get("dev.vertique.aop", "MethodInterceptor");
@@ -81,6 +83,9 @@ final class AopProxyEmitter {
     private static final ClassName FUTURE = ClassName.get("io.vertx.core", "Future");
 
     private final CodegenContext ctx;
+
+    /** The interface methods of the bean being emitted whose {@code @Resilient} anchor is not woven. */
+    private Set<ExecutableElement> servicesOwned = Set.of();
 
     AopProxyEmitter(CodegenContext ctx) {
         this.ctx = ctx;
@@ -104,6 +109,8 @@ final class AopProxyEmitter {
      * @param interceptedMethods the bean's aspect-annotated methods (in declaration order); must not
      *                         be empty
      * @param aspectFqns       the set of aspect trigger-annotation FQNs the processor recognises
+     * @param servicesOwned    interface methods whose {@code @Resilient} anchor the services dispatch
+     *                         pipeline applies; the proxy leaves it out of their chains
      * @param emittedLiteralFqns the compilation-scoped set of {@code <Ann>$AopLiteral} FQNs already
      *                         written to the {@code Filer}; this method adds each literal class it
      *                         writes and skips any already present (per-compilation dedup)
@@ -114,7 +121,9 @@ final class AopProxyEmitter {
             ExecutableElement injectCtor,
             List<ExecutableElement> interceptedMethods,
             Set<String> aspectFqns,
+            Set<ExecutableElement> servicesOwned,
             Set<String> emittedLiteralFqns) {
+        this.servicesOwned = servicesOwned;
         // The proxy must always co-locate with the bean — in the bean's own package — so that
         // super(...) and super.method(...) calls are legal for package-private constructors and
         // intercepted methods. The -Avertique.codegen.package option moves only GeneratedAopModule
@@ -336,7 +345,9 @@ final class AopProxyEmitter {
                     .getQualifiedName()
                     .toString();
             if (aspectFqns.contains(fqn)) {
-                result.add(mirror);
+                if (!(servicesOwned.contains(method) && RESILIENT_FQN.equals(fqn))) {
+                    result.add(mirror);
+                }
                 continue;
             }
             for (var entry : mirror.getElementValues().entrySet()) {

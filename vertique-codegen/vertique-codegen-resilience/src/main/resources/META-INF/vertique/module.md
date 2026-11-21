@@ -54,12 +54,12 @@ The registered `ResilienceAnnotationProcessor` validates:
   on the same method as `@Resilient`;
 - interface anchors on any interface, because `@Resilient` follows the method-AOP rule every
   aspect follows: a trigger on an interface method is woven onto the concrete implementors in
-  the compilation, as on a class method. On a service-contract or REST-client interface the
-  generated call also carries the anchor, so a concrete class that implements such a contract
-  in the same compilation would be wrapped twice (see the double-wrapping rule below). On an
-  interface method the processor checks only that the anchor names a policy or carries a
-  declaration and that the return type is a concrete `Future<T>`. An implementor the proxy
-  cannot subclass fails in `vertique-codegen-aop`, which owns the weaving;
+  the compilation, as on a class method. On a REST-client interface the generated call carries
+  the anchor. On a service-contract interface the services dispatch pipeline applies it once
+  per call, so `vertique-codegen-aop` does not weave it onto the contract's implementors; see
+  the double-wrapping rule below. On an interface method the processor checks only that the
+  anchor names a policy or carries a declaration and that the return type is a concrete
+  `Future<T>`. An implementor the proxy cannot subclass fails in `vertique-codegen-aop`, which owns the weaving;
 - proxyability through the shared `ProxyabilityValidator`, including public,
   non-final, Dagger-managed classes with one `@Inject` constructor and
   overridable instance methods;

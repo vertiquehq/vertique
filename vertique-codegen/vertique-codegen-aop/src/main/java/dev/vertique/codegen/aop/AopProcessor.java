@@ -71,6 +71,8 @@ import javax.lang.model.util.ElementFilter;
 public final class AopProcessor extends AbstractProcessor {
 
     private static final String ASPECT_FQN = "dev.vertique.aop.Aspect";
+    private static final String RESILIENT_FQN = "dev.vertique.resilience.annotation.Resilient";
+    private static final String SERVICE_CONTRACT_FQN = "dev.vertique.services.ServiceContract";
     private static final String SCOPE_FQN = "jakarta.inject.Scope";
     private static final String JAVAX_SCOPE_FQN = "javax.inject.Scope";
     private static final String ASSISTED_INJECT_FQN = "dagger.assisted.AssistedInject";
@@ -143,6 +145,7 @@ public final class AopProcessor extends AbstractProcessor {
 
             // Group aspect-annotated methods by their declaring bean.
             Map<TypeElement, List<ExecutableElement>> beans = collectBeans(aspectFqns, roundEnv);
+            Map<TypeElement, Set<ExecutableElement>> servicesOwned = excludeServiceOwnedResilience(beans, aspectFqns);
             for (Map.Entry<TypeElement, List<ExecutableElement>> entry : beans.entrySet()) {
                 TypeElement bean = entry.getKey();
 
@@ -196,7 +199,12 @@ public final class AopProcessor extends AbstractProcessor {
 
                 Optional<ExecutableElement> injectCtor = ctx.injectConstructor(bean);
                 ClassName proxy = proxyEmitter.emit(
-                        bean, injectCtor.orElseThrow(), entry.getValue(), aspectFqns, emittedLiteralFqns);
+                        bean,
+                        injectCtor.orElseThrow(),
+                        entry.getValue(),
+                        aspectFqns,
+                        servicesOwned.getOrDefault(bean, Set.of()),
+                        emittedLiteralFqns);
                 moduleEmitter.add(bean, proxy, scopeOf(bean));
             }
         }
@@ -556,6 +564,62 @@ public final class AopProcessor extends AbstractProcessor {
             });
         }
         return beans;
+    }
+
+    /**
+     * Removes the {@code @Resilient} anchor of a service-contract operation from the weaving plan.
+     *
+     * <p>The services dispatch pipeline applies a contract operation's resilience once, so weaving
+     * the same interface anchor onto the contract's implementor would run the policy twice. An
+     * interface method that is an operation of a {@code @ServiceContract} the bean implements is
+     * dropped from its bean's list when {@code @Resilient} is its only aspect trigger; when it also
+     * carries other aspect triggers it stays and is returned so the emitter leaves {@code @Resilient}
+     * out of its chain. Interface methods of any other interface, and methods declared on the class,
+     * are untouched.
+     *
+     * @return the methods, per bean, whose {@code @Resilient} anchor the emitter must ignore
+     */
+    private Map<TypeElement, Set<ExecutableElement>> excludeServiceOwnedResilience(
+            Map<TypeElement, List<ExecutableElement>> beans, Set<String> triggerFqns) {
+        Map<TypeElement, Set<ExecutableElement>> owned = new LinkedHashMap<>();
+        if (!triggerFqns.contains(RESILIENT_FQN)) {
+            return owned;
+        }
+        Set<String> otherTriggers = new LinkedHashSet<>(triggerFqns);
+        otherTriggers.remove(RESILIENT_FQN);
+        Set<String> resilientOnly = Set.of(RESILIENT_FQN);
+        for (var entry : beans.entrySet()) {
+            TypeElement bean = entry.getKey();
+            List<ExecutableElement> kept = new ArrayList<>();
+            for (ExecutableElement method : entry.getValue()) {
+                boolean serviceOwned = method.getEnclosingElement().getKind() == ElementKind.INTERFACE
+                        && hasAspectTrigger(method, resilientOnly)
+                        && isServiceContractOperation(bean, method);
+                if (!serviceOwned) {
+                    kept.add(method);
+                } else if (hasAspectTrigger(method, otherTriggers)) {
+                    kept.add(method);
+                    owned.computeIfAbsent(bean, k -> new LinkedHashSet<>()).add(method);
+                }
+            }
+            entry.setValue(kept);
+        }
+        beans.values().removeIf(List::isEmpty);
+        return owned;
+    }
+
+    /**
+     * Returns {@code true} when {@code method} is an operation (declared or inherited) of a
+     * {@code @ServiceContract} interface that {@code bean} implements.
+     */
+    private boolean isServiceContractOperation(TypeElement bean, ExecutableElement method) {
+        for (TypeElement iface : allInterfaces(bean)) {
+            if (AnnotationMirrors.isPresent(iface, SERVICE_CONTRACT_FQN)
+                    && ctx.elements().getAllMembers(iface).contains(method)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
