@@ -4,6 +4,7 @@
 package dev.vertique.codegen.aop;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
@@ -81,6 +82,46 @@ class ServiceContractResilientAnchorTest {
         assertFalse(source.contains("AspectProvider<Resilient>"), "no @Resilient interceptor is requested");
         assertFalse(source.contains("RESILIENT_"), "no @Resilient occurrence literal backs a chain entry");
         result.assertGeneratedSourceContains(IMPL_PROXY_FQN, "AspectProvider<Audited>");
+    }
+
+    @Test
+    @DisplayName(
+            "a plain interface's aspect on a signature the contract shares is woven whichever interface comes first")
+    void plainInterfaceAspectSurvivesASharedContractSignature() {
+        for (String order : new String[] {"OrderService, Auditable", "Auditable, OrderService"}) {
+            var result = ProcessorTestHarness.run(
+                            new AopProcessor(),
+                            resilient(),
+                            serviceContract(),
+                            audited(),
+                            contract("@Resilient"),
+                            SourceFiles.inline("com.example.Auditable", """
+                                    package com.example;
+                                    import io.vertx.core.Future;
+                                    public interface Auditable {
+                                        @Audited
+                                        Future<String> place(String id);
+                                    }
+                                    """),
+                            SourceFiles.inline("com.example.OrderServiceImpl", """
+                                    package com.example;
+                                    import io.vertx.core.Future;
+                                    import jakarta.inject.Inject;
+                                    public class OrderServiceImpl implements %s {
+                                        @Inject
+                                        public OrderServiceImpl() {}
+                                        @Override
+                                        public Future<String> place(String id) {
+                                            return Future.succeededFuture(id);
+                                        }
+                                    }
+                                    """.formatted(order)))
+                    .assertSuccess();
+
+            assertTrue(
+                    GeneratedSources.of(result, IMPL_PROXY_FQN).contains("AspectProvider<Audited>"),
+                    "@Audited must be woven for: " + order);
+        }
     }
 
     @Test

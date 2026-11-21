@@ -72,8 +72,6 @@ final class AopProxyEmitter {
 
     private static final String GENERATOR_NAMESPACE = "Aop";
 
-    private static final String RESILIENT_FQN = "dev.vertique.resilience.annotation.Resilient";
-
     // --- Framework SPI ClassName constants (referenced, rendered into generated source) ---
     private static final ClassName INVOCATIONS = ClassName.get("dev.vertique.aop", "Invocations");
     private static final ClassName METHOD_INTERCEPTOR = ClassName.get("dev.vertique.aop", "MethodInterceptor");
@@ -345,7 +343,7 @@ final class AopProxyEmitter {
                     .getQualifiedName()
                     .toString();
             if (aspectFqns.contains(fqn)) {
-                if (!(servicesOwned.contains(method) && RESILIENT_FQN.equals(fqn))) {
+                if (!(servicesOwned.contains(method) && AopProcessor.RESILIENT_FQN.equals(fqn))) {
                     result.add(mirror);
                 }
                 continue;

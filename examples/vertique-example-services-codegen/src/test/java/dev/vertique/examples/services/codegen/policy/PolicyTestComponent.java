@@ -15,6 +15,7 @@ import dev.vertique.examples.services.codegen.policy.PolicyFixtures.Effects;
 import dev.vertique.examples.services.codegen.policy.PolicyFixtures.Eligibility;
 import dev.vertique.examples.services.codegen.policy.PolicyFixtures.RecordingAuthorizer;
 import dev.vertique.examples.services.codegen.policy.resource.GeneratedJaxRsResourcesModule;
+import dev.vertique.examples.services.codegen.policy.service.GeneratedAopModule;
 import dev.vertique.examples.services.codegen.policy.service.GeneratedServicesModule;
 import dev.vertique.examples.services.codegen.policy.service.PolicyHandlerService;
 import dev.vertique.examples.services.codegen.policy.service.PolicyService;
@@ -52,7 +53,8 @@ import jakarta.inject.Singleton;
             GeneratedJaxRsResourcesModule.class,
             GeneratedServicesModule.class,
             ResiliencePoliciesModule.class,
-            ResilienceAopModule.class
+            ResilienceAopModule.class,
+            GeneratedAopModule.class
         })
 interface PolicyTestComponent extends VertiqueApplicationComponent {
 
