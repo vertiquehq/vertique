@@ -98,7 +98,7 @@ public final class Timeouts {
      * @param description short description included in timeout failures
      * @param <T> the result type
      * @return a future with the same result or failure, or a timeout failure; a {@link TimeoutException}
-     *     raised by the operation itself is also replaced by the timeout failure
+     *     raised by the operation itself passes through unchanged
      * @throws IllegalArgumentException if {@code timeoutMs} is not positive
      * @throws NullPointerException if an argument is {@code null}
      */
@@ -108,7 +108,8 @@ public final class Timeouts {
         Objects.requireNonNull(description, "description");
 
         return operation.timeout(timeoutMs, TimeUnit.MILLISECONDS).recover(cause -> {
-            if (cause instanceof TimeoutException) {
+            boolean operationOwnFailure = operation.failed() && operation.cause() == cause;
+            if (cause instanceof TimeoutException && !operationOwnFailure) {
                 return Future.failedFuture(timeout(description, timeoutMs));
             }
             return Future.failedFuture(cause);

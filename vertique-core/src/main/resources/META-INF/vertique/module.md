@@ -60,7 +60,7 @@ calls.
   the timeout. When the future has not settled by then, the returned future fails with a
   `TimeoutException` whose message is `<description> did not complete within <timeoutMs> ms`, and a
   later settlement of the original future is ignored. A `TimeoutException` that the future itself fails
-  with is replaced by the same message.
+  with passes through unchanged.
 
 `pollIntervalMs` and `timeoutMs` must be positive and no argument may be null. A violation is thrown
 at once, as `IllegalArgumentException` or `NullPointerException`, not returned as a failed future. A
