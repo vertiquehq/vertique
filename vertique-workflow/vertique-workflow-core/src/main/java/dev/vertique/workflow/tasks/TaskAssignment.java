@@ -44,6 +44,36 @@ import java.util.Objects;
 public sealed interface TaskAssignment permits TaskAssignment.User, TaskAssignment.Role, TaskAssignment.Queue {
 
     /**
+     * Tells whether this assignment names one of the caller's principals: the user id of a
+     * {@link User} assignment equals the caller's user id, the role of a {@link Role} assignment is one
+     * of the caller's roles, or the queue of a {@link Queue} assignment is one of the caller's queues.
+     * Values are compared exactly.
+     *
+     * <p>Only a {@link dev.vertique.security.PrincipalType#USER} principal matches; for any other
+     * principal type this returns {@code false}. A {@link TaskFilter#assignedTo()} filter applies the same
+     * rule to the assignment: among the tasks that pass the filter's other fields and its
+     * archived-instance rule, the query returns exactly those this method matches.
+     *
+     * <p>This is a helper for the application's own authorization. Nothing in the framework calls it:
+     * {@code complete} and {@code reassign} do not compare the actor with the assignment.
+     *
+     * @param principals the caller's principals; must not be null
+     * @return {@code true} when the assignment matches the caller
+     * @throws NullPointerException if {@code principals} is null
+     */
+    default boolean matches(TaskPrincipals principals) {
+        Objects.requireNonNull(principals, "principals");
+        if (!principals.canMatchAssignments()) {
+            return false;
+        }
+        return switch (this) {
+            case User user -> user.userId().equals(principals.userId());
+            case Role role -> principals.roles().contains(role.roleId());
+            case Queue queue -> principals.queues().contains(queue.queueName());
+        };
+    }
+
+    /**
      * Assignment to a specific user.
      *
      * @param userId the application's stable identifier for the assignee; must not be null or blank

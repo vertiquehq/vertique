@@ -42,6 +42,31 @@ public interface TaskService {
 
 Use `TransactionalTaskService<TX>` when task work must participate in a larger transaction.
 
+### Inbox: tasks assigned to the caller
+
+`TaskFilter.withAssignedTo(principals)` lists, in one query, the tasks assigned to the caller's user id,
+to any of its roles and to any of its queues, combined with every other field of the filter:
+
+```java
+@Inject TaskService tasks;
+@Inject Optional<TaskPrincipalsMapper> mapper;
+
+TaskPrincipals me = TaskPrincipalsMapper.orDefault(mapper).toTaskPrincipals(securityContext);
+tasks.list(TaskFilter.empty().withAssignedTo(me).withStatus(TaskStatus.OPEN), PageCursor.first(20));
+```
+
+- Among the tasks that pass the filter's other fields (and, unless `includeArchived` is set, belong to
+  an instance that is not archived), it returns exactly those whose assignment `TaskAssignment.matches(me)`
+  accepts (see the core module reference for the rule and the default mapper). A principal that is not
+  a `USER` gets an empty page, never every task.
+- `assignedTo` excludes `assigneeUser`, `assigneeRole` and `assigneeQueue`; the filter refuses the
+  combination with `IllegalArgumentException`.
+- Pass a status. With `OPEN` the PostgreSQL store reads the partial indexes on open tasks of each
+  assignee kind. Without a status, or with a closed status, it walks the keyset index over all tasks and
+  filters, which grows with the table's history. A task reserved by a recorded completion
+  (`COMPLETING`) is not in an `OPEN` inbox.
+- It is a read and authorizes nothing.
+
 Task commands require an idempotency key. A retry with the same key and same logical payload succeeds as an idempotent retry. Reusing the same key with a different logical payload fails with an idempotency conflict.
 
 ### Recorded completion
@@ -135,7 +160,7 @@ Application code should use `TaskService` or `TransactionalTaskService<TX>`. It 
 
 - **All-or-nothing due-date triplet.** A task step's optional due-date sub-chain (`.dueDate(...)`, `.onDueMutator(...)`, `.dueNextStepId(...)`) must specify all three or none. Partial triplets are rejected at construction by the `HumanTaskNode` compact constructor.
 - **Non-empty unique decisions.** Each task step must declare at least one decision, and decision names within one step must be unique.
-- **`TaskFilter` single-assignee-kind guard.** At most one of `assigneeUser` / `assigneeRole` / `assigneeQueue` may be set. Use `TaskFilter.empty()` plus the `with*` copies to compose filters. `withScopeKey(...)` adds an exact-match start-scope filter (`null` matches every scope; it is a filter, not an authorization boundary: see the core module reference). `withTaskType(...)` adds an exact-match filter on the task type the step declared (`TaskRecord.taskType()`); a task created without a type matches no task type.
+- **`TaskFilter` single-assignee-kind guard.** At most one of `assigneeUser` / `assigneeRole` / `assigneeQueue` may be set; for a user OR its roles OR its queues use `withAssignedTo`, which excludes the three. Use `TaskFilter.empty()` plus the `with*` copies to compose filters. `withScopeKey(...)` adds an exact-match start-scope filter (`null` matches every scope; it is a filter, not an authorization boundary: see the core module reference). `withTaskType(...)` adds an exact-match filter on the task type the step declared (`TaskRecord.taskType()`); a task created without a type matches no task type.
 - **Required actor.** `TaskCompletionCommand` and `TaskReassignmentCommand` reject null / blank `WorkflowActor` via their compact constructors. Authorization is the application's job; the actor recorded here is for audit and idempotency.
 - **Blank `reason` normalization.** Blank `reason` strings on commands are normalized to `null` before idempotency fingerprinting, so callers who omit a reason do not get treated as different commands.
 - **Return contract.** `complete` / `reassign` return `Future<Void>`. There is no result enum on the application-facing API: a succeeded future means the command's effect is persisted (for `complete`, that the completion is *recorded* and the task reserved; the executor applies it afterwards), and every other outcome is a failed future carrying a typed exception — `WorkflowTaskNotWaitingException`, `WorkflowConflictException`, `WorkflowIdempotencyConflictException`, `WorkflowTaskNotFoundException`, `WorkflowStaleSubjectVersionException`, `WorkflowStaleAssignmentException`, or `WorkflowInvalidPayloadException` (400 semantics: unknown decision, payload missing or unexpected for the decision, or a payload that does not bind to the declared type). These operations never report a problem by returning a "nothing happened" value.

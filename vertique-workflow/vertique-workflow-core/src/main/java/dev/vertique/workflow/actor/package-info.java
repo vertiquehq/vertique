@@ -8,6 +8,9 @@
  * so that the append-only history can answer "who initiated this change?" The actor is strictly
  * audit metadata — the runtime never gates a call on the actor identity.
  *
+ * <p>{@link dev.vertique.workflow.actor.TaskPrincipalsMapper} maps the caller to the principals tasks are assigned to;
+ * unlike the actor, those principals feed the application's own task-inbox query and eligibility check.
+ *
  * <p>{@code ActorText} is the internal text rule that keeps an actor id safe to log.
  */
 package dev.vertique.workflow.actor;

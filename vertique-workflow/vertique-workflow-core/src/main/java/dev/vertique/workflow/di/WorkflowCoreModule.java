@@ -9,6 +9,7 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.Multibinds;
 import dev.vertique.workflow.actor.DefaultWorkflowActorMapper;
+import dev.vertique.workflow.actor.TaskPrincipalsMapper;
 import dev.vertique.workflow.actor.WorkflowActorMapper;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
@@ -250,4 +251,13 @@ public abstract class WorkflowCoreModule {
     @Binds
     @Singleton
     abstract WorkflowActorMapper workflowActorMapper(DefaultWorkflowActorMapper impl);
+
+    /**
+     * Declares the optional application binding of {@link TaskPrincipalsMapper}. A consumer injects
+     * {@code Optional<TaskPrincipalsMapper>} and falls back to
+     * {@link dev.vertique.workflow.actor.DefaultTaskPrincipalsMapper} when the application binds none,
+     * so an application replaces the default with a plain {@code @Provides TaskPrincipalsMapper}.
+     */
+    @BindsOptionalOf
+    abstract TaskPrincipalsMapper taskPrincipalsMapper();
 }

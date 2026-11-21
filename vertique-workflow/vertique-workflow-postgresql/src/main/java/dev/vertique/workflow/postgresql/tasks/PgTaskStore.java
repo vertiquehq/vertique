@@ -15,6 +15,7 @@ import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.tasks.TaskAssignment;
 import dev.vertique.workflow.tasks.TaskDecisionDescriptor;
 import dev.vertique.workflow.tasks.TaskFilter;
+import dev.vertique.workflow.tasks.TaskPrincipals;
 import dev.vertique.workflow.tasks.TaskReassignmentResult;
 import dev.vertique.workflow.tasks.TaskRecord;
 import dev.vertique.workflow.tasks.TaskStatus;
@@ -419,9 +420,38 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
      *
      * <p>Executes a non-locking SELECT with an optional JOIN to {@code workflow_instances} for
      * subject filters. The keyset pagination uses {@code (updated_at DESC, task_id ASC)}.
+     *
+     * <p>An {@code assignedTo} filter adds one parenthesized predicate: the task's
+     * {@code (assignee_type, assignee_key)} pair is the user id, one of the roles or one of the queues,
+     * as an {@code OR} of up to three branches, the role and queue values bound as text arrays. A branch
+     * for an empty set is left out. For principals that cannot match an assignment the predicate is
+     * {@code FALSE}, so the page is empty. With {@code assignedTo} the assignee kinds and the status are
+     * inlined as literals (constants and an enum name, never caller text), so the planner can match the
+     * partial indexes on open tasks of each assignee kind even under a generic prepared plan.
      */
     @Override
     public Future<PagedResult<TaskRecord>> findByFilter(TaskFilter filter, PageCursor cursor, SqlClient tx) {
+        return page(buildQuery(filter), cursor, tx);
+    }
+
+    /**
+     * The statement of a task query before paging: the {@code SELECT} with its {@code WHERE} clause,
+     * and the values of its positional parameters in order.
+     *
+     * @param sql the statement text
+     * @param params the parameter values, {@code $1} first
+     */
+    record FilterQuery(String sql, List<Object> params) {}
+
+    /**
+     * Builds the statement of {@link #findByFilter}. Package-private so the plan of the statement can be
+     * checked.
+     *
+     * @param filter the filter
+     * @return the statement and its parameters
+     */
+    FilterQuery buildQuery(TaskFilter filter) {
+        TaskPrincipals principals = filter.assignedTo();
         // The subject filters (subjectType, subjectId) need a JOIN to workflow_instances.
         // The joined side is a narrowed projection of workflow_instances (only the columns the
         // filters read) so workflow_instances.updated_at is never visible: the keyset WHERE
@@ -448,8 +478,17 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
         }
         if (filter.status() != null) {
             sql.append(hasWhere ? " AND" : " WHERE");
-            paramValues.add(filter.status().name());
-            sql.append(" ").append(colPrefix).append("status = $").append(paramValues.size());
+            if (principals != null) {
+                // An enum name, never caller text: inlined so the partial indexes on open tasks apply.
+                sql.append(" ")
+                        .append(colPrefix)
+                        .append("status = '")
+                        .append(filter.status().name())
+                        .append("'");
+            } else {
+                paramValues.add(filter.status().name());
+                sql.append(" ").append(colPrefix).append("status = $").append(paramValues.size());
+            }
             hasWhere = true;
         }
         if (filter.assigneeUser() != null) {
@@ -472,6 +511,11 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
             sql.append(" ").append(colPrefix).append("assignee_type = $").append(paramValues.size());
             paramValues.add(filter.assigneeQueue());
             sql.append(" AND ").append(colPrefix).append("assignee_key = $").append(paramValues.size());
+            hasWhere = true;
+        }
+        if (principals != null) {
+            sql.append(hasWhere ? " AND" : " WHERE");
+            appendAssignedTo(sql, paramValues, colPrefix, principals);
             hasWhere = true;
         }
         if (filter.dueBefore() != null) {
@@ -520,15 +564,62 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
             }
         }
 
+        return new FilterQuery(sql.toString(), paramValues);
+    }
+
+    /**
+     * Appends the parenthesized predicate that the task is assigned to one of the principals.
+     * Parenthesized because the paged-query builder appends the keyset predicate after it.
+     */
+    private static void appendAssignedTo(
+            StringBuilder sql, List<Object> paramValues, String colPrefix, TaskPrincipals principals) {
+        if (!principals.canMatchAssignments()) {
+            sql.append(" FALSE");
+            return;
+        }
+        String type = colPrefix + "assignee_type";
+        String key = colPrefix + "assignee_key";
+        paramValues.add(principals.userId());
+        sql.append(" ((")
+                .append(type)
+                .append(" = 'USER' AND ")
+                .append(key)
+                .append(" = $")
+                .append(paramValues.size())
+                .append(")");
+        if (!principals.roles().isEmpty()) {
+            paramValues.add(principals.roles().toArray(String[]::new));
+            sql.append(" OR (")
+                    .append(type)
+                    .append(" = 'ROLE' AND ")
+                    .append(key)
+                    .append(" = ANY($")
+                    .append(paramValues.size())
+                    .append("))");
+        }
+        if (!principals.queues().isEmpty()) {
+            paramValues.add(principals.queues().toArray(String[]::new));
+            sql.append(" OR (")
+                    .append(type)
+                    .append(" = 'QUEUE' AND ")
+                    .append(key)
+                    .append(" = ANY($")
+                    .append(paramValues.size())
+                    .append("))");
+        }
+        sql.append(")");
+    }
+
+    private Future<PagedResult<TaskRecord>> page(FilterQuery query, PageCursor cursor, SqlClient tx) {
         String orderCol = "updated_at";
         String uniqueCol = "task_id";
 
         // Pin execution to the caller's tx so that read-your-own-writes works inside a single
         // withTransaction(...) block. The inherited pagedQuery() helper defaults to the pool;
         // overriding via .on(tx) routes the read through the active SqlConnection.
-        return this.<TaskRecord>pagedQuery(sql.toString())
+        return this.<TaskRecord>pagedQuery(query.sql())
                 .on(tx)
-                .params(Tuple.from(paramValues))
+                .params(Tuple.from(query.params()))
                 .mapping(this::mapRow)
                 .orderBy(OrderKey.desc(orderCol), OrderKey.asc(uniqueCol))
                 .uniqueKey(uniqueCol)
