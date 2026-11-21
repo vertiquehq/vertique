@@ -19,6 +19,7 @@ import dev.vertique.security.SecurityIdentity;
 import dev.vertique.security.authz.AuthorityClaim;
 import dev.vertique.security.authz.AuthorityKind;
 import dev.vertique.security.authz.AuthorizationClaims;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -64,6 +65,7 @@ class DefaultOutboxCallerScopesMapperTest {
         assertEquals(OutboxCallerScopes.ofUser(Set.of("acme", "default")), scopes);
         assertTrue(scopes.permits("acme"));
         assertFalse(scopes.permits("other-scope"));
+        assertFalse(scopes.permits(null));
     }
 
     @Test
@@ -126,7 +128,7 @@ class DefaultOutboxCallerScopesMapperTest {
     @Test
     @DisplayName("the scopes copy their set and refuse null components")
     void recordRules() {
-        java.util.HashSet<String> keys = new java.util.HashSet<>(Set.of("a"));
+        HashSet<String> keys = new HashSet<>(Set.of("a"));
         OutboxCallerScopes scopes = OutboxCallerScopes.ofUser(keys);
         keys.add("b");
 

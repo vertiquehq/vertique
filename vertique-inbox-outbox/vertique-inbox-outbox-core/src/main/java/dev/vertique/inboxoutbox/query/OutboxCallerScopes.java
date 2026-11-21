@@ -58,10 +58,10 @@ public record OutboxCallerScopes(PrincipalType principalType, Set<String> scopeK
     /**
      * Tells whether an entry with the given scope key is visible to the caller.
      *
-     * @param scopeKey the scope key of the entry
+     * @param scopeKey the scope key of the entry; {@code null} is never permitted
      * @return {@code true} when the caller is a user and {@code scopeKey} is one of its scope keys
      */
     public boolean permits(String scopeKey) {
-        return canMatchEntries() && scopeKeys.contains(scopeKey);
+        return scopeKey != null && canMatchEntries() && scopeKeys.contains(scopeKey);
     }
 }

@@ -12,9 +12,10 @@ import java.util.Optional;
  * Read-only view of the outbox for trusted in-process code, such as administration adapters: list entries by
  * state and other filters, read one entry, and read its stored content.
  *
- * <p>The service performs no authorization. It reads the configured store as a whole: it does not filter on an
- * entry's scope key and returns it only as a label, so it is a platform-operator surface, not a scope-isolation
- * boundary. Stored
+ * <p>The service performs no authorization and takes no caller. It filters on an entry's scope key only when
+ * {@link OutboxQuery#visibleTo()} is set, and an implementation of {@code list} must honour it; {@code getById},
+ * {@code getPayload} and the operations do not check scope, so an adapter checks an entry with
+ * {@link OutboxCallerScopes#permits(String)} before it reads or changes it. Stored
  * carrier, security and context metadata are never returned. Retrying and discarding entries is
  * {@link dev.vertique.inboxoutbox.ops.OutboxOperations}.
  *
