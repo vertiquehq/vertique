@@ -886,7 +886,7 @@ public final class Diagnostics {
      */
     public static String workflowDefaultMethod(String contractFqn, String methodName) {
         return ("Method %s in %s is a default method; default methods are not supported on workflow"
-                        + " contract interfaces in cycle 1.")
+                        + " contract interfaces.")
                 .formatted(methodName, contractFqn);
     }
 

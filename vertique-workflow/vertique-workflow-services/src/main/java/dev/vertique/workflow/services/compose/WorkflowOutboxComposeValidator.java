@@ -149,8 +149,8 @@ public final class WorkflowOutboxComposeValidator implements WorkflowDefinitionV
         if (meta.oneWay()) {
             throw new IllegalStateException("Workflow definition '" + defId + "' v" + defVersion + " step '" + stepId
                     + "' references service target '" + targetId
-                    + "' which is @OneWay; cycle 1 only supports request/reply targets that"
-                    + " return Future<Void>.");
+                    + "' which is @OneWay; only request/reply targets that"
+                    + " return Future<Void> are supported.");
         }
         Class<?> rt = meta.returnType();
         boolean isVoid = Void.class.equals(rt) || void.class.equals(rt);
