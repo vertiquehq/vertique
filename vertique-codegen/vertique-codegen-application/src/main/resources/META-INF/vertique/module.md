@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.codegen.application`
 > **Artifact:** `vertique-codegen-application`
-> **Depends on:** `vertique-codegen-core` (compile), `vertique-application` (processor classpath only)
+> **Depends on:** `vertique-codegen-core` (compile); names `vertique-application` types by fully qualified name only
 
 `vertique-codegen-application` is an annotation processor that generates an application's
 `VertiqueComponentFactory` implementation and its `META-INF/services` SPI registration from a
@@ -255,7 +255,9 @@ does not clean up previously generated files.
 - **`vertique-codegen-core`** — `CodegenContext`, `TypeResolver`, `Diagnostics`; APT helper
   library shared across the codegen family.
 - **`vertique-application`** — `VertiqueApp` annotation and `VertiqueApplicationComponent`
-  (referenced by FQN in the processor; on the processor classpath so the types resolve during
-  annotation processing). Not on the application runtime classpath.
+  (referenced by FQN in the processor, which does not depend on the artifact). The application
+  declares it as an ordinary dependency, so the types resolve from the application's own compile
+  classpath during annotation processing; the processor does nothing when the annotation is not
+  on that classpath.
 
 The module has no dependency on `vertique-launcher`, `vertique-core`, or any runtime module.
