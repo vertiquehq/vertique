@@ -67,9 +67,9 @@ public final class WorkflowPlanValidator {
     }
 
     /**
-     * Validates the plan against the fork/join rules.
+     * Validates the plan against the signal-name, reply-wait and fork/join rules.
      *
-     * <p>Plans without {@code ForkNode}/{@code JoinNode} are accepted unchanged.
+     * <p>A plan that breaks none of them is accepted unchanged. A refusal names the plan's definition id and version.
      *
      * @param plan the plan to validate
      * @throws WorkflowDefinitionException on the first rule violation

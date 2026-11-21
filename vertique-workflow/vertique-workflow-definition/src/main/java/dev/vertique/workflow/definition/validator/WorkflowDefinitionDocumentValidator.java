@@ -74,8 +74,8 @@ import java.util.function.Supplier;
  *   <li>{@code STEP_ID_DUPLICATE} — same step id appears more than once in the steps list.</li>
  *   <li>{@code UNREACHABLE_STEP} — a step cannot be reached from {@code initialStep}. Reachability follows every
  *       step reference: {@code next}, a wait-signal {@code timeout.next}, a human-task decision or due
- *       {@code next}, a decision route {@code to} and {@code default}, a service step's {@code compensation}, a
- *       fork's branch {@code startStep} and {@code join}, and a join's {@code next} and {@code onFailure}. One
+ *       {@code next}, a decision route {@code to} and {@code default}, a service step's {@code compensation},
+ *       {@code reply.next}, {@code reply.onFailure.next} and {@code reply.timeout.next}, a fork's branch {@code startStep} and {@code join}, and a join's {@code next} and {@code onFailure}. One
  *       violation per unreachable step; skipped when {@code initialStep} is not a step id.</li>
  *   <li>{@code STEP_NEXT_UNKNOWN} — a {@code next} reference does not resolve to any step id.</li>
  *   <li>{@code STEP_TARGET_SERVICE_FORMAT} — {@code target} field is blank on a
