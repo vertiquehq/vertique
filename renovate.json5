@@ -38,6 +38,13 @@
       allowedVersions: '/^[0-9]+\\.[0-9]+\\.[0-9]+$/',
     },
     {
+      description: 'victools jsonschema-generator 5 moves to Jackson 3. The framework stays on the Jackson 2 line until its Jackson 3 migration, so major 5 is held back until then; remove this rule as part of that migration.',
+      matchManagers: ['maven'],
+      matchPackageNames: ['com.github.victools:**'],
+      matchUpdateTypes: ['major'],
+      enabled: false,
+    },
+    {
       description: 'GitHub Actions are pinned to commit SHAs with a version comment; let Renovate keep both in sync.',
       matchManagers: ['github-actions'],
       groupName: 'github actions',
