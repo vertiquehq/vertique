@@ -75,8 +75,9 @@ applications contribute their own the same way. Placement-aware adapters read pl
 optional `DbSchemas` binding and reference no Flyway types, so a runtime component needs no Flyway
 module or configuration.
 
-`vertique-workflow-engine` depends on `vertique-deploy` (`VerticleDeployment`, `LifecyclePhase`) for the
-`workflow-executor` deployment, which it contributes to the `SERVICES` phase like the outbox relay. Among Vertique
+`vertique-workflow-engine` depends on `vertique-deploy` (`VerticleDeployment`) and uses `LifecyclePhase` from
+`vertique-core` for the `workflow-executor` deployment, which it contributes to the `SERVICES` phase like the
+outbox relay. Among Vertique
 modules `vertique-deploy` depends only on `vertique-core`, so the dependency adds no cycle.
 
 A service reply crosses from the outbox handler to workflow through an in-process consumer that records the fenced outcome.
@@ -92,7 +93,7 @@ binding), and neither depends on it. It takes no compile dependency on the workf
 PostgreSQL, which the build enforces, so a Kafka source records its signals through the generic
 operations of `vertique-workflow-core`. Generated Dagger wiring from `vertique-codegen-dagger`
 registers the signal sources of an application, both the classes annotated
-`@WorkflowSignalSource` and the sources generated for annotated `@KafkaListener` interfaces, into
+`@WorkflowSignalSource` and the sources generated for interfaces annotated `@KafkaSignalListener`, into
 the `Set` of the transport's source interface. It recognizes the annotations by name and takes no
 compile dependency on the workflow modules.
 
@@ -141,8 +142,9 @@ during Maven validation, including transitive dependencies. Applications instead
 inherit the consumer-safe `vertique-app-parent` described below.
 
 Cache support follows the same one-way boundary: `vertique-cache-core` owns
-provider-neutral cache contracts and consumes `vertique-aop` and `vertique-core`;
-the Caffeine and Redis provider modules depend on that neutral core. Shared Redis
+provider-neutral cache contracts and consumes `vertique-core`, `vertique-context` and `vertique-security-core`;
+`vertique-cache-aop` layers the annotation adapters on it and on `vertique-aop`. The Caffeine and Redis provider
+modules depend on that neutral core. Shared Redis
 connection profiles and client lifecycle belong to `vertique-redis-core`, which is
 independent of cache-specific behavior so other Redis-backed capabilities can reuse it.
 
