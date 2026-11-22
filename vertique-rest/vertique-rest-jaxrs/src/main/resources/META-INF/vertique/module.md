@@ -1009,9 +1009,9 @@ Parameters are matched in this order:
 `CursorPageRequest`: no per-method annotation, and the record is reusable across endpoints.
 
 `@MatrixParam` is not recognized on a server resource method; only the `UriBuilder` implementation uses it. A
-resource-method parameter that carries it is not rejected: it matches no row above except
-the last and is bound as the request body, and a method that already declares a body parameter fails at startup with
-`MULTIPLE_BODY_PARAMS`.
+resource-method parameter that carries it is not rejected: unless its type matches an earlier row (a context type,
+`RequestPreconditions` or a `@RequestParams` type), it is bound as the request body, and a method that already
+declares a body parameter fails at startup with `MULTIPLE_BODY_PARAMS`.
 
 **Type coercion** for `PATH`, `QUERY`, `HEADER`, `COOKIE`, and text `FORM` values goes through the
 shared `dev.vertique.rest.core.convert.ParamConversionResolver`, not a fixed scalar table:
