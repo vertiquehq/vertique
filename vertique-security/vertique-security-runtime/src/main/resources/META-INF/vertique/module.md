@@ -285,6 +285,8 @@ For a gated action with a base PERMIT, `narrow` denies with `STEP_UP_REQUIRED` o
 
 A base DENY passes through untouched, and an unparseable action string fails closed to `INTERNAL_AUTHZ_ERROR`.
 
+No framework component populates `AuthenticationAssurance` on a live request: the REST identity resolution builds the authentication state with an empty assurance, so a gated action denies with `BELOW_MIN` there. A verified reconstruction carries the assurance recorded in its snapshot, but the first condition above still applies to it.
+
 `requirementFor` is annotate-only: it reports the configured requirement for every gated action regardless of whether the given context would currently satisfy it. For a reconstructed context this method is never reached through introspection at all — the framework's introspector throws `ReconstructedContextIntrospectionUnsupportedException` before consulting any narrower; a caller needing the `RECONSTRUCTED_NEEDS_STEP_UP` answer for such a context calls `Authorizer#authorize(...)` instead.
 
 `AssuranceRequirementModule` is the opt-in Dagger module: it provides the parsed `AssuranceRequirementConfig`, contributes the narrower `@IntoSet AuthorizationNarrower`, and provides the `@AssuranceClock`-qualified `Clock` (`Clock.systemUTC()`) the narrower consumes — qualified so it coexists with any other `Clock` binding in the same component without a duplicate-binding error. With no configured `identity.assurance.actions` entries, the installed narrower is a no-op passthrough.

@@ -28,7 +28,7 @@ Use the self-reference idiom (see Core Concepts) to pull Vault secrets into the 
 
 ### Eager Load
 
-All declared paths are read once, at source instantiation time during bootstrap phase 2 (source creation). The resulting map is immutable. A declared path that cannot be read — 404, 403, TCP-refused, or any other error — aborts startup immediately with a `ConfigPropertySourceException` naming the source and path. Placeholder defaults do not override this: if a source is declared and fails to load, bootstrap fails before pass 3 (placeholder resolution) runs.
+All declared paths are read once, when the source is created during bootstrap. The resulting map is immutable. A declared path that cannot be read — 404, 403, TCP-refused, or any other error — aborts startup immediately with a `ConfigPropertySourceException` naming the source and path. Placeholder defaults do not override this: if a source is declared and fails to load, bootstrap fails before pass 3 (placeholder resolution) runs.
 
 ### Path Semantics
 
