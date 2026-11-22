@@ -52,9 +52,10 @@ import org.slf4j.LoggerFactory;
  *       there instead, and its instance is unchanged; only a step-limit overrun fails the instance of those kinds.</li>
  * </ul>
  *
- * <p>Once the executor is stopping ({@link #stop()}), the database pool is closing, so the write of a failure, a
- * reschedule or a release that fails is not tried again: the claim lapses with its lease and the next start takes the
- * command again. A write that answers that the execution lock is busy is still tried again.
+ * <p>Once the executor is stopping ({@link #stop()}), the write of a failure, a reschedule or a release that fails is
+ * not tried again, whatever the cause: the application closes the database pool before it stops the executor, so such
+ * a write cannot succeed. The claim lapses with its lease, its attempt stays spent as after a crash, and the next start
+ * takes the command again. A write that answers that the execution lock is busy is still tried again.
  *
  * <p>A recorded {@code SIGNAL} settles itself inside its savepoint: the engine parks it, or rejects or stales it with a
  * reason, and answers with the matching outcome, so only an applied signal is completed here. A signal's deterministic

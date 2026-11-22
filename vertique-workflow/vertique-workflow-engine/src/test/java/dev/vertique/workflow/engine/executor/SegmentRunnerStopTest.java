@@ -118,6 +118,31 @@ class SegmentRunnerStopTest {
     }
 
     @Test
+    @DisplayName("a release write that fails is abandoned when the executor stops")
+    void releaseWriteIsAbandonedWhenTheExecutorStops() throws Exception {
+        // Given a claim whose busy-lock give-up has passed, so that its segment is not run but its claim is released,
+        // and a release write that always fails
+        when(commands.release(any())).thenReturn(Future.failedFuture(new IllegalStateException("not active")));
+        WorkflowExecutorConfig config = new WorkflowExecutorConfig(1, 1, 100, LEASE_SECONDS);
+        long claimedAt = System.nanoTime()
+                - TimeUnit.SECONDS.toNanos(LEASE_SECONDS)
+                + TimeUnit.MILLISECONDS.toNanos(config.marginMs())
+                - TimeUnit.SECONDS.toNanos(1);
+        Future<Void> run = segmentRunner.run(head, claim, claimedAt, null);
+        verify(commands, timeout(5_000).atLeast(2)).release(any());
+        assertThat(run.isComplete()).isFalse();
+
+        // When the executor stops
+        segmentRunner.stop();
+
+        // Then the segment ends without the release having succeeded
+        run.toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
+        int writes = Mockito.mockingDetails(commands).getInvocations().size();
+        Thread.sleep(500);
+        assertThat(Mockito.mockingDetails(commands).getInvocations()).hasSize(writes);
+    }
+
+    @Test
     @DisplayName("a failure write that finds the execution lock busy is still tried again after the executor stops")
     void busyFailureWriteIsStillTriedAfterTheExecutorStops() throws Exception {
         // Given a segment that failed for good and a failure write that always finds the lock busy

@@ -8,6 +8,7 @@ import static dev.vertique.workflow.postgresql.executor.ExecutorFixture.await;
 import static dev.vertique.workflow.postgresql.executor.ExecutorFixture.startOf;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import ch.qos.logback.classic.Level;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
@@ -67,6 +68,10 @@ class ExecutorStopWithCommandInFlightIT {
 
             // Then the stop ended within its budget, long before the segment deadline
             assertThat(tookMs).isLessThan(STOP_BUDGET.toMillis());
+
+            // And the segment's write was abandoned because of the stop, not because the segment ended some other way
+            assertThat(fixture.logged(Level.WARN))
+                    .anyMatch(event -> event.getFormattedMessage().contains("while the executor stops"));
 
             // And the command is still claimed, with its attempt spent: its lease releases it on the next start
             CommandRow claimed = fixture.commandOf(id);
