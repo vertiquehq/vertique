@@ -34,7 +34,7 @@ The status is Alpha: public signatures and configuration may break in any releas
 
 **Name.** A source is named `{groupId}-{topic}` unless `.name(...)` replaces it. The name is the consumer's configuration key and the source name in diagnostics and in events.
 
-**Construction checks.** `build()` fails with an `IllegalStateException` that names the source and never a key, for a signal the contract does not declare, a signal with no key source, a business-key signal with no `dedupBy`, and `scope` beside `anyScope`. A blank topic, group id or name fails at once with an `IllegalArgumentException` naming it.
+**Construction checks.** `build()` fails with an `IllegalStateException` that names the source and never a key, for a source that declares no signal, a signal the contract does not declare, a signal with no key source, a message type that differs from the signal's parameter type with no `payload`, a business-key signal with no `dedupBy`, `scope` beside `anyScope`, and a `lookupTimeoutMs` below 1. A `build()` with no topic or no group id fails with an `IllegalStateException` as well. A blank topic, group id or name fails at once with an `IllegalArgumentException` naming it.
 
 **Undecodable records.** A record that cannot be decoded is acknowledged and reported once as `UNDECODABLE` through the delivery bean. It does not go down the error strategy. A transient decode failure, such as a schema registry that cannot be reached (`DeserializationException.isTransient()`), is not ignored: it takes the error strategy, so the record is retried and then dead-lettered rather than lost.
 
@@ -137,7 +137,7 @@ final class ShipmentSignals implements KafkaSignalSource<ShipmentDelivered> {
 - **Name only the generated module.** `KafkaSignalSource` is marked `@SignalSourceType(module = WorkflowKafkaSignalsModule.class)`, so the generated registrations module includes `WorkflowKafkaSignalsModule`. An application does not list it.
 - **A forgotten generated module leaves no source.** The generated registrations module carries the sources and this module, so a component that leaves it out builds and runs with no source consuming, as with any generated module. Name it in the component.
 - **The message type is the type argument.** `T` is read from the class's `KafkaSignalSource<T>` type argument. A raw `KafkaSignalSource`, or a type variable the class leaves unresolved, fails startup with an `IllegalStateException` naming the class; it never falls back to `Object`.
-- **Exceptions from `define` are fatal.** An exception thrown by `define`, or by the checks of `build()`, propagates and fails the startup that builds the binding set; the message names the class.
+- **Exceptions from `define` are fatal.** An exception thrown by `define`, or by the checks of `build()`, propagates and fails the startup that builds the binding set. A failed `build()` check is rethrown as an `IllegalStateException` whose message names the source class; an exception from `define` itself propagates unchanged.
 
 ---
 
@@ -151,6 +151,6 @@ The shared stage interfaces (`SignalStages`, `SourceStages`, `SignalTargetStage`
 
 - **workflow-services** - the delivery bean, the source plan and the shared source stages. Its `vertique-workflow-core` types come through it.
 - **kafka-core** - the consumer binding, record filter and terminal failure.
-- **codegen-dagger** - `provided`, and on the module's own processor path, so the module compiles with the generator that registers source classes. An application gets the generator from its parent's processor paths.
+- **codegen-dagger** and **codegen-workflow** - both `provided`, and on the module's own processor path, so the module compiles with the generators that register source classes and process `@KafkaSignalListener`. An application gets the generators from its parent's processor paths.
 
 The module takes no compile dependency on `vertique-workflow-engine` or `vertique-workflow-postgresql`, and the build enforces it.

@@ -75,8 +75,8 @@ validator cannot be constructed.
 
 The constraint supplement is off unless a `jakarta.validation.Validator` is bound. Install
 `ValidationModule` alongside so that the generated schema and the engine's bean-validation
-enforcement agree; wiring only one of them makes the schema looser than the engine. The module logs
-once whether the supplement is enabled.
+enforcement agree; wiring only one of them makes the schema looser than the engine. Each of the module's three schema
+generators (the registration check, the plan schema producer and the state comparison) logs at INFO, on its first use, whether the supplement is enabled; the state comparison builds its generator without a validator, so its line always says disabled.
 
 ---
 
@@ -91,7 +91,7 @@ once whether the supplement is enabled.
 `WorkflowSchemaModule` also binds `WorkflowStateCompatibility`, which the workflow registry and the engine use to decide
 whether one state class extends another. It compares the canonical JSON Schemas of the two classes under the process JSON
 profile (the same generator as the payload check, without the bean-validation supplement): every property of the source
-class must exist in the target class with the same type, and the target may add properties. Nested objects compare
+class must exist in the target class with a compatible type (the target's types must include the source's, so a target that also allows `null` is compatible; a `format` the source states must be kept), and the target may add properties. Nested objects compare
 property by property by the same rule, collection items and map values compare their item type, and an enum target must
 contain every constant of the source; a source property without constants (free text) is not compatible with an enum target. Required properties and `additionalProperties` narrowing are not compared. A refusal that cannot describe a state class names no class (the class name is logged at DEBUG level only). `firstIncompatibility(source, target)` answers the first incompatible schema path,
 such as `amount`, `address.city` or `items[].sku`, or an empty `Optional`; a path never carries a value.
