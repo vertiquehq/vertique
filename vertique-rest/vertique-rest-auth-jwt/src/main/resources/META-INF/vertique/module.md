@@ -180,10 +180,13 @@ Declare the scheme on the application's OpenAPI configuration class, using the s
 public class OpenApiConfig {}
 ```
 
-Then annotate resource methods as usual:
+An operation is authenticated only when a `@SecurityRequirement` (or `@Operation(security = ...)`) on its
+method or resource class names the scheme; the `security` element of `@OpenAPIDefinition` is not read at
+runtime. Then annotate the resource as usual:
 
 ```java
 @Path("/items")
+@SecurityRequirement(name = "bearerAuth")
 public class ItemResource {
 
     @GET

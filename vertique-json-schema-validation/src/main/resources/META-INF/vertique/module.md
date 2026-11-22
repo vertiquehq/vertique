@@ -75,8 +75,9 @@ a `required` violation, which names a property, never a value.
 and every `patternProperties` key that `java.util.regex` cannot compile. The walk never enters the
 value of a literal keyword (`const`, `enum`, `default`, `examples`, `example`), and it reads every
 member of `properties`, `patternProperties`, `$defs`, and `dependentSchemas` as a schema whatever
-its name. A `patternProperties` key is itself a regular expression, so a failure there, or beneath
-it, reports the key as `[key-N]` (its ordinal among that object's keys) and never as the expression.
+its name. A `patternProperties` key is itself a regular expression, so a key that does not compile is
+reported at the JSON Pointer of the `patternProperties` object, and a position beneath a key is reported
+with the key as `[key-N]` (its ordinal among that object's keys), never as the expression.
 The failure carries the JSON Pointer of the position, the JDK's description of the syntax error, and
 its index — never the complete pattern. The description may quote a fragment of the pattern or of the
 key, so treat it as schema-author content, not as a constant.
@@ -157,7 +158,10 @@ Compiles a schema into a `Validator` whose pattern positions are bounded.
   position gains one entry `{"format": "x-vertique-pattern-input-bound"}` appended to its `allOf`
   (`BOUND_FORMAT`), and each non-empty `patternProperties` gains a `propertyNames` entry carrying the
   same bound. Entries are appended, never prepended, so every existing `allOf` index and reported
-  keyword location stays valid against the original schema. The argument is never modified.
+  keyword location stays valid against the original schema. The copy also renames the `format` of each
+  of the seven formats the guard decides without regular expressions (see above) to
+  `x-vertique-format-<name>`, so a schema with such a format differs from its copy even without a
+  bounded position. The argument is never modified.
 - `Validator compile(JsonObject schema, JsonSchemaOptions options)` — rewrites and compiles in one
   step; the guard is the compiled copy's format validator.
 - `Window openWindow()` — opens the calling thread's per-validation window; `Window.close()` ends it.

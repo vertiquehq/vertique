@@ -158,7 +158,7 @@ Then activate it in config:
 produces Vert.x contract-backed validation gates per operation.
 
 ```java
-public class OpenApiContractValidationStrategy implements RequestValidationStrategy {
+public final class OpenApiContractValidationStrategy implements RequestValidationStrategy {
     @Override public String id() { return "openapi-contract"; }
 
     // Caches this mount's contract; rejects a mount that declares no openapiPath.

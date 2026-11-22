@@ -271,7 +271,7 @@ itself (a thrown exception or a failed future) is only logged, never dispatched 
 
 | Parameter shape | Bound to |
 |---|---|
-| `WebSocketSession` (or a supertype) | The current session |
+| `WebSocketSession` (or a subtype) | The current session |
 | `Throwable` (or a subtype) | The error on `@OnError`; left `null` on `@OnOpen` and `@OnClose`. On `@OnMessage` it is not an error slot: it counts as the message parameter (see [Message typing](#message-typing)) |
 | `dev.vertique.security.SecurityContext` | `SecurityRuntime.current()` at invocation time; `null` when no security module is installed |
 | `@PathParam("name") T` | The extracted path segment, converted to `T` |

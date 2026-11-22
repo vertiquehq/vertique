@@ -2176,7 +2176,9 @@ passed to every operation handler contributor instead of "no action". The action
 (no `ActionRegistry`) is not installed, the REST authentication enforcement runtime is not installed,
 no `Authorizer` is installed, or the action is not registered. Roles or scopes without the enforcement runtime are refused for the same reason a resource
 route is. An action-only policy resolves to no `SecurityPolicy` restriction plus its action, as it does
-on a resource route, so the action-gate contributor needs exactly one route authentication handler.
+on a resource route. The operation names its scheme, so that scheme's handler authenticates it, and the
+action-gate contributor, which installs its own route authentication handler only for an operation that
+declares no scheme, installs none.
 
 Enforcement of a typed policy is supported in a composition that includes `AuthModule` and
 `SecurityModule`, directly or through a module that includes them. Where that composition is missing, a

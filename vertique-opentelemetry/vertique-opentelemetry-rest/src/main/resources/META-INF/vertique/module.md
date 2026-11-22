@@ -22,8 +22,10 @@ request or response, and it never submits audit records.
 
 ## When To Use It
 
-Install `vertique-opentelemetry-rest` alongside `RestCoreModule` (or `RestModule`) when distributed
+Install `vertique-opentelemetry-rest` alongside `RestModule` (the JAX-RS mount) when distributed
 tracing is enabled and HTTP server spans should carry OpenAPI route templates and operation ids.
+The enrichment handler is registered only on JAX-RS operation routes, so an application that includes
+`RestCoreModule` without a JAX-RS mount gets no span rename and no route or operation attributes.
 Pair with `vertique-opentelemetry-core` to activate the Vert.x OTel tracer integration and the SDK
 bootstrap. Without a recorded parent span the enrichment is a silent no-op on every request.
 

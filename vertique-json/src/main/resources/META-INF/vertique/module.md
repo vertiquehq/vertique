@@ -441,7 +441,7 @@ customizations.
 | Class | Behavior |
 |---|---|
 | `BigDecimalAsStringSerializer` | Writes `BigDecimal` as a quoted JSON string via `toPlainString()`, bounded to 100 characters; rejects an over-length value with a value-free `JsonMappingException` |
-| `BigDecimalStrictStringDeserializer` | Accepts only a JSON string matching `-?[0-9]+(\.[0-9]+)?` of at most 100 characters; every other token raises `MismatchedInputException` naming only the rejected length |
+| `BigDecimalStrictStringDeserializer` | Accepts only a JSON string matching `-?[0-9]+(\.[0-9]+)?` of at most 100 characters; every other input raises `MismatchedInputException` without echoing the value (a wrong token names its type, a rejected string only its length) |
 | `StrictStringDeserializer` | Rejects scalar→`String` coercion: only `VALUE_STRING` is accepted |
 
 The two `BigDecimal` serdes are a **matched pair** — activating either alone produces an asymmetric
@@ -638,7 +638,7 @@ A validation failure then propagates out of `start()` and the verticle never bec
 | `JsonMapperProfileRegistry` | Bound to the validating default implementation. |
 | `JsonConfig` | Parsed from the `json` config section through the injected `ConfigParser` — both `jsonProfile` and `systemProfile`. |
 | `ApplicationStartupStep` (`@IntoSet`) | The `CONFIGURE`-phase step that installs the `json.systemProfile` profile's mapper as the process JSON codec's mapper. |
-| `ComposeValidator` (`@IntoSet`) | The `json.jsonProfile` validator, forced during the `VALIDATE` phase. It is a pure delegate to `JsonMapperProfileRegistry.validateConfigured(...)`, which owns every message. |
+| `ComposeValidator` (`@IntoSet`) | The `json.jsonProfile` validator, forced during the `VALIDATE` phase. It delegates to `JsonMapperProfileRegistry.validateConfigured(...)`, which owns every profile-id message, for `json.jsonProfile` and `json.systemProfile` alike, and then re-checks that the installed process codec's mapper has no Jackson default typing. |
 
 ---
 

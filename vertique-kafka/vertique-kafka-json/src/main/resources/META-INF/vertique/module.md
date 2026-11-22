@@ -135,7 +135,7 @@ public final class JsonSerdeProvider implements KafkaSerdeProvider {
 
 - `autoDetects` is always `false` — JSON is the terminal fallback, not an auto-detected format. If no format is configured and no other provider's `autoDetects` fires, the registry resolves to `"json"` and requires `JsonSerdeProvider` to be registered.
 - `matchValue` returns `null` (not an empty string) when the routing value is not a `JsonNode` (e.g. when a non-JSON provider's `routingDeserializer` was mistakenly used). The dispatcher treats a `null` match as "no route matched".
-- `convertRouted` throws `DeserializationException` — not `null` — when `treeToValue` fails. The failure message is intentionally value-free (the offending record content is not interpolated into the message); the Jackson cause is preserved as `getCause()` for stacktrace debugging. The failure propagates through the configured `ErrorStrategy`.
+- `convertRouted` throws `DeserializationException` — not `null` — when `treeToValue` fails or when the routing value is not a `JsonNode`. The failure message is intentionally value-free (the offending record content is not interpolated into the message); the Jackson cause is preserved as `getCause()` for stacktrace debugging. The failure propagates through the configured `ErrorStrategy`.
 - An unknown `jsonProfile` id throws `JsonProfileConfigurationException` at deserializer-build time (startup or first endpoint use), not per-record.
 
 ---

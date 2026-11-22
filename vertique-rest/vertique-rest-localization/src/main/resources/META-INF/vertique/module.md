@@ -45,7 +45,7 @@ If no source resolves a locale, the interceptor binds the configured `defaultLoc
 The `LocalizationContext` bound in `ContextHolder` by `RequestLocaleInterceptor` is the single source of truth for the negotiated locale. Handler code reads it as:
 
 ```java
-Optional<Locale> locale = ContextHolder.current(LocalizationContext.class)
+Optional<Locale> locale = holder.current(LocalizationContext.class)
         .map(LocalizationContext::locale);
 ```
 
@@ -62,7 +62,7 @@ ZoneId  zone  = LocalizationContextHolder.zone(holder, ZoneId.of("UTC"));
 
 ### Scope lifecycle
 
-The `ContextHolder.Scope` returned by the binding call is registered with `RequestContextLifecycle.fromRoutingContext(rc).onClose(scope)`. The scope is closed when the request context is torn down at request completion. If `onClose` registration itself throws, the interceptor closes the scope immediately to prevent a leak.
+The `ContextHolder.Scope` returned by the binding call is registered with `RequestContextLifecycle.fromRoutingContext(rc).onClose(scope)`. The scope is closed when the request context is torn down at request completion. If `onClose` registration itself throws, the interceptor closes the scope immediately to prevent a leak and fails the request.
 
 ---
 
@@ -113,7 +113,7 @@ Built-in `LocaleSource` that negotiates the `Accept-Language` request header usi
 
 ```java
 @Singleton
-public class AcceptLanguageLocaleSource implements LocaleSource {
+public final class AcceptLanguageLocaleSource implements LocaleSource {
     public static final int PRIORITY = 1000;
     // ...
 }
@@ -141,7 +141,7 @@ source's class name. Either way, repeated bad headers do not flood the log.
 
 ```java
 @Singleton
-public class RequestLocaleInterceptor implements RequestInterceptor {
+public final class RequestLocaleInterceptor implements RequestInterceptor {
     public static final int REQUEST_LOCALE_PRIORITY = Integer.MIN_VALUE + 1000;
     // ...
 }
@@ -152,7 +152,7 @@ In `beforeRequest`:
 2. Catches `RuntimeException` from each source, WARN-throttles per source class, and treats the source as deferred.
 3. Binds the first non-empty `ResolvedLocale` as `LocalizationContext` with `zoneSource = "default-zone"` and zone from `LocalizationConfig.defaultZone()`.
 4. On no match, binds `LocalizationContext` using `defaultLocale` (`localeSource = "default-locale"`) and `defaultZone` (`zoneSource = "default-zone"`).
-5. Registers the resulting `Scope` via `RequestContextLifecycle.fromRoutingContext(rc).onClose(scope)`; closes immediately on registration failure.
+5. Registers the resulting `Scope` via `RequestContextLifecycle.fromRoutingContext(rc).onClose(scope)`; closes immediately and fails the request on registration failure.
 
 `REQUEST_LOCALE_PRIORITY = Integer.MIN_VALUE + 1000` places locale resolution very early in the request interceptor order, before any application interceptor that reads the locale. A future v2 response-localization interceptor (Content-Language header, localized error bodies) must use a distinct constant and must not reuse this value.
 

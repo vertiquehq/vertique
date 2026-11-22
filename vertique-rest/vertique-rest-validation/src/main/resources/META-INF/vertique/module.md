@@ -115,12 +115,15 @@ interface AppComponent {
 SPI for pluggable request validation. Resolved by `id()` from the `Set<RequestValidationStrategy>` multibinding. The framework selects the strategy matching `jaxrs.validationStrategy` (default `"web-validation"`).
 
 ```java
-public interface RequestValidationStrategy {
+public interface RequestValidationStrategy extends OrderedExtension {
     /** Stable identifier matched against {@code jaxrs.validationStrategy}. */
     String id();
 
     /** True only when this strategy executes bound FileContentVerifiers. */
     default boolean runsFileVerifiers() { return false; }
+
+    /** True only when this strategy looks each operation up in its mount's OpenAPI contract. */
+    default boolean resolvesOperationsFromMountContract() { return false; }
 
     /** Produce an optional per-operation gate at router-build time. */
     Optional<Handler<RoutingContext>> gateFor(

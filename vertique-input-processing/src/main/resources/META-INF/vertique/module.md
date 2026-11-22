@@ -333,4 +333,5 @@ The default engine implementation, the annotation-metadata resolver and its meta
 ## Dependencies
 
 - `dev.vertique:vertique-core` — the canonicalization and sanitization contracts and annotation model this module executes, including `InputFieldNameResolver`, the wire-name projection every entry point takes.
+- `jakarta.annotation:jakarta.annotation-api` — the `@Nullable` marker on public signatures such as `precomputeFieldNameResolution` and `GeneratedInputProcessor.process`.
 - `org.slf4j:slf4j-api` — the registration-time diagnostic described under `precomputeFieldNameResolution`. Nothing on the request path logs.

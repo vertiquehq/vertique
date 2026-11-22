@@ -939,6 +939,7 @@ contributor that reads an authenticated identity above 100:
 |---:|---|---|
 | 40 | action-gate authentication (authentication stage) | `vertique-rest-security` |
 | 50 | JWT claims validation (authentication stage) | `vertique-rest-auth-jwt` |
+| 55 | JWT session enrichment | `vertique-rest-auth-jwt` |
 | 80 | identity resolution | `vertique-rest-security` |
 | 100 | authorization | `vertique-rest-security` |
 | 360 | server-span enrichment | `vertique-opentelemetry-rest` |
@@ -1559,7 +1560,7 @@ public interface RestExceptionMapperCustomizer extends OrderedExtension {
 @Provides @IntoSet
 static RestExceptionMapperCustomizer myTranslator() {
     return mapper -> mapper.on(MyInfrastructureException.class,
-            ex -> new WebApplicationException("Upstream error", 502, ex));
+            ex -> new WebApplicationException("Upstream error", ex, 502));
 }
 ```
 
@@ -1569,12 +1570,12 @@ Dagger wiring, the assembled instance and the error pipeline that consumes it ar
 
 ### Framework seams
 
-Eleven public types are named nowhere above because no application uses one — `RestContextMessages`,
+Twelve public types are framework seams that no application uses — `RestContextMessages`,
 `RestContextModule`, `RestContextTypes`, `RequestCompletionRecorder`, `MountCompositionValidator`,
 `SecurityRequirementSet`, `AuthEnforcementCapability`, `SecurityPolicyViolation`,
-`RequiresActionResolver`, `DeferredCredentialRejectionAuthHandler`, and
-`AnnotationSecurityPolicyResolver`. They are public because sibling framework modules call them
-across package boundaries: the JAX-RS route registrar, the security enforcement modules, the
+`RequiresActionResolver`, `DeferredCredentialRejectionAuthHandler`,
+`AnnotationSecurityPolicyResolver`, and `AuthenticationOrChain`. They are public because sibling
+framework modules call them across package boundaries: the JAX-RS route registrar, the security enforcement modules, the
 WebSocket transport, the OpenTelemetry integration, and the annotation processors that emit against
 the same vocabulary.
 
@@ -1843,8 +1844,9 @@ multi-scheme AND requirement, scopes declared on an OR alternative, and scopes d
   registration are skipped. Observe disconnects, resets, and normal ends through
   `ctx.addEndHandler(...)` (multicast), never through the response setters. Framework code that needs
   disconnect notification (SSE, MCP settlement) already follows this rule; application code must too.
-- **Registering on the `Handle` after completion.** `onClose`, `afterClose`, and `bindMdc` throw
-  `IllegalStateException` once the lifecycle has closed. Leaks are loud, not silent.
+- **Registering on the `Handle` after completion.** `onClose`, `afterClose`, and `bindMdc` with a
+  non-empty map throw `IllegalStateException` once the lifecycle has closed. Leaks are loud, not
+  silent.
 - **Giving a middleware `API` scope on a non-JAX-RS mount.** It is dropped without warning. Only the
   JAX-RS mount honors `MiddlewareScope.API`.
 - **Forgetting `priority()`.** `Middleware` and `OperationHandlerContributor` re-declare it as

@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.rest.ratelimit`
 > **Artifact:** `vertique-rest-rate-limit`
-> **Depends on:** `vertique-rate-limit-core`, `vertique-rest-core`, `vertique-rest-security` (narrow: `RequestOrigin` type and the `OriginCaptureMiddleware.ORDER` constant only)
+> **Depends on:** `vertique-rate-limit-core`, `vertique-rest-core`, `vertique-rest-jaxrs`, `vertique-security-core` (`RequestOrigin` type), `vertique-rest-security` (narrow: the `OriginCaptureMiddleware.ORDER` constant only)
 
 `vertique-rest-rate-limit` is the thin REST adapter for the provider-neutral
 rate-limiting contracts. It owns exactly two things: HTTP response mapping for
@@ -174,4 +174,6 @@ configuration) applies to any rule policy that omits an explicit `mode`.
 |---|---|
 | `vertique-rate-limit-core` | Programmatic rate-limiting API and decision/outcome model |
 | `vertique-rest-core` | JAX-RS routing, error pipeline, and `Middleware`/`MiddlewareScope` contracts |
-| `vertique-rest-security` | `RequestOrigin` type and the `OriginCaptureMiddleware.ORDER` constant only, for the `IP` edge dimension |
+| `vertique-rest-jaxrs` | The `RuntimeDelegate` registration that `Response.status(...)` needs when the exception mappers build their responses |
+| `vertique-security-core` | `RequestOrigin` type, for the `IP` edge dimension |
+| `vertique-rest-security` | The `OriginCaptureMiddleware.ORDER` constant only, for the `IP` edge dimension |
