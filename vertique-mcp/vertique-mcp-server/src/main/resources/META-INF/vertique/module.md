@@ -341,7 +341,7 @@ follows:
   with one terminal and one completion that record the request as `CANCELLED` with error type
   `HTTP`, the status the other handler wrote, and transport outcome `WRITTEN`. That combination
   is the documented marker of a request MCP did not report: a completion listener that reports
-  requests, such as `vertique-audit-mcp`, skips it, because rest-core reports the request. MCP does not
+  requests, such as an audit adapter, skips it, because rest-core reports the request. MCP does not
   claim the request.
 - **Rerouted out, then disconnected** — a request rerouted out of the MCP mount to a path no
   operation route matches, whose connection is lost before the response ends, is settled by MCP as
