@@ -945,8 +945,9 @@ appears in the response body. The 503 carries `Retry-After` (the gate deadline i
 at least one). Load balancers and meshes that retry on another upstream or eject a host after
 consecutive 5xx will act on it, and a WebSocket client that reconnects on 5xx re-enters authorization
 each time; a failing or hung policy point therefore becomes visible to them as an outage, which is the
-point of not answering 403, and rate limiting belongs ahead of authorization to bound how often the
-policy point is asked. A deterministic fault on one request (a policy client rejecting a crafted
+point of not answering 403. The optional edge limiter of `vertique-rest-rate-limit` runs ahead of
+authorization and bounds how often the policy point is asked; `@RateLimited` runs after authorization.
+A deterministic fault on one request (a policy client rejecting a crafted
 value) is also a 503 for that request. Every path that reaches authorization emits exactly one
 `AuthorizationDecisionEvent`; the credential-failure 401 and the import-failure 503 short-circuit
 the request before authorization runs, so no decision event is emitted for them.
