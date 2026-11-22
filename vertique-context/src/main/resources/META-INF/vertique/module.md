@@ -100,7 +100,7 @@ The runtime types and recipes in this section are internal seams for framework m
 
 #### ContextValues
 
-The internal static facade framework modules use to read and write holder values. Every write routes through the duplicated-context guard. Its typed `bind`, `mutate`, and `mutateIfPresent` entry points are bounded `<T extends ContextValue>`. Outside a Vert.x context, `current` returns an empty `Optional` and `snapshot` returns the empty snapshot.
+The internal static facade framework modules use to read and write holder values. Every write routes through the duplicated-context guard, except that `bindSnapshot` with an empty snapshot returns a no-op scope without the check. Its typed `bind`, `mutate`, and `mutateIfPresent` entry points are bounded `<T extends ContextValue>`. Outside a Vert.x context, `current` returns an empty `Optional` and `snapshot` returns the empty snapshot.
 
 ```java
 // Reads — lenient outside Vert.x; T is unbounded
@@ -183,7 +183,7 @@ The injectable orchestrator for durable-boundary propagation. Producers capture;
 
 **Authoritative binding.** `bindFrom` treats the metadata as the complete snapshot taken at the producer. It always binds `DurablePropagationMetadata`, installs every successfully decoded type, and **clears** every other registered durable type for the scope's lifetime. That is what stops ambient context at the consumer from leaking into a `mergeCaptured` performed inside the scope. Closing the scope restores everything, including the cleared values.
 
-**Decode failures are contained.** A decoder that throws, returns `null`, or reports warnings is logged at WARN (throttled per boundary and decoder) and its type is simply not bound; other decoders proceed normally.
+**Decode failures are contained.** A decoder that throws or returns `null` is logged at WARN (throttled per boundary and decoder) and its type is simply not bound; other decoders proceed normally. Warnings carried on a decode result are logged at WARN too (throttled per boundary, decoder, and reason); the type is bound only when the result carries a value, so a `failure(...)` result binds nothing.
 
 **Choosing between `bindFrom` and `decodeToDispatchContext`.** `bindFrom` must run on a duplicated Vert.x context — on a non-duplicated context the holder's write guard throws. A transport whose callback lands on a plain deployment context (an outbox relay, a delayed-job poller) must call `decodeToDispatchContext` instead and merge the returned FQCN-keyed map into `DispatchEnvelopeBuilder.build(...)` as caller overrides; the receiving dispatcher then installs the values on its own duplicated context. Outside any Vert.x context at all, `bindFrom` logs a throttled warning and returns a no-op scope so plain-JUnit fixtures still run.
 
@@ -324,7 +324,7 @@ public final class TenantContextValueAdapter implements ContextValueAdapter<Tena
 }
 ```
 
-`duplicate` has a default that returns the live value unchanged, which is correct for immutable types; override it for anything mutable. This SPI governs holder lifecycle only — boundary propagation uses the encoder/decoder SPIs below.
+Two adapters for the same type fail bootstrap with `IllegalStateException`. `duplicate` has a default that returns the live value unchanged, which is correct for immutable types; override it for anything mutable. This SPI governs holder lifecycle only — boundary propagation uses the encoder/decoder SPIs below.
 
 ### ServiceDispatchContextEncoder / ServiceDispatchContextDecoder (Dagger multibinding)
 

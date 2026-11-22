@@ -156,9 +156,11 @@ public interface VertiqueApplicationComponent {
   partition, and teardown runs against the same shutdown set. A provider that throws while the
   multibinding set is materialized fails the returned future rather than escaping as a
   synchronous throw.
-- A component that does not include `CoreLifecycleStepsModule` will have no CONFIGURE or VALIDATE
-  steps and no startup readiness gate. The multibinding declared in `DeployerModule` provides an empty-by-default `Set`, so the
-  build does not fail — but Jackson will not be configured, compose validators will not run, and the readiness probe does not wait for startup to finish.
+- A component that does not include `CoreLifecycleStepsModule` will have no VALIDATE step and no
+  startup readiness gate. The multibinding declared in `DeployerModule` provides an empty-by-default `Set`, so the
+  build does not fail — but compose validators will not run, and the readiness probe does not wait for startup to finish.
+- The `CONFIGURE`-phase step that installs the JSON system profile comes from `JsonRuntimeModule`, not from
+  `CoreLifecycleStepsModule`. A component that does not include `JsonRuntimeModule` installs no JSON system profile mapper, so Vert.x keeps its raw JSON behaviour.
 
 ---
 
@@ -196,7 +198,7 @@ CONFIGURE  → JsonSystemProfileInstallStep (from JsonRuntimeModule, when includ
 VALIDATE   → ComposeValidationStep (from CoreLifecycleStepsModule)
 MIGRATE    → FlywayMigrationStartupStep (from DbFlywayModule, when included)
 BOOTSTRAP  → deploy BOOTSTRAP-phase verticles
-INFRA      → deploy INFRA-phase verticles (management, health)
+INFRA      → deploy INFRA-phase verticles (management, which serves the health endpoints)
 SERVICES   → ServiceDeploymentStartupStep (from DispatchModule) → deploy SERVICES-phase verticles
 EDGE       → deploy EDGE-phase verticles (HTTP, WebSocket)
 AFTER_START → StartupReadinessCheck (from CoreLifecycleStepsModule, last in the phase); apps contribute post-start notifications etc. here

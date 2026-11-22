@@ -111,8 +111,9 @@ Discovers, sorts, and drives the contributor chain.
   call throws `IllegalStateException` without invoking any contributor.
 - `runShutdownHooks` is guarded independently by a second `AtomicBoolean`; both guards are
   independent and both must fire on the shutdown path.
-- A contributor that throws is wrapped in a `ContributorFailureException` whose message includes the
-  contributor's FQCN; the original exception is preserved as the cause.
+- A contributor that throws an `Exception` is wrapped in a `ContributorFailureException` whose message
+  includes the contributor's FQCN; the original exception is preserved as the cause. An `Error` is
+  not wrapped: it propagates unchanged and still aborts the chain.
 - A contributor that returns `null` from `contribute` triggers a `ContributorFailureException`
   whose message states "returned null builder" — the chain aborts immediately.
 - `contributedCount` tracks how many contributors completed successfully; `runShutdownHooks` confines
@@ -158,6 +159,7 @@ import dev.vertique.bootstrap.BootstrapContext;
 import dev.vertique.bootstrap.VertxBuilderContributor;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.vertx.core.VertxBuilder;
+import io.vertx.micrometer.MicrometerMetricsFactory;
 import io.vertx.micrometer.MicrometerMetricsOptions;
 import io.vertx.micrometer.backends.BackendRegistries;
 
@@ -168,7 +170,8 @@ public class MetricsContributor implements VertxBuilderContributor {
         MicrometerMetricsOptions options = new MicrometerMetricsOptions()
                 .setEnabled(true)
                 .setRegistryName("default");
-        return builder.withMetrics(options);
+        context.vertxOptions().setMetricsOptions(options);
+        return builder.withMetrics(new MicrometerMetricsFactory());
     }
 
     @Override
@@ -213,5 +216,6 @@ within a module's test run, so the constructor seam avoids polluting parallel te
 - **`org.slf4j:slf4j-api`** — shutdown hook failure logging (contributor class names only; config
   contents are never logged).
 
-This module must never depend on Dagger, `vertique-launcher`, `vertique-config-core`, or any module
-that assumes a live `Vertx` instance is available.
+This module must never declare a dependency on Dagger, `vertique-launcher`, `vertique-config-core`,
+or any module that assumes a live `Vertx` instance is available. Its own code uses none of them;
+Dagger reaches its classpath only transitively, through `vertique-core`.

@@ -369,8 +369,8 @@ never raised or clamped. Root `DISABLED` makes no connection at all.
 
 **Credentials.** Each instance uses one complete user and password pair, taken from its own
 `user`/`password`, else the root `flyway.user`/`flyway.password`, else the `DbPoolConfig` pair. A
-partial pair is rejected: one member set on the instance, or a root pair with one member that the
-instance would inherit. Values never mix across levels (the single-history run still falls back
+partial pair is rejected: one member set on the instance, or a root pair with only one member set,
+even when every instance carries its own complete pair. Values never mix across levels (the single-history run still falls back
 per field). Separate migration roles per
 instance are supported against one database. The resolved view shows the selected `user`, never the
 password.

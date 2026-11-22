@@ -29,8 +29,9 @@ cache metrics default to enabled (an absent `MetricsConfig` means enabled). When
 ## Core Concepts
 
 The contributed `CacheObserver` consumes the cache-core observation events. Operation observations
-are recorded as timers named `cache.<operation>` with bounded `provider`, `cache`, and `outcome`
-tags. Cleanup observations use the bounded `profile`, `namespace`, and `outcome` tags and record
+are recorded as timers named `cache.<operation>` (the lowercased operation name) with bounded
+`provider`, `cache`, and `outcome` tags. The `outcome` value is the lowercased `CacheOutcome` name;
+a `CacheLateCompletion` records it with a `late_` prefix (for example `late_hit`). Cleanup observations use the bounded `profile`, `namespace`, and `outcome` tags and record
 these counters:
 
 | Counter | Value recorded |

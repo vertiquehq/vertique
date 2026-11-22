@@ -86,7 +86,7 @@ generation marker itself is never a candidate; unreadable markers are protected 
 failed/backlogged outcome instead of deletion.
 
 Failures are retained for the next run and use capped exponential retry backoff: 15 minutes,
-30 minutes, then up to a one-hour ceiling. A cron tick that arrives before the retry delay has
+30 minutes, then up to a one-hour ceiling. A cron tick that arrives more than half a cadence (7.5 minutes) before the retry delay has
 elapsed is skipped without a sweep or an observation. Each sweep sends a bounded cleanup observation through
 the provider-neutral `CacheObserver` seam as sealed `CacheCleanupCompleted` events. The event
 contains the connection profile, namespace, success/error outcome, scanned count, deleted count,
@@ -144,6 +144,7 @@ Example:
 | `CacheRedisConfig` | `@Provides` `@Singleton` | Parsed `cache.redis` section |
 | `CacheStore` | `@Provides` `@IntoMap` `@CacheModeKey(CLUSTERED)` | Clustered Redis store |
 | `String` | `@Provides` `@IntoMap` `@CacheProviderIdKey(CLUSTERED)` | Provider id `"redis"` |
+| `RedisCleanupJob` | `@Provides` `@Singleton` | Bounded old-generation cleanup job; not application API |
 | `CronScheduler` | `@BindsOptionalOf` | Optional cron for cleanup registration |
 | `ApplicationShutdownStep` | `@Provides` `@IntoSet` | Cleanup unregister then Redis client close (`INFRA`) |
 

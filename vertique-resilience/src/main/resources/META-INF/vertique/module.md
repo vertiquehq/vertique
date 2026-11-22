@@ -369,6 +369,15 @@ match `[A-Za-z0-9._~-]{1,128}`. For example:
 `retry.retryAfterMaxMs` (long, default 0, must be `>= 0`) is the longest failure delay hint the retry
 honors; an invalid value fails with a path-qualified `ConfigurationException`.
 
+A tier must configure at least one of `timeout`, `retry`, `circuitBreaker`, or `bulkhead`. When a
+block is present, `timeout.valueMs` (`> 0`), `retry.maxRetries` (`0..100`), and
+`bulkhead.maxConcurrentCalls` (`> 0`) are required. `retry.delayMs` and `retry.maxDelayMs` must be
+`>= 0` and `retry.backoffMultiplier` finite and `>= 1.0`. `circuitBreaker.maxFailures` must be `>= 1`
+and `resetTimeoutMs` `> 0`. `bulkhead.mode` defaults to `REJECT`, which rejects `maxQueueSize` and
+`queueTimeoutMs`; `QUEUE` requires `maxQueueSize` (`1..1024`) and `queueTimeoutMs` (`1..60000`).
+Violations fail with a path-qualified `ConfigurationException`, and selecting a tier that is not
+configured fails with `resilience.policies.<name> is not defined`.
+
 Install `ResiliencePoliciesModule` alongside `ResilienceModule` when named tiers are used. The
 provider requires the application's `@VertxConfig JsonObject` and canonical `ConfigParser`
 bindings (normally supplied by `VertxModule` and `ConfigParsingModule`). Consumers inject
@@ -394,8 +403,11 @@ named tier `layer(...)` returns transport overrides unchanged.
 
 Implement `BackoffStrategy` when a consumer needs a custom delay schedule. The class may be supplied
 through `@Retry(backoff = CustomBackoff.class)` or through the consumer module's own configuration.
-Consumer modules instantiate configured classes reflectively, so custom strategies must provide a
-public no-argument constructor; construction failures are reported as `IllegalStateException`.
+A custom strategy class is instantiated reflectively, so it must provide a public no-argument
+constructor. A class named by `@Retry(backoff = ...)` that cannot be instantiated surfaces from the
+policy resolver as a `ResiliencePolicyException` with reason `INVALID_CONFIGURATION`; a consumer module
+that instantiates a configured class itself, such as the REST client for
+`restClient.<name>.retry.backoffStrategy`, reports the failure with its own exception type.
 Implement `RetryPolicy` when retry eligibility depends on application-specific failure rules.
 
 ## Module Dagger Bindings
@@ -404,7 +416,8 @@ Implement `RetryPolicy` when retry eligibility depends on application-specific f
 application's `Vertx` binding and contributes one `ApplicationShutdownStep` to the host lifecycle.
 The step invokes the same idempotent runtime `close()` operation during the `CONFIGURE` phase, so
 Dagger-owned applications can share the runtime's closed fencing and timer cleanup. The module
-also declares the empty-by-default multibound observer set.
+also declares the empty-by-default multibound observer set and an optional
+`ResiliencePolicyRegistry` binding that `ResiliencePoliciesModule` fills.
 
 ---
 
@@ -415,5 +428,7 @@ also declares the empty-by-default multibound observer set.
 - `dev.vertique:vertique-aop` — the `@Aspect` metadata used by `@Resilient` and the
   `AspectProvider`/`MethodInterceptor` contracts used by the AOP integration.
 - `io.vertx:vertx-core` — runtime contexts, asynchronous futures, promises, and timers.
+- `io.vertx:vertx-circuit-breaker` — the isolated Vert.x CircuitBreaker engines behind timeout, retry,
+  and circuit-breaker execution.
 - `com.google.dagger:dagger` and `jakarta.inject:jakarta.inject-api` — the singleton runtime and
   lifecycle bindings exposed by `ResilienceModule`.
