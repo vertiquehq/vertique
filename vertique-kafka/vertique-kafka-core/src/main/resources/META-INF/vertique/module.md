@@ -1399,6 +1399,7 @@ default accepts every producer interface.
 | Artifact | Scope | Purpose |
 |---|---|---|
 | `dev.vertique:vertique-core` | compile | DI wiring, typed config parsing, `HealthCheck` SPI, exception roots |
+| `dev.vertique:vertique-resilience` | compile | The shared exponential backoff policy (`RetryBackoff`) behind `RETRY` delays |
 | `dev.vertique:vertique-context` | compile | Dispatch-context propagation across the event bus |
 | `dev.vertique:vertique-logging` | compile | MDC binding for the record's correlation id |
 | `dev.vertique:vertique-services` | compile | Service contract registry and target resolution for dispatch |
