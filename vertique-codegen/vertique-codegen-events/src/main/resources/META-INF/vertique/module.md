@@ -62,7 +62,7 @@ The processor builds the inventory from two sources in the same compilation unit
 1. **`@Observes` parameters** — every method that has a parameter annotated with `@Observes T` contributes `T` to the inventory.
 2. **`@Inject` constructor parameters** — every `Event<T>`, `Provider<Event<T>>`, or `Lazy<Event<T>>` parameter on an `@Inject` constructor contributes `T` to the inventory.
 
-Field injection, method injection, and `@Component` provision methods are not scanned. This matches the framework's constructor-injection convention.
+Field injection, method injection, and `@Component` provision methods are not scanned. This matches the framework's constructor-injection convention. Only the top-level types of the compilation round are scanned: an observer method or an `Event<T>` constructor parameter declared in a nested class is not seen, so declare the observer or publisher-injecting bean as a top-level class.
 
 For each type in the inventory, the processor generates an `X$Event extends Event<X>` publisher. An unobserved type that is only injected as `Event<X>` still gets a valid no-op publisher.
 
@@ -78,6 +78,7 @@ The processor enforces the following at compile time:
 | Observer method must have exactly one parameter | A method with multiple parameters (even if one carries `@Observes`) is rejected |
 | `@Observes Object` is rejected | The registry's superclass walk excludes `Object`; such an observer would silently never fire |
 | Observer method must be `public` | A non-`public` observer method is rejected at the method |
+| Event payload type must not be parameterized | An `@Observes` parameter or `Event<T>` constructor parameter whose payload is a generic type such as `Box<String>` is rejected: the binding would be generated for the erased type and would not satisfy the `Event<Box<String>>` key. A raw payload type is accepted |
 | Observer class must be reachable | The generated module calls the observer from the package it is emitted into (by default the longest common prefix of the event packages), so a declaring class that is not `public` and not in that package is rejected at the observer |
 
 ---
@@ -88,6 +89,7 @@ The processor enforces the following at compile time:
 
 ```java
 // placed in the event type's own package (e.g. com.example.events)
+@dev.vertique.core.codegen.Generated
 public final class OrderCreated$Event extends Event<OrderCreated> {
 
     @Inject
@@ -165,7 +167,7 @@ Runs `@SupportedAnnotationTypes("*")` (wildcard) so it observes all elements in 
 
 Processing occurs in a single pass per compilation round:
 
-1. Scan `@Observes` parameters — validate return type (`void`), parameter count (exactly 1), and event type (`!= Object`).
+1. Scan `@Observes` parameters — validate return type (`void`), parameter count (exactly 1), event type (not `Object`, not parameterized), and method visibility (`public`).
 2. Scan `@Inject` constructor parameters — unwrap `Event<T>`, `Provider<Event<T>>`, `Lazy<Event<T>>`.
 3. Resolve output package (option override → LCP of inventory types → `vertique.generated.events` fallback).
 4. Emit one `X$Event` publisher per inventory type (deduplicated by publisher FQN).
