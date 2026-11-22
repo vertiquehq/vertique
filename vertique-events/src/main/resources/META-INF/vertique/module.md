@@ -79,9 +79,11 @@ public class OrderAuditListener {
 
 Observer methods must:
 - return `void`
+- be `public` (the generated registration calls the method directly) and be declared in a top-level class (nested classes are not scanned)
 - declare exactly one parameter
 - annotate that parameter with `@Observes`
 - not observe `java.lang.Object` directly (the registry's superclass walk excludes `Object`)
+- observe a non-parameterized event type (a payload such as `Box<String>` is rejected at compile time)
 
 #### Invariants & Gotchas
 

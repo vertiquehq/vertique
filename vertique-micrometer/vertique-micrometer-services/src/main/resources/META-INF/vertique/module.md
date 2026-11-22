@@ -51,7 +51,7 @@ settling. Read it as a server-side measurement that runs past the instant the ca
 reply, not as caller-observed latency — the timer sample does not exist yet when the reply is
 delivered, and nothing this module records reaches the caller.
 
-**Per-event registry lookup (no meter cache, D-L).** The interceptor calls
+**Per-event registry lookup (no meter cache).** The interceptor calls
 `Timer.builder(...).tags(...).register(registry)` on every event. Micrometer's internal registry
 lookup is the cache. A separate tuple-keyed adapter cache was evaluated and rejected because the
 drop-on-saturation variant silently stops recording real time series once legitimate tag combinations

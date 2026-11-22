@@ -44,7 +44,7 @@ Config-only cron jobs (`cron.jobs.{id}.target = "service:..."`) are not visible 
 
 `init()` constructs one `CodegenContext` and one instance of each validator. `process()` groups annotated `ExecutableElement`s by enclosing `TypeElement` and dispatches to the four validators. Two early rejections occur before grouping:
 
-- `@CronJob` on an interface method → ERROR (mirrors `CronJobRegistrar.java:159-162`)
+- `@CronJob` on an interface method → ERROR (mirrors the runtime registrar's contract-interface check)
 - `@CronJob` on an abstract class method → ERROR (mirrors `getDeclaredMethods()` non-recursive scan)
 
 The `@CronJob` annotation mirror is resolved once per method (via `AnnotationMirrors.findByFqn`) and carried in a `MethodMirror` record so attribute reads are not repeated across validators.
@@ -72,7 +72,7 @@ Calls `new CronExpression(expr)` inside a `try/catch(IllegalArgumentException)`.
 
 Mirrors `ContractDiscovery.findContract` exactly. Resolution order:
 
-1. If the owner implements `ServiceHandler<C>`, resolve `C` via `TypeResolver.resolveTypeArgument`. Then verify:
+1. If the owner implements `ServiceHandler<C>`, resolve `C` via `TypeResolver.resolveTypeArgument` (a raw type or unresolved type variable is an ERROR). Then verify:
    - `C` is annotated `@ServiceContract`
    - The owner does NOT also directly implement `C` (handler+direct ambiguity)
    - The owner has no additional `@ServiceContract` interfaces beyond `C`
@@ -83,7 +83,7 @@ After a contract is resolved, finds the contract method by name only (mirroring 
 - Requires `@ServiceOperation` on the matched contract method, unconditionally. The runtime rejects all annotation-discovered cron jobs whose contract method lacks `@ServiceOperation` regardless of `mode` or `tracked`.
 - Rejects a blank `@ServiceOperation("")` value (mirrors `OperationIdResolver.resolveStableOperationId`).
 
-Uses `ctx.typeResolver().allSupertypes(...)` and `resolveTypeArgument(...)` — no hand-rolled BFS.
+Uses `ctx.typeResolver().allSupertypes(...)` and `resolveTypeArgument(...)` for the owner's type hierarchy; only the contract-method name lookup walks the contract's super-interfaces itself.
 
 ### `PolicyValueValidator`
 
@@ -118,6 +118,7 @@ All error messages are worded to match the runtime violation strings where appli
 | Invalid cron expression | ERROR | `@CronJob.cron: {parser message}` |
 | No `@ServiceContract` interface | ERROR | `{FQN} does not implement any @ServiceContract-annotated interface` |
 | Multiple `@ServiceContract` interfaces | ERROR | `{FQN} implements multiple @ServiceContract interfaces: {names}` |
+| `ServiceHandler` raw or with an unresolved type variable | ERROR | `{FQN} implements ServiceHandler but the contract type parameter could not be resolved (raw type or unresolved type variable)` |
 | `ServiceHandler<C>` but `C` is not `@ServiceContract` | ERROR | `{FQN} implements ServiceHandler<{C}> but {C} is not annotated with @ServiceContract` |
 | Handler + direct both implemented | ERROR | `{FQN} implements both ServiceHandler<{C}> and {C} directly — use one pattern, not both` |
 | Handler + extra `@ServiceContract`(s) | ERROR | `{FQN} implements ServiceHandler<{C}> but also implements additional @ServiceContract interface(s): {names}` |

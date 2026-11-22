@@ -143,7 +143,7 @@ unmodified elements. Per-type opt-out is `@NoAutoWire`; the optional
 |---|---|---|
 | `{Contract}_ContractContributor` | The **contract interface's** package | One per contract group |
 | `{Contract}_ServiceClientProxy` | The **contract interface's** package | One per source-root `@ServiceContract` interface |
-| `GeneratedServicesModule` | Longest common prefix of the emitted contract packages, or the `vertique.codegen.package` option when set | One per compilation unit that has a contributor or eligible client |
+| `GeneratedServicesModule` | The `vertique.codegen.package` option when set; otherwise the longest common prefix of the emitted contract packages, or `vertique.generated.services` when those packages share no prefix | One per compilation unit that has a contributor or eligible client |
 
 Each contributor is `public final`, annotated `@Generated` and `@Singleton`, implements
 `dev.vertique.services.ServiceContractContributor`, and takes one `jakarta.inject.Provider<Impl>` per
@@ -375,7 +375,7 @@ contract's shape alone, so an impl-only defect never withholds it, while a contr
 
 | Rule | Rejected because | Client proxy for that contract? |
 |---|---|---|
-| A contract method must return a parameterized `Future<T>` | A raw `Future`, `void`, or any other type has no dispatchable result shape | Yes |
+| A contract method must return a parameterized `Future<T>`; a `@OneWay` method must return `Future<Void>` | A raw `Future`, `void`, or any other type has no dispatchable result shape, and a one-way call never delivers a result | Yes |
 | At most one payload parameter per contract method | The dispatch envelope carries a single payload | Yes |
 | `DispatchEnvelope<?>` may not appear as a contract parameter | It is the transport wrapper, not application data | Yes |
 | No overloaded method names on the contract interface | Operation names derive from method names, so overloads collide on one event-bus address | Yes |
@@ -476,7 +476,7 @@ types.
 
 | Artifact | Scope | Purpose |
 |---|---|---|
-| `dev.vertique:vertique-codegen-core` | compile | `CodegenContext`, `TypeResolver`, `AnnotationMirrors`, `Diagnostics`, `PackageResolver`, `DaggerModuleWriter`, `Identifiers`, `Conditions`, `Constructors`, `InjectConstructorValidator`, `AccessPolicyAnnotationResolver` (compiler-mirror policy selection), and the `@NoAutoWire` / `@ConditionalOnProperty` annotations |
+| `dev.vertique:vertique-codegen-core` | compile | `CodegenContext`, `TypeResolver`, `AnnotationMirrors`, `Diagnostics`, `Identifiers`, `Conditions`, `TypeVisibility`, `JaxRsAnnotations`, `GeneratedMarker`, `InjectConstructorValidator`, `AccessPolicyAnnotationResolver` (compiler-mirror policy selection), and the `@NoAutoWire` / `@ConditionalOnProperty` annotations |
 | `dev.vertique:vertique-security-core` | compile | `SecurityContext`, recognized as a dispatch-context parameter type; `AccessPolicyResolver` and `RequiresPolicy` are referenced by name from generated code and diagnostics |
 | `com.palantir.javapoet:javapoet` | compile | Source generation; not on the application runtime classpath |
 

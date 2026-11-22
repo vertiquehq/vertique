@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.job`
 > **Artifact:** `vertique-job-core`
-> **Depends on:** core, deploy
+> **Depends on:** core, resilience, deploy
 
 `vertique-job-core` defines the vocabulary every Vertique scheduling module shares: the job execution
 record and its state machine, the `JobContext` handler-side API for progress, structured logging,
@@ -206,8 +206,9 @@ flusher.flush(); // Future<Void>, always succeeds — periodic tick
 flusher.drain(); // Future<Void>, always succeeds — execution-ending site
 ```
 
-Construction with a `null` repository or a `null` execution id yields a genuine no-op flusher that
-never touches the repository — the case for an execution with no persisted row to reference. The
+Construction with a `null` repository, a `null` execution id or a `JobContext` other than the
+framework's own yields a genuine no-op flusher that never touches the repository — the case for an
+execution with no persisted row to reference, or whose logger this framework does not own. The
 scheduling modules (`vertique-job-cron`, `vertique-job-delayed`) own when `flush()` and `drain()` are
 called; application code does not construct or call a `JobLogFlusher` directly.
 

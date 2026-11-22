@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.codegen.kafka.processor`
 > **Artifact:** `vertique-codegen-kafka`
-> **Depends on:** codegen-core, kafka (processor classpath only)
+> **Depends on:** `vertique-codegen-core`; `vertique-kafka-core` (test scope only)
 
 Annotation processor that eliminates boot-time reflective scan and classify for Kafka consumers. For each `@KafkaListener` type (Model 3 routing interface or Model 4 `KafkaRecordHandler` class) and each class carrying `@KafkaSource` methods (Model 1), it generates a `{Consumer}_BindingMeta` companion holding `public static final List<KafkaBindingMeta> METAS` of compile-time-knowable binding metadata. `KafkaConsumerScanner` consults a `GeneratedBindingMetaLoader` at each scan hook and skips the reflective annotation read, parameter classification, and generic resolution for any consumer whose companion is present.
 
@@ -60,16 +60,18 @@ Lifecycle:
 | Validator | Check | Level |
 |-----------|-------|-------|
 | `ListenerTopicValidator` | Blank `@KafkaListener#topic()` | ERROR |
-| `HandlerMatchValidator` | `matchHeader`, `matchProperty`, `defaultHandler` mutual exclusivity; at most one `defaultHandler` per router; duplicate route selectors (same `matchHeader`+`matchValue` or `matchProperty`+`matchValue`) | ERROR |
+| `HandlerMatchValidator` | Exactly one of `matchHeader`, `matchProperty`, `defaultHandler` per `@KafkaHandler` route (none or several is rejected); at most one `defaultHandler` per router; duplicate route selectors (same `matchHeader`+`matchValue` or `matchProperty`+`matchValue`) | ERROR |
 | `HandlerParamValidator` | Payload parameter arity and type | ERROR |
 | `HandlerReturnTypeValidator` | Return type must be `void` or `Future<Void>` | ERROR |
-| `DirectHandlerValidator` | `@KafkaListener` class must implement `KafkaRecordHandler`; `@KafkaListener#valueType()` must be assignable to the handler's `V` parameter; raw-handler with unresolved `V` rejected | ERROR |
+| `DirectHandlerValidator` | A `@KafkaListener` interface must declare at least one `@KafkaHandler` method, and a `@KafkaListener` class must implement `KafkaRecordHandler`; a declared `@KafkaListener#valueType()` must be assignable from the handler's `V` parameter; raw-handler with unresolved `V` rejected | ERROR |
 
 **Source validators:**
 
 | Validator | Check | Level |
 |-----------|-------|-------|
-| `KafkaSourceValidator` | `@KafkaSource` on a service-impl method, not a contract interface method | ERROR |
+| `KafkaSourceValidator` | `@KafkaSource` on a service-impl method, not a contract interface method; non-blank `topic()` and `groupId()` | ERROR |
+
+`KafkaListenerScanner` additionally rejects a method-level `@JsonProfile` on a `@KafkaListener` type with an ERROR; place `@JsonProfile` at type level.
 
 A consumer with any ERROR-level violation is not emitted.
 
@@ -119,20 +121,21 @@ The NFR's "≥50% lower scan time" is a scan/classify-fraction claim. Measuring 
 
 ## Compile-Time Validation Summary
 
-| Violation | Level | Example message |
-|-----------|-------|----------------|
-| Blank `@KafkaListener#topic()` | ERROR | `@KafkaListener on OrderEventRouter must have a non-blank topic` |
-| `matchHeader` and `matchProperty` both set | ERROR | `@KafkaHandler on onOrder: matchHeader and matchProperty are mutually exclusive` |
-| `defaultHandler` with `matchHeader` or `matchProperty` | ERROR | `@KafkaHandler on onFallback: defaultHandler must not set matchHeader or matchProperty` |
-| More than one `defaultHandler` per router | ERROR | `@KafkaListener OrderEventRouter: at most one @KafkaHandler may have defaultHandler=true` |
+| Violation | Level | Message |
+|-----------|-------|---------|
+| Blank `@KafkaListener#topic()` | ERROR | `@KafkaListener on OrderEventRouter has a blank topic()` |
+| A `@KafkaHandler` route with none, or more than one, of `matchHeader`, `matchProperty`, `defaultHandler=true` | ERROR | `@KafkaHandler method OrderEventRouter.onOrder() must specify exactly one of matchHeader, matchProperty, or defaultHandler=true` |
+| More than one `defaultHandler` per router | ERROR | The same message, reported on the second and later `defaultHandler` methods |
 | Duplicate route selector within a router | ERROR | `@KafkaListener OrderEventRouter has multiple @KafkaHandler methods with the same header selector 'event-type'='created'; route selectors must be unique` — selector uniqueness, not payload-type uniqueness; the reflective runtime (`KafkaConsumerValidation.validateAndBuild`) enforces the same rule with the same wording |
-| More than one payload parameter | ERROR | `@KafkaHandler method must declare exactly one payload parameter` — only **>1** payload is rejected; a **no-arg** handler is allowed (both paths use `Void`), and an unrecognized parameter type is treated as the payload. When parameters are present, parameter 0 must be the payload (see next row) — a context-only handler (e.g. `(KafkaRecordContext ctx)` with no payload) is therefore rejected |
-| Payload parameter not first | ERROR | `@KafkaHandler method must declare its payload as the first parameter; context parameters must come after` — guarantees the generated route value type matches the reflective `params[0]` |
-| Return type not `void` or `Future<Void>` | ERROR | `@KafkaHandler on onOrder: return type must be void or Future<Void>` |
-| `@KafkaListener` class does not implement `KafkaRecordHandler` | ERROR | `@KafkaListener OrderEventHandler must implement KafkaRecordHandler<V>` |
-| `@KafkaListener#valueType()` not assignable to handler `V` | ERROR | `@KafkaListener on OrderEventHandler: declared valueType OtherEvent is not assignable to handler type OrderEvent` |
-| Raw-handler with unresolvable `V` | ERROR | `@KafkaListener on RawHandler: KafkaRecordHandler<V> type parameter V cannot be resolved; declare valueType` |
-| `@KafkaSource` on a contract interface method | ERROR | `@KafkaSource on OrderService.processOrder must be on a service-implementation method, not a contract interface` |
+| More than one payload parameter | ERROR | `@KafkaHandler method OrderEventRouter.onOrder() must declare exactly one payload parameter (found 2)` — only **>1** payload is rejected; a **no-arg** handler is allowed (both paths use `Void`), and an unrecognized parameter type is treated as the payload. When parameters are present, parameter 0 must be the payload (see next row) — a context-only handler (e.g. `(KafkaRecordContext ctx)` with no payload) is therefore rejected |
+| Payload parameter not first | ERROR | `@KafkaHandler method OrderEventRouter.onOrder() must declare its payload as the first parameter; context parameters must come after` — guarantees the generated route value type matches the reflective `params[0]` |
+| Return type not `void` or `Future<Void>` | ERROR | `@KafkaHandler method OrderEventRouter.onOrder() must return void or Future<Void>` |
+| `@KafkaListener` interface without `@KafkaHandler` methods, or class that does not implement `KafkaRecordHandler` | ERROR | `@KafkaListener on OrderEventHandler must either declare @KafkaHandler methods (router) or implement KafkaRecordHandler<V> (direct handler)` |
+| Declared `@KafkaListener#valueType()` not assignable from handler `V` | ERROR | `@KafkaListener on OrderEventHandler has valueType=OtherEvent but the handler implements KafkaRecordHandler<OrderEvent>; annotated valueType must be assignable from the handler's value type V` |
+| Raw-handler with unresolvable `V` | ERROR | `@KafkaListener class RawHandler implements KafkaRecordHandler with an unresolvable value type V — use a concrete type argument, e.g. implements KafkaRecordHandler<MyEvent>` |
+| `@KafkaSource` on a contract interface method | ERROR | `@KafkaSource on OrderService.processOrder() must be on the service implementation method, not the contract interface` |
+| Blank `@KafkaSource#topic()` or `groupId()` | ERROR | `@KafkaSource on OrderService.processOrder() has a blank topic()` (or `groupId()`) |
+| `@JsonProfile` on a method of a `@KafkaListener` type | ERROR | `@JsonProfile on method onOrder in OrderEventRouter is not allowed; place @JsonProfile at TYPE level on the @KafkaListener type` |
 
 ---
 

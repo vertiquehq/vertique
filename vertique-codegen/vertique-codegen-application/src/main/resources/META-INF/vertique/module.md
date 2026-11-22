@@ -209,6 +209,9 @@ public final class AppComponentVertiqueComponentFactory
 }
 ```
 
+The generated class also carries the `dev.vertique.core.codegen.Generated` class-file marker, which
+keeps it out of coverage reports; it has no `javax.annotation.processing.Generated` annotation.
+
 ### Resource: `META-INF/services/dev.vertique.core.VertiqueComponentFactory`
 
 ```
@@ -252,8 +255,9 @@ does not clean up previously generated files.
 
 ## Dependencies
 
-- **`vertique-codegen-core`** — `CodegenContext`, `TypeResolver`, `Diagnostics`; APT helper
-  library shared across the codegen family.
+- **`vertique-codegen-core`** — `CodegenContext`, `TypeResolver`, `Diagnostics`,
+  `AnnotationMirrors`, `GeneratedMarker`; APT helper library shared across the codegen family.
+- **`com.palantir.javapoet:javapoet`** — emits the factory class.
 - **`vertique-application`** — `VertiqueApp` annotation and `VertiqueApplicationComponent`
   (referenced by FQN in the processor, which does not depend on the artifact). The application
   declares it as an ordinary dependency, so the types resolve from the application's own compile

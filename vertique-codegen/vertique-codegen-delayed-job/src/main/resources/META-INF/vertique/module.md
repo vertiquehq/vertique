@@ -8,11 +8,11 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.codegen.delayed.processor`
 > **Artifact:** `vertique-codegen-delayed-job`
-> **Depends on:** codegen-core, job-delayed (processor classpath only)
+> **Depends on:** codegen-core
 
 Annotation processor that eliminates per-call reflection in the delayed-job enqueue hot path. For each `@DelayedJobContract` interface it generates a static `{Contract}_DelayedJobProxy` class that replaces the JDK dynamic proxy built by `DelayedJobClientFactory`, removing `InvocationHandler` dispatch and baking the six enqueue overloads directly into concrete methods.
 
-Runtime selection is transparent: `DelayedJobClientFactory.create` tries `Class.forName` for the generated proxy first, falls back to the JDK `DelayedJobClientProxy` on `ClassNotFoundException`, and throws `IllegalStateException` when a generated class is present but broken.
+Runtime selection is transparent: `DelayedJobClientFactory.create` looks the generated proxy up by name first, falls back to the JDK `DelayedJobClientProxy` when no such class is on the classpath, and throws `IllegalStateException` when a generated class is present but broken.
 
 The processor also generates a single aggregate `GeneratedDelayedJobClientsModule` Dagger module whose `@Provides @Singleton` bindings each delegate to `DelayedJobClientFactory.create({Contract}.class)`, so an application binds every typed client by listing one module in its `@Component` instead of hand-writing a provider per contract.
 
@@ -71,16 +71,17 @@ Enforces contract shape within a single compilation unit.
 | Contract must expose no instance method other than `DelayedJobClient`'s six `enqueue` overloads (declared, inherited, abstract, or default — Object/static methods allowed) | `ERROR` | Blocks emission |
 | No same-unit `DelayedJobExecutor` for the contract | `WARNING` (default) or `ERROR` (opt-in) | Does not block emission |
 | Same-unit executor payload type mismatch | `ERROR` | Does not block emission of the contract's proxy |
+| Contract must be an interface | `ERROR` | Blocks emission |
 
-The full-member method check (the fourth row) uses `Elements.getAllMembers`, not `getEnclosedElements`, so it catches abstract methods inherited through intermediate interfaces and `default` methods added to an intermediate superinterface. Both diverge between the generated and reflective routes if not caught here.
+The full-member method check (the fifth row) uses `Elements.getAllMembers`, not `getEnclosedElements`, so it catches abstract methods inherited through intermediate interfaces and `default` methods added to an intermediate superinterface. Both diverge between the generated and reflective routes if not caught here.
 
 ### `DelayedJobProxyEmitter`
 
 Generates `{Contract}_DelayedJobProxy` in the contract's own package. Key properties of the generated class:
 
-- `public final`, implements the contract interface, annotated `@Generated("...DelayedJobContractProcessor")`.
+- `public final`, implements the contract interface, annotated `@Generated("...DelayedJobContractProcessor")` and with the class-file marker `@dev.vertique.core.codegen.Generated`.
 - Constructor `(DelayedJobService, DelayedJobContract, JsonObject)` — resolves `effectiveMaxAttempts`, `effectiveQueue`, `effectivePriority` from the config object with annotation-default fallback (same merge order as `DelayedJobClientProxy`).
-- Each of the six `enqueue` overloads delegates to a private `doEnqueue(P, Instant, SqlClient, DelayedJobOptions)` helper; `Duration`-bearing overloads normalize to `Instant.now().plus(delay)`. Null-`SqlClient` transactional overloads fail fast with `NullPointerException`.
+- Each of the six `enqueue` overloads delegates to a private `doEnqueue(P, Instant, SqlClient, DelayedJobOptions)` helper; `Duration`-bearing overloads normalize to `Instant.now().plus(delay)`. Null-`SqlClient` transactional overloads fail fast with `NullPointerException` (a failed future, not a throw).
 - `doEnqueue` applies `DelayedJobOptions` overrides in the same order as the reflective proxy, and routes through `DelayedJobService.enqueuePremerged` — public specifically so a generated proxy in the contract's own package can call it — when `options.premergedMetadata()` is non-null.
 - `toString` returns `"DelayedJobClient[name]"`; `equals`/`hashCode` use identity semantics — identical to the JDK proxy's `Object`-method handling.
 
@@ -88,6 +89,7 @@ Example generated class for a contract with a single payload type:
 
 ```java
 @Generated("dev.vertique.codegen.delayed.processor.DelayedJobContractProcessor")
+@dev.vertique.core.codegen.Generated
 public final class DeliverWebhookJob_DelayedJobProxy implements DeliverWebhookJob {
 
     private final DelayedJobService jobService;
@@ -138,6 +140,7 @@ Generates a single `GeneratedDelayedJobClientsModule` covering all valid contrac
 
 ```java
 @Generated("dev.vertique.codegen.delayed.processor.DelayedJobContractProcessor")
+@dev.vertique.core.codegen.Generated
 @Module
 public class GeneratedDelayedJobClientsModule {
     @Provides
@@ -177,25 +180,22 @@ Relatedly, the module is regenerated from whatever contracts the current compila
 
 ### `Class.forName` Discovery Contract
 
-`DelayedJobClientFactory.create` locates the generated proxy via `GeneratedNames.companionFqn(contractInterface, "_DelayedJobProxy")` (in `vertique-core`). This helper replaces the `$` nested-class separator in `Class.getName()` with `_` to match the processor-emitted name:
+`DelayedJobClientFactory.create` locates the generated proxy through `GeneratedCompanions.instantiate` (in `vertique-core`), which builds the class name with `GeneratedNames.companionFqn(contractInterface, "_DelayedJobProxy")`. That helper replaces the `$` nested-class separator in `Class.getName()` with `_` to match the processor-emitted name:
 
 ```java
 // Prefer the generated static proxy when present (zero reflection); fall back to the JDK
 // dynamic proxy otherwise. A present-but-broken generated class fails loudly.
-String generatedFqn = GeneratedNames.companionFqn(contractInterface, "_DelayedJobProxy");
-try {
-    Class<?> generated = Class.forName(generatedFqn, true, contractInterface.getClassLoader());
-    Constructor<?> ctor = generated.getDeclaredConstructor(
-            DelayedJobService.class, DelayedJobContract.class, JsonObject.class);
-    return contractInterface.cast(ctor.newInstance(jobService, annotation, contractConfig));
-} catch (ClassNotFoundException notGenerated) {
-    // No generated proxy — fall back to the JDK dynamic proxy. This is the pre-codegen behavior.
-} catch (ReflectiveOperationException | LinkageError broken) {
-    throw new IllegalStateException(
-            "Generated proxy %s is present but could not be instantiated".formatted(generatedFqn), broken);
-}
-// fall through to JDK proxy...
+return GeneratedCompanions.instantiate(
+                contractInterface,
+                "_DelayedJobProxy",
+                new Class<?>[] {DelayedJobService.class, DelayedJobContract.class, JsonObject.class},
+                new Object[] {service, annotation, contractConfig},
+                (fqn, e) -> new IllegalStateException(
+                        "Generated proxy %s is present but could not be instantiated".formatted(fqn), e))
+        .orElseGet(() -> /* JDK dynamic proxy around DelayedJobClientProxy */ ...);
 ```
+
+An absent class (`ClassNotFoundException`) selects the fallback. A class that fails to load or link, lacks the constructor, or has the wrong type raises the `IllegalStateException`.
 
 The one-time `Class.forName` is the only reflective call in the optimized path. Subsequent enqueue calls have zero reflection.
 
@@ -213,15 +213,16 @@ The generated proxy is always emitted into the contract's own package (`ctx.pack
 
 | Violation | Level | Example message |
 |-----------|-------|----------------|
-| Contract declares type parameters | ERROR | `DeliverWebhookJob must not declare type parameters — a @DelayedJobContract takes its payload type from DelayedJobClient<P>` |
+| Contract is not an interface | ERROR | `@DelayedJobContract com.acme.DeliverWebhookJob must be an interface` |
+| Contract declares type parameters | ERROR | `com.acme.DeliverWebhookJob must not declare type parameters — a @DelayedJobContract takes its payload type from DelayedJobClient<P>` |
 | Contract not referenceable from the generated module's package | MANDATORY_WARNING | `@DelayedJobContract com.foo.HiddenJob is not accessible from package 'com', where GeneratedDelayedJobClientsModule is generated, so it is left unbound` |
-| Contract does not extend `DelayedJobClient<P>` | ERROR | `DeliverWebhookJob must extend DelayedJobClient<P>` |
-| Payload type `P` cannot be resolved | ERROR | `DeliverWebhookJob: could not resolve DelayedJobClient<P> payload type` |
-| Duplicate contract `name()` in same unit | ERROR | `Duplicate @DelayedJobContract name "deliver-webhook": ... and ...` |
-| Extra instance method on contract | ERROR | `@DelayedJobContract DeliverWebhookJob declares method customMethod() — contracts may only expose DelayedJobClient enqueue overloads` |
-| No same-unit `DelayedJobExecutor` (default) | WARNING | `No DelayedJobExecutor for DeliverWebhookJob found in this compilation unit` |
+| Contract does not extend `DelayedJobClient<P>` | ERROR | `com.acme.DeliverWebhookJob must extend DelayedJobClient<P> directly with a concrete payload type` |
+| Payload type `P` cannot be resolved | ERROR | `Cannot resolve payload type P for com.acme.DeliverWebhookJob; @DelayedJobContract interface must extend DelayedJobClient<ConcreteType>` |
+| Duplicate contract `name()` in same unit | ERROR | `Duplicate @DelayedJobContract name 'deliver-webhook' in this compilation unit: com.acme.A and com.acme.B` |
+| Extra instance method on contract | ERROR | `@DelayedJobContract com.acme.DeliverWebhookJob must not declare or inherit methods other than DelayedJobClient's enqueue overloads (found 'customMethod')` |
+| No same-unit `DelayedJobExecutor` (default) | WARNING | `No DelayedJobExecutor for @DelayedJobContract com.acme.DeliverWebhookJob in this compilation unit` |
 | No same-unit `DelayedJobExecutor` (opt-in) | ERROR | Same message |
-| Same-unit executor payload mismatch | ERROR | `DeliverWebhookJobImpl payload ... does not match contract DeliverWebhookJob payload ...` |
+| Same-unit executor payload mismatch | ERROR | `DelayedJobExecutor com.acme.DeliverWebhookJobImpl has payload type X but its contract com.acme.DeliverWebhookJob declares payload Y` |
 
 ---
 
@@ -275,6 +276,6 @@ Generated proxies themselves are discovered at runtime via `Class.forName` in `D
 ## Dependencies
 
 - `dev.vertique:vertique-codegen-core` — `CodegenContext`, `TypeResolver`, `AnnotationMirrors`, `Diagnostics`, `DaggerModuleWriter`, `Identifiers`, `PackageResolver`
-- `dev.vertique:vertique-job-delayed` — `@DelayedJobContract`, `DelayedJobClient`, `DelayedJobClientFactory`, `DelayedJobExecutor`, `DelayedJobService`, `DelayedJobOptions` (processor classpath only; not on runtime classpath). A **consuming application** already carries `vertique-job-delayed` on its normal compile/runtime classpath — it owns the contract annotation the app authors against — so the generated module's reference to `DelayedJobClientFactory` introduces no new runtime dependency.
+- `dev.vertique:vertique-job-delayed` — **not** a dependency of the processor artifact (test scope only). The processor names `@DelayedJobContract`, `DelayedJobClient` and `DelayedJobExecutor` by fully qualified name, and the generated code refers to `DelayedJobClientFactory`, `DelayedJobService`, `DelayedJobContract` and `DelayedJobOptions`. A **consuming application** already carries `vertique-job-delayed` on its normal compile/runtime classpath — it owns the contract annotation the app authors against — so the generated code introduces no new runtime dependency.
 - `com.palantir.javapoet:javapoet` — source generation (compile-only; not on runtime classpath)
 - `javax.annotation.processing` APIs — part of the JDK; not a separate Maven dependency

@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.workflow.definition`
 > **Artifact:** `vertique-workflow-definition`
-> **Depends on:** workflow-core, vertique-core, jackson-databind, jackson-dataformat-yaml, dev.cel:cel
+> **Depends on:** workflow-core, vertique-core, jackson-databind, jackson-dataformat-yaml, jackson-module-parameter-names, dev.cel:cel
 
 `vertique-workflow-definition` adds YAML/JSON workflow authoring on top of `workflow-core`. A definition document is parsed, validated, compiled into the same `WorkflowPlan` used by code-first definitions, and stored as a row of the definition table; a node builds the plan from the row when it is first used.
 
@@ -151,6 +151,7 @@ The full fixture also demonstrates timers, compensation, fork, join, due dates, 
 | `subjectResolver` | no | Named callback that derives `WorkflowSubjectRef` from state |
 | `initialStep` | yes | Step id where execution begins |
 | `steps` | yes | Non-empty list of step definitions |
+| `activateOnDeploy` | no | Boolean, `true` when absent. `false` publishes a packaged document without making it the default scope's current version; a document loaded through the service ignores it |
 
 The `contract` class must carry `@WorkflowContract`. A contract names no definition, so any number of documents and versions may name one contract.
 
@@ -197,7 +198,7 @@ default: manual-review
 `when` is parsed and compiled by the configured `ExpressionProfile`. The default profile uses CEL. The runtime evaluation environment includes:
 
 - `state` - the workflow state converted to a map.
-- Registered named conditions - pre-evaluated booleans keyed by condition id.
+- Named conditions - pre-evaluated booleans keyed by condition id, for the conditions that a `condition` route of the same decision step names. A `when` expression cannot read any other registered condition.
 
 The expression environment declares `state` as an untyped map, so field paths such as `state.total` are not checked against the workflow's state type when the document loads. A path that names a property the state type does not have, or a comparison whose operand types do not fit the property, is not reported at load time: the expression compiles. When the route is evaluated, a missing key (use `has(state.field)` for an optional one) and an ordering comparison (`<`, `>`) of mismatched types fail the evaluation, while `==` and `!=` between mismatched types do not fail and evaluate to `false` and `true`. Parsing, unsupported syntax and the expression limits are still checked at load time.
 
@@ -213,10 +214,11 @@ A well-formed definition is one that passes both parsing and semantic validation
 
 - Jackson YAML/JSON parsing is strict: unknown fields and invalid step types fail.
 - Required top-level fields and required step fields must be present. A null or blank `stateType`, `contract`, `startPayloadType` or `initialStateMapper` fails with `STATE_TYPE_MISSING`, `CONTRACT_MISSING`, `START_PAYLOAD_TYPE_MISSING` or `INITIAL_STATE_MAPPER_MISSING`; null or empty `steps` fails with `STEPS_MISSING`; a step with a null or blank `id` fails with `STEP_ID_MISSING`, naming its position. All of them are reported together with the other violations.
-- Type and contract names resolve through the `WorkflowTypeNames` index only (types for state and payload names, contracts for the contract name). The index holds the classes of every contributed `WorkflowTypeCatalog` and of every registered definition, under their logical and binary names. Before validation the pipeline resolves the contract, the state type, the start payload type, then the signal and decision payload types in step order, and the first name the index does not hold fails the load with `WorkflowUnknownTypeNameException`, which names the document field, and repeats the name only when it consists of letters, digits, underscore, dot, dollar sign and hyphen and is at most 255 characters long. No class is loaded by a name the document supplies.
+- Type and contract names resolve through the `WorkflowTypeNames` index only (types for state and payload names, contracts for the contract name). The index holds the classes of every contributed `WorkflowTypeCatalog` and of every registered definition, under their logical and binary names. Before validation the pipeline resolves the contract, the state type, the start payload type, then the signal, service reply and decision payload types in step order, and the first name the index does not hold fails the load with `WorkflowUnknownTypeNameException`, which names the document field, and repeats the name only when it consists of letters, digits, underscore, dot, dollar sign and hyphen and is at most 255 characters long. No class is loaded by a name the document supplies.
 - The contract class must be annotated with `@WorkflowContract`. A contract names no definition, so several documents and versions can share one contract. A document's plan is built under the same plan rules as a Java definition's, including the check that every signal it waits for is declared on its contract.
 - Contract names and type names are separate namespaces: a contract name given as `stateType`, or a type name given as `contract`, is unknown.
 - Named callbacks must resolve through the registered callback registries. An unregistered `correlationKey` resolver id fails with `CORRELATION_KEY_RESOLVER_UNKNOWN`, naming the step and the id and suggesting the nearest registered ids. A registered resolver whose state type is not the document's state type fails with `CORRELATION_KEY_RESOLVER_STATE_TYPE_MISMATCH`, naming the step, the resolver id and both types.
+- A registered callback must declare exactly the document's state type, and the initial state mapper must also declare exactly the document's start payload type. A mismatch fails with the `*_STATE_TYPE_MISMATCH` code of the callback's category (for example `PAYLOAD_MAPPER_STATE_TYPE_MISMATCH`), or `INITIAL_STATE_MAPPER_PAYLOAD_TYPE_MISMATCH` for the payload type, naming the callback id and both types.
 - Decision expressions must parse through the expression profile.
 - Step ids must be unique, and all step references must point to existing steps. Every step must be reachable from `initialStep`: a step that no chain of references reaches fails with `UNREACHABLE_STEP`, one violation per step, naming it. Reachability follows `next`, a wait-signal `timeout.next`, a human-task decision or `due.next`, a decision route's `to` and `default`, a service step's `compensation`, `reply.next`, `reply.onFailure.next` and `reply.timeout.next`, a fork's branch `startStep` and `join`, and a join's `next` and `onFailure`. A document with an unknown `initialStep` reports `INITIAL_STEP_UNKNOWN` only. Documents that loaded before this rule existed and carry an orphan step are refused; remove the step or reference it.
 - The plan of a document is built through the registry's build path, so core plan validation and the contributed validators still apply. Publishing a loaded definition through the service builds its plan once to validate it and completes the row; nothing is registered, and the node builds the plan again from the row when it is first used. A definition loaded into one scope is not found under the default scope. Documents packaged with the application are recorded in the default scope.
@@ -253,9 +255,10 @@ Example:
 @Provides
 @IntoSet
 static PayloadMapperContributor reserveInventoryPayload() {
-    return PayloadMapperContributor.of(
+    return builder -> builder.register(new NamedPayloadMapper<>(
         "order.reserveInventoryPayload",
-        state -> new ReserveInventoryRequest(((OrderState) state).orderId()));
+        OrderState.class,
+        state -> new ReserveInventoryRequest(state.orderId())));
 }
 ```
 
@@ -425,6 +428,7 @@ Applications must also contribute at least one `WorkflowDefinitionSource` for bo
 - **workflow-core** - builder DSL, registry, plan model, callback ids, and workflow errors.
 - **vertique-core** - common exception hierarchy.
 - **jackson-databind** and **jackson-dataformat-yaml** - strict JSON/YAML parsing.
+- **jackson-module-parameter-names** - lets the parser bind the document records without per-component annotations.
 - **dev.cel:cel** - default expression engine, isolated behind `ExpressionProfile`.
 
 ---

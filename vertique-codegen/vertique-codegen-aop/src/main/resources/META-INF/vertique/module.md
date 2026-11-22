@@ -14,7 +14,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 - `Bean$AopProxy extends Bean` — a subclass proxy that overrides each intercepted method to run the aspect chain via `Invocations.run(...)`.
 - A `MethodMetadata` implementation per intercepted method (via `MetadataEmitter` from `vertique-codegen-core`), including a nested per-parameter `ParameterMetadata` impl whose `findAnnotation`/`hasAnnotation` are backed by generated parameter-level annotation literals — not reflection.
-- An AOP-owned annotation-literal class (`Ann$AopLiteral implements Ann`) per distinct aspect annotation type, plus one per distinct runtime-retained annotation type found on an intercepted method's parameters.
+- An AOP-owned annotation-literal class (`Ann$AopLiteral implements Ann`) per distinct aspect annotation type, plus one per distinct runtime-retained annotation type found on an intercepted method or on its parameters.
 - A single `GeneratedAopModule` Dagger `@Module` that substitutes each proxy for its bean via a `@Binds` method, replicating the bean's declared scope.
 
 ---
@@ -67,7 +67,9 @@ The following bean and method shapes are rejected with a compile error:
 
 | Shape | Reason |
 |-------|--------|
+| Non-`public` class | The generated `@Binds` in `GeneratedAopModule` names the bean type, possibly from another package |
 | `final` class | Cannot be subclassed by `Bean$AopProxy extends Bean` |
+| Bean without exactly one `@Inject` constructor | The proxy replicates that constructor |
 | `final` intercepted method | Cannot be overridden by the proxy subclass; this includes a `final` implementation of an interface trigger method, whether the bean declares or inherits it |
 | `private` intercepted method | Not visible to a subclass |
 | `static` intercepted method | Not an instance method; cannot be overridden |
@@ -76,7 +78,7 @@ The following bean and method shapes are rejected with a compile error:
 | Raw `Future` return on an intercepted method | Misclassified as sync-returning; meters wrong outcome |
 | Wildcard `Future<? ...>` return on an intercepted method | Would require an invalid back-cast in the generated override |
 
-All legal annotation member kinds are materialized into generated literals: `boolean`, `byte`, `short`, `int`, `long`, `char`, `float`, `double`, `String`, `Class`, enum constants, nested annotations, and arrays of those. `char` uses a four-hex-digit `\uXXXX` literal. `float` and `double` use `Float.intBitsToFloat(...)` and `Double.longBitsToDouble(...)` with the exact raw bit pattern, preserving NaN, infinities, and negative zero. Literal equality uses `Float.compare`/`Double.compare` for floating-point members and their hash codes use `Float.valueOf(...).hashCode()`/`Double.valueOf(...).hashCode()`; arrays use `Arrays.equals`/`Arrays.hashCode`.
+All legal annotation member kinds are materialized into generated literals: `boolean`, `byte`, `short`, `int`, `long`, `char`, `float`, `double`, `String`, `Class`, enum constants, nested annotations, and arrays of those. `char` uses a `(char)` cast of its numeric value. `float` and `double` use `Float.intBitsToFloat(...)` and `Double.longBitsToDouble(...)` with the exact raw bit pattern, preserving NaN, infinities, and negative zero. Literal equality uses `Float.compare`/`Double.compare` for floating-point members and their hash codes use `Float.valueOf(...).hashCode()`/`Double.valueOf(...).hashCode()`; arrays use `Arrays.equals`/`Arrays.hashCode`.
 
 ---
 
@@ -205,7 +207,7 @@ Accumulates `(bean, proxy, scope)` entries and emits the single `GeneratedAopMod
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `vertique.codegen.package` | LCP of bean packages | Override the output package for `GeneratedAopModule` only |
+| `vertique.codegen.package` | Longest common package prefix of the bean packages; `vertique.generated.aop` when they share none | Override the output package for `GeneratedAopModule` only |
 
 The option relocates **only `GeneratedAopModule`**. The `Bean$AopProxy` is always generated in the
 **bean's own package**, regardless of this option. This is required so the proxy can call

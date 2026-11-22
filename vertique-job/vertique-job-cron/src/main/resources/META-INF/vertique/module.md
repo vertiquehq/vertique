@@ -79,7 +79,7 @@ second  minute  hour  day-of-month  month  day-of-week
   0       0      0       15           *         *        → 15th of each month at midnight
 ```
 
-Supported syntax: `*` (all), `N` (specific), `A-B` (range), `A,B,C` (list), `*/N` (every N from min), `A-B/N` (every N in range). Day-of-week: 0 = Sunday, 1 = Monday, …, 6 = Saturday (7 is also accepted as Sunday). For day matching, when both day-of-month and day-of-week are restricted, the job fires when either field matches (OR). If either field is a wildcard, the other field controls.
+Supported syntax: `*` (all), `N` (specific), `A-B` (range), `A,B,C` (list), `*/N` (every N from min), `A-B/N` (every N in range), `A/N` (every N from A to the field maximum). Day-of-week: 0 = Sunday, 1 = Monday, …, 6 = Saturday (7 is also accepted as Sunday). For day matching, when both day-of-month and day-of-week are restricted, the job fires when either field matches (OR). If either field is a wildcard, the other field controls.
 
 ### `CronExpression`
 
@@ -169,9 +169,11 @@ Overlap handling is decided before resolution, so a `QUEUE_ONE` tick that arrive
 
 **Synchronous failures cannot strand a job.** A fire holds two guards: a per-job in-flight entry and one of `maxConcurrentJobs` global concurrency slots. Both are released by the execution's completion callback, so anything that threw *synchronously* before that callback could run used to hold them for the process lifetime — and because a job's own in-flight entry is what blocks its next tick, the symptom was a job that simply stopped, silently, after one error. A burned slot also permanently reduced how many jobs could run at once.
 
-Every synchronous throw is now contained and both guards are released, so the fire is skipped and the job is retried on its next tick. This covers a custom `JobRepository` that throws instead of returning a failed future, or returns `null` (it is an application-implemented SPI, and the framework's `onFailure` handling only catches a failed future); a `JobInterceptor` that throws from `onDispatch`; a failure constructing the dispatch envelope, including in an application-registered context encoder; and a failure on the event-bus send. It also covers a throw while persisting the terminal state on the completion and timeout paths, which previously ended the execution with the guards still held and nothing left able to release them. A tracked execution that failed this way is marked `FAILED` on a best-effort basis, and its buffered log entries are still drained.
+Every synchronous throw is now contained and both guards are released, so the fire is skipped and the job is retried on its next tick. This covers a custom `JobRepository` that throws instead of returning a failed future, or returns `null` (it is an application-implemented SPI, and the framework's `onFailure` handling only catches a failed future); a failure constructing the dispatch envelope, including in an application-registered context encoder; and a failure on the event-bus send. It also covers a throw while persisting the terminal state on the completion and timeout paths, which previously ended the execution with the guards still held and nothing left able to release them. A tracked execution that failed this way is marked `FAILED` on a best-effort basis, and its buffered log entries are still drained.
 
 One behavior worth knowing: a job whose handler or repository fails on every fire now logs once per fire rather than falling permanently silent after the first. That is louder, and truthful — the previous silence was the bug.
+
+**Interceptor failures are isolated.** A `JobInterceptor` that throws from `onDispatch` or `onComplete` is logged and ignored; the fire is still dispatched and completed.
 
 **Interceptor asymmetry.** On a synchronous dispatch failure `JobInterceptor.onDispatch` may already have run while `onComplete` never does, because there is no reply to complete. An interceptor that pairs the two — counting in-flight work, for instance — should treat a missing `onComplete` as possible rather than assume symmetry.
 
@@ -364,7 +366,7 @@ Because the scheduler is contributed at `SERVICES`, it starts only if that phase
 
 `CronJobRegistrar` and `CronScheduler` remain accessible on `AppComponent` for advanced use cases (custom integrations, tests) but apps no longer need to call them directly during startup.
 
-**`scan()` is transactional:** validation collects all violations before throwing `CronRegistrationException` (extends `CronConfigurationException` → core `ConfigurationException`). If any violations exist, the scheduler is left untouched — no partial registrations. `persistSchedule()` is wrapped in a top-level `try/catch (Throwable)` so a synchronous throw from a custom `JobRepository` cannot escape `scan()`.
+**`scan()` is transactional:** validation collects all violations before throwing `CronRegistrationException` (extends `CronConfigurationException` → core `ConfigurationException`). If any violations exist, the scheduler is left untouched — no partial registrations. `persistSchedule()` is wrapped in a top-level `try/catch (Exception)` so a synchronous throw from a custom `JobRepository` cannot escape `scan()`; an `Error` is deliberately not caught.
 
 **Rollback on start failure:** if `scheduler.start()` returns a failed Future after `scan()` succeeded, `CronLifecycleVerticle` invokes `scheduler.stop()` best-effort before propagating the original cause (Vert.x does not call `stop()` on a failed `start()`).
 
@@ -392,7 +394,7 @@ configuration surfaces above; they never construct these collaborators.
 - **core** — `EventBusClient`, `ContextHolder`, `DeferredExecutionOrigin`, `LifecyclePhase`, `ConfigParser`, `ConfigurationException`, `KeyedBy`
 - **context** — `DispatchEnvelopeBuilder`, `ContextRuntimeModule` (wired via `CronModule`/`CronPersistenceModule`)
 - **services** — `ServiceContractRegistry` (scanned for `@CronJob` annotations), `ServiceMethodInvoker` (dispatches events and injects `JobContext`/`JobDispatchContext`), `ServiceTargetResolver` (mandatory; resolves `service:` target references once per fire)
-- **deploy** — `VerticleDeployment`, `LifecyclePhase`, `DeployerModule` (wired via `CronBaseModule` to auto-deploy `CronLifecycleVerticle`)
+- **deploy** — `VerticleDeployment` (`CronBaseModule` contributes one to auto-deploy `CronLifecycleVerticle`; the application's deployment runner consumes it)
 - **logging** — MDC utilities
 
 > **MDC note.** `CronJobDispatcher` enriches MDC before dispatching each job execution.

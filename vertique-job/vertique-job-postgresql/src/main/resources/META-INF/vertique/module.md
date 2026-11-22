@@ -9,7 +9,8 @@ SPDX-License-Identifier: EUPL-1.2
 > **Package:** `dev.vertique.job.postgresql`
 > **Artifact:** `vertique-job-postgresql`
 > **Depends on:** `dev.vertique:vertique-job-core`, `dev.vertique:vertique-db-postgresql`,
-> `dev.vertique:vertique-core`. `dev.vertique:vertique-db-flyway` is test-scope here; the application
+> `dev.vertique:vertique-core`, plus `dev.vertique:vertique-job-cron` and `dev.vertique:vertique-services` for the
+> execution retention job. `dev.vertique:vertique-db-flyway` is test-scope here; the application
 > supplies the migration runner.
 
 PostgreSQL implementation of the `JobRepository` SPI defined in `job-core`. Persists job execution state, logs, cron schedule definitions, and node heartbeats. Uses `FOR UPDATE SKIP LOCKED` for concurrent-safe job claiming without external coordination. Provides a transactional `save(execution, SqlClient)` overload for outbox-pattern enqueue. Flyway migrations are bundled at `classpath:db/migration/job`. `JobMigrationsModule` declares them as the `job` migration instance for named Flyway instances, and the optional `db.schemas.job` setting places the job tables in one schema for both the migrations and the repository.
@@ -71,7 +72,7 @@ This guarantees no two callers process the same execution and attributes the wor
 
 Package-private utility that maps `Row` objects to `JobExecution` domain objects. Handles all column extraction and null-safety for `job_executions`.
 
-The `payload` column is returned as `JsonObject` (opaque JSONB). Callers that know the concrete type call `((JsonObject) execution.payload()).mapTo(MyType.class)`.
+The `payload` column is returned as the JSON value it stores: a `JsonObject`, a `JsonArray`, a string, a number or a boolean. Callers that know the concrete type convert it themselves, for example `((JsonObject) execution.payload()).mapTo(MyType.class)` for an object payload.
 
 ### `NotifyingJobRepository`
 
@@ -163,6 +164,7 @@ would fail Flyway checksum validation, which is why the fold-back practice ends 
 | `idx_job_executions_job_id` | `job_id, created_at DESC` | — | Dashboard queries by job |
 | `idx_job_executions_idempotency_key` | `handler, scope_key, idempotency_key` (UNIQUE) | `WHERE idempotency_key IS NOT NULL AND state NOT IN ('SUCCEEDED', 'CANCELLED', 'DEAD_LETTER')` | Delayed-job idempotency key: at most one unfinished execution per handler, scope and key; `FAILED` and `ABANDONED` stay unfinished because a retry can still re-enqueue them |
 | `idx_job_executions_cron_dedup` | `job_id, scheduled_at` (UNIQUE) | `WHERE job_type = 'CRON' AND state NOT IN ('DEAD_LETTER', 'CANCELLED')` | SINGLE_INSTANCE leader election — only one node wins the INSERT race |
+| `idx_job_executions_retention` | `COALESCE(completed_at, updated_at)` | `WHERE state IN ('SUCCEEDED', 'CANCELLED', 'DEAD_LETTER', 'FAILED', 'ABANDONED')` | Execution retention scan: finished executions in age order (see [Execution retention](#execution-retention)) |
 
 A keyed `save` (`JobExecution.idempotencyKey()` not `null`, plain or transactional) runs `INSERT ... ON CONFLICT (handler, scope_key, idempotency_key) WHERE <index predicate> DO NOTHING RETURNING id`. When the insert stores nothing, a second statement reads the unfinished holder and its id is returned; if the holder finished in between, the insert is repeated, at most three times in all, after which the future fails with `IllegalStateException`. The conflict path never updates the holder (`updated_at` is unchanged) and never raises a unique violation, so it cannot abort the caller's transaction. A cron execution never carries a key. Two limits follow from the design: a keyed `save` inside a `REPEATABLE READ` or `SERIALIZABLE` transaction whose snapshot predates the holder's commit cannot see the holder and fails with that `IllegalStateException`; and `updateState`, which does not check the transition model, can move a finished execution back to an unfinished state, which raises a unique violation if another execution has taken its key since.
 

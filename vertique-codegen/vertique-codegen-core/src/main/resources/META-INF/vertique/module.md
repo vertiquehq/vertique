@@ -9,10 +9,11 @@ SPDX-License-Identifier: EUPL-1.2
 
 ## When To Use It
 
-An application never depends on this artifact directly. It arrives with the annotation processor a
-starter or a codegen sibling brings in, and what an application uses from it is the wiring
-annotation set: `@RegisterAs`, `@RegisterIntoSet`, `@ConditionalOnProperty`,
-`@ConditionalOnProperties`, and `@NoAutoWire`, placed on the application's own beans.
+An application never puts this artifact on its runtime classpath, and it never calls the helper
+classes. The processor facade carries the processors on the annotation-processor path, which does
+not make the source-retained annotations importable. An application that writes `@RegisterAs`,
+`@RegisterIntoSet`, `@ConditionalOnProperty`, `@ConditionalOnProperties`, or `@NoAutoWire` on its own
+beans therefore declares this artifact with `provided` scope.
 
 Depend on it explicitly only when writing an annotation processor that emits into the same Dagger
 graph — that is what the framework's own codegen modules do.
@@ -68,9 +69,11 @@ Key methods:
 | `annotations()` | Lazily-initialized `AnnotationMirrors` instance |
 | `diagnostics()` | Lazily-initialized `Diagnostics` instance |
 | `isRecord(TypeElement)` | True when `element.getKind() == ElementKind.RECORD` |
-| `injectConstructor(TypeElement)` | Returns the `@Inject`-annotated constructor; tolerates both `jakarta.inject.Inject` and `javax.inject.Inject` |
+| `injectConstructor(TypeElement)` | Returns the first `@Inject`-annotated constructor as an `Optional`; tolerates both `jakarta.inject.Inject` and `javax.inject.Inject` |
 | `unwrapFuture(TypeMirror)` | If the type is `io.vertx.core.Future<X>`, returns `X`; otherwise returns the type unchanged |
-| `outputPackage(TypeElement)` | Returns the processor option `-Avertique.codegen.package` if set, else the origin element's package |
+| `outputPackage(TypeElement)` | Returns the processor option `-Avertique.codegen.package` if set and not blank, else the origin element's package |
+| `packageNameOf(TypeElement)` | Returns the type's own package, ignoring the `-Avertique.codegen.package` override; use it for access checks |
+| `asTypeElement(TypeMirror)` | Returns the `TypeElement` of a declared type as an `Optional`; empty for a primitive, array, type variable, wildcard, error or no-type mirror, or for `null` |
 
 The constant `CodegenContext.OPTION_OUTPUT_PACKAGE` (`"vertique.codegen.package"`) is the processor option key for the package override.
 
@@ -121,6 +124,8 @@ Obtain via `CodegenContext.annotations()`.
 | Method | Description |
 |--------|-------------|
 | `find(Element, Class<? extends Annotation>)` | Returns the matching `AnnotationMirror`, if present |
+| `static findByFqn(Element, String)` | Same lookup by fully-qualified annotation name, for an annotation type that is not on the processor's compile classpath |
+| `static isPresent(Element, String)` | True when `findByFqn` finds the annotation |
 | `attribute(AnnotationMirror, String name, Class<T>)` | Pulls a single annotation member, applying the correct `AnnotationValue` visitor |
 | `attributeArray(AnnotationMirror, String name)` | Returns a list of annotation values for an array-typed member |
 | `attributeClass(AnnotationMirror, String name)` | Handles the `MirroredTypeException` pattern for `Class`-typed members |
@@ -129,7 +134,7 @@ Obtain via `CodegenContext.annotations()`.
 
 ### Diagnostics
 
-Combines instance methods bound to a `Messager` with static factory methods for consistent message wording. The static formatters fix message wording for the framework's own processors — downstream processors must use them so error messages stay consistent across the framework's codegen modules. `Diagnostics` is an internal seam (see Framework seams), so the wording is a contract between the framework's own processors and carries no compatibility promise to applications or to processors outside the framework.
+Combines instance methods bound to a `Messager` with static factory methods for consistent message wording. The static formatters fix message wording for the framework's own processors — downstream processors must use them so error messages stay consistent across the framework's codegen modules. Beyond the four original formatters below, the class carries one formatter per diagnostic the framework's processors report (selector paths, proxyability, resilience, security, REST, delayed jobs, Kafka, workflows, events, AOP, annotation literals, REST clients); read the class for the full set. `Diagnostics` is an internal seam (see Framework seams), so the wording is a contract between the framework's own processors and carries no compatibility promise to applications or to processors outside the framework.
 
 Obtain via `CodegenContext.diagnostics()`.
 
@@ -144,7 +149,7 @@ Obtain via `CodegenContext.diagnostics()`.
 
 All instance methods accept a `String.format`-style format string.
 
-**Static message formatters (wording fixed for the framework's own processors):**
+**Original shared static formatters (wording fixed for the framework's own processors):**
 
 | Method | Output template |
 |--------|----------------|
@@ -163,7 +168,7 @@ Answers whether generated source placed in one package may name a user type decl
 static boolean isReferenceableFrom(TypeElement type, String fromPackage)
 ```
 
-An aggregate emitter writes one `public` type into a package derived from all its origins, then references each origin by name. Consult this before emitting such a reference: a reference the generated package cannot legally make produces source that does not compile, and because javac compiles generated sources in the same task, the application's build breaks merely by putting the processor on `annotationProcessorPaths` — whether or not the generated module is installed in a `@Component`. Emitters skip what they cannot name (and say so via `Diagnostics.mandatoryWarning`) rather than emitting it.
+An aggregate emitter writes one `public` type into a package derived from all its origins, then references each origin by name. Consult this before emitting such a reference: a reference the generated package cannot legally make produces source that does not compile, and because javac compiles generated sources in the same task, the application's build breaks merely by putting the processor on `annotationProcessorPaths` — whether or not the generated module is installed in a `@Component`. Binding emitters skip what they cannot name (and say so via `Diagnostics.mandatoryWarning`) rather than emitting it; the REST client proxy and bean-accessor emitters instead fail the compilation with an error that names the type the generated package cannot reach.
 
 The rules, each matching what javac accepts:
 
@@ -221,8 +226,8 @@ ProxyabilityValidator validator = new ProxyabilityValidator(ctx, "cacheable");
 boolean valid = validator.validate(method);
 ```
 
-Validation requires a public, non-final enclosing class with exactly one constructor annotated with
-`jakarta.inject.Inject` or `javax.inject.Inject`. The method must be an instance method that can be
+Validation requires a public, non-final enclosing class that declares exactly one constructor, and
+that constructor must be annotated with `jakarta.inject.Inject` or `javax.inject.Inject`. The method must be an instance method that can be
 overridden: final, private, static, and abstract methods are rejected. Each failure is reported as
 a family-prefixed compile-time diagnostic. Enclosing-class checks are memoized per class, so
 co-located annotations do not repeat the same class-level diagnostics; method-level checks still
@@ -248,12 +253,17 @@ module.writeTo(ctx.filer());
 | `concrete()` | Switches the generated class from `abstract` to concrete |
 | `addIntoSetProvides(ClassName qualifier, ClassName type, String methodName, ClassName implType)` | Emits a `@Provides @IntoSet [Qualifier] Type method(Impl impl)` static method |
 | `addElementsIntoSetProvides(ClassName qualifier, ClassName setType, String methodName, CodeBlock body, ParameterSpec... deps)` | Emits a `@Provides @ElementsIntoSet [Qualifier] Set<Type> method(...)` static method from a `CodeBlock` body; used by `GeneratedJaxRsResourcesModuleEmitter` for the uniform `@ElementsIntoSet` binding shape |
-| `addStaticFinalField(TypeName fieldType, String fieldName, CodeBlock initializer)` | Emits a `static final` field with the given type, name, and initializer; used by `ContributorEmitter` for per-impl `PropertyCondition[]` constants |
+| `addStaticFinalField(String fieldName, TypeName fieldType, CodeBlock initializer)` | Emits a `private static final` field with the given name, type, and initializer; fields are emitted before methods. Used by `GeneratedJaxRsResourcesModuleEmitter` for `PropertyCondition[]` constants |
 | `addSingletonProvides(ClassName type, String methodName, CodeBlock body, ParameterSpec... deps)` | Emits a `@Provides @Singleton` static method from a `CodeBlock` body |
-| `addBindsOptionalOf(ClassName type)` | Emits an abstract `@BindsOptionalOf Type type()` declaration |
-| `build()` | Returns a `JavaFile` ready for `Filer.createSourceFile()` |
+| `addBindsOptionalOf(ClassName type)` | Emits an abstract `@BindsOptionalOf` declaration whose method name is the decapitalized simple name (suffixed with `_` when that is a Java keyword). Throws `IllegalStateException` after `concrete()` |
+| `addMultibinds(ParameterizedTypeName setType, String methodName)` | Emits an abstract `@Multibinds Set<T> methodName()` declaration so an empty set binds. Throws `IllegalStateException` after `concrete()` |
+| `addIntoSetProvidesWithBody(TypeName producedType, String methodName, CodeBlock body, ParameterSpec... deps)` | Emits a `@Provides @IntoSet` static method from a `CodeBlock` body |
+| `addBinds(ClassName boundType, ClassName implType, String methodName, ClassName scopeOrNull)` | Emits an abstract `@Binds [@Scope] Bound method(Impl impl)` declaration; the scope is omitted when `scopeOrNull` is `null`. Throws `IllegalStateException` after `concrete()` |
+| `addBinds(TypeName boundType, ClassName implType, String methodName, ClassName scopeOrNull)` | Same, for a parameterized bound type |
+| `generatedBy(String processorFqn)` | Adds `@javax.annotation.processing.Generated("<processorFqn>")` to the generated type; without it only the class-file marker is added |
+| `build()` | Returns a `JavaFile` ready for `Filer.createSourceFile()`; throws `IllegalStateException` for a concrete module that holds an abstract declaration |
 
-Dagger types (`@Module`, `@Provides`, `@IntoSet`, `@Singleton`, `@BindsOptionalOf`) are referenced as `ClassName.get("dagger", "Module")` etc. — the generated source does not add a compile dependency on Dagger beyond what the consuming module already has.
+Dagger types (`@Module`, `@Provides`, `@IntoSet`, `@ElementsIntoSet`, `@BindsOptionalOf`, `@Binds`, `@Multibinds`) are referenced by `ClassName`, for example `ClassName.get("dagger", "Module")`, and `@Singleton` is `jakarta.inject.Singleton` — the generated source does not add a compile dependency on Dagger beyond what the consuming module already has.
 
 ---
 
@@ -293,6 +303,11 @@ JavaPoet emitter that, given a method element, generates a `dev.vertique.core.co
 |--------|-------------|
 | `emitMethodMetadata(ExecutableElement, ClassName, Types)` | Emits a `MethodMetadata` implementation with no materialized annotation literals (`findAnnotation`/`hasAnnotation` resolve nothing) |
 | `methodMetadataType(ExecutableElement, ClassName, Types, List<AnnotationLiteralRef>, List<List<AnnotationLiteralRef>>)` | Builds the `MethodMetadata`-implementing `TypeSpec.Builder` with method-level **and** parameter-level annotation literals baked in, without top-level modifiers (so the caller can emit it top-level or nested) |
+| `emitParameterMetadata(ClassName, int, String, TypeMirror, Types, List<AnnotationLiteralRef>)` | Emits a standalone top-level `ParameterMetadata` implementation for one parameter, with its index, name, erased type and annotation literals baked in as constants (`ANNOTATION_<i>`) |
+| `emitParameterMetadata(ClassName, int, String, TypeMirror, Types, List<AnnotationLiteralRef>, CodeBlock)` | Same, with an optional reflective fallback supplier (a `Supplier<Annotation[]>` expression) for annotations that could not be materialized as literals; `null` keeps the class purely literal-backed |
+| `emitParameterMetadataLoadingType(ClassName, int, String, String, int, List<AnnotationLiteralRef>, CodeBlock)` | Same, for a parameter type the generated class cannot name as a class literal (a private class, or one nested in a private class); `type()` loads the class by binary name at class initialization |
+
+`MetadataEmitter.AnnotationLiteralRef(ClassName annotationType, ClassName literalClass, CodeBlock constructorArgs)` is the public record a caller passes for each materialized literal.
 
 Both the method-level and parameter-level `findAnnotation`/`hasAnnotation` surfaces are reflection-free and literal-backed: for each runtime-retained method annotation the emitter bakes a `static final <Ann>` literal constant (`ANNOTATION_<i>`) and resolves `findAnnotation` by a `type == <Ann>.class` match; for each parameter's runtime-retained annotations it bakes `PARAM_<p>_ANNOTATION_<i>` literal constants and passes them to the nested `ParameterMetadataImpl`, whose `findAnnotation` matches the looked-up `type` against each literal's `annotationType()` — never `Method.getAnnotation`/`Parameter.getAnnotation`. This backs `ParameterMetadata.findAnnotation`/`hasAnnotation` on the codegen path. Generated method metadata emits `genericReturnType()` as a reflection-free `Type` graph, including parameterized, wildcard, and generic-array return shapes. `asMethod()` is the opt-in reflective accessor: the generated implementation resolves `declaringType().getDeclaredMethod(name(), parameterTypes())` on the first call, caches the `Method` in a `volatile` field (concurrent first callers resolve equal copies and the last write wins, so the race is benign), and wraps `NoSuchMethodException` in an `IllegalStateException` that names the expected signature. It is the only reflective call site in the generated class; generated proxy overrides never call it, so a consumer that never calls `asMethod()` stays reflection-free. Parameter `genericType()` remains stubbed and throws `UnsupportedOperationException`.
 
@@ -300,7 +315,7 @@ The caller owns the generator namespace when materializing each `AnnotationLiter
 
 ### meta.AnnotationLiteralEmitter
 
-Generates annotation implementations whose accessors return compile-time constants and whose `equals`/`hashCode` follow the `java.lang.annotation.Annotation` contract. All legal annotation member kinds are supported: the eight primitive kinds (`boolean`, `byte`, `short`, `int`, `long`, `char`, `float`, and `double`), `String`, `Class`, enum constants, nested annotations, and arrays of those kinds. `char` members use source-safe numeric `(char) <value>` expressions, including for control characters, so generated source cannot contain Unicode-escape line terminators. `float` and `double` members use `Float.intBitsToFloat` and `Double.longBitsToDouble` with the exact raw bit pattern read during processing, so NaN, infinities, and negative zero round-trip. Equality uses `Float.compare`/`Double.compare` for floating-point members and boxed `Float`/`Double` hash codes; other primitive members retain direct equality and boxed hash semantics. Arrays use `Arrays.equals` and `Arrays.hashCode`.
+Generates annotation implementations whose accessors return compile-time constants and whose `equals`/`hashCode` follow the `java.lang.annotation.Annotation` contract. All legal annotation member kinds are supported: the eight primitive kinds (`boolean`, `byte`, `short`, `int`, `long`, `char`, `float`, and `double`), `String`, `Class`, enum constants, nested annotations, and arrays of those kinds. `char` members use source-safe numeric `(char) <value>` expressions, including for control characters, so generated source cannot contain Unicode-escape line terminators. `float` and `double` members use `Float.intBitsToFloat` and `Double.longBitsToDouble` with the exact raw bit pattern read during processing, so NaN, infinities, and negative zero round-trip. Equality uses `Float.compare`/`Double.compare` for floating-point members and boxed `Float`/`Double` hash codes; other primitive members retain direct equality and boxed hash semantics. Arrays use `Arrays.equals` and `Arrays.hashCode`, and an array member's accessor returns a fresh clone on each call.
 
 `firstUnsupportedAttribute(TypeElement)` is retained for signature compatibility with `vertique-codegen-jaxrs` and returns `Optional.empty()` for every annotation type. No legal annotation member kind is rejected by this emitter.
 
@@ -364,12 +379,12 @@ must be included explicitly by the owning Dagger component or aggregate module.
 
 ### Framework seams
 
-Twenty public types — `CodegenContext`, `AnnotationMirrors`, `AnnotationLiteralEmitter`,
-`Conditions`, `Constructors`, `DaggerModuleWriter`, `Diagnostics`, `Identifiers`,
-`InjectConstructorValidator`, `JaxRsAnnotations`, `JaxRsBeanScanner`, `MetadataEmitter`,
+Twenty-one public types — `CodegenContext`, `AccessPolicyAnnotationResolver`, `AnnotationMirrors`,
+`AnnotationLiteralEmitter`, `Conditions`, `Constructors`, `DaggerModuleWriter`, `Diagnostics`,
+`Identifiers`, `InjectConstructorValidator`, `JaxRsAnnotations`, `JaxRsBeanScanner`, `MetadataEmitter`,
 `MethodOverrides`, `PackageResolver`, `PathPlaceholders`, `ProxyabilityValidator`,
 `SelectorPathValidator`, `SignalSourceNaming`, `TypeResolver`, and `TypeVisibility` — are the processor-authoring
-substrate. They are public because sibling framework processors in other artifacts call them across
+substrate; `GeneratedMarker` is public as well and is the emitter-side marker described above. They are public because sibling framework processors in other artifacts call them across
 package boundaries, and their Javadoc marks them INTERNAL. They are outside this module's
 compatibility promise.
 
@@ -390,7 +405,7 @@ present, where generated artifacts are named and placed, and that a violation fa
 
 ### Static Diagnostics Formatters
 
-The four static methods on `Diagnostics` (`mustReturnFuture`, `duplicateOperation`, `unsupportedAnnotation`, `expectedRecord`) have fixed string values that the framework's own codegen modules share; `Diagnostics` is an internal seam, so the wording carries no promise to code outside the framework. Downstream codegen processors must call these methods rather than inline the strings. Changing a string value changes the message of every codegen module that uses it, so the strings are pinned by `DiagnosticsTest`.
+The static formatters on `Diagnostics` (the original four — `mustReturnFuture`, `duplicateOperation`, `unsupportedAnnotation`, `expectedRecord` — and the per-family formatters added since) have fixed string values that the framework's own codegen modules share; `Diagnostics` is an internal seam, so the wording carries no promise to code outside the framework. Downstream codegen processors must call these methods rather than inline the strings. Changing a string value changes the message of every codegen module that uses it, so `DiagnosticsTest` pins the strings it covers (all of the original four and most, not all, of the others).
 
 ---
 

@@ -124,7 +124,7 @@ OutboxEntry.builder()
 ```
 
 - **Omitted means `default`.** An entry that never calls `scopeKey(...)` is stored in the `default` scope, and so is every row that existed before the column was added.
-- **An explicit `null` fails.** `OutboxService.publish` returns a failed future with an `IllegalArgumentException`, before any write, for a `null` key and for one that is not a valid core `ScopeKey` (blank, longer than 255 code points, or containing a control or format character). The message does not repeat the key. The entry itself holds the text as given and does not validate it.
+- **An explicit `null` fails.** `OutboxService.publish` returns a failed future with an `IllegalArgumentException`, before any write, for a `null` key and for one that is not a valid core `ScopeKey` (blank, longer than 255 code points, starting or ending with whitespace, or containing a control character, a format character or an unpaired surrogate). The message does not repeat the key. The entry itself holds the text as given and does not validate it.
 - **The ambient `ScopeContext` does not select it.** Publishing under a bound `ScopeContext` still stores `default` unless the entry names a scope. The context is captured into the durable `metadata` like any other durable context, independent of the row's scope.
 - **A scope is a label, not authorization.** Nothing checks the caller's right to a scope at publish, by id or under a service principal; the application authorizes access itself.
 - **Row scope and `ScopeContext` are independent.** A handler that partitions data by scope chooses one source, compares the other when both are present, fails on a mismatch, and authorizes access itself. Do not assume the two agree.
@@ -152,6 +152,7 @@ Domain record representing a persisted outbox row. Carries all relay state field
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | `long` | Auto-assigned outbox entry id |
+| `carrierId` | `UUID` | Row carrier id allocated when the entry was published and stored in its own column; internal to the relay |
 | `aggregateType` | `String` | Logical aggregate type |
 | `aggregateId` | `String` | Aggregate instance id |
 | `eventType` | `String` | Event type |
@@ -159,6 +160,7 @@ Domain record representing a persisted outbox row. Carries all relay state field
 | `destinationType` | `DestinationType` | Open value type; built-ins are `SERVICE`, `DELAYED_JOB`, `KAFKA`; adapter-declared types are also valid |
 | `payload` | `Object` | Payload as read from JSONB storage — a `JsonObject`; a non-object payload is stored wrapped as `{"_v": …}`. Destination handlers decode it with `PayloadCodec.decode(JsonObject)` or `PayloadCodec.decode(JsonObject, Class)`, which unwrap the wrapper |
 | `headers` | `Map<String, String>` | Application/transport headers only (no framework keys); an unmodifiable copy — see [Header model](#header-model) |
+| `metadata` | `OutboxMetadata` | Durable propagation context plus delivery control, as described for `OutboxEnvelope` below |
 | `scheduledAt` | `Instant` | Optional scheduled publish time |
 | `availableAt` | `Instant` | Earliest publish time after backoff |
 | `state` | `OutboxEntryState` | `PENDING`, `PROCESSING`, `PUBLISHED`, `DEAD_LETTER`, `DISCARDED` |
@@ -169,6 +171,8 @@ Domain record representing a persisted outbox row. Carries all relay state field
 | `publishedAt` | `Instant` | When the row transitioned to `PUBLISHED` |
 | `lastError` | `String` | Last error message |
 | `errorType` | `String` | Last error type |
+| `createdAt` | `Instant` | When the row was inserted |
+| `updatedAt` | `Instant` | When the row last changed state |
 | `scopeKey` | `String` | Scope label chosen when the entry was published; never `null` — a `null` component reads `default`. See [Scope](#scope) |
 
 The record is the canonical 23-component form with `scopeKey` last; a public 22-argument constructor without it remains and reads `default`.
@@ -308,8 +312,9 @@ Publish-side access to the application/transport headers for an outbound message
 | `messageId` / `eventType` / `aggregateType` / `aggregateId` | Row columns of the originating entry |
 | `headers` | Application/transport headers, an unmodifiable copy |
 | `scopeKey` | Scope label read from the row; never `null` — a `null` component reads `default`. Independent of the ambient `ScopeContext`. See [Scope](#scope) |
+| `replyHandle` | The reply handle of a row that carries one, `null` otherwise; its `toString()` masks the value. See [Completing an accepted service call](#completing-an-accepted-service-call) |
 
-The record is the canonical six-component form with `scopeKey` last; a public five-argument constructor without it remains and reads `default`.
+The record is the canonical seven-component form with `scopeKey` and `replyHandle` last; public five- and six-argument constructors without them remain and read `default` and `null`.
 
 ### Reading and administering entries
 
@@ -649,6 +654,6 @@ inbox-outbox-core  <--  inbox-outbox-postgresql  (persistence + relay verticle)
 
 A service handling a call that completes later reads `TransactionalMessageContext.replyHandle()` and stores the latest handle with its work. The handle is a bearer value: anyone holding it can complete that one wait, so protect it when sending or storing it outside the application. It survives a restart. A migration can issue a new handle; retain the latest one.
 
-Inject `OutboxReplies` and call `complete(handle, value)` or `fail(handle)` when the work ends. `RECORDED` means the outcome was recorded; `DUPLICATE` means the same outcome was already recorded, and `STALE` means the wait ended, a different outcome won, or the value was refused. An invalid handle fails with `IllegalArgumentException` without echoing the handle. A refused value records a `REPLY_REFUSED` failure when the wait remains open. The service's initial successful return settles the outbox row without completing the wait.
+Inject `OutboxReplies` (bound by `vertique-workflow-services`; the inbox/outbox modules alone do not provide it) and call `complete(handle, value)` or `fail(handle)` when the work ends. `RECORDED` means the outcome was recorded; `DUPLICATE` means the same outcome was already recorded, and `STALE` means the wait ended, a different outcome won, or the value was refused. An invalid handle fails with `IllegalArgumentException` without echoing the handle. A refused value records a `REPLY_REFUSED` failure when the wait remains open. The service's initial successful return settles the outbox row without completing the wait.
 
 A service exception implementing `OutboxPermanentFailure` is classified as permanent and dead-lettered without further attempts.
