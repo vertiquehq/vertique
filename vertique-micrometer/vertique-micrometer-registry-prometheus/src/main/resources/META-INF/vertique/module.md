@@ -119,7 +119,8 @@ Per-request handling:
 - Re-reads `PrometheusBackend.registry()` on every request. If it is empty (the backend was cleared by
   shutdown or bootstrap rollback), responds 503 with the constant body `"metrics unavailable"` rather
   than scraping a stale or closed registry.
-- Inspects the `Accept` header. If it contains `application/openmetrics-text`, renders in
+- Inspects the `Accept` header with a plain substring test (no quality-value parsing; a missing
+  header counts as no match). If it contains `application/openmetrics-text`, renders in
   OpenMetrics 1.0.0 format (`application/openmetrics-text; version=1.0.0; charset=utf-8`).
   Otherwise renders in Prometheus text 0.0.4 format (`text/plain; version=0.0.4; charset=utf-8`).
 - Offloads rendering to a worker thread via `executeBlocking(..., ordered=false)`.

@@ -131,7 +131,7 @@ public VerticleDeploymentManager(VerticleDeployer deployer, Set<VerticleDeployme
 | Method | Description |
 |--------|-------------|
 | `deployAll()` | Deploys all multibinding-registered verticles, sequentially by phase, priority, then name; uses invocation-scoped rollback (only undeploys what the current call started) |
-| `deployPhase(LifecyclePhase)` | Deploys only the verticles registered for the given phase; transactional per phase — rolls back that phase only on failure |
+| `deployPhase(LifecyclePhase)` | Deploys only the verticles registered for the given phase, sequentially; on failure undeploys only the verticles that call started, leaving earlier deployments untouched |
 
 Both methods are **framework choreography primitives**, not application entry points. Application
 startup is delegated to `VertiqueApplicationBootstrap.start(runtime, factory)` in
@@ -295,8 +295,8 @@ Mirror of the startup-step multibinding for teardown work. Same ordering contrac
 
 - `dev.vertique:vertique-core` — `LifecyclePhase`, `LifecycleOrdered`, `ApplicationStartupStep`, `ApplicationShutdownStep`
 - `io.vertx:vertx-core`
+- `com.fasterxml.jackson.core:jackson-annotations` — `@JsonCreator` on `SupervisionConfig`
 - `com.google.dagger:dagger`
 - `jakarta.inject:jakarta.inject-api`
-- `jakarta.annotation:jakarta.annotation-api`
 - `org.slf4j:slf4j-api`
 - `org.projectlombok:lombok` (provided)

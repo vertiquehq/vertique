@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.localization`
 > **Artifact:** `vertique-localization`
-> **Depends on:** core
+> **Depends on:** vertique-core
 
 Provides HTTP-agnostic localization infrastructure: ResourceBundle-backed message catalogs, deterministic RFC 4647 / RFC 5646 locale negotiation, and a typed `LocalizationContext` value for carrying locale, time-zone, and formatting preferences across a unit of work.
 
@@ -32,7 +32,7 @@ Every `MessageSource` is application-owned and Dagger-qualified. `LocalizationMo
 
 ### Candidate-locale walk
 
-`DefaultMessageSource` evaluates the requested locale, then (if different) the configured default locale, then (only when `fallbackToSystemLocale = true`) the JVM system locale. For each candidate it tries the primary basename, then the declared fallback basenames in order. The first bundle containing the message code wins. ResourceBundle's own system-locale fallback mechanism is disabled; the framework controls the walk.
+`DefaultMessageSource` evaluates the requested locale, then (if different) the configured default locale, then (only when `fallbackToSystemLocale = true`) the JVM system locale. For each candidate it tries the primary basename, then the declared fallback basenames in order. The first bundle containing the message code wins. A base bundle with no locale suffix (`messages.properties`) answers directly only on the configured default locale's candidate; for any other candidate, a lookup that resolves to nothing but the base bundle counts as a miss, so the walk reaches the default locale before the base bundle can answer. A code that exists only in the base bundle still resolves for a locale that has its own variant file, through the bundle's parent chain. ResourceBundle's own system-locale fallback mechanism is disabled; the framework controls the walk.
 
 ### Exception data, not exception type
 
@@ -48,8 +48,8 @@ SPI for resolving and formatting localized messages backed by Java `ResourceBund
 
 | Method | Behavior on missing code |
 |--------|--------------------------|
-| `getMessage(code, locale, args...)` | Throws `NoSuchMessageException` |
-| `getMessage(code, defaultMessage, locale, args...)` | Returns `defaultMessage`; throws only when `defaultMessage` is also `null` |
+| `getMessage(code, locale, args...)` | Throws `NoSuchMessageException` (unless `useCodeAsDefaultMessage` is on) |
+| `getMessage(code, defaultMessage, locale, args...)` | Returns the formatted `defaultMessage`; throws only when `defaultMessage` is also `null` (and `useCodeAsDefaultMessage` is off) |
 | `findMessage(code, locale, args...)` | Returns `Optional.empty()` (never applies `useCodeAsDefaultMessage`) |
 | `getMessage(resolvable, locale)` | Tries codes in order; falls back to `resolvable.defaultMessage()`; throws for first code on total miss |
 
@@ -94,7 +94,7 @@ public record MessageSourceOptions(
 
 The `BundleControl` instance (`ResourceBundle.Control` subclass) is stateless and shared across all lookups within a single `MessageSource`. Java's bundle cache is keyed by `(classloader, basename, locale, control)` — passing a new `Control` object per call silently invalidates the cache and defeats TTL semantics.
 
-When modules ship their own bundles from a separately-loaded JAR, they must supply that JAR's `ClassLoader` via `MessageSourceOptions.classLoader(...)` or the `caller` hint, or `ResourceBundle.getBundle` will fail to locate the properties files.
+When modules ship their own bundles from a separately-loaded JAR, they must supply that JAR's `ClassLoader` via `MessageSourceOptions.classLoader(...)` or the `caller` hint, or `ResourceBundle.getBundle` will fail to locate the properties files. The class loader is chosen in this order: `classLoader`, then the `caller` class's loader (skipped when it is `null`), then the thread context class loader, then the system class loader.
 
 ### MessageResolvable
 
@@ -155,7 +155,7 @@ SPI for deterministic locale negotiation. Two resolution paths, each in three ov
 
 The language-tag path (`resolveLanguageTags`) accepts mixed comma/whitespace separators (e.g. `"de-DE  fr  en"`). Whitespace runs are normalized to commas before matching, but error reporting preserves the original raw value.
 
-Implementations only need to override the explicit-fallback overloads (`resolveLanguageRange(value, fallback)` and `resolveLanguageTags(value, fallback)`); the other overloads are `default` methods on the interface.
+Implementations override the explicit-fallback overloads (`resolveLanguageRange(value, fallback)` and `resolveLanguageTags(value, fallback)`) and the two accessors `supportedLocales()` and `defaultLocale()`; the other four overloads are `default` methods on the interface.
 
 ### LocaleResolutionException
 
@@ -187,7 +187,7 @@ Immutable record produced by `LocalizationConfigParser` from the application's `
 | `defaultZone` | `UTC` | Never falls back to JVM system zone; blank/invalid values fail at startup |
 | `supportedLocales` | `[defaultLocale]` | Non-empty; defines the resolver's candidate set |
 | `fallbackToSystemLocale` | `false` | Enables JVM-default-locale as last-resort candidate |
-| `useCodeAsDefaultMessage` | `false` | Applies only to throwing `getMessage` overloads, not `findMessage` |
+| `useCodeAsDefaultMessage` | `false` | Applies only to the throwing `getMessage(code, ...)` overloads; `findMessage` and `getMessage(resolvable, locale)` never apply it |
 | `alwaysUseMessageFormat` | `false` | Forces `MessageFormat` even when no args are supplied |
 | `cacheTtlSeconds` | `-1` | `-1` = JVM default; `0` = no cache; must be integer-typed in JSON |
 
@@ -336,7 +336,7 @@ The `@Binds MessageSourceFactory ← DefaultMessageSourceFactory` binding in `Lo
 
 ### LocaleResolver (replacement)
 
-The `@Binds LocaleResolver ← DefaultLocaleResolver` binding can be overridden to plug in a custom resolution strategy (database-stored locale preferences, user profile lookup, etc.). Implementations must override the explicit-fallback overloads; the default methods on the interface handle the other six overloads.
+The `@Binds LocaleResolver ← DefaultLocaleResolver` binding can be overridden to plug in a custom resolution strategy (database-stored locale preferences, user profile lookup, etc.). Implementations must override the explicit-fallback overloads and the `supportedLocales()` / `defaultLocale()` accessors; the default methods on the interface handle the other four overloads.
 
 ### Application-qualified MessageSources (primary extension pattern)
 

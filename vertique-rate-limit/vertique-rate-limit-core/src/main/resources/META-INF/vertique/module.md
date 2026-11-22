@@ -117,7 +117,10 @@ is to stay bounded and non-blocking, since observers run on the admission hot pa
 
 `limiter(String policyName)` and `<K> limiter(String policyName, Function<? super K,
 RateLimitKey> keySelector)` resolve named policies into handles; `close()` is
-idempotent and force-fails in-flight operations on a second call.
+idempotent and every call returns the same close future. The first call fences in-flight work:
+an in-flight `execute(...)` fails with `RateLimitUnavailableException`, and an in-flight `acquire(...)`
+settles as a backend-failure decision per the policy's `failureMode`; an acquisition after close fails
+with `RateLimitUnavailableException`.
 
 ```java
 RateLimiter search = rateLimiters.limiter("search-quota");
@@ -244,7 +247,7 @@ explicit `Ms` suffix.
 | `rateLimit.enabled` | boolean | `true` | Root kill switch. When `false`, every `acquire(...)` on every handle yields a `DISABLED` decision without engaging any backend; `execute(...)` runs the action. Startup validation still runs. |
 | `rateLimit.defaultMode` | `LOCAL` \| `CLUSTERED` | `LOCAL` | Mode applied to any policy that omits `mode`. An unrecognized value fails startup with `ConfigurationException` naming `rateLimit.defaultMode`. |
 | `rateLimit.local.maxTrackedKeys` | long | `100000` | Per-policy bound on distinct keys a LOCAL registry tracks. Must be between 1 and 10,000,000; a value outside that range fails startup with `ConfigurationException` naming the key. Applies to each LOCAL policy separately, never as one pool shared across policies. |
-| `rateLimit.local.cleanupIntervalMs` | long (ms) | `60000` | Interval at which inactive LOCAL state is reclaimed. Must be at least 1. |
+| `rateLimit.local.cleanupIntervalMs` | long (ms) | `60000` | Retention slack added to a policy's worst-case time to full before inactive LOCAL state becomes reclaimable, and the minimum interval between reclamation sweeps. There is no background timer: a sweep runs inline, at most once per interval, only when a not-yet-tracked key arrives at a registry already at its `maxTrackedKeys` budget. Must be at least 1. |
 | `rateLimit.keyDerivation.secret` | string | none | HMAC secret used to derive CLUSTERED physical keys. Required when any **enabled** policy is `CLUSTERED`, and must be at least 32 bytes in UTF-8; a missing, shorter, or unresolved `${...}` placeholder value fails startup. Not validated for LOCAL-only applications. Supply it through a secret-bearing property source or environment placeholder, never as a literal in a committed file. |
 | `rateLimit.policies.<name>` | object | none | One policy per key; the key is the policy `name` (`[A-Za-z0-9._~-]{1,128}`). A configuration policy replaces a same-named Dagger-contributed `RateLimitPolicy` wholesale. |
 
@@ -303,5 +306,5 @@ packaged module-documentation parity:
 | Artifact | Purpose |
 |---|---|
 | `vertique-core` | Framework foundations and shared configuration/runtime contracts |
-| `vertique-context` | Vert.x context propagation for observer/decision dispatch |
+| `vertique-context` | `ContextRuntimeModule`, which `RateLimitCoreModule` includes so the default subject resolver has a bound `ContextHolder` to read the current `SecurityContext` from |
 | `vertique-security-core` | Provider-neutral `SecurityContext`/`SecurityIdentity` contracts for subject resolution |

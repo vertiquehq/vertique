@@ -191,7 +191,7 @@ public record PrincipalRef(PrincipalType type, String id, Map<String, Object> at
 
 **Construction rules:** `type` and `id` are required (non-null; `id` non-blank). A null `attributes` map is treated as empty. The attributes map is defensively copied at construction.
 
-**Durable capture caveat:** `attributes` (and the analogous attribute maps on `ClientRef` and `AuthorityClaim`) is request-scoped provenance only and is non-authoritative for identity — it does not survive identity-snapshot durable capture. Capture projects subject/client/claim attribute maps to empty unconditionally; the sole survivor is a bounded (≤ 256 chars) `system.reason` string on a `SYSTEM`-typed actor. Durable principal identity is the trust-domain-unique `(PrincipalType, id)` tuple (): applications using tenant-, issuer-, or realm-local identifiers must namespace or otherwise qualify `id`/`clientId` before constructing the ref — e.g. `new PrincipalRef(PrincipalType.USER, "urn:example:tenant:acme:user:01J…", Map.of("displayName", "alice"))` — because the framework treats ids as opaque and never reconstructs identity scope from attributes.
+**Durable capture caveat:** `attributes` (and the analogous attribute maps on `ClientRef` and `AuthorityClaim`) is request-scoped provenance only and is non-authoritative for identity — it does not survive identity-snapshot durable capture. Capture projects subject/client/claim attribute maps to empty unconditionally; the sole survivor is a bounded (≤ 256 chars) `system.reason` string on a `SYSTEM`-typed actor. Durable principal identity is the trust-domain-unique `(PrincipalType, id)` tuple: applications using tenant-, issuer-, or realm-local identifiers must namespace or otherwise qualify `id`/`clientId` before constructing the ref — e.g. `new PrincipalRef(PrincipalType.USER, "urn:example:tenant:acme:user:01J…", Map.of("displayName", "alice"))` — because the framework treats ids as opaque and never reconstructs identity scope from attributes.
 
 `PrincipalType` enum: `USER`, `SERVICE`, `SYSTEM`, `ANONYMOUS`.
 
@@ -446,8 +446,8 @@ matching. A method-level declaration overrides a type-level declaration on surfa
 
 The annotation is now owned by `vertique-security-core` as
 `dev.vertique.security.authz.Authorized`; REST and WebSocket consumers retain the existing inline
-semantics. Moving it from `vertique-rest-core` is an owner-authorized source and binary break for
-old imports, without a deprecated REST alias. Applications must update imports and clean-rebuild
+semantics. Moving it from `vertique-rest-core` is a source and binary break for
+old imports, with no deprecated REST alias. Applications must update imports and clean-rebuild
 with aligned framework and processor versions. Other transports do not gain inline support from the
 relocation alone.
 
@@ -479,7 +479,7 @@ and the "There is no per-message authorization" and "Typed policies gate admissi
 
 ### Event Records
 
-All event records carry `occurredAt` (`Instant`), `correlation` (`CorrelationContext`), and `origin` (`Optional<RequestOrigin>`). All fields are validated non-null by compact constructors.
+Every event record carries `occurredAt` (`Instant`) and `correlation` (`CorrelationContext`). The credential, authorization, snapshot-degradation and captured-authority events also carry `origin` (`Optional<RequestOrigin>`); the channel lifecycle events carry `channelId` and `securityContext` instead. All fields are validated non-null by compact constructors.
 
 | Record | Fired when |
 |--------|-----------|
@@ -489,7 +489,7 @@ All event records carry `occurredAt` (`Instant`), `correlation` (`CorrelationCon
 | `ChannelOpenedEvent` | Long-lived channel established with an authenticated identity |
 | `ChannelIdentityRefreshedEvent` | Channel identity refreshed; carries both new and prior `SecurityContext` |
 | `ChannelClosedEvent` | Channel closed by peer, server, or expiry; carries `reasonCode` |
-| `IdentitySnapshotDegradationEvent` | A durably-carried `IdentitySnapshot` is present but cannot be reconstructed (bad HMAC, unknown/unavailable key, decode failure, incompatible schema version, or a stale/malformed temporal envelope) — or a `CarriageRequirement#REQUIRED` durable target dispatched with no snapshot at all (`EXPECTED_ABSENT`); carries a non-blank `reasonCode` and a best-effort recovered `origin` |
+| `IdentitySnapshotDegradationEvent` | A durably-carried `IdentitySnapshot` is present but cannot be reconstructed (bad HMAC, unknown/unavailable key, decode failure, incompatible schema version, or a stale/malformed temporal envelope) — or a `CarriageRequirement#REQUIRED` durable target dispatched with no snapshot at all (`EXPECTED_ABSENT`); carries a non-blank `reasonCode` and an `origin` (empty for the markers the framework's receive-side initializer binds) |
 | `CapturedAuthorityActivatedEvent` | Mode-3 captured authority is actually put into effect — a durably-captured snapshot's frozen claims are presented as a reconstructed context's current authority; carries the reconstructed identity **uncollapsed**, the activated authorization claims, the activation mode, a per-activation id, and the signed carrier binding |
 
 `AuthorizationDecisionEvent` carries two derived accessors beyond its record components. `invocationOrigin()` surfaces the embedded request's `InvocationOrigin`. `authorityMode()` derives the governing `ReconstructedAuthorityMode` in three steps: an explicit `ReconstructedAuthorityMode.DECISION_ATTRIBUTE` stamp on the decision's `safeAttributes()` (the only source for `LIVE_RESOLVED`, which a marker can never carry), else the request context's intrinsic `reconstruction()` marker mode, else `Optional.empty()`. An unrecognized stamped value yields `Optional.empty()` rather than throwing.
@@ -571,7 +571,7 @@ public record DelegationSummary(String kind, Optional<String> authorityId)
 - Every `IdentitySnapshot` carries a mandatory `integrity()` envelope. There is no unsigned mode at the type level.
 - A `null` `authorizationClaims` list is treated as empty and defensively copied; `subject`, `delegation`, `client`, and `assurance` are required (non-null) `Optional` references. Within `assurance`, `AuthenticationAssurance.amr()` is a `SequencedSet<String>` that preserves first-observed encounter order, and that order is load-bearing for cross-process durable-snapshot integrity: the integrity tag signs the serialized `amr` array, so a decoded snapshot must re-serialize its stored element order byte-for-byte to verify on another node.
 - **Content/envelope split.** `IdentitySnapshotFactory.capture(...)` returns `IdentitySnapshotContent` only — capture cannot legitimately produce a carrier binding, temporal bounds, or a signature. Capturing or carrying a snapshot never by itself grants or removes authorization standing; only reconstruction acts on its contents.
-- **Freshness is a three-term minimum, re-checked at both decode and reconstruction.** The runtime rejects a snapshot past `min(expiresAt, issuedAt + maxCarrierLifetime, content.capturedAt + maxSnapshotLifetime)` — the latter two terms only when an operator configured that budget. The snapshot-lifetime term is anchored on the *immutable* `content.capturedAt()`, never `issuedAt`, so a chained re-encode (which mints a fresh `issuedAt` for a new carrier) cannot renew authority past what the original capture earned. Reconstruction re-evaluates freshness against the current clock, so a snapshot that decoded fresh but has since aged out while held in memory is still rejected.
+- **Freshness is a three-term minimum, re-checked at both decode and reconstruction.** The runtime rejects a snapshot once the current time is more than `clockSkewMs` past `min(expiresAt, issuedAt + maxCarrierLifetime, content.capturedAt + maxSnapshotLifetime)` — the latter two terms only when an operator configured that budget. The snapshot-lifetime term is anchored on the *immutable* `content.capturedAt()`, never `issuedAt`, so a chained re-encode (which mints a fresh `issuedAt` for a new carrier) cannot renew authority past what the original capture earned. Reconstruction re-evaluates freshness against the current clock, so a snapshot that decoded fresh but has since aged out while held in memory is still rejected.
 - **Carrier binding is enforced again at reconstruction**, independently of the decode-time check: a signed `carrier()` that does not match the receive-side's expected carrier is rejected fail-closed.
 - `authorizationClaims` are **attribution only** — audit lineage of what the principal was authorized for at capture time. Under the default mode they are never restored as current authority (a reconstructed `authorization()` is empty); see `IdentityReconstruction` below.
 
@@ -782,7 +782,7 @@ Asynchronous because storage and revocation lookup can require I/O (mirroring `A
 
 - **A permit must echo the requested `grantId`.** The framework's delegation narrower discards a permitted `DelegationGrantDecision` whose `grantId()` does not equal the `grantId` it asked about, replacing it with a deny carrying `GRANT_LOOKUP_FAILED`. An implementation that permits while echoing a different (or empty) grant id therefore grants nothing.
 - Returning a *failed* `Future` is a contract violation, not a deny signal — implementations catch their own storage exceptions and map them to `GRANT_LOOKUP_FAILED`.
-- Principal matching should compare only `(PrincipalType, id)`, never `attributes` ().
+- Principal matching should compare only `(PrincipalType, id)`, never `attributes`.
 
 Expiry and scope checks ship in the framework's `InMemoryDelegationGrantValidator` default (`dev.vertique:vertique-security-runtime`); storage and revocation lookup live behind this seam for consumer-owned durable implementations.
 
@@ -871,7 +871,7 @@ public interface PrincipalAuthorityResolver {
 
 `PrincipalKey` (`record PrincipalKey(PrincipalType type, String id)`, `id` non-blank) is the capability-minimized durable principal key: it structurally carries **no attributes**, so an implementation cannot resolve scope from request-scoped attributes even by accident — it must consult durable, principal-keyed authority storage (a role/entitlement store, an IdP claim cache).
 
-**Resolves the actor, never the subject-of-record.** Per, the Mode-2 authorizer derives the key exclusively from `SecurityContext#identity()#actor()`: for `resumeAsPrincipal` that is the resumed principal, for `deferredExecution` the executing service. `SecurityIdentity#subject()` is never passed to this SPI — impersonation is out of v1 scope; a downstream `AuthorizationNarrower` may still intersect the resolved actor authority against a grant's scope.
+**Resolves the actor, never the subject-of-record.** The Mode-2 authorizer derives the key exclusively from `SecurityContext#identity()#actor()`: for `resumeAsPrincipal` that is the resumed principal, for `deferredExecution` the executing service. `SecurityIdentity#subject()` is never passed to this SPI — impersonation is out of v1 scope; a downstream `AuthorizationNarrower` may still intersect the resolved actor authority against a grant's scope.
 
 **Bounded and fail-closed.** The runtime wraps every installed resolver in a timeout decorator (`identity.authz.resolutionTimeoutMs`, default 5000ms), so a delegate whose `Future` never completes cannot hang authorization. The timeout does **not** cancel the delegate's work — a resolver performing I/O should also set a transport-level timeout. Any failure, timeout, or ambiguous result becomes a deny with `AuthzReasonCodes#AUTHORITY_RESOLUTION_FAILED`, never a fallback to the snapshot's captured claims. A *resolvable* principal holding no authority succeeds with `AuthorizationClaims.empty()` — a normal downstream deny, distinct from a resolution failure.
 
@@ -977,5 +977,5 @@ Value-type construction violations (bad action grammar, blank required component
 
 - `dev.vertique:vertique-core` — `ContextValue` (for `SecurityContext`), `CorrelationContext`, `OrderedExtension`, `DurableTarget`/`DurableCarrierDescriptor`, exception roots
 - `io.vertx:vertx-core` — `Future` (SPI method return types)
-- `com.fasterxml.jackson.core:jackson-databind` — polymorphic `VerificationSource` serialization, plus the `jsr310` and `jdk8` datatype modules for `Instant` and `Optional` components on the event and snapshot records
-- `jakarta.annotation:jakarta.annotation-api` — `@Nullable`
+- `com.fasterxml.jackson.core:jackson-databind` — polymorphic `VerificationSource` serialization, plus the `jsr310` datatype module for `Instant` components on the event and snapshot records (the `jdk8` datatype module is a test-scope dependency only)
+- `jakarta.annotation:jakarta.annotation-api` — the `@PermitAll`, `@DenyAll` and `@RolesAllowed` annotations that `AccessPolicy` interfaces carry

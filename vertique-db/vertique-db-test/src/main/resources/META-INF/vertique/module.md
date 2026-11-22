@@ -53,7 +53,7 @@ static void stopDb() { db.close(); }
 | `withMigration()` | Enables Flyway migration from `classpath:db/migration` at start |
 | `withMigration(locations)` | Enables Flyway migration from custom locations |
 | `toPoolConfig()` | Returns a `DbPoolConfig` pointing to the running container |
-| `jdbcUrl()` | Returns the JDBC URL for direct JDBC access |
+| `jdbcUrl()` | Returns the JDBC URL for direct JDBC access. `PostgresContainer` appends `sslmode=disable` unless the URL already carries an `sslmode` |
 | `username()` | Returns the database username |
 | `password()` | Returns the database password |
 | `getContainer()` | Returns the underlying Testcontainers container (dedicated mode only — the no-arg shared-mode `PostgresContainer` has no dedicated container and throws `UnsupportedOperationException`) |
@@ -71,7 +71,7 @@ Concrete `DatabaseContainer` for PostgreSQL, wrapping `org.testcontainers.postgr
 The no-arg constructor runs in **shared-server mode**. Instead of starting a dedicated
 `PostgreSQLContainer` per instance, it provisions its own database on one PostgreSQL server
 container shared by every no-arg `PostgresContainer` in the same Surefire/Failsafe fork. The
-server is started once per fork (lazily, on first use) and is never explicitly stopped — the
+server is started once per fork (lazily, on first use, waiting up to 120 seconds for it to become ready) and is never explicitly stopped — the
 Testcontainers Ryuk sidecar reaps it when the JVM exits. Each instance's `start()` provisions a
 unique per-instance database on that server (`CREATE DATABASE`, sanitized `withDatabaseName` hint
 plus a monotonic counter, truncated to Postgres's 63-character identifier limit) and runs its own
@@ -111,6 +111,10 @@ static final PostgresContainer db = new PostgresContainer("postgres:15")
 - **Connection-identity accessors require `start()` first.** In shared mode, `jdbcUrl()`,
   `username()`, `password()`, and `toPoolConfig()` all throw `IllegalStateException` if called
   before `start()` — the instance has no provisioned database yet to describe.
+- **Shared-mode `start()` is idempotent and retryable.** Calling `start()` again on an instance that already
+  has a provisioned database does nothing. If the migrations fail, the provisioned database is dropped and the
+  instance is reset, so a later `start()` provisions and migrates afresh. `close()` on an instance that was
+  never started, or is already closed, does nothing.
 - **Isolation is database-level, not cluster-level.** Every no-arg `PostgresContainer` in a JVM
   fork shares one PostgreSQL server; only the database is per-instance. Migrations and tests must
   not create or depend on cluster-global objects (roles, tablespaces, cluster-level extensions) —

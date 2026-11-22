@@ -73,7 +73,7 @@ The probe endpoints evaluate their set through `HealthCheckAggregator` from `dev
 
 - Every check in the set runs concurrently; the endpoint waits for all of them to settle, whatever their outcome. The one exception is a check that throws an `Error` while starting — see the last bullet.
 - The overall status is UP only when every individual check is UP.
-- An empty check set is UP with an empty `checks` array. An application whose component includes `CoreLifecycleStepsModule` is never empty: its set holds the `startup` check.
+- An empty check set is UP with an empty `checks` array. An application whose component includes `CoreLifecycleStepsModule` never has an empty readiness set: it always holds the `startup` check. The liveness set holds no framework check.
 - Each check is bounded by a per-check timeout (`healthCheckTimeoutSeconds`, default 5); a timed-out check counts as DOWN. The aggregator instance `HealthCheckModule` binds for injection reads `management.healthCheckTimeoutSeconds` from the application configuration, so an injected consumer and the probes use the same timeout; a component that does not bind the configuration gets the aggregator's default of 5 seconds.
 - A check that returns a failed future, or that throws an **exception** synchronously from `check()`, is reported as DOWN carrying the throwable's message — or its fully qualified class name when the throwable has no message. A check that returns `null` instead of a future is DOWN the same way; a check whose future completes with a `null` result is DOWN with no `data`. A check that throws an `Error` rather than an exception from `check()` or `name()` is not attributable to one entry and degrades the whole probe to the terse `{"status":"DOWN","checks":[]}` body. Because checks are started in sequence, such an `Error` also prevents the checks after it from starting at all and abandons those already in flight.
 - Rendering is the endpoint's own step on top of the report. A check whose result data cannot be rendered as JSON is reported DOWN by the endpoint even though the `HealthReport` entry is UP, so the HTTP status is decided from the rendered entries, and data that breaks the response as a whole degrades the probe to the terse body (see Invariants & Gotchas).
@@ -294,13 +294,14 @@ static HealthCheck cacheCheck(CacheHealthCheck check) {
 
 ## Built-In Readiness Checks
 
-Three framework modules contribute a readiness check automatically when installed. None requires application wiring.
+Four framework modules contribute a readiness check automatically when installed. None requires application wiring, and no framework module contributes a liveness check.
 
 | Name | Contributed by | Reports DOWN when |
 |------|----------------|-------------------|
 | `startup` | `dev.vertique:vertique-core` (`CoreLifecycleStepsModule`) | the lifecycle runner has not yet finished every phase, so an API listener may not be bound |
 | `database` | `dev.vertique:vertique-db-postgresql` | `SELECT 1` against the connection pool fails |
 | `services` | `dev.vertique:vertique-services` | any supervised event-bus service is unavailable |
+| `kafka-consumers` | `dev.vertique:vertique-kafka-core` | never; it reports UP with the `total` and `enabled` consumer counts as `data` |
 
 The `services` check carries a per-service `data` map (`{"user-service": "UP"}`) on both UP and DOWN results whenever at least one service is supervised; with no supervised services it reports UP with no data.
 
@@ -343,4 +344,4 @@ With hierarchical property expansion, `management.port=9090` in a `.properties` 
 | `com.google.dagger:dagger` | `ManagementModule` bindings and multibinding declarations |
 | `jakarta.inject:jakarta.inject-api` | `@Inject`, `@Singleton` |
 | `org.slf4j:slf4j-api` | Startup and failure logging |
-| `org.projectlombok:lombok` | Compile-scoped; `ManagementConfig` builder and logging field |
+| `org.projectlombok:lombok` | Provided scope; `ManagementConfig` builder and logging field |

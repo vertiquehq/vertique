@@ -7,8 +7,8 @@ SPDX-License-Identifier: EUPL-1.2
 
 > **Status:** Stable
 > **Package:** `dev.vertique.db.postgresql`
-> **Artifact:** `db-postgresql`
-> **Depends on:** db-core, core
+> **Artifact:** `vertique-db-postgresql`
+> **Depends on:** `dev.vertique:vertique-db-core`, `dev.vertique:vertique-core`
 
 PostgreSQL-specific implementation of the db-core abstractions. Provides a pre-configured failure mapper with SQL state translations, a `PgSqlRepository` base class, and the Dagger module that wires the `vertx-pg-client` connection pool.
 
@@ -131,20 +131,20 @@ Obtained automatically via `PgSqlRepository.query()` / `PgSqlRepository.query(St
 
 ### `PgPagedQuery<T>`
 
-PostgreSQL implementation of `PagedQuery`. Composes paginated SQL with PostgreSQL-specific syntax: `$N` parameter placeholders, row-value comparison for keyset conditions, and `LIMIT` clause. Validates at construction time that the base SQL does not contain `ORDER BY`, `LIMIT`, `OFFSET`, or inline lock clauses.
+PostgreSQL implementation of `PagedQuery`. Composes paginated SQL with PostgreSQL-specific syntax: `$N` parameter placeholders, double-quoted order columns, row-value comparison for keyset conditions (uniform direction, no `NULLS FIRST`/`NULLS LAST`; mixed directions or null handling use an equivalent lexicographic predicate), and `LIMIT` clause. Validates at construction time that the base SQL does not contain `ORDER BY`, `LIMIT`, `OFFSET`, or inline lock clauses.
 
 **Generated SQL patterns:**
 
 ```sql
 -- First page (no keyset)
-SELECT id, name FROM items ORDER BY name ASC, id ASC LIMIT 21
+SELECT id, name FROM items ORDER BY "name" ASC, "id" ASC LIMIT 21
 
 -- Subsequent page (with keyset from previous result)
-SELECT id, name FROM items WHERE (name, id) > ($1, $2) ORDER BY name ASC, id ASC LIMIT 21
+SELECT id, name FROM items WHERE ("name", "id") > ($1, $2) ORDER BY "name" ASC, "id" ASC LIMIT 21
 
 -- With base WHERE clause
-SELECT id, name FROM items WHERE status = $1 AND (name, id) > ($2, $3)
-    ORDER BY name ASC, id ASC LIMIT 21
+SELECT id, name FROM items WHERE status = $1 AND ("name", "id") > ($2, $3)
+    ORDER BY "name" ASC, "id" ASC LIMIT 21
 ```
 
 Obtained automatically via `PgSqlRepository.pagedQuery()` / `PgSqlRepository.pagedQuery(String)` — do not construct directly.
@@ -261,12 +261,13 @@ interface AppComponent {
 | Type | Scope | Description |
 |------|-------|-------------|
 | `Pool` | `@Singleton` | PostgreSQL connection pool built from `DbPoolConfig` |
+| `PgConnectOptions` | `@Singleton` | Connect options built from `DbPoolConfig` by the same factory as the pool, for components that need a dedicated connection (for example LISTEN/NOTIFY subscribers) |
 | `PgDbExceptionMapper` | `@Singleton` | Pre-configured PostgreSQL exception mapper |
 | `PoolConnectHandler` | `@BindsOptionalOf` | Optional; provide via `@Provides` to initialize new connections; its future must complete (see the db-core reference) |
 | `HealthCheck` | `@IntoSet` `@Readiness` | `DatabaseHealthCheck`, contributed automatically |
 | `ApplicationShutdownStep` | `@IntoSet` | Closes the `Pool` when the application stops, contributed automatically |
 
-**Pool shutdown.** The module closes the pool it provides: its `ApplicationShutdownStep` runs in the `INFRA` phase at the lowest priority, so the other shutdown steps run first. Verticles are undeployed after all shutdown steps, so a request that reaches a verticle in that window sees a closed pool. A component that runs the application's shutdown steps (the Vertique application runner does) releases the pool and its connections at stop; a component that does not run them keeps the previous behavior, where the pool is released only when Vert.x closes. Close a pool you create yourself with `Pool.close()`; the module closes only its own.
+**Pool shutdown.** The module closes the pool it provides: its `ApplicationShutdownStep` runs in the `INFRA` phase at the lowest priority, so the other `INFRA` steps and the steps of every later phase run first. Verticles are undeployed after all shutdown steps, so a request that reaches a verticle in that window sees a closed pool. A component that runs the application's shutdown steps (the Vertique application runner does) releases the pool and its connections at stop; a component that does not run them keeps the previous behavior, where the pool is released only when Vert.x closes. Close a pool you create yourself with `Pool.close()`; the module closes only its own.
 
 ---
 
@@ -284,7 +285,7 @@ no message.
 
 ## Configuration
 
-Pool configuration comes from the `"db"` config section (see `DbPoolConfig` in `dev.vertique:vertique-db-core`). An omitted `port` uses the PostgreSQL default port, 5432; a port below 1 or above 65535 fails startup with a `ConfigurationException` naming `db.port`.
+Pool configuration comes from the `"db"` config section (see `DbPoolConfig` in `dev.vertique:vertique-db-core`). An omitted `port` (or `0`) uses the PostgreSQL default port, 5432; a negative port or one above 65535 fails startup with a `ConfigurationException` naming `db.port`.
 
 ```json
 {
@@ -355,8 +356,8 @@ static ExceptionMapper<?> connectionMapper(ConnectionExceptionMapper m) { return
 
 ## Dependencies
 
-- `dev.vertique:db-core` — `DbExceptionMapper`, `AbstractSqlRepository`, `DbPoolConfig`, `PoolConnectHandler`
-- `dev.vertique:core` — `VertxConfig`
+- `dev.vertique:vertique-db-core` — `DbExceptionMapper`, `AbstractSqlRepository`, `DbPoolConfig`, `PoolConnectHandler`
+- `dev.vertique:vertique-core` — `HealthCheck`, `HealthCheckModule`, `ApplicationShutdownStep`, `ConfigurationException`
 - `io.vertx:vertx-pg-client` — `PgBuilder`, `PgConnectOptions`, `PgException`
 - `com.google.dagger:dagger`
 - `jakarta.inject:jakarta.inject-api`

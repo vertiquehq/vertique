@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.config.awssecrets`
 > **Artifact:** `vertique-config-aws-secrets`
-> **Depends on:** config
+> **Depends on:** config-core
 
 Provides an AWS Secrets Manager property source for the `config.propertySources` placeholder chain. At construction time the module fetches every declared secret from Secrets Manager, builds an immutable in-memory map, and serves all subsequent `lookup()` calls from that map with no further I/O. The module integrates with the `ConfigPropertySourceFactory` SPI and is discovered automatically via `ServiceLoader` — no Dagger module is required.
 
@@ -18,7 +18,7 @@ This module is not a Vert.x config store (`config.stores`). It is a property sou
 
 ## When To Use It
 
-Install `vertique-config-aws-secrets` when secrets stored in AWS Secrets Manager must be injected into the application config tree at startup via `${key}` placeholder references. Pair it with `vertique-config` (already a transitive dependency) and `vertique-launcher` for full bootstrap integration.
+Install `vertique-config-aws-secrets` when secrets stored in AWS Secrets Manager must be injected into the application config tree at startup via `${key}` placeholder references. Pair it with `vertique-config-core` (already a transitive dependency) and `vertique-launcher` for full bootstrap integration.
 
 Use the self-reference idiom (see Core Concepts) to pull secrets into the tree without writing any value in a config file.
 
@@ -34,7 +34,7 @@ All declared secrets are fetched once, at source construction time during bootst
 
 Each entry in the `secrets` array is processed in one of two mutually exclusive modes. Exactly one of `prefix` or `key` must be present per entry — both or neither is a schema error.
 
-**Prefix mode** (`"prefix": "db."`) — the secret's `SecretString` must be a JSON object. Its keys are flattened under the declared prefix using `SecretDataFlattener` from the `config` module. Nested JSON objects are flattened with dot-separators: a key `{"nested": {"host": "db-host"}}` stored under prefix `"db."` produces `db.nested.host`. If the `SecretString` is not a valid JSON object, startup is aborted with a `ConfigPropertySourceException` that names the secret ID but never its content.
+**Prefix mode** (`"prefix": "db."`) — the secret's `SecretString` must be a JSON object. Its keys are flattened under the declared prefix using `SecretDataFlattener` from `vertique-config-core`. Nested JSON objects are flattened with dot-separators: a key `{"nested": {"host": "db-host"}}` stored under prefix `"db."` produces `db.nested.host`. If the `SecretString` is not a valid JSON object, startup is aborted with a `ConfigPropertySourceException` that names the secret ID but never its content.
 
 **Key mode** (`"key": "api.token"`) — the secret's `SecretString` is stored as-is under exactly the declared key, regardless of whether it looks like JSON. The content is never inspected or parsed.
 
@@ -101,7 +101,7 @@ The full per-source configuration block under `config.propertySources[*]`:
 |-------|----------|---------|-------------|
 | `type` | Yes | — | Must be `"aws-secrets"` |
 | `name` | No | `aws-secrets[{index}]` | Source instance name for diagnostics |
-| `region` | No | SDK default region chain | AWS region string (e.g. `"eu-west-1"`). When absent, the SDK resolves the region via `AWS_DEFAULT_REGION`, `aws.region`, instance metadata, etc. Passed to the SDK unvalidated (see below). |
+| `region` | No | SDK default region chain | AWS region string (e.g. `"eu-west-1"`). When absent, the SDK resolves the region via `AWS_REGION`, `aws.region`, instance metadata, etc. Passed to the SDK unvalidated (see below). |
 | `endpointOverride` | No | none | Override the Secrets Manager endpoint URL. Use for LocalStack (`http://localhost:4566`) or other test endpoints. Passed to the SDK unvalidated (see below). |
 | `connectTimeoutMs` | No | 5000 | Connection timeout in milliseconds, applied to `UrlConnectionHttpClient`. A blank string counts as absent and takes the default. |
 | `readTimeoutMs` | No | 5000 | Socket/read timeout in milliseconds, applied to `UrlConnectionHttpClient`. A blank string counts as absent and takes the default. |
@@ -123,6 +123,7 @@ Each element of the `secrets` array:
   `ConfigPropertySourceException` names the source and the element's index and the JSON type it found,
   never the element's value.
 - Missing or blank `secretId`
+- A blank `key` (an entry in key mode must name a non-blank key)
 - Both `prefix` and `key` present on the same entry
 - Neither `prefix` nor `key` present on an entry
 

@@ -41,7 +41,7 @@ a second time.
 
 | Included module | Artifact | What it brings |
 |---|---|---|
-| `dev.vertique.core.VertxModule` | `vertique-core` | the `Vertx` instance and the root `@VertxConfig` `JsonObject` |
+| `dev.vertique.core.VertxModule` | `vertique-core` | the `Vertx` instance, the root `@VertxConfig` `JsonObject`, and the `EventBus`, `EventBusExceptionMapper` and `EventBusClient` bindings |
 | `dev.vertique.config.parser.ConfigParsingModule` | `vertique-config-core` | the canonical `ConfigParser` and its dedicated config `ObjectMapper` |
 | `dev.vertique.deploy.DeployerModule` | `vertique-deploy` | the `VerticleDeployment`, `ApplicationStartupStep`, and `ApplicationShutdownStep` multibinding sets |
 | `dev.vertique.core.lifecycle.CoreLifecycleStepsModule` | `vertique-core` | the `VALIDATE` compose step, the `AFTER_START` `StartupReadinessCheck` (also the `startup` readiness check) and the `ComposeValidator` multibinding. The `CONFIGURE` step is not part of the core starter: it arrives with `dev.vertique.json.JsonRuntimeModule`, which the REST modules include |

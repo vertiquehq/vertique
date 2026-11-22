@@ -17,8 +17,8 @@ shared annotation vocabularies for validation, sanitization, and JSON profiles.
 
 Core is almost entirely *declaration*. Most of what it defines is implemented elsewhere: the
 context holder ships in `dev.vertique:vertique-context`, the config parser in
-`dev.vertique:vertique-config-core`, bean validation in `dev.vertique:vertique-validation`, health
-aggregation in `dev.vertique:vertique-management`. Depending on core gives an application the
+`dev.vertique:vertique-config-core`, bean validation in `dev.vertique:vertique-validation`, the HTTP
+health probes in `dev.vertique:vertique-management`. Depending on core gives an application the
 contracts and the annotations, not the runtime behind them.
 
 ---
@@ -251,7 +251,7 @@ the static `of` factory, which delegates to the canonical constructor.
 ### `FailureMapper`
 
 Concrete, hierarchy-aware, context-aware `Throwable → Throwable` translator registry. Usable
-directly for ad-hoc translation, and the base class the layer mappers in `dev.vertique:vertique-rest-jaxrs`,
+directly for ad-hoc translation, and the base class the layer mappers in `dev.vertique:vertique-rest-core`,
 `dev.vertique:vertique-services`, and `dev.vertique:vertique-db-core` extend.
 
 ```java
@@ -535,9 +535,10 @@ source `"unbound"`) for surfaces that are deliberately not request-tied.
 `CorrelationContext.generated(String source)` mints fresh UUID request/correlation ids for
 fail-closed emission sites that still need an audit join key when no ambient correlation is bound.
 
-The runtime that binds this context, and the `CorrelationIdGenerator` SPI it uses, ship in
-`dev.vertique:vertique-correlation`. An application overrides ID generation by binding its own
-`CorrelationIdGenerator` — that module declares the binding as optional.
+The runtime that binds this context ships in `dev.vertique:vertique-correlation`. The
+`CorrelationIdGenerator` SPI it uses (`String generate()`) is declared in core, in
+`dev.vertique.core.correlation`. An application overrides ID generation by binding its own
+`CorrelationIdGenerator` — `vertique-correlation` declares the binding as optional.
 
 ### General-purpose helpers
 
@@ -758,7 +759,9 @@ can still be reconfigured by any in-process code; the JSON runtime re-checks def
 - A different id than the one already installed is refused with an `IllegalStateException` naming
   both ids and both installing classes — one process has one JSON codec. The same id installs the
   new, equivalent instance and logs the swap at `INFO`, so a second application booted in the same
-  JVM under the same system profile starts normally.
+  JVM under the same system profile starts normally. When the incoming mapper reads more leniently
+  than the one it replaces — a read-strictness feature turned off, a lenient parser feature turned
+  on, or a weaker stream-read limit — the swap also logs a `WARN` naming each difference.
 - The mapper must register Vert.x's Jackson module (`VertxJsonSupport.module()` in
   `dev.vertique:vertique-json`), otherwise `JsonObject`, `JsonArray` and `Buffer` values would be
   bean-serialized instead of round-tripping — `IllegalArgumentException`.
@@ -1179,10 +1182,12 @@ public interface ContextAwareFailureTranslator<T extends Throwable> extends Fail
 }
 ```
 
-Both register on a `FailureMapper` through `on(...)`. Layer-specific customizer SPIs — which
-contribute translators into the framework's REST, service, and database mappers through Dagger — are
-declared by those modules; see `dev.vertique:vertique-rest-jaxrs`, `dev.vertique:vertique-services`,
-and `dev.vertique:vertique-db-core`.
+Both register on a `FailureMapper` through `on(...)`. Layer-specific customizer SPIs contribute
+translators into the framework's REST and service mappers through Dagger:
+`RestExceptionMapperCustomizer` is declared in `dev.vertique:vertique-rest-core` and its set is
+declared by `dev.vertique:vertique-rest-jaxrs`, and `ServiceExceptionMapperCustomizer` is declared
+by `dev.vertique:vertique-services`. The database mapper in `dev.vertique:vertique-db-core` is
+extended by subclassing and has no customizer SPI.
 
 ### `JsonMapperProfile`
 
@@ -1211,8 +1216,8 @@ copies any caller-supplied collection.
 
 ### Context-propagation SPIs
 
-Implement these to make a typed value travel across a dispatch or durable boundary. Every one is
-bounded `<T extends ContextValue>` on its context type; the registries that collect them live in
+Implement these to make a typed value travel across a dispatch or durable boundary. Every generic
+one is bounded `<T extends ContextValue>` on its context type; the registries that collect them live in
 `dev.vertique:vertique-context`.
 
 | SPI | Contract |
@@ -1415,8 +1420,8 @@ stored as a `String`, and type coercion is `ConfigParser`'s job downstream.
 | Segment form | Interpretation |
 |---|---|
 | Bare segment, including all-digit (`2026`) | Object key |
-| `[N]`, N a non-negative integer | Array index |
-| `[content]`, quoted or containing a dot | Literal map key (dots preserved, surrounding quotes stripped) |
+| `[N]`, N a non-negative integer without a leading zero that fits in an `int` | Array index |
+| `[content]`, any other content — quoted, containing a dot, or not such an integer (`[01]` is a key) | Literal map key (dots preserved, surrounding quotes stripped) |
 
 ```
 a.b=1, a.c=2                           → {"a":{"b":"1","c":"2"}}

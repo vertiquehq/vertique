@@ -81,7 +81,7 @@ The native `properties` bag is passed verbatim to the Vert.x Kafka client and mu
 
 ### `ApicurioAvroSerdeProvider`
 
-`KafkaSerdeProvider` implementation for the `"avro"` format. Backed by `io.apicurio:apicurio-registry-avro-serde-kafka:3.3.3`.
+`KafkaSerdeProvider` implementation for the `"avro"` format. Backed by `io.apicurio:apicurio-registry-avro-serde-kafka:3.3.4`.
 
 ```java
 public final class ApicurioAvroSerdeProvider implements KafkaSerdeProvider {
@@ -144,7 +144,7 @@ Defaults applied by the provider. `serdeProperties` overrides each of them excep
 | `apicurio.registry.retry-count` | yes | yes | `3` (bounded retries; override via `serdeProperties`) |
 | `apicurio.registry.retry-backoff-ms` | yes | yes | `300` (override via `serdeProperties`) |
 
-Registry-call bounding: the JDK client adapter applies a 30s connect timeout and the retry knobs above bound retry storms; the worker-threading contract keeps blocking calls off the event loop. Apicurio 3.3.3 has no config-map key for a per-request socket read timeout (a custom registry client would be needed; this is a known, deferred gap).
+Registry-call bounding: the JDK client adapter applies a 30s connect timeout and the retry knobs above bound retry storms; the worker-threading contract keeps blocking calls off the event loop. Apicurio 3.3.4 has no config-map key for a per-request socket read timeout (a custom registry client would be needed; this is a known, deferred gap).
 
 **`schemaRegistry` carries `url` only.** Registry credentials and every other Apicurio client setting go in `serdeProperties` as `apicurio.registry.*` keys. Any other key under `kafka.schemaRegistry` fails startup with a `ConfigurationException` that names the key and never its value, so a credential placed there is never silently ignored.
 
@@ -152,7 +152,7 @@ Registry-call bounding: the JDK client adapter applies a 30s connect timeout and
 
 - The router-routing deserializer (`routingDeserializer(endpointConfig)`) is built once per router consumer (held by the dispatcher) from the consumer's merged `endpointConfig`, so endpoint `serdeProperties` + `schemaRegistry` apply during route selection. It is type-agnostic: the wire schema-id resolves the concrete `SpecificRecord` with no caller-supplied type.
 - `matchValue` reads the discriminator field from the deserialized `GenericRecord` using `record.get(property)`. A field whose value is `null` returns `null` (unmatched route, not an error). A value that is not an Avro record throws `IllegalArgumentException`, because the dispatcher passes only what this provider's routing deserializer produced, so a non-Avro value is a wiring bug.
-- Serialization failures (missing schema, registry unreachable) surface as `DeserializationException` / failed `Future` and flow through the configured `ErrorStrategy` — never as an uncaught throw. A failure whose cause is an I/O error, or a registry answer of 5xx, 401, 403, 408 or 429, is marked `isTransient()`; a binding that ignores undecodable records ignores only the others.
+- Serialization failures (missing schema, registry unreachable) surface as `DeserializationException` / failed `Future` and flow through the configured `ErrorStrategy` — never as an uncaught throw. A failure whose cause is an I/O error other than a truncated payload, or a registry answer of 5xx, 401, 403, 408 or 429, is marked `isTransient()`; a binding that ignores undecodable records ignores only the others.
 
 ---
 
@@ -353,4 +353,4 @@ For Model-3 `matchProperty` routing with Avro, the dispatcher uses the per-entry
 |----------|-------|---------|
 | `dev.vertique:vertique-kafka-core` | compile | `KafkaSerdeProvider` SPI, `KafkaSerializer`/`KafkaDeserializer`, `DeserializationException` |
 | `io.apicurio:apicurio-registry-avro-serde-kafka` | compile | `AvroKafkaSerializer`/`AvroKafkaDeserializer`; Confluent-wire framing via `Default4ByteIdHandler` |
-| `org.apache.avro:avro` | compile (transitive) | `SpecificRecord`, `GenericRecord` |
+| `org.apache.avro:avro` | compile | `SpecificRecord`, `GenericRecord` |

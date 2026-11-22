@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.opentelemetry.cache`
 > **Artifact:** `vertique-opentelemetry-cache`
-> **Depends on:** `vertique-cache-core`, `vertique-opentelemetry-core`
+> **Depends on:** `vertique-cache-core`, `vertique-opentelemetry-core`, opentelemetry-api (library)
 
 Provides the optional OpenTelemetry adapter for provider-neutral cache observations. It contributes
 one `CacheObserver` through `OpenTelemetryCacheModule`; cache modules remain independent of
@@ -27,7 +27,10 @@ nothing. This module owns no configuration keys of its own.
 ## Core Concepts
 
 The contributed `CacheObserver` creates spans named `cache.<operation>` with bounded `provider`,
-`cache`, and `outcome` attributes plus `duration_ms`. Failed observations mark the span as an error.
+`cache`, and `outcome` attributes plus `duration_ms`. The `outcome` value is the lowercased
+`CacheOutcome` name; a `CacheLateCompletion` records it with a `late_` prefix. An operation
+observation with outcome `error` or `timeout` marks the span as an error, and a late completion
+does so only for `error`.
 The span is started at the operation's start (the event's end time minus its elapsed time), so its width
 covers the operation. Tracer and span failures are swallowed so telemetry cannot alter cache behavior, except
 a `VirtualMachineError`, `ThreadDeath` or `LinkageError`, which is never caught. Cleanup events
@@ -69,3 +72,4 @@ only this type adaptation; configuration, registry, and optional bindings remain
 |---|---|
 | `vertique-cache-core` | Provides the cache observer SPI and observations |
 | `vertique-opentelemetry-core` | Compile dependency; provides `Tracer` and `TracingConfig` |
+| `opentelemetry-api` | Supplies `Tracer`, `Span`, and `StatusCode` |

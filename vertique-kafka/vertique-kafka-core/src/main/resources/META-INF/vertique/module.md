@@ -67,6 +67,11 @@ one that determines whether a record can be lost.
 Handlers must therefore be idempotent under `MANUAL`. See [How a `MANUAL` consumer settles
 records](#how-a-manual-consumer-settles-records).
 
+A service operation is dispatched as a request only when the consumer is `MANUAL` and the operation is not
+one-way: the record then settles on a successful reply within `eventBusTimeoutMs`. An `AUTO` consumer and a
+one-way operation are sent without waiting for a reply, so a failure inside the service is not seen by the
+consumer and does not reach the error strategy. A `KafkaRecordHandler` is always awaited.
+
 The at-least-once guarantee starts at a partition's **first committed offset**. The framework leaves
 `auto.offset.reset` at Kafka's default, `latest`, so a group's first-ever record that fails before
 any offset is committed can be lost if the consumer restarts or the partition moves. To read from the
@@ -197,7 +202,7 @@ static KafkaConsumerBinding<?> orderBinding() {
 | `errorStrategy(ErrorStrategy)` | `SKIP` | Failure handling |
 | `commitStrategy(CommitStrategy)` | `AUTO` | Offset commit timing |
 | `deadLetterTopic(String)` | `"{topic}.dlq"` | DLQ topic |
-| `deserializer(KafkaDeserializer<V>)` | framework-built from the resolved format | Custom deserializer; bypasses format and profile resolution entirely |
+| `deserializer(KafkaDeserializer<V>)` | framework-built from the resolved format | Custom deserializer; bypasses format and profile resolution entirely. A global `kafka.format` is ignored for it; an endpoint-level `kafka.consumers.{name}.format` set alongside it fails registration |
 | `filter(KafkaRecordFilter)` | `null` — accept all | Pre-deserialization filter on key and headers |
 | `enabled(boolean)` | `true` | Deploy at startup |
 | `eventBusTimeoutMs(long)` | `30000` | Event-bus dispatch timeout |
@@ -602,8 +607,8 @@ Topic, format, serde properties, and JSON mapper profile are overridable per met
 `kafka.producers.{producerName}.methods.{methodName}.*`.
 
 To pick a JSON mapper profile, place `@JsonProfile("...")` at **type** level on the interface. It is
-a separate annotation, not a `@KafkaProducer` attribute, and a method-level placement is rejected at
-build time.
+a separate annotation, not a `@KafkaProducer` attribute, and a method-level placement makes
+`factory.create(...)` fail with an `IllegalStateException` naming the method.
 
 ---
 
@@ -698,8 +703,10 @@ consumer's `errorStrategy`: a `retry.exhaustedStrategy` of `RETRY` or a `retry.m
 
 Later entries win:
 
-1. root-level connection scalars — `bootstrap.servers`, `security.protocol`, `sasl.mechanism`,
-   `sasl.jaas.config`;
+1. root-level connection keys — the `kafka.*` keys outside the structured ones (`format`, `jsonProfile`,
+   `properties`, `schemaRegistry`, `consumers`, `producers`, `producer`, `messageKeyHash`), such as
+   `bootstrap.servers`, `security.protocol`, `sasl.mechanism`, `sasl.jaas.config`, `sasl.username` and
+   `sasl.password`;
 2. global `kafka.properties`;
 3. per-consumer `kafka.consumers.{name}.properties`.
 
@@ -758,7 +765,7 @@ Merge order, most specific last: `kafka.schemaRegistry.url` → per-producer or 
 ### Secrets
 
 Secret keys inside `properties`, `serdeProperties`, `schemaRegistry` (which accepts `url` only; masked as
-defense in depth), and the root connection properties are masked when a config object is rendered, so a startup log or a `ConfigurationException`
+defense in depth), the root connection properties and `kafka.producer.properties` are masked when a config object is rendered, so a startup log or a `ConfigurationException`
 never reveals a credential. `kafka.messageKeyHash.hmacSecret` deserializes in and stays readable; the
 config mapper behind `ConfigParser` serializes it as `"***"` when set and omits it when absent (the
 shared secret rule, `ConfigSecretRenderer` in `dev.vertique:vertique-core`), and `ConfigParser`
@@ -787,8 +794,9 @@ Producers, highest first:
 
 A custom `KafkaDeserializer` set through `KafkaConsumerBinding.Builder#deserializer()` bypasses
 profile selection entirely — the profile applies only when the framework builds the serde from a
-`KafkaSerdeProvider`. A method-level `@JsonProfile` on a Kafka listener or producer type is rejected
-at build time.
+`KafkaSerdeProvider`. A method-level `@JsonProfile` is rejected: on a Kafka listener type as a
+registration violation (a compile error when the annotation processor handles the type), on a producer
+interface by `factory.create(...)`.
 
 ---
 
@@ -832,7 +840,8 @@ Record B fails (attempt 1/3)
 
 Kafka `RETRY` and a service operation's `@Retry` compose multiplicatively. A service with
 `@Retry(maxRetries = 3)` behind a consumer with `RETRY(maxRetries = 3)` gives a persistently failing
-record up to twelve dispatch attempts before the exhausted strategy applies.
+record up to sixteen dispatch attempts (four runs of the record, each with up to four attempts of the
+operation) before the exhausted strategy applies.
 
 **`RETRY` holds the commit.** The offset of a partition does not pass a retrying record for the whole
 backoff, and an ordinary binding fetches no more of the partition meanwhile. That is appropriate for
@@ -852,8 +861,7 @@ strategy at once: `retry.exhaustedStrategy` for a `RETRY` binding, otherwise the
 The error type must be a simple token (a letter, `_` or `$`, then up to 127 letters, digits and
 `_ $ . -`); any other text becomes `InvalidErrorType`, so nothing with a space or a control
 character reaches a header or a log line. The failure carries the error type only: no cause and no message. The `x-dlq-error` header and the
-log lines hold the error type alone, so keep record data out of it. A retry count left by an
-earlier failure of the same record is removed.
+log lines hold the error type alone, so keep record data out of it.
 
 ### `KafkaDeferredFailure`
 
@@ -871,7 +879,7 @@ type follows the rules of `KafkaTerminalFailure`, and the failure carries the er
 
 ### Poison-message guarantee
 
-A record that always fails leaves the stream after `maxRetries` attempts. The longest it can block a
+A record that always fails leaves the stream after `maxRetries` retries. The longest it can block a
 partition is:
 
 ```
@@ -950,6 +958,7 @@ and records already received stay queued in memory. A record the gate held back 
 spent, nothing is dead-lettered and nothing is committed past it. The consumer asks a closed gate again every 250
 milliseconds; when it opens, the queued records start in the order they were read and the partitions
 fetch again. `open()` is called on the consumer's own context, often, so it must be cheap and must not block.
+A gate that throws is logged and treated as open.
 
 A gate that closes after a record started can be met with a `KafkaDeferredFailure` from the handler (on a binding
 that requires its strategies): the record returns to the queue with its attempts unchanged, and the consumer waits for
@@ -1239,7 +1248,7 @@ public void onRecordCompleted(KafkaConsumerCompletedEvent event, KafkaConsumerRe
 | `KafkaTerminalOutcome` | Meaning |
 |---|---|
 | `SUCCESS` | The handler completed successfully |
-| `SKIP` | Skipped per `ErrorStrategy.SKIP`, filtered, or no matching route |
+| `SKIP` | Skipped per `ErrorStrategy.SKIP`, filtered by the `KafkaRecordFilter` or by an interceptor, or no matching route |
 | `RECOVERED` | An interceptor's `recoverError` handled the error |
 | `RETRY_SCHEDULED` | The offset is not committed and the record will run again. A `requireBindingStrategies` binding reports it also for a `KafkaDeferredFailure` |
 | `DLQ_PUBLISHED` | Forwarded to the dead-letter topic |
@@ -1265,6 +1274,8 @@ later hooks still run and the send's result is unaffected. An `Exception`, `Asse
 `StackOverflowError` is logged at WARN each time, by class name, with the failure itself at DEBUG,
 and a `LinkageError` at ERROR at a limited rate per hook class — the first time, then at most once
 every five minutes — saying that the hook is unusable and its notifications are being lost.
+A send that is rejected before it reaches the wire, because of a reserved-prefix or null-valued header or a
+serializer failure, fires no hook.
 
 The framework calls `onSend(KafkaProducerSend send)`. Override this form: new send details are added
 to the record as components, never as further positional parameters. Read type-level annotations
@@ -1337,7 +1348,7 @@ default accepts every producer interface.
 | `KafkaConsumerRegistry` | `@Singleton` | Registry built from every consumer source, validated at startup |
 | `KafkaConsumerDeploymentManager` | `@Singleton` | Deploys and undeploys consumer verticles |
 | `KafkaProducerFactory` | `@Singleton` | Typed producer proxies and raw sends |
-| `HealthCheck` (`@IntoSet`) | — | `KafkaConsumerHealthCheck`, contributed to the readiness set |
+| `HealthCheck` (`@IntoSet`) | — | `KafkaConsumerHealthCheck`, contributed to the readiness set under the name `kafka-consumers`. It reports `UP` with the `total` and `enabled` consumer counts and does not probe the broker |
 
 ---
 
@@ -1350,7 +1361,7 @@ default accepts every producer interface.
 | `ConfigurationException` | A consumer config bound is violated — an unknown `commitStrategy`, `errorStrategy`, or `retry.exhaustedStrategy`, `eventBusTimeoutMs <= 0`, `maxInFlight < 1`, `instances < 1`, `maxRetries < 0`, `backoffMs < 0`, `backoffMultiplier < 1.0`, `maxBackoffMs < 0`. Every failure names the exact config path (`kafka.consumers.{name}.errorStrategy`, `.commitStrategy`, `.retry.exhaustedStrategy`, or `.retry`) and carries no value, including an unknown enum value |
 | `KafkaRegistrationException` | An invalid consumer declaration, or a generated binding companion that is present but malformed. A `ConfigurationException` subtype — broken generated code is never silently skipped. All violations of one registration are collected into one exception, including a consumer's resolved format with no registered `KafkaSerdeProvider` (the message names the missing module), an ambiguous format auto-detection, and `worker = false` on a consumer whose effective deserializer reports `mayBlock()` |
 | `IllegalArgumentException` | A producer's resolved format has no registered `KafkaSerdeProvider`; the message names the missing module |
-| `IllegalStateException` | `bootstrap.servers` missing or blank when the producer factory is constructed |
+| `IllegalStateException` | `bootstrap.servers` missing or blank when the producer factory is constructed; or two `KafkaSerdeProvider`s declare the same format (compared ignoring case), or one declares a blank format |
 
 ### Runtime failures
 
@@ -1399,7 +1410,7 @@ default accepts every producer interface.
 | Artifact | Scope | Purpose |
 |---|---|---|
 | `dev.vertique:vertique-core` | compile | DI wiring, typed config parsing, `HealthCheck` SPI, exception roots |
-| `dev.vertique:vertique-resilience` | compile | The shared exponential backoff policy (`RetryBackoff`) behind `RETRY` delays |
+| `dev.vertique:vertique-resilience` | compile | The shared exponential backoff policy (`RetryBackoff`) that computes the `RETRY` and dead-letter retry delays |
 | `dev.vertique:vertique-context` | compile | Dispatch-context propagation across the event bus |
 | `dev.vertique:vertique-logging` | compile | MDC binding for the record's correlation id |
 | `dev.vertique:vertique-services` | compile | Service contract registry and target resolution for dispatch |

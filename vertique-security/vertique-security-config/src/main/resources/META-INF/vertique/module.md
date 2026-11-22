@@ -104,7 +104,7 @@ public record AuthorizationConfig(
 )
 ```
 
-Both fields are defensively deep-copied at construction (the map values are also immutably copied). `rolePolicies` is a true user-defined dictionary (rule R9-compliant): keys are operator-defined role names, values are open lists of policy identifiers.
+Both fields are defensively deep-copied at construction (the map values are also immutably copied). `rolePolicies` is a user-defined dictionary: keys are operator-defined role names, values are open lists of policy identifiers.
 
 `AuthorizationConfig.fromJson(...)` fills defaults for omitted fields (empty map / empty list). `AuthorizationConfig.defaults()` returns the canonical empty config.
 
@@ -190,4 +190,6 @@ Config-backed and programmatic contributions are merged by `SecurityAuthzModule`
 
 - `dev.vertique:vertique-security-core` — `PolicyDefinitionSource`, `RolePolicyResolver`, `ActionRegistry`, `PolicyDefinition`, `PolicyStatement`, `ActionPattern`, `Effect`
 - `dev.vertique:vertique-core` (transitive through security-core) — `ConfigParser`, `JsonConfigPaths` (parse boundary), `@VertxConfig`
-- `dev.vertique:vertique-config-core` — test scope only; not a production dependency
+- `com.google.dagger:dagger` — the `@Module`/`@Provides`/`@IntoSet` wiring
+- `com.fasterxml.jackson.core:jackson-databind` — the `@JsonCreator`/`@JsonProperty` config records
+- `dev.vertique:vertique-config-core` — test scope only; not a production dependency; `vertique-security-runtime` is likewise a test-scope dependency

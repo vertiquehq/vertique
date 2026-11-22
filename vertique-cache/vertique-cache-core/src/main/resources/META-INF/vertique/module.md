@@ -159,7 +159,7 @@ bound as a whole record and omitted keys are **not** defaulted: supply every glo
 
 | Key | Type | Default | Range / rule | Description |
 |---|---|---|---|---|
-| `cache.caches.<name>.mode` | `LOCAL` \| `CLUSTERED` \| `DEFAULT` | required | | Overrides the definition's mode unless `DEFAULT`, which defers to the definition and then `cache.defaultMode`. `CLUSTERED` fails startup when a synchronous `@Cacheable` method uses the cache. |
+| `cache.caches.<name>.mode` | `LOCAL` \| `CLUSTERED` \| `DEFAULT` | required | | Overrides the definition's mode unless `DEFAULT`, which defers to the definition and then `cache.defaultMode`. `CLUSTERED` fails when the cache is built if a synchronous `@Cacheable` method uses the cache. |
 | `cache.caches.<name>.ttlSeconds` | long (s) | `0` when omitted | `-1`, `0`, or `1..maxTtlSeconds` | `-1` inherits the definition's TTL (then `defaultTtlSeconds`); `0` disables time expiration; a positive value overrides the definition. An omitted value binds as `0`, not as inherit. A value above `cache.maxTtlSeconds` fails configuration. |
 | `cache.caches.<name>.jsonProfile` | string | inherits `cache.jsonProfile` | not blank when present | Per-cache JSON profile. |
 
