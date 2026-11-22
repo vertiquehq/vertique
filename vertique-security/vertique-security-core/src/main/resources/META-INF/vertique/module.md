@@ -35,7 +35,7 @@ Add `dev.vertique:vertique-security-runtime` to get the default engine wiring an
 
 ### Identity Model
 
-A `SecurityContext` is the request-scoped container for all security facts. It extends `ContextValue`, so it is stored in the Vert.x `ContextLocal` and accessible throughout the request lifecycle. It has four pillars:
+A `SecurityContext` is the request-scoped container for all security facts. It extends `ContextValue`, so it is stored in the request's `ContextHolder` (the framework's single shared Vert.x `ContextLocal` slot) and accessible throughout the request lifecycle. It has four pillars:
 
 - **`identity()`** — who is making the request: `SecurityIdentity` with a mandatory `actor` (`PrincipalRef`), optional `subject` (for PSD2/delegation), optional `delegation` context, and optional OAuth `client` reference.
 - **`authentication()`** — how identity was established: `AuthenticationState` carrying the primary `AuthMethod`, ordered evidence list (`AuthenticationEvidence`), assurance level (`AuthenticationAssurance`), and safe token metadata.
