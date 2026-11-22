@@ -660,7 +660,7 @@ connection's context scope is released directly on close.
 declarations; identity resolution, authorization, claim mapping, and Vert.x authorization import are
 no longer separately declared here — they live entirely behind the single
 `IdentityPipelineFactory` optional binding, owned by `dev.vertique:vertique-rest-security`'s
-`AuthModule` (issue #256; a second module declaring those collaborators would re-create the duplicate
+`AuthModule` (a second module declaring those collaborators would re-create the duplicate
 assembly that change closed).
 
 | Binding | Purpose |

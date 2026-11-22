@@ -847,7 +847,7 @@ applies last regardless of numeric priority.
 @Provides @IntoSet
 static RestExceptionMapperCustomizer myTranslator() {
     return mapper -> mapper.on(MyInfrastructureException.class,
-            ex -> new WebApplicationException("Upstream error", 502, ex));
+            ex -> new WebApplicationException("Upstream error", ex, 502));
 }
 ```
 
