@@ -1368,6 +1368,7 @@ default accepts every producer interface.
 | Failure | Meaning |
 |---|---|
 | `DeserializationException` | The value could not be decoded. A `TechnicalException` subtype; it enters the configured error strategy like any other dispatch failure |
+| `SerializationException` | A producer value could not be serialized. A `TechnicalException` subtype thrown by the serializer; the JSON serializer's message names the value type and topic and carries no record value, and the underlying exception is kept as the cause |
 | Event-bus timeout | Dispatch exceeded `eventBusTimeoutMs`; treated as a dispatch failure |
 | Failed send future with `IllegalArgumentException` | A header on a producer send uses the reserved `vertique-` prefix or has a `null` value. The message names the key; nothing was sent |
 

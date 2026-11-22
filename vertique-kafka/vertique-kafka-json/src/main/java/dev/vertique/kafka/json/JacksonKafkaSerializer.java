@@ -6,6 +6,7 @@ package dev.vertique.kafka.json;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.kafka.KafkaRecordHeaders;
+import dev.vertique.kafka.SerializationException;
 import dev.vertique.kafka.serialization.KafkaSerializer;
 import jakarta.annotation.Nullable;
 
@@ -44,13 +45,13 @@ public class JacksonKafkaSerializer<V> implements KafkaSerializer<V> {
     }
 
     /**
-     * Serializes the value as JSON. The topic and the headers are not used.
+     * Serializes the value as JSON. The headers are not used.
      *
      * @param value the value to serialize
-     * @param topic the target Kafka topic; ignored
+     * @param topic the target Kafka topic; used only in the failure message
      * @param headers the application headers of the record being sent; ignored
      * @return the JSON bytes
-     * @throws RuntimeException if the value cannot be serialized
+     * @throws SerializationException if the value cannot be serialized
      */
     @Override
     public byte[] serialize(V value, String topic, KafkaRecordHeaders headers) {
@@ -58,7 +59,13 @@ public class JacksonKafkaSerializer<V> implements KafkaSerializer<V> {
         try {
             return resolved.writeValueAsBytes(value);
         } catch (Exception e) {
-            throw new RuntimeException("Failed to serialize value: " + e.getMessage(), e);
+            // Message is intentionally value-free: Jackson exception messages can embed field values
+            // of the record being sent, which must not leak into operator logs. The Jackson exception
+            // is preserved as the cause for stacktrace debugging.
+            throw new SerializationException(
+                    "Failed to serialize "
+                            + (value == null ? "null" : value.getClass().getSimpleName()) + " for topic " + topic,
+                    e);
         }
     }
 }

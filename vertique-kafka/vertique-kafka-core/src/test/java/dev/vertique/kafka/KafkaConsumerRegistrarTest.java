@@ -55,6 +55,13 @@ class KafkaConsumerRegistrarTest {
         assertInstanceOf(TechnicalException.class, new DeserializationException("bad", new RuntimeException()));
     }
 
+    @Test
+    @DisplayName("SerializationException is a TechnicalException")
+    void serializationExceptionIsTechnicalException() {
+        assertTrue(TechnicalException.class.isAssignableFrom(SerializationException.class));
+        assertInstanceOf(TechnicalException.class, new SerializationException("bad", new RuntimeException()));
+    }
+
     // --- Shared test event type ---
 
     record TestEvent(String name) {}
