@@ -395,6 +395,66 @@ class JaxRsPipelineProcessorTest {
         }
     }
 
+    // --- Nested resources ---
+
+    @Nested
+    @DisplayName("nested resources")
+    class NestedResources {
+
+        @Test
+        @DisplayName("static nested @Path resource gets its descriptor companion and DI binding")
+        void staticNestedResource_getsCompanionAndBinding() {
+            var result = ProcessorTestHarness.run(
+                    new JaxRsPipelineProcessor(), SourceFiles.inline("dev.vertique.test.Outer", """
+                            package dev.vertique.test;
+
+                            import jakarta.inject.Inject;
+                            import jakarta.ws.rs.GET;
+                            import jakarta.ws.rs.Path;
+
+                            public class Outer {
+                                @Path("/nested")
+                                public static class Inner {
+                                    @Inject
+                                    public Inner() {}
+
+                                    @GET
+                                    public String list() { return ""; }
+                                }
+                            }
+                            """));
+
+            result.assertSuccess();
+            result.assertGeneratedSourceContains(
+                    "dev.vertique.test.Outer_Inner_JaxRsDescriptor", "class Outer_Inner_JaxRsDescriptor");
+            result.assertGeneratedSourceContains("dev.vertique.test.GeneratedJaxRsResourcesModule", "@JaxRsResources");
+        }
+
+        @Test
+        @DisplayName("static nested @Path resource is validated")
+        void staticNestedResource_isValidated() {
+            var result = ProcessorTestHarness.run(
+                    new JaxRsPipelineProcessor(), SourceFiles.inline("dev.vertique.test.Outer", """
+                            package dev.vertique.test;
+
+                            import jakarta.ws.rs.GET;
+                            import jakarta.ws.rs.Path;
+                            import jakarta.ws.rs.POST;
+
+                            public class Outer {
+                                @Path("/nested")
+                                public static class Inner {
+                                    @GET
+                                    @POST
+                                    public String both() { return ""; }
+                                }
+                            }
+                            """));
+
+            result.assertFailed();
+        }
+    }
+
     // --- ServiceLoader registration ---
 
     @Nested
