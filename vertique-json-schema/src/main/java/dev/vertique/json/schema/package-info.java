@@ -30,8 +30,8 @@
  *       reserved-name assertion in that document and carries the digest of its canonical bytes; only
  *       this package constructs it.
  *   <li>{@link dev.vertique.json.schema.OutputRename} names a member an output-direction schema
- *       publishes under a property name other than the one Jackson serializes it under. The report
- *       is provisional.
+ *       publishes under a property name other than the one Jackson serializes it under. The OpenAPI
+ *       publication consumes the report.
  *   <li>{@link dev.vertique.json.schema.HiddenMember} names a member or type that the document still
  *       describes while it carries a hiding marker; {@code hiddenMembers} reports these entries.
  *   <li>{@link dev.vertique.json.schema.HidingMarker} names which marker a {@code HiddenMember}
