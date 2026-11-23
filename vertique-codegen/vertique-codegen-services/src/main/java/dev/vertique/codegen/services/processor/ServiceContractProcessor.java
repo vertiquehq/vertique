@@ -317,9 +317,10 @@ public final class ServiceContractProcessor extends AbstractProcessor {
      * an unrelated defect in one implementation of it.
      *
      * <p>A validated contract that uses one of the emitter's reserved identifiers (see
-     * {@link ClientProxyEmitter#reservedIdentifierCollision}) is skipped with an informational
-     * {@code NOTE}, exactly as a generic contract is: the contract keeps working through the
-     * reflective client proxy at runtime.
+     * {@link ClientProxyEmitter#reservedIdentifierCollision}) gets no generated proxy and an
+     * informational {@code NOTE}, but is still bound in the generated module (the bound client is
+     * the reflective one) unless it carries {@code @NoAutoWire}. A generic contract is skipped
+     * entirely: no proxy and no typed-client binding.
      *
      * @param roundEnv                the current round environment; must not be {@code null}
      * @param contractShapeFailedFqns FQNs of contracts whose contract-shape validation already
@@ -402,7 +403,7 @@ public final class ServiceContractProcessor extends AbstractProcessor {
         boolean duplicate = roundEnv.getElementsAnnotatedWith(provides).stream()
                 .filter(e -> e.getKind() == ElementKind.METHOD)
                 .map(ExecutableElement.class::cast)
-                .filter(m -> m.getAnnotationMirrors().stream().noneMatch(this::isQualifier))
+                .filter(m -> m.getAnnotationMirrors().stream().noneMatch(this::isQualifierOrMultibinding))
                 .anyMatch(m -> ctx.types().isSameType(m.getReturnType(), contractType.asType()));
         if (duplicate) {
             ctx.diagnostics()
@@ -415,8 +416,16 @@ public final class ServiceContractProcessor extends AbstractProcessor {
         }
     }
 
-    private boolean isQualifier(AnnotationMirror annotation) {
-        return annotation.getAnnotationType().asElement().getAnnotationMirrors().stream()
+    private static final Set<String> MULTIBINDING_ANNOTATIONS = Set.of(
+            "dagger.multibindings.IntoSet", "dagger.multibindings.IntoMap", "dagger.multibindings.ElementsIntoSet");
+
+    /** A qualifier or multibinding marker means the provider cannot duplicate the plain binding. */
+    private boolean isQualifierOrMultibinding(AnnotationMirror annotation) {
+        TypeElement type = (TypeElement) annotation.getAnnotationType().asElement();
+        if (MULTIBINDING_ANNOTATIONS.contains(type.getQualifiedName().toString())) {
+            return true;
+        }
+        return type.getAnnotationMirrors().stream()
                 .map(m -> ((TypeElement) m.getAnnotationType().asElement())
                         .getQualifiedName()
                         .toString())

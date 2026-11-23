@@ -340,6 +340,49 @@ class ServiceClientDaggerBindingTest {
                 .assertWarningMessage("@NoAutoWire");
     }
 
+    private void assertNoDuplicateWarning(String contractAnnotations, String providerAnnotations, String extraImports) {
+        JavaFileObject contract = reservedNameContract(contractAnnotations);
+        JavaFileObject manual =
+                SourceFiles.inline("com.example.ManualModule", """
+                package com.example;
+                import dagger.Module;
+                import dagger.Provides;
+                import dev.vertique.services.ServiceClientFactory;
+                %s
+                @Module public abstract class ManualModule {
+                    @Provides %s static Clashing clashing(ServiceClientFactory factory) {
+                        return factory.create(Clashing.class);
+                    }
+                }
+                """.formatted(extraImports, providerAnnotations));
+        var result = ProcessorTestHarness.run(
+                new ServiceContractProcessor(), concat(FRAMEWORK_SOURCES, NO_AUTO_WIRE_SOURCE, contract, manual));
+        result.assertSuccess();
+        assertTrue(
+                result.compilation().diagnostics().stream()
+                        .noneMatch(d -> d.getKind() == javax.tools.Diagnostic.Kind.WARNING
+                                || d.getKind() == javax.tools.Diagnostic.Kind.MANDATORY_WARNING),
+                diagnostics(result.compilation()));
+    }
+
+    @Test
+    @DisplayName("a qualified @Provides does not draw the duplicate-binding warning")
+    void qualifiedProvides_doesNotWarn() {
+        assertNoDuplicateWarning("", "@Named(\"x\")", "import jakarta.inject.Named;");
+    }
+
+    @Test
+    @DisplayName("@NoAutoWire plus a hand-written @Provides does not warn")
+    void noAutoWireWithProvides_doesNotWarn() {
+        assertNoDuplicateWarning("@NoAutoWire", "", "");
+    }
+
+    @Test
+    @DisplayName("an @IntoSet provider does not draw the duplicate-binding warning")
+    void intoSetProvides_doesNotWarn() {
+        assertNoDuplicateWarning("", "@IntoSet", "import dagger.multibindings.IntoSet;");
+    }
+
     @Test
     @DisplayName("a reserved-identifier contract without a hand-written @Provides draws no warning")
     void reservedIdentifierContract_withoutManualProvidesDoesNotWarn() {
