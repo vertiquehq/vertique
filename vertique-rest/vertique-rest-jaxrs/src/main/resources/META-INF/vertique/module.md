@@ -206,8 +206,9 @@ carve-out documented on `RestRequestCompletedEvent`.
 5. Invoke        the resource method, with processed and validated arguments
 ```
 
-Step 3 is skipped transparently when `SanitizationModule` is absent and step 4 when
-`ValidationModule` is absent; neither requires an application change.
+Step 4 is skipped when `ValidationModule` is absent. Step 3 is skipped when `SanitizationModule`
+is absent and no route declares a chain; a route that declares one fails startup instead (see
+[Startup failures](#startup-failures)).
 
 `@Canonicalize` / `@Sanitize` apply at three scopes — on the resource class or method (route level,
 covering all string values in the body plus scalar and collection-element parameters), on a DTO type
@@ -278,8 +279,11 @@ public record CreateUserRequest(
 
 **Three shapes a declared policy still does not reach.** A `Map`-typed field, an `Object`-typed
 field, and a concrete `@JsonTypeInfo` subtype's own fields all leave the field with its inherited
-route- and object-level chains and nothing else. Nothing fails and nothing is logged, so a stranded policy
-on one of these is invisible until the value that mattered gets through. A renamed key, a key a codec
+route- and object-level chains and nothing else. Registration refuses a policy it can see stranded
+there, naming the type: a policy-declaring type held as a `Map` value, or a subtype the codec can
+enumerate that declares a chain its base does not. A policy on the runtime value of an `Object`-typed
+field cannot be seen, so nothing fails and nothing is logged and it stays invisible until the value
+that mattered gets through. A renamed key, a key a codec
 promoted out of an `@JsonUnwrapped` member, and a key matched case-insensitively are all covered
 now, and a governed field the mapper binds under a different property name — `@Sanitize` on
 `streetName` behind `setStreet` — fails registration rather than passing silently. The `vertique-input-processing` reference documents each shape, what still applies, and how to
@@ -641,7 +645,8 @@ RequestInterceptor.onError sync observers, with the original cause
   → ExceptionMapperRegistry.toResponse(translated)
   → Vert.x status-code fallback (only when no specific mapper matched)
   → ErrorInterceptor.afterMapping (async chain, Response → Response)
-  → unhandled-exception logging (framework Throwable catch-all only; level follows the final status)
+  → occurrence id stamped on a problem document that has no `instance`
+  → failure logging (level follows the final status; see below)
 ```
 
 The original cause stays on the routing context for the whole of error processing, so audit and
@@ -748,16 +753,19 @@ makes `instance` the identifier of one occurrence, so a mapper that sets it owns
 it unique per occurrence and log it yourself, because the pipeline logs the value it finds. A
 deliberately fixed value (the blob routes' uniform denial) is not findable in the logs.
 
-**Headers when the body is rebuilt.** Rebuilding the body — by this override, or by the equal-status
-detail sanitization — drops the headers your mapper set that describe the *octets*
+**Headers when the body is rebuilt.** Rebuilding the body — by this override, by the equal-status
+detail sanitization, or by stamping the occurrence id on a problem document that has no `instance` —
+drops the headers your mapper set that describe the *octets*
 of the body it authored: `Content-Length`, `Content-Encoding`, `Content-Range`, `ETag`, and the
 digest headers (`Content-Digest`, `Repr-Digest`, `Digest`, `Content-MD5`). They would describe bytes
 the client never receives. Every other header survives, including `Content-Type`,
 `Content-Language`, and response-level headers such as `WWW-Authenticate`, `Retry-After` and
-`Allow` — a `WWW-Authenticate` is exactly what a status overridden *to* 401 needs. Set a
+`Allow` — a `WWW-Authenticate` is exactly what a status overridden *to* 401 needs. The one
+exception is a non-`ProblemDetail` entity replaced by a fresh problem document, which also loses
+`Content-Type` and `Content-Language`. Set a
 representation header on an error response only if the body is one the framework will not touch
-(a response whose status Vert.x did not override and whose `ProblemDetail` carries no synthesized
-`detail`).
+(a response that is not a problem document, or a `ProblemDetail` that already carries its own
+`instance` and no synthesized `detail`, on a status Vert.x did not override).
 
 ### `DefaultResponseSerializer`
 
@@ -784,7 +792,8 @@ in `dev.vertique:vertique-rest-core`.
 Thrown at startup when route registration found violations. Extends `RestConfigurationException`
 (rest-core) and exposes `violations()` — a `List<RouteRegistrationViolation>` of
 `(operationId, ViolationType, message)`. Security-policy inconsistencies use the separate
-`SecurityPolicyViolationException` instead, and are thrown immediately rather than collected. The
+`SecurityPolicyViolationException` instead: the registrar gathers them across all operations and throws
+them on their own, ahead of any `RouteRegistrationException` of the same build. The
 `jaxrs.security.requireExplicitPolicy` opt-in adds its own collected violation type,
 `NO_EXPLICIT_SECURITY_POLICY` (see [Explicit security policy](#explicit-security-policy)), rather
 than a separate exception.
@@ -938,7 +947,7 @@ Both SPIs are declared in `dev.vertique:vertique-rest-core`; the implementations
 | `TextRequestBodyDecoder` | 1000 | `text/*` | `String` |
 | `BinaryRequestBodyDecoder` | 1000 | `application/octet-stream` | `Buffer`, `byte[]` |
 | `FormUrlencodedRequestBodyDecoder` | 1000 | `application/x-www-form-urlencoded` | any POJO (not `String`, `Buffer`, `byte[]`, `JsonObject`) |
-| `JsonRequestBodyDecoder` | 1100 (fallback) | absent, or containing `"json"` | `JsonObject` → raw; `String` → raw; collection/array → typed elements (see note); other → `JsonObject.mapTo(targetType)` |
+| `JsonRequestBodyDecoder` | 1100 (fallback) | absent, or containing `"json"` | `JsonObject` / `JsonArray` → raw; `String` → raw; collection/array → typed elements (see note); other → the JSON object bound to `targetType` by the route's mapper |
 
 Collection and array JSON bodies resolve their element type through Jackson's `TypeFactory`. A
 non-static (owner-bound) inner collection body type — for example `Outer<Dto>.Inner` where
@@ -954,7 +963,7 @@ or a static collection subtype as the body parameter type.
 | `ByteArrayBodyEncoder` | 1000 | `byte[]` |
 | `StringBodyEncoder` | 1000 | `String` |
 | `ReadStreamBodyEncoder` | 1000 | `ReadStream<Buffer>` |
-| `JsonBodyEncoder` | 1100 (fallback) | everything else |
+| `JsonBodyEncoder` | 1100 (fallback) | any entity whose Content-Type is absent or contains `"json"` |
 
 ```java
 @Provides @IntoSet
@@ -1151,12 +1160,14 @@ retry: <ms>       (omitted when null)
 data: <data>      (omitted when null)
 ```
 
-Keepalive comments (`: keep-alive`, then a blank line) are emitted at a fixed `jaxrs.sse.keepAliveIntervalMs`
-cadence for as long as the response streams, whether or not data events are flowing.
+Keepalive comments (`: keep-alive`, then a blank line) are emitted, while `jaxrs.sse.keepAliveEnabled`
+is true (the default), at a fixed `jaxrs.sse.keepAliveIntervalMs` cadence for as long as the response
+streams, whether or not data events are flowing.
 
 Startup validation pairs the two halves of the contract: a method returning `ReadStream<SseEvent>`
-must declare `@Produces("text/event-stream")`, and a method declaring that media type must return
-`ReadStream<SseEvent>`. Either violation is collected into `RouteRegistrationException`.
+(or `Future<ReadStream<SseEvent>>`) must declare `@Produces("text/event-stream")`, and a method
+declaring that media type must return one of them. Either violation is collected into
+`RouteRegistrationException`.
 
 `examples/vertique-example-sse` is a complete end-to-end example covering `Last-Event-ID` replay,
 terminal event ordering, and connection cleanup.
@@ -1727,8 +1738,14 @@ described under [Mount conflicts](#mount-conflicts) above, because every other p
 this module parses the `jaxrs.applications` section itself (see
 [Per-application configuration](#per-application-configuration)). The keys it acts on are
 `jaxrs.basePath`, `jaxrs.openapiPath`, `jaxrs.sse.*`, `jaxrs.validationStrategy`,
+`jaxrs.mediaTypeValidation`,
 `jaxrs.security.requireExplicitPolicy` (see [Explicit security policy](#explicit-security-policy)),
 `jaxrs.applications.<name>.openapiPath`, and the JSON profile keys below.
+
+`jaxrs.mediaTypeValidation` (default `WARN`) checks at router build that each declared `@Consumes`
+type has a registered `RequestBodyDecoder` and each declared `@Produces` type a `ResponseBodyEncoder`:
+`WARN` logs each mismatch, `STRICT` fails startup with a `RestConfigurationException` listing all of
+them, and `OFF` skips the check.
 
 ### JSON profile selection
 
@@ -1992,8 +2009,10 @@ In the third message a path is `jaxrs.applications.<name>` for an entry that is 
 `jaxrs.applications.<name>.<key>` for a rejected key; in the fourth and fifth it is
 `jaxrs.applications.<name>.openapiPath`.
 
-`SecurityPolicyViolationException` is thrown immediately when a `SecurityPolicyValidator` is bound and
-finds a violation, rather than being collected. `JsonProfileConfigurationException` is thrown at
+`SecurityPolicyViolationException` carries the security-policy violations of every operation
+(conflicting security annotations, an empty `@RolesAllowed`, and, when a `SecurityPolicyValidator` is
+bound, its findings); it is thrown on its own, ahead of any `RouteRegistrationException` of the same
+build. `JsonProfileConfigurationException` is thrown at
 router-build time for an unknown profile id.
 
 Route registration also gates declared input processing, raising `ConfigurationException` with one
@@ -2108,7 +2127,7 @@ Beyond what `RestCoreModule` and `JsonRuntimeModule` contribute:
 | `RestExceptionMapper` | built by folding `Set<RestExceptionMapperCustomizer>` in `OrderedExtension` order |
 | `DefaultExceptionMapper` | pre-configured with the mapping table above |
 | `ExceptionMapperRegistry` | `DefaultExceptionMapper` + `Set<ExceptionMapper<?>>` |
-| `List<RequestInterceptor>` | `Set<RequestInterceptor>` sorted once and shared by the serializer and the response pipeline |
+| `List<RequestInterceptor>` | `Set<RequestInterceptor>` sorted once and handed to the serializer; each JAX-RS mount sorts the set again for its own request, response and error pipelines when its router is built |
 | `List<ResponseBodyEncoder>` / `List<RequestBodyDecoder>` | sorted once in `OrderedExtension` order |
 | `ResponseSerializer` | `DefaultResponseSerializer`, wired from the sorted interceptor and encoder lists |
 | `SseChannelFactory` | `@Singleton`; the factory a resource method injects to create an SSE channel |
@@ -2124,7 +2143,7 @@ Beyond what `RestCoreModule` and `JsonRuntimeModule` contribute:
 | `Set<RouterMount>` | `@ElementsIntoSet`: with no `@RestApplication` declared, the default `JaxRsRouterMount` at `jaxrs.basePath`, empty when `@JaxRsResources` is empty; once one or more are declared, one mount per active application instead — see [`@RestApplication`](#restapplication) |
 | `MountCompositionValidator` (`JaxRsApplicationMountValidator`) | `@IntoSet`; INTERNAL; takes the `RestApplications` view, `JaxRsConfig`, and `Set<RequestValidationStrategy>`; validates application mounts against hand-built JAX-RS mounts and against each other, the cross-mount operationId rule and its shared-id WARN, and, under a contract-driven strategy, the contract-location parse — see [Mount conflicts](#mount-conflicts) |
 | `ComposeValidator` (`JaxRsDefaultProfileValidator`) | `@IntoSet`; fails the `VALIDATE` phase on an unknown `jaxrs.jsonProfile` (`json.systemProfile` is validated earlier, by the `CONFIGURE`-phase install step) |
-| `OperationSchemaSource`, `BeanValidator`, `InputObjectProcessor` (`dev.vertique.input.processing.InputObjectProcessor`), `ActionRegistry`, `Authorizer` | `@BindsOptionalOf`; satisfied by `rest-validation`, `validation`, `sanitization`, and `rest-security` respectively |
+| `OperationSchemaSource`, `BeanValidator`, `InputObjectProcessor` (`dev.vertique.input.processing.InputObjectProcessor`), `ActionRegistry`, `Authorizer` | `@BindsOptionalOf`; satisfied by `rest-validation` (`OperationSchemaSource`), `validation` (`BeanValidator`), `sanitization` (`InputObjectProcessor`), and the authorization engine, `SecurityAuthzModule` in `vertique-security-runtime` (`ActionRegistry`, `Authorizer`) |
 | `SyntheticOperationInstaller` | `@Binds` to a package-private implementation; INTERNAL; framework documentation module only; enforces a `SyntheticOperation` typed policy in the supported `AuthModule` and `SecurityModule` composition and refuses a restrictive one without it |
 | `Set<MountPublicationHook>` | `@Multibinds`; INTERNAL; empty by default; sibling framework modules contribute: the documentation module through `@ElementsIntoSet`, the `openapi-contract` validation module's contract-load check through `@IntoSet` |
 
@@ -2229,7 +2248,7 @@ These types left this module and have no forwarding type here. Change the import
 | `dev.vertique:vertique-rest-core` | every extension SPI this runtime consumes, the `http`/`jaxrs` config objects, `ProblemDetail`, `BoundRequest`'s `RequestValue`, the parameter-conversion stack, and `RestCoreModule` |
 | `dev.vertique:vertique-input-processing` | the neutral `InputObjectProcessor` / `EffectiveInputPolicies` contracts the body pipeline and the optional sanitization binding are typed against |
 | `dev.vertique:vertique-security-core` | `SecurityContext` and the authorization references the security policy resolves against |
-| `dev.vertique:vertique-json` | `JsonMapperProfileRegistry`, `JsonConfig` (its `effectiveProfile()` is the `vertique` floor), and `JsonRuntimeModule` for per-method profile resolution; `JacksonFieldNameResolver` — the `dev.vertique.core.sanitization.InputFieldNameResolver` implementation supplying the body wire-name projection input processing keys its policies on |
+| `dev.vertique:vertique-json` | the `JsonMapperProfileRegistry` binding (the type is declared in `vertique-core`), `JsonConfig` (its `effectiveProfile()` is the `vertique` floor), and `JsonRuntimeModule` for per-method profile resolution; `JacksonFieldNameResolver` — the `dev.vertique.core.sanitization.InputFieldNameResolver` implementation supplying the body wire-name projection input processing keys its policies on |
 | `io.swagger.core.v3:swagger-annotations-jakarta` | `@Operation` / `@ApiResponse` read at scan time for the operationId and, at build time, by the spec generator |
 | `org.projectlombok:lombok` | `provided` scope — logging and accessors; not a runtime dependency |
 
