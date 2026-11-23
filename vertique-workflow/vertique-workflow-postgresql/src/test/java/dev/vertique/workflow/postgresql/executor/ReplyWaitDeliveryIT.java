@@ -84,7 +84,8 @@ class ReplyWaitDeliveryIT {
             assertThat(f.signalWait(node, id, waitId, value).outcome()).isEqualTo(Outcome.DUPLICATE);
             var rows = await(f.fixture
                     .observer()
-                    .preparedQuery("SELECT target_json, dedup_key, provenance_json, actor_kind, actor_reason "
+                    .preparedQuery("SELECT target_json, dedup_key, provenance_json, actor->>'kind' AS actor_kind,"
+                            + " actor->>'value' AS actor_reason "
                             + "FROM workflow_commands WHERE workflow_id = $1 AND kind = 'SIGNAL'")
                     .execute(Tuple.of(id.value())));
             assertThat(rows.size()).isEqualTo(1);

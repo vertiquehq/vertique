@@ -3,7 +3,7 @@
 
 package dev.vertique.workflow.state;
 
-import dev.vertique.workflow.actor.WorkflowAttribution;
+import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import jakarta.annotation.Nullable;
@@ -42,7 +42,7 @@ import java.time.Instant;
  * @param recordedAt timestamp when this entry was persisted
  * @param entryVersion the stored version of the entry's format: 2 for a decision log entry ({@code DECISION}
  *     and {@code STATE_BASELINE}), 1 for every other entry; {@code null} only when an entry is built without it
- * @param attribution who acted and how it was established, or {@code null} when not recorded
+ * @param actor who acted, or {@code null} when no actor is recorded
  * @param executorId the node that executed the work, or {@code null}
  * @param commandId the id of the command the entry belongs to, or {@code null}
  * @param stepId the step the entry concerns, or {@code null}
@@ -60,7 +60,7 @@ public record WorkflowHistoryEntry(
         String payloadJson,
         Instant recordedAt,
         @Nullable Integer entryVersion,
-        @Nullable WorkflowAttribution attribution,
+        @Nullable WorkflowActor actor,
         @Nullable String executorId,
         @Nullable Long commandId,
         @Nullable String stepId,

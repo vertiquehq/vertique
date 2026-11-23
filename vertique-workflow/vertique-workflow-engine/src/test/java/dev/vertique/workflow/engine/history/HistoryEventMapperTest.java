@@ -5,10 +5,7 @@ package dev.vertique.workflow.engine.history;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import dev.vertique.security.PrincipalRef;
-import dev.vertique.security.PrincipalType;
 import dev.vertique.workflow.actor.WorkflowActor;
-import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.engine.spi.CommittedHistoryEntry;
 import dev.vertique.workflow.history.CommandKind;
 import dev.vertique.workflow.history.WorkflowHistoryEvent;
@@ -285,9 +282,7 @@ class HistoryEventMapperTest {
                 "{}",
                 AT,
                 1,
-                new WorkflowAttribution(
-                        new WorkflowActor.User("alice"),
-                        new PrincipalRef(PrincipalType.USER, "bob", java.util.Map.of())),
+                new WorkflowActor.User("alice"),
                 "node-1",
                 42L,
                 "step-a",
@@ -310,11 +305,10 @@ class HistoryEventMapperTest {
         assertThat(info.stepId()).isEqualTo("step-a");
         assertThat(info.commandId()).isEqualTo(42L);
         assertThat(info.commandKind()).isEqualTo(CommandKind.SIGNAL);
-        assertThat(info.attribution().actor()).isEqualTo(new WorkflowActor.User("alice"));
-        assertThat(info.attribution().onBehalfOf().id()).isEqualTo("bob");
+        assertThat(info.actor()).isEqualTo(new WorkflowActor.User("alice"));
         assertThat(info.recordedAt()).isEqualTo(AT);
 
-        // Given a bare row with an unknown command kind and no attribution
+        // Given a bare row with an unknown command kind and no actor
         WorkflowHistoryEntry bare = new WorkflowHistoryEntry(
                 ID,
                 1L,
@@ -338,8 +332,8 @@ class HistoryEventMapperTest {
                 .orElseThrow()
                 .entryInfo();
 
-        // Then the attribution and command kind are absent
-        assertThat(defaults.attribution()).isNull();
+        // Then the actor and command kind are absent
+        assertThat(defaults.actor()).isNull();
         assertThat(defaults.commandKind()).isNull();
         assertThat(defaults.definition()).isNull();
         assertThat(HistoryEventMapper.map(new CommittedHistoryEntry(bare, null))

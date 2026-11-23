@@ -3,7 +3,7 @@
 
 package dev.vertique.workflow.engine.testsupport;
 
-import dev.vertique.workflow.actor.WorkflowAttribution;
+import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
 import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.DispositionResult;
@@ -113,7 +113,7 @@ public final class EmptyCommandRepository implements WorkflowCommandRepository<S
     }
 
     @Override
-    public Future<Long> recordRetry(WorkflowInstanceId instance, WorkflowAttribution actor, SqlClient tx) {
+    public Future<Long> recordRetry(WorkflowInstanceId instance, WorkflowActor actor, SqlClient tx) {
         recordedRetries.add(instance);
         return Future.succeededFuture(1L);
     }
@@ -123,7 +123,7 @@ public final class EmptyCommandRepository implements WorkflowCommandRepository<S
             WorkflowInstanceId instance,
             long targetVersion,
             @Nullable String targetScope,
-            WorkflowAttribution actor,
+            WorkflowActor actor,
             SqlClient tx) {
         recordedMigrations.add(new RecordedMigration(instance, targetVersion, targetScope));
         return Future.succeededFuture(1L);
@@ -155,8 +155,7 @@ public final class EmptyCommandRepository implements WorkflowCommandRepository<S
     }
 
     @Override
-    public Future<List<SettledCommand>> cancelAll(
-            WorkflowInstanceId instance, WorkflowAttribution canceller, SqlClient tx) {
+    public Future<List<SettledCommand>> cancelAll(WorkflowInstanceId instance, WorkflowActor canceller, SqlClient tx) {
         cancelledInstances.add(instance);
         return Future.succeededFuture(List.of());
     }
@@ -242,7 +241,7 @@ public final class EmptyCommandRepository implements WorkflowCommandRepository<S
             String idempotencyKey,
             @Nullable String payloadJson,
             @Nullable String targetJson,
-            WorkflowAttribution actor,
+            WorkflowActor actor,
             SqlClient tx) {
         return Future.succeededFuture(1L);
     }
@@ -346,7 +345,7 @@ public final class EmptyCommandRepository implements WorkflowCommandRepository<S
             String dedupKey,
             @Nullable String payloadJson,
             String targetJson,
-            WorkflowAttribution actor,
+            WorkflowActor actor,
             SqlClient tx) {
         return Future.succeededFuture(1L);
     }
@@ -362,7 +361,7 @@ public final class EmptyCommandRepository implements WorkflowCommandRepository<S
             @Nullable String payloadJson,
             @Nullable String explicitCarrierJson,
             @Nullable String provenanceJson,
-            WorkflowAttribution actor,
+            WorkflowActor actor,
             SqlClient tx) {
         recordedSignals.add(new RecordedSignal(
                 instance, signalName, forkStepId, branchId, dedupKey, payloadJson, explicitCarrierJson));

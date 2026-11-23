@@ -12,7 +12,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.actor.WorkflowActor;
-import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.history.CommandKind;
 import dev.vertique.workflow.history.WorkflowHistoryEvent;
 import dev.vertique.workflow.history.WorkflowHistoryEvent.CommandChanged;
@@ -97,7 +96,7 @@ public class ExecutorHistoryAnnouncementIT {
             // And the failure of a timer is the system's doing, for the timer command; the retry entry is written by
             // the segment that runs it, which records no command for it, and none is inferred
             assertThat(failed.entryInfo().commandKind()).isEqualTo(CommandKind.TIMER);
-            assertThat(failed.entryInfo().attribution()).isEqualTo(WorkflowAttribution.system("timer"));
+            assertThat(failed.entryInfo().actor()).isEqualTo(new WorkflowActor.System("timer"));
             assertThat(retried.entryInfo().commandKind()).isNull();
 
             // And none that a timer wrote is without the system actor
@@ -105,8 +104,7 @@ public class ExecutorHistoryAnnouncementIT {
                     .filteredOn(event -> event.entryInfo().commandKind() == CommandKind.TIMER)
                     .isNotEmpty()
                     .allSatisfy(
-                            event -> assertThat(event.entryInfo().attribution().actor())
-                                    .isInstanceOf(WorkflowActor.System.class));
+                            event -> assertThat(event.entryInfo().actor()).isInstanceOf(WorkflowActor.System.class));
 
             // And nothing was reported as failed, since an internal retry is not, while the throwing listener changed
             // nothing

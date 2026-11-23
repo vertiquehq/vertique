@@ -20,9 +20,7 @@ import java.util.Objects;
  *   <li>{@link PrincipalType#SYSTEM} → {@link WorkflowActor.System} using the
  *       {@code system.reason} attribute when present, falling back to
  *       {@code "unspecified"} when the attribute is absent</li>
- *   <li>{@link PrincipalType#ANONYMOUS} → {@link IllegalArgumentException} — workflow operations
- *       require a named actor; anonymous callers must be rejected by the authorization layer
- *       before reaching the workflow engine</li>
+ *   <li>{@link PrincipalType#ANONYMOUS} → {@link WorkflowActor.Anonymous}</li>
  * </ul>
  *
  * <p>Used as the {@link WorkflowActorMapper} when the application binds none; see
@@ -43,12 +41,11 @@ public final class DefaultWorkflowActorMapper implements WorkflowActorMapper {
      * <p>Maps {@code USER} → {@link WorkflowActor.User}, {@code SERVICE} →
      * {@link WorkflowActor.Service}, {@code SYSTEM} → {@link WorkflowActor.System}
      * (using {@code system.reason} attribute or {@code "unspecified"} fallback).
-     * {@code ANONYMOUS} identities are rejected with {@link IllegalArgumentException}.
+     * {@code ANONYMOUS} → {@link WorkflowActor.Anonymous}.
      *
      * @param identity the security identity to map; must not be {@code null}
      * @return the corresponding workflow actor; never {@code null}
      * @throws NullPointerException     if {@code identity} is {@code null}
-     * @throws IllegalArgumentException if the identity type is {@link PrincipalType#ANONYMOUS}
      */
     @Override
     public WorkflowActor toWorkflowActor(SecurityIdentity identity) {
@@ -60,9 +57,7 @@ public final class DefaultWorkflowActorMapper implements WorkflowActorMapper {
                 String reason = (String) identity.actor().attributes().getOrDefault("system.reason", "unspecified");
                 yield new WorkflowActor.System(reason);
             }
-            case ANONYMOUS ->
-                throw new IllegalArgumentException("cannot map ANONYMOUS identity to WorkflowActor — "
-                        + "workflow operations require a named actor");
+            case ANONYMOUS -> new WorkflowActor.Anonymous();
         };
     }
 }

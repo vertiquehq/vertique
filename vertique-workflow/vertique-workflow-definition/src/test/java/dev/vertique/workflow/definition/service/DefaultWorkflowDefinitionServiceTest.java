@@ -17,7 +17,6 @@ import dev.vertique.security.SecurityIdentity;
 import dev.vertique.workflow.actor.DefaultWorkflowActorMapper;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.actor.WorkflowActorMapper;
-import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.definition.callbacks.DefaultBranchResultReducerRegistry;
 import dev.vertique.workflow.definition.callbacks.DefaultFailMessageFactoryRegistry;
@@ -382,7 +381,7 @@ class DefaultWorkflowDefinitionServiceTest {
         }
     }
 
-    private WorkflowAttribution registeredBy(ContextHolder holder, WorkflowActorMapper mapper) {
+    private WorkflowActor registeredBy(ContextHolder holder, WorkflowActorMapper mapper) {
         WorkflowDefinitionRegistryStore durable = Mockito.mock(WorkflowDefinitionRegistryStore.class);
         Mockito.when(durable.insertCandidate(
                         Mockito.any(WorkflowDefinitionRecord.class), Mockito.any(WorkflowDefinitionDocument.class)))
@@ -418,15 +417,15 @@ class DefaultWorkflowDefinitionServiceTest {
                         SecurityContexts.unauthenticated(SecurityIdentity.user(
                                 new PrincipalRef(PrincipalType.USER, "alice", java.util.Map.of()))));
 
-        WorkflowAttribution actor = registeredBy(holder, new DefaultWorkflowActorMapper());
+        WorkflowActor actor = registeredBy(holder, new DefaultWorkflowActorMapper());
 
-        assertThat(actor.actor()).isEqualTo(new WorkflowActor.User("alice"));
+        assertThat(actor).isEqualTo(new WorkflowActor.User("alice"));
     }
 
     @Test
     @DisplayName("a durable load with no identity stores the candidate as unattributed")
     void aDurableLoadWithNoIdentityIsUnattributed() {
-        assertThat(registeredBy(new Held(), new DefaultWorkflowActorMapper())).isEqualTo(WorkflowAttribution.absent());
+        assertThat(registeredBy(new Held(), new DefaultWorkflowActorMapper())).isNull();
     }
 
     @Test
@@ -441,7 +440,7 @@ class DefaultWorkflowDefinitionServiceTest {
             throw new IllegalArgumentException("alice cannot be mapped");
         };
 
-        assertThat(registeredBy(holder, failing)).isEqualTo(WorkflowAttribution.absent());
+        assertThat(registeredBy(holder, failing)).isNull();
     }
 
     @Nested

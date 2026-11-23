@@ -57,11 +57,8 @@ CREATE TABLE IF NOT EXISTS workflow_definitions (
     loaded_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     status_changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    -- who made the last status change, in the shape of the instance history's actor; null when it was not attributed
-    status_actor_kind VARCHAR(20) NULL,
-    status_actor_id VARCHAR(255) NULL,
-    status_actor_reason VARCHAR(255) NULL,
-    status_on_behalf_of JSONB NULL,
+    -- who made the last status change, as {"kind","value"}; null when it was not attributed
+    status_changed_by JSONB NULL,
     publish_token UUID,
     failure_reason VARCHAR(64),
     CONSTRAINT pk_workflow_definitions PRIMARY KEY (scope_key, definition_id, definition_version),
@@ -88,11 +85,8 @@ CREATE TABLE IF NOT EXISTS workflow_definition_activations (
     target_scope_key VARCHAR(255) NOT NULL,
     definition_version BIGINT NOT NULL,
     activated_at TIMESTAMPTZ NOT NULL,
-    -- who wrote the record, in the shape of the instance history's actor; null when it was not attributed
-    activation_actor_kind VARCHAR(20) NULL,
-    activation_actor_id VARCHAR(255) NULL,
-    activation_actor_reason VARCHAR(255) NULL,
-    activation_on_behalf_of JSONB NULL,
+    -- who wrote the record, as {"kind","value"}; null when it was not attributed
+    activated_by JSONB NULL,
     CONSTRAINT pk_workflow_definition_activations PRIMARY KEY (scope_key, definition_id),
     CONSTRAINT ck_workflow_definition_activations_version CHECK (definition_version > 0),
     CONSTRAINT ck_workflow_definition_activations_keys CHECK (
@@ -155,10 +149,8 @@ CREATE TABLE IF NOT EXISTS workflow_commands (
     claimed_by            VARCHAR(255) NULL,
     context_json          JSONB        NULL,
     explicit_carrier_json JSONB        NULL,
-    actor_kind            VARCHAR(20)  NULL,
-    actor_id              VARCHAR(255) NULL,
-    actor_reason          VARCHAR(255) NULL,
-    on_behalf_of          JSONB NULL,
+    -- who recorded the command, as {"kind","value"}; {"kind":"NONE"} for a command recorded with no actor
+    actor                 JSONB        NULL,
     dedup_key             VARCHAR(255) NULL,
     settled_at            TIMESTAMPTZ  NULL,
     last_error            TEXT         NULL,
@@ -247,12 +239,10 @@ ALTER TABLE workflow_instances ADD COLUMN IF NOT EXISTS baseline_logged BOOLEAN 
 CREATE INDEX IF NOT EXISTS idx_workflow_instances_business_key_scope_key_definition_id
     ON workflow_instances (business_key, scope_key, definition_id) WHERE business_key IS NOT NULL;
 
--- History: attribution, execution and definition identity, and state versions; older rows keep nulls.
+-- History: the actor, execution and definition identity, and state versions; older rows keep nulls. The actor is
+-- {"kind","value"}: null for an entry not attributed yet, {"kind":"NONE"} for an entry attributed to no one.
 ALTER TABLE workflow_history
-    ADD COLUMN IF NOT EXISTS actor_kind            VARCHAR(20)  NULL,
-    ADD COLUMN IF NOT EXISTS actor_id              VARCHAR(255) NULL,
-    ADD COLUMN IF NOT EXISTS actor_reason          VARCHAR(255) NULL,
-    ADD COLUMN IF NOT EXISTS on_behalf_of          JSONB NULL,
+    ADD COLUMN IF NOT EXISTS actor                 JSONB        NULL,
     ADD COLUMN IF NOT EXISTS executor_id           VARCHAR(255) NULL,
     ADD COLUMN IF NOT EXISTS command_id            BIGINT       NULL,
     ADD COLUMN IF NOT EXISTS step_id               VARCHAR(255) NULL,

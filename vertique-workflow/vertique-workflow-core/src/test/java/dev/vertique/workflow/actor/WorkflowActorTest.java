@@ -7,16 +7,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 
+import dev.vertique.workflow.state.payload.TaskCancelledHistoryPayload;
 import io.vertx.core.json.Json;
+import java.time.Instant;
+import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies the three {@link WorkflowActor} permits ({@link WorkflowActor.User},
- * {@link WorkflowActor.Service}, {@link WorkflowActor.System}): null/blank rejection, happy-path
+ * Verifies the four {@link WorkflowActor} permits ({@link WorkflowActor.User},
+ * {@link WorkflowActor.Service}, {@link WorkflowActor.System}, {@link WorkflowActor.Anonymous}): null/blank rejection, happy-path
  * construction, equality/hashCode round-trips, sealed-sum exhaustiveness via a {@code switch}
- * expression, and Jackson round-trip/shape-pin behavior (ADR-0048).
+ * expression, and Jackson round-trip/shape-pin behavior.
  */
 class WorkflowActorTest {
 
@@ -128,6 +131,26 @@ class WorkflowActorTest {
         }
     }
 
+    // --- Anonymous permit ---
+
+    @Nested
+    @DisplayName("WorkflowActor.Anonymous")
+    class AnonymousPermit {
+
+        @Test
+        @DisplayName("the no-argument constructor gives an anonymous actor equal to the canonical one")
+        void noArgumentConstructor() {
+            assertThat(new WorkflowActor.Anonymous().anonymous()).isTrue();
+            assertThat(new WorkflowActor.Anonymous()).isEqualTo(new WorkflowActor.Anonymous(true));
+        }
+
+        @Test
+        @DisplayName("anonymous false throws IllegalArgumentException")
+        void falseRejected() {
+            assertThatIllegalArgumentException().isThrownBy(() -> new WorkflowActor.Anonymous(false));
+        }
+    }
+
     // --- Sealed-sum exhaustiveness ---
 
     @Nested
@@ -135,12 +158,14 @@ class WorkflowActorTest {
     class SealedSumExhaustiveness {
 
         @Test
-        @DisplayName("switch expression covers all three permits without default")
+        @DisplayName("switch expression covers all four permits without default")
         void switchCoversAllPermits() {
             WorkflowActor user = new WorkflowActor.User("alice");
             WorkflowActor service = new WorkflowActor.Service("svc");
             WorkflowActor system = new WorkflowActor.System("reason");
+            WorkflowActor anonymous = new WorkflowActor.Anonymous();
 
+            assertThat(label(anonymous)).isEqualTo("anonymous");
             assertThat(label(user)).isEqualTo("user:alice");
             assertThat(label(service)).isEqualTo("service:svc");
             assertThat(label(system)).isEqualTo("system:reason");
@@ -151,11 +176,12 @@ class WorkflowActorTest {
                 case WorkflowActor.User u -> "user:" + u.userId();
                 case WorkflowActor.Service s -> "service:" + s.serviceId();
                 case WorkflowActor.System sys -> "system:" + sys.reason();
+                case WorkflowActor.Anonymous ignored -> "anonymous";
             };
         }
     }
 
-    // --- Jackson serialization shape pin (ADR-0048: byte-identical wire shape) ---
+    // --- Jackson serialization shape pin (byte-identical wire shape) ---
 
     @Nested
     @DisplayName("Jackson serialization shape pin")
@@ -183,6 +209,14 @@ class WorkflowActorTest {
             String json = Json.encode(new WorkflowActor.System("due-date-expired"));
 
             assertThat(json).isEqualTo("{\"reason\":\"due-date-expired\"}");
+        }
+
+        @Test
+        @DisplayName("Anonymous serializes to exactly {\"anonymous\":true} — no type discriminator added")
+        void anonymousShapeIsUnwrapped() {
+            String json = Json.encode(new WorkflowActor.Anonymous());
+
+            assertThat(json).isEqualTo("{\"anonymous\":true}");
         }
     }
 
@@ -220,6 +254,52 @@ class WorkflowActorTest {
             WorkflowActor decoded = Json.decodeValue(Json.encode(original), WorkflowActor.class);
 
             assertThat(decoded).isInstanceOf(WorkflowActor.System.class).isEqualTo(original);
+        }
+
+        @Test
+        @DisplayName("Anonymous round-trips through Json.encode/decodeValue(WorkflowActor.class)")
+        void anonymousRoundTrips() {
+            WorkflowActor original = new WorkflowActor.Anonymous();
+
+            WorkflowActor decoded = Json.decodeValue(Json.encode(original), WorkflowActor.class);
+
+            assertThat(decoded).isInstanceOf(WorkflowActor.Anonymous.class).isEqualTo(original);
+        }
+
+        @Test
+        @DisplayName("a hand-written {\"anonymous\":true} literal deserializes to WorkflowActor.Anonymous")
+        void anonymousLiteralDeserializes() {
+            WorkflowActor decoded = Json.decodeValue("{\"anonymous\":true}", WorkflowActor.class);
+
+            assertThat(decoded).isEqualTo(new WorkflowActor.Anonymous());
+        }
+
+        @Test
+        @DisplayName("a hand-written {\"anonymous\":false} literal is refused")
+        void anonymousFalseLiteralIsRefused() {
+            org.assertj.core.api.Assertions.assertThatThrownBy(
+                            () -> Json.decodeValue("{\"anonymous\":false}", WorkflowActor.class))
+                    .isInstanceOf(RuntimeException.class);
+        }
+
+        @Test
+        @DisplayName("a history payload record round-trips each of the four actors")
+        void payloadRecordRoundTripsEachActor() {
+            for (WorkflowActor actor : new WorkflowActor[] {
+                new WorkflowActor.User("alice"),
+                new WorkflowActor.Service("payment-svc"),
+                new WorkflowActor.System("workflow-cancelled"),
+                new WorkflowActor.Anonymous()
+            }) {
+                TaskCancelledHistoryPayload original = new TaskCancelledHistoryPayload(
+                        "step-1", UUID.randomUUID(), Instant.parse("2026-01-02T03:04:05Z"), "reason", actor, null);
+
+                TaskCancelledHistoryPayload decoded =
+                        Json.decodeValue(Json.encode(original), TaskCancelledHistoryPayload.class);
+
+                assertThat(decoded).isEqualTo(original);
+                assertThat(decoded.cancelledBy()).isEqualTo(actor);
+            }
         }
 
         @Test

@@ -5,10 +5,7 @@ package dev.vertique.workflow.state;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import dev.vertique.security.PrincipalRef;
-import dev.vertique.security.PrincipalType;
 import dev.vertique.workflow.actor.WorkflowActor;
-import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import java.lang.reflect.RecordComponent;
@@ -42,9 +39,7 @@ class WorkflowHistoryEntryTest {
                 "{\"name\":\"go\"}",
                 RECORDED_AT,
                 2,
-                new WorkflowAttribution(
-                        new WorkflowActor.Service("relay-svc"),
-                        new PrincipalRef(PrincipalType.USER, "u-2", java.util.Map.of())),
+                new WorkflowActor.Service("relay-svc"),
                 "node-1",
                 11L,
                 "wait",
@@ -73,8 +68,8 @@ class WorkflowHistoryEntryTest {
         // And the entry version is the boxed one
         assertThat(entry.entryVersion()).isEqualTo(Integer.valueOf(1));
 
-        // And every other new component is null, the attribution status included
-        assertThat(entry.attribution()).isNull();
+        // And every other new component is null, the actor included
+        assertThat(entry.actor()).isNull();
         assertThat(entry.executorId()).isNull();
         assertThat(entry.commandId()).isNull();
         assertThat(entry.stepId()).isNull();
@@ -154,7 +149,7 @@ class WorkflowHistoryEntryTest {
                         "String payloadJson",
                         "Instant recordedAt",
                         "Integer entryVersion",
-                        "WorkflowAttribution attribution",
+                        "WorkflowActor actor",
                         "String executorId",
                         "Long commandId",
                         "String stepId",
@@ -176,7 +171,7 @@ class WorkflowHistoryEntryTest {
         // When each new component differs in turn, then the entries differ
         assertThat(base)
                 .isNotEqualTo(with(base, 5, 1))
-                .isNotEqualTo(with(base, 6, new WorkflowAttribution(new WorkflowActor.User("u-1"), null)))
+                .isNotEqualTo(with(base, 6, new WorkflowActor.User("u-1")))
                 .isNotEqualTo(with(base, 7, "node-2"))
                 .isNotEqualTo(with(base, 8, 12L))
                 .isNotEqualTo(with(base, 9, "other-step"))
@@ -197,7 +192,7 @@ class WorkflowHistoryEntryTest {
             entry.payloadJson(),
             entry.recordedAt(),
             entry.entryVersion(),
-            entry.attribution(),
+            entry.actor(),
             entry.executorId(),
             entry.commandId(),
             entry.stepId(),
@@ -216,7 +211,7 @@ class WorkflowHistoryEntryTest {
                 (String) values[3],
                 (Instant) values[4],
                 (Integer) values[5],
-                (WorkflowAttribution) values[6],
+                (WorkflowActor) values[6],
                 (String) values[7],
                 (Long) values[8],
                 (String) values[9],

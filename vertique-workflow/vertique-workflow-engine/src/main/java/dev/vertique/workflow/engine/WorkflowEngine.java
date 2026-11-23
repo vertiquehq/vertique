@@ -10,11 +10,9 @@ import dev.vertique.core.validation.ViolationDetail;
 import dev.vertique.db.IsolationLevel;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.actor.WorkflowActorMaps;
-import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.dedup.WorkflowDedupScopes;
 import dev.vertique.workflow.engine.executor.ClaimLostException;
-import dev.vertique.workflow.engine.executor.CommandActors;
 import dev.vertique.workflow.engine.executor.CommandErrors;
 import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
 import dev.vertique.workflow.engine.executor.StartPayloadValidation;
@@ -291,7 +289,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     private final int maxOpenSignals;
 
     /** Takes the actor a recorded command is logged with from the identity of the caller that records it. */
-    private final CommandActors actors;
+    private final RecordedActors actors;
 
     /** Routes the intents of a segment; told which command a segment executes so that it can attribute them. */
     private final RecorderRouter recorderRouter;
@@ -422,7 +420,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             WorkflowCommandRepository<SqlClient> commands,
             Provider<WorkflowExecutorControl> executorControl,
             Optional<WorkflowRecordingConfig> recording,
-            CommandActors actors,
+            RecordedActors actors,
             RecorderRouter recorderRouter,
             WorkflowHistoryEventPublisher historyPublisher,
             WorkflowTypeNames typeNames,
@@ -536,7 +534,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 Optional.empty(),
                 key -> Optional.empty(),
                 definitionReads,
-                CommandActors.ambient(),
+                RecordedActors.ambient(),
                 WorkflowHistoryEventPublisher.disabled(),
                 IntakeAdmission.alwaysAdmitting());
     }
@@ -578,7 +576,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             Optional<WorkflowPlanSchemaProducer> schemaProducer,
             Function<DefinitionKey, Optional<DefinitionFailure>> failingMarks,
             @Nullable TransactionalDefinitionReads<SqlClient> definitionReads,
-            CommandActors actors,
+            RecordedActors actors,
             WorkflowHistoryEventPublisher historyPublisher) {
         this(
                 txRunner,
@@ -707,7 +705,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             Optional<WorkflowPlanSchemaProducer> schemaProducer,
             Function<DefinitionKey, Optional<DefinitionFailure>> failingMarks,
             @Nullable TransactionalDefinitionReads<SqlClient> definitionReads,
-            CommandActors actors,
+            RecordedActors actors,
             WorkflowHistoryEventPublisher historyPublisher,
             IntakeAdmission intake) {
         this.intake = intake;
@@ -819,8 +817,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 reservations,
                 historyRecorder,
                 Optional.of(recordingConfig),
-                schemaProducer,
-                actors);
+                schemaProducer);
         taskLifecycleHolder[0] = this.taskLifecycle;
         // TimerLifecycleService needs the driver, coordinator, and task service eagerly; all three
         // are now built. The driver reaches resolveFireAt through the lazy Provider above
@@ -1515,8 +1512,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx, int maxSteps) {
         // Every history entry the segment writes is logged with the actor that recorded the command it is about, and
         // with the actor of the executed command when it names none. The executor never reads the ambient identity.
-        WorkflowAttribution recorded =
-                command.attribution() == null ? WorkflowAttribution.absent() : command.attribution();
+        WorkflowActor recorded = command.actor();
         DefinitionKey pinned =
                 new DefinitionKey(head.definitionScopeKey(), head.definitionId(), head.definitionVersion());
         return decisions.segment(
@@ -2652,13 +2648,13 @@ final class WorkflowEngine implements WorkflowEngineHandle {
 
     /**
      * Takes the actor of a correlated delivery from the ambient identity. A delivery that carries a provenance is
-     * refused with {@link WorkflowSignalActorException} when the capture yields no actor (no identity, or an anonymous
-     * one) or the actor mapper refuses the identity, so a source never records a command that no actor stands behind. A
-     * delivery without provenance keeps the capture as it is: an absent actor is recorded and a mapper failure
-     * propagates unchanged.
+     * refused with {@link WorkflowSignalActorException} when there is no actor (no identity), when the caller is
+     * anonymous, or when the actor mapper refuses the identity, so a source never records a command that no named
+     * actor stands behind. A delivery without provenance keeps the capture as it is: an absent or anonymous actor is
+     * recorded and a mapper failure propagates unchanged.
      */
-    private Future<WorkflowAttribution> capturedForDelivery(CorrelatedSignal signal, String contractName) {
-        Future<WorkflowAttribution> captured = actors.captured();
+    private Future<WorkflowActor> capturedForDelivery(CorrelatedSignal signal, String contractName) {
+        Future<WorkflowActor> captured = actors.captured();
         if (signal.provenance() == null) {
             return captured;
         }
@@ -2669,7 +2665,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 refusal.initCause(result.cause());
                 return Future.failedFuture(refusal);
             }
-            if (result.result().actor() == null) {
+            if (result.result() == null || result.result() instanceof WorkflowActor.Anonymous) {
                 return Future.failedFuture(new WorkflowSignalActorException(contractName, signal.signalName()));
             }
             return Future.succeededFuture(result.result());
@@ -3057,12 +3053,17 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * @param id     the workflow instance id
      * @param reason human-readable reason for the cancellation
      * @param inst   the loaded (non-terminal) instance snapshot
-     * @param canceller who cancelled the instance, logged on the entries of the cancelled commands
+     * @param canceller who cancelled the instance, or {@code null} when the cancel has no caller; logged on the
+     *     entries of the cancelled commands and on the cancelled task
      * @param tx     the active transaction
      * @return a {@link Future} that completes when the cancellation has been persisted
      */
     private Future<Void> doCancel(
-            WorkflowInstanceId id, String reason, WorkflowInstance inst, WorkflowAttribution canceller, SqlClient tx) {
+            WorkflowInstanceId id,
+            String reason,
+            WorkflowInstance inst,
+            @Nullable WorkflowActor canceller,
+            SqlClient tx) {
         UUID waitTaskId = null;
         if (inst.waitType() == WaitType.TASK) {
             try {
@@ -3074,7 +3075,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         }
         UUID taskId = waitTaskId;
         UUID activeTimerId = TimerLifecycleService.resolveActiveTimerId(inst);
-        WorkflowActor cancelledByActor = new WorkflowActor.System("workflow-cancelled");
+        // The task is cancelled as the canceller; the system only when the cancel has no caller.
+        WorkflowActor cancelledByActor = canceller != null ? canceller : new WorkflowActor.System("workflow-cancelled");
         Instant now = clock.instant();
 
         // Command rows first, in ascending id order: every command the instance still has is cancelled in one
@@ -3227,6 +3229,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             WorkflowInstance inst, UUID taskId, String reason, Instant now, WorkflowActor actor, SqlClient tx) {
         return taskStore.markCancelled(taskId, reason, now, actor, tx).compose(transition -> taskLifecycle
                 .appendTaskCancelledHistory(inst, taskId, reason, actor, now, tx)
+                // The entry names the same actor as the task row, the payload and the event: the canceller, or the
+                // system when the cancel has no caller. It is the last entry written so far, so nothing else is
+                // touched.
+                .compose(taskCancelledSeq -> commands.attributeHistory(inst.id(), taskCancelledSeq, actor, tx)
+                        .map(taskCancelledSeq))
                 .compose(taskCancelledSeq -> emitEvent(
                         inst,
                         WorkflowEventType.TASK_CANCELLED,

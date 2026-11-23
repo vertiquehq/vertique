@@ -3,7 +3,6 @@
 
 package dev.vertique.workflow.engine;
 
-import dev.vertique.workflow.engine.executor.CommandActors;
 import dev.vertique.workflow.engine.executor.CommandErrors;
 import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
 import dev.vertique.workflow.engine.executor.Savepoints;
@@ -122,7 +121,7 @@ final class MigrationExecutor {
     private final WorkflowContextBinder contextBinder;
 
     /** Takes the actor a recorded migration is logged with from the identity of the caller. */
-    private final CommandActors actors;
+    private final RecordedActors actors;
 
     /** Logs the migration: its own patch and the full state after it. */
     private final DecisionLog decisions;
@@ -182,7 +181,7 @@ final class MigrationExecutor {
             Function<DefinitionKey, Optional<DefinitionFailure>> failing,
             WorkflowCommandRepository<SqlClient> commands,
             @jakarta.annotation.Nullable TransactionalDefinitionReads<SqlClient> definitionReads,
-            CommandActors actors,
+            RecordedActors actors,
             DecisionLog decisions,
             SignalWaits signalWaits,
             TimerStore<SqlClient> timerStore,
@@ -243,7 +242,7 @@ final class MigrationExecutor {
             Provider<FailingMarks> marks,
             WorkflowCommandRepository<SqlClient> commands,
             Optional<TransactionalDefinitionReads<SqlClient>> definitionReads,
-            CommandActors actors,
+            RecordedActors actors,
             DecisionLog decisions,
             SignalWaits signalWaits,
             TimerStore<SqlClient> timerStore,
@@ -314,7 +313,7 @@ final class MigrationExecutor {
                 key -> Optional.empty(),
                 commands,
                 null,
-                CommandActors.ambient(),
+                RecordedActors.ambient(),
                 decisions,
                 signalWaits,
                 timerStore,

@@ -10,8 +10,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import dev.vertique.context.DefaultContextHolder;
+import dev.vertique.workflow.actor.CurrentWorkflowActor;
+import dev.vertique.workflow.actor.DefaultWorkflowActorMapper;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
-import dev.vertique.workflow.engine.executor.CommandActors;
 import dev.vertique.workflow.engine.history.WorkflowHistoryEventPublisher;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
@@ -74,7 +76,11 @@ class WorkflowEngineStaleCorrelatedDeliveryTest {
         when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
         when(dedup.findCorrelated(any(), any(), any())).thenReturn(Future.succeededFuture(Optional.empty()));
         WorkflowHistoryEventPublisher publisher = new WorkflowHistoryEventPublisher(
-                Set.of(), history, mock(Pool.class), commands, CommandActors.ambient());
+                Set.of(),
+                history,
+                mock(Pool.class),
+                commands,
+                new CurrentWorkflowActor(new DefaultContextHolder(), new DefaultWorkflowActorMapper()));
         return new WorkflowEngine(
                 mock(WorkflowTransactionRunner.class),
                 registry,
@@ -109,7 +115,7 @@ class WorkflowEngineStaleCorrelatedDeliveryTest {
                 Optional.empty(),
                 key -> Optional.empty(),
                 null,
-                CommandActors.ambient(),
+                RecordedActors.ambient(),
                 publisher);
     }
 

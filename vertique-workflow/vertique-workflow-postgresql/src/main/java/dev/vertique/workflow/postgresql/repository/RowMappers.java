@@ -159,7 +159,7 @@ class RowMappers {
      * Returns a {@link RowMapper} that maps a full row from {@code workflow_history} to a
      * {@link WorkflowHistoryEntry} with every component set that the row holds.
      *
-     * <p>The actor is {@code null} when {@code actor_kind} is {@code null}; the definition key is {@code null} when
+     * <p>The actor is {@code null} when {@code actor} is {@code null} or names no one; the definition key is {@code null} when
      * {@code definition_scope_key} is {@code null}. Used only by the history service.
      *
      * @return a row mapper for the enriched {@link WorkflowHistoryEntry}
@@ -177,7 +177,7 @@ class RowMappers {
                     extractJsonb(row, "payload_json"),
                     toInstant(row.getOffsetDateTime("recorded_at")),
                     row.getInteger("entry_version"),
-                    PgWorkflowAttribution.read(row, ""),
+                    PgWorkflowActor.read(row, "actor"),
                     row.getString("executor_id"),
                     row.getLong("command_id"),
                     row.getString("step_id"),

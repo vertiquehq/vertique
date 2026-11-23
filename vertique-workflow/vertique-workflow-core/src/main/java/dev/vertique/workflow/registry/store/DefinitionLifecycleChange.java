@@ -3,7 +3,7 @@
 
 package dev.vertique.workflow.registry.store;
 
-import dev.vertique.workflow.actor.WorkflowAttribution;
+import dev.vertique.workflow.actor.WorkflowActor;
 import jakarta.annotation.Nullable;
 import java.time.Instant;
 import java.util.Objects;
@@ -21,8 +21,9 @@ public sealed interface DefinitionLifecycleChange {
      */
     UUID changeId();
 
-    /** Who acted and how their attribution was established. */
-    WorkflowAttribution attribution();
+    /** Who acted, or {@code null} when the call had no actor. */
+    @Nullable
+    WorkflowActor actor();
 
     /**
      * When the change was made: stamped when the call was made, together with the actor, and not when the change
@@ -53,14 +54,14 @@ public sealed interface DefinitionLifecycleChange {
      * @param changeId    the change id
      * @param operation   what was done
      * @param key         the version
-     * @param attribution who acted and how that attribution was established
+     * @param actor       who acted, or {@code null} when the call had no actor
      * @param occurredAt  when
      */
     record VersionChange(
             UUID changeId,
             VersionOperation operation,
             DefinitionKey key,
-            WorkflowAttribution attribution,
+            @Nullable WorkflowActor actor,
             Instant occurredAt)
             implements DefinitionLifecycleChange {
 
@@ -69,7 +70,6 @@ public sealed interface DefinitionLifecycleChange {
             Objects.requireNonNull(changeId, "changeId");
             Objects.requireNonNull(operation, "operation");
             Objects.requireNonNull(key, "key");
-            Objects.requireNonNull(attribution, "attribution");
             Objects.requireNonNull(occurredAt, "occurredAt");
         }
     }
@@ -86,7 +86,7 @@ public sealed interface DefinitionLifecycleChange {
      *                       {@link ActivationOperation#DEACTIVATE_DEFAULT}
      * @param version        the version made the default for {@link ActivationOperation#ACTIVATE}, otherwise
      *                       {@code null}
-     * @param attribution who acted and how that attribution was established
+     * @param actor       who acted, or {@code null} when the call had no actor
      * @param occurredAt     when the call was made
      */
     record ActivationChange(
@@ -96,7 +96,7 @@ public sealed interface DefinitionLifecycleChange {
             String definitionId,
             @Nullable String targetScopeKey,
             @Nullable Long version,
-            WorkflowAttribution attribution,
+            @Nullable WorkflowActor actor,
             Instant occurredAt)
             implements DefinitionLifecycleChange {
 
@@ -106,7 +106,6 @@ public sealed interface DefinitionLifecycleChange {
             Objects.requireNonNull(operation, "operation");
             Objects.requireNonNull(scopeKey, "scopeKey");
             Objects.requireNonNull(definitionId, "definitionId");
-            Objects.requireNonNull(attribution, "attribution");
             Objects.requireNonNull(occurredAt, "occurredAt");
         }
     }

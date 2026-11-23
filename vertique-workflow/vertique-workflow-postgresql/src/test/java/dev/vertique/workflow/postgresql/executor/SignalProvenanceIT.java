@@ -442,6 +442,31 @@ class SignalProvenanceIT {
         }
     }
 
+    @Test
+    @DisplayName("a delivery without provenance from an anonymous caller is recorded with the anonymous actor")
+    void anonymousDeliveryWithoutProvenanceIsRecordedAsAnonymous() {
+        RecordedSignalIT.RecordingObserver observer = new RecordedSignalIT.RecordingObserver();
+        try (KeyedWaitFixture f = KeyedWaitFixture.open(db.toPoolConfig())) {
+            // Given an instance waiting on PAY-77 and a signal carrying no provenance
+            Node node = f.node("engine").observers(observer).build();
+            WorkflowInstanceId id = f.startKeyed(node, "PAY-77");
+            f.idle(node, id);
+
+            // When an anonymous caller delivers it
+            Delivery delivery =
+                    Route.KEY.deliver(f, node, SecurityIdentity.anonymous(), plain(Route.KEY, "PAY-77", "d-1"));
+
+            // Then the delivery is recorded, with the anonymous actor, and no absence is reported for it
+            assertThat(delivery.receiptOrFail().outcome()).isEqualTo(CorrelatedSignalReceipt.Outcome.RECORDED);
+            assertThat(f.signalRows(id)).singleElement().satisfies(command -> {
+                Attributed actor = f.actorOf(command.id());
+                assertThat(actor.actorKind()).isEqualTo("ANONYMOUS");
+                assertThat(actor.actorId()).isNull();
+            });
+            assertThat(absences(observer)).isZero();
+        }
+    }
+
     // --- Helpers ---
 
     /** A delivery of the route's signal that carries provenance, under the identity, committed whatever happens. */

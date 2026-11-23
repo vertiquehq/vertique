@@ -132,14 +132,13 @@ public class HistoryAnnouncementIT {
             assertThat(reassigned.to()).isEqualTo(new TaskAssignment.Role("other-auditors"));
             WorkflowHistoryEvent.TaskDecided decided = only(endedEvents, WorkflowHistoryEvent.TaskDecided.class);
             assertThat(decided.decisionName()).isEqualTo("approve");
-            assertThat(((WorkflowActor.User) decided.entryInfo().attribution().actor()).userId())
+            assertThat(((WorkflowActor.User) decided.entryInfo().actor()).userId())
                     .isEqualTo(AuditRun.TASK_USER);
             assertThat(decisionOf(endedEvents, WorkflowHistoryEvent.DecisionKind.TASK_DECIDED)
                             .entryInfo())
                     .satisfies(info -> {
                         assertThat(info.commandKind()).isEqualTo(CommandKind.COMPLETION);
-                        assertThat(((WorkflowActor.User) info.attribution().actor()).userId())
-                                .isEqualTo(AuditRun.TASK_USER);
+                        assertThat(((WorkflowActor.User) info.actor()).userId()).isEqualTo(AuditRun.TASK_USER);
                     });
             assertThat(decisionOf(endedEvents, WorkflowHistoryEvent.DecisionKind.SIGNAL_APPLIED)
                             .entryInfo()
@@ -154,9 +153,7 @@ public class HistoryAnnouncementIT {
             for (WorkflowHistoryEvent event : endedEvents) {
                 CommandKind kind = event.entryInfo().commandKind();
                 if (kind == null && !(event instanceof WorkflowHistoryEvent.TaskReassigned)) {
-                    assertThat(((WorkflowActor.User)
-                                            event.entryInfo().attribution().actor())
-                                    .userId())
+                    assertThat(((WorkflowActor.User) event.entryInfo().actor()).userId())
                             .as(event.toString())
                             .isIn("u-0", "u-1", "u-4");
                     continue;
@@ -169,7 +166,7 @@ public class HistoryAnnouncementIT {
                             case SIGNAL -> "u-4";
                             default -> throw new AssertionError("unexpected command kind " + kind + " of " + event);
                         };
-                assertThat(((WorkflowActor.User) event.entryInfo().attribution().actor()).userId())
+                assertThat(((WorkflowActor.User) event.entryInfo().actor()).userId())
                         .as(event.toString())
                         .isEqualTo(expected);
             }
@@ -181,9 +178,8 @@ public class HistoryAnnouncementIT {
                     .filteredOn(event -> event instanceof WorkflowHistoryEvent.InstanceCancelled
                             || event instanceof WorkflowHistoryEvent.TaskCancelled)
                     .hasSize(2)
-                    .allSatisfy(event -> assertThat(((WorkflowActor.User)
-                                            event.entryInfo().attribution().actor())
-                                    .userId())
+                    .allSatisfy(event -> assertThat(
+                                    ((WorkflowActor.User) event.entryInfo().actor()).userId())
                             .isEqualTo("u-5"));
 
             // And no action failed, while the throwing listener was told of every commit and did not alter one

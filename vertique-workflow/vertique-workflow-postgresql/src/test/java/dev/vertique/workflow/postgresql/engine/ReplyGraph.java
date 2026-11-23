@@ -843,7 +843,11 @@ final class ReplyGraph implements AutoCloseable {
 
     List<Row> signals(WorkflowInstanceId id) {
         return rows(
-                "SELECT * FROM workflow_commands WHERE workflow_id = $1 AND kind = 'SIGNAL' ORDER BY seq", id.value());
+                "SELECT *, actor->>'kind' AS actor_kind,"
+                        + " CASE WHEN actor->>'kind' IN ('USER', 'SERVICE') THEN actor->>'value' END AS actor_id,"
+                        + " CASE WHEN actor->>'kind' = 'SYSTEM' THEN actor->>'value' END AS actor_reason"
+                        + " FROM workflow_commands WHERE workflow_id = $1 AND kind = 'SIGNAL' ORDER BY seq",
+                id.value());
     }
 
     void until(String description, BooleanSupplier condition) {

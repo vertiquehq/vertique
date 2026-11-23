@@ -9,7 +9,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import dev.vertique.core.context.DurableMetadata;
-import dev.vertique.workflow.actor.WorkflowAttribution;
+import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
 import dev.vertique.workflow.events.WorkflowEventIntent;
 import dev.vertique.workflow.events.WorkflowEventType;
@@ -102,7 +102,7 @@ class WorkflowEventEmitterTest {
                 null,
                 null,
                 null,
-                WorkflowAttribution.system("test"));
+                new WorkflowActor.System("test"));
     }
 
     @Test

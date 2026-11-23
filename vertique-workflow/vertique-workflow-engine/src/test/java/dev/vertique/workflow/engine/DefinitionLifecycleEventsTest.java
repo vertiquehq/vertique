@@ -9,10 +9,7 @@ import static dev.vertique.workflow.engine.DefaultWorkflowDefinitionLifecycleTes
 import static dev.vertique.workflow.engine.DefaultWorkflowDefinitionLifecycleTest.row;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import dev.vertique.security.PrincipalRef;
-import dev.vertique.security.PrincipalType;
 import dev.vertique.workflow.actor.WorkflowActor;
-import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.engine.DefaultWorkflowDefinitionLifecycleTest.ActivationStore;
 import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
@@ -59,9 +56,8 @@ class DefinitionLifecycleEventsTest {
 
     private static final DefinitionKey V2 = new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 2);
     private static final Instant NOW = Instant.parse("2026-02-03T04:05:06Z");
-    private static final WorkflowAttribution ALICE = new WorkflowAttribution(
-            new WorkflowActor.User("alice"), new PrincipalRef(PrincipalType.USER, "carol", java.util.Map.of()));
-    private static final WorkflowAttribution BOB = new WorkflowAttribution(new WorkflowActor.Service("bob"), null);
+    private static final WorkflowActor ALICE = new WorkflowActor.User("alice");
+    private static final WorkflowActor BOB = new WorkflowActor.Service("bob");
 
     /** Records every call, in order. */
     private static final class Recorder implements WorkflowDefinitionLifecycleListener {
@@ -102,7 +98,7 @@ class DefinitionLifecycleEventsTest {
         }
     }
 
-    private final AtomicReference<WorkflowAttribution> actor = new AtomicReference<>(ALICE);
+    private final AtomicReference<WorkflowActor> actor = new AtomicReference<>(ALICE);
     private final AtomicInteger captures = new AtomicInteger();
     private final Recorder recorder = new Recorder();
     private final DefinitionApplyQueue queue = new DefinitionApplyQueue();
@@ -112,7 +108,7 @@ class DefinitionLifecycleEventsTest {
                 Set.of(listeners),
                 () -> {
                     captures.incrementAndGet();
-                    return actor.get();
+                    return Optional.ofNullable(actor.get());
                 },
                 Clock.fixed(NOW, ZoneOffset.UTC));
     }
@@ -178,8 +174,7 @@ class DefinitionLifecycleEventsTest {
         VersionChange change = recorder.onlyVersionChange();
         assertThat(change.operation()).isEqualTo(VersionOperation.PUBLISH);
         assertThat(change.key()).isEqualTo(KEY);
-        assertThat(change.attribution().actor()).isEqualTo(new WorkflowActor.User("alice"));
-        assertThat(change.attribution().onBehalfOf().id()).isEqualTo("carol");
+        assertThat(change.actor()).isEqualTo(new WorkflowActor.User("alice"));
         assertThat(change.occurredAt()).isEqualTo(NOW);
         assertThat(change.changeId()).isNotNull();
         assertThat(recorder.failures).isEmpty();
@@ -468,7 +463,7 @@ class DefinitionLifecycleEventsTest {
 
         // Then the change names alice
         assertThat(result.succeeded()).isTrue();
-        assertThat(recorder.onlyVersionChange().attribution().actor()).isEqualTo(new WorkflowActor.User("alice"));
+        assertThat(recorder.onlyVersionChange().actor()).isEqualTo(new WorkflowActor.User("alice"));
         assertThat(captures).hasValue(1);
     }
 
@@ -490,8 +485,7 @@ class DefinitionLifecycleEventsTest {
         // Then the call succeeded and the change names no actor
         assertThat(result.succeeded()).isTrue();
         VersionChange change = recorder.onlyVersionChange();
-        assertThat(change.attribution().actor()).isNull();
-        assertThat(change.attribution().onBehalfOf()).isNull();
+        assertThat(change.actor()).isNull();
     }
 
     @Test
@@ -518,9 +512,8 @@ class DefinitionLifecycleEventsTest {
         seed(store, KEY);
         seed(store, V2);
         var lifecycle = lifecycle(store, Set.of(), events());
-        WorkflowAttribution alice = new WorkflowAttribution(
-                new WorkflowActor.User("alice"), new PrincipalRef(PrincipalType.USER, "carol", java.util.Map.of()));
-        WorkflowAttribution bob = new WorkflowAttribution(new WorkflowActor.Service("bob"), null);
+        WorkflowActor alice = new WorkflowActor.User("alice");
+        WorkflowActor bob = new WorkflowActor.Service("bob");
 
         // When alice deprecates and retires version 1 and activates version 2, and bob clears the default and
         // deprecates 2
@@ -580,8 +573,7 @@ class DefinitionLifecycleEventsTest {
         assertThat(lifecycle.publish(KEY).succeeded()).isTrue();
 
         // Then the claim and the completion carry her
-        WorkflowAttribution alice = new WorkflowAttribution(
-                new WorkflowActor.User("alice"), new PrincipalRef(PrincipalType.USER, "carol", java.util.Map.of()));
+        WorkflowActor alice = new WorkflowActor.User("alice");
         assertThat(store.claimedBy).isEqualTo(alice);
         assertThat(store.completedBy).isEqualTo(alice);
     }
@@ -607,7 +599,7 @@ class DefinitionLifecycleEventsTest {
 
         // Then the claim was released as the caller
         assertThat(store.releasedBy).isNotNull();
-        assertThat(store.releasedBy.actor()).isEqualTo(new WorkflowActor.User("alice"));
+        assertThat(store.releasedBy).isEqualTo(new WorkflowActor.User("alice"));
     }
 
     /** Notes the actor of each change it is given, then does what the in-memory store does. */
@@ -616,13 +608,13 @@ class DefinitionLifecycleEventsTest {
 
         @Override
         public Future<Void> transition(
-                DefinitionKey key, DefinitionStatus from, DefinitionStatus to, WorkflowAttribution actor) {
+                DefinitionKey key, DefinitionStatus from, DefinitionStatus to, WorkflowActor actor) {
             seen.add("transition " + actor);
             return transition(key, from, to);
         }
 
         @Override
-        public Future<Void> retire(DefinitionKey key, WorkflowAttribution actor) {
+        public Future<Void> retire(DefinitionKey key, WorkflowActor actor) {
             seen.add("retire " + actor);
             return retire(key);
         }
@@ -658,7 +650,7 @@ class DefinitionLifecycleEventsTest {
         VersionChange first = (VersionChange) recorder.changes.get(0);
         assertThat(first.operation()).isEqualTo(VersionOperation.PUBLISH);
         assertThat(first.key()).isEqualTo(KEY);
-        assertThat(first.attribution().actor()).isEqualTo(new WorkflowActor.System("bootstrap"));
+        assertThat(first.actor()).isEqualTo(new WorkflowActor.System("bootstrap"));
         VersionChange second = (VersionChange) recorder.changes.get(1);
         assertThat(second.operation()).isEqualTo(VersionOperation.PUBLISH);
         assertThat(second.key()).isEqualTo(V2);
@@ -668,7 +660,7 @@ class DefinitionLifecycleEventsTest {
         assertThat(activation.targetScopeKey()).isEqualTo(WorkflowScopes.DEFAULT);
         assertThat(activation.definitionId()).isEqualTo("wf");
         assertThat(activation.version()).isEqualTo(2L);
-        assertThat(activation.attribution()).isEqualTo(second.attribution());
+        assertThat(activation.actor()).isEqualTo(second.actor());
         assertThat(activation.changeId()).isNotEqualTo(second.changeId());
         assertThat(recorder.failures).isEmpty();
         assertThat(captures).hasValue(0);

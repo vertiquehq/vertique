@@ -77,23 +77,28 @@ public class InstanceCommandActorHistoryIT {
             WorkflowInstanceId named = scenario.start(user(userId), "actor-named", Map.of());
             scenario.runToIdle(named);
             scenario.cancel(service("ops"), named);
-            WorkflowInstanceId anonymous = scenario.start(null, "actor-anonymous", Map.of());
+            WorkflowInstanceId nobody = scenario.start(null, "actor-nobody", Map.of());
+            scenario.runToIdle(nobody);
+            WorkflowInstanceId anonymous =
+                    scenario.start(dev.vertique.security.SecurityIdentity.anonymous(), "actor-anonymous", Map.of());
             scenario.runToIdle(anonymous);
 
             // When the log of each is read through the history service
             List<WorkflowHistoryEntry> namedLog = await(history.entries(named, 0, 500));
+            List<WorkflowHistoryEntry> nobodyLog = await(history.entries(nobody, 0, 500));
             List<WorkflowHistoryEntry> anonymousLog = await(history.entries(anonymous, 0, 500));
 
             // Then the start entry names the user, and the cancellation entry names the service
             WorkflowHistoryEntry start = only(namedLog, WorkflowEntryType.START);
-            assertThat(start.attribution().actor()).isEqualTo(new WorkflowActor.User(userId));
+            assertThat(start.actor()).isEqualTo(new WorkflowActor.User(userId));
             WorkflowHistoryEntry cancelled = only(namedLog, WorkflowEntryType.CANCELLED);
-            assertThat(cancelled.attribution().actor()).isEqualTo(new WorkflowActor.Service("ops"));
+            assertThat(cancelled.actor()).isEqualTo(new WorkflowActor.Service("ops"));
 
-            // And a start with no identity is logged as none, with absent attribution
-            WorkflowHistoryEntry anonymousStart = only(anonymousLog, WorkflowEntryType.START);
-            assertThat(anonymousStart.attribution().actor()).isNull();
-            assertThat(anonymousStart.attribution().onBehalfOf()).isNull();
+            // And a start with no security context is logged with no actor
+            assertThat(only(nobodyLog, WorkflowEntryType.START).actor()).isNull();
+
+            // And a start by an anonymous caller is logged with the anonymous actor
+            assertThat(only(anonymousLog, WorkflowEntryType.START).actor()).isEqualTo(new WorkflowActor.Anonymous());
         } finally {
             reading.close();
         }
@@ -119,9 +124,9 @@ public class InstanceCommandActorHistoryIT {
 
             // Then the retry entry names the user, and the migration entry names the service
             WorkflowHistoryEntry retried = only(log, WorkflowEntryType.RETRIED);
-            assertThat(retried.attribution().actor()).isEqualTo(new WorkflowActor.User("r-1"));
+            assertThat(retried.actor()).isEqualTo(new WorkflowActor.User("r-1"));
             WorkflowHistoryEntry migrated = only(log, WorkflowEntryType.WORKFLOW_MIGRATED);
-            assertThat(migrated.attribution().actor()).isEqualTo(new WorkflowActor.Service("deployer"));
+            assertThat(migrated.actor()).isEqualTo(new WorkflowActor.Service("deployer"));
         } finally {
             reading.close();
         }

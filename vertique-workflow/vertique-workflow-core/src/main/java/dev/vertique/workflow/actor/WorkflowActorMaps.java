@@ -29,8 +29,9 @@ public final class WorkflowActorMaps {
      * keys.
      *
      * <p>Kind values: {@code "USER"} for {@link WorkflowActor.User}, {@code "SERVICE"} for
-     * {@link WorkflowActor.Service}, {@code "SYSTEM"} for {@link WorkflowActor.System}. The value
-     * is the actor's identifying string ({@code userId} / {@code serviceId} / {@code reason}).
+     * {@link WorkflowActor.Service}, {@code "SYSTEM"} for {@link WorkflowActor.System}, {@code "ANONYMOUS"} for
+     * {@link WorkflowActor.Anonymous}. The value is the actor's identifying string ({@code userId} /
+     * {@code serviceId} / {@code reason}), and the empty string for an anonymous actor.
      *
      * @param actor the actor; must not be null
      * @return an immutable map with {@code "kind"} and {@code "value"} entries
@@ -40,7 +41,39 @@ public final class WorkflowActorMaps {
             case WorkflowActor.User u -> Map.of("kind", "USER", "value", u.userId());
             case WorkflowActor.Service s -> Map.of("kind", "SERVICE", "value", s.serviceId());
             case WorkflowActor.System sys -> Map.of("kind", "SYSTEM", "value", sys.reason());
+            case WorkflowActor.Anonymous ignored -> Map.of("kind", "ANONYMOUS", "value", "");
         };
+    }
+
+    /**
+     * Rebuilds a {@link WorkflowActor} from the pair {@link #toMap(WorkflowActor)} produces.
+     *
+     * <p>The value of an {@code "ANONYMOUS"} actor is ignored.
+     *
+     * @param kind  {@code "USER"}, {@code "SERVICE"}, {@code "SYSTEM"} or {@code "ANONYMOUS"}
+     * @param value the actor's identifying string
+     * @return the actor
+     * @throws IllegalArgumentException if the kind is {@code null} or unknown, or the value is not valid for the
+     *     kind; the message never repeats the value
+     */
+    public static WorkflowActor toActor(String kind, String value) {
+        if (kind == null) {
+            throw new IllegalArgumentException("The actor kind is missing");
+        }
+        return switch (kind) {
+            case "USER" -> new WorkflowActor.User(requireValue(value));
+            case "SERVICE" -> new WorkflowActor.Service(requireValue(value));
+            case "SYSTEM" -> new WorkflowActor.System(requireValue(value));
+            case "ANONYMOUS" -> new WorkflowActor.Anonymous();
+            default -> throw new IllegalArgumentException("The actor kind is not known");
+        };
+    }
+
+    private static String requireValue(String value) {
+        if (value == null) {
+            throw new IllegalArgumentException("The actor value is missing");
+        }
+        return value;
     }
 
     /**

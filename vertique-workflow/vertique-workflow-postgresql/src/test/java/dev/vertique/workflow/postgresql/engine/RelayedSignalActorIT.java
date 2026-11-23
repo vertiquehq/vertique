@@ -60,7 +60,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Verifies how a signal that travels through the outbox relay is attributed: to the identity the relay's reconstruction
- * binds, with the original caller as the party it acts for; that a snapshot that does not verify records nothing under
+ * binds, as the actor mapper maps it; that a snapshot that does not verify records nothing under
  * the default policy and is recorded with its actor like any other when the policy continues; and that a delivery without identity
  * carriage is logged as no actor.
  */
@@ -94,8 +94,8 @@ public class RelayedSignalActorIT {
 
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
-    @DisplayName("a relayed signal is logged as the relay, acting for the user who wrote the outbox row")
-    void relayedSignalIsLoggedAsTheRelayOnBehalfOfTheUser(Vertx vertx) {
+    @DisplayName("a relayed signal is logged as the relay identity, not as the user who wrote the outbox row")
+    void relayedSignalIsLoggedAsTheRelayNotTheUser(Vertx vertx) {
         // Given identity carriage installed with a signing key, and user u-9 whose transaction signals instance X
         try (Run run = Run.carrying(vertx, null)) {
             WorkflowInstanceId x = run.waitingInstance("relay-default");
@@ -104,10 +104,10 @@ public class RelayedSignalActorIT {
             run.publishSignal(user("u-9"), x, "default-wiring", false);
             Attributed signal = run.awaitSignal(x);
 
-            // Then the recorded signal carries the system with the relay's reason, acting for u-9
+            // Then the recorded signal carries the system with the relay's reason
             assertThat(signal.actorKind()).isEqualTo("SYSTEM");
             assertThat(signal.actorReason()).isEqualTo(EVENT_TYPE);
-            assertThat(signal.onBehalfOf()).isEqualTo("u-9");
+            assertThat(signal.actorId()).isNull();
         }
 
         // And with a service identity resolver bound to relay-svc (second graph)
@@ -118,10 +118,9 @@ public class RelayedSignalActorIT {
             run.publishSignal(user("u-9"), y, "resolver-wiring", false);
             Attributed signal = run.awaitSignal(y);
 
-            // Then the recorded signal carries SERVICE relay-svc, acting for u-9
+            // Then the recorded signal carries SERVICE relay-svc
             assertThat(signal.actorKind()).isEqualTo("SERVICE");
             assertThat(signal.actorId()).isEqualTo("relay-svc");
-            assertThat(signal.onBehalfOf()).isEqualTo("u-9");
         }
     }
 
@@ -144,14 +143,12 @@ public class RelayedSignalActorIT {
             assertThat(run.inboxRows(refused)).isZero();
         }
 
-        // And with the policy set to continue, the same delivery is recorded with its actor like any other and acts for
-        // no one
+        // And with the policy set to continue, the same delivery is recorded with its actor like any other
         try (Run run = Run.carrying(vertx, "CONTINUE_WITHOUT_IDENTITY")) {
             WorkflowInstanceId continued = run.waitingInstance("tampered-continue");
             run.publishSignal(user("u-9"), continued, "tampered-continue", true);
             Attributed signal = run.awaitSignal(continued);
 
-            assertThat(signal.onBehalfOf()).isNull();
             assertThat(signal.actorKind()).isEqualTo("SYSTEM");
             assertThat(signal.actorReason()).isEqualTo(EVENT_TYPE);
         }
@@ -165,7 +162,6 @@ public class RelayedSignalActorIT {
             assertThat(signal.actorKind()).isEqualTo("NONE");
             assertThat(signal.actorId()).isNull();
             assertThat(signal.actorReason()).isNull();
-            assertThat(signal.onBehalfOf()).isNull();
         }
     }
 
@@ -176,7 +172,7 @@ public class RelayedSignalActorIT {
         // Given identity carriage with the outbox relay requiring it, the default degradation policy, and a
         // definition whose first step dispatches billing.charge
         try (Run run = Run.carryingRequiring(vertx, Map.of("outbox-relay", "REQUIRED"))) {
-            // When user U records the start with no party acted for, the executor runs the segment and the relay
+            // When user U records the start, the executor runs the segment and the relay
             // delivers the outbox record
             WorkflowInstanceId charge = run.startCharge(user("U"), "attribution");
             run.awaitChargeSettled();
@@ -187,7 +183,8 @@ public class RelayedSignalActorIT {
             assertThat(headers.getString("x-workflow-actor-id")).isEqualTo("U");
             assertThat(headers.containsKey("x-workflow-attribution")).isFalse();
 
-            // And no party acted for, no reason, and nothing an application could have set, appears in any letter case
+            // And no reason, no on-behalf-of header, and nothing an application could have set, appears in any letter
+            // case
             assertThat(headers.fieldNames())
                     .extracting(name -> name.toLowerCase(Locale.ROOT))
                     .doesNotContain("x-workflow-on-behalf-of", "x-workflow-actor-reason", "x-workflow-custom");
@@ -237,7 +234,7 @@ public class RelayedSignalActorIT {
     }
 
     /** The actor columns of one command. */
-    private record Attributed(String actorKind, String actorId, String actorReason, String onBehalfOf) {}
+    private record Attributed(String actorKind, String actorId, String actorReason) {}
 
     /** One started graph over the database with the means to write outbox rows and read what the relay recorded. */
     private static final class Run implements AutoCloseable {
@@ -465,15 +462,14 @@ public class RelayedSignalActorIT {
 
         List<Attributed> signalCommands(WorkflowInstanceId id) {
             List<Attributed> rows = new java.util.ArrayList<>();
-            for (var row : await(
-                    pool.preparedQuery("SELECT actor_kind, actor_id, actor_reason, on_behalf_of->>'id' AS on_behalf_of"
-                                    + " FROM workflow_commands WHERE workflow_id = $1 AND kind = 'SIGNAL' ORDER BY seq")
-                            .execute(Tuple.of(id.value())))) {
+            for (var row : await(pool.preparedQuery("SELECT actor->>'kind' AS actor_kind,"
+                            + " CASE WHEN actor->>'kind' IN ('USER', 'SERVICE') THEN actor->>'value' END"
+                            + " AS actor_id,"
+                            + " CASE WHEN actor->>'kind' = 'SYSTEM' THEN actor->>'value' END AS actor_reason"
+                            + " FROM workflow_commands WHERE workflow_id = $1 AND kind = 'SIGNAL' ORDER BY seq")
+                    .execute(Tuple.of(id.value())))) {
                 rows.add(new Attributed(
-                        row.getString("actor_kind"),
-                        row.getString("actor_id"),
-                        row.getString("actor_reason"),
-                        row.getString("on_behalf_of")));
+                        row.getString("actor_kind"), row.getString("actor_id"), row.getString("actor_reason")));
             }
             return rows;
         }

@@ -668,8 +668,8 @@ public class RecordedCancelIT {
             faults.afterClaimOf(id, claim -> setStatus(f, id, "CANCELLED").compose(done -> f.fixture
                     .observer()
                     .preparedQuery("INSERT INTO workflow_history (workflow_id, sequence, entry_type, payload_json,"
-                            + " recorded_at, actor_kind, actor_id) SELECT $1, COALESCE(MAX(sequence),"
-                            + " 0) + 1, 'CANCELLED', '{}'::jsonb, now(), 'USER', 'canceller' FROM"
+                            + " recorded_at, actor) SELECT $1, COALESCE(MAX(sequence),"
+                            + " 0) + 1, 'CANCELLED', '{}'::jsonb, now(), '{\"kind\":\"USER\",\"value\":\"canceller\"}'::jsonb FROM"
                             + " workflow_history WHERE workflow_id = $1")
                     .execute(Tuple.of(id.value()))
                     .mapEmpty()));
@@ -689,9 +689,11 @@ public class RecordedCancelIT {
             long command = f.signal(id, "k").id();
             var entry = await(f.fixture
                             .observer()
-                            .preparedQuery("SELECT actor_kind, actor_id FROM workflow_history WHERE workflow_id = $1"
-                                    + " AND entry_type = 'COMMAND_CANCELLED'"
-                                    + " AND COALESCE(command_id, (payload_json->>'commandId')::bigint) = $2")
+                            .preparedQuery(
+                                    "SELECT actor->>'kind' AS actor_kind, actor->>'value' AS actor_id FROM workflow_history"
+                                            + " WHERE workflow_id = $1"
+                                            + " AND entry_type = 'COMMAND_CANCELLED'"
+                                            + " AND COALESCE(command_id, (payload_json->>'commandId')::bigint) = $2")
                             .execute(Tuple.of(id.value(), command)))
                     .iterator()
                     .next();
@@ -699,7 +701,7 @@ public class RecordedCancelIT {
             assertThat(entry.getString("actor_kind")).isEqualTo("USER");
             var row = await(f.fixture
                             .observer()
-                            .preparedQuery("SELECT actor_id FROM workflow_commands WHERE id = $1")
+                            .preparedQuery("SELECT actor->>'value' AS actor_id FROM workflow_commands WHERE id = $1")
                             .execute(Tuple.of(command)))
                     .iterator()
                     .next();

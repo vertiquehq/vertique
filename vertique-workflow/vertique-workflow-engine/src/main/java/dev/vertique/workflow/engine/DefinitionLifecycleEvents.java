@@ -3,9 +3,8 @@
 
 package dev.vertique.workflow.engine;
 
-import dev.vertique.workflow.actor.WorkflowActorCapture;
-import dev.vertique.workflow.actor.WorkflowAttribution;
-import dev.vertique.workflow.engine.executor.CommandActors;
+import dev.vertique.workflow.actor.CurrentWorkflowActor;
+import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.engine.history.ListenerDispatch;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.registry.store.DefinitionKey;
@@ -25,6 +24,7 @@ import jakarta.inject.Singleton;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
@@ -56,20 +56,20 @@ final class DefinitionLifecycleEvents {
     /** Builds the change of one call, from the values that must be taken before the call is queued. */
     @FunctionalInterface
     interface ChangeFactory {
-        DefinitionLifecycleChange build(UUID changeId, WorkflowAttribution actor, Instant occurredAt);
+        DefinitionLifecycleChange build(UUID changeId, @Nullable WorkflowActor actor, Instant occurredAt);
     }
 
     private final List<WorkflowDefinitionLifecycleListener> listeners;
-    private final Supplier<WorkflowAttribution> actors;
+    private final Supplier<Optional<WorkflowActor>> actors;
     private final Clock clock;
 
     @Inject
-    DefinitionLifecycleEvents(Set<WorkflowDefinitionLifecycleListener> listeners, CommandActors actors) {
-        this(listeners, actors::capture, Clock.systemUTC());
+    DefinitionLifecycleEvents(Set<WorkflowDefinitionLifecycleListener> listeners, CurrentWorkflowActor actor) {
+        this(listeners, actor::get, Clock.systemUTC());
     }
 
     DefinitionLifecycleEvents(
-            Set<WorkflowDefinitionLifecycleListener> listeners, Supplier<WorkflowAttribution> actors, Clock clock) {
+            Set<WorkflowDefinitionLifecycleListener> listeners, Supplier<Optional<WorkflowActor>> actors, Clock clock) {
         this.listeners = List.copyOf(listeners);
         this.actors = actors;
         this.clock = clock;
@@ -77,7 +77,7 @@ final class DefinitionLifecycleEvents {
 
     /** Returns events with no listener: the operations they are given run with no actor. */
     static DefinitionLifecycleEvents disabled() {
-        return new DefinitionLifecycleEvents(Set.of(), WorkflowAttribution::absent, Clock.systemUTC());
+        return new DefinitionLifecycleEvents(Set.of(), Optional::empty, Clock.systemUTC());
     }
 
     boolean enabled() {
@@ -94,8 +94,8 @@ final class DefinitionLifecycleEvents {
      *                records next to the change it makes; an exception it throws becomes a failed future
      * @return the future of the operation, unchanged
      */
-    Future<Void> around(@Nullable ChangeFactory factory, Function<WorkflowAttribution, Future<Void>> start) {
-        WorkflowAttribution captured = WorkflowActorCapture.bestEffort(actors);
+    Future<Void> around(@Nullable ChangeFactory factory, Function<WorkflowActor, Future<Void>> start) {
+        WorkflowActor captured = bestEffortActor();
         DefinitionLifecycleChange change = enabled() && factory != null ? build(factory, captured) : null;
         Future<Void> result;
         try {
@@ -115,8 +115,20 @@ final class DefinitionLifecycleEvents {
         return result;
     }
 
+    /** The actor of the current caller; none when there is none or the mapper fails, which a lifecycle call survives. */
+    private @Nullable WorkflowActor bestEffortActor() {
+        try {
+            return actors.get().orElse(null);
+        } catch (RuntimeException failure) {
+            log.warn(
+                    "Could not capture the workflow actor ({})",
+                    failure.getClass().getName());
+            return null;
+        }
+    }
+
     /** Builds the change on the calling thread; arguments that cannot form a change are the operation's to refuse. */
-    private @Nullable DefinitionLifecycleChange build(ChangeFactory factory, WorkflowAttribution actor) {
+    private @Nullable DefinitionLifecycleChange build(ChangeFactory factory, @Nullable WorkflowActor actor) {
         try {
             return factory.build(UUID.randomUUID(), actor, clock.instant());
         } catch (RuntimeException invalid) {
@@ -152,7 +164,7 @@ final class DefinitionLifecycleEvents {
                 || (outcome != ReconcileOutcome.INSERTED && outcome != ReconcileOutcome.INSERTED_AND_ACTIVATED)) {
             return;
         }
-        WorkflowAttribution actor = WorkflowAttribution.system(BOOTSTRAP_REASON);
+        WorkflowActor actor = new WorkflowActor.System(BOOTSTRAP_REASON);
         changed(new VersionChange(UUID.randomUUID(), VersionOperation.PUBLISH, key, actor, clock.instant()));
         if (outcome == ReconcileOutcome.INSERTED_AND_ACTIVATED) {
             changed(new ActivationChange(

@@ -11,8 +11,10 @@ import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContexts;
 import dev.vertique.security.SecurityIdentity;
 import dev.vertique.workflow.actor.WorkflowActor;
+import dev.vertique.workflow.events.WorkflowEventType;
 import dev.vertique.workflow.executor.WorkflowExecutorEvent;
 import dev.vertique.workflow.ops.StartCommand;
+import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskReassignmentCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.executor.ExecutorFixture.Node;
@@ -22,6 +24,7 @@ import dev.vertique.workflow.postgresql.executor.TimerCommandIT.TimeoutWait;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.tasks.TaskAssignment;
 import io.vertx.core.Future;
+import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.Tuple;
 import jakarta.annotation.Nullable;
@@ -40,6 +43,11 @@ import java.util.function.Supplier;
  */
 public final class ActorScenario implements AutoCloseable {
 
+    /** The parts of the stored {@code actor} the proofs compare: its kind, and its value as an id or a reason. */
+    private static final String ACTOR_PARTS = "actor->>'kind' AS actor_kind,"
+            + " CASE WHEN actor->>'kind' IN ('USER', 'SERVICE') THEN actor->>'value' END AS actor_id,"
+            + " CASE WHEN actor->>'kind' = 'SYSTEM' THEN actor->>'value' END AS actor_reason";
+
     /** The reason the scenario cancels instances with. */
     public static final String WHY = "operator-cancelled";
 
@@ -48,18 +56,16 @@ public final class ActorScenario implements AutoCloseable {
      *
      * @param label       the kind of the command or the type of the entry
      * @param commandId   the command the row is, or the command the entry belongs to; null when it names none
-     * @param actorKind   {@code actor_kind}
-     * @param actorId     {@code actor_id}
-     * @param actorReason {@code actor_reason}
-     * @param onBehalfOf  {@code on_behalf_of}
+     * @param actorKind   the {@code kind} of the stored {@code actor}
+     * @param actorId     the {@code value} of a user or service actor
+     * @param actorReason the {@code value} of a system actor
      */
     public record Attributed(
             String label,
             @Nullable Long commandId,
             @Nullable String actorKind,
             @Nullable String actorId,
-            @Nullable String actorReason,
-            @Nullable String onBehalfOf) {
+            @Nullable String actorReason) {
 
         /** Whether the row carries exactly this kind and id. */
         public boolean is(String kind, String id) {
@@ -216,6 +222,20 @@ public final class ActorScenario implements AutoCloseable {
      * @param key    the idempotency key
      */
     public void completeTask(@Nullable SecurityIdentity caller, WorkflowInstanceId id, String key) {
+        completeTask(caller, id, key, new WorkflowActor.User("reviewer"));
+    }
+
+    /**
+     * Completes the instance's open task in a transaction of its own, under the identity, with the actor the command
+     * names, and commits it.
+     *
+     * @param caller      the identity the call runs under, or null for none
+     * @param id          the instance
+     * @param key         the idempotency key
+     * @param completedBy the actor the command names as the completer
+     */
+    public void completeTask(
+            @Nullable SecurityIdentity caller, WorkflowInstanceId id, String key, WorkflowActor completedBy) {
         UUID taskId = await(f.fixture
                         .observer()
                         .preparedQuery("SELECT task_id FROM workflow_tasks WHERE workflow_id = $1")
@@ -223,12 +243,7 @@ public final class ActorScenario implements AutoCloseable {
                 .iterator()
                 .next()
                 .getUUID("task_id");
-        var command = RecordedCompletionIT.command(
-                new RecordedCompletionIT.OpenTask(id, taskId),
-                "approve",
-                new io.vertx.core.json.JsonObject(),
-                key,
-                null);
+        var command = new TaskCompletionCommand(taskId, "approve", new JsonObject(), key, completedBy, null);
         await(as(caller, () -> node.pool.withTransaction(tx -> node.engine.taskCompleted(command, tx))));
     }
 
@@ -315,6 +330,60 @@ public final class ActorScenario implements AutoCloseable {
     // --- Observation ---
 
     /**
+     * One actor column of the instance's task, as stored.
+     *
+     * @param id     the instance
+     * @param column {@code completed_by}, {@code cancelled_by} or {@code reassigned_by}
+     * @return the stored {@code {"kind","value"}} object, or null when the column is null
+     */
+    public @Nullable JsonObject taskActor(WorkflowInstanceId id, String column) {
+        return (JsonObject) await(f.fixture
+                        .observer()
+                        .preparedQuery("SELECT " + column + " FROM workflow_tasks WHERE workflow_id = $1")
+                        .execute(Tuple.of(id.value())))
+                .iterator()
+                .next()
+                .getValue(column);
+    }
+
+    /**
+     * The actor the payload of the instance's history entry of the type names, in the field of the payload.
+     *
+     * @param id    the instance
+     * @param type  the entry type, for example {@code TASK_COMPLETED}
+     * @param field the payload field, for example {@code completedBy}
+     * @return the payload's actor object, as the payload stores it
+     */
+    public JsonObject payloadActor(WorkflowInstanceId id, String type, String field) {
+        JsonObject payload = (JsonObject) await(f.fixture
+                        .observer()
+                        .preparedQuery("SELECT payload_json FROM workflow_history WHERE workflow_id = $1"
+                                + " AND entry_type = $2 ORDER BY sequence DESC LIMIT 1")
+                        .execute(Tuple.of(id.value(), type)))
+                .iterator()
+                .next()
+                .getValue("payload_json");
+        return payload.getJsonObject(field);
+    }
+
+    /**
+     * The actor the last published event of the type names, in the attribute of the event.
+     *
+     * @param id        the instance
+     * @param eventType the event type
+     * @param attribute the attribute name, for example {@code cancelledBy}
+     * @return the attribute as published, a map with the actor's kind and value
+     */
+    public Object eventActor(WorkflowInstanceId id, WorkflowEventType eventType, String attribute) {
+        return f.fixture.workflowEvents.stream()
+                .filter(event -> event.workflowId().equals(id) && event.eventType() == eventType)
+                .reduce((first, second) -> second)
+                .orElseThrow(() -> new AssertionError("no " + eventType + " event for " + id))
+                .attributes()
+                .get(attribute);
+    }
+
+    /**
      * A pool of the scenario's database for reading it.
      *
      * @return the pool
@@ -345,9 +414,8 @@ public final class ActorScenario implements AutoCloseable {
         List<Attributed> rows = new ArrayList<>();
         for (Row row : await(f.fixture
                 .observer()
-                .preparedQuery(
-                        "SELECT kind, id, actor_kind, actor_id, actor_reason, on_behalf_of->>'id' AS on_behalf_of"
-                                + " FROM workflow_commands WHERE workflow_id = $1 ORDER BY seq")
+                .preparedQuery("SELECT kind, id, " + ACTOR_PARTS
+                        + " FROM workflow_commands WHERE workflow_id = $1 ORDER BY seq")
                 .execute(Tuple.of(id.value())))) {
             rows.add(attributed(row.getString("kind"), row.getLong("id"), row));
         }
@@ -366,7 +434,7 @@ public final class ActorScenario implements AutoCloseable {
         for (Row row : await(f.fixture
                 .observer()
                 .preparedQuery("SELECT entry_type, COALESCE(command_id, (payload_json->>'commandId')::bigint)"
-                        + " AS command, actor_kind, actor_id, actor_reason, on_behalf_of->>'id' AS on_behalf_of"
+                        + " AS command, " + ACTOR_PARTS
                         + " FROM workflow_history WHERE workflow_id = $1 ORDER BY sequence")
                 .execute(Tuple.of(id.value())))) {
             rows.add(attributed(row.getString("entry_type"), row.getLong("command"), row));
@@ -409,8 +477,7 @@ public final class ActorScenario implements AutoCloseable {
                 commandId,
                 row.getString("actor_kind"),
                 row.getString("actor_id"),
-                row.getString("actor_reason"),
-                row.getString("on_behalf_of"));
+                row.getString("actor_reason"));
     }
 
     /** Runs the work on a duplicated context of its own with the identity bound as the security context. */

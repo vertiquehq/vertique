@@ -5,7 +5,7 @@ package dev.vertique.workflow.engine;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import dev.vertique.workflow.actor.WorkflowAttribution;
+import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
@@ -1181,9 +1181,9 @@ class DefaultWorkflowDefinitionLifecycleTest {
         int claims;
         int completes;
         int releases;
-        WorkflowAttribution claimedBy;
-        WorkflowAttribution completedBy;
-        WorkflowAttribution releasedBy;
+        WorkflowActor claimedBy;
+        WorkflowActor completedBy;
+        WorkflowActor releasedBy;
 
         @Override
         public Future<Optional<WorkflowDefinitionRecord>> find(DefinitionKey key) {
@@ -1198,19 +1198,19 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
-        public Future<ActivationClaim> claim(DefinitionKey key, WorkflowAttribution actor) {
+        public Future<ActivationClaim> claim(DefinitionKey key, WorkflowActor actor) {
             claimedBy = actor;
             return claim(key);
         }
 
         @Override
-        public Future<Void> complete(ActivationClaim claim, WorkflowAttribution actor) {
+        public Future<Void> complete(ActivationClaim claim, WorkflowActor actor) {
             completedBy = actor;
             return complete(claim);
         }
 
         @Override
-        public Future<Void> release(ActivationClaim claim, WorkflowAttribution actor) {
+        public Future<Void> release(ActivationClaim claim, WorkflowActor actor) {
             releasedBy = actor;
             return release(claim);
         }

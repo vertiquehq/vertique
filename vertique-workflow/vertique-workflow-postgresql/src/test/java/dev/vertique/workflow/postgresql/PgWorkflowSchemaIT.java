@@ -48,10 +48,7 @@ import dev.vertique.inboxoutbox.OutboxEntry;
 import dev.vertique.inboxoutbox.OutboxService;
 import dev.vertique.inboxoutbox.postgresql.InboxOutboxMigrationsModule;
 import dev.vertique.inboxoutbox.postgresql.TransactionalMessagingPostgresqlModule;
-import dev.vertique.security.PrincipalRef;
-import dev.vertique.security.PrincipalType;
 import dev.vertique.workflow.actor.WorkflowActor;
-import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.contract.IdempotencyKeyed;
 import dev.vertique.workflow.contract.SignalDedupKey;
 import dev.vertique.workflow.contract.WorkflowSignal;
@@ -1777,7 +1774,7 @@ public class PgWorkflowSchemaIT {
         long start = steps.start(instance, key);
         assertEquals("2", steps.commandValue(start, "seq"));
         assertEquals("PENDING", steps.state(start));
-        assertEquals("alice", steps.commandValue(start, "actor_id"));
+        assertEquals("alice", steps.commandValue(start, "actor->>'value'"));
         assertEquals("3", mappedValue("workflow_command_queues", "workflow_id", id, "next_seq"));
         assertFalse(flag(runtime, tx -> commands.hasDeadLetters(id, tx)));
         SegmentCommand recorded =
@@ -1801,7 +1798,7 @@ public class PgWorkflowSchemaIT {
         SegmentCommand fenced =
                 inTransaction(runtime, tx -> commands.fence(first, tx)).orElseThrow();
         assertEquals(key, fenced.dedupKey());
-        assertInstanceOf(WorkflowActor.User.class, fenced.attribution().actor());
+        assertInstanceOf(WorkflowActor.User.class, fenced.actor());
         assertTrue(await(commands.release(first)));
         assertFalse(await(commands.release(first)));
         assertEquals("PENDING", steps.state(start));
@@ -1853,7 +1850,7 @@ public class PgWorkflowSchemaIT {
                 inTransaction(runtime, tx -> commands.readParked(id, first, tx)).orElseThrow();
         assertEquals("SIGNAL", parked.kind());
         assertTrue(parked.payloadJson().contains("value"));
-        assertEquals(new WorkflowActor.User("alice"), parked.attribution().actor());
+        assertEquals(new WorkflowActor.User("alice"), parked.actor());
         assertFalse(flag(runtime, tx -> commands.wasParked(id, first, tx)));
         assertEquals(1, await(commands.findParked(id)).size());
 
@@ -2159,7 +2156,7 @@ public class PgWorkflowSchemaIT {
     private static void exerciseCancellationAndRearm(CommandSteps steps) throws Exception {
         RuntimeComponent runtime = steps.runtime;
         PgWorkflowCommandRepository commands = steps.commands;
-        WorkflowAttribution canceller = new WorkflowAttribution(new WorkflowActor.Service("canceller"), null);
+        WorkflowActor canceller = new WorkflowActor.Service("canceller");
 
         // Given: one pending command of every kind, a signal that answers a wait among them
         WorkflowInstance instance = steps.instance();
@@ -2206,7 +2203,7 @@ public class PgWorkflowSchemaIT {
         assertEquals(
                 List.of("SERVICE"),
                 column(
-                        "SELECT DISTINCT actor_kind FROM " + MAPPED_SCHEMA
+                        "SELECT DISTINCT actor->>'kind' FROM " + MAPPED_SCHEMA
                                 + ".workflow_history WHERE workflow_id = ?::uuid",
                         instance.id().value()));
 
@@ -2249,7 +2246,7 @@ public class PgWorkflowSchemaIT {
         WorkflowInstance instance = steps.instance();
         WorkflowInstanceId id = instance.id();
         long start = steps.start(instance, unique("attribution-key"));
-        WorkflowAttribution system = WorkflowAttribution.system("migration");
+        WorkflowActor system = new WorkflowActor.System("migration");
 
         // an entry that names a command takes that command's actor and the pinned definition
         String namesCommand = "{\"commandId\":" + start + "}";
@@ -2258,24 +2255,35 @@ public class PgWorkflowSchemaIT {
         DefinitionKey pinned = new DefinitionKey(WorkflowScopes.DEFAULT, FORK_JOIN_DEFINITION.definitionId(), 1L);
         inTransaction(
                 runtime, tx -> commands.attributeSegmentHistory(id, 1, CommandSteps.FALLBACK, segment, pinned, tx));
-        assertEquals("USER", historyValue(id, 1, "actor_kind"));
-        assertEquals("alice", historyValue(id, 1, "actor_id"));
+        assertEquals("USER", historyValue(id, 1, "actor->>\'kind\'"));
+        assertEquals("alice", historyValue(id, 1, "actor->>\'value\'"));
         assertEquals(String.valueOf(start), historyValue(id, 1, "command_id"));
         assertEquals(pinned.definitionId(), historyValue(id, 1, "definition_id"));
 
         // an entry that names none takes the fallback, which pins no definition without a segment
         inTransaction(runtime, tx -> history.append(historyEntry(id, 2, WorkflowEntryType.RETRIED), tx));
         inTransaction(runtime, tx -> commands.attributeSegmentHistory(id, 2, CommandSteps.FALLBACK, tx));
-        assertEquals("SERVICE", historyValue(id, 2, "actor_kind"));
-        assertEquals("fallback-service", historyValue(id, 2, "actor_id"));
+        assertEquals("SERVICE", historyValue(id, 2, "actor->>\'kind\'"));
+        assertEquals("fallback-service", historyValue(id, 2, "actor->>\'value\'"));
         assertNull(historyValue(id, 2, "definition_id"));
 
         // a plain attribution gives its actor to the entries from a sequence on that have none
         inTransaction(runtime, tx -> history.append(historyEntry(id, 3, WorkflowEntryType.COMPLETED), tx));
         inTransaction(runtime, tx -> commands.attributeHistory(id, 1, system, tx));
-        assertEquals("SYSTEM", historyValue(id, 3, "actor_kind"));
-        assertEquals("migration", historyValue(id, 3, "actor_reason"));
-        assertEquals("USER", historyValue(id, 1, "actor_kind"), "an attributed entry is left as it was");
+        assertEquals("SYSTEM", historyValue(id, 3, "actor->>\'kind\'"));
+        assertEquals("migration", historyValue(id, 3, "actor->>\'value\'"));
+        assertEquals("USER", historyValue(id, 1, "actor->>\'kind\'"), "an attributed entry is left as it was");
+
+        // the actor is one JSONB column on the commands and on the history, and the four former columns are gone
+        for (String table : List.of("workflow_commands", "workflow_history")) {
+            assertEquals(
+                    List.of("actor|jsonb|YES"),
+                    column(
+                            "SELECT column_name || '|' || data_type || '|' || is_nullable FROM information_schema.columns"
+                                    + " WHERE table_schema = ? AND table_name = ? AND (column_name LIKE 'actor%'"
+                                    + " OR column_name = 'on_behalf_of') ORDER BY column_name",
+                            MAPPED_SCHEMA, table));
+        }
 
         // the legacy baseline mark is consumed once
         execute("UPDATE " + MAPPED_SCHEMA + ".workflow_instances SET baseline_logged = FALSE WHERE id = '" + id.value()
@@ -2367,10 +2375,8 @@ public class PgWorkflowSchemaIT {
     private static final class CommandSteps {
 
         static final String NODE = "schema-placement-node";
-        static final WorkflowAttribution REQUESTER = new WorkflowAttribution(
-                new WorkflowActor.User("alice"), new PrincipalRef(PrincipalType.USER, "manager", java.util.Map.of()));
-        static final WorkflowAttribution FALLBACK =
-                new WorkflowAttribution(new WorkflowActor.Service("fallback-service"), null);
+        static final WorkflowActor REQUESTER = new WorkflowActor.User("alice");
+        static final WorkflowActor FALLBACK = new WorkflowActor.Service("fallback-service");
 
         private static final int LEASE_SECONDS = 60;
         private static final int MAX_ATTEMPTS = 3;

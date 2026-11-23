@@ -124,7 +124,7 @@ final class HistoryEventMapper {
                 entry.stepId(),
                 entry.commandId(),
                 commandKind(committed.commandKind()),
-                entry.attribution(),
+                entry.actor(),
                 entry.recordedAt());
     }
 

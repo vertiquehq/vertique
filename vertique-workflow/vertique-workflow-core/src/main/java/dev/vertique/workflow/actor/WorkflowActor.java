@@ -16,13 +16,13 @@ import java.util.Objects;
  * strictly audit metadata — the runtime never gates a call on the actor identity; the
  * application's own authorization layer decides whether a given actor is permitted to act.
  *
- * <p>On task rows, the actor is persisted as a {@code (kind, value)} pair on the {@code workflow_tasks} row's actor columns
- * ({@code completed_by}, {@code cancelled_by}, {@code reassigned_by}); that shape is built and
- * parsed by hand in {@code PgTaskStore} and is independent of this interface's Jackson mapping.
+ * <p>In a store, the actor is persisted as a {@code (kind, value)} pair, for example in the
+ * {@code workflow_tasks} row's {@code completed_by}, {@code cancelled_by} and {@code reassigned_by} columns; that
+ * shape is written and read with {@link WorkflowActorMaps} and is independent of this interface's Jackson mapping.
  * When a {@code WorkflowActor} is embedded as a field inside a history payload record (e.g.
  * {@code TaskCompletedHistoryPayload.completedBy}), Jackson serializes it as the permit's bare
- * record shape — {@code {"userId":"..."}} / {@code {"serviceId":"..."}} / {@code {"reason":"..."}}
- * — with no wrapper or type discriminator. {@link JsonTypeInfo.Id#DEDUCTION} deserialization picks
+ * record shape — {@code {"userId":"..."}} / {@code {"serviceId":"..."}} / {@code {"reason":"..."}} /
+ * {@code {"anonymous":true}} — with no wrapper or type discriminator. {@link JsonTypeInfo.Id#DEDUCTION} deserialization picks
  * the correct permit by which field is present, so this wire shape is preserved byte-for-byte
  * while still allowing {@code WorkflowActor} to round-trip through Jackson.
  *
@@ -30,20 +30,23 @@ import java.util.Objects;
  * {@code User("")} or whitespace-only {@code System("   ")} is a programmer error, not a usable
  * audit identity.
  *
- * <p>Three permits are defined:
+ * <p>Four permits are defined:
  * <ul>
  *   <li>{@link User} — a human user acting through a UI</li>
  *   <li>{@link Service} — an automated service or integration acting on the workflow</li>
  *   <li>{@link System} — an engine-internal actor for system-driven actions</li>
+ *   <li>{@link Anonymous} — a caller that is not authenticated</li>
  * </ul>
  */
 @JsonTypeInfo(use = JsonTypeInfo.Id.DEDUCTION)
 @JsonSubTypes({
     @JsonSubTypes.Type(WorkflowActor.User.class),
     @JsonSubTypes.Type(WorkflowActor.Service.class),
-    @JsonSubTypes.Type(WorkflowActor.System.class)
+    @JsonSubTypes.Type(WorkflowActor.System.class),
+    @JsonSubTypes.Type(WorkflowActor.Anonymous.class)
 })
-public sealed interface WorkflowActor permits WorkflowActor.User, WorkflowActor.Service, WorkflowActor.System {
+public sealed interface WorkflowActor
+        permits WorkflowActor.User, WorkflowActor.Service, WorkflowActor.System, WorkflowActor.Anonymous {
 
     /**
      * A human user driving the action through a UI.
@@ -83,6 +86,31 @@ public sealed interface WorkflowActor permits WorkflowActor.User, WorkflowActor.
             if (serviceId.isBlank()) {
                 throw new IllegalArgumentException("serviceId must not be blank");
             }
+        }
+    }
+
+    /**
+     * A caller that is not authenticated. It records that the action came from a caller the application could not
+     * identify, as opposed to an action with no caller at all, which has no actor.
+     *
+     * @param anonymous always {@code true}; the component exists so that the actor has a JSON form,
+     *     {@code {"anonymous":true}}
+     */
+    record Anonymous(boolean anonymous) implements WorkflowActor {
+        /**
+         * Validates that {@code anonymous} is {@code true}.
+         *
+         * @throws IllegalArgumentException if {@code anonymous} is {@code false}
+         */
+        public Anonymous {
+            if (!anonymous) {
+                throw new IllegalArgumentException("anonymous must be true");
+            }
+        }
+
+        /** Creates the anonymous actor. */
+        public Anonymous() {
+            this(true);
         }
     }
 

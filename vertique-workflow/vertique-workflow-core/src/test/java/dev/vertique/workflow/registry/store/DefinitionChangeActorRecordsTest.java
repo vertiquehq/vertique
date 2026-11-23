@@ -4,12 +4,8 @@
 package dev.vertique.workflow.registry.store;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import dev.vertique.security.PrincipalRef;
-import dev.vertique.security.PrincipalType;
 import dev.vertique.workflow.actor.WorkflowActor;
-import dev.vertique.workflow.actor.WorkflowAttribution;
 import java.time.Instant;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
@@ -22,10 +18,9 @@ import org.junit.jupiter.api.Test;
 class DefinitionChangeActorRecordsTest {
 
     private static final Instant NOW = Instant.parse("2026-01-02T03:04:05Z");
-    private static final WorkflowAttribution ALICE = new WorkflowAttribution(
-            new WorkflowActor.User("alice"), new PrincipalRef(PrincipalType.USER, "carol", java.util.Map.of()));
+    private static final WorkflowActor ALICE = new WorkflowActor.User("alice");
 
-    private static WorkflowDefinitionRecord record(WorkflowAttribution changedBy) {
+    private static WorkflowDefinitionRecord record(WorkflowActor changedBy) {
         return new WorkflowDefinitionRecord(
                 new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1),
                 DefinitionKind.CODE,
@@ -98,14 +93,5 @@ class DefinitionChangeActorRecordsTest {
         assertThat(shortForm)
                 .isEqualTo(
                         new DefinitionActivation(WorkflowScopes.DEFAULT, "wf", WorkflowScopes.DEFAULT, 1, NOW, null));
-    }
-
-    @Test
-    @DisplayName("a subject needs an actor, and the system actor needs a reason")
-    void anActorRequiresItsComponents() {
-        assertThatThrownBy(() -> new WorkflowAttribution(
-                        null, new PrincipalRef(PrincipalType.USER, "carol", java.util.Map.of())))
-                .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> WorkflowAttribution.system(null)).isInstanceOf(NullPointerException.class);
     }
 }

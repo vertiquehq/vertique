@@ -15,10 +15,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import dev.vertique.security.PrincipalRef;
-import dev.vertique.security.PrincipalType;
 import dev.vertique.workflow.actor.WorkflowActor;
-import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.engine.spi.CommittedHistoryEntry;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.history.WorkflowHistoryChange;
@@ -40,6 +37,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -102,15 +100,13 @@ class WorkflowHistoryEventPublisherTest {
         return publisher(
                 () -> {
                     actorCaptures.incrementAndGet();
-                    return new WorkflowAttribution(
-                            new WorkflowActor.User("alice"),
-                            new PrincipalRef(PrincipalType.USER, "bob", java.util.Map.of()));
+                    return Optional.of(new WorkflowActor.User("alice"));
                 },
                 listeners);
     }
 
     private WorkflowHistoryEventPublisher publisher(
-            java.util.function.Supplier<WorkflowAttribution> actor, WorkflowHistoryListener... listeners) {
+            java.util.function.Supplier<Optional<WorkflowActor>> actor, WorkflowHistoryListener... listeners) {
         Set<WorkflowHistoryListener> set = new LinkedHashSet<>(List.of(listeners));
         return new WorkflowHistoryEventPublisher(
                 set,
@@ -307,8 +303,7 @@ class WorkflowHistoryEventPublisherTest {
         assertThat(failure.instanceId()).isEqualTo(ID);
         assertThat(failure.errorType()).isEqualTo("IllegalArgumentException");
         assertThat(failure.occurredAt()).isEqualTo(NOW);
-        assertThat(failure.attribution().actor()).isEqualTo(new WorkflowActor.User("alice"));
-        assertThat(failure.attribution().onBehalfOf().id()).isEqualTo("bob");
+        assertThat(failure.actor()).isEqualTo(new WorkflowActor.User("alice"));
         // and no settlement is registered for a failed work
         verify(transaction, never()).completion();
     }
@@ -403,8 +398,7 @@ class WorkflowHistoryEventPublisherTest {
         // Then the action's failure is unchanged and reported with the unattributed actor
         assertThat(result.failed()).isTrue();
         assertThat(failures).hasSize(1);
-        assertThat(failures.get(0).attribution().actor()).isEqualTo(null);
-        assertThat(failures.get(0).attribution().onBehalfOf()).isNull();
+        assertThat(failures.get(0).actor()).isNull();
     }
 
     @Test
@@ -759,7 +753,7 @@ class WorkflowHistoryEventPublisherTest {
                 history,
                 readClient,
                 (id, client) -> Future.failedFuture(new IllegalStateException("lock timeout")),
-                () -> new WorkflowAttribution(new WorkflowActor.User("alice"), null),
+                () -> Optional.of(new WorkflowActor.User("alice")),
                 Clock.fixed(NOW, ZoneOffset.UTC));
         AtomicInteger runs = new AtomicInteger();
 

@@ -198,31 +198,30 @@ public class ScopeMigrationIT {
                             "target_scope_key",
                             "definition_version",
                             "activated_at",
-                            "activation_actor_kind",
-                            "activation_actor_id",
-                            "activation_actor_reason",
-                            "activation_on_behalf_of");
+                            "activated_by");
 
-            // And who made the last change is kept in nullable columns next to the time of the change
+            // And who made the last change is kept in one nullable JSONB column next to the time of the change
             assertThat(catalog.rows("""
                             SELECT column_name || '|' || data_type || '|' || is_nullable
                             FROM information_schema.columns
                             WHERE table_schema = current_schema() AND table_name = 'workflow_definition_activations'
-                              AND column_name IN ('activation_actor_id', 'activation_on_behalf_of')
+                              AND column_name = 'activated_by'
                             ORDER BY column_name
-                            """))
-                    .containsExactly("activation_actor_id|character varying|YES", "activation_on_behalf_of|jsonb|YES");
-            assertThat(catalog.columnShape("workflow_definition_activations", "activation_actor_id"))
-                    .isEqualTo("character varying|255|YES|null");
-            assertThat(catalog.columnShape("workflow_definition_activations", "activation_actor_reason"))
-                    .isEqualTo("character varying|255|YES|null");
+                            """)).containsExactly("activated_by|jsonb|YES");
+            assertThat(catalog.columnNames("workflow_definitions")).contains("status_changed_by");
             assertThat(catalog.columnNames("workflow_definitions"))
-                    .contains("status_actor_kind", "status_actor_id", "status_actor_reason", "status_on_behalf_of");
-            assertThat(catalog.columnNames("workflow_definitions")).doesNotContain("status_attribution");
-            assertThat(catalog.columnShape("workflow_definitions", "status_actor_id"))
-                    .isEqualTo("character varying|255|YES|null");
-            assertThat(catalog.columnShape("workflow_definitions", "status_actor_reason"))
-                    .isEqualTo("character varying|255|YES|null");
+                    .doesNotContain(
+                            "status_attribution",
+                            "status_actor_kind",
+                            "status_actor_id",
+                            "status_actor_reason",
+                            "status_on_behalf_of");
+            assertThat(catalog.rows("""
+                            SELECT column_name || '|' || data_type || '|' || is_nullable
+                            FROM information_schema.columns
+                            WHERE table_schema = current_schema() AND table_name = 'workflow_definitions'
+                              AND column_name = 'status_changed_by'
+                            """)).containsExactly("status_changed_by|jsonb|YES");
             assertThat(catalog.primaryKey("workflow_definition_activations"))
                     .isEqualTo("PRIMARY KEY (scope_key, definition_id)");
             assertThat(catalog.columnShape("workflow_definition_activations", "target_scope_key"))

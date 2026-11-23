@@ -10,7 +10,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.actor.WorkflowActor;
-import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.definition.it.fixture.OrderDocumentSignals;
 import dev.vertique.workflow.definition.it.fixture.PlaceOrderDoc;
@@ -95,8 +94,7 @@ public class DefinitionLifecycleEventsIT {
             assertThat(activation.scopeKey()).isEqualTo(DEFAULT);
             assertThat(activation.targetScopeKey()).isEqualTo(DEFAULT);
             assertThat(activation.version()).isEqualTo(1L);
-            assertThat(changes)
-                    .allSatisfy(change -> assertThat(change.attribution()).isEqualTo(WorkflowAttribution.absent()));
+            assertThat(changes).allSatisfy(change -> assertThat(change.actor()).isNull());
             assertThat(events.failures()).isEmpty();
         }
     }
@@ -156,7 +154,7 @@ public class DefinitionLifecycleEventsIT {
                     .extracting(DefinitionLifecycleChangeAssert::describe)
                     .containsExactly("PUBLISH " + id + "@2", "ACTIVATE " + id + "@2");
             assertThat(firstStart).allSatisfy(change -> {
-                assertThat(change.attribution().actor()).isEqualTo(BOOTSTRAP);
+                assertThat(change.actor()).isEqualTo(BOOTSTRAP);
             });
             // ... and the restart published the lower and the opted-out version without activating either, and
             // reported nothing for the version it already held

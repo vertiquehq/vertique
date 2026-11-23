@@ -62,10 +62,10 @@ with the transaction, so the relay retries it.
 **Who is logged.** The endpoint records the signal inside the dispatch context the relay rebuilt for the delivery, and the engine
 logs the signal's actor from the identity of that context (see "Who asked for a command" in the engine module reference). The
 actor is never read from `WorkflowSignalRequest`, its payload or its carrier. By default the relay's identity is `SYSTEM` with the
-outbox row's event type as the reason; a bound `ServiceIdentityResolver` names a service instead. Either acts for the user whose
-transaction wrote the outbox row (`on_behalf_of`). A snapshot that cannot be verified refuses the delivery under the default
+outbox row's event type as the reason; a bound `ServiceIdentityResolver` names a service instead. The user whose transaction wrote
+the outbox row is not recorded. A snapshot that cannot be verified refuses the delivery under the default
 degradation policy, so no command, dedup or inbox row is written; under `CONTINUE_WITHOUT_IDENTITY` the signal is recorded with the relay's actor
-like any other, and the security module's own degradation event is the record of the degradation. A graph without identity carriage logs the signal as `NONE`.
+like any other, and the security module's own degradation event is the record of the degradation. A graph without identity carriage logs the signal with no actor.
 
 Signal dedup happens at two layers:
 

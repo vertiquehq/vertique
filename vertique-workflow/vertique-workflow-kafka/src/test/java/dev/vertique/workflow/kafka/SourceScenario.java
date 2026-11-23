@@ -954,7 +954,9 @@ final class SourceScenario implements AutoCloseable {
     /** The {@code SIGNAL} commands of the instance, oldest first. */
     List<CommandRow> commands(Waiting waiting) {
         List<CommandRow> rows = new ArrayList<>();
-        for (Row row : await(readPool.preparedQuery("SELECT id, state, actor_kind, actor_id, actor_reason, dedup_key,"
+        for (Row row : await(readPool.preparedQuery("SELECT id, state, actor->>'kind' AS actor_kind,"
+                        + " CASE WHEN actor->>'kind' IN ('USER', 'SERVICE') THEN actor->>'value' END AS actor_id,"
+                        + " CASE WHEN actor->>'kind' = 'SYSTEM' THEN actor->>'value' END AS actor_reason, dedup_key,"
                         + " payload_json::text AS payload, context_json::text AS context,"
                         + " provenance_json::text AS provenance FROM workflow_commands"
                         + " WHERE workflow_id = $1 AND kind = 'SIGNAL' ORDER BY id")

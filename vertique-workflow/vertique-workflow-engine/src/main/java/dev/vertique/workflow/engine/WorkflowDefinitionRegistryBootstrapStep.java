@@ -5,7 +5,7 @@ package dev.vertique.workflow.engine;
 
 import dev.vertique.core.lifecycle.ApplicationStartupStep;
 import dev.vertique.core.lifecycle.LifecyclePhase;
-import dev.vertique.workflow.actor.WorkflowAttribution;
+import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowCodeDefinitionCatalog.CodeDefinition;
@@ -92,7 +92,7 @@ import org.slf4j.LoggerFactory;
 @Singleton
 final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartupStep {
     private static final Logger log = LoggerFactory.getLogger(WorkflowDefinitionRegistryBootstrapStep.class);
-    private static final WorkflowAttribution BOOTSTRAP_ACTOR = WorkflowAttribution.system("bootstrap");
+    private static final WorkflowActor BOOTSTRAP_ACTOR = new WorkflowActor.System("bootstrap");
     private static final Set<DefinitionStatus> LIVE = Set.of(DefinitionStatus.AVAILABLE, DefinitionStatus.DEPRECATED);
     private static final Comparator<WorkflowDefinitionRecord> LISTING_ORDER = Comparator.comparing(
                     (WorkflowDefinitionRecord record) -> record.key().definitionId())

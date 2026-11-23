@@ -3,7 +3,7 @@
 
 package dev.vertique.workflow.history;
 
-import dev.vertique.workflow.actor.WorkflowAttribution;
+import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import jakarta.annotation.Nullable;
 import java.time.Instant;
@@ -18,7 +18,7 @@ import java.util.UUID;
  * @param attemptId  minted once per attempt; a repeat of the action by the caller is a new attempt with a new id
  * @param instanceId the instance, or {@code null} when the action never resolved one
  * @param action     what was attempted
- * @param attribution who acted and how that attribution was established
+ * @param actor      who acted, or {@code null} when the action had no actor
  * @param errorType  the simple class name of the failure, never its message; {@code null} when unknown
  * @param occurredAt when the failure was observed
  */
@@ -26,7 +26,7 @@ public record WorkflowHistoryFailure(
         UUID attemptId,
         @Nullable WorkflowInstanceId instanceId,
         Action action,
-        WorkflowAttribution attribution,
+        @Nullable WorkflowActor actor,
         @Nullable String errorType,
         Instant occurredAt) {
 
@@ -54,7 +54,6 @@ public record WorkflowHistoryFailure(
     public WorkflowHistoryFailure {
         Objects.requireNonNull(attemptId, "attemptId");
         Objects.requireNonNull(action, "action");
-        Objects.requireNonNull(attribution, "attribution");
         Objects.requireNonNull(occurredAt, "occurredAt");
     }
 }

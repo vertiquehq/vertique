@@ -3,7 +3,7 @@
 
 package dev.vertique.workflow.engine.spi;
 
-import dev.vertique.workflow.actor.WorkflowAttribution;
+import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.history.PendingCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.registry.store.DefinitionKey;
@@ -181,11 +181,11 @@ public interface WorkflowCommandRepository<TX> {
             String idempotencyKey,
             @Nullable String payloadJson,
             @Nullable String targetJson,
-            WorkflowAttribution actor,
+            @Nullable WorkflowActor actor,
             TX tx);
 
     /**
-     * Records a {@code START} command for a caller with no identity, as {@link WorkflowAttribution#none()}.
+     * Records a {@code START} command for a caller with no identity, which records no actor.
      *
      * @param instance       the new instance
      * @param idempotencyKey the caller's idempotency key, kept for display
@@ -200,7 +200,7 @@ public interface WorkflowCommandRepository<TX> {
             @Nullable String payloadJson,
             @Nullable String targetJson,
             TX tx) {
-        return recordStart(instance, idempotencyKey, payloadJson, targetJson, WorkflowAttribution.absent(), tx);
+        return recordStart(instance, idempotencyKey, payloadJson, targetJson, null, tx);
     }
 
     /**
@@ -478,7 +478,7 @@ public interface WorkflowCommandRepository<TX> {
             @Nullable String payloadJson,
             @Nullable String explicitCarrierJson,
             @Nullable String provenanceJson,
-            WorkflowAttribution actor,
+            @Nullable WorkflowActor actor,
             TX tx);
 
     /**
@@ -504,11 +504,11 @@ public interface WorkflowCommandRepository<TX> {
             String dedupKey,
             @Nullable String payloadJson,
             String targetJson,
-            WorkflowAttribution actor,
+            @Nullable WorkflowActor actor,
             TX tx);
 
     /**
-     * Records a {@code COMPLETION} command for a caller with no identity, as {@link WorkflowAttribution#none()}.
+     * Records a {@code COMPLETION} command for a caller with no identity, which records no actor.
      *
      * @param instance    the instance
      * @param taskId      the task the completion reserves
@@ -525,7 +525,7 @@ public interface WorkflowCommandRepository<TX> {
             @Nullable String payloadJson,
             String targetJson,
             TX tx) {
-        return recordCompletion(instance, taskId, dedupKey, payloadJson, targetJson, WorkflowAttribution.absent(), tx);
+        return recordCompletion(instance, taskId, dedupKey, payloadJson, targetJson, null, tx);
     }
 
     /**
@@ -687,17 +687,17 @@ public interface WorkflowCommandRepository<TX> {
      * @param tx       the caller's transaction handle
      * @return a {@link Future} containing the command's row id
      */
-    Future<Long> recordRetry(WorkflowInstanceId instance, WorkflowAttribution actor, TX tx);
+    Future<Long> recordRetry(WorkflowInstanceId instance, @Nullable WorkflowActor actor, TX tx);
 
     /**
-     * Records a {@code RETRY} command for a caller with no identity, as {@link WorkflowAttribution#none()}.
+     * Records a {@code RETRY} command for a caller with no identity, which records no actor.
      *
      * @param instance the instance to recover
      * @param tx       the caller's transaction handle
      * @return a {@link Future} containing the command's row id
      */
     default Future<Long> recordRetry(WorkflowInstanceId instance, TX tx) {
-        return recordRetry(instance, WorkflowAttribution.absent(), tx);
+        return recordRetry(instance, null, tx);
     }
 
     /**
@@ -719,11 +719,11 @@ public interface WorkflowCommandRepository<TX> {
             WorkflowInstanceId instance,
             long targetVersion,
             @Nullable String targetScope,
-            WorkflowAttribution actor,
+            @Nullable WorkflowActor actor,
             TX tx);
 
     /**
-     * Records a {@code MIGRATION} command for a caller with no identity, as {@link WorkflowAttribution#none()}.
+     * Records a {@code MIGRATION} command for a caller with no identity, which records no actor.
      *
      * @param instance      the instance to migrate
      * @param targetVersion the definition version to migrate to
@@ -733,7 +733,7 @@ public interface WorkflowCommandRepository<TX> {
      */
     default Future<Long> recordMigration(
             WorkflowInstanceId instance, long targetVersion, @Nullable String targetScope, TX tx) {
-        return recordMigration(instance, targetVersion, targetScope, WorkflowAttribution.absent(), tx);
+        return recordMigration(instance, targetVersion, targetScope, null, tx);
     }
 
     /**
@@ -798,18 +798,18 @@ public interface WorkflowCommandRepository<TX> {
      * @param tx       the caller's transaction handle
      * @return a {@link Future} containing the cancelled commands in ascending id order
      */
-    Future<List<SettledCommand>> cancelAll(WorkflowInstanceId instance, WorkflowAttribution canceller, TX tx);
+    Future<List<SettledCommand>> cancelAll(WorkflowInstanceId instance, @Nullable WorkflowActor canceller, TX tx);
 
     /**
-     * Cancels every unsettled command of the instance for a canceller with no identity, as
-     * {@link WorkflowAttribution#none()}.
+     * Cancels every unsettled command of the instance for a canceller with no identity, which records
+     * no actor.
      *
      * @param instance the instance being cancelled
      * @param tx       the caller's transaction handle
      * @return a {@link Future} containing the cancelled commands in ascending id order
      */
     default Future<List<SettledCommand>> cancelAll(WorkflowInstanceId instance, TX tx) {
-        return cancelAll(instance, WorkflowAttribution.absent(), tx);
+        return cancelAll(instance, null, tx);
     }
 
     /**
@@ -840,8 +840,8 @@ public interface WorkflowCommandRepository<TX> {
 
     /**
      * Logs who is behind the history entries a transaction wrote since {@code fromSequence}: every entry of the
-     * instance from that sequence on that carries no actor yet takes the actor and the party it acted for. An entry
-     * that already carries an actor is left as it is. A repository that keeps no actor columns inherits this no-op.
+     * instance from that sequence on that carries no actor yet takes the actor. An entry
+     * that already carries an actor is left as it is. A repository that keeps no actor inherits this no-op.
      *
      * @param instance     the instance
      * @param fromSequence the first sequence to attribute, as the history's next sequence was before the entries were
@@ -851,7 +851,7 @@ public interface WorkflowCommandRepository<TX> {
      * @return a {@link Future} that completes when the entries are attributed
      */
     default Future<Void> attributeHistory(
-            WorkflowInstanceId instance, long fromSequence, WorkflowAttribution actor, TX tx) {
+            WorkflowInstanceId instance, long fromSequence, @Nullable WorkflowActor actor, TX tx) {
         return Future.succeededFuture();
     }
 
@@ -859,7 +859,7 @@ public interface WorkflowCommandRepository<TX> {
      * Logs who is behind the history entries an executor segment wrote since {@code fromSequence}: an entry that names
      * a command takes the actor that recorded that command, and any other entry takes the fallback, which is the actor
      * of the command the segment executes. An entry that already carries an actor is left as it is. A command recorded
-     * before actors were logged counts as recorded with no identity. A repository that keeps no actor columns inherits
+     * before actors were logged counts as recorded with no identity. A repository that keeps no actor inherits
      * this no-op.
      *
      * @param instance     the instance
@@ -869,7 +869,7 @@ public interface WorkflowCommandRepository<TX> {
      * @return a {@link Future} that completes when the entries are attributed
      */
     default Future<Void> attributeSegmentHistory(
-            WorkflowInstanceId instance, long fromSequence, WorkflowAttribution fallback, TX tx) {
+            WorkflowInstanceId instance, long fromSequence, @Nullable WorkflowActor fallback, TX tx) {
         return Future.succeededFuture();
     }
 
@@ -894,7 +894,7 @@ public interface WorkflowCommandRepository<TX> {
     default Future<Void> attributeSegmentHistory(
             WorkflowInstanceId instance,
             long fromSequence,
-            WorkflowAttribution fallback,
+            @Nullable WorkflowActor fallback,
             SegmentCommand command,
             DefinitionKey pinned,
             TX tx) {
