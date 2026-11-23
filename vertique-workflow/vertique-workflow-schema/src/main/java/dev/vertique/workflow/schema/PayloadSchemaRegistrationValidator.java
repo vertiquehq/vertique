@@ -77,6 +77,11 @@ final class PayloadSchemaRegistrationValidator implements WorkflowDefinitionVali
                     new PayloadShapeRule.Context(definitionId, version, null, null, typeNames.nameOf(startType)),
                     () -> startType);
         }
+        String outputTypeName = definition.plan().outputTypeName();
+        if (outputTypeName != null) {
+            PayloadShapeRule.Context context = PayloadShapeRule.Context.ofOutput(definitionId, version, outputTypeName);
+            resolve(context, () -> load(context));
+        }
         for (WorkflowNode node : definition.plan().nodes()) {
             if (node instanceof HumanTaskNode task) {
                 for (HumanTaskNode.TaskDecision decision : task.decisions()) {

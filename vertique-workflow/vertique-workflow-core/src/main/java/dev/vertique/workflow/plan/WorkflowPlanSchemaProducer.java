@@ -5,6 +5,7 @@ package dev.vertique.workflow.plan;
 
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import io.vertx.core.json.JsonObject;
+import jakarta.annotation.Nullable;
 import java.util.Map;
 
 /**
@@ -37,4 +38,18 @@ public interface WorkflowPlanSchemaProducer {
      * @return the schemas keyed by step id, then decision name
      */
     Map<String, Map<String, JsonObject>> decisionSchemas(RuntimeWorkflow plan);
+
+    /**
+     * Returns the JSON Schema of the output the plan declares, as it is described for the payload-schema descriptor.
+     *
+     * <p>The default returns {@code null}, so an implementation written before the declared output existed keeps
+     * compiling and describes no output.
+     *
+     * @param plan the runtime workflow whose output is described
+     * @return the schema document; {@code null} when the plan declares no output
+     */
+    @Nullable
+    default JsonObject outputSchema(RuntimeWorkflow plan) {
+        return null;
+    }
 }

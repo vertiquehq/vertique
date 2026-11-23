@@ -209,6 +209,22 @@ final class Definitions {
                 stepId, new HumanTaskNode.AssignmentSpec.Role("reviewers"), list, null, null, null, null, false);
     }
 
+    /**
+     * A definition that starts without a payload, completes at once and declares {@code outputType} as its output.
+     *
+     * @param id the definition id
+     * @param version the definition version
+     * @param outputType the declared output class
+     * @return the definition
+     */
+    static <O> WorkflowDefinition<State, Primary> withOutput(String id, long version, Class<O> outputType) {
+        return definition(Primary.class, id, version, wf -> {
+            initWith(wf, Void.class, "done");
+            wf.output(outputType, state -> null);
+            wf.complete("done");
+        });
+    }
+
     private static <C> WorkflowDefinition<State, C> build(
             Class<C> contract, String id, long version, Class<?> startType, Map<String, Class<?>> decisions) {
         return definition(contract, id, version, wf -> {
