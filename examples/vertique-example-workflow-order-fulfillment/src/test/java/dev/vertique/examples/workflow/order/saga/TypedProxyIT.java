@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.examples.workflow.order.OrderFulfillmentDefinition;
 import dev.vertique.examples.workflow.order.OrderFulfillmentWorkflow;
+import dev.vertique.examples.workflow.order.state.OrderReceipt;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.state.WorkflowStatus;
 import io.vertx.core.Vertx;
@@ -100,6 +101,35 @@ public class TypedProxyIT extends SagaTestBase {
                     assertEquals(
                             1, component.stubShippingService().createCalls().size());
 
+                    ctx.completeNow();
+                }));
+    }
+
+    @Test
+    @DisplayName("a completed order's declared output is read with result(id, OrderReceipt.class)")
+    void completedOrderReceipt(VertxTestContext ctx) {
+        var cmd = new dev.vertique.examples.workflow.order.command.PlaceOrder(
+                "proxy-receipt-1",
+                "cust-receipt-1",
+                java.util.List.of(
+                        new dev.vertique.examples.workflow.order.command.PlaceOrder.OrderItem("SKU-R", 1, 250L)),
+                250L);
+
+        proxy.start(cmd)
+                .compose(id -> awaitIdle(id))
+                .compose(id -> driveRelay().map(v -> id))
+                .compose(id -> driveRelay().map(v -> id))
+                .compose(id -> driveRelay().map(v -> id))
+                .compose(id -> component.workflowOperations().result(id, OrderReceipt.class))
+                .onComplete(ar -> ctx.verify(() -> {
+                    assertTrue(ar.succeeded(), "the receipt must be readable: " + ar.cause());
+                    OrderReceipt receipt = ar.result();
+                    assertEquals("proxy-receipt-1", receipt.orderId());
+                    assertEquals("cust-receipt-1", receipt.customerId());
+                    assertEquals(250L, receipt.totalCents());
+                    assertTrue(
+                            receipt.trackingNumber() != null && !receipt.trackingNumber().isBlank(),
+                            "the receipt carries the shipment tracking number");
                     ctx.completeNow();
                 }));
     }

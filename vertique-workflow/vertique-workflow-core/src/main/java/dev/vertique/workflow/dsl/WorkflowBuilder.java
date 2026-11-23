@@ -86,6 +86,9 @@ public final class WorkflowBuilder<S> {
      */
     private static final CallbackId SUBJECT_RESOLVER_ID = new CallbackId("$subject.resolver");
 
+    /** Stable callback id for the plan-level {@link #output(Class, Function)} mapper. */
+    private static final CallbackId OUTPUT_MAPPER_ID = new CallbackId("$output.mapper");
+
     // --- Internal state ---
 
     private Class<?> startPayloadTypeInternal;
@@ -160,6 +163,17 @@ public final class WorkflowBuilder<S> {
      */
     @Nullable
     private CallbackId subjectResolverCallbackId;
+
+    /** Output mappers keyed by CallbackId value; populated by the output(...) call. */
+    private final Map<String, Function<Object, Object>> outputMappers = new HashMap<>();
+
+    /** The declared output class, or {@code null} when {@link #output(Class, Function)} was not called. */
+    @Nullable
+    private Class<?> outputType;
+
+    /** The logical name of {@link #outputType} under this builder's {@link WorkflowTypeNames}. */
+    @Nullable
+    private String outputTypeNameInternal;
 
     /**
      * Constructs a new builder.
@@ -786,6 +800,62 @@ public final class WorkflowBuilder<S> {
         return this;
     }
 
+    /**
+     * Declares what instances of this definition produce on success: an output type and a mapping from the final state.
+     *
+     * <p>The engine runs the mapper once, inside the transaction that completes the instance, and stores the encoded
+     * value next to the state. Callers read it with
+     * {@link dev.vertique.workflow.ops.WorkflowOperations#result(dev.vertique.workflow.ops.WorkflowInstanceId, Class)},
+     * and the {@code WORKFLOW_COMPLETED} event carries it. The output is part of the plan: a plan that declares one has a
+     * different plan hash from the same plan without it, while the mapper body is not hashed.
+     *
+     * <p>May be called once per builder, anywhere in {@code define}, like {@link #subject(Function)}. The output is the
+     * value the author chooses to publish: do not put secrets or personal data the event audience must not see into it.
+     *
+     * <p>Example:
+     * <pre>{@code
+     *   wf.output(OrderReceipt.class, s -> new OrderReceipt(s.orderId(), s.trackingCode()))
+     * }</pre>
+     *
+     * @param <O> the output type
+     * @param type the output class; must not be null, {@code void} or {@link Void}
+     * @param mapper function that maps the final workflow state to the output; must not be null, and must not return
+     *     null (a null return fails the completion like a throwing mapper)
+     * @return this builder for chaining
+     * @throws NullPointerException if {@code type} or {@code mapper} is null
+     * @throws IllegalArgumentException if {@code type} is {@code void} or {@link Void}
+     * @throws IllegalStateException if an output was already declared on this builder
+     */
+    @SuppressWarnings("unchecked")
+    public <O> WorkflowBuilder<S> output(Class<O> type, Function<S, O> mapper) {
+        Objects.requireNonNull(type, "type");
+        Objects.requireNonNull(mapper, "mapper");
+        if (type == void.class || type == Void.class) {
+            throw new IllegalArgumentException("output(...) needs a type that carries a value, not " + type.getName());
+        }
+        if (outputType != null) {
+            throw new IllegalStateException("output(...) has already been declared for this WorkflowBuilder; "
+                    + "duplicate registration is almost always a bug");
+        }
+        outputMappers.put(OUTPUT_MAPPER_ID.value(), (Function<Object, Object>) (Function<?, ?>) mapper);
+        outputType = type;
+        outputTypeNameInternal = payloadName(type);
+        return this;
+    }
+
+    /**
+     * INTERNAL framework seam — used by the workflow registry to index the plan's classes; not an application contract
+     * and outside the maturity promise.
+     *
+     * <p>Returns the class declared through {@link #output(Class, Function)}.
+     *
+     * @return the output class, or {@code null} when no output was declared
+     */
+    @Nullable
+    public Class<?> outputType() {
+        return outputType;
+    }
+
     // --- fork/join entry points ---
 
     /**
@@ -929,8 +999,16 @@ public final class WorkflowBuilder<S> {
         // three-argument build overload.
         String stateTypeName = "";
 
+        CallbackId outputMapperId = outputType == null ? null : OUTPUT_MAPPER_ID;
         String planHash = computePlanHash(
-                definitionId, definitionVersion, stateTypeName, effectiveInitialStep, nodes, subjectResolverCallbackId);
+                definitionId,
+                definitionVersion,
+                stateTypeName,
+                effectiveInitialStep,
+                nodes,
+                subjectResolverCallbackId,
+                outputTypeNameInternal,
+                outputMapperId);
         return new WorkflowPlan(
                 definitionId,
                 definitionVersion,
@@ -938,7 +1016,9 @@ public final class WorkflowBuilder<S> {
                 stateTypeName,
                 effectiveInitialStep,
                 List.copyOf(nodes),
-                subjectResolverCallbackId);
+                subjectResolverCallbackId,
+                outputTypeNameInternal,
+                outputMapperId);
     }
 
     /**
@@ -965,8 +1045,16 @@ public final class WorkflowBuilder<S> {
 
         validateStepReferences();
 
+        CallbackId outputMapperId = outputType == null ? null : OUTPUT_MAPPER_ID;
         String planHash = computePlanHash(
-                definitionId, definitionVersion, stateTypeName, effectiveInitialStep, nodes, subjectResolverCallbackId);
+                definitionId,
+                definitionVersion,
+                stateTypeName,
+                effectiveInitialStep,
+                nodes,
+                subjectResolverCallbackId,
+                outputTypeNameInternal,
+                outputMapperId);
         return new WorkflowPlan(
                 definitionId,
                 definitionVersion,
@@ -974,7 +1062,9 @@ public final class WorkflowBuilder<S> {
                 stateTypeName,
                 effectiveInitialStep,
                 List.copyOf(nodes),
-                subjectResolverCallbackId);
+                subjectResolverCallbackId,
+                outputTypeNameInternal,
+                outputMapperId);
     }
 
     /** Names a signal or decision payload class for the plan and remembers that the plan refers to it. */
@@ -1165,7 +1255,8 @@ public final class WorkflowBuilder<S> {
                 Map.copyOf(taskAssignmentResolvers),
                 Map.copyOf(subjectResolvers),
                 Map.copyOf(branchResultReducers),
-                Map.copyOf(correlationKeyResolvers));
+                Map.copyOf(correlationKeyResolvers),
+                Map.copyOf(outputMappers));
     }
 
     // --- Fluent inner classes ---
@@ -2175,7 +2266,9 @@ public final class WorkflowBuilder<S> {
                 plan.stateTypeName(),
                 plan.initialStepId(),
                 plan.nodes(),
-                plan.subjectResolverCallbackId());
+                plan.subjectResolverCallbackId(),
+                plan.outputTypeName(),
+                plan.outputMapperCallbackId());
     }
 
     /**
@@ -2209,7 +2302,9 @@ public final class WorkflowBuilder<S> {
             String stateTypeName,
             String initialStepId,
             List<WorkflowNode> nodes,
-            @Nullable CallbackId subjectResolverCallbackId) {
+            @Nullable CallbackId subjectResolverCallbackId,
+            @Nullable String outputTypeName,
+            @Nullable CallbackId outputMapperCallbackId) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             update(digest, definitionId);
@@ -2339,6 +2434,13 @@ public final class WorkflowBuilder<S> {
             if (subjectResolverCallbackId != null) {
                 update(digest, "subjectResolver");
                 update(digest, subjectResolverCallbackId.value());
+            }
+            // Declared output — appended after the subject bytes and only when present, so a plan without an output
+            // keeps its previous hash exactly. The mapper body is not hashed, as for every callback.
+            if (outputTypeName != null) {
+                update(digest, "output");
+                update(digest, outputTypeName);
+                update(digest, outputMapperCallbackId != null ? outputMapperCallbackId.value() : "");
             }
             byte[] hashBytes = digest.digest();
             StringBuilder hex = new StringBuilder(64);
@@ -2498,7 +2600,8 @@ public final class WorkflowBuilder<S> {
             Map<String, Function<Object, TaskAssignment>> taskAssignmentResolvers,
             Map<String, Function<Object, WorkflowSubjectRef>> subjectResolvers,
             Map<String, BiFunction<Object, Map<String, BranchResult>, Object>> branchResultReducers,
-            Map<String, Function<Object, String>> correlationKeyResolvers)
+            Map<String, Function<Object, String>> correlationKeyResolvers,
+            Map<String, Function<Object, Object>> outputMappers)
             implements WorkflowCallbackRegistry {
 
         @SuppressWarnings("unchecked")
@@ -2590,6 +2693,14 @@ public final class WorkflowBuilder<S> {
             Function<Object, WorkflowSubjectRef> fn = subjectResolvers.get(id.value());
             if (fn == null) throw new UnsupportedOperationException("subjectResolver not registered for " + id);
             return (Function<S, WorkflowSubjectRef>) (Function<?, ?>) fn;
+        }
+
+        @SuppressWarnings("unchecked")
+        @Override
+        public <S> Function<S, Object> outputMapper(CallbackId id) {
+            Function<Object, Object> fn = outputMappers.get(id.value());
+            if (fn == null) throw new UnsupportedOperationException("outputMapper not registered for " + id);
+            return (Function<S, Object>) (Function<?, ?>) fn;
         }
 
         @SuppressWarnings("unchecked")

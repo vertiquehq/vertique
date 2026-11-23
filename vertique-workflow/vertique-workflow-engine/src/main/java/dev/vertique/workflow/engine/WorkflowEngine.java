@@ -50,6 +50,8 @@ import dev.vertique.workflow.exception.WorkflowInstanceNotFoundException;
 import dev.vertique.workflow.exception.WorkflowIntakeRefusedException;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import dev.vertique.workflow.exception.WorkflowPlanHashDriftException;
+import dev.vertique.workflow.exception.WorkflowResultTypeMismatchException;
+import dev.vertique.workflow.exception.WorkflowResultUnavailableException;
 import dev.vertique.workflow.exception.WorkflowSignalActorException;
 import dev.vertique.workflow.exception.WorkflowSignalAmbiguousException;
 import dev.vertique.workflow.exception.WorkflowSignalLimitException;
@@ -96,6 +98,7 @@ import dev.vertique.workflow.timer.TimerStore;
 import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.Future;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.SqlClient;
@@ -791,6 +794,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 clock,
                 decisions,
                 waitRecords,
+                Optional.of(recordingConfig),
                 () -> timerLifecycleHolder[0],
                 () -> taskLifecycleHolder[0]);
         driverHolder[0] = this.driver;
@@ -1057,6 +1061,64 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                     }
                     return history.listByInstance(id, tx).map(entries -> new WorkflowView(inst, entries));
                 }));
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Reads the instance in one {@code REPEATABLE READ} transaction without the plan, archived rows included, so the
+     * stored output is served by a node that no longer holds the code of the pinned version. The type matches when the
+     * stored output type name equals the logical name of {@code type}, its binary name, or the name the stored row of
+     * the pinned definition version gives its binary name (read in the same transaction; an absent row or binding only
+     * removes that candidate). The messages of the failures name types and ids, never the stored value.
+     *
+     * @param id the workflow instance id; must not be null
+     * @param type the requested type; must not be null
+     * @return a {@link Future} resolving to the decoded output
+     */
+    @Override
+    public <T> Future<T> result(WorkflowInstanceId id, Class<T> type) {
+        Objects.requireNonNull(id, "id");
+        Objects.requireNonNull(type, "type");
+        return txRunner.inTransaction(
+                IsolationLevel.REPEATABLE_READ, tx -> instances.findById(id, tx).compose(optInst -> {
+                    if (optInst.isEmpty()) {
+                        return Future.<T>failedFuture(new WorkflowInstanceNotFoundException(id));
+                    }
+                    WorkflowInstance inst = optInst.get();
+                    if (inst.status() != WorkflowStatus.COMPLETED) {
+                        return Future.<T>failedFuture(new WorkflowResultUnavailableException(
+                                id, WorkflowResultUnavailableException.Reason.NOT_COMPLETED, inst.status()));
+                    }
+                    if (inst.outputJson() == null || inst.outputTypeName() == null) {
+                        return Future.<T>failedFuture(new WorkflowResultUnavailableException(
+                                id, WorkflowResultUnavailableException.Reason.NO_OUTPUT, inst.status()));
+                    }
+                    String requestedName = typeNames.nameOf(type);
+                    if (inst.outputTypeName().equals(requestedName)
+                            || inst.outputTypeName().equals(type.getName())) {
+                        return Future.succeededFuture(decodeResult(inst, type, requestedName));
+                    }
+                    DefinitionKey pin =
+                            new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion());
+                    return instances.findDefinitionNameBinding(pin, tx).map(binding -> {
+                        String bound =
+                                binding.map(names -> names.get(type.getName())).orElse(null);
+                        if (!inst.outputTypeName().equals(bound)) {
+                            throw new WorkflowResultTypeMismatchException(id, inst.outputTypeName(), requestedName);
+                        }
+                        return decodeResult(inst, type, requestedName);
+                    });
+                }));
+    }
+
+    /** Decodes the stored output; a value that does not decode is a mismatch, reported without the value. */
+    private static <T> T decodeResult(WorkflowInstance inst, Class<T> type, String requestedName) {
+        try {
+            return Json.decodeValue(Buffer.buffer(inst.outputJson()), type);
+        } catch (RuntimeException e) {
+            throw new WorkflowResultTypeMismatchException(inst.id(), inst.outputTypeName(), requestedName);
+        }
     }
 
     // --- TransactionalWorkflowOperations ---

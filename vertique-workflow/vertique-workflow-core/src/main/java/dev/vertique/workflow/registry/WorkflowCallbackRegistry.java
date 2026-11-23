@@ -232,6 +232,25 @@ public interface WorkflowCallbackRegistry {
     }
 
     /**
+     * Retrieves the output mapper registered under the given callback id.
+     *
+     * <p>Output mappers have type {@code Function<S, Object>} where {@code S} is the workflow state type. The function
+     * maps the final state to the declared output when the instance completes; the engine calls it only when
+     * {@link dev.vertique.workflow.plan.WorkflowPlan#outputMapperCallbackId()} is non-null.
+     *
+     * <p>The default implementation throws {@link UnsupportedOperationException}, so a registry for a definition that
+     * declares no output need not override it.
+     *
+     * @param <S> the workflow state type
+     * @param id the callback id to look up
+     * @return the registered output mapper; never null
+     * @throws UnsupportedOperationException if no output mapper is registered for the given id
+     */
+    default <S> Function<S, Object> outputMapper(CallbackId id) {
+        throw new UnsupportedOperationException("outputMapper not registered for " + id);
+    }
+
+    /**
      * Retrieves the branch-result reducer registered under the given callback id.
      *
      * <p>Reducers have type {@code BiFunction<S, Map<String, BranchResult>, S>}. The fan-in

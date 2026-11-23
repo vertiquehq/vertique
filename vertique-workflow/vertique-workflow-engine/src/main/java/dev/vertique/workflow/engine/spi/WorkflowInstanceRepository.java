@@ -12,6 +12,7 @@ import dev.vertique.workflow.state.WorkflowInstance;
 import io.vertx.core.Future;
 import jakarta.annotation.Nullable;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -103,6 +104,22 @@ public interface WorkflowInstanceRepository<TX> {
      * @return a {@link Future} containing the stored contract name, or {@link Optional#empty()} when there is no row
      */
     default Future<Optional<String>> findDefinitionContract(DefinitionKey key, TX tx) {
+        return Future.succeededFuture(Optional.empty());
+    }
+
+    /**
+     * Reads the name binding that the stored row of a definition version holds: the binary name of each state and
+     * payload class of its plan, mapped to the logical name the version's plan hash used. The read uses the caller's
+     * transaction and takes no further connection.
+     *
+     * <p>The default returns empty, as an implementation without access to the definition rows has no answer; the
+     * caller then decides on the names it already has.
+     *
+     * @param key the full definition key
+     * @param tx the active transaction or pooled connection to use for the read
+     * @return a {@link Future} containing the binding, or {@link Optional#empty()} when there is no row
+     */
+    default Future<Optional<Map<String, String>>> findDefinitionNameBinding(DefinitionKey key, TX tx) {
         return Future.succeededFuture(Optional.empty());
     }
 

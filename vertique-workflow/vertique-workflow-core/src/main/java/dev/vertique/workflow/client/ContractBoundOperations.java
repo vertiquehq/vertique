@@ -76,6 +76,11 @@ final class ContractBoundOperations implements WorkflowOperations {
     }
 
     @Override
+    public <T> Future<T> result(WorkflowInstanceId id, Class<T> type) {
+        return delegate.result(id, type);
+    }
+
+    @Override
     public Future<Void> migrate(WorkflowInstanceId id, long targetVersion) {
         return delegate.migrate(id, targetVersion);
     }

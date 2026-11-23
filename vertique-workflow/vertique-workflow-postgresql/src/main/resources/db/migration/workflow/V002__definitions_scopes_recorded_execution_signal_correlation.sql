@@ -245,6 +245,10 @@ ALTER TABLE workflow_instances ALTER COLUMN state_json DROP NOT NULL;
 ALTER TABLE workflow_instances ALTER COLUMN current_step_id DROP NOT NULL;
 ALTER TABLE workflow_instances ADD COLUMN IF NOT EXISTS baseline_logged BOOLEAN NOT NULL DEFAULT TRUE;
 
+-- The declared output of a completed instance, written once with COMPLETED; NULL for every other row.
+ALTER TABLE workflow_instances ADD COLUMN IF NOT EXISTS output_json JSONB NULL;
+ALTER TABLE workflow_instances ADD COLUMN IF NOT EXISTS output_type_name VARCHAR(255) NULL;
+
 -- Business-key lookup without a definition or a scope. Not unique: a business key is unique only per scope and
 -- definition id, which idx_workflow_instances_business_key already enforces.
 CREATE INDEX IF NOT EXISTS idx_workflow_instances_business_key_scope_key_definition_id
