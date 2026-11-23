@@ -420,8 +420,10 @@ class OutboxRelayPollPacingTest {
         }
 
         int record(int capacity) {
-            asked.add(capacity);
+            // The test thread treats asked.size() as the claim count and then reads times, so a claim
+            // must be fully recorded in times before it becomes visible in asked.
             times.add(System.nanoTime());
+            asked.add(capacity);
             return asked.size();
         }
 
