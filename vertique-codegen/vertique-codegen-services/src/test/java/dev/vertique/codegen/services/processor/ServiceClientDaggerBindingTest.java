@@ -231,6 +231,131 @@ class ServiceClientDaggerBindingTest {
                 source(forward, "two.Second_ContractContributor"), source(reverse, "two.Second_ContractContributor"));
     }
 
+    private static JavaFileObject reservedNameContract(String annotations) {
+        return SourceFiles.inline("com.example.Clashing", """
+                package com.example;
+                import dev.vertique.codegen.NoAutoWire;
+                import dev.vertique.services.ServiceContract;
+                import dev.vertique.services.ServiceOperation;
+                import io.vertx.core.Future;
+                %s @ServiceContract("clashing")
+                public interface Clashing {
+                    @ServiceOperation("greet") Future<String> greet(String _args_);
+                }
+                """.formatted(annotations));
+    }
+
+    private static final JavaFileObject CLASHING_FACTORY_MODULE = SourceFiles.inline("com.example.FactoryModule", """
+                package com.example;
+                import dagger.Module;
+                import dagger.Provides;
+                import dev.vertique.services.ServiceClientFactory;
+                @Module public abstract class FactoryModule {
+                    @Provides static ServiceClientFactory factory() { return new ServiceClientFactory(); }
+                }
+                """);
+
+    @Test
+    @DisplayName("a reserved-identifier contract gets a typed-client binding and no generated proxy")
+    void reservedIdentifierContract_isBoundWithoutProxy() {
+        JavaFileObject contract = reservedNameContract("");
+
+        var result = ProcessorTestHarness.run(
+                new ServiceContractProcessor(), concat(FRAMEWORK_SOURCES, NO_AUTO_WIRE_SOURCE, contract));
+
+        result.assertSuccess();
+        result.assertGeneratedSourceContains("com.example.GeneratedServicesModule", "provideClashingClient(");
+        result.assertGeneratedSourceContains(
+                "com.example.GeneratedServicesModule", "return serviceClientFactory.create(Clashing.class)");
+        result.assertGeneratedSourceDoesNotContain("com.example.GeneratedServicesModule", "_ServiceClientProxy");
+        assertTrue(
+                result.compilation()
+                        .generatedSourceFile("com.example.Clashing_ServiceClientProxy")
+                        .isEmpty(),
+                "no proxy may be generated for a reserved-identifier contract");
+    }
+
+    @Test
+    @DisplayName("a reserved-identifier contract with @NoAutoWire gets no typed-client binding")
+    void reservedIdentifierContract_noAutoWireIsNotBound() {
+        JavaFileObject contract = reservedNameContract("@NoAutoWire");
+
+        var result = ProcessorTestHarness.run(
+                new ServiceContractProcessor(), concat(FRAMEWORK_SOURCES, NO_AUTO_WIRE_SOURCE, contract));
+
+        result.assertSuccess();
+        assertTrue(
+                result.compilation()
+                                .generatedSourceFile("com.example.GeneratedServicesModule")
+                                .isEmpty()
+                        || !source(result, "com.example.GeneratedServicesModule")
+                                .contains("provideClashingClient("),
+                "a @NoAutoWire contract must not get a typed-client binding");
+    }
+
+    @Test
+    @DisplayName("the reserved-identifier binding resolves to a working reflective client through Dagger")
+    void reservedIdentifierContract_bindingResolvesThroughDagger() throws Exception {
+        JavaFileObject contract = reservedNameContract("");
+        JavaFileObject component = SourceFiles.inline("com.example.TestComponent", """
+                package com.example;
+                import dagger.Component;
+                import jakarta.inject.Singleton;
+                @Singleton
+                @Component(modules = {GeneratedServicesModule.class, FactoryModule.class})
+                interface TestComponent {
+                    Clashing clashing();
+                }
+                """);
+
+        Compilation compilation = compileWithDagger(NO_AUTO_WIRE_SOURCE, contract, CLASHING_FACTORY_MODULE, component);
+        assertEquals(Compilation.Status.SUCCESS, compilation.status(), diagnostics(compilation));
+        assertTrue(
+                compilation
+                        .generatedSourceFile("com.example.DaggerTestComponent")
+                        .isPresent(),
+                "Dagger must resolve the generated Clashing binding");
+    }
+
+    @Test
+    @DisplayName("a hand-written @Provides for a reserved-identifier contract draws a warning naming @NoAutoWire")
+    void reservedIdentifierContract_handWrittenProvidesWarns() {
+        JavaFileObject contract = reservedNameContract("");
+        JavaFileObject manual = SourceFiles.inline("com.example.ManualModule", """
+                package com.example;
+                import dagger.Module;
+                import dagger.Provides;
+                import dev.vertique.services.ServiceClientFactory;
+                @Module public abstract class ManualModule {
+                    @Provides static Clashing clashing(ServiceClientFactory factory) {
+                        return factory.create(Clashing.class);
+                    }
+                }
+                """);
+
+        ProcessorTestHarness.run(
+                        new ServiceContractProcessor(),
+                        concat(FRAMEWORK_SOURCES, NO_AUTO_WIRE_SOURCE, contract, manual))
+                .assertSuccess()
+                .assertWarningMessage("@NoAutoWire");
+    }
+
+    @Test
+    @DisplayName("a reserved-identifier contract without a hand-written @Provides draws no warning")
+    void reservedIdentifierContract_withoutManualProvidesDoesNotWarn() {
+        JavaFileObject contract = reservedNameContract("");
+
+        var result = ProcessorTestHarness.run(
+                new ServiceContractProcessor(), concat(FRAMEWORK_SOURCES, NO_AUTO_WIRE_SOURCE, contract));
+
+        result.assertSuccess();
+        assertTrue(
+                result.compilation().diagnostics().stream()
+                        .noneMatch(d -> d.getKind() == javax.tools.Diagnostic.Kind.WARNING
+                                || d.getKind() == javax.tools.Diagnostic.Kind.MANDATORY_WARNING),
+                diagnostics(result.compilation()));
+    }
+
     private static Compilation compileWithDagger(JavaFileObject... sources) {
         return Compiler.javac()
                 .withProcessors(new ServiceContractProcessor(), new dagger.internal.codegen.ComponentProcessor())

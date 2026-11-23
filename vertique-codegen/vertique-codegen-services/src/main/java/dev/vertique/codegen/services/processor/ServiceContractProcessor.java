@@ -42,7 +42,9 @@ import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.annotation.processing.SupportedOptions;
 import javax.annotation.processing.SupportedSourceVersion;
 import javax.lang.model.SourceVersion;
+import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.ElementKind;
+import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.TypeElement;
 
 /**
@@ -361,28 +363,74 @@ public final class ServiceContractProcessor extends AbstractProcessor {
             }
 
             // Validation runs first so a contract that is both invalid *and* identifier-colliding
-            // still gets its errors reported; only emission is skipped below.
+            // still gets its errors reported. A colliding contract gets no proxy (it cannot be
+            // emitted) but is still bound: ServiceClientFactory.create falls back to the reflective
+            // client when no companion exists.
+            boolean autoWired = !AnnotationMirrors.isPresent(contractType, ServiceAnnotations.NO_AUTO_WIRE);
             Optional<String> collision = clientProxyEmitter.reservedIdentifierCollision(model);
             if (collision.isPresent()) {
                 noteReservedIdentifier(contractType, collision.get());
+                if (autoWired) {
+                    warnOnHandWrittenProvider(roundEnv, contractType);
+                    moduleEmitter.addClient(model);
+                }
                 continue;
             }
 
             clientProxyEmitter.emit(model);
-            if (!AnnotationMirrors.isPresent(contractType, ServiceAnnotations.NO_AUTO_WIRE)) {
+            if (autoWired) {
                 moduleEmitter.addClient(model);
             }
         }
     }
 
     /**
+     * Warns when the same compilation declares an unqualified Dagger {@code @Provides} method that
+     * returns the given contract, because the generated typed-client binding would duplicate it.
+     *
+     * <p>Only {@code @Provides} methods compiled in the current round are visible; a provider in
+     * another module or compilation is not detected.
+     *
+     * @param roundEnv     the current round environment; must not be {@code null}
+     * @param contractType the contract that is about to be bound; must not be {@code null}
+     */
+    private void warnOnHandWrittenProvider(RoundEnvironment roundEnv, TypeElement contractType) {
+        TypeElement provides = ctx.elements().getTypeElement("dagger.Provides");
+        if (provides == null) {
+            return;
+        }
+        boolean duplicate = roundEnv.getElementsAnnotatedWith(provides).stream()
+                .filter(e -> e.getKind() == ElementKind.METHOD)
+                .map(ExecutableElement.class::cast)
+                .filter(m -> m.getAnnotationMirrors().stream().noneMatch(this::isQualifier))
+                .anyMatch(m -> ctx.types().isSameType(m.getReturnType(), contractType.asType()));
+        if (duplicate) {
+            ctx.diagnostics()
+                    .warning(
+                            contractType,
+                            "A @Provides method for %s exists in this compilation, but a typed-client binding"
+                                    + " is generated for it, so Dagger will report a duplicate binding."
+                                    + " Annotate the contract with @NoAutoWire to keep the hand-written @Provides.",
+                            contractType.getQualifiedName());
+        }
+    }
+
+    private boolean isQualifier(AnnotationMirror annotation) {
+        return annotation.getAnnotationType().asElement().getAnnotationMirrors().stream()
+                .map(m -> ((TypeElement) m.getAnnotationType().asElement())
+                        .getQualifiedName()
+                        .toString())
+                .anyMatch(n -> n.equals("jakarta.inject.Qualifier") || n.equals("javax.inject.Qualifier"));
+    }
+
+    /**
      * Emits the informational {@code NOTE} explaining that a contract uses an identifier the
-     * generated proxy reserves, so no companion is emitted for it.
+     * generated proxy reserves, so no companion proxy is emitted for it.
      *
-     * <p>Mirrors the generic-contract skip note emitted by {@link ClientContractExtractor}: the
-     * contract keeps working, it just dispatches through the reflective client proxy at runtime.
+     * <p>The contract is still bound in {@code GeneratedServicesModule}; the bound client is the
+     * reflective one, because {@code ServiceClientFactory.create} finds no generated companion.
      *
-     * @param contractType the skipped contract; must not be {@code null}
+     * @param contractType the contract without a generated proxy; must not be {@code null}
      * @param identifier   the colliding identifier reported by
      *                     {@link ClientProxyEmitter#reservedIdentifierCollision}; must not be
      *                     {@code null}
@@ -391,9 +439,9 @@ public final class ServiceContractProcessor extends AbstractProcessor {
         ctx.diagnostics()
                 .note(
                         contractType,
-                        "No service client proxy generated for %s: '%s' collides with an identifier"
-                                + " reserved by the generated proxy."
-                                + " Clients for this contract use the reflective proxy at runtime.",
+                        "No service client proxy generated for %s: identifier '%s' is reserved by the generated"
+                                + " proxy. The typed-client binding uses the reflective client."
+                                + " Annotate the contract with @NoAutoWire to keep a hand-written @Provides.",
                         contractType.getQualifiedName(),
                         identifier);
     }
