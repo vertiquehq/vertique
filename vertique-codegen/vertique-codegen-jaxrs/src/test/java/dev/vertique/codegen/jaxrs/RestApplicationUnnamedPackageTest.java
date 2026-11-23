@@ -15,9 +15,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * A compilation unit entirely in the unnamed package must be judged the same way with
- * {@code -Avertique.codegen.autoWire} on and off: the unnamed package is one package, so a
- * package-private resource and a package-private declaration are accessible to each other.
+ * With {@code -Avertique.codegen.autoWire=false}, a compilation unit entirely in the unnamed
+ * package resolves to the unnamed package: it is one package, so a package-private resource and a
+ * package-private declaration are accessible to each other. (With auto-wiring on, the unnamed
+ * package is a compile error asking for {@code -Avertique.codegen.package}; not covered here.)
  */
 class RestApplicationUnnamedPackageTest {
 
