@@ -134,10 +134,10 @@ public class AwsSecretsPropertySourceFactory implements ConfigPropertySourceFact
      */
     private static AwsSourceSettings parseSettings(String name, JsonObject sourceConfig) {
         // --- region (optional) ---
-        String region = stringField(name, sourceConfig, "region", "region");
+        String region = sourceConfig.getString("region");
 
         // --- endpointOverride (optional) ---
-        String endpointOverride = stringField(name, sourceConfig, "endpointOverride", "endpointOverride");
+        String endpointOverride = sourceConfig.getString("endpointOverride");
 
         // --- timeouts ---
         int connectTimeoutMs =
@@ -179,15 +179,15 @@ public class AwsSecretsPropertySourceFactory implements ConfigPropertySourceFact
             }
 
             // --- secretId (required, non-blank) ---
-            String secretId = stringField(name, entry, "secretId", "secrets[" + i + "].secretId");
+            String secretId = entry.getString("secretId");
             if (secretId == null || secretId.isBlank()) {
                 throw new ConfigPropertySourceException(
                         name, "secrets entry at index " + i + " has missing or blank 'secretId' field");
             }
 
             // --- prefix / key (exactly one required) ---
-            String prefix = stringField(name, entry, "prefix", "secrets[" + i + "].prefix");
-            String key = stringField(name, entry, "key", "secrets[" + i + "].key");
+            String prefix = entry.getString("prefix");
+            String key = entry.getString("key");
 
             boolean hasPrefix = prefix != null;
             boolean hasKey = key != null;
@@ -225,28 +225,6 @@ public class AwsSecretsPropertySourceFactory implements ConfigPropertySourceFact
             result.add(new SecretEntry(secretId, prefix, key));
         }
         return List.copyOf(result);
-    }
-
-    /**
-     * Reads an optional string field, rejecting a value of any other JSON type with a
-     * {@link ConfigPropertySourceException} that names the field and never echoes the value.
-     *
-     * @param sourceName the source instance name for the exception message
-     * @param object     the object holding the field
-     * @param key        the key to read
-     * @param field      the field path used in the error message
-     * @return the string value, or {@code null} when absent
-     * @throws ConfigPropertySourceException if the value is not a string
-     */
-    private static String stringField(String sourceName, JsonObject object, String key, String field) {
-        Object value = object.getValue(key);
-        if (value == null) {
-            return null;
-        }
-        if (value instanceof CharSequence text) {
-            return text.toString();
-        }
-        throw new ConfigPropertySourceException(sourceName, "field '" + field + "' has the wrong type");
     }
 
     /**

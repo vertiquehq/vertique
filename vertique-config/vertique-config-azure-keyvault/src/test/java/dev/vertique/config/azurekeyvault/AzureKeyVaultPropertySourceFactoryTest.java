@@ -942,40 +942,29 @@ class AzureKeyVaultPropertySourceFactoryTest {
     @DisplayName("wrong-typed fields")
     class WrongTypedFields {
 
-        private ConfigPropertySourceException createFailing(JsonObject config) {
-            return assertThrows(ConfigPropertySourceException.class, () -> factoryWithStub(Map.of())
-                    .create("src", config));
-        }
-
         @Test
-        @DisplayName("a wrong-typed scalar names the field and not the value")
-        void wrongTypedScalarsNameTheField() {
-            JsonObject base = minimalConfig("https://myvault.vault.azure.net");
-
-            ConfigPropertySourceException e = createFailing(base.copy().put("endpoint", 8642));
-            assertTrue(e.getMessage().contains("endpoint"), e.getMessage());
-            assertFalse(e.getMessage().contains("8642"), e.getMessage());
-
-            e = createFailing(base.copy().put("prefix", 8642));
-            assertTrue(e.getMessage().contains("prefix"), e.getMessage());
-            assertFalse(e.getMessage().contains("8642"), e.getMessage());
-
-            e = createFailing(base.copy().put("auth", new JsonObject().put("method", 8642)));
-            assertTrue(e.getMessage().contains("auth.method"), e.getMessage());
-            assertFalse(e.getMessage().contains("8642"), e.getMessage());
-
-            e = createFailing(base.copy().put("auth", new JsonObject().put("clientId", true)));
-            assertTrue(e.getMessage().contains("auth.clientId"), e.getMessage());
-        }
-
-        @Test
-        @DisplayName("a non-object auth block names the field")
+        @DisplayName("a string where the auth object is required names the field and not the value")
         void wrongTypedAuthBlock() {
-            ConfigPropertySourceException e = createFailing(
-                    minimalConfig("https://myvault.vault.azure.net").put("auth", "managed-identity"));
+            ConfigPropertySourceException e = assertThrows(ConfigPropertySourceException.class, () -> factoryWithStub(
+                            Map.of())
+                    .create(
+                            "src",
+                            minimalConfig("https://myvault.vault.azure.net").put("auth", "managed-identity")));
 
             assertTrue(e.getMessage().contains("auth"), e.getMessage());
             assertFalse(e.getMessage().contains("managed-identity"), e.getMessage());
+        }
+
+        @Test
+        @DisplayName("a number in a string field is still accepted as its string form")
+        void numberInStringFieldIsCoerced() {
+            ConfigPropertySource source = factoryWithStub(Map.of("2024x", "v"))
+                    .create(
+                            "src",
+                            configWithPrefix("https://myvault.vault.azure.net", "x")
+                                    .put("prefix", 2024));
+
+            assertNotNull(source);
         }
     }
 }

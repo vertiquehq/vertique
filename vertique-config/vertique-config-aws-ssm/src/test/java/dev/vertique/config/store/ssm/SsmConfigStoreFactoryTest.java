@@ -870,28 +870,31 @@ class SsmConfigStoreFactoryTest {
     class WrongTypedFields {
 
         @Test
-        @DisplayName("a wrong-typed scalar fails with an IllegalArgumentException naming the field, not the value")
-        void wrongTypedScalarNamesTheField(Vertx vertx) {
-            Object[][] cases = {
-                {"region", 7531},
-                {"endpointOverride", true},
-                {"recursive", "perhaps"},
-                {"withDecryption", "perhaps"},
-                {"prefix", 7531},
-                {"path", 7531},
-            };
-            for (Object[] c : cases) {
-                String field = (String) c[0];
-                JsonObject config = configWithPath("/myapp/prod/").put(field, c[1]);
+        @DisplayName("a string where a boolean is required fails naming the field, not the value")
+        void wrongTypedBooleanNamesTheField(Vertx vertx) {
+            for (String field : new String[] {"recursive", "withDecryption"}) {
+                JsonObject config = configWithPath("/myapp/prod/").put(field, "perhaps");
 
                 IllegalArgumentException e =
                         assertThrows(IllegalArgumentException.class, () -> factory.create(vertx, config));
 
                 assertTrue(e.getMessage().contains("'" + field + "'"), e.getMessage());
-                assertFalse(e.getMessage().contains("7531"), e.getMessage());
                 assertFalse(e.getMessage().contains("perhaps"), e.getMessage());
-                assertFalse(e.getMessage().contains("true"), e.getMessage());
             }
+        }
+
+        @Test
+        @DisplayName("a number in a string field is still accepted as its string form")
+        void numberInStringFieldIsCoerced(Vertx vertx) {
+            SsmStoreSettings[] captured = new SsmStoreSettings[1];
+            SsmConfigStoreFactory capturing = new SsmConfigStoreFactory(settings -> {
+                captured[0] = settings;
+                return gateway;
+            });
+
+            capturing.create(vertx, configWithPath("/myapp/prod/").put("region", 2024));
+
+            assertEquals("2024", captured[0].region());
         }
     }
 }

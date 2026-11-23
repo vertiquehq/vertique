@@ -1095,41 +1095,26 @@ class AwsSecretsPropertySourceFactoryTest {
         }
 
         @Test
-        @DisplayName("a wrong-typed region names the field and not the value")
-        void wrongTypedRegion() {
-            ConfigPropertySourceException e =
-                    createFailing(minimalKeyConfig("my/secret", "my.key").put("region", 7531));
-
-            assertTrue(e.getMessage().contains("region"), e.getMessage());
-            assertFalse(e.getMessage().contains("7531"), e.getMessage());
-        }
-
-        @Test
-        @DisplayName("a wrong-typed endpointOverride names the field and not the value")
-        void wrongTypedEndpointOverride() {
-            ConfigPropertySourceException e =
-                    createFailing(minimalKeyConfig("my/secret", "my.key").put("endpointOverride", true));
-
-            assertTrue(e.getMessage().contains("endpointOverride"), e.getMessage());
-            assertFalse(e.getMessage().contains("true"), e.getMessage());
-        }
-
-        @Test
-        @DisplayName("a wrong-typed secrets field and wrong-typed entry fields name the field")
-        void wrongTypedSecretsAndEntryFields() {
+        @DisplayName("a string where the secrets array is required names the field and not the value")
+        void wrongTypedSecrets() {
             ConfigPropertySourceException e = createFailing(new JsonObject().put("secrets", "not-an-array"));
-            assertTrue(e.getMessage().contains("secrets"), e.getMessage());
 
-            for (String field : new String[] {"secretId", "key"}) {
-                JsonObject entry = new JsonObject().put("secretId", "my/secret").put("key", "my.key");
-                entry.put(field, 4242);
-                e = createFailing(new JsonObject().put("secrets", new JsonArray().add(entry)));
-                assertTrue(e.getMessage().contains(field), e.getMessage());
-                assertFalse(e.getMessage().contains("4242"), e.getMessage());
-            }
-            JsonObject entry = new JsonObject().put("secretId", "my/secret").put("prefix", 4242);
-            e = createFailing(new JsonObject().put("secrets", new JsonArray().add(entry)));
-            assertTrue(e.getMessage().contains("prefix"), e.getMessage());
+            assertTrue(e.getMessage().contains("secrets"), e.getMessage());
+            assertFalse(e.getMessage().contains("not-an-array"), e.getMessage());
+        }
+
+        @Test
+        @DisplayName("a number in a string field is still accepted as its string form")
+        void numberInStringFieldIsCoerced() {
+            AwsConnectionSettings[] captured = new AwsConnectionSettings[1];
+            AwsSecretsPropertySourceFactory factory = new AwsSecretsPropertySourceFactory((name, settings) -> {
+                captured[0] = settings;
+                return secretId -> "value";
+            });
+
+            factory.create("src", minimalKeyConfig("my/secret", "my.key").put("region", 2024));
+
+            assertEquals("2024", captured[0].region());
         }
     }
 }

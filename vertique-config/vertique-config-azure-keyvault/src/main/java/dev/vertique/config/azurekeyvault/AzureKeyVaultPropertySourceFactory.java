@@ -160,14 +160,14 @@ public class AzureKeyVaultPropertySourceFactory implements ConfigPropertySourceF
      */
     private static AzureConnectionSettings parseSettings(String name, JsonObject sourceConfig) {
         // --- endpoint (required, non-blank, valid absolute URI) ---
-        String endpoint = stringField(name, sourceConfig, "endpoint", "endpoint");
+        String endpoint = sourceConfig.getString("endpoint");
         if (endpoint == null || endpoint.isBlank()) {
             throw new ConfigPropertySourceException(name, "required field 'endpoint' is missing or blank");
         }
         String canonicalEndpoint = validateAndCanonicaliseEndpoint(name, endpoint);
 
         // --- prefix (optional; a blank value counts as absent) ---
-        String prefix = nullIfBlank(stringField(name, sourceConfig, "prefix", "prefix"));
+        String prefix = nullIfBlank(sourceConfig.getString("prefix"));
 
         // --- auth block (optional; defaults to method="default") ---
         JsonObject auth = typed(name, "auth", () -> sourceConfig.getJsonObject("auth"));
@@ -177,11 +177,11 @@ public class AzureKeyVaultPropertySourceFactory implements ConfigPropertySourceF
             authMethod = AzureCredentials.METHOD_DEFAULT;
             clientId = null;
         } else {
-            String configuredMethod = stringField(name, auth, "method", "auth.method");
+            String configuredMethod = auth.getString("method");
             authMethod = configuredMethod == null || configuredMethod.isBlank()
                     ? AzureCredentials.METHOD_DEFAULT
                     : configuredMethod;
-            clientId = nullIfBlank(stringField(name, auth, "clientId", "auth.clientId"));
+            clientId = nullIfBlank(auth.getString("clientId"));
             if (!AzureCredentials.METHOD_DEFAULT.equals(authMethod)
                     && !AzureCredentials.METHOD_MANAGED_IDENTITY.equals(authMethod)) {
                 throw new ConfigPropertySourceException(
@@ -196,28 +196,6 @@ public class AzureKeyVaultPropertySourceFactory implements ConfigPropertySourceF
 
         return new AzureConnectionSettings(
                 endpoint, canonicalEndpoint, prefix, authMethod, clientId, connectTimeoutMs, readTimeoutMs);
-    }
-
-    /**
-     * Reads an optional string field, rejecting a value of any other JSON type with a
-     * {@link ConfigPropertySourceException} that names the field and never echoes the value.
-     *
-     * @param sourceName the source instance name for the exception message
-     * @param object     the object holding the field
-     * @param key        the key to read
-     * @param field      the field path used in the error message
-     * @return the string value, or {@code null} when absent
-     * @throws ConfigPropertySourceException if the value is not a string
-     */
-    private static String stringField(String sourceName, JsonObject object, String key, String field) {
-        Object value = object.getValue(key);
-        if (value == null) {
-            return null;
-        }
-        if (value instanceof CharSequence text) {
-            return text.toString();
-        }
-        throw new ConfigPropertySourceException(sourceName, "field '" + field + "' has the wrong type");
     }
 
     /**
