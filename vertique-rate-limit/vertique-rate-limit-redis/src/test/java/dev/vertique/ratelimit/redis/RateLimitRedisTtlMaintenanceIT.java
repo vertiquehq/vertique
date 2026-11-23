@@ -69,8 +69,12 @@ class RateLimitRedisTtlMaintenanceIT {
                 registry.client(RateLimitRedisTestFixture.CONNECTION), vertx, 10_000, 1_000);
         String storageKey = RateLimitRedisTestFixture.storageKey("warm-up-" + UUID.randomUUID());
         try {
-            RateLimitRedisTestFixture.await(
+            RateLimitBackendResult result = RateLimitRedisTestFixture.await(
                     backend.consume(RateLimitRedisTestFixture.request(storageKey, algorithm, 1)));
+            // consume reports a deadline or connection failure as a result, not a failed future.
+            if (!result.consumed() || result.failureCode().isPresent()) {
+                throw new IllegalStateException("warm-up consume did not commit: " + result);
+            }
         } catch (Exception e) {
             throw new IllegalStateException("warm-up consume against the Redis container failed", e);
         }
@@ -157,7 +161,9 @@ class RateLimitRedisTtlMaintenanceIT {
                 backend.consume(RateLimitRedisTestFixture.request(storageKey, algorithm, 1)));
 
         // Then: the decision is unaffected by the forced PEXPIRE failure.
-        assertTrue(failingPexpire.observedFailedCommand(), "the fake must have forced at least one PEXPIRE failure");
+        assertTrue(
+                failingPexpire.observedFailedCommand(),
+                "the fake must have forced at least one PEXPIRE failure; consume returned " + result);
         assertEquals(true, result.consumed());
         assertEquals(4L, result.remaining());
         assertTrue(result.failureCode().isEmpty(), "a TTL-write failure must never surface as a failure code");
