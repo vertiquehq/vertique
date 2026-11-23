@@ -794,7 +794,7 @@ final class McpToolModelValidator {
         if (element.getKind() == ElementKind.ENUM) {
             return Optional.empty();
         }
-        String fqn = ctx.types().erasure(declared).toString();
+        String fqn = qualifiedName(declared);
         if (SCALARS.contains(fqn)) {
             return Optional.empty();
         }
@@ -871,8 +871,15 @@ final class McpToolModelValidator {
     }
 
     private boolean erasureIs(TypeMirror type, String fqn) {
-        return type instanceof DeclaredType declared
-                && ctx.types().erasure(declared).toString().equals(fqn);
+        return type instanceof DeclaredType declared && qualifiedName(declared).equals(fqn);
+    }
+
+    /**
+     * The qualified name of the declared type's element. Unlike the string form of the erased type
+     * mirror, it never carries a type-use annotation such as a validation constraint.
+     */
+    private static String qualifiedName(DeclaredType declared) {
+        return ((TypeElement) declared.asElement()).getQualifiedName().toString();
     }
 
     // --- Attribute helpers ---
