@@ -118,8 +118,8 @@ The store entry goes in `config.stores[*]`:
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `path` | Yes | — | SSM path prefix, e.g. `/myapp/prod/`. Leading and trailing `/` are added if absent. |
-| `region` | No | SDK default chain | AWS region string (e.g. `"eu-west-1"`). When absent, resolved via `AWS_REGION`, `aws.region`, instance metadata, etc. |
-| `endpointOverride` | No | none | Override the SSM endpoint URL. Use for LocalStack (`http://localhost:4566`) or other test endpoints. |
+| `region` | No | SDK default chain | AWS region string (e.g. `"eu-west-1"`). When absent or blank, resolved via `AWS_REGION`, `aws.region`, instance metadata, etc. |
+| `endpointOverride` | No | none | Override the SSM endpoint URL. A blank string counts as absent. Use for LocalStack (`http://localhost:4566`) or other test endpoints. |
 | `recursive` | No | `true` | Whether to fetch parameters recursively under `path`. |
 | `withDecryption` | No | `true` | Whether to decrypt `SecureString` parameters. |
 | `prefix` | No | none | Dot-separated re-root prefix (e.g. `"app"` or `"app.db"`) that nests the entire result under additional path segments. A blank string counts as absent and applies no re-root; must not contain blank dot-segments (e.g. `"a..b"` is invalid). |

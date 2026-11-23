@@ -290,6 +290,23 @@ class AwsSecretsPropertySourceFactoryTest {
         }
 
         @Test
+        @DisplayName("blank region and blank endpointOverride count as absent")
+        void blankRegionAndEndpointOverrideAreAbsent() {
+            AwsConnectionSettings[] captured = new AwsConnectionSettings[1];
+            AwsSecretsPropertySourceFactory factory = new AwsSecretsPropertySourceFactory((name, settings) -> {
+                captured[0] = settings;
+                return secretId -> "value";
+            });
+
+            JsonObject config =
+                    minimalKeyConfig("my/secret", "my.key").put("region", "  ").put("endpointOverride", "");
+            factory.create("src", config);
+
+            assertNull(captured[0].region());
+            assertNull(captured[0].endpointOverride());
+        }
+
+        @Test
         @DisplayName("endpointOverride is passed through to connection settings")
         void endpointOverridePassedThrough() {
             AwsConnectionSettings[] captured = new AwsConnectionSettings[1];

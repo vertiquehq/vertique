@@ -367,6 +367,29 @@ class SsmConfigStoreFactoryTest {
         }
     }
 
+    // --- Connection settings ---
+
+    @Nested
+    @DisplayName("Connection settings")
+    class ConnectionSettings {
+
+        @Test
+        @DisplayName("blank region and blank endpointOverride count as absent")
+        void blankRegionAndEndpointOverrideAreAbsent(Vertx vertx) {
+            SsmStoreSettings[] captured = new SsmStoreSettings[1];
+            SsmConfigStoreFactory capturing = new SsmConfigStoreFactory(settings -> {
+                captured[0] = settings;
+                return gateway;
+            });
+
+            capturing.create(
+                    vertx, configWithPath("/myapp/prod/").put("region", "  ").put("endpointOverride", ""));
+
+            assertNull(captured[0].region());
+            assertNull(captured[0].endpointOverride());
+        }
+    }
+
     // --- StringList handling ---
 
     @Nested
