@@ -228,7 +228,8 @@ means `MicrometerModule` is not installed, so the adapter defaults to enabled. W
 Package-private `SecurityEventObserver` contributed into the `SecurityEventsModule` multibinding
 (`vertique-security-runtime`) by `MicrometerModule`. Emits the security meters listed below. Guards are two-layered: the
 class-level `enabled` boolean (cached at construction) and individual try/catch blocks — exceptions
-from the registry are caught, logged at WARN, and swallowed; a succeeded `Future` is always returned.
+from the registry are caught, logged at WARN, and swallowed, except a `VirtualMachineError`, `ThreadDeath` or
+`LinkageError`, which is never caught; a succeeded `Future` is always returned.
 
 `method` tags always use `AuthMethod.normalizedKind()` (a bounded `AuthMethodKind` enum value),
 never `AuthMethod.id()` (arbitrary custom input).
@@ -323,7 +324,7 @@ abstract class AopBindingsModule {
 | `extraTags()` | Key-value pairs added on top, validated at binding time |
 | Duration | A `System.nanoTime()` delta, taken before `proceed()` and recorded when the returned future settles. It is never negative because the clock is monotonic — nothing clamps it |
 | Asynchronous methods | The sample is recorded when the downstream future settles, not when the method returns |
-| Isolation | Fire-and-forget: any `Throwable` the registry raises, `Error` included, is caught and logged at WARN. The original result or exception reaches the caller untouched |
+| Isolation | Fire-and-forget: any `Throwable` the registry raises is caught and logged at WARN, except a `VirtualMachineError`, `ThreadDeath` or `LinkageError`, which is rethrown. The original result or exception reaches the caller untouched |
 | Metrics disabled | With `MetricsConfig.enabled()` false, or a disabled config present, the interceptor records nothing and still passes the call through |
 | Cardinality | `extraTags()` keys are not in `GUARDED_TAG_KEYS`, so they are bounded by the application, not by the guard. Keep their value space small |
 

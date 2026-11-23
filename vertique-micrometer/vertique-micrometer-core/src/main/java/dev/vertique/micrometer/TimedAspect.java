@@ -131,8 +131,9 @@ public final class TimedAspect implements AspectProvider<Timed> {
      * Records a single timing sample for a settled invocation. The {@code cause} distinguishes
      * success ({@code null}) from failure (the failure cause). Recording is skipped when metrics are
      * disabled, the duration is derived from a monotonic {@link System#nanoTime()} delta (never
-     * negative), and any {@link Throwable} thrown by the registry (including {@link Error} subclasses)
-     * is caught and logged so the call's own outcome is never affected.
+     * negative), and any {@link Throwable} thrown by the registry is caught and logged so the call's own
+     * outcome is never affected. A fatal error ({@link VirtualMachineError}, {@link ThreadDeath} or
+     * {@link LinkageError}) is rethrown instead.
      *
      * @param name the resolved timer name
      * @param extraTags the pre-parsed {@link Timed#extraTags()} key-value pairs
@@ -153,10 +154,20 @@ public final class TimedAspect implements AspectProvider<Timed> {
 
             Timer.builder(name).tags(tags).register(registry).record(duration);
         } catch (Throwable t) {
+            if (isFatal(t)) {
+                throw (Error) t;
+            }
             log.warn(
                     "TimedAspect failed to record timer '{}': {}",
                     name,
                     t.getClass().getName());
         }
+    }
+
+    @SuppressWarnings("removal")
+    private static boolean isFatal(Throwable failure) {
+        return failure instanceof VirtualMachineError
+                || failure instanceof ThreadDeath
+                || failure instanceof LinkageError;
     }
 }

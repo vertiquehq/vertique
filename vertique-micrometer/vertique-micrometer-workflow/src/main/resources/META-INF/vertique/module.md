@@ -52,7 +52,8 @@ and a warning in the log.
 
 Tag values are the event's `kind` and `outcome` strings, lower-cased and truncated to 64 characters.
 No instance id, definition key, payload or actor value is ever a tag. Registry failures are swallowed,
-so telemetry cannot change command execution.
+except a `VirtualMachineError`, `ThreadDeath` or `LinkageError`, which is never caught, so telemetry cannot change
+command execution.
 
 `SignalSourceMetricsObserver` counts every outcome a correlated signal source reports, once per event, in
 `vertique.workflow.source.outcomes`. The tags are exactly `transport`, `contract`, `signal`, `definition` and

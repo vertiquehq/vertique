@@ -71,9 +71,19 @@ final class OutboxPublishMetricsObserver implements OutboxPublishObserver {
                     event.dispositionRecorded() ? kebab(event.disposition().name()) : UNRECORDED;
             registry.counter(OUTCOMES, "destination.type", destinationType, "outcome", disposition)
                     .increment();
-        } catch (Throwable ignored) {
+        } catch (Throwable failure) {
+            if (isFatal(failure)) {
+                throw (Error) failure;
+            }
             // Telemetry must never alter relay behaviour.
         }
+    }
+
+    @SuppressWarnings("removal")
+    private static boolean isFatal(Throwable failure) {
+        return failure instanceof VirtualMachineError
+                || failure instanceof ThreadDeath
+                || failure instanceof LinkageError;
     }
 
     private static String kebab(String value) {

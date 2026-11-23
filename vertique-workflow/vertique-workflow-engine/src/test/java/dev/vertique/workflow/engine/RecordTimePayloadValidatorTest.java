@@ -8,20 +8,56 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import dev.vertique.core.exception.ConfigurationException;
+import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
+import io.vertx.core.json.jackson.VertxModule;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /** Verifies encoded byte and container depth bounds without exposing values or overflowing the stack. */
 class RecordTimePayloadValidatorTest {
+
+    @AfterEach
+    void resetJsonCodec() {
+        VertiqueJson.resetForTests();
+    }
+
+    @Test
+    @DisplayName("a payload the installed JSON profile can encode is accepted and the byte bound still applies")
+    void payloadIsEncodedWithTheProcessMapper() {
+        // Given a JSON profile whose mapper encodes java.time values, and a 1024-byte limit
+        VertiqueJson.install(
+                JsonProfileId.of("record-time-validator-test"),
+                new ObjectMapper().registerModule(new VertxModule()).registerModule(new JavaTimeModule()));
+        var validator = new RecordTimePayloadValidator(new WorkflowRecordingConfig(5000L, 1024));
+
+        // When a payload holding a LocalDate and one over the byte limit are validated
+        // Then the first is accepted and the second is refused on size
+        assertAll(
+                "process mapper encoding",
+                () -> assertDoesNotThrow(
+                        () -> validator.validate(Map.of("on", LocalDate.of(2026, 1, 2))),
+                        "a LocalDate the process mapper encodes is accepted"),
+                () -> assertRefused(
+                        validator,
+                        Map.of("on", LocalDate.of(2026, 1, 2), "pad", "x".repeat(2000)),
+                        "oversized",
+                        "maxPayloadBytes"));
+    }
 
     @Test
     @DisplayName("record-time payloads respect the encoded byte and container depth bounds")

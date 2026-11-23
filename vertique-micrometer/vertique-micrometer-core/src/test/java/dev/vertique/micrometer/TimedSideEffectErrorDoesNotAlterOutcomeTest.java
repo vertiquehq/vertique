@@ -33,17 +33,17 @@ class TimedSideEffectErrorDoesNotAlterOutcomeTest {
 
     /**
      * Builds a {@link MeterRegistry} whose {@link MeterFilter#accept} throws an
-     * {@link OutOfMemoryError} for every meter, simulating a pathological registry failure with a
+     * {@link AssertionError} for every meter, simulating a pathological registry failure with a
      * non-{@link Exception} {@link Throwable} during the timer-recording side-effect.
      *
-     * @return a registry that throws {@link OutOfMemoryError} on any meter registration attempt
+     * @return a registry that throws {@link AssertionError} on any meter registration attempt
      */
     private static MeterRegistry errorThrowingRegistry() {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
         registry.config().meterFilter(new MeterFilter() {
             @Override
             public MeterFilterReply accept(io.micrometer.core.instrument.Meter.Id id) {
-                throw new OutOfMemoryError("simulated registry OOM during meter registration");
+                throw new AssertionError("simulated non-fatal registry error during meter registration");
             }
         });
         return registry;
@@ -55,7 +55,7 @@ class TimedSideEffectErrorDoesNotAlterOutcomeTest {
     private final AspectProvider<Timed> provider = new TimedAspect(errorRegistry, Optional.empty());
 
     /**
-     * Given a registry that throws an {@link OutOfMemoryError} during timer recording, when a
+     * Given a registry that throws an {@link AssertionError} during timer recording, when a
      * {@code @Timed} method returns successfully, then the returned future must still succeed with the
      * original value — the recording {@code Error} must not escape.
      */
