@@ -54,8 +54,8 @@ public class FutureModelConverter implements ModelConverter {
      * Otherwise returns {@code type} unchanged.
      *
      * @param type the annotated type to inspect
-     * @return the unwrapped inner type when {@code type} is a {@link Future}, otherwise {@code
-     *     type}
+     * @return the unwrapped inner type when {@code type} is a {@link Future} ({@code Object} for a
+     *     raw {@code Future}), otherwise {@code type}
      */
     private AnnotatedType futureValue(AnnotatedType type) {
         JavaType _type = Json.mapper().constructType(type.getType());
@@ -68,7 +68,9 @@ public class FutureModelConverter implements ModelConverter {
             return type;
         }
 
-        var valueType = _type.findTypeParameters(_type.getRawClass())[0];
+        // A raw Future carries no type argument; document it like Future<Object>.
+        JavaType[] typeArguments = _type.findTypeParameters(_type.getRawClass());
+        JavaType valueType = typeArguments.length == 0 ? Json.mapper().constructType(Object.class) : typeArguments[0];
         return new AnnotatedType().type(valueType).resolveAsRef(true);
     }
 
