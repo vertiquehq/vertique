@@ -1286,8 +1286,7 @@ SPDX-License-Identifier: EUPL-1.2
                         <redirectTestOutputToFile>${test.output.toFile}</redirectTestOutputToFile>
                         <!-- Neutralize an ambient VERTX_CONFIG_LOCATIONS so ConfigBootstrap and
                              example/archetype working-directory proofs resolve the default
-                             project-root config/ directory instead of a developer machine path
-                             (vertique-dev#20). A blank value is treated as unset. -->
+                             project-root config/ directory instead of a developer machine path. A blank value is treated as unset. -->
                         <environmentVariables>
                             <VERTX_CONFIG_LOCATIONS></VERTX_CONFIG_LOCATIONS>
                         </environmentVariables>
@@ -1320,7 +1319,7 @@ SPDX-License-Identifier: EUPL-1.2
                         <!-- Keep the same deterministic premain setup for integration-test forks. -->
                         <argLine>@{argLine} -javaagent:${project.build.directory}/mockito-agent.jar</argLine>
                         <redirectTestOutputToFile>${test.output.toFile}</redirectTestOutputToFile>
-                        <!-- Same VERTX_CONFIG_LOCATIONS neutralization as surefire (vertique-dev#20). -->
+                        <!-- Same VERTX_CONFIG_LOCATIONS neutralization as surefire. -->
                         <environmentVariables>
                             <VERTX_CONFIG_LOCATIONS></VERTX_CONFIG_LOCATIONS>
                         </environmentVariables>

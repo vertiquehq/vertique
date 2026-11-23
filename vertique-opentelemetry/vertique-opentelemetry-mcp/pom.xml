@@ -21,7 +21,7 @@ SPDX-License-Identifier: EUPL-1.2
     <description>OpenTelemetry span enrichment adapter for the MCP server: early server-span capture at open(), bounded attribute enrichment, and an optional body-trace link, without creating or renaming a span</description>
 
     <dependencies>
-        <!-- OpenTelemetry API only — no SDK in compile scope (NFR-TEL-002) -->
+        <!-- OpenTelemetry API only — no SDK in compile scope -->
         <dependency>
             <groupId>io.opentelemetry</groupId>
             <artifactId>opentelemetry-api</artifactId>
@@ -91,7 +91,7 @@ SPDX-License-Identifier: EUPL-1.2
             <scope>test</scope>
         </dependency>
         <!-- TP-002/TP-003 IT fixtures: full Dagger composition of a real port-0 MCP server, mirroring
-             the exact modules an application installs (contract §4.10's own component example).
+             the exact modules an application installs.
              Compile scope (R51): McpServerSpanObserver's main source now imports
              dev.vertique.core.correlation.TraceReference directly, the framework's single
              trace-reference type (replacing the deleted MCP-local McpTraceContext), rather than

@@ -172,7 +172,7 @@ class DefaultJsonMapperProfileRegistryTest {
      * <p>The module document offers that helper as a sanctioned seed for an
      * application profile, while the probe used to round-trip a {@link JsonObject} carrying an
      * explicit null field. {@code apply} sets {@code NON_NULL} inclusion, so the field was dropped
-     * and structural equality failed — the registry rejected exactly the seed both documents
+     * and structural equality failed — the registry rejected exactly the seed the module document
      * promise. The probe now carries no null field, because omitting nulls is a
      * serialization-inclusion policy rather than structural corruption.
      */

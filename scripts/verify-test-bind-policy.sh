@@ -40,14 +40,14 @@
 #      `.listen(0, "0.0.0.0")`. Line-oriented and same-line only: an argument
 #      list split across lines, or a nested call before the literal (e.g.
 #      `.listen(port(), "0.0.0.0")`), is not matched — accepted false-negative
-#      budget; the general value-aware check is vertiquehq/vertique-dev#170.
+#      budget; the general value-aware check is deferred.
 #      The regexes anchor on the setter- and bind-call shapes, so a
 #      getter assertion such as `assertEquals("0.0.0.0", config.host())` never
 #      matches — the literal sits in assertEquals' argument position, not a
 #      setter or bind call.
 #      This closes the narrow accidental copy-paste case; the general
 #      value-aware check (a wildcard reaching a bind through a variable or
-#      constant) remains deferred to vertiquehq/vertique-dev#170.
+#      constant) remains deferred.
 #
 # Scope: every *.java file under a src/test directory, build output (target/)
 # excluded. Archetype template tests live at

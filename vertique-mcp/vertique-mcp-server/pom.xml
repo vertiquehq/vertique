@@ -20,14 +20,14 @@ SPDX-License-Identifier: EUPL-1.2
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-core</artifactId></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-rate-limit-core</artifactId></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-resilience</artifactId></dependency>
-        <!-- T014: mandatory InputObjectProcessor composition binding (contract §4.7). -->
+        <!-- Mandatory InputObjectProcessor composition binding. -->
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-input-processing</artifactId></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-json</artifactId></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-json-schema</artifactId></dependency>
         <dependency><groupId>io.vertx</groupId><artifactId>vertx-json-schema</artifactId></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-rest-core</artifactId></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-rest-security</artifactId></dependency>
-        <!-- MCP-001 P04 remediation: stage 4 of the fixed request-time input pipeline (contract §4.7)
+        <!-- Stage 4 of the fixed request-time input pipeline
              is hosted by McpBeanValidation in vertique-mcp-core (public there so generated code in an
              arbitrary application package can reach it); its Bean Validation API/provider therefore
              come transitively via that dependency. R38/W7: also declared directly here at compile
@@ -37,7 +37,7 @@ SPDX-License-Identifier: EUPL-1.2
         <dependency><groupId>jakarta.validation</groupId><artifactId>jakarta.validation-api</artifactId></dependency>
         <!-- R38/W7: vertique-mcp-core's McpBeanValidation static default needs a Jakarta Bean
              Validation provider on the runtime classpath of every MCP application; vertique-mcp-core
-             itself declares only the API at compile scope (ADR: provider dependency belongs to the
+             itself declares only the API at compile scope (the provider dependency belongs to the
              module that puts an application on the classpath, not the shared API-only module). -->
         <dependency><groupId>org.hibernate.validator</groupId><artifactId>hibernate-validator</artifactId><scope>runtime</scope></dependency>
         <dependency><groupId>org.glassfish.expressly</groupId><artifactId>expressly</artifactId><scope>runtime</scope></dependency>
@@ -67,7 +67,7 @@ SPDX-License-Identifier: EUPL-1.2
              tool handlers through real service dispatch. The edge is acyclic: vertique-services depends
              on neither vertique-mcp-core nor vertique-mcp-server. -->
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-services</artifactId><scope>test</scope></dependency>
-        <!-- T014 TP-001: runs the real Dagger ComponentProcessor over in-memory compile fixtures to
+        <!-- Runs the real Dagger ComponentProcessor over in-memory compile fixtures to
              prove a missing InputObjectProcessor binding fails Dagger compilation (test scope only). -->
         <dependency><groupId>com.google.dagger</groupId><artifactId>dagger-compiler</artifactId><version>${dagger.version}</version><scope>test</scope></dependency>
         <!-- The cross-transport input-processing fixture corpus, in-reactor only (not published),

@@ -860,7 +860,7 @@ public class PgJobRepositoryIT {
      * accident of the DDL.
      *
      * <p>This is the schema-side counterpart to the cron scheduler's producer-side invariant
-     * that every persisted cron execution carries a resolved, non-blank handler address
+     * that every persisted cron execution carries a resolved, non-blank handler address.
      * The scheduler unit tests use mock repositories, which happily accept a
      * {@code null} handler — so without this test nothing in the build would notice if the
      * constraint were dropped, and the composition defect behind issue #41 could return

@@ -88,7 +88,7 @@ SPDX-License-Identifier: EUPL-1.2
         <!--
           Test scope only: SchemaFixtureMatrixTest compiles a generated schema through the real
           vertx-json-schema validator to pin its pattern-matching semantics (find vs. match) against
-          the anchored strict-decimal pattern (S6, PRD §6.2/§2 finding 12). Production code never
+          the anchored strict-decimal pattern. Production code never
           depends on a validator — a generated schema document is transport-neutral.
         -->
         <dependency>
