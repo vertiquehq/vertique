@@ -7,12 +7,16 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import dev.vertique.codegen.aop.AopProcessor;
 import dev.vertique.codegen.application.VertiqueAppProcessor;
+import dev.vertique.codegen.cache.CacheAnnotationProcessor;
 import dev.vertique.codegen.cron.processor.CronJobProcessor;
 import dev.vertique.codegen.dagger.processor.AutoWireProcessor;
 import dev.vertique.codegen.delayed.processor.DelayedJobContractProcessor;
 import dev.vertique.codegen.events.EventsProcessor;
 import dev.vertique.codegen.jaxrs.JaxRsPipelineProcessor;
 import dev.vertique.codegen.kafka.processor.KafkaConsumerProcessor;
+import dev.vertique.codegen.mcp.McpToolProcessor;
+import dev.vertique.codegen.ratelimit.RateLimitAnnotationProcessor;
+import dev.vertique.codegen.resilience.ResilienceAnnotationProcessor;
 import dev.vertique.codegen.rest.client.processor.RestClientProcessor;
 import dev.vertique.codegen.sanitization.processor.SanitizationProcessor;
 import dev.vertique.codegen.services.processor.ServiceContractProcessor;
@@ -75,7 +79,11 @@ class AllProcessorsCoexistTest {
                 new RestClientProcessor(),
                 new SanitizationProcessor(),
                 new ServiceContractProcessor(),
-                new WorkflowContractProcessor());
+                new WorkflowContractProcessor(),
+                new McpToolProcessor(),
+                new CacheAnnotationProcessor(),
+                new RateLimitAnnotationProcessor(),
+                new ResilienceAnnotationProcessor());
     }
 
     private static ProcessorTestHarness.Result compile(List<Processor> processors) {

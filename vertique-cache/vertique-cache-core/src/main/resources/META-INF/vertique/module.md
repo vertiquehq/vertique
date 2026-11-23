@@ -229,7 +229,7 @@ selector functions; it is never a storage key and no provider SPI accepts it.
 Core does not validate values before provider work: Caffeine and
 Redis serialize values in their provider implementations and then enforce `maxValueBytes` on the
 serialized bytes; those provider failures are handled by the cache core's fail-open path. An
-explicit declared TTL — builder or annotation — above `maxTtlSeconds` is rejected with
+explicit TTL — builder or annotation — above `maxTtlSeconds` is rejected with
 `IllegalArgumentException`; it is not silently clamped. `ttlSeconds = 0` retains provider size
 protection while disabling time expiration.
 

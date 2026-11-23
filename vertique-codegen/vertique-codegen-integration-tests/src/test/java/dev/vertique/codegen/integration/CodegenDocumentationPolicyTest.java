@@ -29,15 +29,15 @@ class CodegenDocumentationPolicyTest {
             Pattern.compile("<artifactId>vertique-codegen-(?!all(?:</artifactId>))[^<]+</artifactId>");
     private static final Pattern PROCESSOR_LEAF_REFERENCE =
             Pattern.compile("\\bvertique-codegen-(?:application|dagger|jaxrs|rest-client|services|kafka|"
-                    + "delayed-job|workflow|cron|sanitization|aop|events)\\b");
-    private static final Pattern DIRECT_ADOPTION_INSTRUCTION =
-            Pattern.compile("(?is)(?:\\b(?:add|configure|declare|install|select)\\s+(?:the\\s+)?"
+                    + "delayed-job|workflow|cron|sanitization|aop|events|mcp|cache|rate-limit|resilience)\\b");
+    private static final Pattern DIRECT_ADOPTION_INSTRUCTION = Pattern.compile(
+            "(?is)(?:\\b(?:add|configure|declare|install|select)\\s+(?:the\\s+)?"
                     + "(?:dev\\.vertique:)?`?\\bvertique-codegen-(?:application|dagger|jaxrs|"
-                    + "rest-client|services|kafka|delayed-job|workflow|cron|sanitization|aop|events)\\b"
+                    + "rest-client|services|kafka|delayed-job|workflow|cron|sanitization|aop|events|mcp|cache|rate-limit|resilience)\\b"
                     + "|\\bpair\\s+(?:it\\s+)?with\\s+`?\\bvertique-codegen-(?:application|dagger|"
-                    + "jaxrs|rest-client|services|kafka|delayed-job|workflow|cron|sanitization|aop|events)\\b"
+                    + "jaxrs|rest-client|services|kafka|delayed-job|workflow|cron|sanitization|aop|events|mcp|cache|rate-limit|resilience)\\b"
                     + "|\\bneed\\s+only\\s+`?\\bvertique-codegen-(?:application|dagger|jaxrs|"
-                    + "rest-client|services|kafka|delayed-job|workflow|cron|sanitization|aop|events)\\b)");
+                    + "rest-client|services|kafka|delayed-job|workflow|cron|sanitization|aop|events|mcp|cache|rate-limit|resilience)\\b)");
     private static final List<String> PRODUCTION_PROCESSOR_ARTIFACTS = List.of(
             "vertique-codegen-application",
             "vertique-codegen-dagger",
@@ -50,7 +50,11 @@ class CodegenDocumentationPolicyTest {
             "vertique-codegen-cron",
             "vertique-codegen-sanitization",
             "vertique-codegen-aop",
-            "vertique-codegen-events");
+            "vertique-codegen-events",
+            "vertique-codegen-mcp",
+            "vertique-codegen-cache",
+            "vertique-codegen-rate-limit",
+            "vertique-codegen-resilience");
 
     @Test
     void publishedRecipesUseParentOrFacade() throws IOException {

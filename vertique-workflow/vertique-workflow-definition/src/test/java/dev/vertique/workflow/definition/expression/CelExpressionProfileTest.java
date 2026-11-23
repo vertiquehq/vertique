@@ -9,6 +9,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.workflow.definition.expression.cel.CelExpressionProfile;
 import dev.vertique.workflow.definition.parser.WorkflowDefinitionMapperFactory;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -225,6 +226,33 @@ class CelExpressionProfileTest {
         void hasFieldAbsent() {
             CompiledExpression expr = profile.compile("has(state.missing)", boolEnv);
             Map<String, Object> env = Map.of("state", Map.of("status", "active"));
+            assertThat(profile.evaluateBoolean(expr, env)).isFalse();
+        }
+    }
+
+    @Nested
+    @DisplayName("Absent and null state fields in ordered comparisons")
+    class AbsentAndNullFields {
+
+        @Test
+        @DisplayName("state.missing > 5 — field absent from state")
+        void absentFieldInOrderedComparison() {
+            CompiledExpression expr = profile.compile("state.missing > 5", boolEnv);
+            Map<String, Object> env = Map.of("state", Map.of("status", "active"));
+            assertThatThrownBy(() -> profile.evaluateBoolean(expr, env))
+                    .isInstanceOf(ExpressionEvaluationException.class);
+        }
+
+        @Test
+        @DisplayName("state.priority > 5 — field present with a null value is not an error: no boolean result")
+        void nullFieldInOrderedComparison() {
+            // Observed behavior, pinned: a null-valued field does not raise. The raw result is not a
+            // Boolean, and evaluateBoolean maps any non-Boolean result to false.
+            CompiledExpression expr = profile.compile("state.priority > 5", boolEnv);
+            Map<String, Object> state = new HashMap<>();
+            state.put("priority", null);
+            Map<String, Object> env = Map.of("state", state);
+            assertThat(profile.evaluate(expr, env)).isNotInstanceOf(Boolean.class);
             assertThat(profile.evaluateBoolean(expr, env)).isFalse();
         }
     }

@@ -27,8 +27,8 @@ transport-specific hook.
 Install `RateLimitAopModule` alongside `RateLimitCoreModule` (and
 `vertique-rate-limit-redis` for CLUSTERED policies) when methods should declare
 per-operation admission through the annotation rather than manual `RateLimiters`
-calls. Add `vertique-codegen-rate-limit` to the compiler's annotation-processor path
-so declarations are validated at compile time.
+calls. The rate-limit processor, part of the `vertique-codegen-all` facade and of
+`vertique-app-parent`, validates declarations at compile time.
 
 ## Core Concepts
 

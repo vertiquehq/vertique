@@ -49,8 +49,8 @@ proxy generation or cache storage behavior.
 
 Add `vertique-cache-aop` and install `CacheAopModule` alongside a cache provider module when
 methods should declare result caching or invalidation through `@Cacheable` / `@CacheEvict`
-rather than manual `Cache<K,V>` calls. Add `vertique-codegen-cache` to the compiler's
-annotation-processor path so declarations are validated at compile time. Applications that only
+rather than manual `Cache<K,V>` calls. The cache processor, part of the `vertique-codegen-all`
+facade and of `vertique-app-parent`, validates declarations at compile time. Applications that only
 use the programmatic API depend on `vertique-cache-core` alone.
 
 Both annotations are `@Target(ElementType.METHOD)` only and are intended for methods of
