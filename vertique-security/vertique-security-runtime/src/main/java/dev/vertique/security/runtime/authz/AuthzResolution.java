@@ -35,8 +35,8 @@ import java.util.Set;
  * <ol>
  *   <li>no {@link AuthorityKind#ROLE} claims → deny {@link AuthzReasonCodes#ROLE_MISSING}</li>
  *   <li>roles map to no policy name → deny {@link AuthzReasonCodes#ROLE_POLICY_MISSING}</li>
- *   <li>a mapped policy name is absent from the catalogue → deny {@link AuthzReasonCodes#POLICY_NOT_FOUND}</li>
- *   <li>some {@link Effect#ALLOW} statement matches → permit {@link AuthzReasonCodes#PERMITTED}</li>
+ *   <li>any mapped policy name is absent from the catalogue (checked before any policy is matched) → deny {@link AuthzReasonCodes#POLICY_NOT_FOUND}</li>
+ *   <li>some {@link Effect#ALLOW} statement of a resolved policy matches → permit {@link AuthzReasonCodes#PERMITTED}</li>
  *   <li>otherwise → deny {@link AuthzReasonCodes#ACTION_NOT_ALLOWED}</li>
  * </ol>
  *
@@ -100,13 +100,17 @@ public final class AuthzResolution {
                 return AuthorizationDecision.deny(AuthzReasonCodes.ROLE_POLICY_MISSING);
             }
 
-            // (3) every mapped policy name must exist; (4) permit on first ALLOW match
+            // (3) every mapped policy name must exist, checked before any policy is matched so the
+            // outcome never depends on the iteration order of the resolver's set
             for (String policyName : policyNames) {
-                PolicyDefinition policy = policiesByName.get(policyName);
-                if (policy == null) {
+                if (!policiesByName.containsKey(policyName)) {
                     return AuthorizationDecision.deny(AuthzReasonCodes.POLICY_NOT_FOUND);
                 }
-                if (allows(policy, action)) {
+            }
+
+            // (4) permit when some resolved policy has a matching ALLOW statement
+            for (String policyName : policyNames) {
+                if (allows(policiesByName.get(policyName), action)) {
                     return AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED);
                 }
             }

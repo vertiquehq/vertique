@@ -36,7 +36,7 @@ import java.util.Objects;
  *   <li>action not in the {@link ActionRegistry} → deny {@link AuthzReasonCodes#ACTION_NOT_REGISTERED}</li>
  *   <li>no {@link AuthorityKind#ROLE} claims → deny {@link AuthzReasonCodes#ROLE_MISSING}</li>
  *   <li>roles map to no policy name → deny {@link AuthzReasonCodes#ROLE_POLICY_MISSING}</li>
- *   <li>a mapped policy name is absent from the catalogue → deny {@link AuthzReasonCodes#POLICY_NOT_FOUND}</li>
+ *   <li>any mapped policy name is absent from the catalogue (checked before any policy is matched) → deny {@link AuthzReasonCodes#POLICY_NOT_FOUND}</li>
  *   <li>some {@link Effect#ALLOW} statement matches → permit {@link AuthzReasonCodes#PERMITTED}</li>
  *   <li>otherwise → deny {@link AuthzReasonCodes#ACTION_NOT_ALLOWED}</li>
  * </ol>

@@ -68,6 +68,20 @@ class DefaultAuthorizationIntrospectorTest {
     // --- allowed-subset behaviour ---
 
     @Test
+    @DisplayName("lists no action when a resolved policy name is missing, whichever order the resolver yields it")
+    void allowedActions_missingPolicyName_independentOfResolverOrder() {
+        for (List<String> order :
+                List.of(List.of("ghost-policy", "editor-policy"), List.of("editor-policy", "ghost-policy"))) {
+            DefaultAuthorizationIntrospector introspector = new DefaultAuthorizationIntrospector(
+                    registryWith(CMS_CONTENT_READ),
+                    source(allowPolicy("editor-policy", CMS_CONTENT_READ)),
+                    roles -> new java.util.LinkedHashSet<>(order));
+
+            assertEquals(Set.of(), introspector.allowedActions(ctxWithRoles("editor")), order.toString());
+        }
+    }
+
+    @Test
     @DisplayName("returns only the registered actions the actor's policies allow")
     void allowedActions_returnsSubsetAllowedByRoles() {
         DefaultAuthorizationIntrospector introspector = new DefaultAuthorizationIntrospector(

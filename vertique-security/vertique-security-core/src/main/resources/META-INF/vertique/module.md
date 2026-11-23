@@ -59,7 +59,7 @@ The authorization model is a three-layer role→policy→action resolution:
 | 2. Action present in `ActionRegistry` | otherwise deny `ACTION_NOT_REGISTERED` |
 | 3. Context holds at least one `ROLE` claim | otherwise deny `ROLE_MISSING` |
 | 4. Roles resolve to at least one policy name | otherwise deny `ROLE_POLICY_MISSING` |
-| 5. Each resolved policy name in turn: present in the catalogue | the **first** missing name terminates with deny `POLICY_NOT_FOUND` — later names are not consulted |
+| 5. Every resolved policy name is present in the catalogue | any missing name denies `POLICY_NOT_FOUND`, before any policy is checked for a match |
 | 6. Some `ALLOW` statement of a resolved policy matches the action | permit `PERMITTED` |
 | 7. No statement matched | deny `ACTION_NOT_ALLOWED` |
 
