@@ -225,11 +225,11 @@ means `MicrometerModule` is not installed, so the adapter defaults to enabled. W
 
 ### SecurityMetricsObserver
 
-Package-private `SecurityEventObserver` contributed into the `SecurityEventsModule` multibinding
+Package-private `SecurityEventObserver` implementation contributed into the `SecurityEventsModule` multibinding
 (`vertique-security-runtime`) by `MicrometerModule`. Emits the security meters listed below. Guards are two-layered: the
-class-level `enabled` boolean (cached at construction) and individual try/catch blocks — exceptions
-from the registry are caught, logged at WARN, and swallowed, except a `VirtualMachineError`, `ThreadDeath` or
-`LinkageError`, which is never caught; a succeeded `Future` is always returned.
+class-level `enabled` boolean (cached at construction) and individual try/catch blocks — any throwable
+from the registry is caught, logged at WARN, and swallowed, except a `VirtualMachineError`, `ThreadDeath` or
+`LinkageError`, which the observer never catches; otherwise a succeeded `Future` is always returned.
 
 `method` tags always use `AuthMethod.normalizedKind()` (a bounded `AuthMethodKind` enum value),
 never `AuthMethod.id()` (arbitrary custom input).

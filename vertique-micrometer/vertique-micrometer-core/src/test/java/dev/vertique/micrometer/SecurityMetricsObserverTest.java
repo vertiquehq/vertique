@@ -381,6 +381,41 @@ class SecurityMetricsObserverTest {
             });
         }
 
+        @Test
+        @DisplayName("a non-fatal Error from the registry is swallowed like an exception")
+        void nonFatalErrorIsSwallowed() {
+            MeterRegistry registry = new ErrorThrowingMeterRegistry(() -> new AssertionError("intentional"), true);
+            SecurityMetricsObserver observer = new SecurityMetricsObserver(registry, config);
+
+            assertTrue(observer.onCredentialAccepted(acceptedEvent(DefaultAuthMethod.jwt()))
+                    .succeeded());
+            assertTrue(observer.onCredentialRejected(rejectedEvent(DefaultAuthMethod.jwt()))
+                    .succeeded());
+            assertTrue(observer.onAuthorizationDecided(authzDecisionEvent(AuthorizationDecision.deny("X")))
+                    .succeeded());
+            assertTrue(observer.onChannelLifecycle(openedEvent("c1")).succeeded());
+        }
+
+        @Test
+        @DisplayName("a LinkageError from the registry is never caught")
+        void linkageErrorPropagates() {
+            MeterRegistry counters =
+                    new ErrorThrowingMeterRegistry(() -> new NoClassDefFoundError("intentional"), false);
+            SecurityMetricsObserver observer = new SecurityMetricsObserver(counters, config);
+            assertThrows(
+                    NoClassDefFoundError.class,
+                    () -> observer.onCredentialAccepted(acceptedEvent(DefaultAuthMethod.jwt())));
+            assertThrows(
+                    NoClassDefFoundError.class,
+                    () -> observer.onCredentialRejected(rejectedEvent(DefaultAuthMethod.jwt())));
+            assertThrows(
+                    NoClassDefFoundError.class,
+                    () -> observer.onAuthorizationDecided(authzDecisionEvent(AuthorizationDecision.deny("X"))));
+
+            MeterRegistry gauges = new ErrorThrowingMeterRegistry(() -> new NoClassDefFoundError("intentional"), true);
+            assertThrows(NoClassDefFoundError.class, () -> new SecurityMetricsObserver(gauges, config));
+        }
+
         /**
          * Verifies W3: when the registry throws an exception whose message contains a sentinel
          * value, the observer logs only the exception CLASS name — not the full throwable (message
@@ -774,6 +809,35 @@ class SecurityMetricsObserverTest {
         protected <T> Gauge newGauge(
                 io.micrometer.core.instrument.Meter.Id id, @Nullable T obj, java.util.function.ToDoubleFunction<T> f) {
             throw new RuntimeException(sentinel);
+        }
+    }
+
+    /**
+     * A {@link MeterRegistry} stub that throws the supplied {@link Error} on every counter creation,
+     * and on gauge registration too when {@code onGauge} is set.
+     */
+    static final class ErrorThrowingMeterRegistry extends SimpleMeterRegistry {
+
+        private final java.util.function.Supplier<? extends Error> error;
+        private final boolean onGauge;
+
+        ErrorThrowingMeterRegistry(java.util.function.Supplier<? extends Error> error, boolean onGauge) {
+            this.error = error;
+            this.onGauge = onGauge;
+        }
+
+        @Override
+        protected io.micrometer.core.instrument.Counter newCounter(io.micrometer.core.instrument.Meter.Id id) {
+            throw error.get();
+        }
+
+        @Override
+        protected <T> Gauge newGauge(
+                io.micrometer.core.instrument.Meter.Id id, @Nullable T obj, java.util.function.ToDoubleFunction<T> f) {
+            if (onGauge) {
+                throw error.get();
+            }
+            return super.newGauge(id, obj, f);
         }
     }
 }
