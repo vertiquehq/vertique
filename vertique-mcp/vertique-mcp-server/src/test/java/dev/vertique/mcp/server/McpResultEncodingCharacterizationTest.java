@@ -21,6 +21,7 @@ import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.mcp.server.support.McpJsonTokenCorpus;
 import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpCancellationSignal;
+import dev.vertique.mcp.tool.McpContent;
 import dev.vertique.mcp.tool.McpPreparedToolCall;
 import dev.vertique.mcp.tool.McpToolAccess;
 import dev.vertique.mcp.tool.McpToolAnnotations;
@@ -110,6 +111,39 @@ class McpResultEncodingCharacterizationTest {
                         .getJsonObject("error")
                         .getInteger("code"))
                 .isEqualTo(-32603);
+    }
+
+    @Test
+    @DisplayName("synthesizes exactly one text item when only non-text blocks accompany structured content")
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void shouldSynthesizeOneTextItemBesideImageOnlyContent() throws Exception {
+        McpContent.Image image = new McpContent.Image("aGVsbG8=", "image/png");
+        var fixture = new McpResultEncodingCharacterizationTestFixture(
+                4_096, McpToolResult.content(List.of(image), Map.of("k", "v")), vertx);
+
+        JsonObject result = new JsonObject(Buffer.buffer(fixture.encode().payload())).getJsonObject("result");
+
+        var content = result.getJsonArray("content");
+        assertThat(content).hasSize(2);
+        assertThat(content.getJsonObject(0).getString("type")).isEqualTo("image");
+        assertThat(content.getJsonObject(1).getString("type")).isEqualTo("text");
+        assertThat(content.getJsonObject(1).getString("text")).isEqualTo("{\"k\":\"v\"}");
+    }
+
+    @Test
+    @DisplayName("does not synthesize a text item when the handler supplied text beside structured content")
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void shouldNotSynthesizeTextWhenHandlerSuppliedText() throws Exception {
+        McpContent.Image image = new McpContent.Image("aGVsbG8=", "image/png");
+        var fixture = new McpResultEncodingCharacterizationTestFixture(
+                4_096, McpToolResult.content(List.of(new McpContent.Text("clear"), image), Map.of("k", "v")), vertx);
+
+        JsonObject result = new JsonObject(Buffer.buffer(fixture.encode().payload())).getJsonObject("result");
+
+        var content = result.getJsonArray("content");
+        assertThat(content).hasSize(2);
+        assertThat(content.getJsonObject(0).getString("text")).isEqualTo("clear");
+        assertThat(content.getJsonObject(1).getString("type")).isEqualTo("image");
     }
 
     @ParameterizedTest(name = "{0}")
