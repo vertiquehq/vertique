@@ -2044,22 +2044,6 @@ public final class WorkflowDefinitionDocumentValidator {
     }
 
     /**
-     * Checks that the initial-state mapper's declared {@code payloadType} matches the document's
-     * {@code startPayloadType}, and that its {@code stateType} matches the document's
-     * {@code stateType} (exact-class match).
-     *
-     * <p>Both checks are skipped when the mapper id is blank/unregistered or when the respective
-     * resolved class is null.
-     *
-     * @param definitionId the document's definition id
-     * @param definitionVersion the document's definition version
-     * @param mapperId the initialStateMapper id declared in the document
-     * @param resolvedStateType the document's resolved state class; null when unresolvable
-     * @param resolvedStartPayloadType the document's resolved start payload class; null when
-     *     unresolvable
-     * @param violations the list to accumulate violations into
-     */
-    /**
      * Checks the optional output declaration: both keys or neither, a resolvable output type, a registered mapper whose
      * state type is exactly the document's state type and whose output type is exactly the declared output type.
      */
@@ -2072,7 +2056,7 @@ public final class WorkflowDefinitionDocumentValidator {
         boolean hasType = doc.outputType() != null && !doc.outputType().isBlank();
         boolean hasMapper = doc.outputMapper() != null && !doc.outputMapper().isBlank();
         if (doc.outputType() == null && doc.outputMapper() == null) return;
-        if (hasType != hasMapper) {
+        if (!hasType || !hasMapper) {
             violations.add(new Violation(
                     blankFallback(definitionId),
                     definitionVersion,
@@ -2129,6 +2113,22 @@ public final class WorkflowDefinitionDocumentValidator {
         }
     }
 
+    /**
+     * Checks that the initial-state mapper's declared {@code payloadType} matches the document's
+     * {@code startPayloadType}, and that its {@code stateType} matches the document's
+     * {@code stateType} (exact-class match).
+     *
+     * <p>Both checks are skipped when the mapper id is blank/unregistered or when the respective
+     * resolved class is null.
+     *
+     * @param definitionId the document's definition id
+     * @param definitionVersion the document's definition version
+     * @param mapperId the initialStateMapper id declared in the document
+     * @param resolvedStateType the document's resolved state class; null when unresolvable
+     * @param resolvedStartPayloadType the document's resolved start payload class; null when
+     *     unresolvable
+     * @param violations the list to accumulate violations into
+     */
     private void checkInitialStateMapperTypeCompat(
             String definitionId,
             long definitionVersion,

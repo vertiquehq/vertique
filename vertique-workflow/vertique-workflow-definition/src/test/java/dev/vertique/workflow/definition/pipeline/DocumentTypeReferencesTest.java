@@ -27,4 +27,25 @@ class DocumentTypeReferencesTest {
         assertThat(DocumentTypeReferences.of(doc))
                 .contains(new DocumentTypeReferences.Reference(false, "steps[].reply.payloadType", "catalog.Reply"));
     }
+
+    @Test
+    void outputTypeIsCollectedAfterTheStartPayloadType() {
+        var doc = new WorkflowDefinitionDocument(
+                "wf",
+                1,
+                "state",
+                "contract",
+                "start",
+                "init",
+                null,
+                "done",
+                List.of(),
+                null,
+                "catalog.Receipt",
+                "mapper");
+        assertThat(DocumentTypeReferences.of(doc))
+                .containsSequence(
+                        new DocumentTypeReferences.Reference(false, "startPayloadType", "start"),
+                        new DocumentTypeReferences.Reference(false, "outputType", "catalog.Receipt"));
+    }
 }

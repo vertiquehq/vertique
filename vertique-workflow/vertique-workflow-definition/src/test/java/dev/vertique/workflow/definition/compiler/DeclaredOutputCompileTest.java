@@ -177,6 +177,38 @@ class DeclaredOutputCompileTest {
     }
 
     @Test
+    @DisplayName("the compiled definition registers the named mapper, which maps the state to the declared output")
+    void compiledDefinitionRegistersTheNamedMapper() {
+        // Given a document naming the registered mapper
+        WorkflowDefinitionDocument doc = parse(yaml("outputType: " + RECEIPT_FQN + "\noutputMapper: " + MAPPER + "\n"));
+        WorkflowBuilder<State> builder = new WorkflowBuilder<>();
+
+        // When it is compiled
+        compiler.emit(builder, State.class, OrderContract.class, doc);
+        WorkflowPlan plan = builder.build("order-wf", 1L, STATE_FQN);
+
+        // Then the plan's mapper callback applies the registered function
+        assertThat(builder.callbackRegistry()
+                        .<State>outputMapper(plan.outputMapperCallbackId())
+                        .apply(new State("o-1")))
+                .isEqualTo(new Receipt("o-1"));
+    }
+
+    @Test
+    @DisplayName("blank output keys are refused as an incomplete declaration, not left to the compiler")
+    void blankKeysAreRefused() {
+        assertThat(validate(documentWith("", "")).toList())
+                .extracting(v -> v.code())
+                .containsExactly("OUTPUT_DECLARATION_INCOMPLETE");
+        assertThat(validate(documentWith("  ", null)).toList())
+                .extracting(v -> v.code())
+                .containsExactly("OUTPUT_DECLARATION_INCOMPLETE");
+        assertThat(validate(documentWith(RECEIPT_FQN, " ")).toList())
+                .extracting(v -> v.code())
+                .containsExactly("OUTPUT_DECLARATION_INCOMPLETE");
+    }
+
+    @Test
     @DisplayName("a document without the output keys compiles exactly as before and its plan hash is unchanged")
     void documentWithoutAnOutputIsUnchanged() {
         // Given a document without the keys

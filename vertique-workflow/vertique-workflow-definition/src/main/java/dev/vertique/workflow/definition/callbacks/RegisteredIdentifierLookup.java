@@ -13,14 +13,14 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Facade that exposes all 11 named callback registries as named accessors and provides a static
+ * Facade that exposes all 12 named callback registries as named accessors and provides a static
  * Levenshtein-distance utility for generating "did you mean?" suggestions in validation error
  * messages.
  *
  * <p>The definition validator uses this class to check whether ids referenced in a definition document
  * are registered before the document is compiled.
  *
- * <p>This class is intentionally dumb — it only exposes the 11 registries as named accessors and
+ * <p>This class is intentionally dumb — it only exposes the 12 registries as named accessors and
  * delegates all logic (lookup, contains, ids) to each registry. No additional routing or
  * caching is performed.
  */
