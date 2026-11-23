@@ -316,7 +316,7 @@ Deserialized from the `management` section into `ManagementConfig`. Every field 
 | `port` | `int` | `9090` | Management HTTP server port; `0` binds an ephemeral port |
 | `host` | `String` | `"0.0.0.0"` | Network interface to bind; `"127.0.0.1"` restricts the server to loopback; a blank or `null` value counts as absent and takes the default |
 | `enabled` | `boolean` | `true` | `false` skips port binding and contributor invocation |
-| `healthCheckTimeoutSeconds` | `long` | `5` | Per-check timeout for both probe endpoints; must be positive |
+| `healthCheckTimeoutSeconds` | `long` | `5` | Per-check timeout for both probe endpoints; must be a positive whole number |
 
 ```json
 {
@@ -329,7 +329,7 @@ Deserialized from the `management` section into `ManagementConfig`. Every field 
 }
 ```
 
-A zero or negative `healthCheckTimeoutSeconds` fails startup when the configuration is bound, with a `ConfigurationException` that names `management.healthCheckTimeoutSeconds` and no value. A blank or explicitly `null` `management.host` counts as absent and binds the default `0.0.0.0`: a config that previously failed the verticle's deployment now binds every interface, so pin `host` to `127.0.0.1` wherever the wildcard is not wanted. Unknown properties in the `management` section are ignored.
+A zero, negative or fractional (for example `2.5`) `healthCheckTimeoutSeconds` fails startup when the configuration is bound, with a `ConfigurationException` that names `management.healthCheckTimeoutSeconds` and no value. A blank or explicitly `null` `management.host` counts as absent and binds the default `0.0.0.0`: a config that previously failed the verticle's deployment now binds every interface, so pin `host` to `127.0.0.1` wherever the wildcard is not wanted. Unknown properties in the `management` section are ignored.
 
 With hierarchical property expansion, `management.port=9090` in a `.properties` source expands to the same nested object.
 
