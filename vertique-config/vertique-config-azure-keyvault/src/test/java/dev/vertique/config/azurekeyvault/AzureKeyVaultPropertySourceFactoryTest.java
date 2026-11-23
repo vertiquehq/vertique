@@ -958,13 +958,13 @@ class AzureKeyVaultPropertySourceFactoryTest {
         @Test
         @DisplayName("a number in a string field is still accepted as its string form")
         void numberInStringFieldIsCoerced() {
-            ConfigPropertySource source = factoryWithStub(Map.of("2024x", "v"))
+            ConfigPropertySource source = factoryWithStub(Map.of("password", "v"))
                     .create(
                             "src",
-                            configWithPrefix("https://myvault.vault.azure.net", "x")
-                                    .put("prefix", 2024));
+                            minimalConfig("https://myvault.vault.azure.net").put("prefix", 2024));
 
-            assertNotNull(source);
+            assertEquals(Optional.of("v"), source.lookup("2024password"));
+            assertEquals(Optional.empty(), source.lookup("other"));
         }
     }
 }

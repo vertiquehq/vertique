@@ -916,7 +916,8 @@ standalone `new RestClientBuilder(vertx)` has no factory and is not checked acro
 
 > Any `circuitBreaker` block enables a circuit breaker for the client, even one that sets only `timeoutMs`;
 > fields the block omits take the defaults above (or the builder-level or `@CircuitBreaker` values when
-> those exist).
+> those exist). A block that set only some fields and had no such baseline used to reset the breaker after the
+> Vert.x default of 30000 ms; it now uses the documented 10000 ms.
 >
 > The `retry` block carries `maxRetries` and `backoffStrategy`. `retryOn` and `abortOn` live on
 > `@Retry` and are not read from config. `maxRetries` is bounded to 100.
