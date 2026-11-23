@@ -15,8 +15,9 @@ Runtime layer for the framework's correlation feature. Owns the holder-bound
 `CorrelationIdGenerator`, the substrate `ContextValueAdapter` for snapshot/restore/duplicate,
 and the Dagger module that wires it all together. The shared value/contract types (e.g.
 `TraceReference`, `CorrelationContext`) live in `dev.vertique.core.correlation` (in `vertique-core`);
-this module's own runtime types and SPIs (e.g. `CorrelationIdGenerator`, `TraceReferenceResolver`)
-live in `dev.vertique.correlation`; REST-specific ingress lives in `dev.vertique.rest.core.correlation`
+this module's own runtime types and SPIs (e.g. `CorrelationContextFactory`, `TraceReferenceResolver`)
+live in `dev.vertique.correlation`; the `CorrelationIdGenerator` SPI is declared in `dev.vertique.core.correlation`
+and this module supplies its default; REST-specific ingress lives in `dev.vertique.rest.core.correlation`
 (in `vertique-rest-core`).
 
 ---
@@ -45,7 +46,8 @@ Public string constants for the framework's mirrored MDC keys: `REQUEST_ID` (`re
 literal key strings) when configuring a logging pattern — e.g. Logback `%X{correlationId}` — so log
 lines carry the active correlation identifiers.
 
-Mirroring is selective: `requestId`/`correlationId` are set once at REST ingress; `causationId` and
+Mirroring is selective: `requestId`/`correlationId` are set once at REST ingress (and, on non-REST
+boundaries, projected by `CorrelationContextSeeder` when the context is bound); `causationId` and
 `trace` (`traceId`/`spanId`) are additionally written into MDC whenever the corresponding
 `CorrelationContextMutator` setter runs during enrichment. Session refs, protocol-correlation refs,
 and arbitrary attributes are never mirrored into MDC — they live only in the `CorrelationContext`
@@ -161,5 +163,6 @@ For cross-boundary propagation the runtime ships:
   quoting) is what it accepts — enum values, however, are parsed strictly by the decoder itself
   (`Enum.valueOf` over the header tree), so an enum-lenient system profile does not widen them.
 - A `CorrelationContextSeeder` `InboundContextInitializer` that mints a fresh context on every
-  inbound boundary (REST, service dispatch, Kafka, outbox relay, delayed-job poll, workflow
-  branch / timer recovery) that arrives without one.
+  inbound non-REST boundary (service dispatch, Kafka, outbox relay, delayed-job poll, workflow
+  branch / timer recovery) that arrives without one. REST requests are bound by
+  `CorrelationIngressMiddleware` instead.

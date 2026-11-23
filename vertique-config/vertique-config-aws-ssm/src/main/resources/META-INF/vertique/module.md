@@ -118,7 +118,7 @@ The store entry goes in `config.stores[*]`:
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `path` | Yes | — | SSM path prefix, e.g. `/myapp/prod/`. Leading and trailing `/` are added if absent. |
-| `region` | No | SDK default chain | AWS region string (e.g. `"eu-west-1"`). When absent, resolved via `AWS_DEFAULT_REGION`, `aws.region`, instance metadata, etc. |
+| `region` | No | SDK default chain | AWS region string (e.g. `"eu-west-1"`). When absent, resolved via `AWS_REGION`, `aws.region`, instance metadata, etc. |
 | `endpointOverride` | No | none | Override the SSM endpoint URL. Use for LocalStack (`http://localhost:4566`) or other test endpoints. |
 | `recursive` | No | `true` | Whether to fetch parameters recursively under `path`. |
 | `withDecryption` | No | `true` | Whether to decrypt `SecureString` parameters. |
@@ -130,7 +130,7 @@ The store entry goes in `config.stores[*]`:
 
 Thrown as `IllegalArgumentException` from the factory (surfaces as `BootstrapConfigException` in the bootstrap loader):
 
-- `path` missing or blank
+- `path` missing or blank, or a `path` that names no segment after normalization (`/`): reading the entire parameter store is not allowed
 - `prefix` contains blank dot-segments (e.g. `"a..b"`, `".app"`, `"app."`); a blank `prefix` counts as absent
 - the `path` and `prefix` messages name the field and never carry the rejected value
 - `connectTimeoutMs` or `readTimeoutMs` is zero, negative, or non-integer; the message names the field and does not carry the rejected value

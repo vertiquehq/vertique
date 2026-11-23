@@ -62,9 +62,10 @@ registers the MDC service-dispatch encoder and decoder via `@Provides @IntoSet`:
 call, so MDC binding/restoration rides inside the single dispatch-context scope closed in every
 terminal branch — there is no separate `mdcScope` and no MDC capture SPI.
 
-**Default framework MDC fields** (emitted by `ContextualLoggingMiddleware` and
-`IdentityResolutionMiddleware` via `RequestContextLifecycle`):
-- `requestId` — per-request correlation identifier
+**Default framework MDC fields** (emitted by `CorrelationIngressMiddleware`, `ContextualLoggingMiddleware`
+and `IdentityResolutionMiddleware`; the last two bind through `RequestContextLifecycle`):
+- `requestId` — per-request identifier, written by `CorrelationIngressMiddleware` together with `correlationId`
+  (`causationId`, `traceId` and `spanId` are mirrored into MDC when present, see `vertique-correlation`)
 - `method` — HTTP method
 - `path` — request path
 - `userId` — authenticated user identifier (when present)
@@ -86,7 +87,7 @@ Extends `AsyncAppenderBase<ILoggingEvent>`. Enriches events with Vert.x context-
 | Property | Default | Description |
 |---|---|---|
 | `queueSize` | 256 | Capacity of the transfer queue (inherited from `AsyncAppenderBase`) |
-| `discardingThreshold` | 20% of `queueSize` | When queue fill exceeds this, low-priority events (TRACE/DEBUG/INFO) are dropped |
+| `discardingThreshold` | 20% of `queueSize` | When the remaining queue capacity falls below this, low-priority events (TRACE/DEBUG/INFO) are dropped; WARN and ERROR are kept while the queue has room |
 | `neverBlock` | `true` | When the queue is full, events are silently discarded rather than blocking the caller |
 | `maxFlushTime` | 1000 ms | Grace period during `stop()` to drain remaining events |
 

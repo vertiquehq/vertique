@@ -110,7 +110,7 @@ outboxService.publish(tx, OutboxEntry.builder()
     .onSuccess(id -> log.info("Outbox entry {} recorded", id));
 ```
 
-**Scope selection.** The entry names its scope with `OutboxEntry.builder().scopeKey("acme")`; omitting it stores `default`. `publish` validates the key as a core `ScopeKey` before it writes anything: a `null` key (an explicit `scopeKey(null)`) and an invalid one (blank, longer than 255 code points, or containing a control or format character) return a failed future with an `IllegalArgumentException` whose message does not repeat the key, and nothing is inserted. The ambient `ScopeContext` never selects the row's scope; it is captured into `metadata.context` like any other durable context.
+**Scope selection.** The entry names its scope with `OutboxEntry.builder().scopeKey("acme")`; omitting it stores `default`. `publish` validates the key as a core `ScopeKey` before it writes anything: a `null` key (an explicit `scopeKey(null)`) and an invalid one (blank, longer than 255 code points, containing a control character, an unpaired surrogate or a format character, or starting or ending with whitespace) return a failed future with an `IllegalArgumentException` whose message does not repeat the key, and nothing is inserted. The ambient `ScopeContext` never selects the row's scope; it is captured into `metadata.context` like any other durable context.
 
 The scope is a label, not authorization. Nothing checks the caller's right to a scope at publish, by id, or under a service principal. Row scope and `ScopeContext` are independent, so a handler that partitions data chooses one source, compares the other when both are present, fails on a mismatch, and authorizes access itself. Inbox deduplication is not scoped: `inbox` rows key on `(message_id, source)` only.
 
@@ -138,7 +138,7 @@ When `LISTEN_NOTIFY` is configured but the notification channel is unavailable o
 4. On success: `markPublished()`.
 5. On retryable failure: `markRetry()` with incremented attempt and backoff-computed `availableAt`.
 6. On permanent failure or exhausted attempts: `markDeadLetter()`.
-7. On `unresolvable`: `markUnresolvable()` with short delay; attempt count unchanged.
+7. On `unresolvable`: `markUnresolvable()` with a 60-second delay; attempt count unchanged.
 8. A failed future from `publish()` is treated as retryable.
 9. A handler that throws synchronously from `publish()` — an exception, an `AssertionError` or a `LinkageError` — returns `null` instead of a future, or completes its future with `null` is treated as retryable too: it costs that one entry an attempt, the rest of the claimed batch is still delivered, and polling continues.
 10. When the `mark*` call of steps 4–7 has settled — succeeded, failed, or thrown — every registered `OutboxPublishObserver` (see `dev.vertique:vertique-inbox-outbox-core`) is notified once with the attempt's facts and the envelope from step 2. The callback runs on the relay's context: when the `mark*` call settles on another context or thread, the relay hops back to its own context before it notifies. `dispositionRecorded` is `true` only when the `mark*` call returned `true`.
@@ -221,7 +221,7 @@ Deserialized from `inboxOutbox.cleanup`.
 |-------|---------|-------------|
 | `publishedRetentionDays` | `7` | Days to retain `PUBLISHED` outbox rows before cleanup |
 | `deadLetterRetentionDays` | `30` | Days to retain `DEAD_LETTER` outbox rows before cleanup |
-| `discardedRetentionDays` | `7` | Days to retain `DISCARDED` outbox rows before cleanup; the window an operator has to undo a discard |
+| `discardedRetentionDays` | `7` | Days to retain `DISCARDED` outbox rows before cleanup; the window an operator has to undo a discard. A value outside 1 to 3650 fails with `InboxOutboxConfigurationException` |
 | `inboxRetentionDays` | `30` | Days to retain processed inbox dedup records before cleanup |
 | `cleanupBatchSize` | `1000` | Maximum records deleted per cleanup batch, across each table |
 
@@ -274,7 +274,7 @@ is frozen from this Stable release.** Every later schema change ships as `V2+`, 
 | `created_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | Row creation time |
 | `updated_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | Row last-modified time |
 
-Indexes: `idx_outbox_pending` (partial, `state = 'PENDING'`, on `available_at ASC, id ASC`), `idx_outbox_processing` (partial, `state = 'PROCESSING'`, on `claimed_at ASC`), `idx_outbox_aggregate` (partial, pending/processing non-null aggregates), `idx_outbox_published`, `idx_outbox_dead_letter`.
+Indexes: `idx_outbox_pending` (partial, `state = 'PENDING'`, on `available_at ASC, id ASC`), `idx_outbox_processing` (partial, `state = 'PROCESSING'`, on `claimed_at ASC`), `idx_outbox_aggregate` (partial, pending/processing non-null aggregates), `idx_outbox_published`, `idx_outbox_dead_letter`; `V003` adds `idx_outbox_listing_updated`, `idx_outbox_listing_created` and `idx_outbox_discarded`.
 
 **`inbox` table** — dedup log:
 
@@ -396,7 +396,7 @@ look in a schema the migration never filled.
 
 ## Dagger Wiring
 
-`TransactionalMessagingPostgresqlModule` includes `TransactionalMessagingModule` (core), `InboxOutboxMigrationsModule` (the `inbox-outbox` migration declaration) and `DbSchemasModule` (the optional `DbSchemas` binding), and provides:
+`TransactionalMessagingPostgresqlModule` includes `TransactionalMessagingModule` (core), `ContextRuntimeModule`, `LoggingContextModule`, `InboxOutboxMigrationsModule` (the `inbox-outbox` migration declaration) and `DbSchemasModule` (the optional `DbSchemas` binding), and provides:
 
 | Binding | Type | Description |
 |---------|------|-------------|
@@ -406,10 +406,13 @@ look in a schema the migration never filled.
 | `OutboxQueueProbe` | Singleton | The same `PgInboxOutboxRepository`: one read-only statement counts the due entries (by their own state, without applying the relay's handler scope or aggregate order), ages the oldest of them and counts the dead-lettered ones; the partial indexes on `PENDING` and `DEAD_LETTER` keep its cost with the backlog, not the table |
 | `Set<MigrationDefinition>` | `@IntoSet` | The `inbox-outbox` declaration from `InboxOutboxMigrationsModule`: location `classpath:db/migration/inbox-outbox`, no dependencies |
 | `PgOutboxOperations` / `OutboxOperations` | Singleton | Built from `Optional<DbSchemas>`, the `ContextHolder` bound by the included `ContextRuntimeModule` (no extra holder binding is needed or declared) and the contributed `Set<OutboxOperationListener>`, which is empty by default |
+| `PgOutboxQueryService` / `OutboxQueryService` | Singleton | Built from `Optional<DbSchemas>` and `OutboxQueryConfig`, so its statements address the same `outbox` table as the repository |
+| `OutboxQueryConfig` | Singleton | Query configuration deserialized from `inboxOutbox.query`; an absent section yields the defaults |
 | `OutboxRelayConfig` | Singleton | Relay configuration deserialized from `inboxOutbox.relay` |
 | `InboxOutboxCleanupConfig` | Singleton | Cleanup configuration deserialized from `inboxOutbox.cleanup` |
 | `Set<VerticleDeployment>` | `@ElementsIntoSet` | `OutboxRelay` verticle; SERVICES phase, priority 100. Every relay instance is given the contributed `Set<OutboxPublishObserver>`, sorted once per instance by `OrderedExtension` order |
 | `@Services Set<Object>` | `@IntoSet` | `OutboxMaintenanceCron` — provides cluster-singleton `@CronJob` entry points for stale-lease recovery and table cleanup |
+| `Set<ComposeValidator>` | `@IntoSet` | `InboxOutboxPostgresqlComposeValidator`, the cron-wiring check described under [Configuration](#configuration) |
 
 **Compatibility note.** `PgInboxOutboxRepository` is now provided by an explicit `@Provides` method. A component that installs this module and also provides `PgInboxOutboxRepository` itself sees a duplicate binding; remove its own provider. The `@Inject` two-argument constructor remains for components that do not install this module.
 
@@ -422,6 +425,7 @@ look in a schema the migration never filled.
     DbModule.class,                              // supplies DbSchemas from db.schemas
     DbPostgresqlModule.class,
     DbFlywayModule.class,
+    CronPersistenceModule.class,                 // required by the maintenance cron jobs
     TransactionalMessagingPostgresqlModule.class,
     TransactionalMessagingServiceModule.class,   // optional: SERVICE adapter
     TransactionalMessagingKafkaModule.class,     // optional: KAFKA adapter
@@ -442,6 +446,7 @@ public interface AppComponent { ... }
       "pollingIntervalMs": 1000,
       "batchSize": 50,
       "leaseTimeoutMs": 30000,
+      "maxAttempts": 20,
       "backoffBaseDelayMs": 1000,
       "backoffMaxDelayMs": 300000,
       "instances": 1
@@ -449,6 +454,7 @@ public interface AppComponent { ... }
     "cleanup": {
       "publishedRetentionDays": 7,
       "deadLetterRetentionDays": 30,
+      "discardedRetentionDays": 7,
       "inboxRetentionDays": 30,
       "cleanupBatchSize": 1000
     }

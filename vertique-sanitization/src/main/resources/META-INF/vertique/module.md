@@ -100,7 +100,7 @@ Canonicalizers are semantics-preserving normalizers. They are stateless, idempot
 | `NfkcCanonicalizer` | Normalizes to Unicode Normalization Form KC (compatibility decomposition + canonical composition); recommended for identifiers |
 | `NfcCanonicalizer` | Normalizes to Unicode Normalization Form C (canonical decomposition + canonical composition); recommended for text |
 | `NormalizeLineEndingsCanonicalizer` | Converts `\r\n` and bare `\r` to `\n` |
-| `CollapseWhitespaceCanonicalizer` | Replaces runs of whitespace with a single space |
+| `CollapseWhitespaceCanonicalizer` | Replaces runs of ASCII whitespace (`\s+`: space, tab, line feed, vertical tab, form feed, carriage return) with a single space |
 | `UpperCaseCanonicalizer` | Converts to uppercase using `String.toUpperCase(Locale.ROOT)` |
 | `LowerCaseCanonicalizer` | Converts to lowercase using `String.toLowerCase(Locale.ROOT)` |
 | `RemoveIdentifierSeparatorsCanonicalizer` | Removes spaces and hyphens; useful for phone numbers, credit card numbers, UUIDs before comparison |
@@ -116,10 +116,10 @@ Sanitizers remove or transform disallowed content. They are stateless and thread
 | Class | Effect |
 |-------|--------|
 | `StripControlCharsSanitizer` | Removes C0 and C1 control characters (`U+0000`–`U+001F`, `U+007F`, `U+0080`–`U+009F`); preserves tab, LF, and CR |
-| `StripAllHtmlSanitizer` | Strips all HTML tags using OWASP Java HTML Sanitizer |
+| `StripAllHtmlSanitizer` | Strips all HTML tags and attributes using OWASP Java HTML Sanitizer and returns plain text: entities are decoded, `script` and `style` content is dropped, block-level element boundaries become newlines, and the result is trimmed |
 | `BasicHtmlSanitizer` | Allows `<p>`, `<br>`, `<em>`, `<i>`, `<strong>`, `<b>`, `<ul>`, `<ol>`, `<li>`; strips everything else |
-| `LinksHtmlSanitizer` | Allows `BasicHtml` elements plus `<a href>` (http, https and mailto schemes only) |
-| `RichTextHtmlSanitizer` | Allows `LinksHtml` elements plus headings, blockquote, code, pre, img |
+| `LinksHtmlSanitizer` | Allows `BasicHtml` elements plus `<a href>` (http, https and mailto schemes only; `rel="nofollow"` is added to links) |
+| `RichTextHtmlSanitizer` | Allows `LinksHtml` elements plus `u`, `s`, `h1`-`h6`, `blockquote`, `pre`, `code`, `table`, `thead`, `tbody`, `tr`, `th`, `td`, `hr`, `span`, `div`, `sub`, `sup` and `<img>` (`src`, `alt`, `width`, `height`); the `class` attribute is allowed on every allowed element |
 
 HTML sanitizers use [OWASP Java HTML Sanitizer](https://owasp.org/www-project-java-html-sanitizer/) with static singleton `PolicyFactory` instances (thread-safe).
 
@@ -263,8 +263,8 @@ Custom processors are contributed via `@Provides @IntoSet` in application or lib
 
 ## Dependencies
 
-- `dev.vertique:core`
-- `dev.vertique:input-processing`
+- `dev.vertique:vertique-core`
+- `dev.vertique:vertique-input-processing`
 - `com.google.dagger:dagger`
 - `jakarta.inject:jakarta.inject-api`
 - `com.googlecode.owasp-java-html-sanitizer:owasp-java-html-sanitizer` (OWASP Java HTML Sanitizer, used by HTML sanitizers)

@@ -223,8 +223,11 @@ public abstract class SampledOnlyTracingModule {
   non-blocking.
 - A resolver should never throw. The caller guards with `try`/`catch` (WARN, then continue), but a
   throwing resolver still emits one WARN line per request.
-- `TraceReference` is `record TraceReference(String traceId, @Nullable String spanId, String source)`
-  and lives in `dev.vertique:vertique-core`; `traceId` and `source` must be non-null.
+- `TraceReference` is `record TraceReference(String traceId, @Nullable String spanId, String source,
+  boolean sampled, @Nullable String traceState)` and lives in `dev.vertique:vertique-core`; `traceId`
+  and `source` must be non-null and `traceId` must not be blank. The three-argument convenience
+  constructor `TraceReference(traceId, spanId, source)` used in the example above defaults
+  `sampled=false` and `traceState=null`.
 - The `@BindsOptionalOf` model means the binding is *absent*, not null, when no module supplies it —
   there is no NPE risk in the ingress path.
 
@@ -242,8 +245,9 @@ properties always win. The whole subtree is **inert on the reuse path**.
 | `tracing.security.spanEvents` | boolean | `true` | Emit the security span events listed above. |
 | `tracing.otel.*` | object | — | Flattened to `otel.*` and supplied to `AutoConfiguredOpenTelemetrySdk`. A blank string value counts as absent and is skipped, so it never overwrites a seeded value. |
 
-Two `otel.*` properties are seeded before the flatten step and can be overridden by it:
-`otel.metrics.exporter=none` (meters are Micrometer-owned) and `otel.logs.exporter=none`.
+Three `otel.*` properties are seeded before the flatten step and can be overridden by it:
+`otel.metrics.exporter=none` (meters are Micrometer-owned), `otel.logs.exporter=none` and
+`otel.service.name` (resolved as described below).
 
 **Service-name resolution**, first non-blank wins:
 

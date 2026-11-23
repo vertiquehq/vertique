@@ -52,6 +52,11 @@ import org.slf4j.LoggerFactory;
  *       there instead, and its instance is unchanged; only a step-limit overrun fails the instance of those kinds.</li>
  * </ul>
  *
+ * <p>Once the executor is stopping ({@link #stop()}), the write of a failure, a reschedule or a release that fails is
+ * not tried again, whatever the cause: the application closes the database pool before it stops the executor, so such
+ * a write cannot succeed. The claim lapses with its lease, its attempt stays spent as after a crash, and the next start
+ * takes the command again. A write that answers that the execution lock is busy is still tried again.
+ *
  * <p>A recorded {@code SIGNAL} settles itself inside its savepoint: the engine parks it, or rejects or stales it with a
  * reason, and answers with the matching outcome, so only an applied signal is completed here. A signal's deterministic
  * failure and its own step-limit overrun never reach the dispositions above. A recorded {@code COMPLETION} does the same:
@@ -92,6 +97,9 @@ final class SegmentRunner {
     private final WorkflowSegments segments;
     private final ExecutorEvents events;
 
+    /** Set once the executor is stopping: a disposition write that fails is then not tried again. */
+    private volatile boolean stopping;
+
     SegmentRunner(
             Vertx vertx,
             WorkflowExecutorConfig config,
@@ -105,6 +113,15 @@ final class SegmentRunner {
         this.runner = Objects.requireNonNull(runner, "runner");
         this.segments = Objects.requireNonNull(segments, "segments");
         this.events = Objects.requireNonNull(events, "events");
+    }
+
+    /**
+     * Marks the executor as stopping. From then on a failure, reschedule or release write that fails is not tried
+     * again, because the database pool is closing and the write cannot succeed; the claim lapses with its lease and the
+     * next start takes the command again. A write that answers that the execution lock is busy is still tried again.
+     */
+    void stop() {
+        stopping = true;
     }
 
     /**
@@ -307,6 +324,10 @@ final class SegmentRunner {
                 }
                 return Future.<Void>succeededFuture();
             }
+            if (stopping) {
+                logAbandonedWhileStopping(claim, "rescheduled");
+                return Future.<Void>succeededFuture();
+            }
             if (System.nanoTime() - instants.leaseEnd() < 0) {
                 return pause(RELEASE_RETRY_MS).compose(ignored -> reschedule(claim, instants));
             }
@@ -363,6 +384,10 @@ final class SegmentRunner {
                 }
             } else {
                 log.debug("The failure of command {} could not be written", claim.commandId(), result.cause());
+                if (stopping) {
+                    logAbandonedWhileStopping(claim, "failed");
+                    return Future.<Void>succeededFuture();
+                }
             }
             return pause(BUSY_RETRY_MS).compose(ignored -> fail(claim, reason, lastError, instants, claimStartNanos));
         });
@@ -377,6 +402,10 @@ final class SegmentRunner {
             released = Future.failedFuture(e);
         }
         return released.<Void>mapEmpty().recover(failure -> {
+            if (stopping) {
+                logAbandonedWhileStopping(claim, "released");
+                return Future.succeededFuture();
+            }
             if (System.nanoTime() - instants.leaseEnd() < 0) {
                 return pause(RELEASE_RETRY_MS).compose(ignored -> release(claim, instants));
             }
@@ -386,6 +415,13 @@ final class SegmentRunner {
                     failure.getClass().getName());
             return Future.succeededFuture();
         });
+    }
+
+    private void logAbandonedWhileStopping(ClaimedCommand claim, String what) {
+        log.warn(
+                "Command {} could not be {} while the executor stops; its claim lapses with its lease",
+                claim.commandId(),
+                what);
     }
 
     private Future<Void> pause(long delayMs) {

@@ -160,7 +160,7 @@ Profiles live under `redis.connections` as a keyed object (key = profile name). 
 |---|---|---|
 | `RedisConnectionsConfig` | `@Provides` `@Singleton` | Parsed `redis.connections` profiles |
 | `RedisClientRegistry` | `@Provides` `@Singleton` | Lazy shared clients for those profiles |
-| `ApplicationShutdownStep` | `@Provides` `@IntoSet` | `RedisClientShutdownStep` (`INFRA`, lowest same-phase priority) |
+| `ApplicationShutdownStep` | `@Provides` `@Singleton` `@IntoSet` | `RedisClientShutdownStep` (`INFRA`, lowest same-phase priority) |
 
 ## Verification
 
@@ -174,4 +174,4 @@ Profiles live under `redis.connections` as a keyed object (key = profile name). 
 |---|---|
 | `vertique-core` | Framework foundation and typed configuration boundary |
 | Vert.x Redis Client | Asynchronous Redis client API |
-| Lettuce 7.7.0.RELEASE | Internal topology-maintenance client |
+| Lettuce 7.9.0.RELEASE | Internal topology-maintenance client |

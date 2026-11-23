@@ -38,7 +38,8 @@ must be declared on a public, non-final class with exactly one constructor annot
 `jakarta.inject.Inject` or `javax.inject.Inject`. The annotated method must be an instance
 method that can be overridden; final, private, static, abstract, and non-proxyable method
 shapes produce diagnostics. `@Cacheable` methods must return a value, and raw, wildcard, or
-type-variable `Future` results are rejected.
+type-variable `Future` results are rejected. A `@Cacheable` with `mode = CLUSTERED` must
+return `Future<T>`; synchronous methods use `LOCAL`.
 
 Keys are ordered selector-path arrays: `key = {"tenantId", "user.email"}`. Each path is a
 positional (`"0"`) or parameter-name (`"user"`) root plus at most seven dot-separated

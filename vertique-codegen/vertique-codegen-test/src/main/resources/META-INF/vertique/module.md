@@ -71,6 +71,7 @@ Each `-A` option is emitted as `-Akey=value` and appended to the harness's pinne
 | `assertGeneratedSourceContains(String fqn, String snippet)` | Fails if no generated source exists for `fqn`, or if the source does not contain `snippet` |
 | `assertGeneratedSourceDoesNotContain(String fqn, String snippet)` | Negative counterpart of the above: fails if no generated source exists for `fqn`, or if the source **does** contain `snippet` |
 | `assertErrorMessage(String substring)` | Fails if no `ERROR` diagnostic has a message containing `substring` |
+| `assertWarningMessage(String substring)` | Fails if no `WARNING` or `MANDATORY_WARNING` diagnostic has a message containing `substring` |
 | `assertNoWarnings()` | Fails if any `WARNING` or `MANDATORY_WARNING` diagnostic was produced |
 | `generatedClassLoader()` | Asserts success, then returns a `ClassLoader` over every class the compilation produced. Built once and reused |
 | `loadGeneratedClass(String fqn)` | Loads one class the compilation produced, by fully-qualified name |
@@ -165,6 +166,6 @@ None. Test-utility library only.
 | Dependency | Scope | Purpose |
 |------------|-------|---------|
 | `dev.vertique:vertique-codegen-core` | compile | APT helpers available to test fixtures |
-| `com.google.testing.compile:compile-testing:0.23.0` | compile | In-process Java compiler with `Compilation` result and `JavaFileObjects` utilities |
+| `com.google.testing.compile:compile-testing:0.24.0` | compile | In-process Java compiler with `Compilation` result and `JavaFileObjects` utilities |
 | `org.opentest4j:opentest4j:1.3.0` | compile | `AssertionFailedError` thrown by all `Result` assertions |
 | `com.palantir.javapoet:javapoet` | compile | Fixtures may build source objects via JavaPoet |

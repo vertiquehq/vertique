@@ -58,8 +58,9 @@ The registered `ResilienceAnnotationProcessor` validates:
   anchor wraps the generated client call. A service-contract interface anchor is applied once,
   by the services dispatch pipeline, and is not woven onto the contract's implementors (see the
   double-wrapping rule below for a handler that declares resilience itself). On an
-  interface method the processor checks only that the anchor names a policy or carries a
-  declaration and that the return type is a concrete `Future<T>`. An implementor the proxy
+  interface method the processor checks the policy-name syntax and the value bounds, that the
+  anchor names a policy or carries a declaration, and that the return type is a concrete
+  `Future<T>`; it applies no proxyability check. An implementor the proxy
   cannot subclass fails in `vertique-codegen-aop`, which owns the weaving;
 - proxyability through the shared `ProxyabilityValidator`, including public,
   non-final, Dagger-managed classes with one `@Inject` constructor and

@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.config.azurekeyvault`
 > **Artifact:** `vertique-config-azure-keyvault`
-> **Depends on:** config
+> **Depends on:** config-core
 
 Provides an Azure Key Vault property source for the `config.propertySources` placeholder chain. Unlike the eager-load model used by `vertique-config-vault` and `vertique-config-aws-secrets`, this source is **on-demand**: only keys that are actually referenced as `${...}` placeholders are ever fetched. No `list` permission is needed, and secrets that are never referenced cause no SDK calls.
 
@@ -18,7 +18,7 @@ The module integrates with the `ConfigPropertySourceFactory` SPI and is discover
 
 ## When To Use It
 
-Install `vertique-config-azure-keyvault` when secrets stored in Azure Key Vault must be injected into the application config tree at startup via `${key}` placeholder references. Pair it with `vertique-config` (already a transitive dependency) and `vertique-launcher` for full bootstrap integration.
+Install `vertique-config-azure-keyvault` when secrets stored in Azure Key Vault must be injected into the application config tree at startup via `${key}` placeholder references. Pair it with `vertique-config-core` (already a transitive dependency) and `vertique-launcher` for full bootstrap integration.
 
 Use the self-reference idiom (see Core Concepts) to pull vault secrets into the tree without writing any value in a config file. Use prefix routing to direct specific key namespaces to specific vault instances.
 
@@ -159,7 +159,7 @@ With an optional `clientId`, selects a specific user-assigned managed identity:
 
 **Note:** Credential construction does not make any network calls. Auth errors surface at the first vault lookup, not at source creation time.
 
-Any other `method` value is rejected at create time with a `ConfigPropertySourceException` naming the invalid value.
+Any other `method` value is rejected at create time with a `ConfigPropertySourceException` that names the `auth.method` field and does not echo the value.
 
 ---
 

@@ -27,7 +27,7 @@ Install `vertique-opentelemetry-services` alongside `DispatchModule` when distri
 enabled and service dispatch spans should carry service target and one-way attributes. Pair with
 `vertique-opentelemetry-core` to activate the Vert.x OTel tracer integration and the SDK bootstrap.
 
-Without a recorded parent span (Vert.x `DeliveryOptions.PROPAGATE` default), no event-bus spans are
+Without a recorded parent span (Vert.x's default `PROPAGATE` tracing policy), no event-bus spans are
 created and the enrichment interceptor is a silent no-op on every dispatch.
 
 ---
@@ -174,8 +174,9 @@ only this type adaptation; configuration, registry, and optional bindings remain
 ## Dependencies
 
 - `io.opentelemetry:opentelemetry-api` — `Span`, `SpanContext`, `StatusCode`, `AttributeKey`
-- `io.opentelemetry:opentelemetry-semconv` — `ErrorAttributes`
+- `io.opentelemetry.semconv:opentelemetry-semconv` — `ErrorAttributes`
 - `dev.vertique:vertique-services` — `ServiceInterceptor`, `ServiceDispatchContext`
 - `dev.vertique:vertique-core` — `Result` (via `core.eventbus`)
+- `io.vertx:vertx-core` — `Future`, the return type of the async `ServiceInterceptor` callbacks this module inherits as no-ops
 - `com.google.dagger:dagger`, `jakarta.inject:jakarta.inject-api`
 - `org.slf4j:slf4j-api`, `org.projectlombok:lombok` (provided)

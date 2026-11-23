@@ -20,9 +20,12 @@ The dispatch chain is reflection-free. The generated proxy calls `super.method(a
 
 Add `vertique-aop` to any module that defines a custom aspect annotation (`@Timed` or any user-defined `@Aspect`-meta-annotated annotation), or to any module that implements `AspectProvider<A>` to supply the interceptor logic for an aspect. Applications inheriting `vertique-app-parent` declare runtime capabilities only and receive the complete processor facade automatically; custom-parent applications use the BOM plus `vertique-codegen-all` recipe in `docs/packaging.md`. `vertique-codegen-aop` remains the ownership boundary for generated AOP proxies.
 
-The open-core framework ships one built-in aspect that depends on this module:
+The open-core framework ships these built-in aspects, each in a module that depends on this one:
 
 - `@Timed` — in `vertique-micrometer-core`, measures method execution time
+- `@Resilient` — in `vertique-resilience`, runs the method through a resilience policy
+- `@Cacheable` and `@CacheEvict` — in `vertique-cache-aop`, cache the result or evict entries
+- `@RateLimited` — in `vertique-rate-limit-aop`, consumes rate-limit quota before the call
 
 ---
 
@@ -111,7 +114,7 @@ public interface MethodInterceptor {
 }
 ```
 
-v1 aspects call `proceed()` exactly once. The contract permits multiple calls, so a future retry aspect can be implemented without any SPI change.
+Most built-in aspects call `proceed()` exactly once; `@Resilient` calls it once per attempt when its retry policy re-runs the call. The contract permits any number of calls.
 
 ### `Invocation`
 

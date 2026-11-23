@@ -24,7 +24,8 @@ Two framework qualifiers use the multibinding emit shape; one uses a direct sing
 `@ServiceContract` implementation wiring is owned by `vertique-codegen-services`, not by this processor.
 
 Generic source-retained registrations are also handled here. `@RegisterAs(Target.class)` emits one
-abstract `@Binds Target bindImplementation(Implementation implementation)` method, while
+abstract `@Binds Target bind<Implementation>(Implementation implementation)` method (the method name is `bind`
+plus the implementation's simple name, with `To<Target>` appended when two registrations would collide), while
 `@RegisterIntoSet(Target.class)` emits the same shape with `@IntoSet`. Both annotations are
 repeatable, so one implementation may be registered under multiple explicit targets. The
 processor emits `GeneratedRegistrationsModule` only when at least one valid registration exists;
@@ -71,9 +72,9 @@ The processor uses `@SupportedAnnotationTypes("*")` so it runs every round regar
 
 | Package | Contents |
 |---------|----------|
-| `dev.vertique.codegen.dagger.processor` | `AutoWireProcessor`, `Qualifier` (enum), `Binding` (record) |
+| `dev.vertique.codegen.dagger.processor` | `AutoWireProcessor`, `Qualifier` (enum), `Binding` (record), `Registration` (record) |
 | `dev.vertique.codegen.dagger.processor.collect` | `AnnotationRootedCollector` (shared base), `RestClientCollector`, `KafkaConsumerCollector`, `DelayedJobExecutorScanner`, `RegistrationCollector`, `SignalSourceCollector`, `GeneratedSignalSourceCollector` |
-| `dev.vertique.codegen.dagger.processor.emit` | `MultibindingModuleEmitter`, `RestClientModuleEmitter`, `RegistrationModuleEmitter` |
+| `dev.vertique.codegen.dagger.processor.emit` | `MultibindingModuleEmitter`, `RestClientModuleEmitter`, `RegistrationModuleEmitter`, `ReferenceableBindings` (package-private reachability filter) |
 | `dev.vertique.codegen.dagger.processor.support` | `Filters`, `FilerWriter` |
 
 ---
@@ -86,8 +87,10 @@ The processor uses `@SupportedAnnotationTypes("*")` so it runs every round regar
 
 `process(annotations, round)` runs in two phases:
 
-1. **Annotation-rooted collectors** — `RestClientCollector`, `KafkaConsumerCollector` each pull candidates from `round.getElementsAnnotatedWith(MarkerAnnotation.class)`.
+1. **Annotation-rooted collectors** — `RestClientCollector` and `KafkaConsumerCollector` each pull candidates from `round.getElementsAnnotatedWith(MarkerAnnotation.class)`; `RegistrationCollector`, `SignalSourceCollector` and `GeneratedSignalSourceCollector` collect `Registration` records the same way.
 2. **Root-element scan** — a single pass over `round.getRootElements()` feeds `DelayedJobExecutorScanner`.
+
+In the final synthetic round the processor collects and emits nothing; it only asks `GeneratedSignalSourceCollector` to report predicted signal-source classes that no processor generated.
 
 `@Path`-resource collection is not part of this processor. JAX-RS resource discovery and DI binding emission are owned by `JaxRsPipelineProcessor` in `vertique-codegen-jaxrs`.
 
@@ -141,15 +144,15 @@ Validates `@Inject` constructor count (skipped for interfaces such as `@RestClie
 
 ### `KafkaConsumerCollector`
 
-Handles both `@KafkaListener` and `@KafkaSource` in a single pass (both map to `Qualifier.KAFKA_CONSUMERS`). Skips `@KafkaListener` interfaces — Model 3 routing interfaces use a `Class<?>` literal contribution that must remain manual.
+Handles both `@KafkaListener` and `@KafkaSource` in a single pass (both map to `Qualifier.KAFKA_CONSUMERS`). Skips `@KafkaListener` interfaces with a compiler note — Model 3 routing interfaces use a `Class<?>` literal contribution that must remain manual.
 
 ### `RestClientCollector`
 
-Collects interfaces annotated `@RestClient`. No `@Inject` constructor check (interfaces have none). Routes to `RestClientModuleEmitter` rather than `MultibindingModuleEmitter`.
+Collects interfaces annotated `@RestClient`. No `@Inject` constructor check (interfaces have none). `@RestClient` on a class, concrete or abstract, is a compile error (`@RestClient may only be applied to interfaces`). Routes to `RestClientModuleEmitter` rather than `MultibindingModuleEmitter`.
 
 ### `DelayedJobExecutorScanner`
 
-Root-element scan: loads `dev.vertique.job.delayed.DelayedJobExecutor` via `Elements.getTypeElement(...)`. If the class is unavailable in this compilation (no `job-delayed` dependency), the scanner is a no-op. Checks assignability via erasure FQN comparison. Only concrete classes pass.
+Root-element scan: loads `dev.vertique.job.delayed.DelayedJobExecutor` via `Elements.getTypeElement(...)`. If the class is unavailable in this compilation (no `job-delayed` dependency), the scanner is a no-op. Checks assignability with `Types.isAssignable` on the erased types. Only concrete classes pass; a class with no `@Inject` constructor is skipped with a note, and one with several is an error.
 
 ### `RegistrationCollector` and `RegistrationModuleEmitter`
 
@@ -179,7 +182,7 @@ reads the form from the annotation types present in the round.
 
 ### `MultibindingModuleEmitter`
 
-Emits `Generated{Qualifier}Module` for the two `@IntoSet` qualifiers (`@KafkaConsumers`, `@DelayedJobs`) using `DaggerModuleWriter.named(...).addIntoSetProvides(qualifierClass, Object.class, methodName, implType).build()`.
+Emits `Generated{Qualifier}Module` for the two `@IntoSet` qualifiers (`@KafkaConsumers`, `@DelayedJobs`) using `DaggerModuleWriter.named(...).concrete().addIntoSetProvides(qualifierClass, Object.class, methodName, implType).build()`.
 
 Each generated provider method is named after the implementation type's **simple** name, decapitalized, with `Binding` appended — `UserServiceImpl` → `userServiceImplBinding`. A leading acronym keeps its casing (`URLProvider` → `URLProviderBinding`), and a name that would otherwise be a Java keyword gets a trailing underscore.
 
@@ -361,4 +364,4 @@ None. `vertique-codegen-dagger` is a compile-time annotation processor with no r
 | `vertique-codegen-core` | compile | `CodegenContext`, `AnnotationMirrors`, `Diagnostics`, `DaggerModuleWriter`, `PackageResolver`, `@NoAutoWire` |
 | `com.palantir.javapoet:javapoet` | compile | JavaPoet `CodeBlock` patterns not covered by `DaggerModuleWriter` |
 
-Test-only dependencies (not in the processor jar's runtime classpath): `vertique-codegen-test`, `jakarta.ws.rs-api`, `jakarta.inject-api`, `dagger`, `vertique-services`, `vertique-rest-core`, `vertique-rest-client`, `vertique-kafka-core`, `vertique-job-delayed`.
+Test-only dependencies (not in the processor jar's runtime classpath): `vertique-codegen-test`, `jakarta.inject-api`, `dagger`, `dagger-compiler`, `vertique-rest-client`, `vertique-kafka-core`, `vertique-job-delayed`, JUnit and Mockito.

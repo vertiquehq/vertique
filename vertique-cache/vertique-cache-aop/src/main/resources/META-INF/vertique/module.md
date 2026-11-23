@@ -59,7 +59,7 @@ Dagger-provided classes.
 ## Composition
 
 Include `CacheAopModule` alongside a cache provider module in an application component.
-Provider modules include only the provider-neutral `CacheCoreModule` and never this
+Provider modules include the provider-neutral `CacheCoreModule` and never this
 module; an application that uses cache annotations installs `CacheAopModule`
 explicitly, and a programmatic-only application omits it entirely. The adapters reach
 definition resolution through the core's public `CacheAdapterSupport` seam.
@@ -90,7 +90,7 @@ combined with `@CacheEvict` on the same method. A synchronous method (return typ
 `Future<T>`) always resolves to `LOCAL` unless `cache.caches.<name>.mode` overrides it: leaving
 `mode()` as `DEFAULT` stays `LOCAL` even under `cache.defaultMode: CLUSTERED`, an explicit
 `mode = CLUSTERED` is a compile-time error, and a configuration that still makes the effective mode
-`CLUSTERED` fails startup when the cache is built. A cache name shared by a synchronous and a `Future`-returning method must resolve to one mode: under `cache.defaultMode: CLUSTERED` the `Future` method's unset mode resolves to `CLUSTERED` while the synchronous one resolves to `LOCAL`, and registration fails with an incompatible-definitions error, so set `mode = LOCAL` on the `Future` method or use a `cache.caches.<name>.mode` override. A `@CacheEvict(clear = true)` clears the store of the definition a `@Cacheable` registered under that name, and the store of the declared or default mode while none is registered.
+`CLUSTERED` fails when the cache is built. A cache name shared by a synchronous and a `Future`-returning method must resolve to one mode: under `cache.defaultMode: CLUSTERED` the `Future` method's unset mode resolves to `CLUSTERED` while the synchronous one resolves to `LOCAL`, and registration fails with an incompatible-definitions error, so set `mode = LOCAL` on the `Future` method or use a `cache.caches.<name>.mode` override. A `@CacheEvict(clear = true)` clears the store of the definition a `@Cacheable` registered under that name, and the store of the declared or default mode while none is registered.
 
 ### @CacheEvict
 

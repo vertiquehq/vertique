@@ -120,8 +120,10 @@ Include alongside `TransactionalMessagingPostgresqlModule` and `DelayedJobModule
 @Component(modules = {
     VertxModule.class,
     DispatchModule.class,
+    DbModule.class,
     DbPostgresqlModule.class,
     DbFlywayModule.class,
+    CronPersistenceModule.class,                 // required by the outbox maintenance jobs
     DelayedJobModule.class,
     TransactionalMessagingPostgresqlModule.class,
     TransactionalMessagingDelayedJobModule.class,

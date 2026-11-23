@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.config.vault`
 > **Artifact:** `vertique-config-vault`
-> **Depends on:** config
+> **Depends on:** config-core
 
 Provides a HashiCorp Vault KV v2 property source for the `config.propertySources` placeholder chain. At construction time the module reads every declared Vault path, flattens the key-value data into an immutable in-memory map, and serves subsequent `lookup()` calls from that map with no further I/O. The module integrates with the `ConfigPropertySourceFactory` SPI and is discovered automatically via `ServiceLoader` — no Dagger module is required.
 
@@ -18,7 +18,7 @@ This module is not a Vert.x config store (`config.stores`). It is a property sou
 
 ## When To Use It
 
-Install `vertique-config-vault` when secrets stored in HashiCorp Vault KV v2 must be injected into the application config tree at startup via `${key}` placeholder references. Pair it with `vertique-config` (already a transitive dependency) and `vertique-launcher` for full bootstrap integration.
+Install `vertique-config-vault` when secrets stored in HashiCorp Vault KV v2 must be injected into the application config tree at startup via `${key}` placeholder references. Pair it with `vertique-config-core` (already a transitive dependency) and `vertique-launcher` for full bootstrap integration.
 
 Use the self-reference idiom (see Core Concepts) to pull Vault secrets into the tree without writing the value in any config file.
 
@@ -51,7 +51,7 @@ Example: Vault path `secret/app` containing two keys — `password` and `api.key
 
 When two paths produce the same prefixed key, the later path in the declaration order wins.
 
-Note: the `VaultPropertySource` code contains a `flattenInto` helper that descends into nested `Map` structures. This applies to gateway implementations that return real nested maps (such as test stubs) but not to the production jopenlibs gateway, which always returns flat string maps.
+Note: `VaultPropertySource` flattens each path's data through `SecretDataFlattener` from `vertique-config-core`, which descends into nested `Map` structures and joins nested keys with dots. This applies to gateway implementations that return real nested maps (such as test stubs) but not to the production jopenlibs gateway, which always returns flat string maps.
 
 ### Self-Reference Idiom
 

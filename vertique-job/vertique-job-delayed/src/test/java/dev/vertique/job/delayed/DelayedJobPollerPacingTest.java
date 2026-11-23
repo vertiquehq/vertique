@@ -141,7 +141,9 @@ class DelayedJobPollerPacingTest {
         void fullClaimIsFollowedByAnotherAtOnce(Vertx vertx) {
             claims.script(List.of(execution("a"), execution("b")), List.of(execution("c"), execution("d")), List.of());
 
-            answerEveryDispatchAtOnce(vertx);
+            // both slots of a claim come back together: a freed slot asks for the slots free at that moment,
+            // so replies that trickle in one event-loop turn apart would let the pass ask for one
+            answerEachClaimTogether(vertx, 2);
             deploy(vertx, 2, SLEEP_MS);
 
             claims.await(3, 15_000L);
@@ -386,6 +388,26 @@ class DelayedJobPollerPacingTest {
         });
     }
 
+    /**
+     * A handler that answers the {@code perClaim} dispatches of each claim together, from one task on the
+     * poller's own context. Both replies are then queued on that loop before the first one frees a slot
+     * and sets the short pass timer, which can only run after them, so the pass sees every slot free.
+     */
+    private void answerEachClaimTogether(Vertx vertx, int perClaim) {
+        List<String> batch = new ArrayList<>();
+        vertx.eventBus().consumer(HANDLER, msg -> {
+            if (msg.body() instanceof DispatchEnvelope<?> body
+                    && body.replyAddress().isPresent()) {
+                batch.add(body.replyAddress().orElseThrow());
+                if (batch.size() == perClaim) {
+                    List<String> addresses = List.copyOf(batch);
+                    batch.clear();
+                    claims.claimContext.runOnContext(ignored -> addresses.forEach(address -> reply(vertx, address)));
+                }
+            }
+        });
+    }
+
     /** A handler that keeps every dispatch open until the test answers it. */
     private void holdEveryDispatch(Vertx vertx) {
         vertx.eventBus().consumer(HANDLER, msg -> {
@@ -420,6 +442,9 @@ class DelayedJobPollerPacingTest {
         private static final Object NULL_LIST = new Object();
         private volatile List<Object> script = List.of(List.of());
 
+        /** The context the latest claim ran on: the poller's own. */
+        volatile io.vertx.core.Context claimContext;
+
         @SafeVarargs
         final void script(List<JobExecution>... results) {
             script = new ArrayList<>(List.of((Object[]) results));
@@ -444,6 +469,7 @@ class DelayedJobPollerPacingTest {
         }
 
         int record(int capacity) {
+            claimContext = Vertx.currentContext();
             asked.add(capacity);
             times.add(System.nanoTime());
             return asked.size();

@@ -48,8 +48,8 @@ NotificationService txNotification =
 ```
 
 The two-argument form writes the `default` scope. A `null` `scopeKey`, or a key that is not a
-valid core `ScopeKey` (blank, longer than 255 code points, or containing a control or format
-character), throws `IllegalArgumentException` when `create` is called and not when a method is
+valid core `ScopeKey` (blank, longer than 255 code points, starting or ending with whitespace, or
+containing a control character, a format character or an unpaired surrogate), throws `IllegalArgumentException` when `create` is called and not when a method is
 invoked. The message does not repeat the key.
 
 Invoking a method on the returned proxy:
@@ -92,8 +92,10 @@ At relay time:
    `DurableContextPropagator.decodeToDispatchContext(metadata.context(), ...)`, then merged into
    the caller-override map — no holder write (the relay runs on the verticle's deployment context,
    not a duplicated context). The per-row carrier is reproduced from
-   `metadata.delivery.outbox().carrierId()` so a transplanted identity snapshot fails closed. Relay
-   control in `metadata.delivery` is otherwise ignored on the service path. Before building the
+   `metadata.delivery.outbox().carrierId()` so a transplanted identity snapshot fails closed. Apart
+   from that, the service path reads only the reply control of `metadata.delivery` (see below) and, for
+   a row carrying a reply handle, the entry's maximum attempts, to tell the last attempt from an earlier
+   one. Before building the
    envelope, a `DeferredExecutionOrigin` (`kind = "outbox-relay"`, `reference` = the event type) is
    also merged into the caller-override map, proving the dispatch is deferred execution for the
    opt-in identity-snapshot reconstruction initializer.
@@ -162,12 +164,17 @@ destinations.
 ## Dagger Wiring
 
 `TransactionalMessagingServiceModule` includes `ContextRuntimeModule` and `LoggingContextModule`.
-It contributes only the destination handler; `TransactionalServiceClientFactory` is a `@Singleton`
-with an `@Inject` constructor and is JIT-bound — there is no `@Provides` factory method.
+It contributes the destination handler and declares an optional binding for the framework-internal
+outcome consumer that reply-carrying rows use (`vertique-workflow-services` binds it; rows without a
+reply handle never read it). `TransactionalServiceClientFactory` is a `@Singleton` with an `@Inject`
+constructor and is JIT-bound — there is no `@Provides` factory method.
 
 ```java
 @Module(includes = {ContextRuntimeModule.class, LoggingContextModule.class})
 public abstract class TransactionalMessagingServiceModule {
+
+    @BindsOptionalOf
+    abstract OutboxOutcomeConsumer outcomeConsumer();
 
     @Provides @IntoSet
     static OutboxDestinationHandler serviceHandler(

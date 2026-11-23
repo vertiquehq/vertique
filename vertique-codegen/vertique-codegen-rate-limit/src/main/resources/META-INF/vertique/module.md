@@ -33,9 +33,10 @@ and always returns `false` from `process()`. It checks:
   and at most 8 segments including the root; the root must resolve to a declared
   method parameter (by name or position); each subsequent segment must be a public,
   zero-argument record component or `getX`/`isX` accessor; the terminal segment must
-  resolve to a supported scalar type (`String`, `Character`, `Boolean`, a numeric
-  primitive or wrapper, `BigInteger`, `BigDecimal`, `UUID`, an enum type, or a
-  `java.time` scalar).
+  resolve to a supported scalar type (`String`, `Character`, `Boolean`, any primitive
+  type, `Byte`, `Short`, `Integer`, `Long`, `Float`, `Double`, `BigInteger`, `BigDecimal`,
+  `UUID`, an enum type, or one of `Instant`, `LocalDate`, `LocalDateTime`,
+  `OffsetDateTime`, `ZonedDateTime`).
 - **Proxyability preconditions** — the declaring type must be a public, non-final class
   with exactly one `@Inject` constructor, and the annotated method must be an
   instance method that can be overridden (not final, private, static, or abstract).

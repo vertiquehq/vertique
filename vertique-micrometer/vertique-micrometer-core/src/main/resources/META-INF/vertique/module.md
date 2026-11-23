@@ -140,6 +140,7 @@ directly in the backends and bypass those filters.
 static CompositeMeterRegistry registry();    // never null
 static boolean bootstrapped();
 static void bootstrap(MicrometerAssembly);   // called exactly once; throws ISE on second call
+static void detach(MicrometerAssembly);      // removes the assembly's composite from the outer; shutdown path
 static void resetForTests();                 // @AfterEach test isolation
 ```
 
@@ -171,7 +172,8 @@ Active path (metrics enabled + at least one provider present):
 
 Inert path: `metrics.enabled=false` or zero providers — returns builder unchanged.
 
-`onShutdown()` closes the assembly (idempotent). The launcher calls `onShutdown()` only for
+`onShutdown()` detaches the assembly's composite from the outer registry, then closes the assembly
+(idempotent). The launcher calls `onShutdown()` only for
 contributors whose `contribute()` returned successfully, so the assembly is always closed on both
 normal stop and subsequent-contributor failures — but never after a failed active-path contribution.
 
@@ -330,8 +332,8 @@ abstract class AopBindingsModule {
 ### MetricsBootstrapException
 
 Unchecked exception thrown by `MicrometerMetricsContributor` when metrics assembly fails. No cause
-constructor is provided. The message contains only the component or backend class name to prevent
-accidental credential logging.
+constructor is provided. The message contains only a component or backend name and, for a wrapped
+failure, the failure's simple class name, to prevent accidental credential logging.
 
 ---
 
@@ -448,7 +450,7 @@ only this type adaptation; configuration, registry, and optional bindings remain
 ## Dependencies
 
 - `dev.vertique:vertique-core` — `OrderedExtension`, `ConfigurationException`, `@VertxConfig`,
-  `JsonConfigPaths`
+  `ConfigParser`, `JsonConfigPaths`
 - `dev.vertique:vertique-bootstrap` — `VertxBuilderContributor`, `BootstrapContext`
 - `dev.vertique:vertique-security-core` — the authentication and authorization events
   `SecurityMetricsObserver` counts

@@ -202,7 +202,7 @@ The role and scope calculation behind the REST built-in decision point, as an `A
 
 Programmatic reference implementations for applications that define authorization data in code rather than config.
 
-- `InMemoryPolicyDefinitionSource` — backed by a `List<PolicyDefinition>` supplied at construction.
+- `InMemoryPolicyDefinitionSource` — backed by a `Collection<PolicyDefinition>` supplied at construction.
 - `InMemoryRolePolicyResolver` — backed by a `Map<String, List<String>>` (role → policy names) supplied at construction. Also used as the default empty-mapping resolver contributed `@IntoSet` by `SecurityAuthzModule`.
 
 ---
@@ -602,5 +602,9 @@ static ServiceIdentityResolver serviceIdentityResolver() {
 - `dev.vertique:vertique-security-core` — all SPI interfaces and value types
 - `dev.vertique:vertique-core` — `OrderedExtension`, `ContextHolder`, durable-context types, the `ConfigParser` seam, exception roots
 - `dev.vertique:vertique-context` — the durable-context encoder/decoder multibinding sets the carriage module contributes into
+- `dev.vertique:vertique-resilience` — the `Resilience` runtime that `SecurityAuthzModule` includes and that bounds Mode-2 resolution with a timeout
 - `io.vertx:vertx-core` — `Future`, and the timer backing the Mode-2 resolution timeout
-- `com.google.dagger:dagger` — the `@Module`/`@Multibinds`/`@BindsOptionalOf` wiring this module ships
+- `com.google.dagger:dagger` and `jakarta.inject:jakarta.inject-api` — the `@Module`/`@Multibinds`/`@BindsOptionalOf` wiring this module ships and its `@Inject`/`@Singleton` annotations
+- `com.fasterxml.jackson.datatype:jackson-datatype-jdk8` and `jackson-datatype-jsr310` — the canonical JSON mapper inside `IdentitySnapshotCodec`
+- `org.slf4j:slf4j-api` — WARN/ERROR logging from the emitter and the authorization decorators
+- `dev.vertique:vertique-config-core` — test scope only; not a production dependency

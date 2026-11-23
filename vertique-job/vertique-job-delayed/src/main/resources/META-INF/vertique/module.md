@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.job.delayed`
 > **Artifact:** `vertique-job-delayed`
-> **Depends on:** job-core, job-postgresql, services, deploy, core, context, db-core, logging, config-core
+> **Depends on:** job-core, job-postgresql, services, deploy, core, resilience, context, db-core, logging
 
 `vertique-job-delayed` is a durable one-shot job queue. An application enqueues a job — now, at an
 instant, or after a delay — and the framework persists it, claims it on some node, dispatches it to a
@@ -156,7 +156,8 @@ Lombok `@Builder` value object. Only `handler` is required.
 `scopeKey` is selected here only when you build the `DelayedJob` yourself; a typed contract client
 selects it once for all its enqueues (see [DelayedJobClientFactory](#delayedjobclientfactory)).
 Leaving it out stores `default`. A `null`, blank, over-long (more
-than 255 code points) or control- or format-character key fails the enqueue with an
+than 255 code points), control- or format-character key, or one that starts or ends with whitespace,
+fails the enqueue with an
 `IllegalArgumentException` in a failed future, before any write, and the message does not repeat the
 key. This holds for `enqueue` and `enqueuePremerged`, with or without a `SqlClient`. The ambient
 `ScopeContext` never selects the row's scope; it is captured into `metadata` like any other durable
@@ -271,7 +272,7 @@ class DeliverWebhookJobImpl implements DelayedJobExecutor<WebhookPayload, Delive
 
     @Override
     public Future<Void> execute(WebhookPayload payload, JobContext ctx) {
-        ctx.logger().info("Delivering webhook for payment {}", payload.paymentId());
+        ctx.logger().info("Delivering webhook for payment " + payload.paymentId());
         return webhookClient.notify(payload.paymentId());
     }
 }
@@ -353,7 +354,8 @@ acme.enqueue(payload);   // stored in scope "acme"
   `DelayedJobOptions`. The scope replaces any `DelayedJob.scopeKey` and is applied by the service
   that the client enqueues through.
 - `scope` throws `IllegalArgumentException` for `null`, and for a blank, over-long (more than 255
-  code points) or control- or format-character key, when it is called. The message does not repeat
+  code points), control- or format-character key, or one that starts or ends with whitespace, when
+  it is called. The message does not repeat
   the key.
 - `client(C.class).create()` without `scope`, and `create(C.class)`, store `default`.
 - A generated `{Contract}_DelayedJobProxy` needs no regeneration: the scope travels in the service
@@ -575,7 +577,9 @@ never construct these types.
 - **context** — durable context propagation across the persistence hop.
 - **db-core** — the `DataAccessException` family the enqueue exception mapper translates.
 - **logging** — the MDC context facade used on the dispatch and reply paths.
-- **config-core** — the `ConfigParser` implementation the module's config boundary resolves.
+- **config-core** — not a dependency of this module (it appears only on the test classpath). The
+  config boundary injects the `ConfigParser` that core declares; the application graph supplies its
+  implementation.
 
 > **MDC note.** The poller enriches MDC before dispatching each job execution. Enrichment that runs
 > on the poller verticle thread (a non-duplicated Vert.x context) writes through SLF4J's `MDC`
