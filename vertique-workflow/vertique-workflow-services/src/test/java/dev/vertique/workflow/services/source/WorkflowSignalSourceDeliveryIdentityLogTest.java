@@ -26,8 +26,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Verifies that the actor id a delivery writes to the log for an outcome that records no command
- * passes through the shared text rule: an id taken from a message header cannot start a log line of
- * its own, carry a control or line separator character, or run past 255 code points.
+ * passes through the shared echoed-name rule: an id taken from a message header cannot start a log line of
+ * its own, carry a control or line separator character, or run past 64 code points.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -65,23 +65,23 @@ class WorkflowSignalSourceDeliveryIdentityLogTest {
                 // and it holds no control or line separator character
                 assertThat(logged.codePoints())
                         .as(row)
-                        .noneMatch(WorkflowSignalSourceDeliveryIdentityLogTest::isControlOrLineSeparator);
+                        .noneMatch(WorkflowSignalSourceDeliveryIdentityLogTest::isControl);
 
                 // and no line of it is the forged text
                 assertThat(logged.lines()).as(row).noneMatch(line -> line.startsWith(FORGED_LINE));
 
-                // and the actor id in it is at most 255 code points
-                assertThat(logged).as(row).doesNotContain("Z".repeat(256));
+                // and the actor id in it is at most 64 code points, followed by a cut marker when it was longer
+                assertThat(logged).as(row).doesNotContain("Z".repeat(65));
                 if (actorId.equals(LONG_ACTOR)) {
-                    assertThat(logged).as(row).contains("Z".repeat(255));
+                    assertThat(logged).as(row).contains("Z".repeat(64) + "...");
                 } else {
-                    assertThat(logged).as(row).contains("mallory");
+                    assertThat(logged).as(row).contains("mallory??");
                 }
             }
         }
     }
 
-    private static boolean isControlOrLineSeparator(int codePoint) {
+    private static boolean isControl(int codePoint) {
         int type = Character.getType(codePoint);
         return Character.isISOControl(codePoint)
                 || type == Character.LINE_SEPARATOR

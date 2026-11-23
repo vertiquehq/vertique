@@ -23,9 +23,7 @@ class DefinitionChangeActorRecordsTest {
 
     private static final Instant NOW = Instant.parse("2026-01-02T03:04:05Z");
     private static final WorkflowAttribution ALICE = new WorkflowAttribution(
-            new WorkflowActor.User("alice"),
-            new PrincipalRef(PrincipalType.USER, "carol", java.util.Map.of()),
-            WorkflowAttribution.Status.VERIFIED);
+            new WorkflowActor.User("alice"), new PrincipalRef(PrincipalType.USER, "carol", java.util.Map.of()));
 
     private static WorkflowDefinitionRecord record(WorkflowAttribution changedBy) {
         return new WorkflowDefinitionRecord(
@@ -103,11 +101,11 @@ class DefinitionChangeActorRecordsTest {
     }
 
     @Test
-    @DisplayName("an actor needs its actor and its attribution, and the system actor needs a reason")
+    @DisplayName("a subject needs an actor, and the system actor needs a reason")
     void anActorRequiresItsComponents() {
-        assertThatThrownBy(() -> new WorkflowAttribution(null, null, WorkflowAttribution.Status.VERIFIED))
+        assertThatThrownBy(() -> new WorkflowAttribution(
+                        null, new PrincipalRef(PrincipalType.USER, "carol", java.util.Map.of())))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new WorkflowAttribution(null, null, null)).isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> WorkflowAttribution.system(null)).isInstanceOf(NullPointerException.class);
     }
 }

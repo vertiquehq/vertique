@@ -44,8 +44,7 @@ class WorkflowHistoryEntryTest {
                 2,
                 new WorkflowAttribution(
                         new WorkflowActor.Service("relay-svc"),
-                        new PrincipalRef(PrincipalType.USER, "u-2", java.util.Map.of()),
-                        WorkflowAttribution.Status.VERIFIED),
+                        new PrincipalRef(PrincipalType.USER, "u-2", java.util.Map.of())),
                 "node-1",
                 11L,
                 "wait",
@@ -177,11 +176,7 @@ class WorkflowHistoryEntryTest {
         // When each new component differs in turn, then the entries differ
         assertThat(base)
                 .isNotEqualTo(with(base, 5, 1))
-                .isNotEqualTo(with(
-                        base,
-                        6,
-                        new WorkflowAttribution(
-                                new WorkflowActor.User("u-1"), null, WorkflowAttribution.Status.VERIFIED)))
+                .isNotEqualTo(with(base, 6, new WorkflowAttribution(new WorkflowActor.User("u-1"), null)))
                 .isNotEqualTo(with(base, 7, "node-2"))
                 .isNotEqualTo(with(base, 8, 12L))
                 .isNotEqualTo(with(base, 9, "other-step"))

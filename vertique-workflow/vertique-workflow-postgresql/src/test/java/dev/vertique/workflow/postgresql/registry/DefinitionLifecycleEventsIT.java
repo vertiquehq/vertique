@@ -157,7 +157,6 @@ public class DefinitionLifecycleEventsIT {
                     .containsExactly("PUBLISH " + id + "@2", "ACTIVATE " + id + "@2");
             assertThat(firstStart).allSatisfy(change -> {
                 assertThat(change.attribution().actor()).isEqualTo(BOOTSTRAP);
-                assertThat(change.attribution().status()).isEqualTo(WorkflowAttribution.Status.VERIFIED);
             });
             // ... and the restart published the lower and the opted-out version without activating either, and
             // reported nothing for the version it already held

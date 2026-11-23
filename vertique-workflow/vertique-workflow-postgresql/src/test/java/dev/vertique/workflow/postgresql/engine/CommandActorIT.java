@@ -62,7 +62,7 @@ public class CommandActorIT {
             WorkflowInstanceId second = scenario.start(null, "anonymous-start", Map.of());
             scenario.runToIdle(second);
 
-            // Then the first START row and its history entries carry SERVICE billing, verified
+            // Then the first START row and its history entries carry SERVICE billing
             List<Attributed> firstCommands = scenario.commands(first);
             assertThat(firstCommands)
                     .filteredOn(row -> row.label().equals("START"))
@@ -72,12 +72,10 @@ public class CommandActorIT {
                         assertThat(row.actorId()).isEqualTo("billing");
                         assertThat(row.actorReason()).isNull();
                         assertThat(row.onBehalfOf()).isNull();
-                        assertThat(row.attribution()).isEqualTo("VERIFIED");
                     });
             assertThat(scenario.history(first)).isNotEmpty().allSatisfy(entry -> {
                 assertThat(entry.actorKind()).as(entry.label()).isEqualTo("SERVICE");
                 assertThat(entry.actorId()).as(entry.label()).isEqualTo("billing");
-                assertThat(entry.attribution()).as(entry.label()).isEqualTo("VERIFIED");
             });
 
             // And nothing the payload named reached any row
@@ -90,10 +88,9 @@ public class CommandActorIT {
                     .singleElement()
                     .satisfies(row -> {
                         assertThat(row.actorKind()).isEqualTo("SYSTEM");
-                        assertThat(row.attribution()).isNotNull();
                     });
 
-            // And the second START row and its entries carry NONE, absent
+            // And the second START row and its entries carry NONE
             assertThat(scenario.commands(second))
                     .filteredOn(row -> row.label().equals("START"))
                     .singleElement()
@@ -102,11 +99,10 @@ public class CommandActorIT {
                         assertThat(row.actorId()).isNull();
                         assertThat(row.actorReason()).isNull();
                         assertThat(row.onBehalfOf()).isNull();
-                        assertThat(row.attribution()).isEqualTo("ABSENT");
                     });
             assertThat(scenario.history(second)).isNotEmpty().allSatisfy(entry -> {
                 assertThat(entry.actorKind()).as(entry.label()).isEqualTo("NONE");
-                assertThat(entry.attribution()).as(entry.label()).isEqualTo("ABSENT");
+                assertThat(entry.actorId()).as(entry.label()).isNull();
             });
 
             // And the test observer received one actor-absent event, for the second start only
@@ -145,20 +141,19 @@ public class CommandActorIT {
                     .satisfies(entry -> {
                         assertThat(entry.actorKind()).isEqualTo("USER");
                         assertThat(entry.actorId()).isEqualTo("u-2");
-                        assertThat(entry.attribution()).isEqualTo("VERIFIED");
                     });
 
             // And the cancellation entry and every command-cancelled entry, the signal's among them, carry SERVICE ops
             assertThat(history)
                     .filteredOn(entry -> entry.label().equals("CANCELLED"))
                     .singleElement()
-                    .satisfies(entry -> assertThat(entry.is("SERVICE", "ops", "VERIFIED"))
+                    .satisfies(entry -> assertThat(entry.is("SERVICE", "ops"))
                             .as(entry.toString())
                             .isTrue());
             assertThat(history)
                     .filteredOn(entry -> entry.label().equals("COMMAND_CANCELLED"))
                     .isNotEmpty()
-                    .allSatisfy(entry -> assertThat(entry.is("SERVICE", "ops", "VERIFIED"))
+                    .allSatisfy(entry -> assertThat(entry.is("SERVICE", "ops"))
                             .as(entry.toString())
                             .isTrue());
             assertThat(history)
@@ -173,7 +168,6 @@ public class CommandActorIT {
                     .satisfies(row -> {
                         assertThat(row.actorKind()).isEqualTo("USER");
                         assertThat(row.actorId()).isEqualTo("u-1");
-                        assertThat(row.attribution()).isEqualTo("VERIFIED");
                     });
 
             // And the cancelled due-date timer command keeps the system, not the canceller
@@ -213,7 +207,7 @@ public class CommandActorIT {
             scenario.cancel(service("ops"), a);
 
             // Then every command is cancelled, and the cancellation entry and every command-cancelled entry carry
-            // SERVICE ops, verified
+            // SERVICE ops
             assertThat(scenario.commandStates(a))
                     .containsEntry(parked, "CANCELLED")
                     .containsEntry(deferred, "CANCELLED")
@@ -222,7 +216,7 @@ public class CommandActorIT {
             assertThat(history)
                     .filteredOn(entry -> entry.label().equals("CANCELLED"))
                     .singleElement()
-                    .satisfies(entry -> assertThat(entry.is("SERVICE", "ops", "VERIFIED"))
+                    .satisfies(entry -> assertThat(entry.is("SERVICE", "ops"))
                             .as(entry.toString())
                             .isTrue());
             assertThat(history)
@@ -231,14 +225,13 @@ public class CommandActorIT {
                     .containsExactlyInAnyOrder(parked, deferred, timer);
             assertThat(history)
                     .filteredOn(entry -> entry.label().equals("COMMAND_CANCELLED"))
-                    .allSatisfy(entry -> assertThat(entry.is("SERVICE", "ops", "VERIFIED"))
+                    .allSatisfy(entry -> assertThat(entry.is("SERVICE", "ops"))
                             .as(entry.toString())
                             .isTrue());
 
             // And each cancelled command row keeps the actor that recorded it
-            assertThat(rowOf(scenario, a, parked).is("USER", "u-1", "VERIFIED")).isTrue();
-            assertThat(rowOf(scenario, a, deferred).is("USER", "u-2", "VERIFIED"))
-                    .isTrue();
+            assertThat(rowOf(scenario, a, parked).is("USER", "u-1")).isTrue();
+            assertThat(rowOf(scenario, a, deferred).is("USER", "u-2")).isTrue();
             assertThat(rowOf(scenario, a, timer).actorKind()).isEqualTo("SYSTEM");
 
             // And the parked signal's receipt entry keeps the user who recorded the signal
@@ -246,7 +239,7 @@ public class CommandActorIT {
                     .filteredOn(entry -> entry.label().equals("SIGNAL_PARKED")
                             && Long.valueOf(parked).equals(entry.commandId()))
                     .isNotEmpty()
-                    .allSatisfy(entry -> assertThat(entry.is("USER", "u-1", "VERIFIED"))
+                    .allSatisfy(entry -> assertThat(entry.is("USER", "u-1"))
                             .as(entry.toString())
                             .isTrue());
         }
@@ -267,7 +260,7 @@ public class CommandActorIT {
             // When service ops cancels B
             scenario.cancel(service("ops"), b);
 
-            // Then both are cancelled and logged with SERVICE ops, verified, as is the cancellation
+            // Then both are cancelled and logged with SERVICE ops, as is the cancellation
             assertThat(scenario.commandStates(b))
                     .containsEntry(deadSignal, "CANCELLED")
                     .containsEntry(deadCompletion, "CANCELLED");
@@ -275,7 +268,7 @@ public class CommandActorIT {
             assertThat(history)
                     .filteredOn(entry -> entry.label().equals("CANCELLED"))
                     .singleElement()
-                    .satisfies(entry -> assertThat(entry.is("SERVICE", "ops", "VERIFIED"))
+                    .satisfies(entry -> assertThat(entry.is("SERVICE", "ops"))
                             .as(entry.toString())
                             .isTrue());
             assertThat(history)
@@ -284,15 +277,13 @@ public class CommandActorIT {
                     .contains(deadSignal, deadCompletion);
             assertThat(history)
                     .filteredOn(entry -> entry.label().equals("COMMAND_CANCELLED"))
-                    .allSatisfy(entry -> assertThat(entry.is("SERVICE", "ops", "VERIFIED"))
+                    .allSatisfy(entry -> assertThat(entry.is("SERVICE", "ops"))
                             .as(entry.toString())
                             .isTrue());
 
             // And each cancelled command row keeps the actor that recorded it
-            assertThat(rowOf(scenario, b, deadSignal).is("USER", "u-1", "VERIFIED"))
-                    .isTrue();
-            assertThat(rowOf(scenario, b, deadCompletion).is("USER", "u-4", "VERIFIED"))
-                    .isTrue();
+            assertThat(rowOf(scenario, b, deadSignal).is("USER", "u-1")).isTrue();
+            assertThat(rowOf(scenario, b, deadCompletion).is("USER", "u-4")).isTrue();
         }
     }
 

@@ -421,7 +421,6 @@ class DefaultWorkflowDefinitionServiceTest {
         WorkflowAttribution actor = registeredBy(holder, new DefaultWorkflowActorMapper());
 
         assertThat(actor.actor()).isEqualTo(new WorkflowActor.User("alice"));
-        assertThat(actor.status()).isEqualTo(WorkflowAttribution.Status.VERIFIED);
     }
 
     @Test
@@ -442,7 +441,7 @@ class DefaultWorkflowDefinitionServiceTest {
             throw new IllegalArgumentException("alice cannot be mapped");
         };
 
-        assertThat(registeredBy(holder, failing)).isEqualTo(WorkflowAttribution.unavailable());
+        assertThat(registeredBy(holder, failing)).isEqualTo(WorkflowAttribution.absent());
     }
 
     @Nested

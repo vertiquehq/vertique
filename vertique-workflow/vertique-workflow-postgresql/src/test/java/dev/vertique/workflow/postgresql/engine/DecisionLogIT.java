@@ -107,7 +107,6 @@ public class DecisionLogIT {
                     .allSatisfy(entry -> {
                         assertThat(entry.actorKind()).as(entry.type()).isEqualTo("USER");
                         assertThat(entry.actorId()).as(entry.type()).isEqualTo("u-route");
-                        assertThat(entry.attribution()).as(entry.type()).isEqualTo("VERIFIED");
                     });
         }
     }

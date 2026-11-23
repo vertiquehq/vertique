@@ -9,7 +9,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.actor.WorkflowActor;
-import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.history.CommandKind;
 import dev.vertique.workflow.history.WorkflowHistoryChange;
 import dev.vertique.workflow.history.WorkflowHistoryEvent;
@@ -160,7 +159,6 @@ public class HistoryAnnouncementIT {
                                     .userId())
                             .as(event.toString())
                             .isIn("u-0", "u-1", "u-4");
-                    assertThat(event.entryInfo().attribution().status()).isEqualTo(WorkflowAttribution.Status.VERIFIED);
                     continue;
                 }
                 String expected = event instanceof WorkflowHistoryEvent.TaskReassigned
@@ -174,7 +172,6 @@ public class HistoryAnnouncementIT {
                 assertThat(((WorkflowActor.User) event.entryInfo().attribution().actor()).userId())
                         .as(event.toString())
                         .isEqualTo(expected);
-                assertThat(event.entryInfo().attribution().status()).isEqualTo(WorkflowAttribution.Status.VERIFIED);
             }
             // and the entries that name their command carry its kind, none inferred from the segment
             assertThat(endedEvents)

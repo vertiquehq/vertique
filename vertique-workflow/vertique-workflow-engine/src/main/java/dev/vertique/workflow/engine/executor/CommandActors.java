@@ -81,7 +81,7 @@ public final class CommandActors {
     /**
      * Takes the actor from the current security identity.
      *
-     * @return the actor; {@link WorkflowAttribution.Status#ABSENT} when there is no identity or it is anonymous
+     * @return the attribution; {@link WorkflowAttribution#absent()} when there is no identity or it is anonymous
      * @throws RuntimeException whatever the actor mapper throws for the identity, unchanged
      */
     public WorkflowAttribution capture() {
@@ -105,7 +105,7 @@ public final class CommandActors {
     /**
      * Captures the actor and runs the write that records a command with it. The write is not run when the capture
      * fails, so a mapper failure refuses the recording with the mapper's own exception. When the write succeeds and
-     * the actor is {@link WorkflowAttribution.Status#ABSENT}, the observers are told of an {@code ActorAbsent} event for the
+     * the attribution has no actor, the observers are told of an {@code ActorAbsent} event for the
      * command kind.
      *
      * @param commandKind the kind of the command being recorded, for the event
@@ -124,7 +124,7 @@ public final class CommandActors {
      * @param commandKind the kind of the command
      */
     public void reportAbsence(WorkflowAttribution actor, String commandKind) {
-        if (actor.status() == WorkflowAttribution.Status.ABSENT && events.any()) {
+        if (actor.actor() == null && events.any()) {
             events.emit(new WorkflowExecutorEvent.ActorAbsent(commandKind));
         }
     }

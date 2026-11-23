@@ -75,23 +75,22 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     private static final String COLUMNS =
             "scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, name_binding, status, document_format, "
                     + "source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at, created_at, status_changed_at, failure_reason, signal_names_json, start_schema_json, "
-                    + "status_actor_kind, status_actor_id, status_actor_reason, status_on_behalf_of, status_attribution";
+                    + "status_actor_kind, status_actor_id, status_actor_reason, status_on_behalf_of";
     /** Sets who made the status change from the five parameters after the key and one more (a claim token or status). */
-    private static final String SET_STATUS_ACTOR_5 = "status_actor_kind=$5, status_actor_id=$6, status_actor_reason=$7,"
-            + " status_on_behalf_of=$8, status_attribution=$9";
+    private static final String SET_STATUS_ACTOR_5 =
+            "status_actor_kind=$5, status_actor_id=$6, status_actor_reason=$7," + " status_on_behalf_of=$8";
 
     /** Sets who made the status change from the five parameters after the key and two more (a status pair). */
-    private static final String SET_STATUS_ACTOR_6 = "status_actor_kind=$6, status_actor_id=$7, status_actor_reason=$8,"
-            + " status_on_behalf_of=$9, status_attribution=$10";
+    private static final String SET_STATUS_ACTOR_6 =
+            "status_actor_kind=$6, status_actor_id=$7, status_actor_reason=$8," + " status_on_behalf_of=$9";
 
-    private static final String ACTIVATION_ACTOR_COLUMNS = "activation_actor_kind, activation_actor_id,"
-            + " activation_actor_reason, activation_on_behalf_of, activation_attribution";
+    private static final String ACTIVATION_ACTOR_COLUMNS =
+            "activation_actor_kind, activation_actor_id," + " activation_actor_reason, activation_on_behalf_of";
 
     private static final String ACTIVATION_ACTOR_UPDATE = "activation_actor_kind=EXCLUDED.activation_actor_kind,"
             + " activation_actor_id=EXCLUDED.activation_actor_id,"
             + " activation_actor_reason=EXCLUDED.activation_actor_reason,"
-            + " activation_on_behalf_of=EXCLUDED.activation_on_behalf_of,"
-            + " activation_attribution=EXCLUDED.activation_attribution";
+            + " activation_on_behalf_of=EXCLUDED.activation_on_behalf_of";
 
     private static final String LOCKED_COLUMNS = COLUMNS + ", document_digest";
     private static final String KEY = "scope_key = $1 AND definition_id = $2 AND definition_version = $3";
@@ -190,10 +189,10 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 + " ORDER BY definition_id, scope_key, definition_version";
 
         this.sqlInsert = "INSERT INTO " + definitions
-                + " (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status, document, document_format, document_digest, source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at, name_binding, signal_names_json, start_schema_json, status_actor_kind, status_actor_id, status_actor_reason, status_on_behalf_of, status_attribution) VALUES ($1,$2,$3,'DOCUMENT',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18::jsonb,$19::jsonb,$20,$21,$22,$23,$24)";
+                + " (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status, document, document_format, document_digest, source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at, name_binding, signal_names_json, start_schema_json, status_actor_kind, status_actor_id, status_actor_reason, status_on_behalf_of) VALUES ($1,$2,$3,'DOCUMENT',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18::jsonb,$19::jsonb,$20,$21,$22,$23)";
 
         this.sqlInsertCode = "INSERT INTO " + definitions
-                + " (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status, source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at, name_binding, signal_names_json, start_schema_json, status_actor_kind, status_actor_id, status_actor_reason, status_on_behalf_of, status_attribution) VALUES ($1,$2,$3,'CODE',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15::jsonb,$16::jsonb,$17,$18,$19,$20,$21)";
+                + " (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status, source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at, name_binding, signal_names_json, start_schema_json, status_actor_kind, status_actor_id, status_actor_reason, status_on_behalf_of) VALUES ($1,$2,$3,'CODE',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15::jsonb,$16::jsonb,$17,$18,$19,$20)";
 
         this.sqlUpdateCodeProvenance = "UPDATE " + definitions
                 + " SET source_type=$4, source_uri=$5, source_revision=$6, source_author=$7, source_upload_id=$8, loaded_at=$9, contract_name=$10, state_type_name=$11 WHERE "
@@ -214,7 +213,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
 
         this.sqlResetStale = "UPDATE " + definitions
                 + " SET status='CANDIDATE', publish_token=NULL, status_changed_at=clock_timestamp(), status_actor_kind='SYSTEM', status_actor_id=NULL,"
-                + " status_actor_reason='stale publication reset', status_on_behalf_of=NULL, status_attribution='VERIFIED'"
+                + " status_actor_reason='stale publication reset', status_on_behalf_of=NULL"
                 + " WHERE definition_id=$1 AND status='PUBLISHING' AND extract(epoch from (clock_timestamp() - status_changed_at)) >= $2::numeric";
 
         this.sqlUpdateProvenance = "UPDATE " + definitions
@@ -253,7 +252,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 + " (scope_key, definition_id, target_scope_key, definition_version, activated_at, "
                 + ACTIVATION_ACTOR_COLUMNS + ")"
                 + " SELECT $1::varchar,$2::varchar,$3::varchar,$4::bigint,$5::timestamptz,"
-                + " $6::varchar,$7::varchar,$8::varchar,$9::jsonb,$10::varchar WHERE EXISTS (SELECT 1 FROM "
+                + " $6::varchar,$7::varchar,$8::varchar,$9::jsonb WHERE EXISTS (SELECT 1 FROM "
                 + definitions
                 + " WHERE scope_key=$3 AND definition_id=$2 AND definition_version=$4 AND status='AVAILABLE')"
                 + " ON CONFLICT (scope_key, definition_id) DO UPDATE SET target_scope_key=EXCLUDED.target_scope_key,"
@@ -272,7 +271,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 + " AS existing (scope_key, definition_id, target_scope_key, definition_version, activated_at, "
                 + ACTIVATION_ACTOR_COLUMNS + ")"
                 + " SELECT '" + WorkflowScopes.DEFAULT + "',$1::varchar,'" + WorkflowScopes.DEFAULT
-                + "',$2::bigint,clock_timestamp(),$3::varchar,$4::varchar,$5::varchar,$6::jsonb,$7::varchar"
+                + "',$2::bigint,clock_timestamp(),$3::varchar,$4::varchar,$5::varchar,$6::jsonb"
                 + " WHERE EXISTS (SELECT 1 FROM " + definitions
                 + " WHERE scope_key='" + WorkflowScopes.DEFAULT
                 + "' AND definition_id=$1 AND definition_version=$2 AND status='AVAILABLE')"
@@ -1138,7 +1137,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 storedFailure(r),
                 storedObject(r, "signal_names_json"),
                 storedObject(r, "start_schema_json"),
-                PgWorkflowAttribution.read(r, "status_", "status_attribution"));
+                PgWorkflowAttribution.read(r, "status_"));
     }
 
     /** Reads a stored JSON object column; a value that is not an object reads as absent and is never echoed. */
@@ -1162,7 +1161,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     static DefinitionActivation activation(Row r) {
-        return activation(r, PgWorkflowAttribution.read(r, "activation_", "activation_attribution"));
+        return activation(r, PgWorkflowAttribution.read(r, "activation_"));
     }
 
     /** Reads an activation record from a row that does not select who wrote it, as the start selection does. */

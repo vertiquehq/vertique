@@ -12,7 +12,6 @@ import dev.vertique.security.PrincipalRef;
 import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityIdentity;
 import dev.vertique.workflow.actor.WorkflowActor;
-import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.history.WorkflowInstanceHistoryService;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.executor.ActorScenario;
@@ -72,8 +71,9 @@ public class InstanceCommandActorHistoryIT {
             WorkflowInstanceHistoryService history =
                     HistoryGraph.reading(vertx, options, reading).historyService();
 
-            // An actor ID with a line break and more than 255 characters still names the same caller.
-            String userId = "u-0\n" + "x".repeat(300) + (char) 0 + (char) 0xd800;
+            // An actor ID of the longest storable length, with a line break and a bidi override, is stored as it is
+            // and still names the same caller.
+            String userId = "u-0\n\u202e" + "x".repeat(250);
             WorkflowInstanceId named = scenario.start(user(userId), "actor-named", Map.of());
             scenario.runToIdle(named);
             scenario.cancel(service("ops"), named);
@@ -87,15 +87,13 @@ public class InstanceCommandActorHistoryIT {
             // Then the start entry names the user, and the cancellation entry names the service
             WorkflowHistoryEntry start = only(namedLog, WorkflowEntryType.START);
             assertThat(start.attribution().actor()).isEqualTo(new WorkflowActor.User(userId));
-            assertThat(start.attribution().status()).isEqualTo(WorkflowAttribution.Status.VERIFIED);
             WorkflowHistoryEntry cancelled = only(namedLog, WorkflowEntryType.CANCELLED);
             assertThat(cancelled.attribution().actor()).isEqualTo(new WorkflowActor.Service("ops"));
-            assertThat(cancelled.attribution().status()).isEqualTo(WorkflowAttribution.Status.VERIFIED);
 
             // And a start with no identity is logged as none, with absent attribution
             WorkflowHistoryEntry anonymousStart = only(anonymousLog, WorkflowEntryType.START);
-            assertThat(anonymousStart.attribution().actor()).isEqualTo(null);
-            assertThat(anonymousStart.attribution().status()).isEqualTo(WorkflowAttribution.Status.ABSENT);
+            assertThat(anonymousStart.attribution().actor()).isNull();
+            assertThat(anonymousStart.attribution().onBehalfOf()).isNull();
         } finally {
             reading.close();
         }
@@ -122,10 +120,8 @@ public class InstanceCommandActorHistoryIT {
             // Then the retry entry names the user, and the migration entry names the service
             WorkflowHistoryEntry retried = only(log, WorkflowEntryType.RETRIED);
             assertThat(retried.attribution().actor()).isEqualTo(new WorkflowActor.User("r-1"));
-            assertThat(retried.attribution().status()).isEqualTo(WorkflowAttribution.Status.VERIFIED);
             WorkflowHistoryEntry migrated = only(log, WorkflowEntryType.WORKFLOW_MIGRATED);
             assertThat(migrated.attribution().actor()).isEqualTo(new WorkflowActor.Service("deployer"));
-            assertThat(migrated.attribution().status()).isEqualTo(WorkflowAttribution.Status.VERIFIED);
         } finally {
             reading.close();
         }

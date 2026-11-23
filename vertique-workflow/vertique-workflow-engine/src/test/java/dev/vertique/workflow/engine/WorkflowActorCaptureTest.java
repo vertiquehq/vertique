@@ -32,13 +32,13 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Verifies the actor that the registry stores for a definition change: the same actor, with the same cleaning and the
- * same attribution, that the engine takes for a command, so that a stored definition change and an instance's history
- * entry name a caller the same way.
+ * Verifies the actor that the registry stores for a definition change: the same actor, with the same text, that the
+ * engine takes for a command, so that a stored definition change and an instance's history entry name a caller the
+ * same way. Also verifies which text an attribution accepts and which it refuses.
  */
 class WorkflowActorCaptureTest {
 
-    /** Characters the actor text rule removes, built at run time so that no source line carries them. */
+    /** Characters that the attribution keeps verbatim, built at run time so that no source line carries them. */
     private static final String RIGHT_TO_LEFT_OVERRIDE = Character.toString(0x202E);
 
     private static final String ZERO_WIDTH = Character.toString(0x200B);
@@ -88,8 +88,7 @@ class WorkflowActorCaptureTest {
                 Arguments.of("user", holding(user("u-1"))),
                 Arguments.of("service for a user", holding(serviceActingFor("svc-1", "u-7"))),
                 Arguments.of("system", holding(SystemIdentities.scheduledJob("nightly"))),
-                Arguments.of(
-                        "hostile id", holding(user("u\u0000-" + RIGHT_TO_LEFT_OVERRIDE + "1\n" + "x".repeat(400)))),
+                Arguments.of("hostile id", holding(user("u-" + RIGHT_TO_LEFT_OVERRIDE + "1\n" + "x".repeat(200)))),
                 Arguments.of("id of format characters only", holding(user(ZERO_WIDTH + ZERO_WIDTH_JOINER))),
                 Arguments.of("hostile subject", holding(serviceActingFor("svc-1", "u\r\n7" + LINE_SEPARATOR))),
                 Arguments.of(
@@ -111,7 +110,6 @@ class WorkflowActorCaptureTest {
         WorkflowAttribution engine = new CommandActors(holder, mapper).capture();
         assertThat(stored.actor()).as(label).isEqualTo(engine.actor());
         assertThat(stored.onBehalfOf()).as(label).isEqualTo(engine.onBehalfOf());
-        assertThat(stored.status()).as(label).isEqualTo(engine.status());
     }
 
     @Test
@@ -125,7 +123,7 @@ class WorkflowActorCaptureTest {
         assertThat(WorkflowActorCapture.capture(holding(SecurityIdentity.anonymous()), refusing))
                 .isEqualTo(WorkflowAttribution.absent());
         assertThat(WorkflowAttribution.absent().actor()).isNull();
-        assertThat(WorkflowAttribution.absent().status()).isEqualTo(WorkflowAttribution.Status.ABSENT);
+        assertThat(WorkflowAttribution.absent().onBehalfOf()).isNull();
     }
 
     @Test
@@ -142,23 +140,106 @@ class WorkflowActorCaptureTest {
 
     @Test
     void preservesActorAndSubjectTextAndDropsSubjectAttributes() {
-        String id = "u\n-" + "x".repeat(400);
+        String id = "u\n-" + "x".repeat(200);
         String subjectId = "s" + RIGHT_TO_LEFT_OVERRIDE + "7";
         WorkflowAttribution attribution = new WorkflowAttribution(
                 new WorkflowActor.User(id),
-                new PrincipalRef(PrincipalType.USER, subjectId, Map.of("issuer", "request-only")),
-                WorkflowAttribution.Status.VERIFIED);
+                new PrincipalRef(PrincipalType.USER, subjectId, Map.of("issuer", "request-only")));
         assertThat(attribution.actor()).isEqualTo(new WorkflowActor.User(id));
         assertThat(attribution.onBehalfOf()).isEqualTo(new PrincipalRef(PrincipalType.USER, subjectId, Map.of()));
     }
 
     @Test
-    @DisplayName("the system actor carries its exact reason and is verified")
+    @DisplayName("the system actor carries its exact reason")
     void theSystemActorCarriesItsReason() {
         WorkflowAttribution system = WorkflowAttribution.system("boot\nstrap");
 
         assertThat(system.actor()).isEqualTo(new WorkflowActor.System("boot\nstrap"));
         assertThat(system.onBehalfOf()).isNull();
-        assertThat(system.status()).isEqualTo(WorkflowAttribution.Status.VERIFIED);
+    }
+
+    @Test
+    @DisplayName("a degraded snapshot is recorded with its actor like any other")
+    void aDegradedSnapshotIsRecordedWithItsActor() {
+        Held degraded = holding(user("u-1"))
+                .with(SnapshotDegradationMarker.class, new SnapshotDegradationMarker("TAMPERED", Optional.empty()));
+
+        WorkflowAttribution attribution = WorkflowActorCapture.capture(degraded, new DefaultWorkflowActorMapper());
+
+        assertThat(attribution.actor()).isEqualTo(new WorkflowActor.User("u-1"));
+        assertThat(attribution.onBehalfOf()).isNull();
+    }
+
+    @Test
+    @DisplayName("a failed capture is recorded as no actor")
+    void aFailedCaptureIsRecordedAsNoActor() {
+        WorkflowAttribution attribution = WorkflowActorCapture.bestEffort(() -> {
+            throw new IllegalStateException("unreadable");
+        });
+
+        assertThat(attribution).isEqualTo(WorkflowAttribution.absent());
+        assertThat(attribution.actor()).isNull();
+    }
+
+    @Test
+    @DisplayName("an id of exactly 255 code points is accepted and one of 256 is refused, for every text field")
+    void theLengthLimitIsInCodePoints() {
+        String limit = "x".repeat(WorkflowAttribution.MAX_CODE_POINTS);
+        String emoji = Character.toString(0x1F600);
+        String limitInCodePoints = emoji.repeat(WorkflowAttribution.MAX_CODE_POINTS);
+
+        assertThat(new WorkflowAttribution(new WorkflowActor.User(limit), null).actor())
+                .isEqualTo(new WorkflowActor.User(limit));
+        assertThat(new WorkflowAttribution(new WorkflowActor.Service(limitInCodePoints), null).actor())
+                .isEqualTo(new WorkflowActor.Service(limitInCodePoints));
+        assertThat(WorkflowAttribution.system(limit).actor()).isEqualTo(new WorkflowActor.System(limit));
+        assertThat(attributedFor(limit).onBehalfOf().id()).isEqualTo(limit);
+        String over = limit + "x";
+        assertThatThrownBy(() -> new WorkflowAttribution(new WorkflowActor.User(over), null))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new WorkflowAttribution(new WorkflowActor.Service(over), null))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> WorkflowAttribution.system(over)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> attributedFor(over)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new WorkflowAttribution(new WorkflowActor.User(limitInCodePoints + emoji), null))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("text with a NUL character or an unpaired surrogate is refused, without echoing the text")
+    void unstorableTextIsRefused() {
+        String nul = "u\u0000-1";
+        String lonelyHigh = "u" + '\uD83D' + "-1";
+        String lonelyLow = "u" + '\uDE00' + "-1";
+        String trailingHigh = "u-1" + '\uD83D';
+
+        assertThatThrownBy(() -> new WorkflowAttribution(new WorkflowActor.User(nul), null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageNotContaining("u-1");
+        assertThatThrownBy(() -> new WorkflowAttribution(new WorkflowActor.Service(lonelyHigh), null))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> WorkflowAttribution.system(lonelyLow)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> WorkflowAttribution.system(trailingHigh)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> attributedFor(nul)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> attributedFor(lonelyHigh)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("a valid surrogate pair, bidi and control text are kept verbatim")
+    void validTextIsKeptVerbatim() {
+        String pair = "u-" + Character.toString(0x1F600);
+        String hostile = "u\n-" + RIGHT_TO_LEFT_OVERRIDE + ZERO_WIDTH + ZERO_WIDTH_JOINER + LINE_SEPARATOR + "\t ";
+
+        assertThat(new WorkflowAttribution(new WorkflowActor.User(pair), null).actor())
+                .isEqualTo(new WorkflowActor.User(pair));
+        assertThat(new WorkflowAttribution(new WorkflowActor.User(hostile), null).actor())
+                .isEqualTo(new WorkflowActor.User(hostile));
+        assertThat(WorkflowAttribution.system(hostile).actor()).isEqualTo(new WorkflowActor.System(hostile));
+        assertThat(attributedFor(hostile).onBehalfOf().id()).isEqualTo(hostile);
+    }
+
+    private static WorkflowAttribution attributedFor(String subjectId) {
+        return new WorkflowAttribution(
+                new WorkflowActor.Service("svc"), new PrincipalRef(PrincipalType.USER, subjectId, Map.of()));
     }
 }

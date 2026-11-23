@@ -60,11 +60,8 @@ class DefinitionLifecycleEventsTest {
     private static final DefinitionKey V2 = new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 2);
     private static final Instant NOW = Instant.parse("2026-02-03T04:05:06Z");
     private static final WorkflowAttribution ALICE = new WorkflowAttribution(
-            new WorkflowActor.User("alice"),
-            new PrincipalRef(PrincipalType.USER, "carol", java.util.Map.of()),
-            WorkflowAttribution.Status.VERIFIED);
-    private static final WorkflowAttribution BOB =
-            new WorkflowAttribution(new WorkflowActor.Service("bob"), null, WorkflowAttribution.Status.DEGRADED);
+            new WorkflowActor.User("alice"), new PrincipalRef(PrincipalType.USER, "carol", java.util.Map.of()));
+    private static final WorkflowAttribution BOB = new WorkflowAttribution(new WorkflowActor.Service("bob"), null);
 
     /** Records every call, in order. */
     private static final class Recorder implements WorkflowDefinitionLifecycleListener {
@@ -183,7 +180,6 @@ class DefinitionLifecycleEventsTest {
         assertThat(change.key()).isEqualTo(KEY);
         assertThat(change.attribution().actor()).isEqualTo(new WorkflowActor.User("alice"));
         assertThat(change.attribution().onBehalfOf().id()).isEqualTo("carol");
-        assertThat(change.attribution().status()).isEqualTo(WorkflowAttribution.Status.VERIFIED);
         assertThat(change.occurredAt()).isEqualTo(NOW);
         assertThat(change.changeId()).isNotNull();
         assertThat(recorder.failures).isEmpty();
@@ -495,7 +491,7 @@ class DefinitionLifecycleEventsTest {
         assertThat(result.succeeded()).isTrue();
         VersionChange change = recorder.onlyVersionChange();
         assertThat(change.attribution().actor()).isNull();
-        assertThat(change.attribution().status()).isEqualTo(WorkflowAttribution.Status.UNAVAILABLE);
+        assertThat(change.attribution().onBehalfOf()).isNull();
     }
 
     @Test
@@ -523,11 +519,8 @@ class DefinitionLifecycleEventsTest {
         seed(store, V2);
         var lifecycle = lifecycle(store, Set.of(), events());
         WorkflowAttribution alice = new WorkflowAttribution(
-                new WorkflowActor.User("alice"),
-                new PrincipalRef(PrincipalType.USER, "carol", java.util.Map.of()),
-                WorkflowAttribution.Status.VERIFIED);
-        WorkflowAttribution bob =
-                new WorkflowAttribution(new WorkflowActor.Service("bob"), null, WorkflowAttribution.Status.DEGRADED);
+                new WorkflowActor.User("alice"), new PrincipalRef(PrincipalType.USER, "carol", java.util.Map.of()));
+        WorkflowAttribution bob = new WorkflowAttribution(new WorkflowActor.Service("bob"), null);
 
         // When alice deprecates and retires version 1 and activates version 2, and bob clears the default and
         // deprecates 2
@@ -588,9 +581,7 @@ class DefinitionLifecycleEventsTest {
 
         // Then the claim and the completion carry her
         WorkflowAttribution alice = new WorkflowAttribution(
-                new WorkflowActor.User("alice"),
-                new PrincipalRef(PrincipalType.USER, "carol", java.util.Map.of()),
-                WorkflowAttribution.Status.VERIFIED);
+                new WorkflowActor.User("alice"), new PrincipalRef(PrincipalType.USER, "carol", java.util.Map.of()));
         assertThat(store.claimedBy).isEqualTo(alice);
         assertThat(store.completedBy).isEqualTo(alice);
     }
@@ -668,7 +659,6 @@ class DefinitionLifecycleEventsTest {
         assertThat(first.operation()).isEqualTo(VersionOperation.PUBLISH);
         assertThat(first.key()).isEqualTo(KEY);
         assertThat(first.attribution().actor()).isEqualTo(new WorkflowActor.System("bootstrap"));
-        assertThat(first.attribution().status()).isEqualTo(WorkflowAttribution.Status.VERIFIED);
         VersionChange second = (VersionChange) recorder.changes.get(1);
         assertThat(second.operation()).isEqualTo(VersionOperation.PUBLISH);
         assertThat(second.key()).isEqualTo(V2);

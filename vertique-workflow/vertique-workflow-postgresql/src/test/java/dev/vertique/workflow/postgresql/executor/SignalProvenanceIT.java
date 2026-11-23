@@ -191,7 +191,6 @@ class SignalProvenanceIT {
             assertThat(actor.actorKind()).isEqualTo("SYSTEM");
             assertThat(actor.actorId()).isNull();
             assertThat(actor.actorReason()).isEqualTo(KAFKA_REASON);
-            assertThat(actor.attribution()).isEqualTo("VERIFIED");
 
             // And the target holds the signal name and the wait id and no provenance key
             assertThat(command.target().getString("name")).isEqualTo(PAYMENT_CAPTURED);
@@ -422,20 +421,18 @@ class SignalProvenanceIT {
             }
             assertThat(f.provenanceRows()).isZero();
 
-            // And the calls with no identity recorded an absent actor, and those with the system identity a verified
-            // system actor
+            // And the calls with no identity recorded no actor, and those with the system identity the system
+            // actor
             for (WorkflowInstanceId bare : List.of(payment77, order42)) {
                 assertThat(f.signalRows(bare)).isNotEmpty().allSatisfy(command -> {
                     Attributed actor = f.actorOf(command.id());
                     assertThat(actor.actorKind()).isEqualTo("NONE");
-                    assertThat(actor.attribution()).isEqualTo("ABSENT");
                 });
             }
             for (WorkflowInstanceId carried : List.of(payment78, order43)) {
                 assertThat(f.signalRows(carried)).singleElement().satisfies(command -> {
                     Attributed actor = f.actorOf(command.id());
                     assertThat(actor.actorKind()).isEqualTo("SYSTEM");
-                    assertThat(actor.attribution()).isEqualTo("VERIFIED");
                 });
             }
 

@@ -84,9 +84,8 @@ class ReplyWaitDeliveryIT {
             assertThat(f.signalWait(node, id, waitId, value).outcome()).isEqualTo(Outcome.DUPLICATE);
             var rows = await(f.fixture
                     .observer()
-                    .preparedQuery(
-                            "SELECT target_json, dedup_key, provenance_json, actor_kind, actor_reason, attribution_status "
-                                    + "FROM workflow_commands WHERE workflow_id = $1 AND kind = 'SIGNAL'")
+                    .preparedQuery("SELECT target_json, dedup_key, provenance_json, actor_kind, actor_reason "
+                            + "FROM workflow_commands WHERE workflow_id = $1 AND kind = 'SIGNAL'")
                     .execute(Tuple.of(id.value())));
             assertThat(rows.size()).isEqualTo(1);
             Row command = rows.iterator().next();
@@ -103,7 +102,6 @@ class ReplyWaitDeliveryIT {
             assertThat(provenance.getJsonObject("attributes").getMap().values()).contains("inventory.reserve", "7");
             assertThat(command.getString("actor_kind")).isEqualTo("SYSTEM");
             assertThat(command.getString("actor_reason")).isEqualTo("outbox reply");
-            assertThat(command.getString("attribution_status")).isEqualTo("VERIFIED");
             var dedup = await(f.fixture
                     .observer()
                     .preparedQuery("SELECT kind, scope_key, dedup_namespace, key FROM workflow_dedup "

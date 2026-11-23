@@ -163,28 +163,34 @@ A branch failure inside a segment is handled by the segment's outcome and the co
 
 ### Who asked for a command
 
-Every recorded command carries who asked for it: `actor_kind`, `actor_id`, `actor_reason`, `on_behalf_of` and
-`attribution_status`. The engine takes them once, when the command is recorded and in the recording caller's transaction, from the
+Every recorded command carries who asked for it: `actor_kind`, `actor_id`, `actor_reason` and `on_behalf_of`. The engine takes them once, when the command is recorded and in the recording caller's transaction, from the
 caller's current `SecurityContext` (read through the `ContextHolder`, which defaults to `DefaultContextHolder`) and the
 `WorkflowActorMapper` (default `DefaultWorkflowActorMapper`). Both can be replaced on `WorkflowEngineParts.Builder`
 (`contextHolder`, `actorMapper`); a Dagger graph supplies them through its `ContextHolder` binding and an optional `WorkflowActorMapper` binding (the default applies when the application binds none).
 
-| Caller | Logged as | `attribution_status` |
-|---|---|---|
-| A user | `USER` with the user id | `VERIFIED` |
-| A service principal | `SERVICE` with the service id | `VERIFIED` |
-| The system | `SYSTEM` with the reason, and no id | `VERIFIED` |
-| No security context, or an anonymous identity | `NONE`, with no id | `ABSENT` |
-| Any of the first three, in a context that carries the security module's snapshot-degradation marker | as above | `DEGRADED` |
+| Caller | Logged as |
+|---|---|
+| A user | `USER` with the user id |
+| A service principal | `SERVICE` with the service id |
+| The system | `SYSTEM` with the reason, and no id |
+| No security context, or an anonymous identity | `NONE`, with no id |
+
+The security module's snapshot-degradation marker does not change the attribution: the security module's own degradation event is
+the record of the degradation.
 
 - **Never from a payload.** The actor is never taken from a start or signal payload, a header, a carrier or a request object; a
   payload that names an actor changes nothing. `completedBy` and `reassignedBy` on the task commands stay application data.
 - **`NONE` is decided first.** An absent or anonymous identity is logged as `NONE` before the mapper runs, so the mapper never sees an
-  anonymous identity. An exception the mapper throws refuses the recording and reaches the caller unchanged; nothing is written.
+  anonymous identity. On a command-recording path an exception the mapper throws refuses the recording and reaches the caller
+  unchanged; nothing is written. A capture that fails on a best-effort path (a definition change, a history failure report) yields
+  `WorkflowAttribution.absent()` instead and is logged by exception class.
 - **On behalf of.** `on_behalf_of` holds the subject when its principal type or id differs from the acting principal.
-  It stores the subject type and opaque id. `WorkflowAttribution` exposes an attribute-free `PrincipalRef`.
-- **Actor text.** Command and history capture preserves the actor id, system reason, and delegated subject id as supplied.
-  Logs and transport headers format their own output.
+  It stores the subject type and opaque id as a JSONB object `{"type","id"}`. `WorkflowAttribution` exposes an attribute-free `PrincipalRef`.
+- **Actor text.** Command and history capture stores the actor id, system reason, and delegated subject id exactly as supplied:
+  nothing is stripped or truncated. `WorkflowAttribution` refuses, with an `IllegalArgumentException` that names the field and never
+  the value, an actor id, system reason or subject id of more than 255 code points or one that holds NUL or an unpaired surrogate.
+  Whoever prints the text formats it: log lines use `EchoedNames.bounded` (64 code points, with control characters, Unicode line and
+  paragraph separators and unpaired surrogates replaced by `?`), and headers are percent-encoded.
 - **Timers.** A timer command is logged as `SYSTEM` with the reason `timer`, whoever's segment recorded it.
 - **Observers.** A command recorded with `NONE` is reported to the executor observers as `ActorAbsent(kind)` with the command kind
   (`START`, `SIGNAL`, `COMPLETION`, `RETRY` or `MIGRATION`) when the recording call succeeds. A caller that owns the transaction
@@ -202,9 +208,9 @@ caller's current `SecurityContext` (read through the `ContextHolder`, which defa
   instance's `CANCELLED` entry.
 - **Attribution headers on dispatched and published intents.** A service dispatch a segment writes reaches its recorder with the
   headers `x-workflow-actor-kind`, `x-workflow-actor-id`, `x-workflow-actor-reason`, `x-workflow-on-behalf-of`,
-  `x-workflow-on-behalf-of-type` and `x-workflow-attribution`, taken from the actor of the command the segment executes (the kind and the status are the enum names;
+  `x-workflow-on-behalf-of-type`, taken from the actor of the command the segment executes (the kind is the enum name;
   absent values are omitted). The id, reason, and subject id use UTF-8 percent encoding. A field that cannot be encoded as UTF-8 is omitted from the headers. Any other intent, such as a workflow event that reaches brokers and webhooks, gets only
-  `x-workflow-actor-kind` and `x-workflow-attribution`, so no subject identifier leaves the deployment. Before they are added, `RecorderRouter` removes every application-set header
+  `x-workflow-actor-kind`, so no subject identifier leaves the deployment. Before they are added, `RecorderRouter` removes every application-set header
   whose name starts with `x-workflow-` in any letter case, so an application cannot set or forge them; other headers are kept. The
   headers are unauthenticated audit data: no relay, contributor or recording path reads them, binds an identity from them or derives an
   actor from them, including a signal relayed back into a workflow.
@@ -222,10 +228,11 @@ caller's current `SecurityContext` (read through the `ContextHolder`, which defa
   rebuilt for the delivery: `SYSTEM` with the outbox row's event type as the reason, or the service a bound `ServiceIdentityResolver`
   names, acting for the user who wrote the row. The security module's degradation policy decides before the signal is recorded: a
   snapshot that cannot be verified refuses the delivery under the default policy, and under `CONTINUE_WITHOUT_IDENTITY` the signal is
-  recorded as `DEGRADED` and acts for no one. Without identity carriage the signal is recorded as `NONE`.
+  recorded with the relay's actor like any other; the security module's own degradation event is the record of the degradation.
+  Without identity carriage the signal is recorded as `NONE`.
 
 - **Every instance command names its caller in the history.** The `START`, `RETRIED`, `CANCELLED` and `WORKFLOW_MIGRATED` entries,
-  like the signal, completion and reassignment entries, carry the actor and the attribution status of the command that caused them;
+  like the signal, completion and reassignment entries, carry the actor of the command that caused them;
   read them through `WorkflowInstanceHistoryService`, which returns the actor on every entry (`WorkflowOperations.query` keeps its
   narrow history without it).
 
@@ -236,8 +243,8 @@ The registry stores who made the last change of a definition row and of an activ
 `reinstate`, `activate`) on the calling thread, from the same `ContextHolder` and `WorkflowActorMapper` as for a command, whether or
 not a `WorkflowDefinitionLifecycleListener` is bound, and hands it to the store in the same call, so it is written in the transaction
 that changes the row. The listener still receives every change with its actor; the full history of changes is the audit adapter's, not
-the registry's. Startup writes carry the system with the reason `bootstrap`. A call with no identity stores `NONE` with absent
-attribution, which replaces the actor of an earlier change.
+the registry's. Startup writes carry the system with the reason `bootstrap`. A call with no identity, or one whose capture fails, stores `NONE` (the
+absent attribution), which replaces the actor of an earlier change.
 
 ### The decision log
 
@@ -359,7 +366,7 @@ and never call them, and they sit outside this module's maturity promise.
   `Reason`. `occurredAt` is stamped at call time with the actor, not at commit. For `ActivationChange`, `targetScopeKey` is the scope
   that owns the version for `ACTIVATE`, `WorkflowScopes.DEFAULT` for `FOLLOW`, and `null` for `DEACTIVATE_DEFAULT`. An accepted repeat
   is reported like any change. `WorkflowDefinitionRegistryBootstrapStep` reports the first insert of a version after its transaction
-  committed, as a `PUBLISH` by the `SYSTEM` actor with the reason `bootstrap` and `VERIFIED` attribution, followed by an `ACTIVATE` of
+  committed, as a `PUBLISH` by the `SYSTEM` actor with the reason `bootstrap`, followed by an `ACTIVATE` of
   the default scope when the store answered `ReconcileOutcome.INSERTED_AND_ACTIVATED`. Every other outcome (`UNCHANGED`, `REHASHED`,
   `DRIFT`, `KIND_CONFLICT`) reports nothing, and startup reports no failure. A listener exception is handled as for history.
 

@@ -101,7 +101,7 @@ class ReplyApplicationFailureIT {
             await(f.fixture
                     .observer()
                     .preparedQuery(
-                            "UPDATE workflow_commands SET actor_kind = 'SYSTEM', actor_reason = 'reply test', attribution_status = 'VERIFIED' WHERE workflow_id = $1 AND kind = 'SIGNAL'")
+                            "UPDATE workflow_commands SET actor_kind = 'SYSTEM', actor_reason = 'reply test' WHERE workflow_id = $1 AND kind = 'SIGNAL'")
                     .execute(Tuple.of(id.value())));
             f.retry(node, id);
             node.awaitIdle(id);

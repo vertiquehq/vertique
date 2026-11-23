@@ -668,8 +668,8 @@ public class RecordedCancelIT {
             faults.afterClaimOf(id, claim -> setStatus(f, id, "CANCELLED").compose(done -> f.fixture
                     .observer()
                     .preparedQuery("INSERT INTO workflow_history (workflow_id, sequence, entry_type, payload_json,"
-                            + " recorded_at, actor_kind, actor_id, attribution_status) SELECT $1, COALESCE(MAX(sequence),"
-                            + " 0) + 1, 'CANCELLED', '{}'::jsonb, now(), 'USER', 'canceller', 'VERIFIED' FROM"
+                            + " recorded_at, actor_kind, actor_id) SELECT $1, COALESCE(MAX(sequence),"
+                            + " 0) + 1, 'CANCELLED', '{}'::jsonb, now(), 'USER', 'canceller' FROM"
                             + " workflow_history WHERE workflow_id = $1")
                     .execute(Tuple.of(id.value()))
                     .mapEmpty()));

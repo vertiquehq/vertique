@@ -2159,8 +2159,7 @@ public class PgWorkflowSchemaIT {
     private static void exerciseCancellationAndRearm(CommandSteps steps) throws Exception {
         RuntimeComponent runtime = steps.runtime;
         PgWorkflowCommandRepository commands = steps.commands;
-        WorkflowAttribution canceller = new WorkflowAttribution(
-                new WorkflowActor.Service("canceller"), null, WorkflowAttribution.Status.VERIFIED);
+        WorkflowAttribution canceller = new WorkflowAttribution(new WorkflowActor.Service("canceller"), null);
 
         // Given: one pending command of every kind, a signal that answers a wait among them
         WorkflowInstance instance = steps.instance();
@@ -2369,11 +2368,9 @@ public class PgWorkflowSchemaIT {
 
         static final String NODE = "schema-placement-node";
         static final WorkflowAttribution REQUESTER = new WorkflowAttribution(
-                new WorkflowActor.User("alice"),
-                new PrincipalRef(PrincipalType.USER, "manager", java.util.Map.of()),
-                WorkflowAttribution.Status.VERIFIED);
-        static final WorkflowAttribution FALLBACK = new WorkflowAttribution(
-                new WorkflowActor.Service("fallback-service"), null, WorkflowAttribution.Status.VERIFIED);
+                new WorkflowActor.User("alice"), new PrincipalRef(PrincipalType.USER, "manager", java.util.Map.of()));
+        static final WorkflowAttribution FALLBACK =
+                new WorkflowAttribution(new WorkflowActor.Service("fallback-service"), null);
 
         private static final int LEASE_SECONDS = 60;
         private static final int MAX_ATTEMPTS = 3;

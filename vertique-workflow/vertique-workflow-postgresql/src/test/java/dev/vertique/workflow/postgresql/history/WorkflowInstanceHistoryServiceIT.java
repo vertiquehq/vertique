@@ -110,26 +110,14 @@ public class WorkflowInstanceHistoryServiceIT {
             HistoryAssert.of(all)
                     .ofTypes(WorkflowEntryType.COMMAND_RECEIVED, WorkflowEntryType.DECISION)
                     .hasSteps(
-                            step(WorkflowEntryType.COMMAND_RECEIVED, start, "NONE ABSENT", null),
-                            step(WorkflowEntryType.DECISION, start, "NONE ABSENT", "wait-task"),
-                            step(WorkflowEntryType.COMMAND_RECEIVED, completion, "USER/u-1 VERIFIED", null),
-                            step(WorkflowEntryType.DECISION, completion, "USER/u-1 VERIFIED", "task-decided"),
-                            step(WorkflowEntryType.DECISION, completion, "USER/u-1 VERIFIED", "wait-signal"),
-                            step(
-                                    WorkflowEntryType.COMMAND_RECEIVED,
-                                    signal,
-                                    "SERVICE/relay-svc for u-2 VERIFIED",
-                                    null),
-                            step(
-                                    WorkflowEntryType.DECISION,
-                                    signal,
-                                    "SERVICE/relay-svc for u-2 VERIFIED",
-                                    "signal-applied"),
-                            step(
-                                    WorkflowEntryType.DECISION,
-                                    signal,
-                                    "SERVICE/relay-svc for u-2 VERIFIED",
-                                    "completed"));
+                            step(WorkflowEntryType.COMMAND_RECEIVED, start, "NONE", null),
+                            step(WorkflowEntryType.DECISION, start, "NONE", "wait-task"),
+                            step(WorkflowEntryType.COMMAND_RECEIVED, completion, "USER/u-1", null),
+                            step(WorkflowEntryType.DECISION, completion, "USER/u-1", "task-decided"),
+                            step(WorkflowEntryType.DECISION, completion, "USER/u-1", "wait-signal"),
+                            step(WorkflowEntryType.COMMAND_RECEIVED, signal, "SERVICE/relay-svc for u-2", null),
+                            step(WorkflowEntryType.DECISION, signal, "SERVICE/relay-svc for u-2", "signal-applied"),
+                            step(WorkflowEntryType.DECISION, signal, "SERVICE/relay-svc for u-2", "completed"));
 
             // And the service entry names the service as the actor, acting for the user who wrote the outbox row
             assertThat(all)
@@ -138,7 +126,6 @@ public class WorkflowInstanceHistoryServiceIT {
                     .satisfies(entry -> {
                         assertThat(entry.attribution().actor()).isEqualTo(new WorkflowActor.Service("relay-svc"));
                         assertThat(entry.attribution().onBehalfOf().id()).isEqualTo("u-2");
-                        assertThat(entry.attribution().status()).isEqualTo(WorkflowAttribution.Status.VERIFIED);
                     });
 
             // And every decision names its definition, step, one plan hash, an executor and the entry version two
@@ -183,7 +170,7 @@ public class WorkflowInstanceHistoryServiceIT {
                     .isNotEmpty()
                     .allSatisfy(entry -> {
                         assertThat(entry.entryVersion()).isEqualTo(1);
-                        assertThat(entry.attribution().status()).isNotNull();
+                        assertThat(entry.attribution()).isNotNull();
                         assertThat(entry.executorId()).isNull();
                         assertThat(entry.planHash()).isNull();
                         assertThat(entry.patchJson()).isNull();
@@ -192,10 +179,10 @@ public class WorkflowInstanceHistoryServiceIT {
             // And a start recorded with no security context is logged as no actor, not as a missing one
             assertThat(all.getFirst().attribution().actor()).isEqualTo(null);
 
-            // And the pages concatenate to the same list, with every entry carrying its attribution status
+            // And the pages concatenate to the same list, with every entry carrying its attribution
             assertThat(paged).isEqualTo(all);
-            assertThat(paged).allSatisfy(entry -> assertThat(entry.attribution().status())
-                    .isNotNull());
+            assertThat(paged)
+                    .allSatisfy(entry -> assertThat(entry.attribution()).isNotNull());
 
             // And afterSequence starts after the given entry and the limit bounds the page, at both ends of its range
             assertThat(await(history.entries(id, 3, 2)))
@@ -509,8 +496,7 @@ public class WorkflowInstanceHistoryServiceIT {
                         + (actor == null || actor instanceof WorkflowActor.System ? "" : "/" + mapped.get("value"))
                         + (attribution.onBehalfOf() == null
                                 ? ""
-                                : " for " + attribution.onBehalfOf().id())
-                        + " " + attribution.status();
+                                : " for " + attribution.onBehalfOf().id());
             }
             return new Step(entry.entryType(), entry.commandId(), described, entry.outcome());
         }

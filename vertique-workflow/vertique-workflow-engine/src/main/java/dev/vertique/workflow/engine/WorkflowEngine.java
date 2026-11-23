@@ -2669,7 +2669,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 refusal.initCause(result.cause());
                 return Future.failedFuture(refusal);
             }
-            if (result.result().status() == WorkflowAttribution.Status.ABSENT) {
+            if (result.result().actor() == null) {
                 return Future.failedFuture(new WorkflowSignalActorException(contractName, signal.signalName()));
             }
             return Future.succeededFuture(result.result());

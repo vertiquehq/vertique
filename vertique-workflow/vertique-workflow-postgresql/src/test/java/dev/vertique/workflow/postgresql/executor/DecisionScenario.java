@@ -106,7 +106,6 @@ public final class DecisionScenario implements AutoCloseable {
      * @param actorKind      {@code actor_kind}
      * @param actorId        {@code actor_id}
      * @param onBehalfOf     {@code on_behalf_of}
-     * @param attribution    {@code attribution_status}
      * @param rowText        the whole row as JSON text, every column
      */
     public record Entry(
@@ -128,7 +127,6 @@ public final class DecisionScenario implements AutoCloseable {
             @Nullable String actorKind,
             @Nullable String actorId,
             @Nullable String onBehalfOf,
-            @Nullable String attribution,
             String rowText) {
 
         /** The operations of the entry's patch, or null when it has none (a column that is null, or a full state). */
@@ -936,7 +934,7 @@ public final class DecisionScenario implements AutoCloseable {
                 .preparedQuery("SELECT sequence, entry_type, COALESCE(command_id, (payload_json->>'commandId')::bigint)"
                         + " AS command, step_id, outcome, definition_scope_key, definition_id, definition_version,"
                         + " plan_hash, state_version_before, state_version_after, executor_id, patch_json,"
-                        + " payload_json, entry_version, actor_kind, actor_id, on_behalf_of->>'id' AS on_behalf_of, attribution_status,"
+                        + " payload_json, entry_version, actor_kind, actor_id, on_behalf_of->>'id' AS on_behalf_of,"
                         + " row_to_json(h)::text AS row_text FROM workflow_history h WHERE workflow_id = $1"
                         + " ORDER BY sequence")
                 .execute(Tuple.of(id.value())))) {
@@ -960,7 +958,6 @@ public final class DecisionScenario implements AutoCloseable {
                     row.getString("actor_kind"),
                     row.getString("actor_id"),
                     row.getString("on_behalf_of"),
-                    row.getString("attribution_status"),
                     row.getString("row_text")));
         }
         return entries;

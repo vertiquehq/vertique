@@ -900,8 +900,8 @@ final class KeyedWaitFixture implements AutoCloseable {
     ActorScenario.Attributed actorOf(long commandId) {
         Row row = await(fixture.observer()
                         .preparedQuery(
-                                "SELECT kind, id, actor_kind, actor_id, actor_reason, on_behalf_of->>'id' AS on_behalf_of,"
-                                        + " attribution_status FROM workflow_commands WHERE id = $1")
+                                "SELECT kind, id, actor_kind, actor_id, actor_reason, on_behalf_of->>'id' AS on_behalf_of"
+                                        + " FROM workflow_commands WHERE id = $1")
                         .execute(Tuple.of(commandId)))
                 .iterator()
                 .next();
@@ -911,8 +911,7 @@ final class KeyedWaitFixture implements AutoCloseable {
                 row.getString("actor_kind"),
                 row.getString("actor_id"),
                 row.getString("actor_reason"),
-                row.getString("on_behalf_of"),
-                row.getString("attribution_status"));
+                row.getString("on_behalf_of"));
     }
 
     /**

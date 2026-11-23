@@ -52,7 +52,6 @@ public final class ActorScenario implements AutoCloseable {
      * @param actorId     {@code actor_id}
      * @param actorReason {@code actor_reason}
      * @param onBehalfOf  {@code on_behalf_of}
-     * @param attribution {@code attribution_status}
      */
     public record Attributed(
             String label,
@@ -60,12 +59,11 @@ public final class ActorScenario implements AutoCloseable {
             @Nullable String actorKind,
             @Nullable String actorId,
             @Nullable String actorReason,
-            @Nullable String onBehalfOf,
-            @Nullable String attribution) {
+            @Nullable String onBehalfOf) {
 
-        /** Whether the row carries exactly this kind, id and attribution status. */
-        public boolean is(String kind, String id, String status) {
-            return kind.equals(actorKind) && java.util.Objects.equals(id, actorId) && status.equals(attribution);
+        /** Whether the row carries exactly this kind and id. */
+        public boolean is(String kind, String id) {
+            return kind.equals(actorKind) && java.util.Objects.equals(id, actorId);
         }
     }
 
@@ -348,7 +346,7 @@ public final class ActorScenario implements AutoCloseable {
         for (Row row : await(f.fixture
                 .observer()
                 .preparedQuery(
-                        "SELECT kind, id, actor_kind, actor_id, actor_reason, on_behalf_of->>'id' AS on_behalf_of, attribution_status"
+                        "SELECT kind, id, actor_kind, actor_id, actor_reason, on_behalf_of->>'id' AS on_behalf_of"
                                 + " FROM workflow_commands WHERE workflow_id = $1 ORDER BY seq")
                 .execute(Tuple.of(id.value())))) {
             rows.add(attributed(row.getString("kind"), row.getLong("id"), row));
@@ -368,7 +366,7 @@ public final class ActorScenario implements AutoCloseable {
         for (Row row : await(f.fixture
                 .observer()
                 .preparedQuery("SELECT entry_type, COALESCE(command_id, (payload_json->>'commandId')::bigint)"
-                        + " AS command, actor_kind, actor_id, actor_reason, on_behalf_of->>'id' AS on_behalf_of, attribution_status"
+                        + " AS command, actor_kind, actor_id, actor_reason, on_behalf_of->>'id' AS on_behalf_of"
                         + " FROM workflow_history WHERE workflow_id = $1 ORDER BY sequence")
                 .execute(Tuple.of(id.value())))) {
             rows.add(attributed(row.getString("entry_type"), row.getLong("command"), row));
@@ -412,8 +410,7 @@ public final class ActorScenario implements AutoCloseable {
                 row.getString("actor_kind"),
                 row.getString("actor_id"),
                 row.getString("actor_reason"),
-                row.getString("on_behalf_of"),
-                row.getString("attribution_status"));
+                row.getString("on_behalf_of"));
     }
 
     /** Runs the work on a duplicated context of its own with the identity bound as the security context. */

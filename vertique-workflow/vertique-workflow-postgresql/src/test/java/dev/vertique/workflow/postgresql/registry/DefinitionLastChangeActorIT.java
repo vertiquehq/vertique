@@ -92,7 +92,7 @@ public class DefinitionLastChangeActorIT {
             // Then the candidate names the user and the time of the registration
             WorkflowDefinitionRecord candidate = record(scenario, key);
             assertThat(candidate.status()).isEqualTo(DefinitionStatus.CANDIDATE);
-            assertThat(candidate.statusChangedBy()).isEqualTo(verified(new WorkflowActor.User("alice")));
+            assertThat(candidate.statusChangedBy()).isEqualTo(attributedTo(new WorkflowActor.User("alice")));
             assertThat(candidate.statusChangedAt()).isAfterOrEqualTo(before);
 
             // When a service principal publishes it
@@ -101,7 +101,7 @@ public class DefinitionLastChangeActorIT {
             // Then the row names the publisher in place of the registrant, and its status change time moved on
             WorkflowDefinitionRecord published = record(scenario, key);
             assertThat(published.status()).isEqualTo(DefinitionStatus.AVAILABLE);
-            assertThat(published.statusChangedBy()).isEqualTo(verified(new WorkflowActor.Service("deployer")));
+            assertThat(published.statusChangedBy()).isEqualTo(attributedTo(new WorkflowActor.Service("deployer")));
             assertThat(published.statusChangedAt()).isAfterOrEqualTo(candidate.statusChangedAt());
 
             // When a user activates it in the default scope
@@ -109,21 +109,21 @@ public class DefinitionLastChangeActorIT {
 
             // Then the activation record names who wrote it and when
             DefinitionActivation activation = scenario.activations(DEFAULT, doc).getFirst();
-            assertThat(activation.activatedBy()).isEqualTo(verified(new WorkflowActor.User("bob")));
+            assertThat(activation.activatedBy()).isEqualTo(attributedTo(new WorkflowActor.User("bob")));
             assertThat(activation.activatedAt()).isAfterOrEqualTo(before);
 
             // And a later activation of the same record replaces who wrote it
             as(vertx, scenario, user("bella"), () -> scenario.service().activate(DEFAULT, doc, DEFAULT, 1));
             assertThat(scenario.activations(DEFAULT, doc).getFirst().activatedBy())
-                    .isEqualTo(verified(new WorkflowActor.User("bella")));
+                    .isEqualTo(attributedTo(new WorkflowActor.User("bella")));
 
             // When it is taken off the default, deprecated and reinstated by users, and deprecated again with no
             // identity
             await(scenario.service().deactivateDefault(doc));
             as(vertx, scenario, user("dave"), () -> scenario.service().deprecate(key));
-            assertThat(record(scenario, key).statusChangedBy()).isEqualTo(verified(new WorkflowActor.User("dave")));
+            assertThat(record(scenario, key).statusChangedBy()).isEqualTo(attributedTo(new WorkflowActor.User("dave")));
             as(vertx, scenario, user("erin"), () -> scenario.service().reinstate(key));
-            assertThat(record(scenario, key).statusChangedBy()).isEqualTo(verified(new WorkflowActor.User("erin")));
+            assertThat(record(scenario, key).statusChangedBy()).isEqualTo(attributedTo(new WorkflowActor.User("erin")));
             await(scenario.service().deprecate(key));
 
             // Then the last change replaces the earlier ones: with no identity the row records none at all
@@ -137,7 +137,7 @@ public class DefinitionLastChangeActorIT {
             // Then the retirement is the last change
             WorkflowDefinitionRecord retired = record(scenario, key);
             assertThat(retired.status()).isEqualTo(DefinitionStatus.RETIRED);
-            assertThat(retired.statusChangedBy()).isEqualTo(verified(new WorkflowActor.Service("janitor")));
+            assertThat(retired.statusChangedBy()).isEqualTo(attributedTo(new WorkflowActor.Service("janitor")));
         }
     }
 
@@ -208,10 +208,7 @@ public class DefinitionLastChangeActorIT {
             WorkflowDefinitionRecord reset = record(scenario, key);
             assertThat(reset.status()).isEqualTo(DefinitionStatus.CANDIDATE);
             assertThat(reset.statusChangedBy())
-                    .isEqualTo(new WorkflowAttribution(
-                            new WorkflowActor.System("stale publication reset"),
-                            null,
-                            WorkflowAttribution.Status.VERIFIED));
+                    .isEqualTo(new WorkflowAttribution(new WorkflowActor.System("stale publication reset"), null));
         }
     }
 
@@ -224,8 +221,9 @@ public class DefinitionLastChangeActorIT {
             own(database, doc);
             Scenario scenario = scenario(database, boot(database));
 
-            // A service and a delegated user share an ID, but are different principals.
-            String sharedId = "~utf16:relay\t" + "x".repeat(300);
+            // A service and a delegated user share an id of the longest storable length that holds a control character,
+            // but are different principals.
+            String sharedId = "relay\t" + "x".repeat(249);
             SecurityIdentity relayed = new SecurityIdentity(
                     new PrincipalRef(PrincipalType.SERVICE, sharedId, Map.of()),
                     Optional.of(new PrincipalRef(PrincipalType.USER, sharedId, Map.of("issuer", "local"))),
@@ -242,12 +240,11 @@ public class DefinitionLastChangeActorIT {
             WorkflowAttribution actor = record(scenario, key(doc, 1)).statusChangedBy();
             assertThat(actor.actor()).isEqualTo(new WorkflowActor.Service(sharedId));
             assertThat(actor.onBehalfOf()).isEqualTo(new PrincipalRef(PrincipalType.USER, sharedId, Map.of()));
-            assertThat(actor.status()).isEqualTo(WorkflowAttribution.Status.VERIFIED);
         }
     }
 
-    private static WorkflowAttribution verified(WorkflowActor actor) {
-        return new WorkflowAttribution(actor, null, WorkflowAttribution.Status.VERIFIED);
+    private static WorkflowAttribution attributedTo(WorkflowActor actor) {
+        return new WorkflowAttribution(actor, null);
     }
 
     private static WorkflowDefinitionRecord record(Scenario scenario, DefinitionKey key) {

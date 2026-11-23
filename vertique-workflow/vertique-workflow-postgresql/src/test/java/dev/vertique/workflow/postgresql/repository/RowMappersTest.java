@@ -19,8 +19,8 @@ import org.junit.jupiter.api.Test;
 class RowMappersTest {
 
     @Test
-    @DisplayName("an actor kind this version does not know is read as unavailable and does not fail the entry")
-    void unknownActorKindIsReadAsUnavailable() throws Exception {
+    @DisplayName("an actor kind this version does not know is read as no actor and does not fail the entry")
+    void unknownActorKindIsReadAsNoActor() throws Exception {
         // Given a history row whose actor kind a newer version wrote
         Row row = mock(Row.class);
         when(row.getUUID("workflow_id")).thenReturn(UUID.randomUUID());
@@ -35,19 +35,17 @@ class RowMappersTest {
         // When the row is mapped
         WorkflowHistoryEntry entry = RowMappers.enrichedWorkflowHistoryEntry().map(row);
 
-        // The row remains readable, and the unknown actor is distinguishable from an absent caller.
-        assertThat(entry.attribution()).isEqualTo(WorkflowAttribution.unavailable());
+        // The row remains readable, and its attribution names no actor.
+        assertThat(entry.attribution()).isEqualTo(WorkflowAttribution.absent());
     }
 
     @Test
-    void aNonObjectDelegatedSubjectIsUnavailable() {
+    void aNonObjectDelegatedSubjectIsReadAsNoActor() {
         Row row = mock(Row.class);
         when(row.getString("actor_kind")).thenReturn("USER");
         when(row.getString("actor_id")).thenReturn("u-1");
-        when(row.getString("attribution_status")).thenReturn("VERIFIED");
         when(row.getJsonObject("on_behalf_of")).thenThrow(ClassCastException.class);
 
-        assertThat(PgWorkflowAttribution.read(row, "", "attribution_status"))
-                .isEqualTo(WorkflowAttribution.unavailable());
+        assertThat(PgWorkflowAttribution.read(row, "")).isEqualTo(WorkflowAttribution.absent());
     }
 }

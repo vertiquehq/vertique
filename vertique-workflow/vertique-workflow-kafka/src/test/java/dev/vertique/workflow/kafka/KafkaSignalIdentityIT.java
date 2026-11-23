@@ -60,11 +60,10 @@ class KafkaSignalIdentityIT {
             Produced record = carriers.produce(scenario.delivered("1", ref));
             scenario.awaitDelivered(record, order);
 
-            // Then the SIGNAL command's actor is SYSTEM with the reason kafka source: carriers, and is verified
+            // Then the SIGNAL command's actor is SYSTEM with the reason kafka source: carriers
             CommandRow command = scenario.onlyCommand(order);
             assertThat(command.actorKind()).isEqualTo("SYSTEM");
             assertThat(command.actorReason()).isEqualTo("kafka source: carriers");
-            assertThat(command.attribution()).isEqualTo("VERIFIED");
             // And the provenance holds the source, the topic, the partition and the offset
             JsonObject provenance = command.provenanceJson();
             assertThat(provenance.getString("source")).isEqualTo("carriers");
@@ -293,10 +292,9 @@ class KafkaSignalIdentityIT {
             CommandRow restoringCommand = scenario.onlyCommand(forRestoring);
             assertThat(restoringCommand.context()).isNotNull().contains("C-77");
             assertThat(restoringCommand.context()).doesNotContain("R-9");
-            // And on both commands the attribution is verified, not degraded, and the malformed identity header was not
-            // applied
-            assertThat(plainCommand.attribution()).isEqualTo("VERIFIED");
-            assertThat(restoringCommand.attribution()).isEqualTo("VERIFIED");
+            // And on both commands the actor is the source's system identity, and the malformed identity header was
+            // not applied
+            assertThat(plainCommand.actorKind()).isEqualTo("SYSTEM");
             assertThat(restoringCommand.actorKind()).isEqualTo("SYSTEM");
             assertThat(restoringCommand.context()).doesNotContain("not-base64");
         }
@@ -388,13 +386,12 @@ class KafkaSignalIdentityIT {
                 assertThat(scenario.commands(waiting[index])).hasSize(1);
                 CommandRow command = scenario.onlyCommand(waiting[index]);
                 // And none stores the header's correlation id, each stored correlation is freshly seeded, no command
-                // names mallory and each attribution is verified
+                // names mallory
                 assertThat(command.context()).isNotNull().doesNotContain("R-9").doesNotContain("C 77");
                 assertThat(command.context()).doesNotContain("xxxxxxxx");
                 assertThat(command.actorKind()).isEqualTo("SYSTEM");
                 assertThat(String.valueOf(command.actorId())).doesNotContain("mallory");
                 assertThat(command.context()).doesNotContain("mallory");
-                assertThat(command.attribution()).isEqualTo("VERIFIED");
             }
             // And no log record holds a header value
             assertThat(scenario.logs())

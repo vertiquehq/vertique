@@ -243,7 +243,7 @@ Future<List<PendingCommand>> openCommands(WorkflowInstanceId id);
 
 - **Paging.** `entries` returns entries in ascending sequence order after `afterSequence` (exclusive; `0` for the first page). `limit` must be 1 to 500; anything else throws `IllegalArgumentException` before anything is read. Page by passing the last sequence read.
 - **Open commands.** `openCommands` lists the commands that are `PENDING`, `DEFERRED`, `CLAIMED`, `PARKED` or `DEAD`, in sequence order, as `PendingCommand`. `lastError` is the reason code plus the sanitized message stored when the command failed (never raw exception text); the service returns it as stored.
-- **The entry.** `WorkflowHistoryEntry` keeps its five original components and gains trailing nullable ones: `entryVersion` (boxed `Integer`; the stored format version: 2 for `DECISION` and `STATE_BASELINE` entries, 1 for every other entry), `attribution` (`WorkflowAttribution`), `executorId`, `commandId`, `stepId`, `outcome`, `definitionKey`, `planHash`, `stateVersionBefore`, `stateVersionAfter` and `patchJson` (a JSON array; `[]` for no change). The five-argument constructor stays and reports `entryVersion` 1 with every other new component null. A row with no recorded attribution returns a null `attribution`. Work recorded without a caller identity carries attribution with status `ABSENT`.
+- **The entry.** `WorkflowHistoryEntry` keeps its five original components and gains trailing nullable ones: `entryVersion` (boxed `Integer`; the stored format version: 2 for `DECISION` and `STATE_BASELINE` entries, 1 for every other entry), `attribution` (`WorkflowAttribution`), `executorId`, `commandId`, `stepId`, `outcome`, `definitionKey`, `planHash`, `stateVersionBefore`, `stateVersionAfter` and `patchJson` (a JSON array; `[]` for no change). The five-argument constructor stays and reports `entryVersion` 1 with every other new component null. A row with no recorded attribution returns a null `attribution`. Work recorded without a caller identity carries attribution with no actor (`WorkflowAttribution.absent()`).
 - **Command and definition on the entry.** An entry records the command it names in `commandId`: its own column, or the `commandId` of
   its payload where the writer put it there. An entry that names no command keeps a null `commandId`; the engine does not give it the
   command of the segment it was written in, because it may belong to another command, such as a parked signal applied during the
@@ -252,7 +252,7 @@ Future<List<PendingCommand>> openCommands(WorkflowInstanceId id);
   definition its writer recorded, which is null for most and the target for the entry that logs the migration. An entry that already
   records a value keeps it. An entry written outside a segment can also have a null `commandId` or `definitionKey`.
 - **`query()` stays narrow.** The history in the `WorkflowView` that `WorkflowOperations.query` returns carries the five original components and the stored `entryVersion`; every other new component is null there. Only this service returns the enriched entry.
-- **Every instance command is attributed.** The `START`, `RETRIED`, `CANCELLED` and `WORKFLOW_MIGRATED` entries, and the entries of signals, completions and reassignments, carry the actor and attribution status of the command that caused them, taken from the caller's identity when the command was recorded.
+- **Every instance command is attributed.** The `START`, `RETRIED`, `CANCELLED` and `WORKFLOW_MIGRATED` entries, and the entries of signals, completions and reassignments, carry the actor of the command that caused them, taken from the caller's identity when the command was recorded.
 - **Reading is not authorized here.** Entries name actors and carry state patches, and open commands carry stored failure text. The framework performs no authorization on these reads; the application authorizes them before exposing them.
 - **No lock.** The service reads on a pooled connection outside any caller transaction and takes no execution lock.
 
@@ -712,9 +712,11 @@ static WorkflowHistoryListener historyNotifier(Notifier notifier) {
   inside a `MIGRATION` segment, whose pin changes part-way, except the entry that logs the migration itself. `commandKind` is also
   `null` when the command row's kind is not one this node knows. Attribution is null when the entry records none.
 - **Attribution.** `WorkflowAttribution` carries a `WorkflowActor`, the delegated subject as a `PrincipalRef` with empty
-  attributes when present, and a status. `VERIFIED` identifies a verified caller. `DEGRADED` identifies a caller reconstructed
-  from an unverified snapshot. `ABSENT` means no caller identity was available and `UNAVAILABLE` means a best-effort capture
-  failed. Neither status carries an actor or subject. Use attribution as evidence only.
+  attributes when present; the actor is `null` when there was no attributable caller (`WorkflowAttribution.absent()`), and a
+  best-effort capture that failed, or a stored row that cannot be read, also yields `absent()`. A subject requires an actor.
+  The text is kept as given, nothing stripped or cut: the constructor refuses, with an `IllegalArgumentException` that names the
+  field and never the value, an actor id, system reason or subject id of more than 255 code points or one that holds NUL or an
+  unpaired surrogate. Whoever prints the text formats it. Use attribution as evidence only.
 - **Failures.** `onHistoryFailed` reports a caller action that failed, whose transaction did not commit or whose commit was not
   confirmed. It is reported once per attempt, with an `attemptId` minted for that attempt (a repeat of the action is a new attempt), the
   `Action` (`START`, `SIGNAL`, `CANCEL`, `RETRY`, `MIGRATE`, `TASK_COMPLETE`, `TASK_REASSIGN` or `FAILURE_DISPOSITION`, the terminal
@@ -811,7 +813,7 @@ static WorkflowDefinitionLifecycleListener registryNotifier(Notifier notifier) {
 - **Repeats are reported.** A repeat that changes nothing, such as publishing an available version, is accepted and reported like any
   other change, because the registry result cannot tell the two apart.
 - **Startup.** The versions startup records for the first time are reported as a `PUBLISH` by `WorkflowActor.System` with the
-  reason `bootstrap` and `VERIFIED` attribution, and a version that also became the default scope's current version is followed by
+  reason `bootstrap`, and a version that also became the default scope's current version is followed by
   an `ACTIVATE` in the default scope (scope key and target scope key both `WorkflowScopes.DEFAULT`). A restart that finds nothing new
   reports nothing, and startup reports no failures.
 - **Only in a Dagger graph.** The events are built by the engine module's Dagger-injected lifecycle and startup step. A
@@ -891,7 +893,7 @@ keeps only the last change of a row, never a history: the next change replaces t
 removing an activation record (`deactivateDefault`, `follow`) leaves no row to name anyone. The actor is taken from the calling
 identity through the `WorkflowActorMapper`, never from a payload: a registered document (`WorkflowDefinitionService.load`), a
 lifecycle call and a stale-publication reset made by the system on startup all store theirs, and startup stores the system with the
-reason `bootstrap`. Failed best-effort capture records `UNAVAILABLE` and an absent identity records `ABSENT`. The store gains `claim`, `complete`, `release`, `transition` and `retire` overloads with a
+reason `bootstrap`. A failed best-effort capture and an absent identity both record `absent()`, an attribution with no actor. The store gains `claim`, `complete`, `release`, `transition` and `retire` overloads with a
 trailing `WorkflowAttribution`; their defaults drop the actor and call the older method, so a store written before them keeps
 working without recording it. A full history of definition changes is the `WorkflowDefinitionLifecycleListener`'s, which receives
 every change with its actor.
@@ -1288,7 +1290,7 @@ Behaviors that are load-bearing for correct use and not obvious from method sign
 - **Recorders must be durable, never live.** A `WorkflowSideEffectRecorder<TX>` may persist an outbox row, or write to another transactional store, but must not call a downstream service before commit.
 - **A history listener must not block, and must have a default branch.** Callbacks run on a Vert.x thread, and the variants of `WorkflowHistoryEvent`, `DefinitionLifecycleChange` and their enums grow additively. A `switch` without `default` fails to compile, or throws `MatchException`, when a version adds a variant. See `WorkflowHistoryListener`.
 - **A history listener may miss events.** Delivery is after the commit and at most once; a process stop between the two loses the notification. Catch up from `WorkflowInstanceHistoryService` by `sequence` when a consumer must be complete, and never use a listener as the only copy of a record.
-- **Listener events are not authorization input.** Use `WorkflowAttribution.status()` to distinguish verified, degraded, absent, and unavailable attribution.
+- **Listener events are not authorization input.** `WorkflowAttribution.actor()` is `null` when no caller could be attributed, and nothing in the attribution says how the caller was verified.
 - **A listener makes a call wait for the instance lock.** With a `WorkflowHistoryListener` bound, even a duplicate signal waits for the instance's execution lock, and a lock timeout fails the call with a retryable `WorkflowPersistenceException`.
 - **Human task DSL guard rails.** A task step's decision list must be non-empty with unique decision names (enforced by the `HumanTaskNode` compact constructor). The optional due-date triplet (`dueDate`, `onDueMutator`, `dueNextStepId`) is all-or-nothing — supplying a partial subset is rejected at construction.
 - **`assignedTo` filter.** `TaskFilter.withAssignedTo(TaskPrincipals)` lists the tasks assigned to the caller's user id, any of its roles or any of its queues, in one query, combined with the other fields. Among the tasks that pass those fields and the archived-instance rule, the query returns exactly those `TaskAssignment.matches` accepts. Principals that cannot match an assignment (any type but `USER`) match no task, never every task. `TaskFilter` gains `assignedTo` as a trailing nullable component and keeps its earlier constructors; record patterns that deconstruct it by component list must add it. A `TaskStore` must honour the component: ignoring it would list every task.

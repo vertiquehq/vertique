@@ -177,7 +177,7 @@ class RowMappers {
                     extractJsonb(row, "payload_json"),
                     toInstant(row.getOffsetDateTime("recorded_at")),
                     row.getInteger("entry_version"),
-                    PgWorkflowAttribution.read(row, "", "attribution_status"),
+                    PgWorkflowAttribution.read(row, ""),
                     row.getString("executor_id"),
                     row.getLong("command_id"),
                     row.getString("step_id"),

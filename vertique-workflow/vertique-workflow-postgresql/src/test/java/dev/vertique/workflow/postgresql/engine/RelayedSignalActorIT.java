@@ -61,7 +61,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 /**
  * Verifies how a signal that travels through the outbox relay is attributed: to the identity the relay's reconstruction
  * binds, with the original caller as the party it acts for; that a snapshot that does not verify records nothing under
- * the default policy and a degraded attribution when the policy continues; and that a delivery without identity
+ * the default policy and is recorded with its actor like any other when the policy continues; and that a delivery without identity
  * carriage is logged as no actor.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
@@ -104,11 +104,10 @@ public class RelayedSignalActorIT {
             run.publishSignal(user("u-9"), x, "default-wiring", false);
             Attributed signal = run.awaitSignal(x);
 
-            // Then the recorded signal carries the system with the relay's reason, acting for u-9, verified
+            // Then the recorded signal carries the system with the relay's reason, acting for u-9
             assertThat(signal.actorKind()).isEqualTo("SYSTEM");
             assertThat(signal.actorReason()).isEqualTo(EVENT_TYPE);
             assertThat(signal.onBehalfOf()).isEqualTo("u-9");
-            assertThat(signal.attribution()).isEqualTo("VERIFIED");
         }
 
         // And with a service identity resolver bound to relay-svc (second graph)
@@ -119,11 +118,10 @@ public class RelayedSignalActorIT {
             run.publishSignal(user("u-9"), y, "resolver-wiring", false);
             Attributed signal = run.awaitSignal(y);
 
-            // Then the recorded signal carries SERVICE relay-svc, acting for u-9, verified
+            // Then the recorded signal carries SERVICE relay-svc, acting for u-9
             assertThat(signal.actorKind()).isEqualTo("SERVICE");
             assertThat(signal.actorId()).isEqualTo("relay-svc");
             assertThat(signal.onBehalfOf()).isEqualTo("u-9");
-            assertThat(signal.attribution()).isEqualTo("VERIFIED");
         }
     }
 
@@ -146,19 +144,19 @@ public class RelayedSignalActorIT {
             assertThat(run.inboxRows(refused)).isZero();
         }
 
-        // And with the policy set to continue, the same delivery is recorded as degraded and acts for no one
+        // And with the policy set to continue, the same delivery is recorded with its actor like any other and acts for
+        // no one
         try (Run run = Run.carrying(vertx, "CONTINUE_WITHOUT_IDENTITY")) {
             WorkflowInstanceId continued = run.waitingInstance("tampered-continue");
             run.publishSignal(user("u-9"), continued, "tampered-continue", true);
             Attributed signal = run.awaitSignal(continued);
 
-            assertThat(signal.attribution()).isEqualTo("DEGRADED");
             assertThat(signal.onBehalfOf()).isNull();
             assertThat(signal.actorKind()).isEqualTo("SYSTEM");
             assertThat(signal.actorReason()).isEqualTo(EVENT_TYPE);
         }
 
-        // And without identity carriage the signal is recorded with NONE and absent
+        // And without identity carriage the signal is recorded with NONE
         try (Run run = Run.plain(vertx)) {
             WorkflowInstanceId plain = run.waitingInstance("no-carriage");
             run.publishSignal(user("u-9"), plain, "no-carriage-key", false);
@@ -168,7 +166,6 @@ public class RelayedSignalActorIT {
             assertThat(signal.actorId()).isNull();
             assertThat(signal.actorReason()).isNull();
             assertThat(signal.onBehalfOf()).isNull();
-            assertThat(signal.attribution()).isEqualTo("ABSENT");
         }
     }
 
@@ -185,10 +182,10 @@ public class RelayedSignalActorIT {
             run.awaitChargeSettled();
             JsonObject headers = run.chargeHeaders();
 
-            // Then the record's headers name U as the actor, verified
+            // Then the record's headers name U as the actor
             assertThat(headers.getString("x-workflow-actor-kind")).isEqualTo("USER");
             assertThat(headers.getString("x-workflow-actor-id")).isEqualTo("U");
-            assertThat(headers.getString("x-workflow-attribution")).isEqualTo("VERIFIED");
+            assertThat(headers.containsKey("x-workflow-attribution")).isFalse();
 
             // And no party acted for, no reason, and nothing an application could have set, appears in any letter case
             assertThat(headers.fieldNames())
@@ -240,8 +237,7 @@ public class RelayedSignalActorIT {
     }
 
     /** The actor columns of one command. */
-    private record Attributed(
-            String actorKind, String actorId, String actorReason, String onBehalfOf, String attribution) {}
+    private record Attributed(String actorKind, String actorId, String actorReason, String onBehalfOf) {}
 
     /** One started graph over the database with the means to write outbox rows and read what the relay recorded. */
     private static final class Run implements AutoCloseable {
@@ -469,16 +465,15 @@ public class RelayedSignalActorIT {
 
         List<Attributed> signalCommands(WorkflowInstanceId id) {
             List<Attributed> rows = new java.util.ArrayList<>();
-            for (var row : await(pool.preparedQuery(
-                            "SELECT actor_kind, actor_id, actor_reason, on_behalf_of->>'id' AS on_behalf_of, attribution_status"
+            for (var row : await(
+                    pool.preparedQuery("SELECT actor_kind, actor_id, actor_reason, on_behalf_of->>'id' AS on_behalf_of"
                                     + " FROM workflow_commands WHERE workflow_id = $1 AND kind = 'SIGNAL' ORDER BY seq")
-                    .execute(Tuple.of(id.value())))) {
+                            .execute(Tuple.of(id.value())))) {
                 rows.add(new Attributed(
                         row.getString("actor_kind"),
                         row.getString("actor_id"),
                         row.getString("actor_reason"),
-                        row.getString("on_behalf_of"),
-                        row.getString("attribution_status")));
+                        row.getString("on_behalf_of")));
             }
             return rows;
         }

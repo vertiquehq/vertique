@@ -104,8 +104,7 @@ class WorkflowHistoryEventPublisherTest {
                     actorCaptures.incrementAndGet();
                     return new WorkflowAttribution(
                             new WorkflowActor.User("alice"),
-                            new PrincipalRef(PrincipalType.USER, "bob", java.util.Map.of()),
-                            WorkflowAttribution.Status.VERIFIED);
+                            new PrincipalRef(PrincipalType.USER, "bob", java.util.Map.of()));
                 },
                 listeners);
     }
@@ -310,7 +309,6 @@ class WorkflowHistoryEventPublisherTest {
         assertThat(failure.occurredAt()).isEqualTo(NOW);
         assertThat(failure.attribution().actor()).isEqualTo(new WorkflowActor.User("alice"));
         assertThat(failure.attribution().onBehalfOf().id()).isEqualTo("bob");
-        assertThat(failure.attribution().status()).isEqualTo(WorkflowAttribution.Status.VERIFIED);
         // and no settlement is registered for a failed work
         verify(transaction, never()).completion();
     }
@@ -406,7 +404,6 @@ class WorkflowHistoryEventPublisherTest {
         assertThat(result.failed()).isTrue();
         assertThat(failures).hasSize(1);
         assertThat(failures.get(0).attribution().actor()).isEqualTo(null);
-        assertThat(failures.get(0).attribution().status()).isEqualTo(WorkflowAttribution.Status.UNAVAILABLE);
         assertThat(failures.get(0).attribution().onBehalfOf()).isNull();
     }
 
@@ -762,8 +759,7 @@ class WorkflowHistoryEventPublisherTest {
                 history,
                 readClient,
                 (id, client) -> Future.failedFuture(new IllegalStateException("lock timeout")),
-                () -> new WorkflowAttribution(
-                        new WorkflowActor.User("alice"), null, WorkflowAttribution.Status.VERIFIED),
+                () -> new WorkflowAttribution(new WorkflowActor.User("alice"), null),
                 Clock.fixed(NOW, ZoneOffset.UTC));
         AtomicInteger runs = new AtomicInteger();
 

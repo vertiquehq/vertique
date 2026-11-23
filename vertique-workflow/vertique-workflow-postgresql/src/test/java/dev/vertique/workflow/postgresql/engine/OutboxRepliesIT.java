@@ -178,8 +178,6 @@ class OutboxRepliesIT {
                 var command = run.signals(id).getFirst();
                 assertThat(command.getString("actor_kind"))
                         .isEqualTo((label.equals("user") || label.equals("degraded")) ? "USER" : "SYSTEM");
-                assertThat(command.getString("attribution_status"))
-                        .isEqualTo(label.equals("degraded") ? "DEGRADED" : "VERIFIED");
                 if (label.equals("user") || label.equals("degraded"))
                     assertThat(command.getString("actor_id")).isEqualTo("caller-1");
                 else {

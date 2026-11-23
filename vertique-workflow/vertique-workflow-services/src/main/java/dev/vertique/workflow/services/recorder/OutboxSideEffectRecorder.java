@@ -88,7 +88,7 @@ public final class OutboxSideEffectRecorder implements WorkflowSideEffectRecorde
      *
      * <p>An intent a workflow segment writes arrives with the attribution headers
      * {@code x-workflow-actor-kind}, {@code x-workflow-actor-id}, {@code x-workflow-actor-reason},
-     * {@code x-workflow-on-behalf-of}, {@code x-workflow-on-behalf-of-type} and {@code x-workflow-attribution} (absent values omitted), added by the engine
+     * {@code x-workflow-on-behalf-of} and {@code x-workflow-on-behalf-of-type} (absent values omitted), added by the engine
      * from the actor of the command the segment executes. They are copied to the outbox entry as they are. They are
      * unauthenticated and are not an identity; nothing here reads them.
      *

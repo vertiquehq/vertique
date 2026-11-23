@@ -27,6 +27,7 @@ import dev.vertique.workflow.source.SignalNoMatch;
 import dev.vertique.workflow.source.SignalSourceEvent;
 import dev.vertique.workflow.source.SignalSourceEvent.Outcome;
 import dev.vertique.workflow.source.SignalSourceRefusal;
+import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.ScopeKeyRules;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
@@ -467,29 +468,10 @@ final class SignalSourceRun<T> {
         log.warn(
                 "Source '{}' recorded no command for actor '{}': contract={}, signal={}, outcome={}",
                 plan.sourceName(),
-                actorForLog(identity.actor().id()),
+                EchoedNames.bounded(identity.actor().id()),
                 target == null ? null : target.contractName(),
                 target == null ? null : target.signalName(),
                 verdict.outcome());
-    }
-
-    /** Formats an actor identifier for this single-line log message. */
-    private static String actorForLog(String text) {
-        StringBuilder kept = new StringBuilder(Math.min(text.length(), 255));
-        int count = 0;
-        for (int index = 0; index < text.length() && count < 255; ) {
-            int codePoint = text.codePointAt(index);
-            index += Character.charCount(codePoint);
-            if (Character.isISOControl(codePoint)
-                    || codePoint == 0x2028
-                    || codePoint == 0x2029
-                    || Character.getType(codePoint) == Character.FORMAT) {
-                continue;
-            }
-            kept.appendCodePoint(codePoint);
-            count++;
-        }
-        return kept.isEmpty() ? "[unprintable]" : kept.toString();
     }
 
     private static SourceDisposition fold(SourceDisposition sofar, SourceDisposition next) {

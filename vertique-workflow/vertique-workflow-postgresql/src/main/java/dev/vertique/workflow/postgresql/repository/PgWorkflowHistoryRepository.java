@@ -131,7 +131,7 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
                 + " ORDER BY sequence DESC LIMIT $2";
 
         this.sqlListPage = "SELECT workflow_id, sequence, entry_type, payload_json, recorded_at, entry_version,"
-                + " actor_kind, actor_id, actor_reason, on_behalf_of, attribution_status, executor_id, command_id,"
+                + " actor_kind, actor_id, actor_reason, on_behalf_of, executor_id, command_id,"
                 + " step_id, outcome, definition_scope_key, definition_id, definition_version, plan_hash,"
                 + " state_version_before, state_version_after, patch_json FROM " + history
                 + " WHERE workflow_id = $1 AND sequence > $2 ORDER BY sequence ASC LIMIT $3";
@@ -144,7 +144,7 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
         this.sqlListRange = "SELECT h.workflow_id, h.sequence, h.entry_type,"
                 + " CASE WHEN h.entry_type IN ('TASK_CREATED', 'TASK_COMPLETED', 'TASK_REASSIGNED', 'TASK_CANCELLED')"
                 + " THEN h.payload_json END AS payload_json, h.recorded_at,"
-                + " h.entry_version, h.actor_kind, h.actor_id, h.actor_reason, h.on_behalf_of, h.attribution_status,"
+                + " h.entry_version, h.actor_kind, h.actor_id, h.actor_reason, h.on_behalf_of,"
                 + " h.executor_id, h.command_id, h.step_id, h.outcome, h.definition_scope_key, h.definition_id,"
                 + " h.definition_version, h.plan_hash, h.state_version_before, h.state_version_after,"
                 + " NULL::jsonb AS patch_json, c.kind AS command_kind FROM " + history + " h LEFT JOIN " + commands

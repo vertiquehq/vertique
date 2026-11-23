@@ -33,7 +33,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Verifies the attribution headers the router stamps on a segment's intent from the command the segment executes: the
- * command's actor, the party it acted for and its attribution status, with every application-set header whose name
+ * command's actor, the party it acted for, with every application-set header whose name
  * starts with the workflow prefix removed first, in any letter case.
  */
 class RecorderRouterAttributionTest {
@@ -55,7 +55,7 @@ class RecorderRouterAttributionTest {
         Map<String, String> applicationHeaders = new HashMap<>();
         applicationHeaders.put("x-workflow-actor-id", "mallory");
         applicationHeaders.put("X-Workflow-On-Behalf-Of", "eve");
-        applicationHeaders.put("X-WORKFLOW-Attribution", "VERIFIED");
+        applicationHeaders.put("X-WORKFLOW-Attribution", "forged");
         applicationHeaders.put("x-workflow-custom", "x");
         applicationHeaders.put("x-trace", "kept");
         WorkflowInstanceId id = new WorkflowInstanceId(UUID.randomUUID());
@@ -79,13 +79,12 @@ class RecorderRouterAttributionTest {
                 null,
                 new WorkflowAttribution(
                         new WorkflowActor.Service("billing\n%"),
-                        new PrincipalRef(PrincipalType.USER, "u-7", java.util.Map.of()),
-                        WorkflowAttribution.Status.DEGRADED));
+                        new PrincipalRef(PrincipalType.USER, "u-7", java.util.Map.of())));
 
         // When the router routes the intent for the command
         router.route(intent, command, mock(SqlClient.class));
 
-        // Then the recorder got the command's actor under the five attribution names and no application-set workflow
+        // Then the recorder got the command's actor under the four attribution names and no application-set workflow
         // header, while an unrelated header is kept
         Map<String, String> headers = recorded.get().headers();
         assertThat(headers)
@@ -93,14 +92,14 @@ class RecorderRouterAttributionTest {
                 .containsEntry("x-workflow-actor-id", "billing%0A%25")
                 .containsEntry("x-workflow-on-behalf-of", "u-7")
                 .containsEntry("x-workflow-on-behalf-of-type", "USER")
-                .containsEntry("x-workflow-attribution", "DEGRADED")
                 .containsEntry("x-trace", "kept")
+                .doesNotContainKey("x-workflow-attribution")
                 .doesNotContainKey("x-workflow-actor-reason");
         assertThat(headers.keySet())
                 .extracting(name -> name.toLowerCase(Locale.ROOT))
                 .doesNotContain("x-workflow-custom")
                 .doesNotHaveDuplicates();
-        assertThat(headers.values()).doesNotContain("mallory", "eve", "x");
+        assertThat(headers.values()).doesNotContain("mallory", "eve", "x", "forged");
     }
 
     @SuppressWarnings("unchecked")
@@ -133,7 +132,7 @@ class RecorderRouterAttributionTest {
         assertThat(recorded.get().headers())
                 .containsEntry("x-workflow-actor-kind", "SYSTEM")
                 .containsEntry("x-workflow-actor-reason", "timer")
-                .containsEntry("x-workflow-attribution", "VERIFIED")
+                .doesNotContainKey("x-workflow-attribution")
                 .doesNotContainKey("x-workflow-actor-id")
                 .doesNotContainKey("x-workflow-on-behalf-of")
                 .doesNotContainKey("X-Workflow-On-Behalf-Of");
@@ -141,7 +140,7 @@ class RecorderRouterAttributionTest {
 
     @SuppressWarnings("unchecked")
     @Test
-    @DisplayName("a workflow event carries only the actor kind and the attribution, never an id or a party acted for")
+    @DisplayName("a workflow event carries only the actor kind, never an id or a party acted for")
     void workflowEventCarriesNoSubjectIdentifier() {
         // Given a recorder of workflow events and a command by a user acting for another
         AtomicReference<WorkflowSideEffectIntent> recorded = new AtomicReference<>();
@@ -173,16 +172,15 @@ class RecorderRouterAttributionTest {
                 null,
                 new WorkflowAttribution(
                         new WorkflowActor.User("alice"),
-                        new PrincipalRef(PrincipalType.USER, "bob", java.util.Map.of()),
-                        WorkflowAttribution.Status.VERIFIED));
+                        new PrincipalRef(PrincipalType.USER, "bob", java.util.Map.of())));
 
         // When the router routes the event for the command
         router.route(intent, command, mock(SqlClient.class));
 
-        // Then only the kind and the attribution are stamped
+        // Then only the kind is stamped
         assertThat(recorded.get().headers())
                 .containsEntry("x-workflow-actor-kind", "USER")
-                .containsEntry("x-workflow-attribution", "VERIFIED")
+                .doesNotContainKey("x-workflow-attribution")
                 .doesNotContainKey("x-workflow-actor-id")
                 .doesNotContainKey("x-workflow-actor-reason")
                 .doesNotContainKey("x-workflow-on-behalf-of")
@@ -240,6 +238,6 @@ class RecorderRouterAttributionTest {
                 null,
                 null,
                 null,
-                new WorkflowAttribution(new WorkflowActor.User(user), null, WorkflowAttribution.Status.VERIFIED));
+                new WorkflowAttribution(new WorkflowActor.User(user), null));
     }
 }

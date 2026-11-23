@@ -8,7 +8,6 @@ import dev.vertique.security.PrincipalRef;
 import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityIdentity;
-import dev.vertique.security.SnapshotDegradationMarker;
 import java.util.Objects;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
@@ -33,11 +32,7 @@ public final class WorkflowActorCapture {
         PrincipalRef subject = identity.subject()
                 .filter(ref -> ref.type() != caller.type() || !ref.id().equals(caller.id()))
                 .orElse(null);
-        WorkflowAttribution.Status status =
-                holder.current(SnapshotDegradationMarker.class).isPresent()
-                        ? WorkflowAttribution.Status.DEGRADED
-                        : WorkflowAttribution.Status.VERIFIED;
-        return new WorkflowAttribution(actor, subject, status);
+        return new WorkflowAttribution(actor, subject);
     }
 
     public static WorkflowAttribution bestEffort(Supplier<WorkflowAttribution> capture) {
@@ -47,7 +42,7 @@ public final class WorkflowActorCapture {
             log.warn(
                     "Could not capture workflow attribution ({})",
                     failure.getClass().getName());
-            return WorkflowAttribution.unavailable();
+            return WorkflowAttribution.absent();
         }
     }
 }

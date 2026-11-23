@@ -287,8 +287,7 @@ class HistoryEventMapperTest {
                 1,
                 new WorkflowAttribution(
                         new WorkflowActor.User("alice"),
-                        new PrincipalRef(PrincipalType.USER, "bob", java.util.Map.of()),
-                        WorkflowAttribution.Status.VERIFIED),
+                        new PrincipalRef(PrincipalType.USER, "bob", java.util.Map.of())),
                 "node-1",
                 42L,
                 "step-a",
@@ -313,7 +312,6 @@ class HistoryEventMapperTest {
         assertThat(info.commandKind()).isEqualTo(CommandKind.SIGNAL);
         assertThat(info.attribution().actor()).isEqualTo(new WorkflowActor.User("alice"));
         assertThat(info.attribution().onBehalfOf().id()).isEqualTo("bob");
-        assertThat(info.attribution().status()).isEqualTo(WorkflowAttribution.Status.VERIFIED);
         assertThat(info.recordedAt()).isEqualTo(AT);
 
         // Given a bare row with an unknown command kind and no attribution

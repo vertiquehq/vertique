@@ -201,8 +201,7 @@ public class ScopeMigrationIT {
                             "activation_actor_kind",
                             "activation_actor_id",
                             "activation_actor_reason",
-                            "activation_on_behalf_of",
-                            "activation_attribution");
+                            "activation_on_behalf_of");
 
             // And who made the last change is kept in nullable columns next to the time of the change
             assertThat(catalog.rows("""
@@ -212,16 +211,18 @@ public class ScopeMigrationIT {
                               AND column_name IN ('activation_actor_id', 'activation_on_behalf_of')
                             ORDER BY column_name
                             """))
-                    .containsExactly("activation_actor_id|text|YES", "activation_on_behalf_of|jsonb|YES");
+                    .containsExactly("activation_actor_id|character varying|YES", "activation_on_behalf_of|jsonb|YES");
+            assertThat(catalog.columnShape("workflow_definition_activations", "activation_actor_id"))
+                    .isEqualTo("character varying|255|YES|null");
+            assertThat(catalog.columnShape("workflow_definition_activations", "activation_actor_reason"))
+                    .isEqualTo("character varying|255|YES|null");
             assertThat(catalog.columnNames("workflow_definitions"))
-                    .contains(
-                            "status_actor_kind",
-                            "status_actor_id",
-                            "status_actor_reason",
-                            "status_on_behalf_of",
-                            "status_attribution");
-            assertThat(catalog.columnShape("workflow_definitions", "status_attribution"))
-                    .isEqualTo("character varying|20|YES|null");
+                    .contains("status_actor_kind", "status_actor_id", "status_actor_reason", "status_on_behalf_of");
+            assertThat(catalog.columnNames("workflow_definitions")).doesNotContain("status_attribution");
+            assertThat(catalog.columnShape("workflow_definitions", "status_actor_id"))
+                    .isEqualTo("character varying|255|YES|null");
+            assertThat(catalog.columnShape("workflow_definitions", "status_actor_reason"))
+                    .isEqualTo("character varying|255|YES|null");
             assertThat(catalog.primaryKey("workflow_definition_activations"))
                     .isEqualTo("PRIMARY KEY (scope_key, definition_id)");
             assertThat(catalog.columnShape("workflow_definition_activations", "target_scope_key"))

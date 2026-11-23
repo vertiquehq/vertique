@@ -84,54 +84,45 @@ class CommandActorsTest {
 
     private static Stream<Arguments> identities() {
         return Stream.of(
-                // label, holder, kind, id, reason, onBehalfOf, attribution
-                Arguments.of("user u-1", holding(user("u-1")), "USER", "u-1", null, null, "VERIFIED"),
+                // label, holder, kind, id, reason, onBehalfOf
+                Arguments.of("user u-1", holding(user("u-1")), "USER", "u-1", null, null),
                 Arguments.of(
                         "service svc-1 acting for u-7",
                         holding(serviceActingFor("svc-1", "u-7")),
                         "SERVICE",
                         "svc-1",
                         null,
-                        "u-7",
-                        "VERIFIED"),
+                        "u-7"),
                 Arguments.of(
                         "system with reason nightly",
                         holding(SystemIdentities.scheduledJob("nightly")),
                         "SYSTEM",
                         null,
                         "nightly",
-                        null,
-                        "VERIFIED"),
+                        null),
                 Arguments.of(
                         "user whose subject is itself",
                         holding(userActingFor("u-1", "u-1")),
                         "USER",
                         "u-1",
                         null,
-                        null,
-                        "VERIFIED"),
-                Arguments.of("anonymous", holding(SecurityIdentity.anonymous()), "NONE", null, null, null, "ABSENT"),
-                Arguments.of("no security context", new Held(), "NONE", null, null, null, "ABSENT"));
+                        null),
+                Arguments.of("anonymous", holding(SecurityIdentity.anonymous()), "NONE", null, null, null),
+                Arguments.of("no security context", new Held(), "NONE", null, null, null));
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("identities")
     @DisplayName("the actor and the party it acts for are taken from the current identity, never from a payload")
     void capturesActorAndOnBehalfOfFromTheCurrentIdentity(
-            String label,
-            ContextHolder holder,
-            String kind,
-            String id,
-            String reason,
-            String onBehalfOf,
-            String attribution) {
+            String label, ContextHolder holder, String kind, String id, String reason, String onBehalfOf) {
         // Given a context holder that holds the identity (or none) and the default mapper
         CommandActors actors = new CommandActors(holder, new DefaultWorkflowActorMapper());
 
         // When the actor is captured
         var actor = actors.capture();
 
-        // Then the kind, the id, the reason, the party acted for and the attribution status are the expected ones
+        // Then the kind, the id, the reason, the party acted for are the expected ones
         WorkflowActor expected =
                 switch (kind) {
                     case "USER" -> new WorkflowActor.User(id);
@@ -143,12 +134,11 @@ class CommandActorsTest {
         assertThat(actor.actor()).isEqualTo(expected);
         assertThat(actor.onBehalfOf())
                 .isEqualTo(onBehalfOf == null ? null : new PrincipalRef(PrincipalType.USER, onBehalfOf, Map.of()));
-        assertThat(actor.status().name()).isEqualTo(attribution);
     }
 
     @Test
-    @DisplayName("a context that carries the snapshot degradation marker is attributed as degraded")
-    void aDegradationMarkerMakesTheAttributionDegraded() {
+    @DisplayName("a context that carries the snapshot degradation marker is attributed to its actor like any other")
+    void aDegradationMarkerDoesNotChangeTheAttribution() {
         // Given a service identity and the degradation marker the security module binds when a snapshot did not verify
         Held holder = holding(SecurityIdentity.service(new PrincipalRef(PrincipalType.SERVICE, "relay-svc", Map.of())))
                 .with(SnapshotDegradationMarker.class, new SnapshotDegradationMarker("TAMPERED", Optional.empty()));
@@ -157,10 +147,9 @@ class CommandActorsTest {
         // When the actor is captured
         var actor = actors.capture();
 
-        // Then the actor is still the service, with no party acted for, and the attribution is degraded
+        // Then the actor is still the service, with no party acted for, as without the marker
         assertThat(actor.actor()).isEqualTo(new WorkflowActor.Service("relay-svc"));
         assertThat(actor.onBehalfOf()).isNull();
-        assertThat(String.valueOf(actor.status())).isEqualTo("DEGRADED");
     }
 
     @Test
@@ -195,7 +184,7 @@ class CommandActorsTest {
 
     @Test
     void preservesIdsAndReasonsExactly() {
-        String id = "a".repeat(280) + "\n\u2028\u202e";
+        String id = "a".repeat(200) + "\n\u2028\u202e";
         var userActor = new CommandActors(holding(user(id)), new DefaultWorkflowActorMapper()).capture();
         assertThat(userActor.actor()).isEqualTo(new WorkflowActor.User(id));
 
@@ -208,5 +197,18 @@ class CommandActorsTest {
         var delegated =
                 new CommandActors(holding(serviceActingFor("svc-1", id)), new DefaultWorkflowActorMapper()).capture();
         assertThat(delegated.onBehalfOf()).isEqualTo(new PrincipalRef(PrincipalType.USER, id, Map.of()));
+    }
+
+    @Test
+    @DisplayName("an id the store cannot hold refuses the capture instead of being cut or cleaned")
+    void anUnstorableIdRefusesTheCapture() {
+        // Given an identity whose id is over the limit and one whose id holds a NUL character
+        CommandActors tooLong = new CommandActors(
+                holding(user("a".repeat(WorkflowAttribution.MAX_CODE_POINTS + 1))), new DefaultWorkflowActorMapper());
+        CommandActors withNul = new CommandActors(holding(user("u\u0000-1")), new DefaultWorkflowActorMapper());
+
+        // When the actor is captured, then the attribution refuses the text
+        assertThatThrownBy(tooLong::capture).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(withNul::capture).isInstanceOf(IllegalArgumentException.class);
     }
 }

@@ -840,7 +840,7 @@ public interface WorkflowCommandRepository<TX> {
 
     /**
      * Logs who is behind the history entries a transaction wrote since {@code fromSequence}: every entry of the
-     * instance from that sequence on that carries no actor yet takes the actor and its attribution status. An entry
+     * instance from that sequence on that carries no actor yet takes the actor and the party it acted for. An entry
      * that already carries an actor is left as it is. A repository that keeps no actor columns inherits this no-op.
      *
      * @param instance     the instance
