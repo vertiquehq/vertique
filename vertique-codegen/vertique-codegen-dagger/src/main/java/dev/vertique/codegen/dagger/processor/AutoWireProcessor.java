@@ -37,8 +37,10 @@ import javax.lang.model.element.TypeElement;
  * <ul>
  *   <li>{@code @RestClient} &#8594; {@code GeneratedRestClientsModule} with
  *       {@code @Provides @Singleton InterfaceType provideXxx(RestClientFactory)} methods</li>
- *   <li>{@code @KafkaListener} / {@code @KafkaSource} &#8594; {@code GeneratedKafkaConsumersModule}
- *       with {@code @Provides @IntoSet @KafkaConsumers Object} methods</li>
+ *   <li>{@code @KafkaListener} classes &#8594; {@code GeneratedKafkaConsumersModule}
+ *       with {@code @Provides @IntoSet @KafkaConsumers Object} methods; {@code @KafkaSource}
+ *       methods are not wired here, the runtime finds them through the service contract
+ *       registry</li>
  *   <li>{@code DelayedJobExecutor} impls &#8594; {@code GeneratedDelayedJobsModule} with
  *       {@code @Provides @IntoSet @DelayedJobs Object} methods</li>
  * </ul>

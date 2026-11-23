@@ -13,7 +13,7 @@ import javax.lang.model.element.TypeElement;
  * <ul>
  *   <li>{@link #origin} — the source {@link TypeElement} from which this binding was discovered.
  *       For annotation-rooted discovery ({@code @Path}, {@code @RestClient},
- *       {@code @KafkaListener}/ {@code @KafkaSource}), this is the annotated type itself. For
+ *       {@code @KafkaListener}), this is the annotated type itself. For
  *       root-element scanners ({@code @ServiceContract} impl, {@code DelayedJobExecutor} impl),
  *       this is the concrete implementing class.</li>
  *   <li>{@link #implType} — the {@link ClassName} of the implementation type to wire. For most

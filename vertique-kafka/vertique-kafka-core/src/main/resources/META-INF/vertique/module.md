@@ -343,9 +343,9 @@ static Object orderEventHandler(OrderEventHandler handler) {
 Applications inheriting `vertique-app-parent` declare the Kafka runtime capability they use and get
 the processor facade automatically; custom-parent applications follow the BOM plus
 `vertique-codegen-all` recipe in `docs/packaging.md`. `dev.vertique:vertique-codegen-dagger` emits
-`@Provides @IntoSet @KafkaConsumers Object` bindings for `@KafkaSource`-annotated classes (model 1)
-and `@KafkaListener`-annotated **classes** (model 4); include `GeneratedKafkaConsumersModule` in the
-`@Component`.
+`@Provides @IntoSet @KafkaConsumers Object` bindings for `@KafkaListener`-annotated **classes** (model 4); include
+`GeneratedKafkaConsumersModule` in the `@Component`. Model 1 (`@KafkaSource` methods) needs no entry
+there: the runtime finds those consumers through the service contract registry.
 
 Model 3 routing **interfaces** are not auto-wired — their `Class<?>` contribution stays a manual
 `@Provides @IntoSet @KafkaConsumers` binding.

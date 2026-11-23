@@ -25,7 +25,7 @@ paths. See `docs/packaging.md`. No `@Component` changes are required beyond incl
 `GeneratedJaxRsResourcesModule`.
 
 `vertique-codegen-jaxrs` owns `@Path`-resource Dagger binding. `vertique-codegen-dagger` retains
-responsibility for `@RestClient`, `@KafkaListener`/`@KafkaSource`, and `DelayedJobExecutor` wiring.
+responsibility for `@RestClient`, `@KafkaListener`, and `DelayedJobExecutor` wiring.
 
 ---
 
