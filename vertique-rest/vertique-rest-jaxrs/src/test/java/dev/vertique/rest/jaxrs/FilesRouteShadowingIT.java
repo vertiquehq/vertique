@@ -71,7 +71,10 @@ class FilesRouteShadowingIT {
         }
     }
 
-    /** Open mixed-segment route declared before the secured static route. */
+    /**
+     * Open mixed-segment route beside a secured static route. Pins the existing order: both segments
+     * rank as literal, and the template tie-break puts the static one first.
+     */
     @Path("/mixed")
     public static class MixedFirstResource {
 
@@ -101,6 +104,41 @@ class FilesRouteShadowingIT {
         @Operation(operationId = "mixedStatic")
         public String staticFile() {
             return "static";
+        }
+    }
+
+    /** Open two-variable route beside a secured route whose constraint spans a path separator. */
+    @Path("/repos")
+    public static class SpanningConstraintResource {
+
+        /**
+         * Open two-variable route.
+         *
+         * @param owner the bound owner
+         * @param name the bound name
+         * @return the bound values echoed back
+         */
+        @GET
+        @Path("/{owner:\\w+}/{name}")
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "reposOpen")
+        public String open(@PathParam("owner") String owner, @PathParam("name") String name) {
+            return "open=" + owner + "/" + name;
+        }
+
+        /**
+         * Secured route whose constraint spans a path separator and ends in a literal segment.
+         *
+         * @param slug the bound slug
+         * @return a constant body when authentication passes
+         */
+        @GET
+        @Path("/{slug:[^/]+/admin}")
+        @Produces(MediaType.TEXT_PLAIN)
+        @SecurityRequirement(name = "bearerAuth")
+        @Operation(operationId = "reposAdmin")
+        public String admin(@PathParam("slug") String slug) {
+            return "admin";
         }
     }
 
@@ -166,5 +204,17 @@ class FilesRouteShadowingIT {
                     return body(client, port, "/mixed/other.txt");
                 })
                 .andThen(r -> ctx.verify(() -> assertEquals("open=other", r.result()))));
+    }
+
+    @Test
+    @DisplayName("A secured /repos/{slug:[^/]+/admin} is not shadowed by an open /repos/{owner}/{name}")
+    void spanningConstraintWithLiteralTailNotShadowed(Vertx vertx, VertxTestContext ctx) {
+        WebClient client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
+        run(vertx, ctx, new SpanningConstraintResource(), port -> status(client, port, "/repos/x/admin")
+                .compose(code -> {
+                    ctx.verify(() -> assertEquals(401, code, "anonymous /repos/x/admin must hit the auth handler"));
+                    return body(client, port, "/repos/x/other");
+                })
+                .andThen(r -> ctx.verify(() -> assertEquals("open=x/other", r.result()))));
     }
 }

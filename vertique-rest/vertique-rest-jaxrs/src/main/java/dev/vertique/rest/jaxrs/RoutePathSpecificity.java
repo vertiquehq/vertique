@@ -115,7 +115,11 @@ final class RoutePathSpecificity {
      * Splits a path template into its segments on every {@code /} that is outside braces, dropping
      * empty segments produced by a leading or trailing slash. A {@code /} inside {@code {...}} (for
      * example the character class in {@code {name:[^/]+}}, or a constraint with nested braces such as
-     * {@code {name:[a-z/]{1,3}}}) does not split, so the whole variable stays one segment.
+     * {@code {name:[a-z/]{1,3}}}) does not split, so the whole variable stays one segment. A segment
+     * that is exactly one constrained variable whose constraint contains a literal path separator
+     * (outside a character class or group), such as {@code {slug:[^/]+/admin}}, counts as
+     * one segment per separated piece; a piece without regex metacharacters ({@code admin}) counts as
+     * a literal.
      *
      * <p>Unbalanced input never throws: an opening brace with no matching close is treated as ordinary
      * text and the remainder of the template is split normally.
@@ -158,9 +162,108 @@ final class RoutePathSpecificity {
     }
 
     private static void addSegment(List<String> result, String path, int from, int to) {
-        if (to > from) {
-            result.add(path.substring(from, to));
+        if (to <= from) {
+            return;
         }
+        String segment = path.substring(from, to);
+        int colon = wholeVariableColon(segment);
+        if (colon < 0) {
+            result.add(segment);
+            return;
+        }
+        // A constraint that itself contains a path separator matches several request segments; rank
+        // it as one piece per separator so that a literal part of the constraint (the "admin" of
+        // {slug:[^/]+/admin}) still counts as a literal against a sibling's plain variable.
+        String name = segment.substring(1, colon);
+        List<String> pieces = splitConstraint(segment.substring(colon + 1, segment.length() - 1));
+        if (pieces.size() < 2) {
+            result.add(segment);
+            return;
+        }
+        for (String piece : pieces) {
+            result.add(isPlainLiteral(piece) ? piece : "{" + name + ":" + piece + "}");
+        }
+    }
+
+    /**
+     * Returns the index of the {@code :} that introduces the constraint when {@code segment} is exactly
+     * one constrained brace variable ({@code {name:constraint}}), otherwise {@code -1}.
+     */
+    private static int wholeVariableColon(String segment) {
+        if (segment.length() < 3 || segment.charAt(0) != '{' || segment.charAt(segment.length() - 1) != '}') {
+            return -1;
+        }
+        int depth = 0;
+        int colon = -1;
+        for (int i = 0; i < segment.length(); i++) {
+            char c = segment.charAt(i);
+            if (c == '{') {
+                depth++;
+            } else if (c == '}') {
+                depth--;
+                if (depth == 0 && i != segment.length() - 1) {
+                    return -1; // the first variable closes before the end: a mixed segment
+                }
+            } else if (c == ':' && depth == 1 && colon < 0) {
+                colon = i;
+            }
+        }
+        return depth == 0 ? colon : -1;
+    }
+
+    /**
+     * Splits a regex constraint on each {@code /} (or an escaped {@code \/}) that matches a literal path
+     * separator: one outside a character class and a group. A constraint without such a separator is
+     * returned whole.
+     */
+    private static List<String> splitConstraint(String constraint) {
+        List<String> pieces = new ArrayList<>();
+        int start = 0;
+        int groups = 0;
+        boolean inClass = false;
+        for (int i = 0; i < constraint.length(); i++) {
+            char c = constraint.charAt(i);
+            if (c == '\\') {
+                if (!inClass && groups == 0 && i + 1 < constraint.length() && constraint.charAt(i + 1) == '/') {
+                    addPiece(pieces, constraint, start, i); // an escaped slash is still a separator
+                    start = i + 2;
+                }
+                i++; // skip the escaped character
+            } else if (inClass) {
+                inClass = c != ']';
+            } else if (c == '[') {
+                inClass = true;
+            } else if (c == '(') {
+                groups++;
+            } else if (c == ')') {
+                groups = Math.max(0, groups - 1);
+            } else if (c == '/' && groups == 0) {
+                addPiece(pieces, constraint, start, i);
+                start = i + 1;
+            }
+        }
+        addPiece(pieces, constraint, start, constraint.length());
+        if (pieces.isEmpty()) {
+            pieces.add(constraint);
+        }
+        return pieces;
+    }
+
+    private static void addPiece(List<String> pieces, String constraint, int from, int to) {
+        String piece = constraint.substring(from, to).trim();
+        if (!piece.isEmpty()) {
+            pieces.add(piece);
+        }
+    }
+
+    /** Returns whether a constraint piece has no regex metacharacter, so it matches only itself. */
+    private static boolean isPlainLiteral(String piece) {
+        for (int i = 0; i < piece.length(); i++) {
+            if ("\\.[]{}()*+?^$|".indexOf(piece.charAt(i)) >= 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

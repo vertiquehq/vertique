@@ -96,6 +96,22 @@ class RoutePathSpecificityTest {
         }
 
         @Test
+        @DisplayName("a literal tail of a separator-spanning constraint ranks as a literal segment")
+        void spanningConstraintLiteralTailBeatsParam() {
+            assertMoreSpecific("/repos/{slug:[^/]+/admin}", "/repos/{owner:\\w+}/{name}");
+            assertMoreSpecific("/repos/{slug:[^/]+/[^/]+}", "/repos/{owner}/{name}");
+            assertMoreSpecific("/repos/{slug:[^/]+\\/admin}", "/repos/{owner}/{name}");
+        }
+
+        @Test
+        @DisplayName("a constraint without a separator, or with one in a class or group, stays one segment")
+        void constraintWithoutLiteralSeparatorStaysOneSegment() {
+            assertMoreSpecific("/a/{x:abc}", "/a/{x}");
+            assertMoreSpecific("/a/b", "/a/{x:abc}");
+            assertMoreSpecific("/a/{p:[^/]+}/{q}", "/a/{p:(x/y)}");
+        }
+
+        @Test
         @DisplayName("a mixed segment stays literal and beats a regex segment")
         void mixedSegmentStaysLiteral() {
             assertMoreSpecific("/files/{name}.txt", "/files/{name:[^/]+}");
