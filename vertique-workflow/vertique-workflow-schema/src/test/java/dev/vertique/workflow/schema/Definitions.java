@@ -193,6 +193,28 @@ final class Definitions {
     }
 
     /**
+     * A candidate built by hand that declares {@code outputTypeName} as its output and has no task.
+     *
+     * @param id the definition id
+     * @param version the definition version
+     * @param outputTypeName the output type name the plan holds
+     * @return the candidate
+     */
+    static RegisteredWorkflowDefinition handBuiltWithOutput(String id, long version, String outputTypeName) {
+        WorkflowPlan plan = new WorkflowPlan(
+                id,
+                version,
+                "hash",
+                State.class.getName(),
+                "done",
+                List.of(new CompleteNode("done")),
+                null,
+                outputTypeName,
+                new CallbackId("$output.mapper"));
+        return new RegisteredWorkflowDefinition(plan, Void.class);
+    }
+
+    /**
      * A human task node whose decisions name payload types by string, as a persisted plan does.
      *
      * @param stepId the step id
@@ -207,6 +229,22 @@ final class Definitions {
         }
         return new HumanTaskNode(
                 stepId, new HumanTaskNode.AssignmentSpec.Role("reviewers"), list, null, null, null, null, false);
+    }
+
+    /**
+     * A definition that starts without a payload, completes at once and declares {@code outputType} as its output.
+     *
+     * @param id the definition id
+     * @param version the definition version
+     * @param outputType the declared output class
+     * @return the definition
+     */
+    static <O> WorkflowDefinition<State, Primary> withOutput(String id, long version, Class<O> outputType) {
+        return definition(Primary.class, id, version, wf -> {
+            initWith(wf, Void.class, "done");
+            wf.output(outputType, state -> null);
+            wf.complete("done");
+        });
     }
 
     private static <C> WorkflowDefinition<State, C> build(

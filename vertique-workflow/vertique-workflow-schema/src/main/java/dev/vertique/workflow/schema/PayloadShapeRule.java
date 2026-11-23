@@ -55,13 +55,46 @@ final class PayloadShapeRule {
      * @param stepId the human task step, or {@code null} for the start payload
      * @param decisionName the decision, or {@code null} for the start payload
      * @param typeName the payload type's binary name
+     * @param output whether the type is the declared output of the definition; a context for the start payload or a
+     *     decision has none
      */
     record Context(
             String definitionId,
             long definitionVersion,
             @Nullable String stepId,
             @Nullable String decisionName,
-            String typeName) {
+            String typeName,
+            boolean output) {
+
+        /**
+         * Creates the context of the start payload or of a decision payload.
+         *
+         * @param definitionId the candidate definition id
+         * @param definitionVersion the candidate definition version
+         * @param stepId the human task step, or {@code null} for the start payload
+         * @param decisionName the decision, or {@code null} for the start payload
+         * @param typeName the payload type's binary name
+         */
+        Context(
+                String definitionId,
+                long definitionVersion,
+                @Nullable String stepId,
+                @Nullable String decisionName,
+                String typeName) {
+            this(definitionId, definitionVersion, stepId, decisionName, typeName, false);
+        }
+
+        /**
+         * Creates the context of the declared output.
+         *
+         * @param definitionId the candidate definition id
+         * @param definitionVersion the candidate definition version
+         * @param typeName the output type's name
+         * @return the context
+         */
+        static Context ofOutput(String definitionId, long definitionVersion, String typeName) {
+            return new Context(definitionId, definitionVersion, null, null, typeName, true);
+        }
 
         /**
          * The start of every failure message: the definition, the declaration site and the payload type.
@@ -69,9 +102,11 @@ final class PayloadShapeRule {
          * @return the message prefix, without a trailing space
          */
         String subject() {
-            String site = stepId == null ? "start payload" : "step '" + stepId + "' decision '" + decisionName + "'";
-            return "definition '" + definitionId + "' v" + definitionVersion + " " + site + " payload type '" + typeName
-                    + "'";
+            String site = output
+                    ? "output"
+                    : stepId == null ? "start payload" : "step '" + stepId + "' decision '" + decisionName + "'";
+            return "definition '" + definitionId + "' v" + definitionVersion + " " + site + " "
+                    + (output ? "type" : "payload type") + " '" + typeName + "'";
         }
     }
 

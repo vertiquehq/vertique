@@ -109,8 +109,8 @@ default value).
 
 The validator is a `WorkflowDefinitionValidator` contributed to the workflow registry. It runs for
 every candidate definition, whether registered at bootstrap or published at runtime. It reads the
-start payload type first, then the decision payload types of every human task in plan order,
-including tasks inside fork branches. For each distinct type name it does this once:
+start payload type first, then the declared output type when the definition declares one, then the decision
+payload types of every human task in plan order, including tasks inside fork branches. For each distinct type name it does this once:
 
 1. **Skip `void`.** A `void` or `java.lang.Void` payload means no payload and needs no schema.
    A primitive decision type other than `void`, such as `int`, is not skipped: it is rejected with
@@ -126,6 +126,8 @@ including tasks inside fork branches. For each distinct type name it does this o
 5. **Require an object.** The document must be object-shaped (see below).
 6. **Precompile the patterns.** Every `pattern` in the document must compile.
 7. **Compile the validator.** The schema is compiled under the bounded pattern guard and cached.
+
+The declared output is held to the same rules as a payload, including the object rule, and its failures name "output type" instead of a payload site. Event consumers and `result` callers decode the output as JSON, and only an object root can gain fields later without breaking them, so a `String`, a number or a list is refused; wrap it in a record. `WorkflowPlanSchemaProducer.outputSchema` is the INTERNAL default method that describes the same schema (`null` for a plan without an output).
 
 The first failure ends validation of that definition. A failure is never cached; types resolved
 before it stay cached.
@@ -205,7 +207,7 @@ without knowing the Java types.
 | Class | Role |
 |---|---|
 | `WorkflowPayloadSchemas` | `describe(key)` for the whole definition; `decision(key, stepId, decisionName)` for one decision; `validateDecision` and `validateStart` to validate a submitted payload. Every method returns a `Future`: `Future<Optional<WorkflowDefinitionDescriptor>>`, `Future<Optional<DecisionDescriptor>>` and `Future<PayloadValidationResult>` twice. The key is the `DefinitionKey` of the pin: scope, definition id and version |
-| `WorkflowDefinitionDescriptor` | Definition id and version, the start payload schema (`null` for a `void` start) and the human task steps in plan order |
+| `WorkflowDefinitionDescriptor` | Definition id and version, the start payload schema (`null` for a `void` start), the human task steps in plan order and `output`, the schema of the declared output (`null` when the definition declares none; the four-argument constructor leaves it `null`) |
 | `HumanTaskStepDescriptor` | A step id and its decisions in declaration order |
 | `DecisionDescriptor` | Decision name, the step it leads to and the payload schema (`null` for a `void` decision) |
 | `PayloadSchema` | The canonical JSON Schema document and the `propertyOrder` list |
@@ -401,6 +403,7 @@ type; no payload value is ever included.
 |---|---|
 | Cannot be loaded | `definition 'order-review' v2 step 'review' decision 'approve' payload type 'com.acme.ApprovePaylod' cannot be loaded` |
 | Not object-shaped | `definition 'order-review' v2 step 'review' decision 'approve' payload type 'java.lang.String' is not object-shaped (root type string); wrap the value in a record` |
+| Output not object-shaped | `definition 'order-review' v2 output type 'java.lang.String' is not object-shaped (root type string); wrap the value in a record` |
 | Uncompilable pattern | `definition 'order-review' v2 start payload payload type 'com.acme.Start' has a pattern at /properties/code/pattern that does not compile: Unclosed group near index 3` |
 | Cannot be described | `definition 'order-review' v2 step 'review' decision 'approve' payload type 'com.acme.ApprovePayload' cannot be described: <reason>` |
 
