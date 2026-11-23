@@ -25,8 +25,9 @@ import javax.lang.model.type.TypeMirror;
  * @param consumes            the media types from {@code @Consumes}, or an empty list if absent
  * @param produces            the media types from {@code @Produces}, or an empty list if absent
  * @param methodSecurity      the resolved method-level security contract; never {@code null}
- * @param validationGroups    the validation group type mirrors from {@code @ValidateWith}, or
- *                            {@code null} if the annotation is absent
+ * @param validationGroups    the validation group type mirrors from {@code @ValidateWith}, empty
+ *                            for an explicit {@code @ValidateWith({})}, or {@code null} if the
+ *                            annotation is absent
  * @param params              the resolved parameter contracts in declaration order; never {@code null}
  * @param routeCanonicalizers ordered list of canonicalizer class type mirrors for the route-level
  *                            chain (method-level {@code @Canonicalize}/{@code @SkipCanonicalization}

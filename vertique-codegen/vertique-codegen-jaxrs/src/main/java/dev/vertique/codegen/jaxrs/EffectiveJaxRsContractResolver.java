@@ -611,7 +611,8 @@ public final class EffectiveJaxRsContractResolver {
      *
      * @param method        the concrete method
      * @param resourceClass the resource class
-     * @return the list of validation group type mirrors, or {@code null} if the annotation is absent
+     * @return the list of validation group type mirrors, empty when the first declaration carries an
+     *     explicit {@code @ValidateWith({})}, or {@code null} if the annotation is absent
      */
     private List<TypeMirror> resolveValidationGroups(ExecutableElement method, TypeElement resourceClass) {
         // Precedence 1: direct on method
@@ -1557,7 +1558,8 @@ public final class EffectiveJaxRsContractResolver {
 
     /**
      * Returns the {@code Class[]}-typed attribute value from the given annotation as a
-     * {@code List<TypeMirror>}, or {@code null} if the annotation is absent.
+     * {@code List<TypeMirror>}, or {@code null} if the annotation is absent. A present annotation
+     * with an empty array yields an empty list.
      *
      * @param element       the element to inspect
      * @param annotationFqn the annotation FQN
@@ -1574,7 +1576,7 @@ public final class EffectiveJaxRsContractResolver {
                             mirrors.add(tm);
                         }
                     }
-                    return mirrors.isEmpty() ? null : (List<TypeMirror>) mirrors;
+                    return (List<TypeMirror>) mirrors;
                 })
                 .orElse(null);
     }

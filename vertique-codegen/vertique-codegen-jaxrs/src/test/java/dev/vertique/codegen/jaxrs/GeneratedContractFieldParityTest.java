@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
+import dev.vertique.core.validation.ValidateWith;
 import dev.vertique.rest.jaxrs.JaxRsRouteRegistrar;
 import dev.vertique.rest.jaxrs.ResourceMethodMeta;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsDescriptorSupport;
@@ -18,6 +19,7 @@ import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -37,6 +39,7 @@ class GeneratedContractFieldParityTest {
 
     private static JavaFileObject src(String simpleName, String body) {
         return SourceFiles.inline(PKG + "." + simpleName, "package " + PKG + ";\n\n" + """
+                import dev.vertique.core.validation.ValidateWith;
                 import jakarta.ws.rs.Consumes;
                 import jakarta.ws.rs.GET;
                 import jakarta.ws.rs.POST;
@@ -303,5 +306,84 @@ class GeneratedContractFieldParityTest {
         assertEquals(
                 pick(scans.reflective(), "root").path(),
                 pick(scans.generated(), "root").path());
+    }
+
+    // --- @ValidateWith ---
+
+    interface Create {}
+
+    interface ValidatedApi {
+        @POST
+        @Path("/overridden")
+        @ValidateWith({Create.class})
+        String overridden(String body);
+
+        @POST
+        @Path("/inherited")
+        @ValidateWith({Create.class})
+        String inherited(String body);
+    }
+
+    @Path("/validated")
+    static class ValidatedResource implements ValidatedApi {
+        @Override
+        @ValidateWith({})
+        public String overridden(String body) {
+            return body;
+        }
+
+        @Override
+        public String inherited(String body) {
+            return body;
+        }
+    }
+
+    private static List<String> groupNames(ResourceMethodMeta meta) {
+        return meta.validationGroups() == null
+                ? null
+                : Arrays.stream(meta.validationGroups()).map(Class::getName).toList();
+    }
+
+    @Test
+    @DisplayName(
+            "an explicit empty @ValidateWith on an override wins over the interface groups like the reflective scan")
+    void emptyValidateWithOverride() throws Exception {
+        Scans scans = scan(
+                new ValidatedResource(),
+                "ValidatedResource",
+                src("Create", "public interface Create {}\n"),
+                src("ValidatedApi", """
+                        public interface ValidatedApi {
+                            @POST
+                            @Path("/overridden")
+                            @ValidateWith({Create.class})
+                            String overridden(String body);
+
+                            @POST
+                            @Path("/inherited")
+                            @ValidateWith({Create.class})
+                            String inherited(String body);
+                        }
+                        """),
+                src("ValidatedResource", """
+                        @Path("/validated")
+                        public class ValidatedResource implements ValidatedApi {
+                            @Override
+                            @ValidateWith({})
+                            public String overridden(String body) {
+                                return body;
+                            }
+
+                            @Override
+                            public String inherited(String body) {
+                                return body;
+                            }
+                        }
+                        """));
+        assertEquals(List.of(), groupNames(pick(scans.reflective(), "overridden")));
+        assertEquals(1, groupNames(pick(scans.reflective(), "inherited")).size());
+        assertEquals(
+                groupNames(pick(scans.reflective(), "overridden")), groupNames(pick(scans.generated(), "overridden")));
+        assertEquals(1, groupNames(pick(scans.generated(), "inherited")).size());
     }
 }

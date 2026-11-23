@@ -226,7 +226,7 @@ public final class JaxRsDescriptorEmitter {
 
             // Validation groups: VG_ (only if present)
             String vgConstName = "VG" + methodSuffix;
-            if (mc.validationGroups() != null && !mc.validationGroups().isEmpty()) {
+            if (mc.validationGroups() != null) {
                 staticFields.add(stringArrayConst(
                         vgConstName,
                         mc.validationGroups().stream().map(this::erasedFqn).toList()));
@@ -300,7 +300,7 @@ public final class JaxRsDescriptorEmitter {
 
             describeBody.addStatement(
                     "$T<?> $L = resolveClass(support, cl_, $L)", Class.class, returnVarName, "R" + methodSuffix);
-            if (mc.validationGroups() != null && !mc.validationGroups().isEmpty()) {
+            if (mc.validationGroups() != null) {
                 describeBody.addStatement(
                         "$T[] $L = resolveClasses(support, cl_, $L)", Class.class, vgVarName, vgConstName);
             } else {
