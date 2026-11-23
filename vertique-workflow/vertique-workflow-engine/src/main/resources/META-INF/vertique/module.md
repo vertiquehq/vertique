@@ -1212,7 +1212,13 @@ shutdown; the engine owns no start or stop of its own. A graph that runs no depl
 its `Set<VerticleDeployment>` alone, never the whole phase, which would also start the graph's other `SERVICES` verticles. A
 factory-built engine's `executor().start()` deploys the same supplier and options with `vertx.deployVerticle`, and
 `executor().stop()` undeploys it; `stop` ends claiming and completes when every in-flight segment has committed or been rolled
-back by its own deadline, which is normally within the lease and is extended by a statement stuck in the database. Until one
+back by its own deadline, which is normally within the lease and is extended by a statement stuck in the database. A segment
+that fails while the stop waits, as it does when the application has already closed the database pool, does not hold the
+stop: a write that fails its command, reschedules it or releases its claim and then fails is not tried again once the stop
+has begun, whatever the cause of its failure, so the stop ends as soon as the segment does. The command stays claimed until
+its lease ends, when the next start takes it again, and the abandoned claim counts as one of its `maxAttempts`, as a crash
+does; a transient database error during a stop is therefore not retried either. A write that finds the execution lock busy
+is still tried again, until the segment's deadline. Until one
 `pollIntervalMs` after the stop, it also waits for the instance's other database work (a peek, the earliest-delay read, the
 queue snapshot and the mark writes after a segment), so that such work does not race the close of the pool; work still
 running when that interval ends, including a mark write of a segment that ends later, is not waited for. An
