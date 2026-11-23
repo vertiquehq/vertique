@@ -35,8 +35,8 @@ public interface WorkflowDefinitionLifecycle {
     Future<Void> deprecate(DefinitionKey key);
 
     /**
-     * Retires a candidate, or a deprecated definition once it has cooled and no instance is pinned to it. The
-     * durable status is committed first, atomically with the cooling and pin checks; a refusal fails the future
+     * Retires a candidate, or a deprecated definition as soon as no instance is pinned to it. The
+     * durable status is committed first, atomically with the pin check; a refusal fails the future
      * typed and changes nothing, durably or locally. Only after the commit does the local registry drop the
      * version, and only when the registration there is the one this lifecycle published
      * for the same key. A registration that the lifecycle did not publish, or that a direct registry call has
