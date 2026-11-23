@@ -3,7 +3,9 @@
 
 package dev.vertique.rest.jaxrs;
 
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.List;
 
 /**
  * Computes a deterministic, total-order <em>specificity</em> ordering over JAX-RS {@code @Path}
@@ -17,8 +19,9 @@ import java.util.Comparator;
  * handler never runs. Registering the more-specific {@code /hello/secured} first restores the
  * specificity-before-parameter precedence the pre-rewrite OpenAPI router supplied automatically.
  *
- * <p><strong>Segment classification.</strong> Each template is split into {@code /}-delimited
- * segments, and each segment is classified as one of:
+ * <p><strong>Segment classification.</strong> Each template is split into segments on every
+ * {@code /} outside braces (a {@code /} inside a variable's regex constraint, such as
+ * {@code {name:[^/]+}}, does not split), and each segment is classified as one of:
  * <ul>
  *   <li>{@link SegmentKind#LITERAL} — static text with no variable, e.g. {@code secured};</li>
  *   <li>{@link SegmentKind#REGEX} — a variable carrying a regex constraint, e.g. {@code {id:\d+}};</li>
@@ -109,16 +112,55 @@ final class RoutePathSpecificity {
     }
 
     /**
-     * Splits a path template into its {@code /}-delimited segments, dropping empty segments produced
-     * by a leading slash or a trailing slash.
+     * Splits a path template into its segments on every {@code /} that is outside braces, dropping
+     * empty segments produced by a leading or trailing slash. A {@code /} inside {@code {...}} (for
+     * example the character class in {@code {name:[^/]+}}, or a constraint with nested braces such as
+     * {@code {name:[a-z/]{1,3}}}) does not split, so the whole variable stays one segment.
+     *
+     * <p>Unbalanced input never throws: an opening brace with no matching close is treated as ordinary
+     * text and the remainder of the template is split normally.
      *
      * @param path the JAX-RS path template
      * @return the non-empty path segments in order
      */
     private static String[] segments(String path) {
-        return java.util.Arrays.stream(path.split("/"))
-                .filter(s -> !s.isEmpty())
-                .toArray(String[]::new);
+        List<String> result = new ArrayList<>();
+        int start = 0;
+        int depth = 0;
+        int open = -1;
+        int i = 0;
+        int length = path.length();
+        while (i < length) {
+            char c = path.charAt(i);
+            if (c == '{') {
+                if (depth == 0) {
+                    open = i;
+                }
+                depth++;
+            } else if (c == '}') {
+                if (depth > 0) {
+                    depth--;
+                }
+            } else if (c == '/' && depth == 0) {
+                addSegment(result, path, start, i);
+                start = i + 1;
+            }
+            i++;
+            if (i == length && depth > 0) {
+                // The outermost brace never closed: treat it as plain text and rescan after it.
+                i = open + 1;
+                depth = 0;
+                open = -1;
+            }
+        }
+        addSegment(result, path, start, length);
+        return result.toArray(String[]::new);
+    }
+
+    private static void addSegment(List<String> result, String path, int from, int to) {
+        if (to > from) {
+            result.add(path.substring(from, to));
+        }
     }
 
     /**
