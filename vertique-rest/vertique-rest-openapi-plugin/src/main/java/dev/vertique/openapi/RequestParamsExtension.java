@@ -246,10 +246,10 @@ public class RequestParamsExtension extends AbstractOpenAPIExtension {
                     components.addSchemas(name, schema);
                 }
             });
-            // Swagger Core uses the simple class name as the schema name by default.
-            // @Schema(name=...) can override this, but @RequestParams member types are
-            // unlikely to use that annotation. The simple name is the correct $ref target.
-            return new Schema<>().$ref("#/components/schemas/" + type.getSimpleName());
+            // Swagger Core registers the component under the resolved schema name, which honours
+            // @Schema(name = ...); fall back to the simple class name for an unnamed schema.
+            String schemaName = resolved.schema.getName() != null ? resolved.schema.getName() : type.getSimpleName();
+            return new Schema<>().$ref("#/components/schemas/" + schemaName);
         }
         return resolved.schema;
     }
