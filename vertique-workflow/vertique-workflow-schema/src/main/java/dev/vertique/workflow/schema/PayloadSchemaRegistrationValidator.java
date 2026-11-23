@@ -27,13 +27,13 @@ import java.util.function.Supplier;
 /**
  * Registration-time check of the payload types a candidate workflow definition declares.
  *
- * <p>For the start payload type and then for the decision payload types of every human task, in plan order, each
- * distinct type name is resolved once per process JSON profile: {@code void} types mean no payload and are skipped; a
+ * <p>For the start payload type, then the declared output type, then the decision payload types of every human task,
+ * in plan order, each distinct type name is resolved once per process JSON profile: {@code void} types mean no payload and are skipped; a
  * cached type is reused; the JSON object types are described by a fixed document; any other type is found in the
  * type-name index by its logical or binary name (a name the index does not know is refused, never loaded), described
- * by the profile's schema generator, required to be object-shaped, checked for
- * patterns that do not compile, compiled into a guarded validator, given a property order and cached. The first failure ends validation and
- * is reported as a {@link WorkflowDefinitionException}; a failure is never cached, while entries resolved before it
+ * by the profile's schema generator, required to be object-shaped, checked for patterns that do not compile,
+ * compiled into a guarded validator, given a property order and cached. A failure for the output names "output
+ * type" in place of a payload site. The first failure ends validation and is reported as a {@link WorkflowDefinitionException}; a failure is never cached, while entries resolved before it
  * stay cached. A configuration fault, an unknown system profile, propagates unchanged.
  *
  * <p>The candidate is only read: the validator never consults the workflow registry. Exception messages name the

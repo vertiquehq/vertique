@@ -193,6 +193,28 @@ final class Definitions {
     }
 
     /**
+     * A candidate built by hand that declares {@code outputTypeName} as its output and has no task.
+     *
+     * @param id the definition id
+     * @param version the definition version
+     * @param outputTypeName the output type name the plan holds
+     * @return the candidate
+     */
+    static RegisteredWorkflowDefinition handBuiltWithOutput(String id, long version, String outputTypeName) {
+        WorkflowPlan plan = new WorkflowPlan(
+                id,
+                version,
+                "hash",
+                State.class.getName(),
+                "done",
+                List.of(new CompleteNode("done")),
+                null,
+                outputTypeName,
+                new CallbackId("$output.mapper"));
+        return new RegisteredWorkflowDefinition(plan, Void.class);
+    }
+
+    /**
      * A human task node whose decisions name payload types by string, as a persisted plan does.
      *
      * @param stepId the step id

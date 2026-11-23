@@ -79,23 +79,24 @@ class DeclaredOutputSchemaTest {
         DefaultWorkflowRegistry registry = Registries.withSchemaValidator(cache);
         registry.register(Definitions.withOutput("receipt", 1L, ExpensePayloads.ApprovalComment.class));
         registry.register(Definitions.expense());
-        WorkflowPlanSchemaProducerAccess producer = new WorkflowPlanSchemaProducerAccess(cache);
+        DefaultWorkflowPlanSchemaProducer producer = new DefaultWorkflowPlanSchemaProducer(cache);
 
-        assertThat(producer.outputOf(registry.resolve(key("receipt"))))
+        assertThat(producer.outputSchema(registry.resolve(key("receipt"))))
                 .isEqualTo(Registries.generated(ExpensePayloads.ApprovalComment.class));
-        assertThat(producer.outputOf(registry.resolve(key("expense")))).isNull();
+        assertThat(producer.outputSchema(registry.resolve(key("expense")))).isNull();
     }
 
-    /** Reaches the package-private producer. */
-    private static final class WorkflowPlanSchemaProducerAccess {
-        private final DefaultWorkflowPlanSchemaProducer producer;
+    @Test
+    @DisplayName("an output type the index does not know is refused as one that cannot be loaded")
+    void anUnknownOutputTypeCannotBeLoaded() {
+        CountingGenerator generator =
+                new CountingGenerator(PayloadSchemaTestProfiles.builtIn(), PayloadSchemaTestProfiles.VERTIQUE);
+        PayloadSchemaRegistrationValidator validator =
+                new PayloadSchemaRegistrationValidator(cache, generator, TestTypeNames.lenient());
 
-        WorkflowPlanSchemaProducerAccess(PayloadSchemaCache cache) {
-            this.producer = new DefaultWorkflowPlanSchemaProducer(cache);
-        }
-
-        io.vertx.core.json.JsonObject outputOf(dev.vertique.workflow.registry.RuntimeWorkflow plan) {
-            return producer.outputSchema(plan);
-        }
+        assertThatThrownBy(() -> validator.validate(Definitions.handBuiltWithOutput("d", 1L, "com.example.Missing")))
+                .isInstanceOf(WorkflowDefinitionException.class)
+                .hasMessage("definition 'd' v1 output type 'com.example.Missing' cannot be loaded");
+        assertThat(cache.snapshot()).isEmpty();
     }
 }

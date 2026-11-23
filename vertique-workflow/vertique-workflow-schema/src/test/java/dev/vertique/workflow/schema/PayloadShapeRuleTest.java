@@ -228,6 +228,19 @@ class PayloadShapeRuleTest {
                         + " object-shaped (root type string); wrap the value in a record");
     }
 
+    @Test
+    @DisplayName("the declared output is named by the output wording")
+    void outputContextUsesTheOutputWording() {
+        // Given: the context of a declared output
+        PayloadShapeRule.Context output = PayloadShapeRule.Context.ofOutput("d", 7L, "java.lang.String");
+
+        // When / Then: the message names the output type instead of a payload site
+        assertThatThrownBy(() -> PayloadShapeRule.check(Documents.of(String.class), output))
+                .isInstanceOf(WorkflowDefinitionException.class)
+                .hasMessageStartingWith("definition 'd' v7 output type 'java.lang.String' is not object-shaped"
+                        + " (root type string); wrap the value in a record");
+    }
+
     // --- Helpers ---
 
     /** What the registration path hands to the rule: the fixed document for document objects, else the generator's. */

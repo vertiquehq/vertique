@@ -16,7 +16,7 @@ import java.util.Map;
  * it writes definition rows without a start schema and without declared signal names. A node that executes
  * workflows is expected to bind it.
  *
- * <p>Both methods are pure and deterministic for one plan: they read the plan and never register, store or change
+ * <p>Every method is pure and deterministic for one plan: they read the plan and never register, store or change
  * anything.
  */
 public interface WorkflowPlanSchemaProducer {
