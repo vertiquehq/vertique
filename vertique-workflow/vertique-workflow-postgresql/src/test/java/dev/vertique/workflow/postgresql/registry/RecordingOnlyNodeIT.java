@@ -388,7 +388,7 @@ public class RecordingOnlyNodeIT {
             RecordingOnlyFixture code = fixture(scenario);
 
             // Given an executor that stored an available document to activate, an available one to deprecate, a
-            // candidate and a deprecated version that is past its cooling time
+            // candidate and a deprecated version
             Nodes nodes = new Nodes(vertx, scenario);
             Running executor = nodes.executorNode(code);
             AppComponent seed = executor.graph();

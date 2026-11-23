@@ -214,7 +214,7 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
             assertEquals(1, update(plain, instances, running.withVersion(3), 2));
             assertEquals("RUNNING", instanceStatus(running.id()));
 
-            // When: the code version is deprecated, past cooling, and retirement is tried while the pin is live
+            // When: the code version is deprecated and retirement is tried while the pin is live
             await(store.transition(key, DefinitionStatus.AVAILABLE, DefinitionStatus.DEPRECATED));
             backdateStatusChange();
             assertEquals(Reason.PINNED_INSTANCES, failureReason(store.retire(key)));
@@ -626,7 +626,7 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
         return ((WorkflowDefinitionLifecycleException) failure.getCause()).reason();
     }
 
-    /** Moves the last status change of the mapped definitions an hour back, so no cooling window is open. */
+    /** Moves the last status change of the mapped definitions an hour back; retirement does not depend on it. */
     private static void backdateStatusChange() throws SQLException {
         try (Connection connection = connection();
                 Statement statement = connection.createStatement()) {
