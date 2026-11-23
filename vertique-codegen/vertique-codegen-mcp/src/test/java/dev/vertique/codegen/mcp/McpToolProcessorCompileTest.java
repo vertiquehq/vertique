@@ -156,6 +156,43 @@ class McpToolProcessorCompileTest {
     }
 
     @Test
+    @DisplayName("a type-use annotated String result is text content and an annotated Optional keeps the probe")
+    void shouldEmitTypeUseAnnotatedStringResultAsTextAndKeepTheOptionalProbe() {
+        JavaFileObject annotated = SourceFiles.inline(TOOLS_PACKAGE + ".AnnotatedResultTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+                import jakarta.validation.Valid;
+                import jakarta.validation.constraints.NotBlank;
+                import java.util.Optional;
+
+                public class AnnotatedResultTools {
+
+                    @Inject
+                    public AnnotatedResultTools() {}
+
+                    @McpTool(name = "weather.annotated_result", description = "Describe the current weather.")
+                    public Future<@NotBlank String> lookup(
+                            @McpToolParam(name = "nickname", description = "An optional nickname.")
+                            @Valid Optional<String> nickname) {
+                        return Future.succeededFuture("sunny");
+                    }
+                }
+                """);
+        String invokerFqn = TOOLS_PACKAGE + ".AnnotatedResultTools_lookup_McpToolInvoker";
+        try (McpToolCompilation compilation = McpToolCompilation.of(annotated)) {
+            compilation
+                    .result()
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(invokerFqn, "McpToolResult.text(value)")
+                    .assertGeneratedSourceContains(invokerFqn, "OptionalProbe");
+        }
+    }
+
+    @Test
     @DisplayName("a @NotNull Optional<T> parameter is rejected at compile time, naming the parameter")
     void shouldRejectNotNullOptionalParameter() {
         JavaFileObject requiredOptional = SourceFiles.inline(TOOLS_PACKAGE + ".RequiredOptionalTools", """
