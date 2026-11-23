@@ -70,6 +70,13 @@ import java.util.function.Supplier;
  *   <li>{@code START_PAYLOAD_TYPE_UNRESOLVABLE} — {@code startPayloadType} name not found.</li>
  *   <li>{@code INITIAL_STATE_MAPPER_UNKNOWN} — {@code initialStateMapper} id not registered.</li>
  *   <li>{@code SUBJECT_RESOLVER_UNKNOWN} — {@code subjectResolver} present but not registered.</li>
+ *   <li>{@code OUTPUT_DECLARATION_INCOMPLETE} — only one of {@code outputType} and {@code outputMapper} is present.</li>
+ *   <li>{@code OUTPUT_TYPE_UNRESOLVABLE} — {@code outputType} name not found.</li>
+ *   <li>{@code OUTPUT_MAPPER_UNKNOWN} — {@code outputMapper} id not registered.</li>
+ *   <li>{@code OUTPUT_MAPPER_STATE_TYPE_MISMATCH} — the mapper's state type is not exactly the document's state
+ *       type.</li>
+ *   <li>{@code OUTPUT_MAPPER_OUTPUT_TYPE_MISMATCH} — the mapper's output type is not exactly the type {@code outputType}
+ *       names.</li>
  *   <li>{@code INITIAL_STEP_UNKNOWN} — {@code initialStep} does not match any step id.</li>
  *   <li>{@code STEP_ID_DUPLICATE} — same step id appears more than once in the steps list.</li>
  *   <li>{@code UNREACHABLE_STEP} — a step cannot be reached from {@code initialStep}. Reachability follows every
@@ -369,6 +376,8 @@ public final class WorkflowDefinitionDocumentValidator {
                     "`subjectResolver`",
                     violations);
         }
+
+        checkOutputDeclaration(doc, definitionId, definitionVersion, resolvedStateType, violations);
 
         // Step id checks
         if (stepIds != null) {
@@ -2050,6 +2059,76 @@ public final class WorkflowDefinitionDocumentValidator {
      *     unresolvable
      * @param violations the list to accumulate violations into
      */
+    /**
+     * Checks the optional output declaration: both keys or neither, a resolvable output type, a registered mapper whose
+     * state type is exactly the document's state type and whose output type is exactly the declared output type.
+     */
+    private void checkOutputDeclaration(
+            WorkflowDefinitionDocument doc,
+            String definitionId,
+            long definitionVersion,
+            @Nullable Class<?> resolvedStateType,
+            List<Violation> violations) {
+        boolean hasType = doc.outputType() != null && !doc.outputType().isBlank();
+        boolean hasMapper = doc.outputMapper() != null && !doc.outputMapper().isBlank();
+        if (doc.outputType() == null && doc.outputMapper() == null) return;
+        if (hasType != hasMapper) {
+            violations.add(new Violation(
+                    blankFallback(definitionId),
+                    definitionVersion,
+                    null,
+                    null,
+                    "OUTPUT_DECLARATION_INCOMPLETE",
+                    "`outputType` and `outputMapper` must both be present or both be absent"));
+            return;
+        }
+        Class<?> resolvedOutputType = checkClassResolvable(
+                definitionId,
+                definitionVersion,
+                null,
+                null,
+                doc.outputType(),
+                "OUTPUT_TYPE_UNRESOLVABLE",
+                "`outputType`",
+                violations);
+        checkRegistryId(
+                definitionId,
+                definitionVersion,
+                null,
+                null,
+                doc.outputMapper(),
+                lookup.outputMappers().ids(),
+                "OUTPUT_MAPPER_UNKNOWN",
+                "`outputMapper`",
+                violations);
+        checkCallbackStateTypeCompat(
+                definitionId,
+                definitionVersion,
+                null,
+                null,
+                doc.outputMapper(),
+                resolvedStateType,
+                () -> lookup.outputMappers().lookup(doc.outputMapper()).stateType(),
+                "OUTPUT_MAPPER_STATE_TYPE_MISMATCH",
+                "`outputMapper`",
+                violations);
+        if (resolvedOutputType != null && lookup.outputMappers().contains(doc.outputMapper())) {
+            Class<?> mapperOutputType =
+                    lookup.outputMappers().lookup(doc.outputMapper()).outputType();
+            if (!resolvedOutputType.equals(mapperOutputType)) {
+                violations.add(new Violation(
+                        blankFallback(definitionId),
+                        definitionVersion,
+                        null,
+                        null,
+                        "OUTPUT_MAPPER_OUTPUT_TYPE_MISMATCH",
+                        "`outputMapper` '" + doc.outputMapper() + "' declares outputType '"
+                                + mapperOutputType.getName() + "' but document outputType is '"
+                                + resolvedOutputType.getName() + "'"));
+            }
+        }
+    }
+
     private void checkInitialStateMapperTypeCompat(
             String definitionId,
             long definitionVersion,

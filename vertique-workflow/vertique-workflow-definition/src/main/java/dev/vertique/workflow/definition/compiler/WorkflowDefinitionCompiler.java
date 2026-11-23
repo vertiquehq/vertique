@@ -6,6 +6,7 @@ package dev.vertique.workflow.definition.compiler;
 import dev.vertique.workflow.definition.callbacks.NamedBranchResultReducer;
 import dev.vertique.workflow.definition.callbacks.NamedCorrelationKeyResolver;
 import dev.vertique.workflow.definition.callbacks.NamedFailMessageFactory;
+import dev.vertique.workflow.definition.callbacks.NamedOutputMapper;
 import dev.vertique.workflow.definition.callbacks.NamedPayloadMapper;
 import dev.vertique.workflow.definition.callbacks.NamedStartStateMapper;
 import dev.vertique.workflow.definition.callbacks.NamedStateMutator;
@@ -182,6 +183,12 @@ public final class WorkflowDefinitionCompiler {
             Function<Object, WorkflowSubjectRef> subjectFn =
                     (Function<Object, WorkflowSubjectRef>) (Function<?, ?>) subjectResolver.resolver();
             builder.subject(subjectFn);
+        }
+
+        // --- Optional declared output ---
+        if (doc.outputMapper() != null) {
+            NamedOutputMapper<?, ?> outputMapper = lookup.outputMappers().lookup(doc.outputMapper());
+            builder.output((Class) outputMapper.outputType(), (Function) outputMapper.mapper());
         }
 
         // --- Initial step ---

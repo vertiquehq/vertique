@@ -65,6 +65,8 @@ contract: dev.vertique.examples.workflow.order.OrderFulfillmentWorkflowV1
 startPayloadType: dev.vertique.examples.workflow.order.command.PlaceOrder
 initialStateMapper: order.fromPlaceOrder
 subjectResolver: order.subject
+outputType: order.Receipt
+outputMapper: order.receipt
 initialStep: reserve-inventory
 steps:
   - id: reserve-inventory
@@ -149,6 +151,8 @@ The full fixture also demonstrates timers, compensation, fork, join, due dates, 
 | `startPayloadType` | yes | Logical type name of the start payload; a packaged document may also use a binary class name |
 | `initialStateMapper` | yes | Named callback that maps start payload to initial state |
 | `subjectResolver` | no | Named callback that derives `WorkflowSubjectRef` from state |
+| `outputType` | no | Logical type name (from the type catalog) of the output an instance produces on success; present only together with `outputMapper` |
+| `outputMapper` | no | Id of a registered `NamedOutputMapper` that maps the final state to the output; present only together with `outputType` |
 | `initialStep` | yes | Step id where execution begins |
 | `steps` | yes | Non-empty list of step definitions |
 | `activateOnDeploy` | no | Boolean, `true` when absent. `false` publishes a packaged document without making it the default scope's current version; a document loaded through the service ignores it |
@@ -246,6 +250,11 @@ Common callback categories:
 | Task assignment resolver | State -> task assignment |
 | Branch result reducer | State + branch results -> state |
 | Named condition | State -> boolean used by decisions |
+| Output mapper | Final state -> declared output (`NamedOutputMapper`: `id`, `stateType`, `outputType`, `mapper`) |
+
+An output mapper is contributed as an `OutputMapperContributor` into the `Set<OutputMapperContributor>` multibinding, which `WorkflowDefinitionModule` declares empty by default; `DefaultOutputMapperRegistry` collects it and refuses two different mappers for one id. `RegisteredIdentifierLookup` exposes it as the twelfth registry, `outputMappers()`. Its injected constructor takes all twelve; the earlier eleven- and ten-argument constructors stay and pass an empty registry.
+
+The two output keys declare what an instance produces on success, the same output that `WorkflowBuilder.output(...)` declares in code (see `dev.vertique:vertique-workflow-core`, Declared Output); a document and a Java definition that declare the same output compile to equal plans, hashes included. Both keys are present or both are absent: one without the other fails validation with `OUTPUT_DECLARATION_INCOMPLETE`. `outputType` that no catalog or class names fails with `OUTPUT_TYPE_UNRESOLVABLE`, an unregistered `outputMapper` id with `OUTPUT_MAPPER_UNKNOWN`, a mapper whose state class is not exactly the document's `stateType` with `OUTPUT_MAPPER_STATE_TYPE_MISMATCH`, and a mapper whose output class is not exactly the one `outputType` names with `OUTPUT_MAPPER_OUTPUT_TYPE_MISMATCH`. The mapper body is not part of the plan hash. `WorkflowDefinitionDocument` gains the two trailing components `outputType` and `outputMapper`, keeps its earlier constructors (which declare no output) and carries `@JsonCreator` on the canonical constructor; documents are strict, so an older release refuses a document that carries the keys. Publish such a version with `activateOnDeploy: false` until every node runs this release.
 
 A correlation-key resolver is contributed as a `CorrelationKeyResolverContributor` into the `Set<CorrelationKeyResolverContributor>` multibinding, which `WorkflowDefinitionModule` declares empty by default; `DefaultCorrelationKeyResolverRegistry` collects it and refuses two different resolvers for one id. `RegisteredIdentifierLookup` exposes it as the eleventh registry, `correlationKeyResolvers()`. Its injected constructor takes all eleven; the earlier ten-argument constructor stays and passes an empty registry.
 
