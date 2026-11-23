@@ -128,7 +128,8 @@ public class TypedProxyIT extends SagaTestBase {
                     assertEquals("cust-receipt-1", receipt.customerId());
                     assertEquals(250L, receipt.totalCents());
                     assertTrue(
-                            receipt.trackingNumber() != null && !receipt.trackingNumber().isBlank(),
+                            receipt.trackingNumber() != null
+                                    && !receipt.trackingNumber().isBlank(),
                             "the receipt carries the shipment tracking number");
                     ctx.completeNow();
                 }));

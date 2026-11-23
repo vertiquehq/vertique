@@ -18,4 +18,8 @@ import jakarta.annotation.Nullable;
  * @param trackingNumber the shipment tracking number
  */
 @WorkflowType("order.Receipt")
-public record OrderReceipt(String orderId, String customerId, long totalCents, @Nullable String trackingNumber) {}
+public record OrderReceipt(
+        String orderId,
+        String customerId,
+        long totalCents,
+        @Nullable String trackingNumber) {}
