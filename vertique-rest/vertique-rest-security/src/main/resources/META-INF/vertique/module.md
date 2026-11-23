@@ -69,6 +69,7 @@ own contributor relative to them:
 |---|---|---|
 | 40 | `ActionGateAuthenticationContributor` (authentication stage) | `vertique-rest-security` |
 | 50 | JWT claims validator (authentication stage) | `vertique-rest-auth-jwt` |
+| 55 | `JwtCorrelationSessionContributor` | `vertique-rest-auth-jwt` |
 | 80 | `IdentityResolutionContributor` | `vertique-rest-security` |
 | 100 | `AuthorizationContributor` | `vertique-rest-security` |
 
@@ -720,6 +721,8 @@ What the two modules put in the graph, and where each instance comes from:
 | `RequestOriginCapturer` | `AuthModule` | built from the application's `RequestOriginConfig` when it binds one, else from `RequestOriginConfig.defaults()`; `@Singleton` |
 | `Set<OperationHandlerContributor>` | `AuthModule` | identity resolution, authorization, and action-gate authentication contributors |
 | `Set<Middleware>` | `AuthModule` | `OriginCaptureMiddleware` |
+| `Set<SecurityIdentityResolver>` | `AuthModule` | `DefaultSecurityIdentityResolver`, plus any resolver the application contributes |
+| `Set<ServiceDispatchContextEncoder<?>>`, `Set<ServiceDispatchContextDecoder<?>>` | `AuthModule` | the pass-through `SecurityContext` encoder and decoder that carry the caller's identity across in-process service dispatch |
 
 `IdentityResolutionMiddleware` and `SecurityPolicyEnforcer` also carry `@Inject` constructors for
 hand-wiring outside a Dagger graph, but the explicit `AuthModule` bindings above take precedence
@@ -791,6 +794,9 @@ public Future<Response> handle(jakarta.ws.rs.core.SecurityContext sc) { ... }
 
 `@Authorized` on a class applies to every method; a method-level `@Authorized` overrides it.
 
+The built-in decision point matches required scopes against the caller's `SCOPE` and `PERMISSION`
+authorities alike, and required roles against `ROLE` authorities only.
+
 ---
 
 ## Configuration
@@ -829,7 +835,9 @@ Resolution rules:
   forms (`1234`), dotted quads with an octet above `255` and IPv4 octets with leading zeros
   (`010.1.1.1`) are rejected, not resolved or reinterpreted.
 - `clientIp` uses the forwarded chain **only** when the direct peer matches a trusted CIDR;
-  otherwise it is the direct peer address.
+  otherwise it is the direct peer address. With a trusted peer and a valid chain it is the first
+  entry, walking the chain from the right, that lies outside every trusted CIDR; when every entry is
+  trusted it is the direct peer address.
 - Forwarded scheme and host are honoured only when three conditions hold together: the
   corresponding flag is set, the direct peer is trusted, **and** the request carries a valid
   `X-Forwarded-For` chain (at least one accepted entry, and not rejected by `forwardedForCap`).

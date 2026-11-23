@@ -16,7 +16,8 @@ configured with the Jackson, Jakarta Validation, and Swagger 2 modules). It is t
 has no dependency on REST, MCP, Vert.x Web, `vertx-json-schema`, Dagger, Micrometer, or OpenTelemetry.
 
 **Applications do not use this artifact directly.** Install `vertique-rest-validation`
-(`RestValidationModule`), `vertique-rest-openapi-docs`, or `vertique-mcp-server` instead. Every
+(`RestValidationModule`), `vertique-rest-openapi-docs`, `vertique-mcp-server`, or
+`vertique-workflow-schema` instead. Every
 public type in `dev.vertique.json.schema` is an INTERNAL framework seam — outside the application
 maturity promise — even though this module's `Status` is Stable for the generation behavior those
 consumers rely on.
@@ -31,9 +32,10 @@ and runtime value validation.
 
 Do **not** add this dependency from application code. Use it only when authoring or extending a
 Vertique framework module that must synthesize JSON Schema from Jackson / Jakarta Validation /
-Swagger annotations (today: `rest-validation`, `rest-openapi-docs`, `mcp-server`). Application
-projects that need request validation install `RestValidationModule`; projects that need published
-OpenAPI or MCP tool schemas install those modules.
+Swagger annotations (today: `rest-validation`, `rest-openapi-docs`, `mcp-server`,
+`workflow-schema`). Application projects that need request validation install
+`RestValidationModule`; projects that need published OpenAPI or MCP tool schemas, or workflow
+payload schemas, install those modules.
 
 ---
 
@@ -41,9 +43,9 @@ OpenAPI or MCP tool schemas install those modules.
 
 ### Three construction modes
 
-`AnnotationJsonSchemaGenerator` is constructed through exactly one of three static factories, each
-selecting how Victools discovers Jackson properties and which profile-declared schema-type
-overrides apply:
+`AnnotationJsonSchemaGenerator` is constructed through exactly one of four static factory methods
+(three modes; the input mode has a second overload that takes a `Validator`), each selecting how
+Victools discovers Jackson properties and which profile-declared schema-type overrides apply:
 
 - `withVictoolsDefaults()` — Victools' own default mapper, with no profile override applied. This
   is the mode a consumer without a resolved `JsonMapperProfile` uses.
@@ -531,12 +533,6 @@ which the typed description already says more precisely, so the description wins
 deserializes as map-like or collection-like is described exactly as if it declared no any-setter:
 Jackson never routes a key to that any-setter, so describing it would reject legal map entries.
 
-**Known gap.** A class-level `@Schema(additionalProperties = FALSE)` on a bean that is bound
-case-insensitively is not honored when the bean is described only through the plain case-insensitive
-inline path (no member-level annotation, no any-setter): the description omits
-`additionalProperties: false` for it, so the schema admits unknown keys that the annotation says to
-reject. The annotation closes the object on every other path.
-
 ### Reserved names beside described extras
 
 Where extra keys are described on a case-sensitively bound type, the document also carries
@@ -696,6 +692,11 @@ free, and their branches carry only `required` or `not`, never `properties`, so 
 closes an object carrying `properties` does not close a branch. The rule is the schema's alone: a
 Jackson binder accepts several spellings of one property under every profile, so the strict form is
 stricter than the binder rather than a description of it.
+
+A type bound case-insensitively that also declares an alias spelling is refused at generation with a
+bounded diagnostic naming the type: the alias rules cannot be folded together with the case-insensitive
+description. Declare a `JsonSchemaTypeOverride` for the type on the profile, or bind it
+case-sensitively.
 
 Listing runs over the finished document, after generation, so every reference a copied schema
 carries is already resolved. The plan is carried in the document under one generator-private

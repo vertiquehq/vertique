@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.mcp.micrometer`
 > **Artifact:** `vertique-micrometer-mcp`
-> **Depends on:** `vertique-micrometer-core`, `vertique-mcp-core`, `vertique-core`, `vertique-config-core`
+> **Depends on:** `vertique-micrometer-core`, `vertique-mcp-core`, `vertique-core`
 
 Observe-only Micrometer metrics adapter for the MCP server. When installed alongside
 `McpServerModule` and `MicrometerModule`, it records a per-request timer

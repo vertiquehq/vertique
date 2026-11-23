@@ -68,8 +68,9 @@ upgrades. The timer therefore has no `UNKNOWN` `route` or `operation` series. Fo
 counts, use Vert.x's native HTTP server metrics (`metrics.vertx.httpServer` in
 `vertique-micrometer-core`, default `true` when its Vert.x metrics are enabled).
 
-**Per-event registry lookup (no meter cache, D-L).** Both adapters call
-`Timer.builder(...).tags(...).register(registry)` on every event. Micrometer's internal registry
+**Per-event registry lookup (no meter cache).** The request-timer listener calls
+`Timer.builder(...).tags(...).register(registry)` on every event; the active-requests interceptor
+registers its gauge once, at construction. Micrometer's internal registry
 lookup is the cache — this is consistent with Spring Boot Actuator and the Vert.x Micrometer
 integration. A separate tuple-keyed adapter cache was evaluated and rejected because the
 drop-on-saturation variant silently stops recording real time series once legitimate tag combinations

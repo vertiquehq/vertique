@@ -107,8 +107,9 @@ module that does not compile.
 
 ### Deterministic, all-or-nothing emission
 
-Tools are grouped by declaring type and ordered by declaring type and method name, so repeated builds
-of the same inputs produce byte-identical source. When any validation diagnostic is reported the
+Tools are grouped by declaring type and ordered by declaring type and method name, and the generated
+module's bindings are ordered by tool name, so repeated builds of the same inputs produce
+byte-identical source. When any validation diagnostic is reported the
 processor emits nothing; a package-resolution failure discovered during module emission can leave
 already-written invoker sources behind, but the compilation still fails, so a partial registry can
 never bind.
@@ -138,6 +139,9 @@ For every parameterized tool the processor emits:
   by the package-private `McpInputPolicyResolver` through the shared `ElementInvocationPolicies`
   adapter — route-level chains for the tool method over its declaring type, then each parameter's own
   override;
+- every Jakarta Bean Validation constraint annotation (recognized by the `@Constraint`
+  meta-annotation, so a custom constraint is copied too) and `@Valid` declared directly on the source
+  parameter, copied onto the component so stage 4 validates them;
 - a position-stable `List<McpToolParameterMetadata>` pairing each component name with its external
   protocol name and description.
 
@@ -228,7 +232,7 @@ targeted diagnostic and no model, so a rejected tool never produces a second, de
 | Boundary | What is required |
 |---|---|
 | Direct invocability | The tool method is `public`, concrete, and an instance method on a Dagger-managed type with exactly one `@Inject` constructor |
-| Protocol metadata | Tool names are unique across the compilation and match `[A-Za-z0-9_.-]{1,128}`; the tool description and each parameter description are non-blank and at most 4,096 characters; a blank title is omitted |
+| Protocol metadata | Tool names are unique across the compilation and match `[A-Za-z0-9_.-]{1,128}`; the tool description and each parameter description are non-blank and at most 4,096 characters; a blank title is omitted; each `requiredClientCapabilities` entry matches `[A-Za-z][A-Za-z0-9_-]{0,127}` and is not repeated |
 | Honest type contracts | No raw, wildcard, type-variable, or unresolved type in a parameter or result; no `void` result; no input member without a JSON schema representation; an `Optional` parameter is never `@NotNull` (Jakarta Validation), because requiredness is type-derived |
 | Effective JSON profile | Resolved method-over-type; a blank id is rejected at compile time rather than surfacing as an unresolvable mapper during composition |
 | Input-policy conflicts | A `@Canonicalize`/`@Sanitize` declaration and its `@Skip*` counterpart on the same element (method, declaring type, or parameter) is a compile error |
