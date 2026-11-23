@@ -387,8 +387,9 @@ overriding interface declarations. Annotation inheritance follows the Java overr
 
 The event-bus send timeout uses operation, service, and global `sendTimeoutMs` overrides before the
 resolved active execution budget plus the compatibility margin. Custom-backoff, unbounded, or
-saturated budgets require one of those explicit transport timeouts. Services has no separate
-bulkhead configuration; admission is enabled only by an explicit `@Bulkhead` declaration.
+saturated budgets require one of those explicit transport timeouts. Services has no per-operation
+bulkhead configuration of its own; a bulkhead limit comes from an explicit `@Bulkhead` declaration
+or from the `bulkhead` block of a named tier selected with `@Resilient(policy = "name")`.
 
 JSON configuration can override annotation values for an environment without changing the service
 contract. Invalid values fail during startup parsing.

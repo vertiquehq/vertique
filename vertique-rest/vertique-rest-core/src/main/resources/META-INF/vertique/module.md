@@ -636,8 +636,8 @@ that differ by a control character stay different (`evil.php` with U+0001 before
 written `evil.ph_p`, never `evil.php`); a value that held a control character therefore parses back with `_` in its place. `isCompatible(MediaType)` is wildcard-aware
 and ignores parameters. A wildcard type with a concrete subtype such as `*/xml` is not a media range:
 `MediaType.parse` returns `null` for it, an `Accept` entry of that shape is dropped as malformed, and
-`isCompatible` treats only `*/*` as matching every type. `specificity()` returns 0 for `*/*`, 1 for `type/*`, 2 for `type/subtype`, and
-3 when parameters are present. Equality ignores the quality factor.
+`isCompatible` treats only `*/*` as matching every type. `specificity()` returns 0 for `*/*`, 1 for `type/*` (even with
+parameters), 2 for `type/subtype`, and 3 for `type/subtype` with parameters. Equality ignores the quality factor.
 
 `AcceptNegotiator.negotiate(String acceptHeader, List<String> serverTypes)` returns the best matching
 server type as `"type/subtype"`, or `null` when nothing matches — the signal a caller turns into a
@@ -1256,7 +1256,7 @@ string. A native or JAX-RS converter that returns `null` for that present value 
 `ParamConversionException` (400) — the same rule for a submitted value and for a `@DefaultValue`
 string routed through the resolver. Absence of a parameter is a caller concern (empty collection,
 `null` scalar, or applying a default); it is not expressed by a converter returning `null`. The
-exception message names the parameter and target type and never echoes the raw value.
+exception message names the parameter, not the target type (`targetType()` carries it), and never echoes the raw value.
 
 ### `RestRequestCompletedListener`, `HttpRequestCompletedListener`, and `RequestCompletionScope`
 
