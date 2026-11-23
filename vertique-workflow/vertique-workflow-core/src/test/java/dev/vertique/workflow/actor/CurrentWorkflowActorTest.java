@@ -35,6 +35,11 @@ import org.junit.jupiter.params.provider.MethodSource;
  */
 class CurrentWorkflowActorTest {
 
+    /** Characters a hostile id may hold, built at run time so that no source line carries them. */
+    private static final String LINE_SEPARATOR = Character.toString(0x2028);
+
+    private static final String RIGHT_TO_LEFT_OVERRIDE = Character.toString(0x202E);
+
     /** Holds the values a test binds; reads only. */
     private static final class Held implements ContextHolder {
         private final Map<Class<?>, Object> values = new HashMap<>();
@@ -190,8 +195,8 @@ class CurrentWorkflowActorTest {
     @DisplayName("ids and reasons are preserved exactly, with nothing cut or cleaned")
     void preservesIdsAndReasonsExactly() {
         // Given identities whose text holds control characters and is long
-        String id = "a".repeat(300) + "\n ‮";
-        String reason = "night\tly run";
+        String id = "a".repeat(300) + "\n" + LINE_SEPARATOR + RIGHT_TO_LEFT_OVERRIDE;
+        String reason = "night\tly" + LINE_SEPARATOR + "run";
 
         // When they are mapped
         Optional<WorkflowActor> userActor =
