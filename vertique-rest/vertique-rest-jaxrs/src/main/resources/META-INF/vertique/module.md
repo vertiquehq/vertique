@@ -259,7 +259,8 @@ shape the engine cannot process at all; declaring a chain on one is rejected at 
 skipped (see [Startup failures](#startup-failures)).
 
 A policy declared on a parameter the engine never sees — a `@Context` parameter, a `RequestPreconditions`
-parameter, or a raw multipart `FileUpload` / `EntityPart` parameter — is inert and is neither
+parameter, or a raw multipart `FileUpload` / `EntityPart` parameter (including a `@FormParam` of those
+types or of `List<FileUpload>` / `List<EntityPart>`) — is inert and is neither
 processed nor reported: those values are not caller-supplied string input the chain model applies to.
 
 **Renamed body fields are covered.** A field-level policy is declared on a Java property, while the
