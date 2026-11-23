@@ -12,12 +12,18 @@ import dev.vertique.core.validation.ValidateWith;
 import dev.vertique.rest.jaxrs.JaxRsRouteRegistrar;
 import dev.vertique.rest.jaxrs.ResourceMethodMeta;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsDescriptorSupport;
+import io.vertx.ext.web.FileUpload;
+import io.vertx.ext.web.RoutingContext;
+import jakarta.ws.rs.BeanParam;
 import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DefaultValue;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Context;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -40,12 +46,19 @@ class GeneratedContractFieldParityTest {
     private static JavaFileObject src(String simpleName, String body) {
         return SourceFiles.inline(PKG + "." + simpleName, "package " + PKG + ";\n\n" + """
                 import dev.vertique.core.validation.ValidateWith;
+                import io.vertx.ext.web.FileUpload;
+                import io.vertx.ext.web.RoutingContext;
+                import jakarta.ws.rs.BeanParam;
                 import jakarta.ws.rs.Consumes;
+                import jakarta.ws.rs.DefaultValue;
                 import jakarta.ws.rs.GET;
                 import jakarta.ws.rs.POST;
                 import jakarta.ws.rs.Path;
                 import jakarta.ws.rs.PathParam;
                 import jakarta.ws.rs.Produces;
+                import jakarta.ws.rs.QueryParam;
+                import jakarta.ws.rs.core.Context;
+                                import java.util.List;
 
                 """ + body);
     }
@@ -385,5 +398,100 @@ class GeneratedContractFieldParityTest {
         assertEquals(
                 groupNames(pick(scans.reflective(), "overridden")), groupNames(pick(scans.generated(), "overridden")));
         assertEquals(1, groupNames(pick(scans.generated(), "inherited")).size());
+    }
+
+    // --- @DefaultValue on sources that do not take one ---
+
+    public static class SearchBean {
+        @QueryParam("page")
+        public String page;
+    }
+
+    @Path("/defaults")
+    static class DefaultsResource {
+        @POST
+        @Path("/body")
+        public String body(@DefaultValue("x") String body) {
+            return body;
+        }
+
+        @GET
+        @Path("/bean")
+        public String bean(@BeanParam @DefaultValue("x") SearchBean bean) {
+            return "bean";
+        }
+
+        @GET
+        @Path("/context")
+        public String context(@Context @DefaultValue("x") RoutingContext routingContext) {
+            return "context";
+        }
+
+        @POST
+        @Path("/files")
+        public String files(@DefaultValue("x") List<FileUpload> files) {
+            return "files";
+        }
+
+        @GET
+        @Path("/query")
+        public String query(@QueryParam("q") @DefaultValue("x") String q) {
+            return q;
+        }
+    }
+
+    @Test
+    @DisplayName("@DefaultValue is dropped for body, bean, context and file parameters like the reflective scan")
+    void defaultValueOnNonScalarSources() throws Exception {
+        Scans scans =
+                scan(new DefaultsResource(), "DefaultsResource", src("SearchBean", """
+                public class SearchBean {
+                    @QueryParam("page")
+                    public String page;
+                }
+                """), src("DefaultsResource", """
+                @Path("/defaults")
+                public class DefaultsResource {
+                    @POST
+                    @Path("/body")
+                    public String body(@DefaultValue("x") String body) {
+                        return body;
+                    }
+
+                    @GET
+                    @Path("/bean")
+                    public String bean(@BeanParam @DefaultValue("x") SearchBean bean) {
+                        return "bean";
+                    }
+
+                    @GET
+                    @Path("/context")
+                    public String context(@Context @DefaultValue("x") RoutingContext routingContext) {
+                        return "context";
+                    }
+
+                    @POST
+                    @Path("/files")
+                    public String files(@DefaultValue("x") List<FileUpload> files) {
+                        return "files";
+                    }
+
+                    @GET
+                    @Path("/query")
+                    public String query(@QueryParam("q") @DefaultValue("x") String q) {
+                        return q;
+                    }
+                }
+                """));
+        for (String method : List.of("body", "bean", "context", "files")) {
+            var reflective = pick(scans.reflective(), method).params().get(0);
+            var generated = pick(scans.generated(), method).params().get(0);
+            assertEquals(null, reflective.defaultValue(), "reflective default of " + method);
+            assertEquals(reflective.source(), generated.source(), "source of " + method);
+            assertEquals(reflective.defaultValue(), generated.defaultValue(), "default of " + method);
+        }
+        // A scalar source keeps its default on both engines.
+        assertEquals("x", pick(scans.reflective(), "query").params().get(0).defaultValue());
+        assertEquals("x", pick(scans.generated(), "query").params().get(0).defaultValue());
     }
 }

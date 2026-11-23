@@ -673,8 +673,10 @@ public final class EffectiveJaxRsContractResolver {
         // Param name — from the classification annotation (e.g. @PathParam("id"))
         String name = resolveParamName(concreteParam, paramIndex, method, resourceClass, source);
 
-        // @DefaultValue
-        String defaultValue = resolveDefaultValue(concreteParam, paramIndex, method, resourceClass);
+        // @DefaultValue — only a scalar binding source takes one; the runtime drops it for the rest
+        String defaultValue = takesDefaultValue(source)
+                ? resolveDefaultValue(concreteParam, paramIndex, method, resourceClass)
+                : null;
 
         // Merged annotation sources: concreteParam plus the matching parameter
         // on each superclass/interface override that declares it, mirroring the runtime
@@ -729,6 +731,18 @@ public final class EffectiveJaxRsContractResolver {
                 genericType,
                 paramCanonicalizers,
                 paramSanitizers);
+    }
+
+    /**
+     * Whether the runtime scanner keeps {@code @DefaultValue} for the source: the path, query,
+     * header, cookie and form sources do; body, bean, context, precondition, file and entity-part
+     * parameters drop it.
+     */
+    private static boolean takesDefaultValue(JaxRsParamSource source) {
+        return switch (source) {
+            case PATH, QUERY, HEADER, COOKIE, FORM -> true;
+            case CONTEXT, PRECONDITIONS, BEAN_PARAM, FILE_UPLOADS, ENTITY_PARTS, BODY -> false;
+        };
     }
 
     /**
