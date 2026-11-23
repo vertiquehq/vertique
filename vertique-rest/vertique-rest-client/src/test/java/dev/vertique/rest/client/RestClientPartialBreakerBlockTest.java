@@ -3,6 +3,7 @@
 
 package dev.vertique.rest.client;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.Mockito.RETURNS_SELF;
 import static org.mockito.Mockito.mock;
@@ -126,5 +127,30 @@ class RestClientPartialBreakerBlockTest {
     void maxFailuresOnlyWithoutBuilderBreaker() {
         assertBuilds(new RestClientBuilder(vertx, ResiliencePolicyRegistry.empty(), factory())
                 .config(blockWith("maxFailures", 2)));
+    }
+
+    @Test
+    @DisplayName("a block that sets only timeoutMs starts from the documented breaker defaults")
+    void timeoutOnlyBlockUsesDocumentedDefaults() {
+        CircuitBreakerOptions effective = RestClientBuilder.applyCircuitBreakerConfig(
+                null, blockWith("timeoutMs", 2_000).circuitBreaker());
+
+        assertThat(effective.getMaxFailures()).isEqualTo(5);
+        assertThat(effective.getResetTimeout()).isEqualTo(10_000L);
+        assertThat(effective.getTimeout()).isEqualTo(2_000L);
+    }
+
+    @Test
+    @DisplayName("a block keeps the baseline values it does not set and never mutates the baseline")
+    void blockKeepsBaselineValues() {
+        CircuitBreakerOptions baseline =
+                new CircuitBreakerOptions().setMaxFailures(9).setResetTimeout(4_000);
+
+        CircuitBreakerOptions effective = RestClientBuilder.applyCircuitBreakerConfig(
+                baseline, blockWith("maxFailures", 2).circuitBreaker());
+
+        assertThat(effective.getMaxFailures()).isEqualTo(2);
+        assertThat(effective.getResetTimeout()).isEqualTo(4_000L);
+        assertThat(baseline.getMaxFailures()).isEqualTo(9);
     }
 }

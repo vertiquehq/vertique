@@ -914,6 +914,10 @@ standalone `new RestClientBuilder(vertx)` has no factory and is not checked acro
 | `restClient.{name}.retry.backoffStrategy` | String | — | FQCN of a `BackoffStrategy` with a public no-arg constructor, instantiated at `build()` |
 | `restClient.defaults.jsonProfile` | String | — | Boundary-wide default profile id for every REST client |
 
+> Any `circuitBreaker` block enables a circuit breaker for the client, even one that sets only `timeoutMs`;
+> fields the block omits take the defaults above (or the builder-level or `@CircuitBreaker` values when
+> those exist).
+>
 > The `retry` block carries `maxRetries` and `backoffStrategy`. `retryOn` and `abortOn` live on
 > `@Retry` and are not read from config. `maxRetries` is bounded to 100.
 

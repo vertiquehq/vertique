@@ -120,6 +120,12 @@ public final class RestClientBuilder {
     }
 
     // --- Static meta cache shared across all builder instances ---
+    /** Documented default for {@code maxFailures} when a configured breaker block has no baseline. */
+    private static final int DEFAULT_BREAKER_MAX_FAILURES = 5;
+
+    /** Documented default for {@code resetTimeoutMs} when a configured breaker block has no baseline. */
+    private static final long DEFAULT_BREAKER_RESET_TIMEOUT_MS = 10_000L;
+
     private static final ConcurrentHashMap<Class<?>, Map<Method, ClientMethodMeta>> META_CACHE =
             new ConcurrentHashMap<>();
 
@@ -133,7 +139,7 @@ public final class RestClientBuilder {
     private Resilience suppliedResilience;
 
     @Nullable
-    private Resilience ownedResilience;
+    private volatile Resilience ownedResilience;
 
     private volatile boolean closed;
 
@@ -788,18 +794,7 @@ public final class RestClientBuilder {
             // Override circuitBreaker (individual field overrides, not a full replacement)
             RestClientCircuitBreakerConfig cbConfig = effectiveConfig.circuitBreaker();
             if (cbConfig != null) {
-                // Copy before applying overrides so a caller-supplied options object is never mutated.
-                effectiveCb =
-                        effectiveCb == null ? new CircuitBreakerOptions() : new CircuitBreakerOptions(effectiveCb);
-                if (cbConfig.maxFailures() != null) {
-                    effectiveCb.setMaxFailures(cbConfig.maxFailures());
-                }
-                if (cbConfig.timeoutMs() != null) {
-                    effectiveCb.setTimeout(cbConfig.timeoutMs());
-                }
-                if (cbConfig.resetTimeoutMs() != null) {
-                    effectiveCb.setResetTimeout(cbConfig.resetTimeoutMs());
-                }
+                effectiveCb = applyCircuitBreakerConfig(effectiveCb, cbConfig);
             }
 
             // Override pool
@@ -1076,6 +1071,35 @@ public final class RestClientBuilder {
             }
         }
         return ownedResilience;
+    }
+
+    /**
+     * Applies a configured {@code circuitBreaker} block onto the baseline breaker options. The
+     * baseline is copied, so a caller-supplied options object is never mutated. When there is no
+     * baseline, the block starts from the documented defaults (5 failures, 10000 ms reset) for every
+     * field it omits, not from the Vert.x defaults.
+     *
+     * @param baseline the builder-level or interface-level options; may be {@code null}
+     * @param config   the configured block
+     * @return the effective options
+     */
+    static CircuitBreakerOptions applyCircuitBreakerConfig(
+            CircuitBreakerOptions baseline, RestClientCircuitBreakerConfig config) {
+        CircuitBreakerOptions options = baseline == null
+                ? new CircuitBreakerOptions()
+                        .setMaxFailures(DEFAULT_BREAKER_MAX_FAILURES)
+                        .setResetTimeout(DEFAULT_BREAKER_RESET_TIMEOUT_MS)
+                : new CircuitBreakerOptions(baseline);
+        if (config.maxFailures() != null) {
+            options.setMaxFailures(config.maxFailures());
+        }
+        if (config.timeoutMs() != null) {
+            options.setTimeout(config.timeoutMs());
+        }
+        if (config.resetTimeoutMs() != null) {
+            options.setResetTimeout(config.resetTimeoutMs());
+        }
+        return options;
     }
 
     @Nullable
