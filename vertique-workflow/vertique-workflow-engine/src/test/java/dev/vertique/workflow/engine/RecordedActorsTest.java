@@ -20,10 +20,10 @@ import dev.vertique.workflow.executor.WorkflowExecutorEvent;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
 import io.vertx.core.Future;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -52,7 +52,7 @@ class RecordedActorsTest {
 
     private static RecordedActors actors(
             ContextHolder holder, WorkflowActorMapper mapper, WorkflowExecutorObserver... observers) {
-        return new RecordedActors(new CurrentWorkflowActor(holder, mapper), Set.of(observers));
+        return new RecordedActors(new CurrentWorkflowActor(holder, mapper), new LinkedHashSet<>(List.of(observers)));
     }
 
     private static SecurityIdentity user(String id) {
@@ -156,6 +156,27 @@ class RecordedActorsTest {
 
         // When a command is recorded with no actor
         Future<Long> result = actors.recording("START", actor -> Future.succeededFuture(5L));
+
+        // Then the recording succeeded and the other observer still heard the event
+        assertThat(result.succeeded()).isTrue();
+        assertThat(events).containsExactly(new WorkflowExecutorEvent.ActorAbsent("START"));
+    }
+
+    @Test
+    @DisplayName("an observer that throws an assertion error neither reaches the recording nor stops the next observer")
+    void anAssertionErrorFromAnObserverIsIsolated() {
+        // Given two observers, the first of which fails an assertion
+        List<WorkflowExecutorEvent> events = new ArrayList<>();
+        RecordedActors actors = actors(
+                holding(null),
+                new DefaultWorkflowActorMapper(),
+                event -> {
+                    throw new AssertionError("observer assertion failed");
+                },
+                events::add);
+
+        // When a command is recorded with no actor
+        Future<Long> result = actors.recording("START", actor -> Future.succeededFuture(6L));
 
         // Then the recording succeeded and the other observer still heard the event
         assertThat(result.succeeded()).isTrue();

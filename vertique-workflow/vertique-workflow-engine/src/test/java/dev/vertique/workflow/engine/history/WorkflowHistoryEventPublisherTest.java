@@ -309,6 +309,26 @@ class WorkflowHistoryEventPublisherTest {
     }
 
     @Test
+    @DisplayName("aroundAs reports a failure with the actor the command names and never reads the current actor")
+    void aroundAsReportsTheCommandActor() {
+        // Given a listener and a current actor that is alice
+        when(history.nextSequence(ID, tx)).thenReturn(Future.succeededFuture(1L));
+        WorkflowHistoryEventPublisher publisher = publisher(recorder);
+        WorkflowActor commandActor = new WorkflowActor.User("bob");
+
+        // When a work that fails runs with the command's actor
+        Future<String> result = publisher.aroundAs(
+                Action.TASK_COMPLETE, ID, commandActor, tx, () -> Future.failedFuture(new RuntimeException("no")));
+
+        // Then the failure names the command's actor and the current actor supplier was not called
+        assertThat(result.failed()).isTrue();
+        assertThat(failures).hasSize(1);
+        assertThat(failures.get(0).action()).isEqualTo(Action.TASK_COMPLETE);
+        assertThat(failures.get(0).actor()).isEqualTo(commandActor);
+        assertThat(actorCaptures).hasValue(0);
+    }
+
+    @Test
     @DisplayName("a work that throws synchronously is reported and rethrown")
     void synchronousThrowIsReported() {
         WorkflowHistoryEventPublisher publisher = publisher(recorder);

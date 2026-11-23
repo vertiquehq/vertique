@@ -211,6 +211,10 @@ class WorkflowEngineHistoryAnnouncementTest {
                 .extracting(WorkflowHistoryFailure::action)
                 .containsExactly(Action.TASK_COMPLETE, Action.TASK_REASSIGN);
         assertThat(failures).extracting(WorkflowHistoryFailure::instanceId).containsOnlyNulls();
+        // and each failure names the actor its command names, though no caller is bound here
+        assertThat(failures)
+                .extracting(WorkflowHistoryFailure::actor)
+                .containsExactly(new WorkflowActor.User("u-1"), new WorkflowActor.User("u-1"));
     }
 
     @Test

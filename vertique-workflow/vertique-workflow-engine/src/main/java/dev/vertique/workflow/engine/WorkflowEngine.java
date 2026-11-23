@@ -3152,7 +3152,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                     BranchToken cancelledBranch =
                             b.withClearedWait(BranchStatus.CANCELLED, b.currentStepId(), branchNow);
                     branchChain = branchChain
-                            .compose(v2 -> cancelBranchOwnedWaits(inst, b, tx))
+                            .compose(v2 -> cancelBranchOwnedWaits(inst, b, canceller, tx))
                             .compose(v2 -> branchTokens
                                     .updateOptimistic(cancelledBranch, b.version(), tx)
                                     .mapEmpty());
@@ -3438,6 +3438,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         return aroundTask(
                 WorkflowHistoryFailure.Action.TASK_COMPLETE,
                 cmd.taskId(),
+                cmd.completedBy(),
                 tx,
                 () -> taskLifecycle.taskCompleted(cmd, tx));
     }
@@ -3467,6 +3468,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         return aroundTask(
                 WorkflowHistoryFailure.Action.TASK_REASSIGN,
                 cmd.taskId(),
+                cmd.reassignedBy(),
                 tx,
                 () -> taskLifecycle.taskReassigned(cmd, tx));
     }
@@ -3474,14 +3476,19 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /**
      * Runs a task action inside the announcement of the history it writes to the instance that owns the task. The
      * owner is read only when a history listener is bound; a task that cannot be read leaves the action to refuse it,
-     * and only its failure is then reported.
+     * and only its failure is then reported. A failure is reported with the actor the command names, the one a
+     * successful action records.
      */
     private <T> Future<T> aroundTask(
-            WorkflowHistoryFailure.Action action, UUID taskId, SqlClient tx, Supplier<Future<T>> work) {
+            WorkflowHistoryFailure.Action action,
+            UUID taskId,
+            WorkflowActor actor,
+            SqlClient tx,
+            Supplier<Future<T>> work) {
         if (!historyPublisher.hasListeners()) {
             return work.get();
         }
-        return taskOwner(taskId, tx).compose(owner -> historyPublisher.around(action, owner, tx, work));
+        return taskOwner(taskId, tx).compose(owner -> historyPublisher.aroundAs(action, owner, actor, tx, work));
     }
 
     /** The instance that owns the task, or null when the task cannot be read. */
@@ -3627,6 +3634,37 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      *     state
      */
     Future<Void> cancelBranchOwnedWaits(WorkflowInstance inst, BranchToken branch, SqlClient tx) {
+        return cancelBranchOwnedWaits(inst, branch, new WorkflowActor.System("branch-cancelled"), false, tx);
+    }
+
+    /**
+     * Cancels the timers and tasks a branch owns because a caller cancelled the instance. Each task is cancelled as
+     * the canceller, and as the system when the cancel has no caller, and its {@code TASK_CANCELLED} entry names the
+     * same actor as the task row, the payload and the event.
+     *
+     * @param inst the instance that owns the branch
+     * @param branch the branch token identifying which timers and tasks to cancel
+     * @param canceller who cancelled the instance, or {@code null} when the cancel has no caller
+     * @param tx the active transaction
+     * @return a {@link Future} that completes when all owned timers and tasks are in a terminal state
+     */
+    private Future<Void> cancelBranchOwnedWaits(
+            WorkflowInstance inst, BranchToken branch, @Nullable WorkflowActor canceller, SqlClient tx) {
+        WorkflowActor actor = canceller != null ? canceller : new WorkflowActor.System("branch-cancelled");
+        return cancelBranchOwnedWaits(inst, branch, actor, true, tx);
+    }
+
+    /**
+     * @param cancelActor who the tasks are cancelled as
+     * @param attributeEntry whether the {@code TASK_CANCELLED} entry is given that actor here; a cancellation inside an
+     *     executor segment leaves it to the segment, which attributes every entry it wrote when it ends
+     */
+    private Future<Void> cancelBranchOwnedWaits(
+            WorkflowInstance inst,
+            BranchToken branch,
+            WorkflowActor cancelActor,
+            boolean attributeEntry,
+            SqlClient tx) {
         // Step 1 — timers first (lock order: workflow_timers before workflow_tasks).
         return timerStore.findScheduledByBranchToken(branch.id(), tx).compose(timers -> {
             Future<Void> timerChain = Future.succeededFuture();
@@ -3641,7 +3679,6 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                     .compose(v -> taskStore.findOpenByBranchToken(branch.id(), tx))
                     .compose(tasks -> {
                         Future<Void> taskChain = Future.succeededFuture();
-                        WorkflowActor cancelActor = new WorkflowActor.System("branch-cancelled");
                         Instant now2 = clock.instant();
                         String reason = "BRANCH_CANCELLED";
                         for (TaskRecord task : tasks) {
@@ -3649,6 +3686,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                                     .compose(v -> taskStore.markCancelled(task.taskId(), reason, now2, cancelActor, tx))
                                     .compose(transition -> taskLifecycle.appendTaskCancelledHistory(
                                             inst, task.stepId(), task.taskId(), reason, cancelActor, now2, tx))
+                                    .compose(seq -> attributeEntry
+                                            ? commands.attributeHistory(inst.id(), seq, cancelActor, tx)
+                                                    .map(seq)
+                                            : Future.succeededFuture(seq))
                                     .compose(seq -> emitEvent(
                                             inst,
                                             WorkflowEventType.TASK_CANCELLED,

@@ -179,7 +179,28 @@ public final class WorkflowHistoryEventPublisher {
             @Nullable WorkflowInstanceId id,
             SqlClient tx,
             Supplier<Future<T>> work) {
-        return run(action, id, tx, true, true, work);
+        return run(() -> attempt(action, id), id, tx, true, true, work);
+    }
+
+    /**
+     * Runs the work of an action like {@link #around}, for an action whose command names its own actor, such as a task
+     * completion: a failure is reported with that actor and the current caller is not read.
+     *
+     * @param action the caller-driven action, for the failure report
+     * @param id     the instance the action concerns, or {@code null} when it never resolved one
+     * @param actor  the actor the command names
+     * @param tx     the transaction the work runs in
+     * @param work   the work
+     * @param <T>    the result of the work
+     * @return the future of the work, unchanged
+     */
+    public <T> Future<T> aroundAs(
+            WorkflowHistoryFailure.Action action,
+            @Nullable WorkflowInstanceId id,
+            WorkflowActor actor,
+            SqlClient tx,
+            Supplier<Future<T>> work) {
+        return run(() -> new Attempt(action, id, actor), id, tx, true, true, work);
     }
 
     /**
@@ -197,7 +218,7 @@ public final class WorkflowHistoryEventPublisher {
      */
     public <T> Future<T> aroundNotWriting(
             WorkflowHistoryFailure.Action action, WorkflowInstanceId id, SqlClient tx, Supplier<Future<T>> work) {
-        return run(action, id, tx, false, false, work);
+        return run(() -> attempt(action, id), id, tx, false, false, work);
     }
 
     /**
@@ -213,11 +234,11 @@ public final class WorkflowHistoryEventPublisher {
      */
     public <T> Future<T> aroundLocked(
             WorkflowHistoryFailure.Action action, WorkflowInstanceId id, SqlClient tx, Supplier<Future<T>> work) {
-        return run(action, id, tx, false, true, work);
+        return run(() -> attempt(action, id), id, tx, false, true, work);
     }
 
     private <T> Future<T> run(
-            @Nullable WorkflowHistoryFailure.Action action,
+            Supplier<Attempt> attempts,
             @Nullable WorkflowInstanceId id,
             SqlClient tx,
             boolean takeLock,
@@ -232,7 +253,7 @@ public final class WorkflowHistoryEventPublisher {
         }
         Future<T> announced;
         try {
-            Attempt attempt = attempt(action, id);
+            Attempt attempt = attempts.get();
             Future<Void> locked =
                     takeLock && id != null ? invoke(attempt, () -> lock.apply(id, tx)) : Future.succeededFuture();
             announced = locked.compose(

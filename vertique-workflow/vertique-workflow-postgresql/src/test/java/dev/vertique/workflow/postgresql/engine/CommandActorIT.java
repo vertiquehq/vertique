@@ -13,6 +13,7 @@ import dev.vertique.security.SecurityIdentity;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.events.WorkflowEventType;
 import dev.vertique.workflow.executor.WorkflowExecutorEvent;
+import dev.vertique.workflow.ops.TaskMutationResult;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.executor.ActorScenario;
 import dev.vertique.workflow.postgresql.executor.ActorScenario.Attributed;
@@ -304,6 +305,162 @@ public class CommandActorIT {
             assertThat(scenario.history(completed))
                     .extracting(Attributed::actorId)
                     .doesNotContain("u-x");
+        }
+    }
+
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    @DisplayName("a branch task cancelled by a caller's cancel is cancelled as the canceller everywhere it is recorded")
+    void branchTaskCancelledByACallerIsCancelledAsTheCanceller() {
+        try (ActorScenario scenario = ActorScenario.branchTask(db.toPoolConfig())) {
+            // Given an instance waiting at a join with an open human task in a branch
+            WorkflowInstanceId id = scenario.start(user("u-0"), "branch-cancel-named", Map.of());
+            scenario.runToIdle(id);
+            assertThat(scenario.taskActor(id, "cancelled_by")).isNull();
+
+            // When service ops cancels the instance
+            scenario.cancel(service("ops"), id);
+
+            // Then the task row, the history payload, the event and the history entry name the canceller
+            assertThat(scenario.taskActor(id, "cancelled_by"))
+                    .isEqualTo(new JsonObject().put("kind", "SERVICE").put("value", "ops"));
+            assertThat(scenario.payloadActor(id, "TASK_CANCELLED", "cancelledBy"))
+                    .isEqualTo(new JsonObject().put("serviceId", "ops"));
+            assertThat(scenario.eventActor(id, WorkflowEventType.TASK_CANCELLED, "cancelledBy"))
+                    .isEqualTo(Map.of("kind", "SERVICE", "value", "ops"));
+            List<Attributed> history = scenario.history(id);
+            assertThat(history)
+                    .filteredOn(entry -> entry.label().equals("TASK_CANCELLED"))
+                    .singleElement()
+                    .satisfies(entry -> assertThat(entry.is("SERVICE", "ops"))
+                            .as(entry.toString())
+                            .isTrue());
+
+            // And the instance's own cancellation entry names the canceller as well
+            assertThat(history)
+                    .filteredOn(entry -> entry.label().equals("CANCELLED"))
+                    .singleElement()
+                    .satisfies(entry -> assertThat(entry.is("SERVICE", "ops"))
+                            .as(entry.toString())
+                            .isTrue());
+        }
+    }
+
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    @DisplayName("a branch task cancelled by a cancel with no caller is cancelled as the system and logs nobody for it")
+    void branchTaskCancelledWithNoCallerIsCancelledAsTheSystem() {
+        try (ActorScenario scenario = ActorScenario.branchTask(db.toPoolConfig())) {
+            // Given an instance waiting at a join with an open human task in a branch
+            WorkflowInstanceId id = scenario.start(user("u-0"), "branch-cancel-nobody", Map.of());
+            scenario.runToIdle(id);
+
+            // When it is cancelled with no security context
+            scenario.cancel(null, id);
+
+            // Then the task row, the history payload, the event and the history entry all name the system
+            assertThat(scenario.taskActor(id, "cancelled_by"))
+                    .isEqualTo(new JsonObject().put("kind", "SYSTEM").put("value", "branch-cancelled"));
+            assertThat(scenario.payloadActor(id, "TASK_CANCELLED", "cancelledBy"))
+                    .isEqualTo(new JsonObject().put("reason", "branch-cancelled"));
+            assertThat(scenario.eventActor(id, WorkflowEventType.TASK_CANCELLED, "cancelledBy"))
+                    .isEqualTo(Map.of("kind", "SYSTEM", "value", "branch-cancelled"));
+            List<Attributed> history = scenario.history(id);
+            assertThat(history)
+                    .filteredOn(entry -> entry.label().equals("TASK_CANCELLED"))
+                    .singleElement()
+                    .satisfies(entry -> {
+                        assertThat(entry.actorKind()).as(entry.toString()).isEqualTo("SYSTEM");
+                        assertThat(entry.actorReason()).as(entry.toString()).isEqualTo("branch-cancelled");
+                    });
+
+            // And the instance's own cancellation entry carries nobody
+            assertThat(history)
+                    .filteredOn(entry -> entry.label().equals("CANCELLED"))
+                    .singleElement()
+                    .satisfies(entry ->
+                            assertThat(entry.actorKind()).as(entry.toString()).isEqualTo("NONE"));
+        }
+    }
+
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    @DisplayName("a branch task completion records the actor the command names, not the caller")
+    void branchTaskCompletionRecordsTheActorTheCommandNames() {
+        try (ActorScenario scenario = ActorScenario.branchTask(db.toPoolConfig())) {
+            // Given an instance with an open task in a branch, and a caller X (user u-x) that names the actor u-y
+            WorkflowInstanceId id = scenario.start(user("u-0"), "branch-complete-y", Map.of());
+            scenario.runToIdle(id);
+            JsonObject y = new JsonObject().put("kind", "USER").put("value", "u-y");
+
+            // When X completes the branch task naming u-y, and the executor applies it
+            scenario.completeTask(user("u-x"), id, "branch-complete-y", new WorkflowActor.User("u-y"));
+            scenario.runToIdle(id);
+
+            // Then the command row, the task row, the history payload, the event and the history entry name u-y
+            assertThat(scenario.commands(id))
+                    .filteredOn(row -> row.label().equals("COMPLETION"))
+                    .singleElement()
+                    .satisfies(row -> assertThat(row.is("USER", "u-y")).isTrue());
+            assertThat(scenario.taskActor(id, "completed_by")).isEqualTo(y);
+            assertThat(scenario.payloadActor(id, "BRANCH_TASK_COMPLETED", "completedBy"))
+                    .isEqualTo(new JsonObject().put("userId", "u-y"));
+            assertThat(scenario.eventActor(id, WorkflowEventType.TASK_COMPLETED, "completedBy"))
+                    .isEqualTo(Map.of("kind", "USER", "value", "u-y"));
+            assertThat(scenario.history(id))
+                    .filteredOn(entry -> entry.label().equals("BRANCH_TASK_COMPLETED"))
+                    .singleElement()
+                    .satisfies(entry -> assertThat(entry.is("USER", "u-y"))
+                            .as(entry.toString())
+                            .isTrue());
+
+            // And nothing of it names the caller u-x
+            assertThat(scenario.history(id)).extracting(Attributed::actorId).doesNotContain("u-x");
+        }
+    }
+
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    @DisplayName(
+            "a completion naming the anonymous actor is recorded as anonymous everywhere, and its repeat is a replay")
+    void anonymousTaskActorIsRecordedEverywhereAndItsRepeatIsAReplay() {
+        try (ActorScenario scenario = ActorScenario.dueDateTask(db.toPoolConfig())) {
+            // Given an instance at a task
+            WorkflowInstanceId id = scenario.start(user("u-0"), "task-anonymous", Map.of());
+            scenario.runToIdle(id);
+            JsonObject anonymous = new JsonObject().put("kind", "ANONYMOUS").put("value", "");
+
+            // When the task is completed naming the anonymous actor, and the executor applies it
+            scenario.completeTask(user("u-x"), id, "anonymous-key", new WorkflowActor.Anonymous());
+            scenario.runToIdle(id);
+
+            // Then the command row, the task row, the history payload, the event and the history entry say ANONYMOUS
+            assertThat(scenario.commands(id))
+                    .filteredOn(row -> row.label().equals("COMPLETION"))
+                    .singleElement()
+                    .satisfies(row -> assertThat(row.actorKind()).isEqualTo("ANONYMOUS"));
+            assertThat(scenario.taskActor(id, "completed_by")).isEqualTo(anonymous);
+            assertThat(scenario.taskRecord(id).completedBy()).isEqualTo(new WorkflowActor.Anonymous());
+            assertThat(scenario.payloadActor(id, "TASK_COMPLETED", "completedBy"))
+                    .isEqualTo(new JsonObject().put("anonymous", true));
+            assertThat(scenario.eventActor(id, WorkflowEventType.TASK_COMPLETED, "completedBy"))
+                    .isEqualTo(Map.of("kind", "ANONYMOUS", "value", ""));
+            assertThat(scenario.history(id))
+                    .filteredOn(entry -> entry.label().equals("TASK_COMPLETED"))
+                    .singleElement()
+                    .satisfies(entry ->
+                            assertThat(entry.actorKind()).as(entry.toString()).isEqualTo("ANONYMOUS"));
+            int commands = scenario.commands(id).size();
+            int entries = scenario.history(id).size();
+
+            // When the same completion is repeated under the same idempotency key
+            TaskMutationResult repeat =
+                    scenario.completeTask(user("u-x"), id, "anonymous-key", new WorkflowActor.Anonymous());
+
+            // Then it is a replay, not a conflict, and it records nothing
+            assertThat(repeat).isNotNull();
+            assertThat(scenario.commands(id)).hasSize(commands);
+            assertThat(scenario.history(id)).hasSize(entries);
         }
     }
 

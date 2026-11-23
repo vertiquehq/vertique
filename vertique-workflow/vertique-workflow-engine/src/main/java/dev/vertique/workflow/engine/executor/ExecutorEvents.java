@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.engine.executor;
 
+import dev.vertique.workflow.engine.history.ListenerDispatch;
 import dev.vertique.workflow.executor.WorkflowExecutorEvent;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
 import java.util.List;
@@ -55,20 +56,13 @@ final class ExecutorEvents {
      * @param event the event
      */
     void emit(WorkflowExecutorEvent event) {
-        for (WorkflowExecutorObserver observer : observers) {
-            try {
-                observer.onEvent(event);
-            } catch (Throwable t) {
-                if (t instanceof VirtualMachineError error) {
-                    throw error;
-                }
-                log.warn(
-                        "Executor observer {} threw while handling a {} event: {}",
-                        observer.getClass().getName(),
-                        event.getClass().getSimpleName(),
-                        t.getClass().getName());
-                log.debug("Executor observer failure", t);
-            }
-        }
+        ListenerDispatch.forEachIsolatingErrors(observers, observer -> observer.onEvent(event), (observer, thrown) -> {
+            log.warn(
+                    "Executor observer {} threw while handling a {} event: {}",
+                    observer.getClass().getName(),
+                    event.getClass().getSimpleName(),
+                    thrown.getClass().getName());
+            log.debug("Executor observer failure", thrown);
+        });
     }
 }

@@ -88,7 +88,7 @@ final class RecordedActors {
             return;
         }
         WorkflowExecutorEvent event = new WorkflowExecutorEvent.ActorAbsent(commandKind);
-        ListenerDispatch.forEach(
+        ListenerDispatch.forEachIsolatingErrors(
                 observers,
                 observer -> observer.onEvent(event),
                 (observer, thrown) -> log.warn(

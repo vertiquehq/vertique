@@ -6,12 +6,12 @@ package dev.vertique.workflow.exception;
 import dev.vertique.workflow.types.EchoedNames;
 
 /**
- * Thrown when a correlated signal that carries a provenance cannot be attributed to an actor: the recording captured no
- * identity (none is bound, or the bound one is anonymous), or the actor mapper refused the identity.
+ * Thrown when a correlated signal that carries a provenance cannot be attributed to a named actor: no identity is
+ * bound, the caller is recorded as anonymous, or the actor mapper refused the identity.
  *
  * <p>The delivery fails in the caller's transaction and writes nothing: no command, no deduplication row, no
- * open-signal count and no history entry. A delivery without provenance is not subject to this rule and records with an
- * absent actor as before. The message names the contract and the signal, each cut at a bounded length and cleaned of
+ * open-signal count and no history entry. A delivery without provenance is not subject to this rule: it is recorded with
+ * no actor when no identity is bound, and with the anonymous actor when the caller is not authenticated. The message names the contract and the signal, each cut at a bounded length and cleaned of
  * control characters, never the key. The accessors keep the full names.
  */
 public final class WorkflowSignalActorException extends WorkflowException {

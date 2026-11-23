@@ -7,6 +7,7 @@ import static dev.vertique.workflow.postgresql.executor.ExecutorFixture.await;
 
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.db.DbPoolConfig;
+import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContexts;
 import dev.vertique.security.SecurityIdentity;
@@ -15,14 +16,20 @@ import dev.vertique.workflow.events.WorkflowEventType;
 import dev.vertique.workflow.executor.WorkflowExecutorEvent;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
+import dev.vertique.workflow.ops.TaskMutationResult;
 import dev.vertique.workflow.ops.TaskReassignmentCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.plan.RaceSafety;
 import dev.vertique.workflow.postgresql.executor.ExecutorFixture.Node;
+import dev.vertique.workflow.postgresql.executor.RecordedCompletionIT.Decision;
+import dev.vertique.workflow.postgresql.executor.RecordedSignalIT.Definition;
 import dev.vertique.workflow.postgresql.executor.RecordedSignalIT.SignalFixture;
 import dev.vertique.workflow.postgresql.executor.TimerCommandIT.DueDateTask;
 import dev.vertique.workflow.postgresql.executor.TimerCommandIT.TimeoutWait;
+import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.tasks.TaskAssignment;
+import dev.vertique.workflow.tasks.TaskRecord;
 import io.vertx.core.Future;
 import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.Row;
@@ -115,6 +122,17 @@ public final class ActorScenario implements AutoCloseable {
      */
     public static ActorScenario dueDateTask(DbPoolConfig db) {
         return new ActorScenario(db, new DueDateTask(), List.of("note"));
+    }
+
+    /**
+     * A scenario over a workflow whose fork has a branch that waits at a task and a branch that ends at once, so that an
+     * instance waits at the join with an open task owned by its branch.
+     *
+     * @param db the migrated database
+     * @return the scenario
+     */
+    public static ActorScenario branchTask(DbPoolConfig db) {
+        return new ActorScenario(db, new BranchTask(), List.of());
     }
 
     /**
@@ -233,8 +251,9 @@ public final class ActorScenario implements AutoCloseable {
      * @param id          the instance
      * @param key         the idempotency key
      * @param completedBy the actor the command names as the completer
+     * @return the result of the completion
      */
-    public void completeTask(
+    public TaskMutationResult completeTask(
             @Nullable SecurityIdentity caller, WorkflowInstanceId id, String key, WorkflowActor completedBy) {
         UUID taskId = await(f.fixture
                         .observer()
@@ -244,7 +263,7 @@ public final class ActorScenario implements AutoCloseable {
                 .next()
                 .getUUID("task_id");
         var command = new TaskCompletionCommand(taskId, "approve", new JsonObject(), key, completedBy, null);
-        await(as(caller, () -> node.pool.withTransaction(tx -> node.engine.taskCompleted(command, tx))));
+        return await(as(caller, () -> node.pool.withTransaction(tx -> node.engine.taskCompleted(command, tx))));
     }
 
     /**
@@ -344,6 +363,24 @@ public final class ActorScenario implements AutoCloseable {
                 .iterator()
                 .next()
                 .getValue(column);
+    }
+
+    /**
+     * The instance's task as the task store reads it back.
+     *
+     * @param id the instance
+     * @return the task record
+     */
+    public TaskRecord taskRecord(WorkflowInstanceId id) {
+        PgTaskStore store = new PgTaskStore(f.fixture.observer(), new PgDbExceptionMapper());
+        UUID taskId = await(f.fixture
+                        .observer()
+                        .preparedQuery("SELECT task_id FROM workflow_tasks WHERE workflow_id = $1")
+                        .execute(Tuple.of(id.value())))
+                .iterator()
+                .next()
+                .getUUID("task_id");
+        return await(store.findById(taskId, f.fixture.observer())).orElseThrow();
     }
 
     /**
@@ -490,5 +527,32 @@ public final class ActorScenario implements AutoCloseable {
                     f.fixture.holder().bind(SecurityContext.class, SecurityContexts.unauthenticated(caller));
             return work.get().onComplete(ignored -> scope.close());
         });
+    }
+
+    /** A fork whose first branch waits at a task and whose second branch ends at once. */
+    private static final class BranchTask extends Definition {
+        BranchTask() {
+            super("actor-branch-task", wf -> {
+                wf.fork("fork")
+                        .branch("branch-a", "task-step", RaceSafety.IGNORE_LATE_RESULT_SAFE)
+                        .branch("branch-b", "complete-b", RaceSafety.IGNORE_LATE_RESULT_SAFE)
+                        .join("join")
+                        .task("task-step")
+                        .assignToRole("reviewers")
+                        .decision("approve", Decision.class)
+                        .onDecision((state, decision) -> state)
+                        .toStep("complete-a")
+                        .build()
+                        .complete("complete-a")
+                        .complete("complete-b")
+                        .join("join")
+                        .allRequired((state, results) -> state)
+                        .toStep("done")
+                        .onFailure("done")
+                        .endJoin()
+                        .complete("done");
+                wf.initialStep("fork");
+            });
+        }
     }
 }
