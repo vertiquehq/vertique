@@ -31,7 +31,6 @@ import dev.vertique.workflow.postgresql.registry.MixedCodeFixtures.Shape;
 import dev.vertique.workflow.postgresql.registry.failing.v1.FinanceDecision;
 import dev.vertique.workflow.registry.store.DefinitionFailure.Rule;
 import dev.vertique.workflow.registry.store.DefinitionKey;
-import dev.vertique.workflow.state.WorkflowStatus;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
@@ -39,6 +38,7 @@ import io.vertx.core.internal.ContextInternal;
 import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.sqlclient.Row;
+import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.SqlConnection;
 import io.vertx.sqlclient.Tuple;
 import java.nio.charset.StandardCharsets;
@@ -48,6 +48,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -135,10 +136,14 @@ public class MixedCodeNodesIT {
             Rows before = Rows.of(database, instance);
             assertThat(before.instance()).contains("WAITING");
 
-            // When B receives the signal
-            Throwable refused = ActivationFixtures.failureOf(() -> b.app()
-                    .workflowOperations()
-                    .signal(instance, "inventory.reserved", new InventoryReservedDoc("r1"), "d1"));
+            // When B receives the signal, read in its own transaction before it commits: once it has committed the
+            // capable node applies the recorded command at once, so only this read sees what recording alone does
+            Recorded recorded = new Recorded();
+            Throwable refused =
+                    ActivationFixtures.failureOf(() -> b.app().pool().withTransaction(tx -> b.app()
+                            .transactionalOperations()
+                            .signal(instance, "inventory.reserved", new InventoryReservedDoc("r1"), "d1", tx)
+                            .compose(ignored -> recorded.read(tx, instance, "d1"))));
 
             // Then it is recorded: recording needs no code for the pinned version, and B applies nothing
             assertThat(refused)
@@ -146,8 +151,8 @@ public class MixedCodeNodesIT {
                     .isNull();
 
             // And the instance and its history are as they were, with the key recorded for the signal
-            assertThat(Rows.of(database, instance)).isEqualTo(before.withDedup(before.dedup() + 1));
-            assertThat(dedupRowsWithKey(database, "d1")).isEqualTo(1);
+            assertThat(recorded.rows).isEqualTo(before.withDedup(before.dedup() + 1));
+            assertThat(recorded.keyedDedupRows).isEqualTo(1);
 
             // And the same signal through A, with the same key, is a duplicate, and A's executor applies the recorded
             // command and advances the instance
@@ -175,11 +180,16 @@ public class MixedCodeNodesIT {
             UUID task = openTask(database, instance);
             Rows before = Rows.of(database, instance);
 
-            // When B completes the task with a valid decision, and then queries the instance
+            // When B completes the task with a valid decision, read in its own transaction before it commits (once it
+            // has committed the capable node applies the recorded command at once), and then queries the instance
             TaskCompletionCommand completion =
                     new TaskCompletionCommand(task, "approve", null, "c1", new WorkflowActor.User("reviewer"), null);
-            Throwable completionRefused = ActivationFixtures.failureOf(() ->
-                    b.app().pool().withTransaction(tx -> b.app().taskCallbacks().taskCompleted(completion, tx)));
+            Recorded recorded = new Recorded();
+            Throwable completionRefused =
+                    ActivationFixtures.failureOf(() -> b.app().pool().withTransaction(tx -> b.app()
+                            .taskCallbacks()
+                            .taskCompleted(completion, tx)
+                            .compose(ignored -> recorded.read(tx, instance, "c1"))));
             WorkflowView readOnB = await(b.app().workflowOperations().query(instance));
 
             // Then it is recorded: recording needs no code for the pinned version, and B applies nothing
@@ -189,16 +199,13 @@ public class MixedCodeNodesIT {
             assertThat(readOnB.instance().id()).isEqualTo(instance);
 
             // And the instance is unchanged, the key is recorded and the task is reserved by the recorded completion
-            Rows recorded = Rows.of(database, instance);
-            assertThat(recorded.instance()).isEqualTo(before.instance());
-            assertThat(recorded.dedup()).isEqualTo(before.dedup() + 1);
+            assertThat(recorded.rows.instance()).isEqualTo(before.instance());
+            assertThat(recorded.rows.dedup()).isEqualTo(before.dedup() + 1);
             assertThat(before.tasks()).contains("OPEN");
-            assertThat(recorded.tasks()).contains("COMPLETING");
+            assertThat(recorded.rows.tasks()).contains("COMPLETING");
 
             // And the same completion through A, with the same key, is a duplicate, and A's executor applies the
             // recorded command and advances the instance
-            WorkflowView view = await(a.app().workflowOperations().query(instance));
-            assertThat(view.instance().status()).isEqualTo(WorkflowStatus.WAITING);
             TaskMutationResult completed = await(
                     a.app().pool().withTransaction(tx -> a.app().taskCallbacks().taskCompleted(completion, tx)));
             await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
@@ -316,10 +323,12 @@ public class MixedCodeNodesIT {
             Rows before = Rows.of(database, instance);
             assertThat(before.branches()).contains(MixedCodeFixtures.FIRST_BRANCH);
 
-            // When B receives the branch signal through the branch-aware overload
+            // When B receives the branch signal through the branch-aware overload, read in its own transaction before
+            // it commits: once it has committed the capable node applies the recorded command at once
             InventoryReservedDoc payload = new InventoryReservedDoc("r3");
-            Throwable refused = ActivationFixtures.failureOf(
-                    () -> onDuplicatedContext(vertx, () -> branchSignal(b, instance, payload, "d3")));
+            Recorded recorded = new Recorded();
+            Throwable refused = ActivationFixtures.failureOf(() -> onDuplicatedContext(
+                    vertx, () -> branchSignal(b, instance, payload, "d3", tx -> recorded.read(tx, instance, "d3"))));
 
             // Then it is recorded: recording needs no code for the pinned version, and B applies nothing
             assertThat(refused)
@@ -327,15 +336,14 @@ public class MixedCodeNodesIT {
                     .isNull();
 
             // And the branch tokens, the instance and the history are unchanged, with the key recorded for the signal
-            assertThat(Rows.of(database, instance)).isEqualTo(before.withDedup(before.dedup() + 1));
-            assertThat(count(database, "SELECT count(*) AS total FROM workflow_commands WHERE dedup_key = $1", "d3"))
-                    .as("the recorded signal command")
-                    .isEqualTo(1);
+            assertThat(recorded.rows).isEqualTo(before.withDedup(before.dedup() + 1));
+            assertThat(recorded.keyedCommands).as("the recorded signal command").isEqualTo(1);
 
             // And the same call through A is a duplicate, and A's executor applies the recorded command and advances
             // the
             // branch
-            await(onDuplicatedContext(vertx, () -> branchSignal(a, instance, payload, "d3")));
+            await(onDuplicatedContext(
+                    vertx, () -> branchSignal(a, instance, payload, "d3", tx -> Future.succeededFuture())));
             await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
             assertThat(Rows.of(database, instance).branches()).isNotEqualTo(before.branches());
         }
@@ -489,7 +497,11 @@ public class MixedCodeNodesIT {
 
     /** Delivers the signal to the first branch of the fork, in one transaction on the node. */
     private static Future<Void> branchSignal(
-            Boot node, WorkflowInstanceId instance, InventoryReservedDoc payload, String dedupKey) {
+            Boot node,
+            WorkflowInstanceId instance,
+            InventoryReservedDoc payload,
+            String dedupKey,
+            Function<SqlConnection, Future<Void>> beforeCommit) {
         return node.app().pool().withTransaction(tx -> node.app()
                 .transactionalOperations()
                 .signal(
@@ -499,7 +511,8 @@ public class MixedCodeNodesIT {
                         dedupKey,
                         MixedCodeFixtures.FORK_STEP,
                         MixedCodeFixtures.FIRST_BRANCH,
-                        tx));
+                        tx)
+                .compose(ignored -> beforeCommit.apply(tx)));
     }
 
     /** Runs the action on a duplicated Vert.x context, which the engine requires to drive the branches of a fork. */
@@ -588,39 +601,102 @@ public class MixedCodeNodesIT {
         }
 
         static Rows of(DefinitionScenario database, WorkflowInstanceId id) {
-            Row instance = one(database, """
-                    SELECT definition_version, version, status, current_step_id, wait_type, wait_key, state_json::text AS state
-                    FROM workflow_instances WHERE id = $1
-                    """, id.value());
-            String instanceText = String.join(
-                    "|",
-                    String.valueOf(instance.getLong("definition_version")),
-                    String.valueOf(instance.getLong("version")),
-                    instance.getString("status"),
-                    instance.getString("current_step_id"),
-                    String.valueOf(instance.getString("wait_type")),
-                    String.valueOf(instance.getString("wait_key")),
-                    instance.getString("state"));
-            return new Rows(
-                    instanceText,
-                    count(
-                            database,
-                            "SELECT count(*) AS total FROM workflow_history WHERE workflow_id = $1",
-                            id.value()),
-                    count(database, "SELECT count(*) AS total FROM workflow_dedup WHERE workflow_id = $1", id.value()),
-                    joined(database, """
-                            SELECT branch_id || ':' || current_step_id || ':' || status AS item
-                            FROM workflow_branch_tokens WHERE workflow_id = $1 ORDER BY branch_id
-                            """, id.value()),
-                    joined(database, """
-                            SELECT task_id::text || ':' || status || ':' || reminders_fired_count AS item
-                            FROM workflow_tasks WHERE workflow_id = $1 ORDER BY task_id
-                            """, id.value()),
-                    joined(database, """
-                            SELECT purpose || ':' || status || ':' || fire_at AS item
-                            FROM workflow_timers WHERE workflow_id = $1 ORDER BY fire_at, timer_id
-                            """, id.value()));
+            return await(read(database.admin(), id));
         }
+
+        /** Reads the rows on the client; on a transaction's connection that includes what the transaction wrote. */
+        static Future<Rows> read(SqlClient client, WorkflowInstanceId id) {
+            Future<String> instance = client.preparedQuery("""
+                            SELECT definition_version, version, status, current_step_id, wait_type, wait_key, state_json::text AS state
+                            FROM workflow_instances WHERE id = $1
+                            """)
+                    .execute(Tuple.of(id.value()))
+                    .map(rows -> {
+                        Row row = rows.iterator().next();
+                        return String.join(
+                                "|",
+                                String.valueOf(row.getLong("definition_version")),
+                                String.valueOf(row.getLong("version")),
+                                row.getString("status"),
+                                row.getString("current_step_id"),
+                                String.valueOf(row.getString("wait_type")),
+                                String.valueOf(row.getString("wait_key")),
+                                row.getString("state"));
+                    });
+            Future<Long> history =
+                    total(client, "SELECT count(*) AS total FROM workflow_history WHERE workflow_id = $1", id.value());
+            Future<Long> dedup =
+                    total(client, "SELECT count(*) AS total FROM workflow_dedup WHERE workflow_id = $1", id.value());
+            Future<String> branches = joined(client, """
+                    SELECT branch_id || ':' || current_step_id || ':' || status AS item
+                    FROM workflow_branch_tokens WHERE workflow_id = $1 ORDER BY branch_id
+                    """, id.value());
+            Future<String> tasks = joined(client, """
+                    SELECT task_id::text || ':' || status || ':' || reminders_fired_count AS item
+                    FROM workflow_tasks WHERE workflow_id = $1 ORDER BY task_id
+                    """, id.value());
+            Future<String> timers = joined(client, """
+                    SELECT purpose || ':' || status || ':' || fire_at AS item
+                    FROM workflow_timers WHERE workflow_id = $1 ORDER BY fire_at, timer_id
+                    """, id.value());
+            return Future.all(instance, history, dedup, branches, tasks, timers)
+                    .map(ignored -> new Rows(
+                            instance.result(),
+                            history.result(),
+                            dedup.result(),
+                            branches.result(),
+                            tasks.result(),
+                            timers.result()));
+        }
+    }
+
+    /**
+     * What a recording left, read in the recording's own transaction before it commits. Once the transaction has
+     * committed, a node with the pinned code applies the recorded command at once, so only a read inside the
+     * transaction sees the recorded state and not what a capable node made of it.
+     */
+    private static final class Recorded {
+        private volatile Rows rows;
+        private volatile long keyedDedupRows;
+        private volatile long keyedCommands;
+
+        /**
+         * Reads the rows of the instance and the deduplication rows and commands that hold the key. A branch signal's
+         * deduplication key is scoped to its branch, so its test counts the command by {@code dedup_key} instead.
+         */
+        Future<Void> read(SqlClient tx, WorkflowInstanceId instance, String key) {
+            return Rows.read(tx, instance)
+                    .compose(read -> {
+                        rows = read;
+                        return total(tx, "SELECT count(*) AS total FROM workflow_dedup WHERE key = $1", key);
+                    })
+                    .compose(count -> {
+                        keyedDedupRows = count;
+                        return total(tx, "SELECT count(*) AS total FROM workflow_commands WHERE dedup_key = $1", key);
+                    })
+                    .compose(count -> {
+                        keyedCommands = count;
+                        return Future.succeededFuture();
+                    });
+        }
+    }
+
+    private static Future<Long> total(SqlClient client, String sql, Object... parameters) {
+        return client.preparedQuery(sql)
+                .execute(Tuple.from(List.of(parameters)))
+                .map(rows -> rows.iterator().next().getLong("total"));
+    }
+
+    private static Future<String> joined(SqlClient client, String sql, Object... parameters) {
+        return client.preparedQuery(sql)
+                .execute(Tuple.from(List.of(parameters)))
+                .map(rows -> {
+                    List<String> items = new ArrayList<>();
+                    for (Row row : rows) {
+                        items.add(row.getString("item"));
+                    }
+                    return String.join(",", items);
+                });
     }
 
     private static UUID openTask(DefinitionScenario database, WorkflowInstanceId instance) {
@@ -648,14 +724,6 @@ public class MixedCodeNodesIT {
 
     private static long count(DefinitionScenario database, String sql, Object... parameters) {
         return one(database, sql, parameters).getLong("total");
-    }
-
-    private static String joined(DefinitionScenario database, String sql, Object... parameters) {
-        List<String> items = new ArrayList<>();
-        for (Row row : await(database.admin().preparedQuery(sql).execute(Tuple.from(List.of(parameters))))) {
-            items.add(row.getString("item"));
-        }
-        return String.join(",", items);
     }
 
     private record StartSnapshot(
