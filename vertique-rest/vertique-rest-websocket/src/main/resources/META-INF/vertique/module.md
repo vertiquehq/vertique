@@ -260,11 +260,12 @@ most one method per annotation per endpoint; a second one fails startup. All fou
 | `@OnOpen` | The handshake succeeded and the session context is bound. Runs before any frame is delivered. |
 | `@OnMessage` | A complete text or binary message arrives. |
 | `@OnClose` | The connection closed, from either side. |
-| `@OnError` | A socket-level error occurs, an inbound message fails to deserialize or validate, or another lifecycle method throws or returns a failed future. |
+| `@OnError` | A socket-level error occurs, an inbound message fails to deserialize or validate, or another lifecycle method (`@OnOpen` included) throws or returns a failed future. |
 
 **Return type** must be `void` or `Future<Void>`; anything else fails startup. Only `@OnOpen` and
 `@OnClose` have their futures awaited — `@OnOpen`'s gates `resume()`, `@OnClose`'s gates resource
-release. A failed future from `@OnMessage` is logged and dispatched to `@OnError`. A failure of `@OnError`
+release. A failed future from `@OnMessage` is logged and dispatched to `@OnError`. An `@OnOpen` failure (a throw or
+a failed future) is dispatched to `@OnError` first, then the socket is closed with `1011`. A failure of `@OnError`
 itself (a thrown exception or a failed future) is only logged, never dispatched back to `@OnError`.
 
 **Parameters** are resolved by type and annotation, in this order:
