@@ -122,6 +122,8 @@ Each element of the `secrets` array:
 - A `secrets` element that is not a JSON object (`null`, string, number, boolean, or array). The
   `ConfigPropertySourceException` names the source and the element's index and the JSON type it found,
   never the element's value.
+- A field of the wrong JSON type (for example `region: 5`, `endpointOverride: true` or a non-array `secrets`); the
+  `ConfigPropertySourceException` names the field and never the value
 - Missing or blank `secretId`
 - A blank `key` (an entry in key mode must name a non-blank key)
 - Both `prefix` and `key` present on the same entry

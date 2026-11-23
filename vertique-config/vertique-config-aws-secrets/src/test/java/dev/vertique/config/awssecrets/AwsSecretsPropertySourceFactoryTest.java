@@ -1081,4 +1081,55 @@ class AwsSecretsPropertySourceFactoryTest {
             }
         }
     }
+
+    // --- Wrong-typed fields ---
+
+    @Nested
+    @DisplayName("wrong-typed fields")
+    class WrongTypedFields {
+
+        private ConfigPropertySourceException createFailing(JsonObject config) {
+            AwsSecretsPropertySourceFactory factory =
+                    new AwsSecretsPropertySourceFactory((name, settings) -> secretId -> "value");
+            return assertThrows(ConfigPropertySourceException.class, () -> factory.create("src", config));
+        }
+
+        @Test
+        @DisplayName("a wrong-typed region names the field and not the value")
+        void wrongTypedRegion() {
+            ConfigPropertySourceException e =
+                    createFailing(minimalKeyConfig("my/secret", "my.key").put("region", 7531));
+
+            assertTrue(e.getMessage().contains("region"), e.getMessage());
+            assertFalse(e.getMessage().contains("7531"), e.getMessage());
+        }
+
+        @Test
+        @DisplayName("a wrong-typed endpointOverride names the field and not the value")
+        void wrongTypedEndpointOverride() {
+            ConfigPropertySourceException e =
+                    createFailing(minimalKeyConfig("my/secret", "my.key").put("endpointOverride", true));
+
+            assertTrue(e.getMessage().contains("endpointOverride"), e.getMessage());
+            assertFalse(e.getMessage().contains("true"), e.getMessage());
+        }
+
+        @Test
+        @DisplayName("a wrong-typed secrets field and wrong-typed entry fields name the field")
+        void wrongTypedSecretsAndEntryFields() {
+            ConfigPropertySourceException e = createFailing(new JsonObject().put("secrets", "not-an-array"));
+            assertTrue(e.getMessage().contains("secrets"), e.getMessage());
+
+            for (String field : new String[] {"secretId", "key"}) {
+                JsonObject entry = new JsonObject().put("secretId", "my/secret").put("key", "my.key");
+                entry.put(field, 4242);
+                e = createFailing(new JsonObject().put("secrets", new JsonArray().add(entry)));
+                assertTrue(e.getMessage().contains(field), e.getMessage());
+                assertFalse(e.getMessage().contains("4242"), e.getMessage());
+            }
+            JsonObject entry = new JsonObject().put("secretId", "my/secret").put("prefix", 4242);
+            e = createFailing(new JsonObject().put("secrets", new JsonArray().add(entry)));
+            assertTrue(e.getMessage().contains("prefix"), e.getMessage());
+        }
+    }
 }

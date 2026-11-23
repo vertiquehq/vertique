@@ -12,6 +12,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Set;
 import java.util.function.BiFunction;
+import java.util.function.Supplier;
 
 /**
  * {@link ConfigPropertySourceFactory} for Azure Key Vault.
@@ -159,28 +160,28 @@ public class AzureKeyVaultPropertySourceFactory implements ConfigPropertySourceF
      */
     private static AzureConnectionSettings parseSettings(String name, JsonObject sourceConfig) {
         // --- endpoint (required, non-blank, valid absolute URI) ---
-        String endpoint = sourceConfig.getString("endpoint");
+        String endpoint = stringField(name, sourceConfig, "endpoint", "endpoint");
         if (endpoint == null || endpoint.isBlank()) {
             throw new ConfigPropertySourceException(name, "required field 'endpoint' is missing or blank");
         }
         String canonicalEndpoint = validateAndCanonicaliseEndpoint(name, endpoint);
 
         // --- prefix (optional; a blank value counts as absent) ---
-        String prefix = nullIfBlank(sourceConfig.getString("prefix"));
+        String prefix = nullIfBlank(stringField(name, sourceConfig, "prefix", "prefix"));
 
         // --- auth block (optional; defaults to method="default") ---
-        JsonObject auth = sourceConfig.getJsonObject("auth");
+        JsonObject auth = typed(name, "auth", () -> sourceConfig.getJsonObject("auth"));
         String authMethod;
         String clientId;
         if (auth == null) {
             authMethod = AzureCredentials.METHOD_DEFAULT;
             clientId = null;
         } else {
-            String configuredMethod = auth.getString("method");
+            String configuredMethod = stringField(name, auth, "method", "auth.method");
             authMethod = configuredMethod == null || configuredMethod.isBlank()
                     ? AzureCredentials.METHOD_DEFAULT
                     : configuredMethod;
-            clientId = nullIfBlank(auth.getString("clientId"));
+            clientId = nullIfBlank(stringField(name, auth, "clientId", "auth.clientId"));
             if (!AzureCredentials.METHOD_DEFAULT.equals(authMethod)
                     && !AzureCredentials.METHOD_MANAGED_IDENTITY.equals(authMethod)) {
                 throw new ConfigPropertySourceException(
@@ -195,6 +196,48 @@ public class AzureKeyVaultPropertySourceFactory implements ConfigPropertySourceF
 
         return new AzureConnectionSettings(
                 endpoint, canonicalEndpoint, prefix, authMethod, clientId, connectTimeoutMs, readTimeoutMs);
+    }
+
+    /**
+     * Reads an optional string field, rejecting a value of any other JSON type with a
+     * {@link ConfigPropertySourceException} that names the field and never echoes the value.
+     *
+     * @param sourceName the source instance name for the exception message
+     * @param object     the object holding the field
+     * @param key        the key to read
+     * @param field      the field path used in the error message
+     * @return the string value, or {@code null} when absent
+     * @throws ConfigPropertySourceException if the value is not a string
+     */
+    private static String stringField(String sourceName, JsonObject object, String key, String field) {
+        Object value = object.getValue(key);
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof CharSequence text) {
+            return text.toString();
+        }
+        throw new ConfigPropertySourceException(sourceName, "field '" + field + "' has the wrong type");
+    }
+
+    /**
+     * Reads a configuration value, converting a wrong-typed value (for example a string where an
+     * array is required) into a {@link ConfigPropertySourceException} that names the field and
+     * never echoes the value.
+     *
+     * @param sourceName the source instance name for the exception message
+     * @param field      the config field name (used in the error message)
+     * @param read       the typed read of the field
+     * @param <T>        the field type
+     * @return the value read
+     * @throws ConfigPropertySourceException if the value does not have the expected type
+     */
+    private static <T> T typed(String sourceName, String field, Supplier<T> read) {
+        try {
+            return read.get();
+        } catch (ClassCastException e) {
+            throw new ConfigPropertySourceException(sourceName, "field '" + field + "' has the wrong type");
+        }
     }
 
     private static String nullIfBlank(String value) {

@@ -12,6 +12,7 @@ import io.vertx.core.json.JsonObject;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BiFunction;
+import java.util.function.Supplier;
 
 /**
  * {@link ConfigPropertySourceFactory} for AWS Secrets Manager.
@@ -133,10 +134,10 @@ public class AwsSecretsPropertySourceFactory implements ConfigPropertySourceFact
      */
     private static AwsSourceSettings parseSettings(String name, JsonObject sourceConfig) {
         // --- region (optional) ---
-        String region = sourceConfig.getString("region");
+        String region = stringField(name, sourceConfig, "region", "region");
 
         // --- endpointOverride (optional) ---
-        String endpointOverride = sourceConfig.getString("endpointOverride");
+        String endpointOverride = stringField(name, sourceConfig, "endpointOverride", "endpointOverride");
 
         // --- timeouts ---
         int connectTimeoutMs =
@@ -144,7 +145,7 @@ public class AwsSecretsPropertySourceFactory implements ConfigPropertySourceFact
         int readTimeoutMs = SourceConfigValues.positiveInt(name, sourceConfig, "readTimeoutMs", DEFAULT_TIMEOUT_MS);
 
         // --- secrets (required, non-empty) ---
-        JsonArray secretsArray = sourceConfig.getJsonArray("secrets");
+        JsonArray secretsArray = typed(name, "secrets", () -> sourceConfig.getJsonArray("secrets"));
         if (secretsArray == null || secretsArray.isEmpty()) {
             throw new ConfigPropertySourceException(name, "required field 'secrets' is missing or empty");
         }
@@ -178,15 +179,15 @@ public class AwsSecretsPropertySourceFactory implements ConfigPropertySourceFact
             }
 
             // --- secretId (required, non-blank) ---
-            String secretId = entry.getString("secretId");
+            String secretId = stringField(name, entry, "secretId", "secrets[" + i + "].secretId");
             if (secretId == null || secretId.isBlank()) {
                 throw new ConfigPropertySourceException(
                         name, "secrets entry at index " + i + " has missing or blank 'secretId' field");
             }
 
             // --- prefix / key (exactly one required) ---
-            String prefix = entry.getString("prefix");
-            String key = entry.getString("key");
+            String prefix = stringField(name, entry, "prefix", "secrets[" + i + "].prefix");
+            String key = stringField(name, entry, "key", "secrets[" + i + "].key");
 
             boolean hasPrefix = prefix != null;
             boolean hasKey = key != null;
@@ -224,6 +225,48 @@ public class AwsSecretsPropertySourceFactory implements ConfigPropertySourceFact
             result.add(new SecretEntry(secretId, prefix, key));
         }
         return List.copyOf(result);
+    }
+
+    /**
+     * Reads an optional string field, rejecting a value of any other JSON type with a
+     * {@link ConfigPropertySourceException} that names the field and never echoes the value.
+     *
+     * @param sourceName the source instance name for the exception message
+     * @param object     the object holding the field
+     * @param key        the key to read
+     * @param field      the field path used in the error message
+     * @return the string value, or {@code null} when absent
+     * @throws ConfigPropertySourceException if the value is not a string
+     */
+    private static String stringField(String sourceName, JsonObject object, String key, String field) {
+        Object value = object.getValue(key);
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof CharSequence text) {
+            return text.toString();
+        }
+        throw new ConfigPropertySourceException(sourceName, "field '" + field + "' has the wrong type");
+    }
+
+    /**
+     * Reads a configuration value, converting a wrong-typed value (for example a string where an
+     * array is required) into a {@link ConfigPropertySourceException} that names the field and
+     * never echoes the value.
+     *
+     * @param sourceName the source instance name for the exception message
+     * @param field      the config field name (used in the error message)
+     * @param read       the typed read of the field
+     * @param <T>        the field type
+     * @return the value read
+     * @throws ConfigPropertySourceException if the value does not have the expected type
+     */
+    private static <T> T typed(String sourceName, String field, Supplier<T> read) {
+        try {
+            return read.get();
+        } catch (ClassCastException e) {
+            throw new ConfigPropertySourceException(sourceName, "field '" + field + "' has the wrong type");
+        }
     }
 
     /**

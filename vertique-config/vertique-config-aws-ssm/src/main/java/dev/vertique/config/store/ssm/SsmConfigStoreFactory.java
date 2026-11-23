@@ -124,7 +124,7 @@ public class SsmConfigStoreFactory implements ConfigStoreFactory {
      */
     private static SsmStoreSettings parseSettings(JsonObject config) {
         // --- path (required, non-blank, and must name at least one segment after normalization) ---
-        String rawPath = config.getString("path");
+        String rawPath = stringField(config, "path");
         if (rawPath == null || rawPath.isBlank()) {
             throw new IllegalArgumentException("AWS SSM store: required config field 'path' is missing or blank");
         }
@@ -138,19 +138,19 @@ public class SsmConfigStoreFactory implements ConfigStoreFactory {
         }
 
         // --- region (optional) ---
-        String region = config.getString("region");
+        String region = stringField(config, "region");
 
         // --- endpointOverride (optional) ---
-        String endpointOverride = config.getString("endpointOverride");
+        String endpointOverride = stringField(config, "endpointOverride");
 
         // --- recursive (default true) ---
-        boolean recursive = config.getBoolean("recursive", true);
+        boolean recursive = booleanField(config, "recursive");
 
         // --- withDecryption (default true) ---
-        boolean withDecryption = config.getBoolean("withDecryption", true);
+        boolean withDecryption = booleanField(config, "withDecryption");
 
         // --- prefix (optional; a blank value counts as absent; otherwise no blank dot-segments) ---
-        String prefix = config.getString("prefix");
+        String prefix = stringField(config, "prefix");
         if (prefix != null && prefix.isBlank()) {
             prefix = null;
         }
@@ -170,6 +170,47 @@ public class SsmConfigStoreFactory implements ConfigStoreFactory {
 
         return new SsmStoreSettings(
                 path, region, endpointOverride, recursive, withDecryption, prefix, connectTimeoutMs, readTimeoutMs);
+    }
+
+    /**
+     * Reads an optional string field, rejecting a value of any other JSON type with an
+     * {@link IllegalArgumentException} that names the field and never echoes the value.
+     *
+     * @param config the JSON object to read from
+     * @param field  the config field name
+     * @return the string value, or {@code null} when absent
+     * @throws IllegalArgumentException if the value is not a string
+     */
+    private static String stringField(JsonObject config, String field) {
+        Object value = config.getValue(field);
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof CharSequence text) {
+            return text.toString();
+        }
+        throw new IllegalArgumentException("AWS SSM store: field '" + field + "' has the wrong type");
+    }
+
+    /**
+     * Reads an optional boolean field that defaults to {@code true}, rejecting a value of any
+     * other JSON type with an {@link IllegalArgumentException} that names the field and never
+     * echoes the value.
+     *
+     * @param config the JSON object to read from
+     * @param field  the config field name
+     * @return the boolean value, or {@code true} when absent
+     * @throws IllegalArgumentException if the value is not a boolean
+     */
+    private static boolean booleanField(JsonObject config, String field) {
+        Object value = config.getValue(field);
+        if (value == null) {
+            return true;
+        }
+        if (value instanceof Boolean flag) {
+            return flag;
+        }
+        throw new IllegalArgumentException("AWS SSM store: field '" + field + "' has the wrong type");
     }
 
     /**

@@ -132,6 +132,7 @@ Thrown as `IllegalArgumentException` from the factory (surfaces as `BootstrapCon
 
 - `path` missing or blank, or a `path` that names no segment after normalization (`/`): reading the entire parameter store is not allowed
 - `prefix` contains blank dot-segments (e.g. `"a..b"`, `".app"`, `"app."`); a blank `prefix` counts as absent
+- a field of the wrong JSON type (for example `region: 5` or `recursive: "yes"`); the message names the field and never the value
 - the `path` and `prefix` messages name the field and never carry the rejected value
 - `connectTimeoutMs` or `readTimeoutMs` is zero, negative, or non-integer; the message names the field and does not carry the rejected value
 

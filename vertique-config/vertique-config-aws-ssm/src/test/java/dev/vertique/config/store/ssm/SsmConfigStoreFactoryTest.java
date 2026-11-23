@@ -862,4 +862,36 @@ class SsmConfigStoreFactoryTest {
             ctx.completeNow();
         }
     }
+
+    // --- Wrong-typed fields ---
+
+    @Nested
+    @DisplayName("Wrong-typed fields")
+    class WrongTypedFields {
+
+        @Test
+        @DisplayName("a wrong-typed scalar fails with an IllegalArgumentException naming the field, not the value")
+        void wrongTypedScalarNamesTheField(Vertx vertx) {
+            Object[][] cases = {
+                {"region", 7531},
+                {"endpointOverride", true},
+                {"recursive", "perhaps"},
+                {"withDecryption", "perhaps"},
+                {"prefix", 7531},
+                {"path", 7531},
+            };
+            for (Object[] c : cases) {
+                String field = (String) c[0];
+                JsonObject config = configWithPath("/myapp/prod/").put(field, c[1]);
+
+                IllegalArgumentException e =
+                        assertThrows(IllegalArgumentException.class, () -> factory.create(vertx, config));
+
+                assertTrue(e.getMessage().contains("'" + field + "'"), e.getMessage());
+                assertFalse(e.getMessage().contains("7531"), e.getMessage());
+                assertFalse(e.getMessage().contains("perhaps"), e.getMessage());
+                assertFalse(e.getMessage().contains("true"), e.getMessage());
+            }
+        }
+    }
 }
