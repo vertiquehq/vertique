@@ -31,8 +31,8 @@ import jakarta.inject.Singleton;
  * {@code verticleDeploymentManager()} accessors expose the lifecycle inputs the runner consumes.
  *
  * <p>The runner reproduces the old {@code MainVerticle} choreography exactly through lifecycle
- * phases: Jackson configuration runs as the {@code CONFIGURE}-phase step contributed by
- * {@link CoreLifecycleStepsModule}; the {@code MIGRATE}-phase {@code FlywayMigrationStartupStep}
+ * phases: {@link CoreLifecycleStepsModule} contributes the {@code VALIDATE}-phase compose-validation
+ * step and the {@code AFTER_START} readiness step; the {@code MIGRATE}-phase {@code FlywayMigrationStartupStep}
  * contributed by {@link DbFlywayModule} runs {@code migrationRunner().migrate(vertx)} before any
  * verticle deploys; then the verticles deploy ({@code INFRA} management first, then {@code EDGE}
  * HTTP). This preserves the legacy migrate &rarr; deploy ordering — and because Flyway is now a
@@ -48,8 +48,8 @@ import jakarta.inject.Singleton;
  *   <li>{@link DbFlywayModule} — Flyway migration runner and its {@code MIGRATE}-phase startup step</li>
  *   <li>{@link ManagementModule} — Health check endpoints on management port</li>
  *   <li>{@link DeployerModule} — Verticle deployment multibinding</li>
- *   <li>{@link CoreLifecycleStepsModule} — framework {@code CONFIGURE}/{@code VALIDATE} lifecycle
- *       steps (Jackson configuration + compose-validator harness)</li>
+ *   <li>{@link CoreLifecycleStepsModule} — framework {@code VALIDATE} compose-validation step and
+ *       {@code AFTER_START} readiness step</li>
  *   <li>{@link AppModule} — application-specific configuration bindings and verticle deployments</li>
  *   <li>{@link ResourceModule} — JAX-RS resource and exception mapper registration</li>
  * </ul>

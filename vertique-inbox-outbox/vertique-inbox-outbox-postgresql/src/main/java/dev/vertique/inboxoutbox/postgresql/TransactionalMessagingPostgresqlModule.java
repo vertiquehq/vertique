@@ -76,8 +76,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  *     DbPostgresqlModule.class,
  *     TransactionalMessagingPostgresqlModule.class,
  *     // optional adapter modules:
- *     // InboxOutboxServicesModule.class,
- *     // InboxOutboxKafkaModule.class,
+ *     // TransactionalMessagingServiceModule.class,
+ *     // TransactionalMessagingKafkaModule.class,
  * })
  * public interface AppComponent { ... }
  * }</pre>

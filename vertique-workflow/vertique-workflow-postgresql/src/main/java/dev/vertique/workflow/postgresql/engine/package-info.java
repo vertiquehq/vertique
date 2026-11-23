@@ -8,7 +8,7 @@
  * Side-effect routing lives in {@code RecorderRouter} (package-private in
  * {@code vertique-workflow-engine}).
  *
- * <p>{@link WorkflowPostgresqlModule} provides the eight PostgreSQL workflow stores as scoped
+ * <p>{@link WorkflowPostgresqlModule} provides the PostgreSQL workflow stores as scoped
  * instances built with the optional {@code DbSchemas} placement, so every workflow table is read and
  * written in the schema mapped for {@code workflow} (and resolves through the connection's default
  * schema when no mapping exists). {@link WorkflowMigrationsModule} declares the packaged schema

@@ -214,7 +214,7 @@ public final class WorkflowDefinitionDocumentValidator {
      * validator that serves documents from an untrusted source must use the constructor that takes the
      * type-name index, which never loads a class by name.
      *
-     * @param lookup facade over all 10 named callback registries; non-null
+     * @param lookup facade over all named callback registries; non-null
      * @param profile expression profile for pre-compiling {@code when} expressions; may be null
      *     (expression pre-compilation is then skipped)
      * @throws NullPointerException if {@code lookup} is null
@@ -230,7 +230,7 @@ public final class WorkflowDefinitionDocumentValidator {
      * (types for state and payloads, contracts for the contract); a name the index does not know is
      * reported as an unresolvable violation and no class is loaded by name.
      *
-     * @param lookup facade over all 10 named callback registries; non-null
+     * @param lookup facade over all named callback registries; non-null
      * @param profile expression profile for pre-compiling {@code when} expressions; may be null
      * @param typeNames the type-name index that resolves the names; non-null
      * @throws NullPointerException if {@code lookup} or {@code typeNames} is null
@@ -259,7 +259,7 @@ public final class WorkflowDefinitionDocumentValidator {
      * <p>Equivalent to {@code new WorkflowDefinitionDocumentValidator(lookup, null)}, so it carries the
      * same trusted-documents-only class-loader fallback.
      *
-     * @param lookup facade over all 10 named callback registries; non-null
+     * @param lookup facade over all named callback registries; non-null
      * @throws NullPointerException if {@code lookup} is null
      */
     public WorkflowDefinitionDocumentValidator(RegisteredIdentifierLookup lookup) {
