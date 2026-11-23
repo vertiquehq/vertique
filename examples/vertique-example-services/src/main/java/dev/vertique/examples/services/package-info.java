@@ -13,7 +13,7 @@
  * that component; at runtime the launcher's bootstrap verticle discovers that factory and the
  * host-neutral lifecycle runner ({@code VertiqueApplicationBootstrap}) builds the component from the
  * pre-resolved {@code config()} tree and drives startup per lifecycle phase. The runner reproduces
- * the legacy deploy choreography: Jackson configuration via {@code CoreLifecycleStepsModule}
+ * the legacy deploy choreography: the process JSON codec install via {@code JsonRuntimeModule}
  * ({@code CONFIGURE}), the management verticle ({@code INFRA}), then the service verticles via the
  * {@code SERVICES}-phase {@code ServiceDeploymentStartupStep} contributed by {@code DispatchModule}
  * (running {@code serviceDeploymentManager().deployAll()} before any {@code SERVICES}-phase

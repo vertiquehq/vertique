@@ -41,8 +41,10 @@ import jakarta.inject.Singleton;
  * {@code verticleDeploymentManager()} accessors expose the lifecycle inputs the runner consumes.
  *
  * <p>The runner reproduces the old {@code MainVerticle} choreography exactly through lifecycle
- * phases: Jackson configuration runs as the {@code CONFIGURE}-phase step contributed by
- * {@link CoreLifecycleStepsModule}; the {@code INFRA}-phase verticle (management) deploys; the
+ * phases: the {@code CONFIGURE}-phase step of {@code JsonRuntimeModule} (brought in by {@code
+ * RestModule}) installs the process JSON codec; {@link CoreLifecycleStepsModule} contributes the
+ * {@code VALIDATE}-phase compose-validation step and the {@code AFTER_START} readiness step; the
+ * {@code INFRA}-phase verticle (management) deploys; the
  * {@code SERVICES}-phase {@code ServiceDeploymentStartupStep} contributed by {@link DispatchModule}
  * runs {@code serviceDeploymentManager().deployAll()} before any {@code SERVICES}-phase verticle;
  * then the {@code EDGE}-phase verticle (HTTP) deploys. This preserves the legacy
@@ -56,8 +58,8 @@ import jakarta.inject.Singleton;
  *   <li>{@link DispatchModule} — Event bus service dispatch infrastructure (includes DeployerModule);
  *       also contributes the paired {@code SERVICES}-phase service deploy/undeploy lifecycle steps</li>
  *   <li>{@link ManagementModule} — Health check endpoints on management port</li>
- *   <li>{@link CoreLifecycleStepsModule} — framework {@code CONFIGURE}/{@code VALIDATE} lifecycle
- *       steps (Jackson configuration + compose-validator harness)</li>
+ *   <li>{@link CoreLifecycleStepsModule} — framework {@code VALIDATE} compose-validation step and
+ *       {@code AFTER_START} readiness step</li>
  *   <li>{@link JwtAuthModule} — JWT bearer authentication, authorization, and security context</li>
  *   <li>{@link AppModule} — Application-specific configuration bindings</li>
  *   <li>{@link GeneratedJaxRsResourcesModule} — auto-generated {@code @JaxRsResources} bindings

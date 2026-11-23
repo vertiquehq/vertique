@@ -35,8 +35,10 @@ import jakarta.inject.Singleton;
  * {@code verticleDeploymentManager()} accessors expose the lifecycle inputs the runner consumes.
  *
  * <p>The runner reproduces the old {@code MainVerticle} choreography exactly through lifecycle
- * phases: Jackson configuration runs as the {@code CONFIGURE}-phase step contributed by
- * {@link CoreLifecycleStepsModule}; the {@code MIGRATE}-phase {@code FlywayMigrationStartupStep}
+ * phases: the {@code CONFIGURE}-phase step of {@code JsonRuntimeModule} (brought in by {@code
+ * RestModule}) installs the process JSON codec; {@link CoreLifecycleStepsModule} contributes the
+ * {@code VALIDATE}-phase compose-validation step and the {@code AFTER_START} readiness step; the
+ * {@code MIGRATE}-phase {@code FlywayMigrationStartupStep}
  * contributed by {@link DbFlywayModule} runs {@code migrationRunner().migrate(vertx)} before any
  * verticle deploys (so the job tables exist before any poller starts — replacing the manual
  * {@code migrationRunner().migrate(vertx)} call); the {@code INFRA}-phase verticle (management)
@@ -66,8 +68,8 @@ import jakarta.inject.Singleton;
  *       runs with that user reconstructed as its subject-of-record. Requires the
  *       {@code identity.snapshot.hmacKeys.active} config section (see the example config)</li>
  *   <li>{@link ManagementModule} — health check endpoints on management port</li>
- *   <li>{@link CoreLifecycleStepsModule} — framework {@code CONFIGURE}/{@code VALIDATE} lifecycle
- *       steps (Jackson configuration + compose-validator harness)</li>
+ *   <li>{@link CoreLifecycleStepsModule} — framework {@code VALIDATE} compose-validation step and
+ *       {@code AFTER_START} readiness step</li>
  *   <li>{@link AppModule} — application-specific configuration and security stub bindings</li>
  *   <li>{@link WebhookModule} — webhook REST client and delayed job executor</li>
  *   <li>{@link GeneratedDelayedJobClientsModule} — APT-generated module that provides one

@@ -34,8 +34,9 @@ import jakarta.inject.Singleton;
  * ({@code VertiqueApplicationBootstrap}) drives startup and shutdown — there is no hand-written
  * {@code MainVerticle}. The inherited {@code startupSteps()}/{@code shutdownSteps()}/
  * {@code verticleDeploymentManager()} accessors expose the lifecycle inputs the runner consumes;
- * {@link CoreLifecycleStepsModule} contributes the {@code VALIDATE}-phase compose-validation step
- * and the {@code AFTER_START} readiness step.
+ * the {@code CONFIGURE}-phase step of {@code JsonRuntimeModule} (brought in by {@code RestModule})
+ * installs the process JSON codec; {@link CoreLifecycleStepsModule} contributes the {@code
+ * VALIDATE}-phase compose-validation step and the {@code AFTER_START} readiness step.
  *
  * <p>Includes:
  * <ul>

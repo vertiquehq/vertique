@@ -31,8 +31,10 @@ import jakarta.inject.Singleton;
  * {@code verticleDeploymentManager()} accessors expose the lifecycle inputs the runner consumes.
  *
  * <p>The runner reproduces the old {@code MainVerticle} choreography exactly through lifecycle
- * phases: {@link CoreLifecycleStepsModule} contributes the {@code VALIDATE}-phase compose-validation
- * step and the {@code AFTER_START} readiness step; the {@code MIGRATE}-phase {@code FlywayMigrationStartupStep}
+ * phases: the {@code CONFIGURE}-phase step of {@code JsonRuntimeModule} (brought in by {@code
+ * RestModule}) installs the process JSON codec; {@link CoreLifecycleStepsModule} contributes the
+ * {@code VALIDATE}-phase compose-validation step and the {@code AFTER_START} readiness step; the
+ * {@code MIGRATE}-phase {@code FlywayMigrationStartupStep}
  * contributed by {@link DbFlywayModule} runs {@code migrationRunner().migrate(vertx)} before any
  * verticle deploys; then the verticles deploy ({@code INFRA} management first, then {@code EDGE}
  * HTTP). This preserves the legacy migrate &rarr; deploy ordering — and because Flyway is now a
