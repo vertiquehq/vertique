@@ -4,6 +4,7 @@
 package dev.vertique.ratelimit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dagger.BindsInstance;
 import dagger.Component;
@@ -72,6 +73,16 @@ class RateLimitPolicyMergeTest {
                 .isEqualTo(java.util.OptionalLong.of(CONFIG_CAPACITY - CONFIG_DEFAULT_COST));
     }
 
+    @Test
+    void shouldRejectTwoProgrammaticPoliciesWithTheSameName(Vertx vertx) {
+        TestComponentWithDuplicate component = DaggerRateLimitPolicyMergeTest_TestComponentWithDuplicate.factory()
+                .create(vertx, new ConfigFixtureModule(new JsonObject()));
+
+        assertThatThrownBy(component::rateLimiters)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Duplicate rate-limit policy name: " + POLICY_NAME);
+    }
+
     /** A Dagger {@code @IntoSet}-style programmatic contribution, built the way a @Provides factory would. */
     private static RateLimitPolicy programmaticPolicy() {
         return new RateLimitPolicy(
@@ -138,6 +149,43 @@ class RateLimitPolicyMergeTest {
         @Provides
         static ConfigParser configParser() {
             return new DefaultConfigParser(DefaultConfigMapper.lenient());
+        }
+    }
+
+    /** A second contribution under the same name as {@link PolicyModule}'s, differing in revision. */
+    @Module
+    static final class SameNamePolicyModule {
+
+        @Provides
+        @IntoSet
+        RateLimitPolicy sameNamePolicy() {
+            RateLimitPolicy base = programmaticPolicy();
+            return new RateLimitPolicy(
+                    base.name(),
+                    base.enabled(),
+                    base.mode(),
+                    base.failureMode(),
+                    "r3",
+                    base.defaultCost(),
+                    base.algorithm());
+        }
+    }
+
+    @Singleton
+    @Component(
+            modules = {
+                RateLimitCoreModule.class,
+                PolicyModule.class,
+                SameNamePolicyModule.class,
+                ConfigFixtureModule.class
+            })
+    interface TestComponentWithDuplicate {
+
+        RateLimiters rateLimiters();
+
+        @Component.Factory
+        interface Factory {
+            TestComponentWithDuplicate create(@BindsInstance Vertx vertx, ConfigFixtureModule configFixtureModule);
         }
     }
 

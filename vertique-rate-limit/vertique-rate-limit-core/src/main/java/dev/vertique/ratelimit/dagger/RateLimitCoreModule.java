@@ -271,19 +271,24 @@ public abstract class RateLimitCoreModule {
      * Merges root-configuration policies over Dagger {@code @IntoSet}-contributed (programmatic)
      * policies: a config policy replaces a same-name programmatic policy <strong>wholesale</strong>
      * — fields never merge across tiers. A name
-     * present in only one tier passes through unchanged. This is a pure resolution step; it never
-     * rejects a same-name overlap between tiers as a duplicate — that override is the intended
-     * mechanism. {@link RateLimiters}'s own constructor separately rejects any duplicate name that
-     * survives resolution into one flat set.
+     * present in only one tier passes through unchanged. A same-name overlap between tiers is never
+     * rejected — that override is the intended mechanism — but two programmatic policies sharing a
+     * name are a duplicate within one tier and fail startup here, since the name-keyed merge would
+     * otherwise drop one silently before {@link RateLimiters}'s own constructor could reject it.
      *
      * @param configPolicies policies resolved from typed {@code rateLimit.policies.<name>} configuration
      * @param programmaticPolicies policies contributed via Dagger {@code @IntoSet RateLimitPolicy}
      * @return the merged policy set, one entry per distinct name, config-tier winning on overlap
+     * @throws IllegalStateException if two programmatic policies share a name
      */
     private static Set<RateLimitPolicy> mergeConfigOverProgrammatic(
             Set<RateLimitPolicy> configPolicies, Set<RateLimitPolicy> programmaticPolicies) {
         Map<String, RateLimitPolicy> merged = new LinkedHashMap<>();
-        programmaticPolicies.forEach(policy -> merged.put(policy.name(), policy));
+        for (RateLimitPolicy policy : programmaticPolicies) {
+            if (merged.put(policy.name(), policy) != null) {
+                throw new IllegalStateException("Duplicate rate-limit policy name: " + policy.name());
+            }
+        }
         configPolicies.forEach(policy -> merged.put(policy.name(), policy));
         return Set.copyOf(merged.values());
     }
