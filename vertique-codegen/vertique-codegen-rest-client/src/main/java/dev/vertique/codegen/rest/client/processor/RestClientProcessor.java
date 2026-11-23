@@ -150,9 +150,8 @@ public final class RestClientProcessor extends AbstractProcessor {
             boolean pathsOk = pathPlaceholderValidator.validate(model);
 
             if (!verbsOk || !returnTypesOk || !pathsOk) {
-                // Do not emit if validation failed
-                emitted = true;
-                return false;
+                // Do not emit for this interface; keep validating the rest of the round
+                continue;
             }
 
             // Resolve bean models for this interface BEFORE proxy emit so the proxy can emit
