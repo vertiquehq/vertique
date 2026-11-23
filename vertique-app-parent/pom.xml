@@ -99,7 +99,7 @@ SPDX-License-Identifier: EUPL-1.2
             <plugin>
                 <groupId>com.diffplug.spotless</groupId>
                 <artifactId>spotless-maven-plugin</artifactId>
-                <version>3.11.0</version>
+                <version>3.12.0</version>
                 <configuration>
                     <java>
                         <!-- Pinned to the formatter spotless 3.10.x defaulted to; spotless 3.11.0 defaults to a newer one that reflows code. -->
