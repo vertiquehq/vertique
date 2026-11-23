@@ -7,6 +7,7 @@ import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.core.validation.ViolationDetail;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.actor.WorkflowActorMaps;
+import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.engine.executor.ClaimLostException;
 import dev.vertique.workflow.engine.executor.CommandActors;
@@ -17,7 +18,6 @@ import dev.vertique.workflow.engine.executor.WorkflowSegments;
 import dev.vertique.workflow.engine.history.DecisionLog;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
-import dev.vertique.workflow.engine.spi.CommandActor;
 import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.DedupClaim;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
@@ -2063,7 +2063,8 @@ final class TaskLifecycleService {
         return actors.captured().compose(reassigner -> reassign(cmd, reassigner, tx));
     }
 
-    private Future<TaskMutationResult> reassign(TaskReassignmentCommand cmd, CommandActor reassigner, SqlClient tx) {
+    private Future<TaskMutationResult> reassign(
+            TaskReassignmentCommand cmd, WorkflowAttribution reassigner, SqlClient tx) {
         return taskStore.findById(cmd.taskId(), tx).compose(optTask -> {
             if (optTask.isEmpty()) {
                 return Future.failedFuture(new WorkflowTaskNotFoundException(cmd.taskId()));
@@ -2127,7 +2128,7 @@ final class TaskLifecycleService {
             TaskReassignmentCommand cmd,
             TaskRecord task,
             WorkflowInstance inst,
-            CommandActor reassigner,
+            WorkflowAttribution reassigner,
             SqlClient tx) {
         Instant now = clock.instant();
         // Lock the task row first so the expectedAssignment precondition is checked against the

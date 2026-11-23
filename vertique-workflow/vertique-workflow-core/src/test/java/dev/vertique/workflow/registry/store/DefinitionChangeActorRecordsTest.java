@@ -6,8 +6,10 @@ package dev.vertique.workflow.registry.store;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import dev.vertique.workflow.history.HistoryAttribution;
-import dev.vertique.workflow.state.HistoryActor;
+import dev.vertique.security.PrincipalRef;
+import dev.vertique.security.PrincipalType;
+import dev.vertique.workflow.actor.WorkflowActor;
+import dev.vertique.workflow.actor.WorkflowAttribution;
 import java.time.Instant;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
@@ -20,10 +22,12 @@ import org.junit.jupiter.api.Test;
 class DefinitionChangeActorRecordsTest {
 
     private static final Instant NOW = Instant.parse("2026-01-02T03:04:05Z");
-    private static final DefinitionChangeActor ALICE = new DefinitionChangeActor(
-            new HistoryActor(HistoryActor.Kind.USER, "alice", null), "carol", HistoryAttribution.VERIFIED);
+    private static final WorkflowAttribution ALICE = new WorkflowAttribution(
+            new WorkflowActor.User("alice"),
+            new PrincipalRef(PrincipalType.USER, "carol", java.util.Map.of()),
+            WorkflowAttribution.Status.VERIFIED);
 
-    private static WorkflowDefinitionRecord record(DefinitionChangeActor changedBy) {
+    private static WorkflowDefinitionRecord record(WorkflowAttribution changedBy) {
         return new WorkflowDefinitionRecord(
                 new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1),
                 DefinitionKind.CODE,
@@ -101,11 +105,9 @@ class DefinitionChangeActorRecordsTest {
     @Test
     @DisplayName("an actor needs its actor and its attribution, and the system actor needs a reason")
     void anActorRequiresItsComponents() {
-        assertThatThrownBy(() -> new DefinitionChangeActor(null, null, HistoryAttribution.ABSENT))
-                .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() ->
-                        new DefinitionChangeActor(new HistoryActor(HistoryActor.Kind.NONE, null, null), null, null))
-                .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> DefinitionChangeActor.system(null)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new WorkflowAttribution(null, null, WorkflowAttribution.Status.VERIFIED))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new WorkflowAttribution(null, null, null)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> WorkflowAttribution.system(null)).isInstanceOf(NullPointerException.class);
     }
 }

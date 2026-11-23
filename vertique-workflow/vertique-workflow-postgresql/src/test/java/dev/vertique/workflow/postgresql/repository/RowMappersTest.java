@@ -7,7 +7,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import dev.vertique.workflow.state.HistoryActor;
+import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import io.vertx.sqlclient.Row;
 import java.time.OffsetDateTime;
@@ -19,8 +19,8 @@ import org.junit.jupiter.api.Test;
 class RowMappersTest {
 
     @Test
-    @DisplayName("an actor kind this version does not know is read as none and does not fail the entry")
-    void unknownActorKindIsReadAsNone() throws Exception {
+    @DisplayName("an actor kind this version does not know is read as unavailable and does not fail the entry")
+    void unknownActorKindIsReadAsUnavailable() throws Exception {
         // Given a history row whose actor kind a newer version wrote
         Row row = mock(Row.class);
         when(row.getUUID("workflow_id")).thenReturn(UUID.randomUUID());
@@ -35,8 +35,19 @@ class RowMappersTest {
         // When the row is mapped
         WorkflowHistoryEntry entry = RowMappers.enrichedWorkflowHistoryEntry().map(row);
 
-        // Then the entry is read, with the actor kind none
-        assertThat(entry.actor()).isNotNull();
-        assertThat(entry.actor().kind()).isEqualTo(HistoryActor.Kind.NONE);
+        // The row remains readable, and the unknown actor is distinguishable from an absent caller.
+        assertThat(entry.attribution()).isEqualTo(WorkflowAttribution.unavailable());
+    }
+
+    @Test
+    void aNonObjectDelegatedSubjectIsUnavailable() {
+        Row row = mock(Row.class);
+        when(row.getString("actor_kind")).thenReturn("USER");
+        when(row.getString("actor_id")).thenReturn("u-1");
+        when(row.getString("attribution_status")).thenReturn("VERIFIED");
+        when(row.getJsonObject("on_behalf_of")).thenThrow(ClassCastException.class);
+
+        assertThat(PgWorkflowAttribution.read(row, "", "attribution_status"))
+                .isEqualTo(WorkflowAttribution.unavailable());
     }
 }

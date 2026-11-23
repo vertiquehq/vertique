@@ -4,7 +4,9 @@
 package dev.vertique.workflow.definition.service;
 
 import dev.vertique.core.context.ContextHolder;
+import dev.vertique.workflow.actor.WorkflowActorCapture;
 import dev.vertique.workflow.actor.WorkflowActorMapper;
+import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.pipeline.CompiledDefinition;
@@ -18,7 +20,6 @@ import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DeclaredSignalNames;
 import dev.vertique.workflow.registry.store.DefinitionActivation;
-import dev.vertique.workflow.registry.store.DefinitionChangeActor;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
@@ -43,8 +44,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Supplier;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Candidate compilation and metadata facade over the durable definition registry.
@@ -58,7 +57,6 @@ import org.slf4j.LoggerFactory;
 @Singleton
 public final class DefaultWorkflowDefinitionService implements WorkflowDefinitionService {
 
-    private static final Logger log = LoggerFactory.getLogger(DefaultWorkflowDefinitionService.class);
     private final WorkflowDefinitionPipeline pipeline;
     private final Provider<WorkflowRegistry> registryProvider;
     private final WorkflowDefinitionRegistryStore durable;
@@ -66,7 +64,7 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
     private final WorkflowDefinitionsConfig config;
     private final Optional<WorkflowPlanSchemaProducer> schemaProducer;
     private final boolean executorNode;
-    private final Supplier<DefinitionChangeActor> actors;
+    private final Supplier<WorkflowAttribution> actors;
 
     /**
      * Constructs the facade over the durable registry, its lifecycle and the typed policy, for a node that does not
@@ -118,7 +116,7 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
                 config,
                 schemaProducer,
                 executorConfig,
-                DefinitionChangeActor::unattributed);
+                WorkflowAttribution::absent);
     }
 
     /**
@@ -159,7 +157,7 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
             Optional<WorkflowDefinitionsConfig> config,
             Optional<WorkflowPlanSchemaProducer> schemaProducer,
             Optional<WorkflowExecutorConfig> executorConfig,
-            Supplier<DefinitionChangeActor> actors) {
+            Supplier<WorkflowAttribution> actors) {
         this.actors = Objects.requireNonNull(actors, "actors");
         this.executorNode = executorConfig.map(WorkflowExecutorConfig::enabled).orElse(true);
         this.schemaProducer = Objects.requireNonNull(schemaProducer, "schemaProducer");
@@ -184,7 +182,7 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
                 throw new WorkflowDefinitionException("workflow.definitions.maxDocumentSizeBytes exceeded: size cap of "
                         + config.maxDocumentSizeBytes() + " bytes (actual: " + content.length + " bytes)");
             // The caller's identity is taken here, before the compilation leaves the calling thread.
-            DefinitionChangeActor actor = actors.get();
+            WorkflowAttribution actor = actors.get();
             // Snapshot caller-owned bytes before asynchronous compilation.
             DefinitionResource resource = new DefinitionResource(content.clone(), format, metadata);
             return work(() -> {
@@ -222,24 +220,13 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
         });
     }
 
-    private static Supplier<DefinitionChangeActor> actorCapture(
+    private static Supplier<WorkflowAttribution> actorCapture(
             Optional<ContextHolder> holder, Optional<WorkflowActorMapper> mapper) {
         Objects.requireNonNull(holder, "holder");
-        if (holder.isEmpty()) return DefinitionChangeActor::unattributed;
+        if (holder.isEmpty()) return WorkflowAttribution::absent;
         ContextHolder bound = holder.get();
         WorkflowActorMapper resolved = WorkflowActorMapper.orDefault(mapper);
-        return () -> {
-            try {
-                return DefinitionChangeActor.capture(bound, resolved);
-            } catch (RuntimeException failure) {
-                // the message can carry identity text, so only the class is logged; the lifecycle falls back the same
-                // way
-                log.warn(
-                        "The actor of a definition registration could not be captured ({}); it is stored as absent",
-                        failure.getClass().getName());
-                return DefinitionChangeActor.unattributed();
-            }
-        };
+        return () -> WorkflowActorCapture.bestEffort(() -> WorkflowActorCapture.capture(bound, resolved));
     }
 
     /** Refuses an operation that compiles and builds a document on a node that does not run the executor. */
@@ -355,7 +342,7 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
             Map<String, String> nameBinding,
             @Nullable JsonObject signalNames,
             @Nullable JsonObject startSchema,
-            @Nullable DefinitionChangeActor actor) {
+            @Nullable WorkflowAttribution actor) {
         Instant now = Instant.now();
         return new WorkflowDefinitionRecord(
                 key,

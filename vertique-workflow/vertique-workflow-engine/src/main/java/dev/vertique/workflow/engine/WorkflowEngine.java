@@ -10,6 +10,7 @@ import dev.vertique.core.validation.ViolationDetail;
 import dev.vertique.db.IsolationLevel;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.actor.WorkflowActorMaps;
+import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.dedup.WorkflowDedupScopes;
 import dev.vertique.workflow.engine.executor.ClaimLostException;
@@ -23,7 +24,6 @@ import dev.vertique.workflow.engine.history.WorkflowHistoryEventPublisher;
 import dev.vertique.workflow.engine.intake.IntakeAdmission;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
-import dev.vertique.workflow.engine.spi.CommandActor;
 import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
@@ -1515,7 +1515,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx, int maxSteps) {
         // Every history entry the segment writes is logged with the actor that recorded the command it is about, and
         // with the actor of the executed command when it names none. The executor never reads the ambient identity.
-        CommandActor recorded = command.actor() == null ? CommandActor.none() : command.actor();
+        WorkflowAttribution recorded =
+                command.attribution() == null ? WorkflowAttribution.absent() : command.attribution();
         DefinitionKey pinned =
                 new DefinitionKey(head.definitionScopeKey(), head.definitionId(), head.definitionVersion());
         return decisions.segment(
@@ -2656,8 +2657,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * delivery without provenance keeps the capture as it is: an absent actor is recorded and a mapper failure
      * propagates unchanged.
      */
-    private Future<CommandActor> capturedForDelivery(CorrelatedSignal signal, String contractName) {
-        Future<CommandActor> captured = actors.captured();
+    private Future<WorkflowAttribution> capturedForDelivery(CorrelatedSignal signal, String contractName) {
+        Future<WorkflowAttribution> captured = actors.captured();
         if (signal.provenance() == null) {
             return captured;
         }
@@ -2668,7 +2669,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 refusal.initCause(result.cause());
                 return Future.failedFuture(refusal);
             }
-            if (result.result().kind() == CommandActor.Kind.NONE) {
+            if (result.result().status() == WorkflowAttribution.Status.ABSENT) {
                 return Future.failedFuture(new WorkflowSignalActorException(contractName, signal.signalName()));
             }
             return Future.succeededFuture(result.result());
@@ -3061,7 +3062,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * @return a {@link Future} that completes when the cancellation has been persisted
      */
     private Future<Void> doCancel(
-            WorkflowInstanceId id, String reason, WorkflowInstance inst, CommandActor canceller, SqlClient tx) {
+            WorkflowInstanceId id, String reason, WorkflowInstance inst, WorkflowAttribution canceller, SqlClient tx) {
         UUID waitTaskId = null;
         if (inst.waitType() == WaitType.TASK) {
             try {

@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.registry.store;
 
+import dev.vertique.workflow.actor.WorkflowAttribution;
 import io.vertx.core.Future;
 import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
@@ -130,7 +131,7 @@ public interface WorkflowDefinitionRegistryStore {
      * @param actor who made the change
      * @return the claim
      */
-    default Future<ActivationClaim> claim(DefinitionKey key, DefinitionChangeActor actor) {
+    default Future<ActivationClaim> claim(DefinitionKey key, WorkflowAttribution actor) {
         return claim(key);
     }
 
@@ -152,7 +153,7 @@ public interface WorkflowDefinitionRegistryStore {
      * @param actor who made the change
      * @return a future completed after the status changed
      */
-    default Future<Void> complete(ActivationClaim claim, DefinitionChangeActor actor) {
+    default Future<Void> complete(ActivationClaim claim, WorkflowAttribution actor) {
         return complete(claim);
     }
 
@@ -173,7 +174,7 @@ public interface WorkflowDefinitionRegistryStore {
      * @param actor who made the change
      * @return a future completed after the claim is released
      */
-    default Future<Void> release(ActivationClaim claim, DefinitionChangeActor actor) {
+    default Future<Void> release(ActivationClaim claim, WorkflowAttribution actor) {
         return release(claim);
     }
 
@@ -212,7 +213,7 @@ public interface WorkflowDefinitionRegistryStore {
      * @return a future completed after the status changed
      */
     default Future<Void> transition(
-            DefinitionKey key, DefinitionStatus from, DefinitionStatus to, DefinitionChangeActor actor) {
+            DefinitionKey key, DefinitionStatus from, DefinitionStatus to, WorkflowAttribution actor) {
         return transition(key, from, to);
     }
 
@@ -241,7 +242,7 @@ public interface WorkflowDefinitionRegistryStore {
      * @param actor who made the change
      * @return a future completed after the status changed
      */
-    default Future<Void> retire(DefinitionKey key, DefinitionChangeActor actor) {
+    default Future<Void> retire(DefinitionKey key, WorkflowAttribution actor) {
         return retire(key);
     }
 

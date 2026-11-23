@@ -205,8 +205,14 @@ public class ScopeMigrationIT {
                             "activation_attribution");
 
             // And who made the last change is kept in nullable columns next to the time of the change
-            assertThat(catalog.columnShape("workflow_definition_activations", "activation_actor_id"))
-                    .isEqualTo("character varying|255|YES|null");
+            assertThat(catalog.rows("""
+                            SELECT column_name || '|' || data_type || '|' || is_nullable
+                            FROM information_schema.columns
+                            WHERE table_schema = current_schema() AND table_name = 'workflow_definition_activations'
+                              AND column_name IN ('activation_actor_id', 'activation_on_behalf_of')
+                            ORDER BY column_name
+                            """))
+                    .containsExactly("activation_actor_id|text|YES", "activation_on_behalf_of|jsonb|YES");
             assertThat(catalog.columnNames("workflow_definitions"))
                     .contains(
                             "status_actor_kind",

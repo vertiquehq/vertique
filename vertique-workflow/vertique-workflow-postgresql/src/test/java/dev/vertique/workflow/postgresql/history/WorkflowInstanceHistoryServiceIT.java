@@ -8,6 +8,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.workflow.actor.WorkflowActor;
+import dev.vertique.workflow.actor.WorkflowActorMaps;
+import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.history.PendingCommand;
 import dev.vertique.workflow.history.WorkflowInstanceHistoryService;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
@@ -15,7 +18,6 @@ import dev.vertique.workflow.ops.WorkflowView;
 import dev.vertique.workflow.postgresql.executor.ActorScenario;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
-import dev.vertique.workflow.state.HistoryActor;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import io.vertx.core.Future;
@@ -134,10 +136,9 @@ public class WorkflowInstanceHistoryServiceIT {
                     .filteredOn(entry -> entry.entryType() == WorkflowEntryType.SIGNAL_RECEIVED)
                     .singleElement()
                     .satisfies(entry -> {
-                        assertThat(entry.actor())
-                                .isEqualTo(new HistoryActor(HistoryActor.Kind.SERVICE, "relay-svc", null));
-                        assertThat(entry.onBehalfOf()).isEqualTo("u-2");
-                        assertThat(entry.attributionStatus()).isEqualTo("VERIFIED");
+                        assertThat(entry.attribution().actor()).isEqualTo(new WorkflowActor.Service("relay-svc"));
+                        assertThat(entry.attribution().onBehalfOf().id()).isEqualTo("u-2");
+                        assertThat(entry.attribution().status()).isEqualTo(WorkflowAttribution.Status.VERIFIED);
                     });
 
             // And every decision names its definition, step, one plan hash, an executor and the entry version two
@@ -182,19 +183,19 @@ public class WorkflowInstanceHistoryServiceIT {
                     .isNotEmpty()
                     .allSatisfy(entry -> {
                         assertThat(entry.entryVersion()).isEqualTo(1);
-                        assertThat(entry.attributionStatus()).isNotNull();
+                        assertThat(entry.attribution().status()).isNotNull();
                         assertThat(entry.executorId()).isNull();
                         assertThat(entry.planHash()).isNull();
                         assertThat(entry.patchJson()).isNull();
                     });
 
             // And a start recorded with no security context is logged as no actor, not as a missing one
-            assertThat(all.getFirst().actor()).isEqualTo(new HistoryActor(HistoryActor.Kind.NONE, null, null));
+            assertThat(all.getFirst().attribution().actor()).isEqualTo(null);
 
             // And the pages concatenate to the same list, with every entry carrying its attribution status
             assertThat(paged).isEqualTo(all);
-            assertThat(paged)
-                    .allSatisfy(entry -> assertThat(entry.attributionStatus()).isNotNull());
+            assertThat(paged).allSatisfy(entry -> assertThat(entry.attribution().status())
+                    .isNotNull());
 
             // And afterSequence starts after the given entry and the limit bounds the page, at both ends of its range
             assertThat(await(history.entries(id, 3, 2)))
@@ -449,10 +450,8 @@ public class WorkflowInstanceHistoryServiceIT {
 
     /** Every new component except the entry version is null. */
     private static void assertNothingElseNew(WorkflowHistoryEntry entry) {
-        assertThat(entry.actor()).as("actor of %d", entry.sequence()).isNull();
-        assertThat(entry.onBehalfOf()).as("onBehalfOf of %d", entry.sequence()).isNull();
-        assertThat(entry.attributionStatus())
-                .as("attributionStatus of %d", entry.sequence())
+        assertThat(entry.attribution())
+                .as("attribution of %d", entry.sequence())
                 .isNull();
         assertThat(entry.executorId()).as("executorId of %d", entry.sequence()).isNull();
         assertThat(entry.commandId()).as("commandId of %d", entry.sequence()).isNull();
@@ -501,14 +500,18 @@ public class WorkflowInstanceHistoryServiceIT {
         }
 
         private static Step stepOf(WorkflowHistoryEntry entry) {
-            HistoryActor actor = entry.actor();
-            String described = actor == null
-                    ? "no actor"
-                    : actor.kind()
-                            + (actor.id() == null ? "" : "/" + actor.id())
-                            + (entry.onBehalfOf() == null ? "" : " for " + entry.onBehalfOf())
-                            + " "
-                            + entry.attributionStatus();
+            WorkflowAttribution attribution = entry.attribution();
+            String described = "no actor";
+            if (attribution != null) {
+                WorkflowActor actor = attribution.actor();
+                Map<String, String> mapped = actor == null ? Map.of("kind", "NONE") : WorkflowActorMaps.toMap(actor);
+                described = mapped.get("kind")
+                        + (actor == null || actor instanceof WorkflowActor.System ? "" : "/" + mapped.get("value"))
+                        + (attribution.onBehalfOf() == null
+                                ? ""
+                                : " for " + attribution.onBehalfOf().id())
+                        + " " + attribution.status();
+            }
             return new Step(entry.entryType(), entry.commandId(), described, entry.outcome());
         }
     }

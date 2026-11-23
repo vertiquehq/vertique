@@ -936,7 +936,7 @@ public final class DecisionScenario implements AutoCloseable {
                 .preparedQuery("SELECT sequence, entry_type, COALESCE(command_id, (payload_json->>'commandId')::bigint)"
                         + " AS command, step_id, outcome, definition_scope_key, definition_id, definition_version,"
                         + " plan_hash, state_version_before, state_version_after, executor_id, patch_json,"
-                        + " payload_json, entry_version, actor_kind, actor_id, on_behalf_of, attribution_status,"
+                        + " payload_json, entry_version, actor_kind, actor_id, on_behalf_of->>'id' AS on_behalf_of, attribution_status,"
                         + " row_to_json(h)::text AS row_text FROM workflow_history h WHERE workflow_id = $1"
                         + " ORDER BY sequence")
                 .execute(Tuple.of(id.value())))) {

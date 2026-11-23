@@ -5,6 +5,7 @@ package dev.vertique.workflow.engine;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
@@ -15,7 +16,6 @@ import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.ActivationClaim;
 import dev.vertique.workflow.registry.store.DefinitionActivation;
-import dev.vertique.workflow.registry.store.DefinitionChangeActor;
 import dev.vertique.workflow.registry.store.DefinitionFailure;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
@@ -1181,9 +1181,9 @@ class DefaultWorkflowDefinitionLifecycleTest {
         int claims;
         int completes;
         int releases;
-        DefinitionChangeActor claimedBy;
-        DefinitionChangeActor completedBy;
-        DefinitionChangeActor releasedBy;
+        WorkflowAttribution claimedBy;
+        WorkflowAttribution completedBy;
+        WorkflowAttribution releasedBy;
 
         @Override
         public Future<Optional<WorkflowDefinitionRecord>> find(DefinitionKey key) {
@@ -1198,19 +1198,19 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
-        public Future<ActivationClaim> claim(DefinitionKey key, DefinitionChangeActor actor) {
+        public Future<ActivationClaim> claim(DefinitionKey key, WorkflowAttribution actor) {
             claimedBy = actor;
             return claim(key);
         }
 
         @Override
-        public Future<Void> complete(ActivationClaim claim, DefinitionChangeActor actor) {
+        public Future<Void> complete(ActivationClaim claim, WorkflowAttribution actor) {
             completedBy = actor;
             return complete(claim);
         }
 
         @Override
-        public Future<Void> release(ActivationClaim claim, DefinitionChangeActor actor) {
+        public Future<Void> release(ActivationClaim claim, WorkflowAttribution actor) {
             releasedBy = actor;
             return release(claim);
         }

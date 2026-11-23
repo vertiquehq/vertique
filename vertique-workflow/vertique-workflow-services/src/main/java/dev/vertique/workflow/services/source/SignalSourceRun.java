@@ -11,7 +11,6 @@ import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityContexts;
 import dev.vertique.security.SecurityIdentity;
 import dev.vertique.security.authz.InvocationOrigin;
-import dev.vertique.workflow.actor.ActorText;
 import dev.vertique.workflow.dedup.WorkflowDedupScopes;
 import dev.vertique.workflow.exception.WorkflowIntakeRefusedException;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
@@ -468,10 +467,29 @@ final class SignalSourceRun<T> {
         log.warn(
                 "Source '{}' recorded no command for actor '{}': contract={}, signal={}, outcome={}",
                 plan.sourceName(),
-                ActorText.clean(identity.actor().id()),
+                actorForLog(identity.actor().id()),
                 target == null ? null : target.contractName(),
                 target == null ? null : target.signalName(),
                 verdict.outcome());
+    }
+
+    /** Formats an actor identifier for this single-line log message. */
+    private static String actorForLog(String text) {
+        StringBuilder kept = new StringBuilder(Math.min(text.length(), 255));
+        int count = 0;
+        for (int index = 0; index < text.length() && count < 255; ) {
+            int codePoint = text.codePointAt(index);
+            index += Character.charCount(codePoint);
+            if (Character.isISOControl(codePoint)
+                    || codePoint == 0x2028
+                    || codePoint == 0x2029
+                    || Character.getType(codePoint) == Character.FORMAT) {
+                continue;
+            }
+            kept.appendCodePoint(codePoint);
+            count++;
+        }
+        return kept.isEmpty() ? "[unprintable]" : kept.toString();
     }
 
     private static SourceDisposition fold(SourceDisposition sofar, SourceDisposition next) {

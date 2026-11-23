@@ -18,7 +18,7 @@ import dev.vertique.security.SystemIdentities;
 import dev.vertique.workflow.actor.DefaultWorkflowActorMapper;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.actor.WorkflowActorMapper;
-import dev.vertique.workflow.engine.spi.CommandActor;
+import dev.vertique.workflow.actor.WorkflowAttribution;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -132,16 +132,18 @@ class CommandActorsTest {
         var actor = actors.capture();
 
         // Then the kind, the id, the reason, the party acted for and the attribution status are the expected ones
-        assertThat(String.valueOf(actor.kind())).isEqualTo(kind);
-        if (id != null) {
-            assertThat(actor.id()).isEqualTo(id);
-        }
-        assertThat(actor.reason()).isEqualTo(reason);
-        assertThat(actor.onBehalfOf()).isEqualTo(onBehalfOf);
-        assertThat(String.valueOf(actor.attribution())).isEqualTo(attribution);
-        if (kind.equals("NONE")) {
-            assertThat(actor.id()).isNull();
-        }
+        WorkflowActor expected =
+                switch (kind) {
+                    case "USER" -> new WorkflowActor.User(id);
+                    case "SERVICE" -> new WorkflowActor.Service(id);
+                    case "SYSTEM" -> new WorkflowActor.System(reason);
+                    case "NONE" -> null;
+                    default -> throw new AssertionError(kind);
+                };
+        assertThat(actor.actor()).isEqualTo(expected);
+        assertThat(actor.onBehalfOf())
+                .isEqualTo(onBehalfOf == null ? null : new PrincipalRef(PrincipalType.USER, onBehalfOf, Map.of()));
+        assertThat(actor.status().name()).isEqualTo(attribution);
     }
 
     @Test
@@ -156,10 +158,9 @@ class CommandActorsTest {
         var actor = actors.capture();
 
         // Then the actor is still the service, with no party acted for, and the attribution is degraded
-        assertThat(String.valueOf(actor.kind())).isEqualTo("SERVICE");
-        assertThat(actor.id()).isEqualTo("relay-svc");
+        assertThat(actor.actor()).isEqualTo(new WorkflowActor.Service("relay-svc"));
         assertThat(actor.onBehalfOf()).isNull();
-        assertThat(String.valueOf(actor.attribution())).isEqualTo("DEGRADED");
+        assertThat(String.valueOf(actor.status())).isEqualTo("DEGRADED");
     }
 
     @Test
@@ -181,8 +182,8 @@ class CommandActorsTest {
         var anonymous = new CommandActors(holding(SecurityIdentity.anonymous()), recording).capture();
 
         // Then both are NONE and the mapper was never called
-        assertThat(String.valueOf(noContext.kind())).isEqualTo("NONE");
-        assertThat(String.valueOf(anonymous.kind())).isEqualTo("NONE");
+        assertThat(noContext).isEqualTo(WorkflowAttribution.absent());
+        assertThat(anonymous).isEqualTo(WorkflowAttribution.absent());
         assertThat(calls).isEmpty();
 
         // And with the service "bad" the capture throws the mapper's exception itself
@@ -193,63 +194,19 @@ class CommandActorsTest {
     }
 
     @Test
-    @DisplayName("ids and reasons are stripped of control characters and line separators, then cut at 255 characters")
-    void idsAndReasonsAreStrippedOfControlCharactersAndTruncated() {
-        // Given a user id of 300 characters with control characters and both separators scattered through it
-        String id = "a".repeat(50)
-                + "\n"
-                + "b".repeat(50)
-                + "\r"
-                + "c".repeat(50)
-                + "\u0000"
-                + "d".repeat(50)
-                + "\u001b"
-                + "e".repeat(50)
-                + "\u2028"
-                + "f".repeat(30)
-                + "\u2029"
-                + "g".repeat(14);
-        assertThat(id).hasSize(300);
-        String cleanId =
-                "a".repeat(50) + "b".repeat(50) + "c".repeat(50) + "d".repeat(50) + "e".repeat(50) + "f".repeat(5);
-
-        // When the actor is captured
+    void preservesIdsAndReasonsExactly() {
+        String id = "a".repeat(280) + "\n\u2028\u202e";
         var userActor = new CommandActors(holding(user(id)), new DefaultWorkflowActorMapper()).capture();
+        assertThat(userActor.actor()).isEqualTo(new WorkflowActor.User(id));
 
-        // Then no control character and no U+2028 or U+2029 remains, and the id is the first 255 after removal
-        assertThat(userActor.id()).hasSize(255).isEqualTo(cleanId);
-        assertThat(userActor.id().chars().anyMatch(Character::isISOControl)).isFalse();
-        assertThat(userActor.id()).doesNotContain("\u2028", "\u2029");
-
-        // And a system reason with a tab and a line separator loses both
+        String reason = "night\tly\u2028run";
         var systemActor = new CommandActors(
-                        holding(SystemIdentities.scheduledJob("night\tly\u2028run")), new DefaultWorkflowActorMapper())
+                        holding(SystemIdentities.scheduledJob(reason)), new DefaultWorkflowActorMapper())
                 .capture();
-        assertThat(systemActor.reason()).isEqualTo("nightlyrun");
+        assertThat(systemActor.actor()).isEqualTo(new WorkflowActor.System(reason));
 
-        // And the party acted for is cleaned and bounded in the same way
-        String subject = "u-" + "\u2028" + "\n" + "x".repeat(300);
-        var delegated = new CommandActors(holding(serviceActingFor("svc-1", subject)), new DefaultWorkflowActorMapper())
-                .capture();
-        assertThat(delegated.onBehalfOf()).hasSize(255).isEqualTo("u-" + "x".repeat(253));
-    }
-
-    @Test
-    @DisplayName("format characters are removed and an id left empty is logged with a placeholder, never as no id")
-    void formatCharactersAreRemovedAndAnEmptyIdGetsAPlaceholder() {
-        // Given a user id with a bidirectional override and a zero-width space inside
-        var actor = new CommandActors(holding(user("ali\u202ece\u200b")), new DefaultWorkflowActorMapper()).capture();
-
-        // Then they are gone
-        assertThat(actor.id()).isEqualTo("alice");
-
-        // And given an id made only of such characters
-        var unprintable =
-                new CommandActors(holding(user("\u202e\u200b\u2028\n")), new DefaultWorkflowActorMapper()).capture();
-
-        // Then the user is logged with the placeholder, verified, not with a null id
-        assertThat(unprintable.kind()).isEqualTo(CommandActor.Kind.USER);
-        assertThat(unprintable.id()).isEqualTo(CommandActors.UNPRINTABLE);
-        assertThat(unprintable.attribution()).isEqualTo(CommandActor.Attribution.VERIFIED);
+        var delegated =
+                new CommandActors(holding(serviceActingFor("svc-1", id)), new DefaultWorkflowActorMapper()).capture();
+        assertThat(delegated.onBehalfOf()).isEqualTo(new PrincipalRef(PrincipalType.USER, id, Map.of()));
     }
 }

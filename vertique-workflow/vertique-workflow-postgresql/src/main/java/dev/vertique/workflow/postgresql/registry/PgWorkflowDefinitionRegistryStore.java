@@ -7,16 +7,16 @@ import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.postgresql.PgSqlRepository;
 import dev.vertique.db.postgresql.PgTableNames;
+import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.engine.WorkflowExceptionMapper;
 import dev.vertique.workflow.engine.spi.TransactionalDefinitionReads;
 import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
-import dev.vertique.workflow.history.HistoryAttribution;
+import dev.vertique.workflow.postgresql.repository.PgWorkflowAttribution;
 import dev.vertique.workflow.registry.store.ActivationClaim;
 import dev.vertique.workflow.registry.store.DefinitionActivation;
-import dev.vertique.workflow.registry.store.DefinitionChangeActor;
 import dev.vertique.workflow.registry.store.DefinitionFailure;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
@@ -29,7 +29,6 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
-import dev.vertique.workflow.state.HistoryActor;
 import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.VertxException;
@@ -254,7 +253,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 + " (scope_key, definition_id, target_scope_key, definition_version, activated_at, "
                 + ACTIVATION_ACTOR_COLUMNS + ")"
                 + " SELECT $1::varchar,$2::varchar,$3::varchar,$4::bigint,$5::timestamptz,"
-                + " $6::varchar,$7::varchar,$8::varchar,$9::varchar,$10::varchar WHERE EXISTS (SELECT 1 FROM "
+                + " $6::varchar,$7::varchar,$8::varchar,$9::jsonb,$10::varchar WHERE EXISTS (SELECT 1 FROM "
                 + definitions
                 + " WHERE scope_key=$3 AND definition_id=$2 AND definition_version=$4 AND status='AVAILABLE')"
                 + " ON CONFLICT (scope_key, definition_id) DO UPDATE SET target_scope_key=EXCLUDED.target_scope_key,"
@@ -273,7 +272,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 + " AS existing (scope_key, definition_id, target_scope_key, definition_version, activated_at, "
                 + ACTIVATION_ACTOR_COLUMNS + ")"
                 + " SELECT '" + WorkflowScopes.DEFAULT + "',$1::varchar,'" + WorkflowScopes.DEFAULT
-                + "',$2::bigint,clock_timestamp(),$3::varchar,$4::varchar,$5::varchar,$6::varchar,$7::varchar"
+                + "',$2::bigint,clock_timestamp(),$3::varchar,$4::varchar,$5::varchar,$6::jsonb,$7::varchar"
                 + " WHERE EXISTS (SELECT 1 FROM " + definitions
                 + " WHERE scope_key='" + WorkflowScopes.DEFAULT
                 + "' AND definition_id=$1 AND definition_version=$2 AND status='AVAILABLE')"
@@ -509,7 +508,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     @Override
-    public Future<ActivationClaim> claim(DefinitionKey key, @Nullable DefinitionChangeActor actor) {
+    public Future<ActivationClaim> claim(DefinitionKey key, @Nullable WorkflowAttribution actor) {
         return attempt(() -> {
             Objects.requireNonNull(key, "key");
             return mutate(key, (tx, rows) -> {
@@ -519,7 +518,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                     throw invalid(key, "cannot claim status " + status);
                 ActivationClaim claim = new ActivationClaim(key, UUID.randomUUID());
                 return tx.preparedQuery(sqlClaim)
-                        .execute(withActor(parameters(key).addUUID(claim.token()), actor))
+                        .execute(PgWorkflowAttribution.bind(parameters(key).addUUID(claim.token()), actor))
                         .map(claim);
             });
         });
@@ -531,7 +530,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     @Override
-    public Future<Void> complete(ActivationClaim claim, @Nullable DefinitionChangeActor actor) {
+    public Future<Void> complete(ActivationClaim claim, @Nullable WorkflowAttribution actor) {
         return attempt(() -> {
             Objects.requireNonNull(claim, "claim");
             DefinitionKey key = claim.key();
@@ -542,7 +541,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                         || !claim.token().equals(current.getUUID("publish_token")))
                     throw conflict(Reason.STALE_CLAIM, key, "publish token is obsolete");
                 return tx.preparedQuery(sqlComplete)
-                        .execute(withActor(parameters(key).addUUID(claim.token()), actor))
+                        .execute(PgWorkflowAttribution.bind(parameters(key).addUUID(claim.token()), actor))
                         .mapEmpty();
             });
         });
@@ -554,11 +553,11 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     @Override
-    public Future<Void> release(ActivationClaim claim, @Nullable DefinitionChangeActor actor) {
+    public Future<Void> release(ActivationClaim claim, @Nullable WorkflowAttribution actor) {
         return attempt(() -> {
             Objects.requireNonNull(claim, "claim");
             return mutate(claim.key(), (tx, rows) -> tx.preparedQuery(sqlRelease)
-                    .execute(withActor(parameters(claim.key()).addUUID(claim.token()), actor))
+                    .execute(PgWorkflowAttribution.bind(parameters(claim.key()).addUUID(claim.token()), actor))
                     .mapEmpty());
         });
     }
@@ -570,7 +569,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
 
     @Override
     public Future<Void> transition(
-            DefinitionKey key, DefinitionStatus from, DefinitionStatus to, @Nullable DefinitionChangeActor actor) {
+            DefinitionKey key, DefinitionStatus from, DefinitionStatus to, @Nullable WorkflowAttribution actor) {
         return attempt(() -> {
             Objects.requireNonNull(key, "key");
             Objects.requireNonNull(from, "from");
@@ -592,8 +591,8 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 Future<Void> guard =
                         to == DefinitionStatus.DEPRECATED ? guardDefaultCurrent(tx, key) : Future.succeededFuture();
                 return guard.compose(ignored -> tx.preparedQuery(sqlTransition)
-                        .execute(
-                                withActor(parameters(key).addString(from.name()).addString(to.name()), actor))
+                        .execute(PgWorkflowAttribution.bind(
+                                parameters(key).addString(from.name()).addString(to.name()), actor))
                         .map(updated -> {
                             if (updated.rowCount() != 1)
                                 throw invalid(key, "expected status " + from + " but the row changed");
@@ -609,7 +608,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     @Override
-    public Future<Void> retire(DefinitionKey key, @Nullable DefinitionChangeActor actor) {
+    public Future<Void> retire(DefinitionKey key, @Nullable WorkflowAttribution actor) {
         return attempt(() -> {
             Objects.requireNonNull(key, "key");
             return mutate(key.definitionId(), (tx, rows) -> {
@@ -623,7 +622,8 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                         .compose(ignored ->
                                 "DEPRECATED".equals(status) ? guardDeprecated(tx, key) : Future.<Void>succeededFuture())
                         .compose(ignored -> tx.preparedQuery(sqlRetire)
-                                .execute(withActor(parameters(key).addString(status), actor))
+                                .execute(PgWorkflowAttribution.bind(
+                                        parameters(key).addString(status), actor))
                                 .map(updated -> {
                                     if (updated.rowCount() != 1)
                                         throw invalid(key, "expected status " + status + " but the row changed");
@@ -646,7 +646,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                     throw invalid(target, "cannot activate status " + status + ", only AVAILABLE can be activated");
                 requireScopeContract(rows, activation, current.getString("contract_name"));
                 return tx.preparedQuery(sqlPutActivation)
-                        .execute(withActor(
+                        .execute(PgWorkflowAttribution.bind(
                                 Tuple.of(
                                         activation.scopeKey(),
                                         activation.definitionId(),
@@ -815,12 +815,12 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
      * that became the default from one that left a higher default as it was.
      */
     private Future<Boolean> activateFirstPublication(
-            SqlConnection tx, DefinitionKey key, boolean activateDefault, @Nullable DefinitionChangeActor actor) {
+            SqlConnection tx, DefinitionKey key, boolean activateDefault, @Nullable WorkflowAttribution actor) {
         if (!activateDefault) return Future.succeededFuture(false);
         if (!WorkflowScopes.DEFAULT.equals(key.scopeKey()))
             throw new IllegalStateException("only a version of the default scope can become its current version");
         return tx.preparedQuery(sqlActivateDefault)
-                .execute(withActor(Tuple.of(key.definitionId(), key.definitionVersion()), actor))
+                .execute(PgWorkflowAttribution.bind(Tuple.of(key.definitionId(), key.definitionVersion()), actor))
                 .map(result -> result.rowCount() > 0);
     }
 
@@ -911,7 +911,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     private Future<Void> insertCode(SqlConnection tx, WorkflowDefinitionRecord record, DefinitionStatus status) {
         var p = record.provenance();
         return tx.preparedQuery(sqlInsertCode)
-                .execute(withActor(
+                .execute(PgWorkflowAttribution.bind(
                         parameters(record.key())
                                 .addString(record.contractName())
                                 .addString(record.stateTypeName())
@@ -1025,7 +1025,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
             DefinitionStatus status) {
         var p = record.provenance();
         return tx.preparedQuery(sqlInsert)
-                .execute(withActor(
+                .execute(PgWorkflowAttribution.bind(
                         parameters(record.key())
                                 .addString(record.contractName())
                                 .addString(record.stateTypeName())
@@ -1109,49 +1109,6 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 r.getString("scope_key"), r.getString("definition_id"), r.getLong("definition_version"));
     }
 
-    /**
-     * Adds the five values that record who made a change: the kind, id and reason of the actor, the party it acted
-     * for and the attribution. A change with no actor writes five nulls, so a change that is not attributed never
-     * keeps the actor of an earlier one.
-     */
-    private static Tuple withActor(Tuple tuple, @Nullable DefinitionChangeActor change) {
-        if (change == null) {
-            return tuple.addString(null)
-                    .addString(null)
-                    .addString(null)
-                    .addString(null)
-                    .addString(null);
-        }
-        HistoryActor actor = change.actor();
-        return tuple.addString(actor.kind().name())
-                .addString(actor.id())
-                .addString(actor.reason())
-                .addString(change.onBehalfOf())
-                .addString(change.attribution().name());
-    }
-
-    /** Reads who made a change; a row that records no kind reads as not attributed, and an unknown value as none. */
-    private static @Nullable DefinitionChangeActor storedActor(
-            Row r, String kind, String id, String reason, String onBehalfOf, String attribution) {
-        String storedKind = r.getString(kind);
-        if (storedKind == null) return null;
-        HistoryActor.Kind actorKind;
-        try {
-            actorKind = HistoryActor.Kind.valueOf(storedKind);
-        } catch (IllegalArgumentException unknown) {
-            actorKind = HistoryActor.Kind.NONE;
-        }
-        HistoryAttribution status;
-        String storedStatus = r.getString(attribution);
-        try {
-            status = storedStatus == null ? HistoryAttribution.ABSENT : HistoryAttribution.valueOf(storedStatus);
-        } catch (IllegalArgumentException unknown) {
-            status = HistoryAttribution.ABSENT;
-        }
-        return new DefinitionChangeActor(
-                new HistoryActor(actorKind, r.getString(id), r.getString(reason)), r.getString(onBehalfOf), status);
-    }
-
     private static Tuple parameters(DefinitionKey key) {
         return Tuple.tuple()
                 .addString(key.scopeKey())
@@ -1181,13 +1138,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 storedFailure(r),
                 storedObject(r, "signal_names_json"),
                 storedObject(r, "start_schema_json"),
-                storedActor(
-                        r,
-                        "status_actor_kind",
-                        "status_actor_id",
-                        "status_actor_reason",
-                        "status_on_behalf_of",
-                        "status_attribution"));
+                PgWorkflowAttribution.read(r, "status_", "status_attribution"));
     }
 
     /** Reads a stored JSON object column; a value that is not an object reads as absent and is never echoed. */
@@ -1211,15 +1162,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     static DefinitionActivation activation(Row r) {
-        return activation(
-                r,
-                storedActor(
-                        r,
-                        "activation_actor_kind",
-                        "activation_actor_id",
-                        "activation_actor_reason",
-                        "activation_on_behalf_of",
-                        "activation_attribution"));
+        return activation(r, PgWorkflowAttribution.read(r, "activation_", "activation_attribution"));
     }
 
     /** Reads an activation record from a row that does not select who wrote it, as the start selection does. */
@@ -1227,7 +1170,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
         return activation(r, null);
     }
 
-    private static DefinitionActivation activation(Row r, @Nullable DefinitionChangeActor activatedBy) {
+    private static DefinitionActivation activation(Row r, @Nullable WorkflowAttribution activatedBy) {
         return new DefinitionActivation(
                 r.getString("scope_key"),
                 r.getString("definition_id"),

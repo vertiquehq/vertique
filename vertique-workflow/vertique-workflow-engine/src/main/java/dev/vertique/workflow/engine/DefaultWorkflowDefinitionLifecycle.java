@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.engine;
 
+import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
@@ -12,7 +13,6 @@ import dev.vertique.workflow.exception.WorkflowNodeRoleException;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.ActivationClaim;
 import dev.vertique.workflow.registry.store.DefinitionActivation;
-import dev.vertique.workflow.registry.store.DefinitionChangeActor;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
 import dev.vertique.workflow.registry.store.DefinitionLifecycleChange.ActivationOperation;
@@ -213,7 +213,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
      * Reads the row and reinstates it. A retired row has its executable source restored and checked, and then the
      * durable change is committed. A deprecated row needs no source check: its change is committed at once.
      */
-    private Future<Void> reinstateQueued(DefinitionKey key, DefinitionChangeActor actor) {
+    private Future<Void> reinstateQueued(DefinitionKey key, WorkflowAttribution actor) {
         return store.find(key).compose(found -> {
             WorkflowDefinitionRecord record =
                     found.orElseThrow(() -> failure(Reason.INVALID_TRANSITION, key, "definition not found"));
@@ -288,7 +288,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
      * Commits the durable reinstatement. A failure whose outcome is unknown is decided by reading the row again: an
      * available row with the plan hash of the row that was read was committed, and any other row was not.
      */
-    private Future<Void> commitReinstatement(WorkflowDefinitionRecord record, DefinitionChangeActor actor) {
+    private Future<Void> commitReinstatement(WorkflowDefinitionRecord record, WorkflowAttribution actor) {
         Future<Void> transition;
         try {
             transition = store.transition(record.key(), record.status(), DefinitionStatus.AVAILABLE, actor);
@@ -314,7 +314,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     /**
      * Commits the retirement. A retirement that fails is read back: a row that is retired means the commit won.
      */
-    private Future<Void> retireQueued(DefinitionKey key, DefinitionChangeActor actor) {
+    private Future<Void> retireQueued(DefinitionKey key, WorkflowAttribution actor) {
         return store.retire(key, actor).recover(original -> {
             if (original instanceof Error) return Future.failedFuture(original);
             return store.find(key).transform(read -> {
@@ -331,7 +331,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     }
 
     /** Reads the current status, then moves an available row to deprecated; already deprecated is accepted. */
-    private Future<Void> commitDeprecation(DefinitionKey key, boolean retryOnConflict, DefinitionChangeActor actor) {
+    private Future<Void> commitDeprecation(DefinitionKey key, boolean retryOnConflict, WorkflowAttribution actor) {
         return store.find(key).compose(found -> {
             WorkflowDefinitionRecord record =
                     found.orElseThrow(() -> failure(Reason.INVALID_TRANSITION, key, "definition not found"));
@@ -364,7 +364,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         });
     }
 
-    private Future<Void> publishQueued(DefinitionKey key, DefinitionChangeActor actor) {
+    private Future<Void> publishQueued(DefinitionKey key, WorkflowAttribution actor) {
         Attempt attempt = new Attempt(key, actor);
         return store.find(key)
                 .<Void>compose(found -> {
@@ -465,7 +465,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
 
     private static final class Attempt {
         final DefinitionKey key;
-        final DefinitionChangeActor actor;
+        final WorkflowAttribution actor;
         ActivationClaim claim;
         WorkflowDefinitionRecord record;
         PersistedDefinitionLoader loader;
@@ -474,7 +474,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
 
         Throwable definitiveCompletionFailure;
 
-        Attempt(DefinitionKey key, DefinitionChangeActor actor) {
+        Attempt(DefinitionKey key, WorkflowAttribution actor) {
             this.key = key;
             this.actor = actor;
         }

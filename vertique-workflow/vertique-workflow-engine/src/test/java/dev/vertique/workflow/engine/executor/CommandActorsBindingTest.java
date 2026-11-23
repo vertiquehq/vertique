@@ -17,8 +17,8 @@ import dev.vertique.security.SecurityContexts;
 import dev.vertique.security.SecurityIdentity;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.actor.WorkflowActorMapper;
+import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.di.WorkflowCoreModule;
-import dev.vertique.workflow.engine.spi.CommandActor;
 import jakarta.inject.Singleton;
 import java.util.Map;
 import java.util.Optional;
@@ -83,21 +83,19 @@ class CommandActorsBindingTest {
     @Test
     @DisplayName("an application mapper binding decides the actor of a recorded command")
     void applicationMapperIsUsed() {
-        CommandActor actor = DaggerCommandActorsBindingTest_OverridingComponent.create()
+        WorkflowAttribution actor = DaggerCommandActorsBindingTest_OverridingComponent.create()
                 .actors()
                 .capture();
 
-        assertThat(actor.kind()).isEqualTo(CommandActor.Kind.SERVICE);
-        assertThat(actor.id()).isEqualTo("custom");
+        assertThat(actor.actor()).isEqualTo(new WorkflowActor.Service("custom"));
     }
 
     @Test
     @DisplayName("without an application mapper the default decides the actor")
     void defaultMapperWithoutBinding() {
-        CommandActor actor =
+        WorkflowAttribution actor =
                 DaggerCommandActorsBindingTest_PlainComponent.create().actors().capture();
 
-        assertThat(actor.kind()).isEqualTo(CommandActor.Kind.USER);
-        assertThat(actor.id()).isEqualTo("alice");
+        assertThat(actor.actor()).isEqualTo(new WorkflowActor.User("alice"));
     }
 }

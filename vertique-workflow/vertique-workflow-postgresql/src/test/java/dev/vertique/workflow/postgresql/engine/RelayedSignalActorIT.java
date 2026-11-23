@@ -469,10 +469,10 @@ public class RelayedSignalActorIT {
 
         List<Attributed> signalCommands(WorkflowInstanceId id) {
             List<Attributed> rows = new java.util.ArrayList<>();
-            for (var row : await(
-                    pool.preparedQuery("SELECT actor_kind, actor_id, actor_reason, on_behalf_of, attribution_status"
+            for (var row : await(pool.preparedQuery(
+                            "SELECT actor_kind, actor_id, actor_reason, on_behalf_of->>'id' AS on_behalf_of, attribution_status"
                                     + " FROM workflow_commands WHERE workflow_id = $1 AND kind = 'SIGNAL' ORDER BY seq")
-                            .execute(Tuple.of(id.value())))) {
+                    .execute(Tuple.of(id.value())))) {
                 rows.add(new Attributed(
                         row.getString("actor_kind"),
                         row.getString("actor_id"),

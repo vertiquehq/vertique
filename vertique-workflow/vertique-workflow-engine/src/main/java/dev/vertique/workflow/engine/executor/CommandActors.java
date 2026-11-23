@@ -5,16 +5,13 @@ package dev.vertique.workflow.engine.executor;
 
 import dev.vertique.context.DefaultContextHolder;
 import dev.vertique.core.context.ContextHolder;
-import dev.vertique.workflow.actor.ActorText;
 import dev.vertique.workflow.actor.DefaultWorkflowActorMapper;
+import dev.vertique.workflow.actor.WorkflowActorCapture;
 import dev.vertique.workflow.actor.WorkflowActorMapper;
-import dev.vertique.workflow.engine.spi.CommandActor;
+import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.executor.WorkflowExecutorEvent;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
-import dev.vertique.workflow.registry.store.DefinitionChangeActor;
-import dev.vertique.workflow.state.HistoryActor;
 import io.vertx.core.Future;
-import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.util.Objects;
@@ -25,33 +22,13 @@ import java.util.function.Function;
 /**
  * INTERNAL: takes the actor of a command from the security identity of the caller that records it.
  *
- * <p>The identity is read from the current {@link SecurityContext} through the {@link ContextHolder}, never from a
+ * <p>The identity is read from the current {@link dev.vertique.security.SecurityContext} through the {@link ContextHolder}, never from a
  * payload, a header or a carrier, and nothing is ever bound: the executor that runs a command later reads the actor
  * from the command's row and never creates or rebuilds a security context.
  *
- * <ul>
- *   <li>No security context, or an anonymous identity, is {@link CommandActor.Kind#NONE}. This is decided before the
- *       {@link WorkflowActorMapper} runs, so the mapper never sees an anonymous identity.</li>
- *   <li>Any other identity is mapped by the mapper; an exception the mapper throws propagates unchanged and refuses
- *       the recording.</li>
- *   <li>The party the actor acted for ({@code onBehalfOf}) is the identity's subject when its id differs from the
- *       actor's.</li>
- *   <li>The attribution is {@code ABSENT} with no identity, {@code DEGRADED} when the context carries the security
- *       module's snapshot-degradation marker (a relayed identity that could not be verified and was let through), and
- *       {@code VERIFIED} otherwise.</li>
- *   <li>Ids and reasons are logged without control characters, without the line and paragraph separators U+2028 and
- *       U+2029 and without Unicode format characters (bidirectional overrides, zero-width characters), then cut at
- *       {@value #MAX_LENGTH} characters. An id left empty by that is logged as {@value #UNPRINTABLE}.</li>
- * </ul>
  */
 @Singleton
 public final class CommandActors {
-
-    /** The most characters of an actor id, reason or party acted for that are logged. */
-    static final int MAX_LENGTH = ActorText.MAX_LENGTH;
-
-    /** What an id, reason or party acted for is logged as when nothing of it is printable. */
-    static final String UNPRINTABLE = ActorText.UNPRINTABLE;
 
     private final ContextHolder holder;
     private final WorkflowActorMapper mapper;
@@ -104,21 +81,11 @@ public final class CommandActors {
     /**
      * Takes the actor from the current security identity.
      *
-     * @return the actor; {@link CommandActor.Kind#NONE} when there is no identity or it is anonymous
+     * @return the actor; {@link WorkflowAttribution.Status#ABSENT} when there is no identity or it is anonymous
      * @throws RuntimeException whatever the actor mapper throws for the identity, unchanged
      */
-    public CommandActor capture() {
-        // The one rule that maps an identity to an actor lives with the registry's actor, so that a command and a
-        // stored
-        // definition change name a caller the same way.
-        DefinitionChangeActor actor = DefinitionChangeActor.capture(holder, mapper);
-        HistoryActor logged = actor.actor();
-        return new CommandActor(
-                CommandActor.Kind.valueOf(logged.kind().name()),
-                logged.id(),
-                logged.reason(),
-                actor.onBehalfOf(),
-                CommandActor.Attribution.valueOf(actor.attribution().name()));
+    public WorkflowAttribution capture() {
+        return WorkflowActorCapture.capture(holder, mapper);
     }
 
     /**
@@ -127,7 +94,7 @@ public final class CommandActors {
      *
      * @return the actor, or the mapper's failure
      */
-    public Future<CommandActor> captured() {
+    public Future<WorkflowAttribution> captured() {
         try {
             return Future.succeededFuture(capture());
         } catch (RuntimeException e) {
@@ -138,7 +105,7 @@ public final class CommandActors {
     /**
      * Captures the actor and runs the write that records a command with it. The write is not run when the capture
      * fails, so a mapper failure refuses the recording with the mapper's own exception. When the write succeeds and
-     * the actor is {@link CommandActor.Kind#NONE}, the observers are told of an {@code ActorAbsent} event for the
+     * the actor is {@link WorkflowAttribution.Status#ABSENT}, the observers are told of an {@code ActorAbsent} event for the
      * command kind.
      *
      * @param commandKind the kind of the command being recorded, for the event
@@ -146,7 +113,7 @@ public final class CommandActors {
      * @param <T>         the type the write yields
      * @return the future of the write, or the failure of the capture
      */
-    public <T> Future<T> recording(String commandKind, Function<CommandActor, Future<T>> write) {
+    public <T> Future<T> recording(String commandKind, Function<WorkflowAttribution, Future<T>> write) {
         return captured().compose(actor -> write.apply(actor).onSuccess(ignored -> reportAbsence(actor, commandKind)));
     }
 
@@ -156,20 +123,9 @@ public final class CommandActors {
      * @param actor       the actor the command was recorded with
      * @param commandKind the kind of the command
      */
-    public void reportAbsence(CommandActor actor, String commandKind) {
-        if (actor.kind() == CommandActor.Kind.NONE && events.any()) {
+    public void reportAbsence(WorkflowAttribution actor, String commandKind) {
+        if (actor.status() == WorkflowAttribution.Status.ABSENT && events.any()) {
             events.emit(new WorkflowExecutorEvent.ActorAbsent(commandKind));
         }
-    }
-
-    /**
-     * Removes control characters, the line and paragraph separators U+2028 and U+2029, and Unicode format characters
-     * (bidirectional overrides and isolates, zero-width characters), then cuts the text at the bound. Text that is
-     * left empty by the removal, such as an id made only of such characters, becomes {@value #UNPRINTABLE}, so that an
-     * identity is never recorded as a verified actor without an id.
-     */
-    @Nullable
-    static String clean(@Nullable String text) {
-        return ActorText.clean(text);
     }
 }

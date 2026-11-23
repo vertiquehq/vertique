@@ -16,12 +16,11 @@ import dev.vertique.security.SecurityIdentity;
 import dev.vertique.security.SnapshotDegradationMarker;
 import dev.vertique.security.SystemIdentities;
 import dev.vertique.workflow.actor.DefaultWorkflowActorMapper;
+import dev.vertique.workflow.actor.WorkflowActor;
+import dev.vertique.workflow.actor.WorkflowActorCapture;
 import dev.vertique.workflow.actor.WorkflowActorMapper;
+import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.engine.executor.CommandActors;
-import dev.vertique.workflow.engine.history.CapturedActor;
-import dev.vertique.workflow.history.HistoryAttribution;
-import dev.vertique.workflow.registry.store.DefinitionChangeActor;
-import dev.vertique.workflow.state.HistoryActor;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -37,7 +36,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * same attribution, that the engine takes for a command, so that a stored definition change and an instance's history
  * entry name a caller the same way.
  */
-class DefinitionChangeActorTest {
+class WorkflowActorCaptureTest {
 
     /** Characters the actor text rule removes, built at run time so that no source line carries them. */
     private static final String RIGHT_TO_LEFT_OVERRIDE = Character.toString(0x202E);
@@ -107,12 +106,12 @@ class DefinitionChangeActorTest {
     void theStoredActorIsTheOneTheEngineTakesForACommand(String label, Held holder) {
         WorkflowActorMapper mapper = new DefaultWorkflowActorMapper();
 
-        DefinitionChangeActor stored = DefinitionChangeActor.capture(holder, mapper);
+        WorkflowAttribution stored = WorkflowActorCapture.capture(holder, mapper);
 
-        CapturedActor engine = CapturedActor.of(new CommandActors(holder, mapper).capture());
+        WorkflowAttribution engine = new CommandActors(holder, mapper).capture();
         assertThat(stored.actor()).as(label).isEqualTo(engine.actor());
         assertThat(stored.onBehalfOf()).as(label).isEqualTo(engine.onBehalfOf());
-        assertThat(stored.attribution()).as(label).isEqualTo(engine.attribution());
+        assertThat(stored.status()).as(label).isEqualTo(engine.status());
     }
 
     @Test
@@ -122,11 +121,11 @@ class DefinitionChangeActorTest {
             throw new AssertionError("the mapper must not see an anonymous identity");
         };
 
-        assertThat(DefinitionChangeActor.capture(new Held(), refusing)).isEqualTo(DefinitionChangeActor.unattributed());
-        assertThat(DefinitionChangeActor.capture(holding(SecurityIdentity.anonymous()), refusing))
-                .isEqualTo(DefinitionChangeActor.unattributed());
-        assertThat(DefinitionChangeActor.unattributed().actor().kind()).isEqualTo(HistoryActor.Kind.NONE);
-        assertThat(DefinitionChangeActor.unattributed().attribution()).isEqualTo(HistoryAttribution.ABSENT);
+        assertThat(WorkflowActorCapture.capture(new Held(), refusing)).isEqualTo(WorkflowAttribution.absent());
+        assertThat(WorkflowActorCapture.capture(holding(SecurityIdentity.anonymous()), refusing))
+                .isEqualTo(WorkflowAttribution.absent());
+        assertThat(WorkflowAttribution.absent().actor()).isNull();
+        assertThat(WorkflowAttribution.absent().status()).isEqualTo(WorkflowAttribution.Status.ABSENT);
     }
 
     @Test
@@ -137,30 +136,29 @@ class DefinitionChangeActorTest {
             throw refusal;
         };
 
-        assertThatThrownBy(() -> DefinitionChangeActor.capture(holding(user("u-1")), failing))
+        assertThatThrownBy(() -> WorkflowActorCapture.capture(holding(user("u-1")), failing))
                 .isSameAs(refusal);
     }
 
     @Test
-    @DisplayName("an actor's id, reason and subject are cleaned and cut so that they fit their columns")
-    void anActorIsCleanedAndBounded() {
-        DefinitionChangeActor actor = new DefinitionChangeActor(
-                new HistoryActor(HistoryActor.Kind.USER, "u\u0000-" + "x".repeat(400), "why\n"),
-                "s" + RIGHT_TO_LEFT_OVERRIDE + "7",
-                HistoryAttribution.VERIFIED);
-
-        assertThat(actor.actor().id()).hasSize(255).startsWith("u-x");
-        assertThat(actor.actor().reason()).isEqualTo("why");
-        assertThat(actor.onBehalfOf()).isEqualTo("s7");
+    void preservesActorAndSubjectTextAndDropsSubjectAttributes() {
+        String id = "u\n-" + "x".repeat(400);
+        String subjectId = "s" + RIGHT_TO_LEFT_OVERRIDE + "7";
+        WorkflowAttribution attribution = new WorkflowAttribution(
+                new WorkflowActor.User(id),
+                new PrincipalRef(PrincipalType.USER, subjectId, Map.of("issuer", "request-only")),
+                WorkflowAttribution.Status.VERIFIED);
+        assertThat(attribution.actor()).isEqualTo(new WorkflowActor.User(id));
+        assertThat(attribution.onBehalfOf()).isEqualTo(new PrincipalRef(PrincipalType.USER, subjectId, Map.of()));
     }
 
     @Test
-    @DisplayName("the system actor carries its reason, cleaned, and is verified")
+    @DisplayName("the system actor carries its exact reason and is verified")
     void theSystemActorCarriesItsReason() {
-        DefinitionChangeActor system = DefinitionChangeActor.system("boot\nstrap");
+        WorkflowAttribution system = WorkflowAttribution.system("boot\nstrap");
 
-        assertThat(system.actor()).isEqualTo(new HistoryActor(HistoryActor.Kind.SYSTEM, null, "bootstrap"));
+        assertThat(system.actor()).isEqualTo(new WorkflowActor.System("boot\nstrap"));
         assertThat(system.onBehalfOf()).isNull();
-        assertThat(system.attribution()).isEqualTo(HistoryAttribution.VERIFIED);
+        assertThat(system.status()).isEqualTo(WorkflowAttribution.Status.VERIFIED);
     }
 }

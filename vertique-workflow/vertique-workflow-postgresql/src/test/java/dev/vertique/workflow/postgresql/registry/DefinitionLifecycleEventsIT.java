@@ -9,6 +9,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.workflow.actor.WorkflowActor;
+import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.definition.it.fixture.OrderDocumentSignals;
 import dev.vertique.workflow.definition.it.fixture.PlaceOrderDoc;
@@ -16,7 +18,6 @@ import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
-import dev.vertique.workflow.history.HistoryAttribution;
 import dev.vertique.workflow.postgresql.registry.ActivationFixtures.Scenario;
 import dev.vertique.workflow.postgresql.registry.DefinitionScenario.Boot;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
@@ -25,7 +26,6 @@ import dev.vertique.workflow.registry.store.DefinitionLifecycleChange;
 import dev.vertique.workflow.registry.store.DefinitionLifecycleChange.ActivationChange;
 import dev.vertique.workflow.registry.store.DefinitionLifecycleChange.VersionChange;
 import dev.vertique.workflow.registry.store.DefinitionLifecycleChange.VersionOperation;
-import dev.vertique.workflow.state.HistoryActor;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
 import java.util.List;
@@ -52,7 +52,7 @@ public class DefinitionLifecycleEventsIT {
             .withDatabaseName("workflow_definition_events_it")
             .withMigration("classpath:db/migration/workflow");
 
-    private static final HistoryActor BOOTSTRAP = new HistoryActor(HistoryActor.Kind.SYSTEM, null, "bootstrap");
+    private static final WorkflowActor BOOTSTRAP = new WorkflowActor.System("bootstrap");
 
     @Test
     @DisplayName("a publish, activate, deprecate, reinstate and retire sequence reports one change per call")
@@ -96,7 +96,7 @@ public class DefinitionLifecycleEventsIT {
             assertThat(activation.targetScopeKey()).isEqualTo(DEFAULT);
             assertThat(activation.version()).isEqualTo(1L);
             assertThat(changes)
-                    .allSatisfy(change -> assertThat(change.actor().kind()).isEqualTo(HistoryActor.Kind.NONE));
+                    .allSatisfy(change -> assertThat(change.attribution()).isEqualTo(WorkflowAttribution.absent()));
             assertThat(events.failures()).isEmpty();
         }
     }
@@ -156,8 +156,8 @@ public class DefinitionLifecycleEventsIT {
                     .extracting(DefinitionLifecycleChangeAssert::describe)
                     .containsExactly("PUBLISH " + id + "@2", "ACTIVATE " + id + "@2");
             assertThat(firstStart).allSatisfy(change -> {
-                assertThat(change.actor()).isEqualTo(BOOTSTRAP);
-                assertThat(change.attribution()).isEqualTo(HistoryAttribution.VERIFIED);
+                assertThat(change.attribution().actor()).isEqualTo(BOOTSTRAP);
+                assertThat(change.attribution().status()).isEqualTo(WorkflowAttribution.Status.VERIFIED);
             });
             // ... and the restart published the lower and the opted-out version without activating either, and
             // reported nothing for the version it already held

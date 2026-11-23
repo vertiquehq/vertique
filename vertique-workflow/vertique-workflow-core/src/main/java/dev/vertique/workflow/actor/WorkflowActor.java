@@ -8,8 +8,7 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import java.util.Objects;
 
 /**
- * Sealed sum type representing the identity of the actor who initiated a state-changing workflow
- * task operation.
+ * The user, service, or system responsible for a workflow action.
  *
  * <p>Every mutating task command ({@link dev.vertique.workflow.ops.TaskCompletionCommand},
  * {@link dev.vertique.workflow.ops.TaskReassignmentCommand}) requires a non-null {@code WorkflowActor}
@@ -17,7 +16,7 @@ import java.util.Objects;
  * strictly audit metadata — the runtime never gates a call on the actor identity; the
  * application's own authorization layer decides whether a given actor is permitted to act.
  *
- * <p>Persisted as a {@code (kind, value)} pair on the {@code workflow_tasks} row's actor columns
+ * <p>On task rows, the actor is persisted as a {@code (kind, value)} pair on the {@code workflow_tasks} row's actor columns
  * ({@code completed_by}, {@code cancelled_by}, {@code reassigned_by}); that shape is built and
  * parsed by hand in {@code PgTaskStore} and is independent of this interface's Jackson mapping.
  * When a {@code WorkflowActor} is embedded as a field inside a history payload record (e.g.

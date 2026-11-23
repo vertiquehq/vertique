@@ -347,8 +347,9 @@ public final class ActorScenario implements AutoCloseable {
         List<Attributed> rows = new ArrayList<>();
         for (Row row : await(f.fixture
                 .observer()
-                .preparedQuery("SELECT kind, id, actor_kind, actor_id, actor_reason, on_behalf_of, attribution_status"
-                        + " FROM workflow_commands WHERE workflow_id = $1 ORDER BY seq")
+                .preparedQuery(
+                        "SELECT kind, id, actor_kind, actor_id, actor_reason, on_behalf_of->>'id' AS on_behalf_of, attribution_status"
+                                + " FROM workflow_commands WHERE workflow_id = $1 ORDER BY seq")
                 .execute(Tuple.of(id.value())))) {
             rows.add(attributed(row.getString("kind"), row.getLong("id"), row));
         }
@@ -367,7 +368,7 @@ public final class ActorScenario implements AutoCloseable {
         for (Row row : await(f.fixture
                 .observer()
                 .preparedQuery("SELECT entry_type, COALESCE(command_id, (payload_json->>'commandId')::bigint)"
-                        + " AS command, actor_kind, actor_id, actor_reason, on_behalf_of, attribution_status"
+                        + " AS command, actor_kind, actor_id, actor_reason, on_behalf_of->>'id' AS on_behalf_of, attribution_status"
                         + " FROM workflow_history WHERE workflow_id = $1 ORDER BY sequence")
                 .execute(Tuple.of(id.value())))) {
             rows.add(attributed(row.getString("entry_type"), row.getLong("command"), row));

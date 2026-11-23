@@ -9,7 +9,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import dev.vertique.core.context.DurableMetadata;
-import dev.vertique.workflow.engine.spi.CommandActor;
+import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
 import dev.vertique.workflow.events.WorkflowEventIntent;
 import dev.vertique.workflow.events.WorkflowEventType;
@@ -91,7 +91,18 @@ class WorkflowEventEmitterTest {
 
     private static SegmentCommand command(long id, WorkflowInstanceId instance) {
         return new SegmentCommand(
-                id, instance, "SIGNAL", null, null, null, null, null, null, null, null, CommandActor.system("test"));
+                id,
+                instance,
+                "SIGNAL",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                WorkflowAttribution.system("test"));
     }
 
     @Test

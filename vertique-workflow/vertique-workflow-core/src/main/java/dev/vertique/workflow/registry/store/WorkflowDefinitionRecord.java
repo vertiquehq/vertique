@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.registry.store;
 
+import dev.vertique.workflow.actor.WorkflowAttribution;
 import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
 import java.time.Instant;
@@ -55,7 +56,7 @@ public record WorkflowDefinitionRecord(
         @Nullable DefinitionFailure failure,
         @Nullable JsonObject signalNames,
         @Nullable JsonObject startSchema,
-        @Nullable DefinitionChangeActor statusChangedBy) {
+        @Nullable WorkflowAttribution statusChangedBy) {
 
     /**
      * Constructs a record that carries no attribution of its last status change.

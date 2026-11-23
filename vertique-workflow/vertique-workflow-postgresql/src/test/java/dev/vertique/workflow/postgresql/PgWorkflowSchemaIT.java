@@ -48,7 +48,10 @@ import dev.vertique.inboxoutbox.OutboxEntry;
 import dev.vertique.inboxoutbox.OutboxService;
 import dev.vertique.inboxoutbox.postgresql.InboxOutboxMigrationsModule;
 import dev.vertique.inboxoutbox.postgresql.TransactionalMessagingPostgresqlModule;
+import dev.vertique.security.PrincipalRef;
+import dev.vertique.security.PrincipalType;
 import dev.vertique.workflow.actor.WorkflowActor;
+import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.contract.IdempotencyKeyed;
 import dev.vertique.workflow.contract.SignalDedupKey;
 import dev.vertique.workflow.contract.WorkflowSignal;
@@ -57,7 +60,6 @@ import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.executor.CommandErrors;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
-import dev.vertique.workflow.engine.spi.CommandActor;
 import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.DedupClaim;
 import dev.vertique.workflow.engine.spi.DispositionResult;
@@ -1799,7 +1801,7 @@ public class PgWorkflowSchemaIT {
         SegmentCommand fenced =
                 inTransaction(runtime, tx -> commands.fence(first, tx)).orElseThrow();
         assertEquals(key, fenced.dedupKey());
-        assertEquals(CommandActor.Kind.USER, fenced.actor().kind());
+        assertInstanceOf(WorkflowActor.User.class, fenced.attribution().actor());
         assertTrue(await(commands.release(first)));
         assertFalse(await(commands.release(first)));
         assertEquals("PENDING", steps.state(start));
@@ -1851,7 +1853,7 @@ public class PgWorkflowSchemaIT {
                 inTransaction(runtime, tx -> commands.readParked(id, first, tx)).orElseThrow();
         assertEquals("SIGNAL", parked.kind());
         assertTrue(parked.payloadJson().contains("value"));
-        assertEquals("alice", parked.actor().id());
+        assertEquals(new WorkflowActor.User("alice"), parked.attribution().actor());
         assertFalse(flag(runtime, tx -> commands.wasParked(id, first, tx)));
         assertEquals(1, await(commands.findParked(id)).size());
 
@@ -2157,8 +2159,8 @@ public class PgWorkflowSchemaIT {
     private static void exerciseCancellationAndRearm(CommandSteps steps) throws Exception {
         RuntimeComponent runtime = steps.runtime;
         PgWorkflowCommandRepository commands = steps.commands;
-        CommandActor canceller = new CommandActor(
-                CommandActor.Kind.SERVICE, "canceller", "instance cancelled", null, CommandActor.Attribution.VERIFIED);
+        WorkflowAttribution canceller = new WorkflowAttribution(
+                new WorkflowActor.Service("canceller"), null, WorkflowAttribution.Status.VERIFIED);
 
         // Given: one pending command of every kind, a signal that answers a wait among them
         WorkflowInstance instance = steps.instance();
@@ -2248,7 +2250,7 @@ public class PgWorkflowSchemaIT {
         WorkflowInstance instance = steps.instance();
         WorkflowInstanceId id = instance.id();
         long start = steps.start(instance, unique("attribution-key"));
-        CommandActor system = CommandActor.system("migration");
+        WorkflowAttribution system = WorkflowAttribution.system("migration");
 
         // an entry that names a command takes that command's actor and the pinned definition
         String namesCommand = "{\"commandId\":" + start + "}";
@@ -2366,10 +2368,12 @@ public class PgWorkflowSchemaIT {
     private static final class CommandSteps {
 
         static final String NODE = "schema-placement-node";
-        static final CommandActor REQUESTER = new CommandActor(
-                CommandActor.Kind.USER, "alice", "requested", "manager", CommandActor.Attribution.VERIFIED);
-        static final CommandActor FALLBACK = new CommandActor(
-                CommandActor.Kind.SERVICE, "fallback-service", null, null, CommandActor.Attribution.VERIFIED);
+        static final WorkflowAttribution REQUESTER = new WorkflowAttribution(
+                new WorkflowActor.User("alice"),
+                new PrincipalRef(PrincipalType.USER, "manager", java.util.Map.of()),
+                WorkflowAttribution.Status.VERIFIED);
+        static final WorkflowAttribution FALLBACK = new WorkflowAttribution(
+                new WorkflowActor.Service("fallback-service"), null, WorkflowAttribution.Status.VERIFIED);
 
         private static final int LEASE_SECONDS = 60;
         private static final int MAX_ATTEMPTS = 3;

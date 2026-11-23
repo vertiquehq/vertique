@@ -9,7 +9,6 @@ import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
-import dev.vertique.workflow.state.HistoryActor;
 import dev.vertique.workflow.state.JoinPolicyType;
 import dev.vertique.workflow.state.JoinState;
 import dev.vertique.workflow.state.JoinStateStatus;
@@ -152,8 +151,6 @@ class RowMappers {
                     null,
                     null,
                     null,
-                    null,
-                    null,
                     null);
         };
     }
@@ -169,11 +166,6 @@ class RowMappers {
      */
     static RowMapper<WorkflowHistoryEntry> enrichedWorkflowHistoryEntry() {
         return row -> {
-            String actorKind = row.getString("actor_kind");
-            HistoryActor actor = actorKind == null
-                    ? null
-                    : new HistoryActor(
-                            historyActorKind(actorKind), row.getString("actor_id"), row.getString("actor_reason"));
             String scopeKey = row.getString("definition_scope_key");
             DefinitionKey definitionKey = scopeKey == null
                     ? null
@@ -185,9 +177,7 @@ class RowMappers {
                     extractJsonb(row, "payload_json"),
                     toInstant(row.getOffsetDateTime("recorded_at")),
                     row.getInteger("entry_version"),
-                    actor,
-                    row.getString("on_behalf_of"),
-                    row.getString("attribution_status"),
+                    PgWorkflowAttribution.read(row, "", "attribution_status"),
                     row.getString("executor_id"),
                     row.getLong("command_id"),
                     row.getString("step_id"),
@@ -198,18 +188,6 @@ class RowMappers {
                     row.getLong("state_version_after"),
                     extractJsonb(row, "patch_json"));
         };
-    }
-
-    /**
-     * The kind of a stored actor. A value this version does not know, such as one a newer version wrote, is read as
-     * {@link HistoryActor.Kind#NONE} so that it does not fail the whole page.
-     */
-    private static HistoryActor.Kind historyActorKind(String stored) {
-        try {
-            return HistoryActor.Kind.valueOf(stored);
-        } catch (IllegalArgumentException e) {
-            return HistoryActor.Kind.NONE;
-        }
     }
 
     // --- BranchToken ---

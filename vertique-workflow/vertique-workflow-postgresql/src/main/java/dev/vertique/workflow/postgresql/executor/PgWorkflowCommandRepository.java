@@ -9,13 +9,13 @@ import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.postgresql.PgTableNames;
+import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.engine.executor.CommandErrors;
 import dev.vertique.workflow.engine.executor.Deferral;
 import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
 import dev.vertique.workflow.engine.history.WorkflowHistoryEventPublisher;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
-import dev.vertique.workflow.engine.spi.CommandActor;
 import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.DispositionResult;
 import dev.vertique.workflow.engine.spi.InstanceFailureListener;
@@ -29,6 +29,7 @@ import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.history.PendingCommand;
 import dev.vertique.workflow.history.WorkflowHistoryFailure;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.postgresql.repository.PgWorkflowAttribution;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.postgresql.timer.WorkflowTimerCarriers;
 import dev.vertique.workflow.registry.store.DefinitionKey;
@@ -572,7 +573,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
             String idempotencyKey,
             @Nullable String payloadJson,
             @Nullable String targetJson,
-            CommandActor actor,
+            WorkflowAttribution actor,
             SqlClient tx) {
         return nextQueueSequence(instance, tx)
                 .compose(seq -> tx.preparedQuery(insertStart)
@@ -613,34 +614,17 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     private static String actorValues(int first) {
         StringBuilder values = new StringBuilder();
         for (int i = 0; i < 5; i++) {
-            values.append(i == 0 ? "" : ", ").append('$').append(first + i).append("::text");
+            values.append(i == 0 ? "" : ", ").append('$').append(first + i).append(i == 3 ? "::jsonb" : "::text");
         }
         return values.toString();
     }
 
-    /** Adds the five actor values, in the order of {@code ACTOR_COLUMNS}, to the parameters. */
-    private static Tuple withActor(Tuple parameters, CommandActor actor) {
-        return parameters
-                .addValue(actor.kind().name())
-                .addValue(actor.id())
-                .addValue(actor.reason())
-                .addValue(actor.onBehalfOf())
-                .addValue(actor.attribution().name());
+    private static Tuple withActor(Tuple parameters, WorkflowAttribution attribution) {
+        return PgWorkflowAttribution.bind(parameters, attribution);
     }
 
-    /** The actor stored on a command row, or {@code null} for a row recorded before actors were logged. */
-    private static @Nullable CommandActor actorOf(Row row) {
-        String kind = row.getString("actor_kind");
-        if (kind == null) {
-            return null;
-        }
-        String attribution = row.getString("attribution_status");
-        return new CommandActor(
-                CommandActor.Kind.valueOf(kind),
-                row.getString("actor_id"),
-                row.getString("actor_reason"),
-                row.getString("on_behalf_of"),
-                attribution == null ? CommandActor.Attribution.ABSENT : CommandActor.Attribution.valueOf(attribution));
+    private static @Nullable WorkflowAttribution actorOf(Row row) {
+        return PgWorkflowAttribution.read(row, "", "attribution_status");
     }
 
     /** A JSON text as the value the PostgreSQL client binds to a {@code jsonb} parameter, so it is stored as JSON. */
@@ -954,7 +938,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
             String entryType,
             JsonObject payload,
             String outcome,
-            @Nullable CommandActor loggedAs) {
+            @Nullable WorkflowAttribution loggedAs) {
         Tuple parameters = Tuple.of(workflow.value(), entryType, payload, commandId, outcome);
         return conn.preparedQuery(loggedAs == null ? insertHistory : insertHistoryAs)
                 .execute(loggedAs == null ? parameters : withActor(parameters, loggedAs))
@@ -1094,7 +1078,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
             @Nullable String payloadJson,
             @Nullable String explicitCarrierJson,
             @Nullable String provenanceJson,
-            CommandActor actor,
+            WorkflowAttribution actor,
             SqlClient tx) {
         JsonObject target = new JsonObject().put("name", signalName);
         if (forkStepId != null) {
@@ -1137,7 +1121,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     }
 
     @Override
-    public Future<Long> recordRetry(WorkflowInstanceId instance, CommandActor actor, SqlClient tx) {
+    public Future<Long> recordRetry(WorkflowInstanceId instance, WorkflowAttribution actor, SqlClient tx) {
         return recordRecovery(instance, "RETRY", null, actor, tx, "recordRetry");
     }
 
@@ -1146,7 +1130,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
             WorkflowInstanceId instance,
             long targetVersion,
             @Nullable String targetScope,
-            CommandActor actor,
+            WorkflowAttribution actor,
             SqlClient tx) {
         JsonObject target = new JsonObject().put("version", targetVersion);
         if (targetScope != null) {
@@ -1159,7 +1143,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
             WorkflowInstanceId instance,
             String kind,
             @Nullable JsonObject target,
-            CommandActor actor,
+            WorkflowAttribution actor,
             SqlClient tx,
             String operation) {
         return nextQueueSequence(instance, tx)
@@ -1234,7 +1218,8 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     }
 
     @Override
-    public Future<List<SettledCommand>> cancelAll(WorkflowInstanceId instance, CommandActor canceller, SqlClient tx) {
+    public Future<List<SettledCommand>> cancelAll(
+            WorkflowInstanceId instance, WorkflowAttribution canceller, SqlClient tx) {
         Tuple parameters = Tuple.tuple();
         parameters.addValue(instance.value());
         for (String kind : List.of("START", "SIGNAL", "COMPLETION", "RETRY", "MIGRATION", "TIMER")) {
@@ -1336,7 +1321,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
 
     @Override
     public Future<Void> attributeHistory(
-            WorkflowInstanceId instance, long fromSequence, CommandActor actor, SqlClient tx) {
+            WorkflowInstanceId instance, long fromSequence, WorkflowAttribution actor, SqlClient tx) {
         return tx.preparedQuery(attributeEntries)
                 .execute(withActor(Tuple.of(instance.value(), fromSequence), actor))
                 .<Void>mapEmpty()
@@ -1352,7 +1337,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
 
     @Override
     public Future<Void> attributeSegmentHistory(
-            WorkflowInstanceId instance, long fromSequence, CommandActor fallback, SqlClient tx) {
+            WorkflowInstanceId instance, long fromSequence, WorkflowAttribution fallback, SqlClient tx) {
         return tx.preparedQuery(attributeEntriesToCommands)
                 .execute(withActor(Tuple.of(instance.value(), fromSequence), fallback)
                         .addValue(null)
@@ -1366,7 +1351,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     public Future<Void> attributeSegmentHistory(
             WorkflowInstanceId instance,
             long fromSequence,
-            CommandActor fallback,
+            WorkflowAttribution fallback,
             SegmentCommand command,
             DefinitionKey pinned,
             SqlClient tx) {
@@ -1391,7 +1376,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
             String reason,
             String entryType,
             String outcome,
-            @Nullable CommandActor loggedAs) {
+            @Nullable WorkflowAttribution loggedAs) {
         JsonObject payload =
                 new JsonObject().put("commandId", commandId).put("kind", kind).put("reason", reason);
         if ("SIGNAL".equals(kind)) {
@@ -1564,7 +1549,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
             String dedupKey,
             @Nullable String payloadJson,
             String targetJson,
-            CommandActor actor,
+            WorkflowAttribution actor,
             SqlClient tx) {
         return nextQueueSequence(instance, tx)
                 .compose(seq -> tx.preparedQuery(insertCompletion)

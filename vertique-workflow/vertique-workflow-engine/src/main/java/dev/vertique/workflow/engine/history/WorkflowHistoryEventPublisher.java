@@ -4,18 +4,17 @@
 package dev.vertique.workflow.engine.history;
 
 import dev.vertique.db.TransactionCompletion;
+import dev.vertique.workflow.actor.WorkflowActorCapture;
+import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.engine.executor.CommandActors;
-import dev.vertique.workflow.engine.spi.CommandActor;
 import dev.vertique.workflow.engine.spi.CommittedHistoryEntry;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
-import dev.vertique.workflow.history.HistoryAttribution;
 import dev.vertique.workflow.history.WorkflowHistoryChange;
 import dev.vertique.workflow.history.WorkflowHistoryEvent;
 import dev.vertique.workflow.history.WorkflowHistoryFailure;
 import dev.vertique.workflow.history.WorkflowHistoryListener;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
-import dev.vertique.workflow.state.HistoryActor;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
@@ -89,7 +88,7 @@ public final class WorkflowHistoryEventPublisher {
     private final List<WorkflowHistoryListener> listeners;
     private final WorkflowHistoryRepository<SqlClient> history;
     private final SqlClient readClient;
-    private final Supplier<CommandActor> actors;
+    private final Supplier<WorkflowAttribution> actors;
     private final Clock clock;
     private final BiFunction<WorkflowInstanceId, SqlClient, Future<Void>> lock;
 
@@ -142,7 +141,7 @@ public final class WorkflowHistoryEventPublisher {
             WorkflowHistoryRepository<SqlClient> history,
             SqlClient readClient,
             BiFunction<WorkflowInstanceId, SqlClient, Future<Void>> lock,
-            Supplier<CommandActor> actors,
+            Supplier<WorkflowAttribution> actors,
             Clock clock) {
         this.lock = lock;
         this.listeners = List.copyOf(listeners);
@@ -540,8 +539,6 @@ public final class WorkflowHistoryEventPublisher {
                 attempt.attemptId,
                 attempt.instanceId,
                 attempt.action,
-                attempt.actor,
-                attempt.onBehalfOf,
                 attempt.attribution,
                 cause == null ? null : cause.getClass().getSimpleName(),
                 clock.instant());
@@ -559,28 +556,25 @@ public final class WorkflowHistoryEventPublisher {
 
     /** An action of {@code null} announces commits only: no failure is reported and no actor is captured. */
     Attempt attempt(@Nullable WorkflowHistoryFailure.Action action, @Nullable WorkflowInstanceId id) {
-        return new Attempt(action, id, action == null ? CapturedActor.unattributed() : CapturedActor.capture(actors));
+        return new Attempt(
+                action, id, action == null ? WorkflowAttribution.absent() : WorkflowActorCapture.bestEffort(actors));
     }
 
     /** One attempt of an action: its identity, its captured actor and whether its failure was reported. */
     static final class Attempt {
         final UUID attemptId = UUID.randomUUID();
         final @Nullable WorkflowHistoryFailure.Action action;
-        final HistoryActor actor;
-        final @Nullable String onBehalfOf;
-        final HistoryAttribution attribution;
+        final WorkflowAttribution attribution;
         final AtomicBoolean reported = new AtomicBoolean();
         volatile @Nullable WorkflowInstanceId instanceId;
 
         private Attempt(
                 @Nullable WorkflowHistoryFailure.Action action,
                 @Nullable WorkflowInstanceId id,
-                CapturedActor captured) {
+                WorkflowAttribution captured) {
             this.action = action;
             this.instanceId = id;
-            this.actor = captured.actor();
-            this.onBehalfOf = captured.onBehalfOf();
-            this.attribution = captured.attribution();
+            this.attribution = captured;
         }
     }
 

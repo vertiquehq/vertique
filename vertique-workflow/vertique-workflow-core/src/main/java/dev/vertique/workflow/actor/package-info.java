@@ -11,6 +11,5 @@
  * <p>{@link dev.vertique.workflow.actor.TaskPrincipalsMapper} maps the caller to the principals tasks are assigned to;
  * unlike the actor, those principals feed the application's own task-inbox query and eligibility check.
  *
- * <p>{@code ActorText} is the internal text rule that keeps an actor id safe to log.
  */
 package dev.vertique.workflow.actor;

@@ -8,7 +8,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import dev.vertique.workflow.engine.spi.CommandActor;
+import dev.vertique.security.PrincipalRef;
+import dev.vertique.security.PrincipalType;
+import dev.vertique.workflow.actor.WorkflowActor;
+import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.sideeffect.IntentKind;
@@ -74,7 +77,10 @@ class RecorderRouterAttributionTest {
                 null,
                 null,
                 null,
-                new CommandActor(CommandActor.Kind.SERVICE, "billing", null, "u-7", CommandActor.Attribution.DEGRADED));
+                new WorkflowAttribution(
+                        new WorkflowActor.Service("billing\n%"),
+                        new PrincipalRef(PrincipalType.USER, "u-7", java.util.Map.of()),
+                        WorkflowAttribution.Status.DEGRADED));
 
         // When the router routes the intent for the command
         router.route(intent, command, mock(SqlClient.class));
@@ -84,8 +90,9 @@ class RecorderRouterAttributionTest {
         Map<String, String> headers = recorded.get().headers();
         assertThat(headers)
                 .containsEntry("x-workflow-actor-kind", "SERVICE")
-                .containsEntry("x-workflow-actor-id", "billing")
+                .containsEntry("x-workflow-actor-id", "billing%0A%25")
                 .containsEntry("x-workflow-on-behalf-of", "u-7")
+                .containsEntry("x-workflow-on-behalf-of-type", "USER")
                 .containsEntry("x-workflow-attribution", "DEGRADED")
                 .containsEntry("x-trace", "kept")
                 .doesNotContainKey("x-workflow-actor-reason");
@@ -117,7 +124,7 @@ class RecorderRouterAttributionTest {
                 Map.of("X-Workflow-On-Behalf-Of", "eve", "x-workflow-actor-id", "mallory"),
                 WorkflowSideEffectIntent.Correlation.singlePath(id, 1L, "def", "acme", "tenant-1", "charge"));
         SegmentCommand command = new SegmentCommand(
-                8L, id, "TIMER", null, null, null, null, null, null, null, null, CommandActor.system("timer"));
+                8L, id, "TIMER", null, null, null, null, null, null, null, null, WorkflowAttribution.system("timer"));
 
         // When the router routes the intent for the command
         router.route(intent, command, mock(SqlClient.class));
@@ -164,7 +171,10 @@ class RecorderRouterAttributionTest {
                 null,
                 null,
                 null,
-                new CommandActor(CommandActor.Kind.USER, "alice", "why", "bob", CommandActor.Attribution.VERIFIED));
+                new WorkflowAttribution(
+                        new WorkflowActor.User("alice"),
+                        new PrincipalRef(PrincipalType.USER, "bob", java.util.Map.of()),
+                        WorkflowAttribution.Status.VERIFIED));
 
         // When the router routes the event for the command
         router.route(intent, command, mock(SqlClient.class));
@@ -175,7 +185,8 @@ class RecorderRouterAttributionTest {
                 .containsEntry("x-workflow-attribution", "VERIFIED")
                 .doesNotContainKey("x-workflow-actor-id")
                 .doesNotContainKey("x-workflow-actor-reason")
-                .doesNotContainKey("x-workflow-on-behalf-of");
+                .doesNotContainKey("x-workflow-on-behalf-of")
+                .doesNotContainKey("x-workflow-on-behalf-of-type");
         assertThat(recorded.get().headers().values()).doesNotContain("alice", "bob", "why", "mallory");
     }
 
@@ -229,6 +240,6 @@ class RecorderRouterAttributionTest {
                 null,
                 null,
                 null,
-                new CommandActor(CommandActor.Kind.USER, user, null, null, CommandActor.Attribution.VERIFIED));
+                new WorkflowAttribution(new WorkflowActor.User(user), null, WorkflowAttribution.Status.VERIFIED));
     }
 }

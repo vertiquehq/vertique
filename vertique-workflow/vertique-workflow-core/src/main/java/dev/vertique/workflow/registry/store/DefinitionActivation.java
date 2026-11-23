@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.registry.store;
 
+import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.types.ScopeKeyRules;
 import jakarta.annotation.Nullable;
 import java.time.Instant;
@@ -34,7 +35,7 @@ public record DefinitionActivation(
         String targetScopeKey,
         long version,
         Instant activatedAt,
-        @Nullable DefinitionChangeActor activatedBy) {
+        @Nullable WorkflowAttribution activatedBy) {
 
     /**
      * Constructs a record with no attribution of who wrote it.

@@ -9,8 +9,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.actor.WorkflowActor;
+import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.history.CommandKind;
-import dev.vertique.workflow.history.HistoryAttribution;
 import dev.vertique.workflow.history.WorkflowHistoryChange;
 import dev.vertique.workflow.history.WorkflowHistoryEvent;
 import dev.vertique.workflow.history.WorkflowHistoryFailure;
@@ -133,12 +133,14 @@ public class HistoryAnnouncementIT {
             assertThat(reassigned.to()).isEqualTo(new TaskAssignment.Role("other-auditors"));
             WorkflowHistoryEvent.TaskDecided decided = only(endedEvents, WorkflowHistoryEvent.TaskDecided.class);
             assertThat(decided.decisionName()).isEqualTo("approve");
-            assertThat(decided.entryInfo().actor().id()).isEqualTo(AuditRun.TASK_USER);
+            assertThat(((WorkflowActor.User) decided.entryInfo().attribution().actor()).userId())
+                    .isEqualTo(AuditRun.TASK_USER);
             assertThat(decisionOf(endedEvents, WorkflowHistoryEvent.DecisionKind.TASK_DECIDED)
                             .entryInfo())
                     .satisfies(info -> {
                         assertThat(info.commandKind()).isEqualTo(CommandKind.COMPLETION);
-                        assertThat(info.actor().id()).isEqualTo(AuditRun.TASK_USER);
+                        assertThat(((WorkflowActor.User) info.attribution().actor()).userId())
+                                .isEqualTo(AuditRun.TASK_USER);
                     });
             assertThat(decisionOf(endedEvents, WorkflowHistoryEvent.DecisionKind.SIGNAL_APPLIED)
                             .entryInfo()
@@ -153,10 +155,12 @@ public class HistoryAnnouncementIT {
             for (WorkflowHistoryEvent event : endedEvents) {
                 CommandKind kind = event.entryInfo().commandKind();
                 if (kind == null && !(event instanceof WorkflowHistoryEvent.TaskReassigned)) {
-                    assertThat(event.entryInfo().actor().id())
+                    assertThat(((WorkflowActor.User)
+                                            event.entryInfo().attribution().actor())
+                                    .userId())
                             .as(event.toString())
                             .isIn("u-0", "u-1", "u-4");
-                    assertThat(event.entryInfo().attribution()).isEqualTo(HistoryAttribution.VERIFIED);
+                    assertThat(event.entryInfo().attribution().status()).isEqualTo(WorkflowAttribution.Status.VERIFIED);
                     continue;
                 }
                 String expected = event instanceof WorkflowHistoryEvent.TaskReassigned
@@ -167,8 +171,10 @@ public class HistoryAnnouncementIT {
                             case SIGNAL -> "u-4";
                             default -> throw new AssertionError("unexpected command kind " + kind + " of " + event);
                         };
-                assertThat(event.entryInfo().actor().id()).as(event.toString()).isEqualTo(expected);
-                assertThat(event.entryInfo().attribution()).isEqualTo(HistoryAttribution.VERIFIED);
+                assertThat(((WorkflowActor.User) event.entryInfo().attribution().actor()).userId())
+                        .as(event.toString())
+                        .isEqualTo(expected);
+                assertThat(event.entryInfo().attribution().status()).isEqualTo(WorkflowAttribution.Status.VERIFIED);
             }
             // and the entries that name their command carry its kind, none inferred from the segment
             assertThat(endedEvents)
@@ -178,8 +184,10 @@ public class HistoryAnnouncementIT {
                     .filteredOn(event -> event instanceof WorkflowHistoryEvent.InstanceCancelled
                             || event instanceof WorkflowHistoryEvent.TaskCancelled)
                     .hasSize(2)
-                    .allSatisfy(
-                            event -> assertThat(event.entryInfo().actor().id()).isEqualTo("u-5"));
+                    .allSatisfy(event -> assertThat(((WorkflowActor.User)
+                                            event.entryInfo().attribution().actor())
+                                    .userId())
+                            .isEqualTo("u-5"));
 
             // And no action failed, while the throwing listener was told of every commit and did not alter one
             assertThat(recorded.failures()).isEmpty();

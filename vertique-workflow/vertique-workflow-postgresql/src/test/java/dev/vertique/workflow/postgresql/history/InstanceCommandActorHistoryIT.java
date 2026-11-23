@@ -11,11 +11,12 @@ import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.security.PrincipalRef;
 import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityIdentity;
+import dev.vertique.workflow.actor.WorkflowActor;
+import dev.vertique.workflow.actor.WorkflowAttribution;
 import dev.vertique.workflow.history.WorkflowInstanceHistoryService;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.executor.ActorScenario;
 import dev.vertique.workflow.postgresql.executor.MigrationScenario;
-import dev.vertique.workflow.state.HistoryActor;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import io.vertx.core.Vertx;
@@ -71,8 +72,9 @@ public class InstanceCommandActorHistoryIT {
             WorkflowInstanceHistoryService history =
                     HistoryGraph.reading(vertx, options, reading).historyService();
 
-            // Given an instance started by user u-0 and cancelled by service ops, and one started with no identity
-            WorkflowInstanceId named = scenario.start(user("u-0"), "actor-named", Map.of());
+            // An actor ID with a line break and more than 255 characters still names the same caller.
+            String userId = "u-0\n" + "x".repeat(300) + (char) 0 + (char) 0xd800;
+            WorkflowInstanceId named = scenario.start(user(userId), "actor-named", Map.of());
             scenario.runToIdle(named);
             scenario.cancel(service("ops"), named);
             WorkflowInstanceId anonymous = scenario.start(null, "actor-anonymous", Map.of());
@@ -84,16 +86,16 @@ public class InstanceCommandActorHistoryIT {
 
             // Then the start entry names the user, and the cancellation entry names the service
             WorkflowHistoryEntry start = only(namedLog, WorkflowEntryType.START);
-            assertThat(start.actor()).isEqualTo(new HistoryActor(HistoryActor.Kind.USER, "u-0", null));
-            assertThat(start.attributionStatus()).isEqualTo("VERIFIED");
+            assertThat(start.attribution().actor()).isEqualTo(new WorkflowActor.User(userId));
+            assertThat(start.attribution().status()).isEqualTo(WorkflowAttribution.Status.VERIFIED);
             WorkflowHistoryEntry cancelled = only(namedLog, WorkflowEntryType.CANCELLED);
-            assertThat(cancelled.actor()).isEqualTo(new HistoryActor(HistoryActor.Kind.SERVICE, "ops", null));
-            assertThat(cancelled.attributionStatus()).isEqualTo("VERIFIED");
+            assertThat(cancelled.attribution().actor()).isEqualTo(new WorkflowActor.Service("ops"));
+            assertThat(cancelled.attribution().status()).isEqualTo(WorkflowAttribution.Status.VERIFIED);
 
             // And a start with no identity is logged as none, with absent attribution
             WorkflowHistoryEntry anonymousStart = only(anonymousLog, WorkflowEntryType.START);
-            assertThat(anonymousStart.actor()).isEqualTo(new HistoryActor(HistoryActor.Kind.NONE, null, null));
-            assertThat(anonymousStart.attributionStatus()).isEqualTo("ABSENT");
+            assertThat(anonymousStart.attribution().actor()).isEqualTo(null);
+            assertThat(anonymousStart.attribution().status()).isEqualTo(WorkflowAttribution.Status.ABSENT);
         } finally {
             reading.close();
         }
@@ -119,11 +121,11 @@ public class InstanceCommandActorHistoryIT {
 
             // Then the retry entry names the user, and the migration entry names the service
             WorkflowHistoryEntry retried = only(log, WorkflowEntryType.RETRIED);
-            assertThat(retried.actor()).isEqualTo(new HistoryActor(HistoryActor.Kind.USER, "r-1", null));
-            assertThat(retried.attributionStatus()).isEqualTo("VERIFIED");
+            assertThat(retried.attribution().actor()).isEqualTo(new WorkflowActor.User("r-1"));
+            assertThat(retried.attribution().status()).isEqualTo(WorkflowAttribution.Status.VERIFIED);
             WorkflowHistoryEntry migrated = only(log, WorkflowEntryType.WORKFLOW_MIGRATED);
-            assertThat(migrated.actor()).isEqualTo(new HistoryActor(HistoryActor.Kind.SERVICE, "deployer", null));
-            assertThat(migrated.attributionStatus()).isEqualTo("VERIFIED");
+            assertThat(migrated.attribution().actor()).isEqualTo(new WorkflowActor.Service("deployer"));
+            assertThat(migrated.attribution().status()).isEqualTo(WorkflowAttribution.Status.VERIFIED);
         } finally {
             reading.close();
         }
