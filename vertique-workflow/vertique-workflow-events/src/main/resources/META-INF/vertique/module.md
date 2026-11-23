@@ -68,7 +68,7 @@ The two scope fields were added without changing `schemaVersion`. Adding fields 
 | `eventType` | Emitted when |
 |---|---|
 | `WORKFLOW_STARTED` | The instance is created and its first step is reached |
-| `WORKFLOW_COMPLETED` | The instance reaches a complete node |
+| `WORKFLOW_COMPLETED` | The instance reaches a complete node; `attributes.output` carries the declared output when the instance's plan declares one |
 | `WORKFLOW_FAILED` | The instance reaches a fail node, or fails |
 | `WORKFLOW_CANCELLED` | The instance is cancelled by an operator or an API call |
 | `WORKFLOW_COMPENSATING` | Compensation starts and the instance becomes `COMPENSATING` |
@@ -81,6 +81,8 @@ The two scope fields were added without changing `schemaVersion`. Adding fields 
 | `TASK_REMINDER` | A task reminder timer fires; no workflow state changes |
 
 `WORKFLOW_EXPIRED` is a reserved name that the engine does not emit.
+
+`WORKFLOW_COMPLETED` carries `attributes.output` when the pinned plan declares an output (`WorkflowBuilder.output(...)` in `dev.vertique:vertique-workflow-core`) and one was stored. The value is the decoded JSON object, never JSON text, so the envelope serializes it as a nested object; otherwise `attributes` stays empty. It is the value the instance's row stores, fixed when the instance completed, and it is held to the record-time bounds (`workflow.recording.maxPayloadBytes`, depth 64). Adding the attribute does not change `schemaVersion`. A consumer that reads it decodes the object itself; the module defines no type for it.
 
 `TASK_REMINDER` carries `reminderIndex`, `isLast`, and `kind` in `attributes`. `kind` is one of two reminder kinds:
 
@@ -178,6 +180,7 @@ Applications normally only provide the binding and destination handler.
   entry written with it; the cancellation of a branch's task writes a `TASK_CANCELLED` history entry, which it did not before,
   and its event carries `attributes.branchId`, the branch id of the branch that owned the task.
   **Behaviour change:** consumers that counted the task events of an instance with a fork now see these four for branch tasks.
+- **The output is author-chosen data.** `attributes.output` is exactly what the definition's output mapper returned. The history redactor covers history only, so a mapper that copies a redacted state field publishes it to every consumer. Keep secrets and personal data the consumers must not see out of the output type.
 - **Event text is not redacted.** The `reason` attribute of `WORKFLOW_CANCELLED` and the `errorMessage` attribute of `WORKFLOW_FAILED` carry the
   text the engine holds. The history entry of the same transition stores that text after the history redactor has replaced the values at its
   pointers, so a value the application hides in history can still reach an event consumer. Keep text that must stay hidden out of the cancel

@@ -34,6 +34,12 @@ import java.util.List;
  *     registered via {@code WorkflowBuilder.subject(...)}; {@code null} when no subject resolver
  *     was configured (cycle-1 through cycle-4 plans always have {@code null} here, preserving
  *     plan-hash continuity)
+ * @param outputTypeName optional logical type name of the declared output registered via
+ *     {@code WorkflowBuilder.output(...)} (the class's {@code @WorkflowType} name, or its binary name when it has
+ *     none; the name bound to the published version when a binding applies); {@code null} when the definition
+ *     declares no output, in which case the plan hash is unchanged
+ * @param outputMapperCallbackId optional {@link CallbackId} of the output mapper, the fixed {@code $output.mapper};
+ *     {@code null} exactly when {@code outputTypeName} is
  */
 public record WorkflowPlan(
         String definitionId,
@@ -42,4 +48,31 @@ public record WorkflowPlan(
         String stateTypeName,
         String initialStepId,
         List<WorkflowNode> nodes,
-        @Nullable CallbackId subjectResolverCallbackId) {}
+        @Nullable CallbackId subjectResolverCallbackId,
+        @Nullable String outputTypeName,
+        @Nullable CallbackId outputMapperCallbackId) {
+
+    /**
+     * Creates a plan that declares no output. Retained so existing callers keep compiling; equivalent to the canonical
+     * constructor with {@code null} for both output components.
+     */
+    public WorkflowPlan(
+            String definitionId,
+            long definitionVersion,
+            String planHash,
+            String stateTypeName,
+            String initialStepId,
+            List<WorkflowNode> nodes,
+            @Nullable CallbackId subjectResolverCallbackId) {
+        this(
+                definitionId,
+                definitionVersion,
+                planHash,
+                stateTypeName,
+                initialStepId,
+                nodes,
+                subjectResolverCallbackId,
+                null,
+                null);
+    }
+}

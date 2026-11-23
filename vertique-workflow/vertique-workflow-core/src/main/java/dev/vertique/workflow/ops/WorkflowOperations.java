@@ -167,6 +167,32 @@ public interface WorkflowOperations {
     }
 
     /**
+     * Returns the declared output of a completed workflow instance, decoded as {@code type}.
+     *
+     * <p>The output is the value the definition's {@code output(...)} mapping produced when the instance completed. It
+     * is stored with the instance, so the call reads one row and no plan or history, succeeds on a node that no longer
+     * holds the definition's code, and reads archived instances. It does not wait for completion.
+     *
+     * <p>The result is read, not authorized: like {@link #query(WorkflowInstanceId)} it is not an authorization
+     * boundary. The default implementation fails with {@link UnsupportedOperationException}; a wrapper or decorator
+     * around another binding must override this method and forward it to the wrapped binding.
+     *
+     * @param <T> the requested type
+     * @param id id of the workflow instance to read
+     * @param type the class to decode the output into; its logical name or binary name must equal the stored output
+     *     type name, or the name the pinned definition version's name binding gives it
+     * @return a {@link Future} that resolves to the output. It fails with
+     *     {@link dev.vertique.workflow.exception.WorkflowInstanceNotFoundException} when there is no such instance,
+     *     with {@link dev.vertique.workflow.exception.WorkflowResultUnavailableException} when the instance has not
+     *     completed or stored no output, and with
+     *     {@link dev.vertique.workflow.exception.WorkflowResultTypeMismatchException} when the stored output is not of
+     *     type {@code type}
+     */
+    default <T> Future<T> result(WorkflowInstanceId id, Class<T> type) {
+        return Future.failedFuture(new UnsupportedOperationException("result not supported by this binding"));
+    }
+
+    /**
      * Records the migration of a workflow instance from its current definition version to {@code targetVersion} using an
      * application-registered {@link dev.vertique.workflow.migration.WorkflowMigrationHandler}. The call returns once the
      * migration is recorded; an executor that holds both the source and the target plan carries it out afterwards, in

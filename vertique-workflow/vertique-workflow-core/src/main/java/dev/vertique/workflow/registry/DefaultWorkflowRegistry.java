@@ -680,6 +680,9 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
         classes.addAll(signalPayloadTypesWithReplies(plan, builder.signalPayloadTypes())
                 .values());
         classes.addAll(builder.decisionPayloadTypes());
+        if (builder.outputType() != null) {
+            classes.add(builder.outputType());
+        }
         return index.add(def.contract(), classes);
     }
 
@@ -866,6 +869,14 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
             String definitionId,
             long definitionVersion) {
         String label = "plan " + describe(scopeKey, definitionId, definitionVersion);
+        if (plan.outputMapperCallbackId() != null) {
+            try {
+                callbacks.outputMapper(plan.outputMapperCallbackId());
+            } catch (IllegalArgumentException | UnsupportedOperationException ex) {
+                throw new WorkflowDefinitionException(label + " declares an output but no outputMapper is registered"
+                        + " for callback '" + plan.outputMapperCallbackId().value() + "'");
+            }
+        }
         for (WorkflowNode node : plan.nodes()) {
             switch (node) {
                 case TimerNode tn -> {

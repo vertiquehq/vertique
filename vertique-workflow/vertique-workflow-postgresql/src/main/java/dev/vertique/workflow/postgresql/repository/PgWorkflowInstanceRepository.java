@@ -33,6 +33,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -85,7 +86,9 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
             "updated_at",
             "completed_at",
             "scope_key",
-            "definition_scope_key");
+            "definition_scope_key",
+            "output_json",
+            "output_type_name");
 
     // --- SQL statements ---
     //
@@ -118,7 +121,9 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
      * <p>Parameters: $1=id, $2=new version, $3=status, $4=current_step_id, $5=wait_type,
      * $6=wait_key, $7=wait_aux_id, $8=state_json, $9=error_type, $10=error_message,
      * $11=expected (old) version, $12=subject_type, $13=subject_id, $14=subject_version. The subject columns are
-     * written with every update because the first segment of a recorded start resolves the subject.
+     * written with every update because the first segment of a recorded start resolves the subject. $15=output_json
+     * and $16=output_type_name carry the stored output through every update; only the update that completes the
+     * instance sets them.
      */
     private final String sqlUpdateOptimistic;
 
@@ -191,9 +196,10 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                 + " (id, definition_id, definition_version, plan_hash, version, status,"
                 + " business_key, subject_type, subject_id, subject_version,"
                 + " current_step_id, wait_type, wait_key, wait_aux_id, state_json,"
-                + " error_type, error_message, metadata, created_at, updated_at, scope_key, definition_scope_key)"
+                + " error_type, error_message, metadata, created_at, updated_at, scope_key, definition_scope_key,"
+                + " output_json, output_type_name)"
                 + " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16, $17,"
-                + " $18::jsonb, $19, $20, $21, $22)";
+                + " $18::jsonb, $19, $20, $21, $22, $23::jsonb, $24)";
 
         this.sqlSelectAllColumns = "SELECT " + String.join(", ", INSTANCE_COLUMNS) + " FROM " + instances;
 
@@ -226,6 +232,7 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                 + " wait_type = $5, wait_key = $6, wait_aux_id = $7, state_json = $8::jsonb,"
                 + " error_type = $9, error_message = $10, updated_at = NOW(),"
                 + " subject_type = $12, subject_id = $13, subject_version = $14,"
+                + " output_json = $15::jsonb, output_type_name = $16,"
                 + " completed_at = CASE WHEN $3::varchar IN ('COMPLETED','FAILED','COMPENSATED','CANCELLED','EXPIRED')"
                 + "   THEN NOW() ELSE NULL END,"
                 // an instance returned to work (a retry of an archived failed instance) is no longer archived
@@ -291,7 +298,9 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                 toOffsetDateTime(inst.createdAt()),
                 toOffsetDateTime(inst.updatedAt()),
                 inst.scopeKey(),
-                inst.definitionScopeKey());
+                inst.definitionScopeKey(),
+                inst.outputJson(),
+                inst.outputTypeName());
 
         return DefinitionPinAdmission.admitPin(
                         tx,
@@ -363,7 +372,9 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                 expectedVersion,
                 subject != null ? subject.type() : null,
                 subject != null ? subject.id() : null,
-                subject != null ? subject.version() : null);
+                subject != null ? subject.version() : null,
+                updated.outputJson(),
+                updated.outputTypeName());
 
         if (TERMINAL_STATUSES.contains(updated.status())) {
             return executeUpdate(sqlUpdateOptimistic, params, tx);
@@ -545,6 +556,31 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                 })
                 .recover(t -> Future.failedFuture(
                         exceptionMapper.translate(t, "workflow_definitions findDefinitionContract")));
+    }
+
+    /**
+     * Reads the name binding of the definition row through the given transaction, so the read takes no further pool
+     * connection.
+     */
+    @Override
+    public Future<Optional<Map<String, String>>> findDefinitionNameBinding(DefinitionKey key, SqlClient tx) {
+        return tx.preparedQuery("SELECT name_binding FROM " + definitionsTable
+                        + " WHERE scope_key = $1 AND definition_id = $2 AND definition_version = $3")
+                .execute(Tuple.of(key.scopeKey(), key.definitionId(), key.definitionVersion()))
+                .<Optional<Map<String, String>>>map(rs -> {
+                    var it = rs.iterator();
+                    if (!it.hasNext()) {
+                        return Optional.empty();
+                    }
+                    io.vertx.core.json.JsonObject binding = it.next().getJsonObject("name_binding");
+                    Map<String, String> names = new java.util.HashMap<>();
+                    if (binding != null) {
+                        binding.forEach(entry -> names.put(entry.getKey(), String.valueOf(entry.getValue())));
+                    }
+                    return Optional.of(Map.copyOf(names));
+                })
+                .recover(t -> Future.failedFuture(
+                        exceptionMapper.translate(t, "workflow_definitions findDefinitionNameBinding")));
     }
 
     /**
