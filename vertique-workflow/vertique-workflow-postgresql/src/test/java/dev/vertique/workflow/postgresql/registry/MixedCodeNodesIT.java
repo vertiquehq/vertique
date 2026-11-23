@@ -660,7 +660,10 @@ public class MixedCodeNodesIT {
         private volatile long keyedDedupRows;
         private volatile long keyedCommands;
 
-        /** Reads the rows of the instance and the deduplication rows and commands that hold the key. */
+        /**
+         * Reads the rows of the instance and the deduplication rows and commands that hold the key. A branch signal's
+         * deduplication key is scoped to its branch, so its test counts the command by {@code dedup_key} instead.
+         */
         Future<Void> read(SqlClient tx, WorkflowInstanceId instance, String key) {
             return Rows.read(tx, instance)
                     .compose(read -> {
