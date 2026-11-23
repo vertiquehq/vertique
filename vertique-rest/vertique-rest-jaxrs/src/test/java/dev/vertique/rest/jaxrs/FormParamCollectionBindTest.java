@@ -55,8 +55,7 @@ import org.junit.jupiter.api.Test;
  * tests build a {@link ResourceMethodMeta.ParamMeta} directly so they exercise
  * {@link ParameterExtractor}'s FORM extraction against the <em>declared</em> collection type.
  *
- * <p>What these tests exist to prevent regressing — the behavior before ADR-0191 (plan §2 F5, F6,
- * F7, F13). Each bullet describes the OLD defect, not current behavior:
+ * <p>What these tests exist to prevent regressing — the behavior before the fix. Each bullet describes the OLD defect, not current behavior:
  * <ul>
  *   <li>{@code ResourceScanner.java:440-454} rewrote every collection-shaped {@code @FormParam}'s
  *       declared type to {@code List.class}, so a declared {@code Set<String>} carried

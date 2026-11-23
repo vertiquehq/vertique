@@ -361,7 +361,7 @@ class AnnotationSensitiveParamConverterCodegenTest {
                         }
                         """));
 
-        // The unsupported member must not fail the build (ADR-0146 parity-first policy).
+        // The unsupported member must not fail the build (parity-first policy).
         result.assertSuccess();
 
         Class<?> planClass =

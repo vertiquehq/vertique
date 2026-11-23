@@ -36,8 +36,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * TP-001: {@link RateLimitAdapterSupport#subjectKey} distinguishes an anonymous caller (governed
  * by {@link AnonymousRateLimitPolicy}) from an authenticated caller whose requested facet is
  * absent — a hard {@code SUBJECT_UNRESOLVABLE} failure, never a silent fall-through into the
- * shared anonymous bucket (contracts/rate-limit-runtime.md, "Framework adapter seam"; {@code
- * spec.md} §5.2).
+ * shared anonymous bucket.
  */
 class RateLimitAdapterSupportTest {
 

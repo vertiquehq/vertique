@@ -706,10 +706,10 @@ class SecurityPolicyEnforcerTest {
         }
     }
 
-    // --- Emission ownership (ADR-0114): exactly one event per authorization attempt ---
+    // --- Emission ownership: exactly one event per authorization attempt ---
 
     @Nested
-    @DisplayName("Emission ownership (ADR-0114): exactly one event per attempt")
+    @DisplayName("Emission ownership: exactly one event per attempt")
     class EmissionOwnership {
 
         private final List<AuthorizationDecisionEvent> events = new ArrayList<>();

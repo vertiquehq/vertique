@@ -55,8 +55,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Unit tests for {@link IdentityPipelineFactory}, frozen by
- * {@code contracts/identity-pipeline-factory.md} (T007).
+ * Unit tests for {@link IdentityPipelineFactory} (T007).
  *
  * <p>Verifies that {@link IdentityPipelineFactory#restIdentityResolution()} wires
  * identity-snapshot capture and binds the REST {@link InvocationOrigin}, that

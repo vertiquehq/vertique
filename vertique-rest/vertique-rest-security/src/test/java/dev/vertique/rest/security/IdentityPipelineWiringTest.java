@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Dagger graph-compilation proof for {@code AuthModule}'s {@link IdentityPipelineFactory}-backed
- * bindings, frozen by {@code contracts/identity-pipeline-factory.md} (T007).
+ * bindings (T007).
  *
  * <p>Declares a component combining {@link AuthModule} and {@link SecurityModule} with the single
  * minimal stand-in this narrow request needs — {@link ContextRuntimeModule}, which supplies the

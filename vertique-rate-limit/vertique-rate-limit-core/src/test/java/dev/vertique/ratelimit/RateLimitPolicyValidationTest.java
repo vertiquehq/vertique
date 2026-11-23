@@ -14,8 +14,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * TP-001: {@code failureMode} has no default anywhere — every policy row, enabled or disabled,
- * must declare it explicitly, or typed config binding fails (contracts/rate-limit-runtime.md,
- * "Policy model"; FR-006, {@code spec.md} §5.5).
+ * must declare it explicitly, or typed config binding fails.
  */
 class RateLimitPolicyValidationTest {
 

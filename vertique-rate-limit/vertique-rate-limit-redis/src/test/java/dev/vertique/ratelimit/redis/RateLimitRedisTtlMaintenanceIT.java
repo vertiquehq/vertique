@@ -32,8 +32,7 @@ import org.testcontainers.utility.DockerImageName;
 
 /**
  * TP-007, TP-008: the Vertique-issued {@code PEXPIRE} TTL bound after a committed consumption, and
- * that a forced {@code PEXPIRE} failure never changes the already-produced admission decision
- * (contracts/rate-limit-runtime.md, "Redis integration contract").
+ * that a forced {@code PEXPIRE} failure never changes the already-produced admission decision.
  */
 @Testcontainers
 @ExtendWith(VertxExtension.class)

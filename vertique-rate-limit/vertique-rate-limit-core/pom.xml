@@ -20,8 +20,7 @@
         <dependency><groupId>io.vertx</groupId><artifactId>vertx-core</artifactId></dependency>
         <dependency><groupId>com.google.dagger</groupId><artifactId>dagger</artifactId></dependency>
         <dependency><groupId>jakarta.inject</groupId><artifactId>jakarta.inject-api</artifactId></dependency>
-        <!-- Bucket4j is this module's private local/cluster engine (contracts/rate-limit-runtime.md
-             "Boundary"): pinned here, never exposed in a public signature. -->
+        <!-- Bucket4j is this module's private local/cluster engine: pinned here, never exposed in a public signature. -->
         <dependency>
             <groupId>com.bucket4j</groupId>
             <artifactId>bucket4j_jdk17-core</artifactId>

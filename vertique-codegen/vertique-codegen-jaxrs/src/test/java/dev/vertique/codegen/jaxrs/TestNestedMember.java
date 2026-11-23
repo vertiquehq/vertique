@@ -13,7 +13,7 @@ import java.lang.annotation.Target;
  *
  * <p>{@code AnnotationLiteralEmitter} cannot render a nested-annotation member into a compile-time
  * literal (its v1 attribute-kind boundary), so an annotation carrying a member of this type forces
- * the codegen emitters onto the reflective-fallback path (ADR-0146 parity-first policy) — mirroring
+ * the codegen emitters onto the reflective-fallback path (parity-first policy) — mirroring
  * the real-world Swagger {@code @Parameter} case, whose {@code schema} member defaults to a nested
  * {@code @Schema}.
  */

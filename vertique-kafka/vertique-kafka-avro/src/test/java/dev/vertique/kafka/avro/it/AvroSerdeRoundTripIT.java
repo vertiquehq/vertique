@@ -214,7 +214,7 @@ public class AvroSerdeRoundTripIT {
                 .serialize(event, topic, KafkaRecordHeaders.empty());
 
         // The framework carries durable/correlation context in record headers (Avro changes only the
-        // value bytes — ADR-0074). Produce with a reserved-style header and assert it survives.
+        // value bytes). Produce with a reserved-style header and assert it survives.
         org.apache.kafka.common.header.Header header = new org.apache.kafka.common.header.internals.RecordHeader(
                 "vertique-correlation", "corr-123".getBytes(StandardCharsets.UTF_8));
         try (KafkaProducer<String, byte[]> producer = new KafkaProducer<>(producerProps())) {

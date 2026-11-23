@@ -2,8 +2,8 @@
 # SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 # SPDX-License-Identifier: EUPL-1.2
 #
-# RELEASE-001 — stages the derived public publication allowlist into a Maven
-# repository (FR-REL-030, FR-REL-033, FR-REL-034, FR-REL-042; ADR-0007).
+# Stages the derived public publication allowlist into a Maven
+# repository.
 #
 # Reactor `deploy` is NOT the publication boundary. The reactor is installed
 # into an isolated local repository; this script then selects only the GAVs

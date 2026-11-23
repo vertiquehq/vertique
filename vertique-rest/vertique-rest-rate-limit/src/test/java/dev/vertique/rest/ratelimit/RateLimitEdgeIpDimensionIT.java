@@ -27,8 +27,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 /**
  * TP-004: the {@code IP} dimension derives its key from {@link OriginCaptureMiddleware}'s
  * published {@code RequestOrigin} only — never from a directly-parsed forwarding header or the raw
- * socket {@code remoteAddress()} (contracts/rest-adapter.md, "Rule composition semantics" — IP
- * mechanism).
+ * socket {@code remoteAddress()}.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -142,7 +141,7 @@ class RateLimitEdgeIpDimensionIT {
 
         // P02/P03 review repair (T017, item 6): the absent-origin + OPEN path must log a bounded,
         // internal-only warning (policy name + "RequestOrigin absent") since the response carries
-        // no policy/rule identity at all (contracts/rest-adapter.md, "HTTP mapping"). Attached
+        // no policy/rule identity at all. Attached
         // around the request round trip only, detached in the finally below, so a failing
         // assertion cannot leave the appender on the shared middleware logger.
         ch.qos.logback.classic.Logger middlewareLogger =

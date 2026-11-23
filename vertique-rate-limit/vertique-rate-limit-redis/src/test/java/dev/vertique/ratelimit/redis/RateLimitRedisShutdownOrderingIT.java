@@ -39,8 +39,7 @@ import org.testcontainers.utility.DockerImageName;
  * runtime <em>before</em> {@code vertique-redis-core}'s own {@code RedisClientShutdownStep}
  * closes the shared client, and {@code vertique-rate-limit-core}'s {@code CONFIGURE}-phase
  * shutdown step (which sorts ahead of {@code INFRA} in startup order and therefore runs
- * <em>after</em> it once reversed for teardown) must observe an already-closed, no-op runtime
- * (contracts/rate-limit-runtime.md, "Redis integration contract"; §11.5).
+ * <em>after</em> it once reversed for teardown) must observe an already-closed, no-op runtime.
  *
  * <p>This proof composes the real Dagger graph (no test double stands between it and the shared
  * client whose close ordering is under proof) and exercises the framework's own {@link

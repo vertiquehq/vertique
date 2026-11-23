@@ -41,7 +41,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Verifies that the enforcement layer ({@link SecurityPolicyEnforcer}) owns emission and produces
  * <strong>exactly one</strong> {@link AuthorizationDecisionEvent} per authorization attempt, while
- * the {@link AuthorizationDecisionPoint} stays a pure evaluator that emits nothing (ADR-0114).
+ * the {@link AuthorizationDecisionPoint} stays a pure evaluator that emits nothing.
  *
  * <p>Covers both the happy path (a pure app-provided decision point still yields exactly one
  * enforcer-emitted event) and the fail-closed short-circuits that emit nothing today
@@ -170,7 +170,7 @@ class PureDecisionPointExactOnceTest {
     @Test
     @DisplayName("app-style pure decision point never emits; enforcer emits exactly one event")
     void appStylePureDecisionPoint_neverEmits() {
-        // An app-provided decision point that ONLY returns a decision (the contract since ADR-0114).
+        // An app-provided decision point that ONLY returns a decision.
         AtomicBoolean decisionPointInvoked = new AtomicBoolean(false);
         AuthorizationDecisionPoint pureDp = request -> {
             decisionPointInvoked.set(true);

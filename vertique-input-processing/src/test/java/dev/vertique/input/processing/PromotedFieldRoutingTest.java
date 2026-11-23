@@ -247,7 +247,7 @@ class PromotedFieldRoutingTest {
                 "the enclosing member's skip must survive promotion");
     }
 
-    // --- ADR-0247 Amendment 3: registration verifies a promoted key can be routed ---
+    // --- registration verifies a promoted key can be routed ---
 
     /** Inner type governed at type level only, so no field of its own carries a chain. */
     @Sanitize(TestStripControlsSanitizer.class)

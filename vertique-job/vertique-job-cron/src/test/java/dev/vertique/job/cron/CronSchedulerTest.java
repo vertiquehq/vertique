@@ -1427,7 +1427,7 @@ class CronSchedulerTest {
      * {@link CronJobDispatcher#dispatch} resolved the target correctly, but only at send time —
      * too late for the already-persisted record.
      *
-     * <p>That is now fixed (ADR-0201): the effective event bus address is resolved once per fire
+     * <p>That is now fixed: the effective event bus address is resolved once per fire
      * by {@link CronScheduler#resolveEffectiveAddress}, before any execution record is written and
      * before {@link CronJobDispatcher#dispatch} is even called, so the address a tracked execution
      * persists is by construction the address actually dispatched to. The tests below pin that

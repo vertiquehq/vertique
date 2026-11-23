@@ -51,8 +51,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Contract tests for the isolated rate-limit Micrometer adapter (contracts/observability.md,
- * "Micrometer adapter").
+ * Contract tests for the isolated rate-limit Micrometer adapter.
  */
 class RateLimitMetricsObserverTest {
 

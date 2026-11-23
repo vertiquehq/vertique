@@ -49,15 +49,14 @@ SPDX-License-Identifier: EUPL-1.2
                                     </excludes>
                                     <includes>
                                         <!-- jackson-annotations is allowed at compile scope for typed config
-                                             records (@JsonCreator, @JsonProperty). Per ADR-0107, config
-                                             metadata annotations are inert; the actual deserialization is
-                                             performed by the shared ConfigParser in vertique-core. -->
+                                             records (@JsonCreator, @JsonProperty). Config metadata annotations are inert; the
+                                             actual deserialization is performed by the shared ConfigParser in vertique-core. -->
                                         <include>com.fasterxml.jackson.core:jackson-annotations</include>
                                         <!-- jackson-databind is allowed only at test scope for the
                                              runtime-IT JSON fixture (TestJsonSerdeProvider). -->
                                         <include>com.fasterxml.jackson.core:jackson-databind:*:*:test</include>
                                     </includes>
-                                    <message>vertique-kafka-core must stay format-neutral: no direct Jackson serde engine, Avro, or Apicurio dependency (JSON serde lives in vertique-kafka-json, Avro in vertique-kafka-avro). jackson-annotations is permitted at compile scope for typed config records (ADR-0107); jackson-databind is allowed only at test scope for the runtime-IT fixture.</message>
+                                    <message>vertique-kafka-core must stay format-neutral: no direct Jackson serde engine, Avro, or Apicurio dependency (JSON serde lives in vertique-kafka-json, Avro in vertique-kafka-avro). jackson-annotations is permitted at compile scope for typed config records; jackson-databind is allowed only at test scope for the runtime-IT fixture.</message>
                                 </bannedDependencies>
                             </rules>
                             <fail>true</fail>
@@ -123,7 +122,7 @@ SPDX-License-Identifier: EUPL-1.2
             <scope>provided</scope>
         </dependency>
         <!-- Jackson annotations only — permitted at compile scope for typed config records
-             (@JsonCreator, @JsonProperty) per ADR-0107. The serde engine (databind/core/dataformat)
+             (@JsonCreator, @JsonProperty). The serde engine (databind/core/dataformat)
              remains banned from src/main; actual deserialization runs in the shared ConfigParser
              (vertique-core). -->
         <dependency>

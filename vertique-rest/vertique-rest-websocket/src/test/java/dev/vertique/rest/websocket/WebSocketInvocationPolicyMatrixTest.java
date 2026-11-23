@@ -43,7 +43,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * TP-001 (T020, issue #379): {@code WebSocketEndpointRegistrar} resolves and caches the IP-01..IP-19
- * invocation-policy matrix ({@code contracts/invocation-policy-resolver.md}) at registration, through
+ * invocation-policy matrix at registration, through
  * the package-private seam {@code cachedRoutePolicies(Method)} /
  * {@code cachedParameterPolicies(Method, int)}.
  *

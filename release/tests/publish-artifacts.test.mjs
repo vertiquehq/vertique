@@ -3,7 +3,7 @@
 
 /**
  * RELEASE-001 — staging never depends on the reactor model
- * (FR-REL-033; ADR-0007).
+ * (FR-REL-033).
  *
  * release/publish-artifacts.sh deploys each payload unit with deploy-file,
  * which needs no project. Run from the repository root, Maven still builds the

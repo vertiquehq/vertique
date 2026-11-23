@@ -38,7 +38,7 @@ import org.slf4j.LoggerFactory;
  * failure class name only — never {@link Throwable#toString()} / message content that may embed
  * event payloads (JWT claims, introspection fields).
  *
- * <p>Pins the exit criterion for {@code vertique-security-runtime} in ADR-0232 / issue #182.
+ * <p>Pins the exit criterion for {@code vertique-security-runtime} (issue #182).
  */
 class SecurityEventEmitterLogHygieneTest {
 

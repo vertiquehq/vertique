@@ -14,7 +14,7 @@ import java.lang.annotation.Target;
  * cannot render into a compile-time literal.
  *
  * <p>Used by the codegen literal-backed-annotation tests to force the reflective-fallback path
- * (ADR-0146 parity-first policy): a parameter carrying this annotation must still compile, and the
+ * (parity-first policy): a parameter carrying this annotation must still compile, and the
  * annotation must remain resolvable via {@code findAnnotation}/{@code annotationsLazy()} on the
  * generated route (through the reflective fallback), byte-for-byte matching the reflective scan path
  * — never silently omitted, never a compile error. Mirrors the real-world Swagger {@code @Parameter}

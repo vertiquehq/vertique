@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Unit tests for {@link SyncPolicyDecisionPoint}.
  *
- * <p>Since ADR-0114 the adapter is a <strong>pure evaluator</strong>: it returns the wrapped
+ * <p>The adapter is a <strong>pure evaluator</strong>: it returns the wrapped
  * policy's decision and emits nothing. These tests verify:
  * <ul>
  *   <li>App policy permits → future succeeds with permit, no emitter dependency</li>

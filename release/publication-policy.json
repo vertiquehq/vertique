@@ -1,5 +1,5 @@
 {
-  "$comment": "RELEASE-001 public publication policy. Publication eligibility is DERIVED from these rules, never selected ad hoc and never inferred from reactor membership (ADR-0007). Changing the reactor, the BOM, or the archetype set without updating expectedPublishableGavCount fails release/tests/publication-contract.test.mjs by design.",
+  "$comment": "Public publication policy. Publication eligibility is DERIVED from these rules, never selected ad hoc and never inferred from reactor membership. Changing the reactor, the BOM, or the archetype set without updating expectedPublishableGavCount fails release/tests/publication-contract.test.mjs by design.",
   "schemaVersion": 1,
   "product": "public",
   "groupIdPrefix": "dev.vertique",

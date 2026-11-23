@@ -3,8 +3,7 @@
 // SPDX-License-Identifier: EUPL-1.2
 
 /**
- * RELEASE-001 — mutable SNAPSHOT publication guard
- * (FR-REL-020, FR-REL-021, FR-REL-022, FR-REL-023; ADR 0006).
+ * Mutable SNAPSHOT publication guard.
  *
  * SNAPSHOT publication is the only product-owned workflow that holds a write
  * credential, so the conditions under which it may run ARE the security

@@ -52,7 +52,7 @@ import org.mockito.ArgumentCaptor;
  * the first request), and at invocation time resolves the ordered {@code key()} selector paths
  * against the live arguments, derives the key through {@link RateLimitAdapterSupport#subjectKey},
  * bypasses admission entirely on an empty resolution, and otherwise guards the invocation through
- * {@link RateLimiter#execute} (contracts/rate-limit-aop.md).
+ * {@link RateLimiter#execute}.
  */
 class RateLimitedAspectTest {
 

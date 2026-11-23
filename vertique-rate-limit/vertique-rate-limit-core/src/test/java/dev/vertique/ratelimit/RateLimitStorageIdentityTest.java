@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * TP-003, TP-004: {@link RateLimitStorageIdentity}'s {@code LOCAL} and {@code CLUSTERED} storage
- * identity derivation ({@code contracts/rate-limit-runtime.md}, "Storage identity"; D015).
+ * identity derivation.
  */
 class RateLimitStorageIdentityTest {
 

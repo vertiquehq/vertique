@@ -84,8 +84,7 @@ import org.slf4j.LoggerFactory;
  * shape it expects, for each of those three sources. Both halves are load-bearing: a stub can hand the
  * extractor a shape the binder never produces.
  *
- * <p>What these tests exist to prevent regressing — the behavior before ADR-0191 (plan §2 F7,
- * F12). Each bullet describes the OLD defect, not current behavior:
+ * <p>What these tests exist to prevent regressing — the behavior before the fix. Each bullet describes the OLD defect, not current behavior:
  * <ul>
  *   <li>{@code extractScalarValue} routed an absent collection's {@code @DefaultValue} through
  *       {@code coerceString}, whose conversion context used the <em>collection</em> type

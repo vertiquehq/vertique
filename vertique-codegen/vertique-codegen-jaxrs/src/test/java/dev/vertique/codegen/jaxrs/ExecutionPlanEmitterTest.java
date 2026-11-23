@@ -1172,7 +1172,7 @@ class ExecutionPlanEmitterTest {
         void unsupportedMemberAnnotation_reflectiveFallbackPreservesFullParity() throws Exception {
             // The parameter carries a supported marker (@TestParamMarker, materialized as a literal)
             // AND an annotation with an unsupported nested-annotation member (@TestUnsupportedMemberMarker,
-            // which AnnotationLiteralEmitter cannot render). ADR-0146 parity-first policy: this must
+            // which AnnotationLiteralEmitter cannot render). parity-first policy: this must
             // compile (not fail), and the unsupported annotation must remain resolvable at runtime via
             // the reflective fallback — never silently omitted.
             var result = ProcessorTestHarness.run(
@@ -1225,7 +1225,7 @@ class ExecutionPlanEmitterTest {
             assertTrue(
                     foundUnsupported.isPresent(),
                     "The unsupported-member annotation must still resolve via the reflective fallback "
-                            + "(ADR-0146 parity-first): codegen must not omit an annotation the reflective path sees");
+                            + "(parity-first): codegen must not omit an annotation the reflective path sees");
 
             // annotationsLazy() returns the FULL merged set (both annotations), matching the reflective path.
             Method annotationsLazy = parameterMetadata.getClass().getMethod("annotationsLazy");

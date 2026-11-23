@@ -81,8 +81,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Integration test proving that a WebSocket endpoint carrying a class-level {@code @RequiresAction}
- * is enforced once at upgrade by the composed {@link SecurityPolicyEnforcer} action gate (FR-AUTHZ-048,
- * ADR-0115).
+ * is enforced once at upgrade by the composed {@link SecurityPolicyEnforcer} action gate (FR-AUTHZ-048).
  *
  * <p>The endpoint {@code /ws/content} declares {@code @RolesAllowed("editor")} AND
  * {@code @RequiresAction("cms.content.read")}. The in-test {@link Authorizer} permits

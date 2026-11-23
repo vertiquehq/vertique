@@ -24,7 +24,7 @@ import java.util.concurrent.CancellationException;
  * Framework wiring for {@link McpPreparedToolCallTest} (T014 TP-002).
  *
  * <p>{@link GeneratedInvoker} stands in for a real generated invoker's {@code prepare(...)} (T012's
- * frozen shape, {@code contracts/tool-authoring-and-dispatch.md} §4.2): it closes over one
+ * frozen shape): it closes over one
  * descriptor, the cancellation signal, the effective mapper, and a materialized carrier — all four
  * held here, by this fixture, at the exact point they are passed in — and returns an
  * {@link McpPreparedToolCall} that exposes none of them, only {@code normalizedArguments()} and

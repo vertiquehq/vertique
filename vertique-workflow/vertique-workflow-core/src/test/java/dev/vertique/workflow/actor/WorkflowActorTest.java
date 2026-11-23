@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
  * Verifies the three {@link WorkflowActor} permits ({@link WorkflowActor.User},
  * {@link WorkflowActor.Service}, {@link WorkflowActor.System}): null/blank rejection, happy-path
  * construction, equality/hashCode round-trips, sealed-sum exhaustiveness via a {@code switch}
- * expression, and Jackson round-trip/shape-pin behavior (ADR-0048).
+ * expression, and Jackson round-trip/shape-pin behavior.
  */
 class WorkflowActorTest {
 
@@ -155,7 +155,7 @@ class WorkflowActorTest {
         }
     }
 
-    // --- Jackson serialization shape pin (ADR-0048: byte-identical wire shape) ---
+    // --- Jackson serialization shape pin (byte-identical wire shape) ---
 
     @Nested
     @DisplayName("Jackson serialization shape pin")

@@ -140,8 +140,7 @@ SPDX-License-Identifier: EUPL-1.2
         <logback.version>1.6.7</logback.version>
         <slf4j.version>2.0.20</slf4j.version>
         <caffeine.version>3.3.1</caffeine.version>
-        <!-- Bucket4j is rate-limit-core's private local/cluster engine (contracts/rate-limit-runtime.md
-             "Boundary"): no com.bucket4j type may appear in a public signature. -->
+        <!-- Bucket4j is rate-limit-core's private local/cluster engine: no com.bucket4j type may appear in a public signature. -->
         <bucket4j.version>8.22.0</bucket4j.version>
 
         <!-- Test -->

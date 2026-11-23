@@ -33,8 +33,7 @@ import org.testcontainers.utility.DockerImageName;
  * its own separate suite. No injectable clock exists for CLUSTERED in Bucket4j 8.19.0's Vert.x
  * builder, so every vector here only exercises full-initial-state-to-exhaustion sequences within
  * one refill period — never mid-period refill timing — so wall-clock jitter cannot flake the
- * agreement assertion (contracts/rate-limit-runtime.md, "Redis integration contract";
- * decisions/D011-bucket4j-redis-cas-and-shared-lifecycle.md).
+ * agreement assertion.
  */
 @Testcontainers
 @Timeout(value = 30, unit = TimeUnit.SECONDS)

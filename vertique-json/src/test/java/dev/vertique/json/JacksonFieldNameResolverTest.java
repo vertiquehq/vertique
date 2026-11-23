@@ -692,7 +692,7 @@ class JacksonFieldNameResolverTest {
         assertTrue(resolver.isIdentityProjection(PlainDto.class), "and the ordinary short circuit is unaffected");
     }
 
-    // --- ADR-0247 Amendment 3: claims on one key resolve the way Jackson binds them ---
+    // --- claims on one key resolve the way Jackson binds them ---
 
     /** Middle level with a field of its own that its unwrapped member also declares. */
     public static class ContactWithOwnStreet {
@@ -820,7 +820,7 @@ class JacksonFieldNameResolverTest {
         assertTrue(nested.getMessage().contains("n_street"), nested.getMessage());
     }
 
-    // --- ADR-0247 Amendment 3: the Java names the mapper binds into ---
+    // --- the Java names the mapper binds into ---
 
     /** A field the mapper reaches only through accessors of a different implicit name. */
     public static class AccessorNamedDto {

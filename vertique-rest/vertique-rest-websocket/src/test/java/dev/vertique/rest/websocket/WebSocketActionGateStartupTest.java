@@ -33,7 +33,7 @@ import org.junit.jupiter.api.Test;
  * (Phase-3 review finding C2).
  *
  * <p>A class-level {@code @RequiresAction} on a WebSocket endpoint is enforced once at upgrade by the
- * composed {@link SecurityPolicyEnforcer} action gate (FR-AUTHZ-048, ADR-0115). Three distinct
+ * composed {@link SecurityPolicyEnforcer} action gate (FR-AUTHZ-048). Three distinct
  * dependencies must all be present for the gate to be enforceable:
  * <ul>
  *   <li>the authz engine — the {@link ActionRegistry} — used to validate the action value;</li>

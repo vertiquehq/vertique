@@ -19,7 +19,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * ADR-0247 Amendment 3 — a field carrying a declared chain that the codec binds no wire key into
+ * A field carrying a declared chain that the codec binds no wire key into
  * fails registration instead of silently never running.
  *
  * <p>The engine keys metadata on the Java field name and a codec keys its binding on the property

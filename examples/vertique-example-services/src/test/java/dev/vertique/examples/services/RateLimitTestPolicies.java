@@ -10,8 +10,7 @@ import io.vertx.core.json.JsonObject;
  * dev.vertique.examples.services.service.RateLimitProbeService#POLICY_NAME} (T013).
  *
  * <p>{@code RateLimitProbeServiceHandler#probe} carries {@code @RateLimited}, and the aspect
- * resolves its policy handle at proxy-construction time (contracts/rate-limit-aop.md —
- * constructor-time fail-fast), so every {@code VertiqueAppExtension}-booted test in this module
+ * resolves its policy handle at proxy-construction time, so every {@code VertiqueAppExtension}-booted test in this module
  * must declare this policy, whether or not the test exercises the probe. {@link
  * dev.vertique.examples.services.RateLimitProbeIT} keeps its own local copy instead of using this
  * fixture, since its capacity is tightly coupled to its own request-count assertions.

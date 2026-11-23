@@ -27,8 +27,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 /**
  * TP-002: the framework-default {@link RateLimitSubjectResolver} —
  * {@link DefaultRateLimitSubjectResolver} — reads the current {@link SecurityIdentity} off the
- * {@link SecurityContext} bound in the framework {@link ContextHolder}
- * (contracts/rate-limit-runtime.md, "Subject resolution SPI"; {@code spec.md} §5.2), mirroring
+ * {@link SecurityContext} bound in the framework {@link ContextHolder}, mirroring
  * {@code dev.vertique.cache.DefaultCacheIdentityResolver}.
  */
 @ExtendWith(VertxExtension.class)
