@@ -156,7 +156,8 @@ class McpToolProcessorCompileTest {
     }
 
     @Test
-    @DisplayName("a type-use annotated String result is text content and an annotated Optional keeps the probe")
+    @DisplayName(
+            "a type-use annotated String result is text content and an annotated Optional beside a primitive keeps the probe")
     void shouldEmitTypeUseAnnotatedStringResultAsTextAndKeepTheOptionalProbe() {
         JavaFileObject annotated = SourceFiles.inline(TOOLS_PACKAGE + ".AnnotatedResultTools", """
                 package com.example.tools;
@@ -176,6 +177,7 @@ class McpToolProcessorCompileTest {
 
                     @McpTool(name = "weather.annotated_result", description = "Describe the current weather.")
                     public Future<@NotBlank String> lookup(
+                            @McpToolParam(name = "days", description = "How many days to describe.") int days,
                             @McpToolParam(name = "nickname", description = "An optional nickname.")
                             @Valid Optional<String> nickname) {
                         return Future.succeededFuture("sunny");
