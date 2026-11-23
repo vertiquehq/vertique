@@ -15,6 +15,7 @@ import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -40,6 +41,7 @@ class GeneratedContractFieldParityTest {
                 import jakarta.ws.rs.GET;
                 import jakarta.ws.rs.POST;
                 import jakarta.ws.rs.Path;
+                import jakarta.ws.rs.PathParam;
                 import jakarta.ws.rs.Produces;
 
                 """ + body);
@@ -53,16 +55,17 @@ class GeneratedContractFieldParityTest {
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), sources);
         result.assertSuccess();
         String fqn = PKG + "." + resourceSimpleName;
-        Object instance =
-                result.generatedClassLoader().loadClass(fqn).getDeclaredConstructor().newInstance();
+        Object instance = result.generatedClassLoader()
+                .loadClass(fqn)
+                .getDeclaredConstructor()
+                .newInstance();
         Class<?> descriptorClass = result.loadGeneratedClass(fqn + "_JaxRsDescriptor");
         Object descriptor = descriptorClass.getDeclaredConstructor().newInstance();
         @SuppressWarnings("unchecked")
         List<ResourceMethodMeta> generated = (List<ResourceMethodMeta>) descriptorClass
                 .getMethod("describe", Object.class, GeneratedJaxRsDescriptorSupport.class, List.class)
                 .invoke(descriptor, instance, new GeneratedJaxRsDescriptorSupport(), new ArrayList<>());
-        return new Scans(
-                byName(new JaxRsRouteRegistrar().scanResource(reflectiveResource)), byName(generated));
+        return new Scans(byName(new JaxRsRouteRegistrar().scanResource(reflectiveResource)), byName(generated));
     }
 
     private static Map<String, ResourceMethodMeta> byName(List<ResourceMethodMeta> metas) {
@@ -180,6 +183,125 @@ class GeneratedContractFieldParityTest {
                 List.of("text/yaml"), pick(scans.reflective(), "x").mediaTypes().consumes());
         assertEquals(
                 List.of("text/csv"), pick(scans.reflective(), "x").mediaTypes().produces());
-        assertEquals(pick(scans.reflective(), "x").mediaTypes(), pick(scans.generated(), "x").mediaTypes());
+        assertEquals(
+                pick(scans.reflective(), "x").mediaTypes(),
+                pick(scans.generated(), "x").mediaTypes());
+    }
+
+    // --- Operation path normalisation ---
+
+    @Path("/users/")
+    static class TrailingSlashClassResource {
+        @GET
+        public String list() {
+            return "list";
+        }
+
+        @GET
+        @Path("/{id}/")
+        public String byId(@PathParam("id") String id) {
+            return "byId";
+        }
+    }
+
+    @Path("/users")
+    static class RootMethodResource {
+        @GET
+        @Path("/")
+        public String root() {
+            return "root";
+        }
+    }
+
+    @Path("users")
+    static class RelativeClassResource {
+        @GET
+        @Path("items//all")
+        public String all() {
+            return "all";
+        }
+
+        @GET
+        @Path("/")
+        public String root() {
+            return "root";
+        }
+    }
+
+    @Test
+    @DisplayName("class path with a trailing slash and method path normalise like the reflective scan")
+    void trailingSlashClassPath() throws Exception {
+        Scans scans = scan(
+                new TrailingSlashClassResource(), "TrailingSlashClassResource", src("TrailingSlashClassResource", """
+                @Path("/users/")
+                public class TrailingSlashClassResource {
+                    @GET
+                    public String list() {
+                        return "list";
+                    }
+
+                    @GET
+                    @Path("/{id}/")
+                    public String byId(@PathParam("id") String id) {
+                        return "byId";
+                    }
+                }
+                """));
+        assertEquals("/users", pick(scans.reflective(), "list").path());
+        assertEquals("/users/{id}", pick(scans.reflective(), "byId").path());
+        for (String method : List.of("list", "byId")) {
+            assertEquals(
+                    pick(scans.reflective(), method).path(),
+                    pick(scans.generated(), method).path(),
+                    "path of " + method);
+        }
+    }
+
+    @Test
+    @DisplayName("class path without a leading slash and a doubled slash normalise like the reflective scan")
+    void relativeClassPath() throws Exception {
+        Scans scans = scan(new RelativeClassResource(), "RelativeClassResource", src("RelativeClassResource", """
+                @Path("users")
+                public class RelativeClassResource {
+                    @GET
+                    @Path("items//all")
+                    public String all() {
+                        return "all";
+                    }
+
+                    @GET
+                    @Path("/")
+                    public String root() {
+                        return "root";
+                    }
+                }
+                """));
+        assertEquals("/users/items/all", pick(scans.reflective(), "all").path());
+        assertEquals("/users", pick(scans.reflective(), "root").path());
+        for (String method : List.of("all", "root")) {
+            assertEquals(
+                    pick(scans.reflective(), method).path(),
+                    pick(scans.generated(), method).path(),
+                    "path of " + method);
+        }
+    }
+
+    @Test
+    @DisplayName("method path \"/\" under a class path normalises like the reflective scan")
+    void rootMethodPath() throws Exception {
+        Scans scans = scan(new RootMethodResource(), "RootMethodResource", src("RootMethodResource", """
+                @Path("/users")
+                public class RootMethodResource {
+                    @GET
+                    @Path("/")
+                    public String root() {
+                        return "root";
+                    }
+                }
+                """));
+        assertEquals("/users", pick(scans.reflective(), "root").path());
+        assertEquals(
+                pick(scans.reflective(), "root").path(),
+                pick(scans.generated(), "root").path());
     }
 }

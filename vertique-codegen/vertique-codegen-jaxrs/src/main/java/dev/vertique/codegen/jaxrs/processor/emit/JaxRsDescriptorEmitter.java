@@ -981,9 +981,9 @@ public final class JaxRsDescriptorEmitter {
     /**
      * Derives the full JAX-RS path by combining the class-level and method-level paths.
      *
-     * <p>Joins the two path segments with a single {@code /} separator, avoiding double slashes.
-     * If {@code sub} already starts with {@code /}, it is appended directly after stripping
-     * any trailing {@code /} from {@code base}.
+     * <p>Joins the two path segments with {@code /} and normalises the result as the reflective
+     * scanner does: duplicate slashes collapse, a leading slash is added and a trailing slash is
+     * removed (the root stays {@code "/"}).
      *
      * @param classPath  the class-level path value, or {@code null}
      * @param methodPath the method-level path value, or {@code null}
@@ -992,21 +992,22 @@ public final class JaxRsDescriptorEmitter {
     private static String buildFullPath(String classPath, String methodPath) {
         String base = classPath != null ? classPath : "";
         String sub = methodPath != null ? methodPath : "";
-        if (sub.isEmpty()) {
-            return base.isEmpty() ? "/" : base;
+        return normalizePath(base + "/" + sub);
+    }
+
+    /**
+     * Collapses duplicate slashes, ensures a leading slash and removes a trailing slash (except for
+     * the root {@code "/"}), exactly as the reflective scanner does.
+     */
+    private static String normalizePath(String path) {
+        String normalized = path.replaceAll("/+", "/");
+        if (!normalized.startsWith("/")) {
+            normalized = "/" + normalized;
         }
-        if (base.isEmpty()) {
-            return sub.startsWith("/") ? sub : "/" + sub;
+        if (normalized.length() > 1 && normalized.endsWith("/")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
         }
-        // Strip trailing slash from base to prevent double-slash when sub starts with /
-        String normalizedBase = base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
-        // Ensure sub starts with /
-        String normalizedSub = sub.startsWith("/") ? sub : "/" + sub;
-        String joined = normalizedBase + normalizedSub;
-        if (!joined.startsWith("/")) {
-            joined = "/" + joined;
-        }
-        return joined;
+        return normalized;
     }
 
     /**
