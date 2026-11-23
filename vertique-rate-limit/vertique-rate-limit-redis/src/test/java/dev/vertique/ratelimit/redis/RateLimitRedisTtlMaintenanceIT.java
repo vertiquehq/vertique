@@ -53,6 +53,27 @@ class RateLimitRedisTtlMaintenanceIT {
         vertx = hostVertx;
         registry = RateLimitRedisTestFixture.registry(vertx, REDIS.getHost(), REDIS.getMappedPort(6379));
         rawCommands = RedisAPI.api(registry.client(RateLimitRedisTestFixture.CONNECTION));
+        warmUp();
+    }
+
+    /**
+     * Pays the cold-start cost of the first {@code consume(...)} (pooled connection, CAS script
+     * load, class initialisation) outside any operation deadline. Under host load that first call
+     * takes several times longer than a warm one, and the tests below give {@code consume} a 2 s
+     * deadline: without this, whichever test runs first can see a {@code TIMEOUT} result and fail
+     * on an assertion about the TTL write that the late completion has not reached yet.
+     */
+    private static void warmUp() {
+        TokenBucketRateLimit algorithm = RateLimitRedisTestFixture.greedyAlgorithm(5, 5, 60_000);
+        RateLimitBackend backend = RateLimitRedisTestFixture.backend(
+                registry.client(RateLimitRedisTestFixture.CONNECTION), vertx, 10_000, 1_000);
+        String storageKey = RateLimitRedisTestFixture.storageKey("warm-up-" + UUID.randomUUID());
+        try {
+            RateLimitRedisTestFixture.await(
+                    backend.consume(RateLimitRedisTestFixture.request(storageKey, algorithm, 1)));
+        } catch (Exception e) {
+            throw new IllegalStateException("warm-up consume against the Redis container failed", e);
+        }
     }
 
     @AfterAll
