@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link DelegationGrantDecision} — the outcome record produced by
- * {@link DelegationGrantValidator} (PRD identity-002 §14.3 Contract Appendix).
+ * {@link DelegationGrantValidator}.
  */
 class DelegationGrantDecisionTest {
 

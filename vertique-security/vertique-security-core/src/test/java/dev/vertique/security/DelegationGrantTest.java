@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link DelegationGrant} — the immutable, audit-safe value record backing grant-based
- * delegation (PRD identity-002 FR-ID-DG-002).
+ * delegation.
  */
 class DelegationGrantTest {
 

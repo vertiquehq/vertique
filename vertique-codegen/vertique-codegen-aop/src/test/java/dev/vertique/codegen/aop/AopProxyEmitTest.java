@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
  * Verifies {@link AopProcessor} emits a reflection-free {@code {Bean}$AopProxy extends Bean} subclass
  * proxy for a bean carrying an {@link dev.vertique.aop.Aspect}-meta-annotated method.
  *
- * <p>These tests pin the FROZEN generated-proxy shape (PRD Appendix A.5): the proxy extends the bean,
+ * <p>These tests pin the FROZEN generated-proxy shape: the proxy extends the bean,
  * overrides the intercepted method, calls {@code super.<method>(...)} directly, holds a {@code static}
  * {@code MethodMetadata} constant, builds the interceptor chain in its constructor, and contains no
  * reflection ({@code Method.invoke} / {@code getDeclaredMethod} / {@code .getAnnotation(}).

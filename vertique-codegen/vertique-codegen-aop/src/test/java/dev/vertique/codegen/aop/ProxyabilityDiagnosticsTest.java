@@ -10,7 +10,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * RED reproduction for slice 2.4 (proxyability diagnostics, FR-013-09a + PRD §12 folded rows): the
+ * RED reproduction for proxyability diagnostics: the
  * subclass-proxy AOP strategy cannot proxy certain method/class shapes, so {@link AopProcessor} MUST
  * REJECT them with a clear {@code Diagnostics.error} <em>before</em> emission — rather than emitting
  * uncompilable {@code extends Bean} / {@code @Override} source (or, for the final-class / final-method

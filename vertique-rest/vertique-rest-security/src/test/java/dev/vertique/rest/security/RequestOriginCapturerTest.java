@@ -26,7 +26,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 /**
  * Unit tests for {@link RequestOriginCapturer}.
  *
- * <p>Covers all acceptance criteria AC-RO-1 through AC-RO-9 from the identity-001 PRD §7.11:
+ * <p>Covers all acceptance criteria AC-RO-1 through AC-RO-9:
  * <ul>
  *   <li>AC-RO-1: direct peer with no proxy — {@code clientIp == remoteIp}</li>
  *   <li>AC-RO-2: trusted proxy with X-Forwarded-For — clientIp derived from chain walk</li>

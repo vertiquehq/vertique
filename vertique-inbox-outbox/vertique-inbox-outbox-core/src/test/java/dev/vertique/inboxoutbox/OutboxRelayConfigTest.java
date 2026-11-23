@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link OutboxRelayConfig} Jackson deserialization and default values.
- * Verifies that all defaults match the documented PRD values and that explicit overrides
+ * Verifies that all defaults match the documented values and that explicit overrides
  * round-trip correctly.
  */
 @DisplayName("OutboxRelayConfig")

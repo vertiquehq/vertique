@@ -32,7 +32,7 @@ import org.junit.jupiter.api.parallel.ExecutionMode;
  *
  * <p>JVM time zone is pinned to {@code Europe/Helsinki} for the duration of this class so
  * {@code MessageFormat}'s {@code {n,date,...}} / {@code {n,time,...}} subformats produce the
- * deterministic outputs the PRD §11.2 matrix expects (those subformats render in the JVM
+ * deterministic outputs the expected matrix requires (those subformats render in the JVM
  * default zone). {@code @Execution(SAME_THREAD)} prevents future Surefire parallel switches
  * from racing siblings that also depend on the system zone.
  */

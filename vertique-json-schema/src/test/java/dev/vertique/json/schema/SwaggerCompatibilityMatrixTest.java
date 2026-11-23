@@ -30,15 +30,15 @@ import org.junit.jupiter.api.Test;
  * <ol>
  *   <li>{@link #swaggerAnnotationMembersArePartitionedExhaustively()} — every {@code @Schema} and
  *       {@code @ArraySchema} annotation member declared by the pinned library falls into exactly one
- *       of this test's own {@link #CONSUMED} or {@link #IGNORED} sets, built from the PRD §6.2 exact
- *       member table. A future dependency upgrade that adds, removes, or renames a member fails this
+ *       of this test's own {@link #CONSUMED} or {@link #IGNORED} sets, built from the exact
+ *       member table of consumed members. A future dependency upgrade that adds, removes, or renames a member fails this
  *       test loudly instead of silently drifting from the documented compatibility promise.
  *   <li>the {@code effect*} test group proves every {@link #CONSUMED} member actually influences a
  *       generated document.
  *   <li>the {@code ignored*} test group proves a representative sample of {@link #IGNORED} members
- *       has <em>no</em> effect, including the two members the PRD calls out by name:
- *       {@code Schema.type} and the {@code implementation} × override interplay (the latter is S4's
- *       job, cross-referenced rather than duplicated below).
+ *       has <em>no</em> effect, including two notable members:
+ *       {@code Schema.type} and the {@code implementation} × override interplay (the latter is
+ *       covered elsewhere, cross-referenced rather than duplicated below).
  * </ol>
  *
  * <p>The {@code implementation} × profile-override guard is proven by {@link
@@ -53,11 +53,11 @@ class SwaggerCompatibilityMatrixTest {
     /** Neutral mapper used to read documents inside the assertions. */
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    // --- PRD §6.2 exact member table, transcribed as the test's own frozen partition ---
+    // --- exact member table, transcribed as the test's own frozen partition ---
 
     /**
      * Every {@code @Schema}/{@code @ArraySchema} member the pinned {@code Swagger2Module} consumes,
-     * per PRD §6.2's exact table: the union of the "type" and "field or method/property" rows for
+     * per the exact table: the union of the "type" and "field or method/property" rows for
      * {@link Schema}, plus the {@code @ArraySchema} row's five members.
      */
     private static final Set<String> CONSUMED = Set.of(
@@ -102,9 +102,9 @@ class SwaggerCompatibilityMatrixTest {
 
     /**
      * Every {@code @Schema}/{@code @ArraySchema} member declared at {@code swagger-annotations-jakarta
-     * 2.2.44} that is NOT a JSON-005 compatibility promise: not listed in PRD §6.2's exact table, so
+     * 2.2.44} that is NOT a compatibility promise: not listed in the exact table, so
      * the pinned {@code Swagger2Module} either does not consult it or the generator does not claim its
-     * effect. Any unlisted member, including {@code Schema.type}, has no JSON-005 effect (FR-JSON-084).
+     * effect. Any unlisted member, including {@code Schema.type}, has no effect.
      *
      * <p>This is a flat set of member <em>names</em>, not (annotation, name) pairs: {@code contains},
      * {@code extensions}, {@code maxContains}, {@code minContains}, {@code prefixItems}, and {@code
@@ -181,7 +181,7 @@ class SwaggerCompatibilityMatrixTest {
         declaredNotReflected.removeAll(reflected);
         assertTrue(
                 declaredNotReflected.isEmpty(),
-                "CONSUMED/IGNORED name a member the pinned library no longer declares — update the PRD §6.2"
+                "CONSUMED/IGNORED name a member the pinned library no longer declares — update the member"
                         + " table and this partition; stale: " + declaredNotReflected);
 
         Set<String> overlap = new HashSet<>(CONSUMED);
@@ -660,7 +660,7 @@ class SwaggerCompatibilityMatrixTest {
 
     // --- Obligation 3: unlisted-member non-effect proofs ---
 
-    /** DTO proving {@code Schema.type} has no effect (the PRD's explicitly named example). */
+    /** DTO proving {@code Schema.type} has no effect (the explicitly named example). */
     static final class IgnoredTypeDto {
 
         /** Declares {@code type="string"} on an {@link Integer}-typed property. */
@@ -676,7 +676,7 @@ class SwaggerCompatibilityMatrixTest {
     }
 
     @Test
-    @DisplayName("Schema.type has no effect: an Integer property keeps type 'integer' (PRD-named example)")
+    @DisplayName("Schema.type has no effect: an Integer property keeps type 'integer'")
     void schemaTypeHasNoEffect() throws Exception {
         String annotated = AnnotationJsonSchemaGenerator.withVictoolsDefaults().generateCanonical(IgnoredTypeDto.class);
         String unannotated =

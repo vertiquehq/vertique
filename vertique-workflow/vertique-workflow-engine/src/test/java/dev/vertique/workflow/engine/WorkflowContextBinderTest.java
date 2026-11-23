@@ -67,8 +67,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * Unit tests for {@link WorkflowContextBinder} (PRD FR-WF-CTX-012 / FR-WF-CTX-020 /
- * FR-WF-CTX-024, AC-9, NFR-WF-CTX-008).
+ * Unit tests for {@link WorkflowContextBinder}.
  *
  * <p>Uses the {@code runOnDuplicated} pattern plus the shared {@link TenantCtx} /
  * {@link TenantCtxCodec} test fixture to bind ambient context, and the real

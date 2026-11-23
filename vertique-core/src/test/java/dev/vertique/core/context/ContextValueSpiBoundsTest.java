@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test;
  * Verifies that the context-producing SPIs declare their context-type parameter bounded by
  * {@link ContextValue}.
  *
- * <p>This is the bytecode-level proof of the compile-time contract from PRD context-001 (FR-CTX-210):
+ * <p>This is the bytecode-level proof of the compile-time contract:
  * an extension author cannot declare an encoder/decoder/adapter over a non-{@code ContextValue}
  * context type, so a malformed context type is rejected at compile time rather than at erased-path
  * reinstatement (runtime). Only the context-type parameter is bounded; wire/snapshot/envelope type

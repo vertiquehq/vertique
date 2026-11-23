@@ -87,8 +87,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
  * Binder-row wiring tests for {@link WorkflowEngine}, {@link TaskLifecycleService}, and
- * {@link TimerLifecycleService} (PRD AC-7, FR-WF-CTX-020/024/025, and the bind-once routing rule
- * in Contract Appendix C2).
+ * {@link TimerLifecycleService} and the bind-once routing rule.
  *
  * <p>Each instance-owned single-path drive (signal, cancel, retry, migrate, task/timer lifecycle
  * callbacks with no branch token involved) must route the drive body through

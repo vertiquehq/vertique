@@ -56,7 +56,7 @@ SPDX-License-Identifier: EUPL-1.2
         <!--
           Test-scope only: reuses vertique-workflow-engine's TenantCtx / TenantCtxCodec
           durable-context test fixtures (dev.vertique.workflow.engine.testsupport) instead of
-          declaring a colocated duplicate, per the workflow-007 plan S6 fixture-consolidation note.
+          declaring a colocated duplicate, as part of the fixture consolidation.
         -->
         <dependency>
             <groupId>dev.vertique</groupId>

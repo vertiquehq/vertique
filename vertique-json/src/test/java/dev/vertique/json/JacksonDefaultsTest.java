@@ -40,7 +40,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Unit tests for {@link JacksonDefaults#apply(ObjectMapper)}.
  *
- * <p>Verifies that the four opinionated defaults from PRD §6.1 are applied correctly:
+ * <p>Verifies that the four opinionated defaults are applied correctly:
  * (1) unknown-enum fallback enabled, (2) ISO-8601 java.time with offset preserved,
  * (3) BigDecimal for floats, (4) NON_NULL inclusion. Also verifies that BigDecimal serialization
  * stays as a JSON number (stock behavior), JsonObject round-trips correctly, and that Instant
@@ -376,10 +376,10 @@ class JacksonDefaultsTest {
         }
     }
 
-    // --- Behavioral tests for the opinionated defaults (PRD Phase 1 ACs) ---
+    // --- Behavioral tests for the opinionated defaults ---
 
     @Nested
-    @DisplayName("Behavioral defaults (PRD Phase 1 acceptance criteria)")
+    @DisplayName("Behavioral defaults")
     class BehavioralDefaults {
 
         @Test

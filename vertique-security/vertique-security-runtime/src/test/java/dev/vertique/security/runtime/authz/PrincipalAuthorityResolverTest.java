@@ -19,8 +19,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link InMemoryPrincipalAuthorityResolver} — the framework-shipped, in-memory
- * {@link dev.vertique.security.authz.PrincipalAuthorityResolver} reference implementation (PRD
- * identity-002 §14.3 Phase-2 Appendix). Verifies resolution keys strictly off {@code (type, id)}
+ * {@link dev.vertique.security.authz.PrincipalAuthorityResolver} reference implementation. Verifies resolution keys strictly off {@code (type, id)}
  * and fails closed for both a missing and an ambiguous principal.
  */
 class PrincipalAuthorityResolverTest {

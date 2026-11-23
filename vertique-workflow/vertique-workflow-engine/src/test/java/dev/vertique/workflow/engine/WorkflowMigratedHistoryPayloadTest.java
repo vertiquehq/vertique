@@ -12,8 +12,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies {@link WorkflowMigratedHistoryPayload}'s {@code commandCorrelationId} stitching field
- * (PRD FR-WF-CTX-050/051, AC-5, Contract Appendix C5).
+ * Verifies {@link WorkflowMigratedHistoryPayload}'s {@code commandCorrelationId} stitching field.
  */
 class WorkflowMigratedHistoryPayloadTest {
 

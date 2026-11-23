@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test;
  * {@code Object[] args = {...}} array (so an aspect can mutate {@code invocation.arguments()[i]}),
  * but then builds the terminal lambda as {@code () -> super.greet(name)} — passing the
  * <em>original parameter locals</em> rather than reading back from the (possibly mutated) array.
- * Per PRD Appendix A.5 the terminal must read the live array: {@code () -> super.greet((String)
+ * The terminal must read the live array: {@code () -> super.greet((String)
  * args[0])}. As written, an aspect that rewrites {@code invocation.arguments()[i]} is a silent
  * no-op — the original argument value reaches {@code super}.
  *
@@ -56,7 +56,7 @@ class TerminalReadsLiveArgsTest {
     void terminalSuperCallReadsLiveArgsArray() {
         ProcessorTestHarness.run(new AopProcessor(), greeterBean())
                 .assertSuccess()
-                // The terminal must read the (possibly aspect-mutated) live array — per PRD A.5:
+                // The terminal must read the (possibly aspect-mutated) live array:
                 // super.greet((String) args[0]). RED today: emitter passes the original `name` local.
                 .assertGeneratedSourceContains(PROXY_FQN, "super.greet((String) args[0]")
                 // And it must NOT pass the bare original parameter name straight to super.

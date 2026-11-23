@@ -12,12 +12,12 @@ import org.junit.jupiter.api.Test;
 import org.opentest4j.AssertionFailedError;
 
 /**
- * Tests for {@link ProcessorTestHarness}, including the PRD CG-001 acceptance-criterion #2
+ * Tests for {@link ProcessorTestHarness}, including the
  * smoke test using {@link DeprecatedSmokeProcessor}.
  */
 class ProcessorTestHarnessTest {
 
-    // --- Smoke test (PRD AC #2) ---
+    // --- Smoke test ---
 
     @Test
     void smokeTest_deprecatedProcessor_generatesMarker() {

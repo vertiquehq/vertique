@@ -40,8 +40,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * FR-JSON-081 baseline fixture matrix, plus the determinism/divergence and PRD §6.2 wire-honesty
- * proofs S6 owns.
+ * Baseline fixture matrix, plus the determinism/divergence and wire-honesty proofs.
  *
  * <p>Every matrix row asserts three things: generation succeeds through {@link
  * AnnotationJsonSchemaGenerator#withVictoolsDefaults()}, the canonical output is byte-identical to a
@@ -51,8 +50,7 @@ import org.junit.jupiter.api.Test;
  *
  * <p>{@link #anchoredPatternValidatorSemanticsPinned()} additionally pins, empirically, which
  * pattern-matching semantics (find vs. match) the real {@code vertx-json-schema} validator applies to
- * the anchored strict-decimal pattern committed in {@code strict-input-amount.json} (S3) — see PRD
- * §6.2 and plan §2 finding 12.
+ * the anchored strict-decimal pattern committed in {@code strict-input-amount.json}.
  */
 class SchemaFixtureMatrixTest {
 
@@ -351,10 +349,10 @@ class SchemaFixtureMatrixTest {
         };
     }
 
-    // --- PRD §6.2 wire-honesty: a Jakarta constraint inapplicable to the wire type is not emitted ---
+    // --- wire-honesty: a Jakarta constraint inapplicable to the wire type is not emitted ---
 
     @Test
-    @DisplayName("@DecimalMin on a string-form BigDecimal does not emit 'minimum' on the string schema (PRD §6.2)")
+    @DisplayName("@DecimalMin on a string-form BigDecimal does not emit 'minimum' on the string schema")
     void jakartaConstraintInapplicableToWireTypeNotEmitted() {
         // Given: the real vertique-strict profile, whose BigDecimal override declares a string wire
         // type, and a property additionally carrying a Jakarta numeric-domain constraint.
@@ -371,8 +369,8 @@ class SchemaFixtureMatrixTest {
         assertTrue(textValues(applicable, "format").contains("decimal"), "the fragment's format must still be present");
 
         // ...but the value-domain constraint, inapplicable to a string wire representation, is not
-        // advertised as if it constrained that representation (PRD §6.2: "@DecimalMin on a string-form
-        // BigDecimal is not emitted as minimum on the string schema"). Bean Validation still enforces
+        // advertised as if it constrained that representation (a @DecimalMin on a string-form
+        // BigDecimal is not emitted as minimum on the string schema). Bean Validation still enforces
         // it against the materialized Java value; only the published schema keyword is suppressed.
         assertTrue(
                 keywordValues(applicable, "minimum").isEmpty(),

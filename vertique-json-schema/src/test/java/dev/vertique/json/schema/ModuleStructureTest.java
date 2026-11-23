@@ -92,7 +92,7 @@ class ModuleStructureTest {
             "io.opentelemetry.");
 
     /**
-     * The only seven types this module may expose publicly (PRD §6.2, plan §3a): the generator, its
+     * The only seven types this module may expose publicly: the generator, its
      * bounded failure type, the canonical schema and redaction manifest the generator's {@code
      * describe} returns, the output rename its {@code outputRenames} reports, and the hidden member
      * and hiding marker its {@code hiddenMembers} reports.
@@ -109,7 +109,7 @@ class ModuleStructureTest {
     // --- #1: dependency allowlist ---
 
     @Test
-    @DisplayName("vertique-json-schema pom.xml declares exactly the PRD §6.1 compile-scope dependency set")
+    @DisplayName("vertique-json-schema pom.xml declares exactly the allowed compile-scope dependency set")
     void dependencyAllowlistIsExact() throws Exception {
         Path pom = Path.of(System.getProperty("user.dir"), "pom.xml");
         assertTrue(Files.isRegularFile(pom), "Expected pom.xml to exist at " + pom);
@@ -118,7 +118,7 @@ class ModuleStructureTest {
         assertEquals(
                 ALLOWED_COMPILE_DEPENDENCIES,
                 actual,
-                "vertique-json-schema compile-scope dependencies must be exactly the PRD §6.1 allowlist");
+                "vertique-json-schema compile-scope dependencies must be exactly the allowlist");
     }
 
     /**
@@ -175,7 +175,7 @@ class ModuleStructureTest {
     // --- #2: main-source import allowlist ---
 
     @Test
-    @DisplayName("dev.vertique.json.schema main sources import only the PRD §6.1 allowed packages")
+    @DisplayName("dev.vertique.json.schema main sources import only the allowed packages")
     void mainSourcesImportOnlyAllowedPackages() throws IOException {
         Path srcMain = Path.of(System.getProperty("user.dir"), "src", "main", "java");
         assertTrue(Files.isDirectory(srcMain), "Expected src/main/java to exist at " + srcMain);

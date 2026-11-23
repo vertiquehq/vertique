@@ -452,7 +452,7 @@ class AnnotationSchemaSourceTest {
     void startupGenerationFailureSurfacesAsRestConfigurationException() {
         // Body synthesis runs at route registration, so an unrepresentable body type is a startup
         // failure. It surfaces as this module's configuration exception naming the operation, with the
-        // shared generator's single bounded exception type (PRD FR-JSON-076) preserved as a cause, so
+        // shared generator's single bounded exception type preserved as a cause, so
         // the router build fails and the mount is never installed.
         AnnotationSchemaSource source = new AnnotationSchemaSource();
         JaxRsOperationDescriptor descriptor = genericBodyOp("unrepresentable", List.class, UNRESOLVED_TYPE_VARIABLE);

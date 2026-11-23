@@ -17,8 +17,8 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for {@link AssuranceRequirementConfig} — the FR-ID-AR-003 action-PATTERN authoring
- * contract (PRD identity-002).
+ * Unit tests for {@link AssuranceRequirementConfig} — the action-PATTERN authoring
+ * contract.
  *
  * <p>Pins: a wildcard pattern key gates every action it matches (the C1 spec-conformance fix — a
  * previous exact-string-keyed implementation silently matched nothing for a wildcard key), an exact

@@ -52,7 +52,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Dark-mode end-to-end proof for the workflow-007 durable-context feature (PRD AC-8): with zero
+ * Dark-mode end-to-end proof for the durable-context feature: with zero
  * registered durable namespaces (no encoders, decoders, or
  * {@link dev.vertique.core.context.InboundContextInitializer}s — the bare
  * {@link dev.vertique.context.ContextRuntimeModule} multibinding defaults, contributed transitively
@@ -339,7 +339,7 @@ public class WorkflowDarkModeIT {
                             WorkflowStatus.COMPLETED,
                             ar.result().instance().status(),
                             "the signalled branch must drive the ALL_REQUIRED join to completion,"
-                                    + " exactly as it does with no context registered");
+                                    + " exactly as it did before durable context support");
                     ctx.completeNow();
                 })));
     }

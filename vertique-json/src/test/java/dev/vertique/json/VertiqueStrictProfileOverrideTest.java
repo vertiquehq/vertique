@@ -51,7 +51,7 @@ class VertiqueStrictProfileOverrideTest {
                 "{\"format\":\"decimal\",\"maxLength\":" + BigDecimalStrictStringDeserializer.MAX_LENGTH
                         + ",\"pattern\":\"" + escapedPattern + "\",\"type\":\"string\"}";
         assertEquals(expectedCanonicalJson, override.fragment().canonicalJson());
-        // Pin the literal form the PRD/plan freeze, so a constant-derivation regression is caught
+        // Pin the frozen literal form, so a constant-derivation regression is caught
         // even if MAX_LENGTH or the pattern derivation silently changed underneath the assertion above.
         assertEquals(
                 "{\"format\":\"decimal\",\"maxLength\":100,\"pattern\":\"^-?[0-9]+(\\\\.[0-9]+)?$\",\"type\":\"string\"}",

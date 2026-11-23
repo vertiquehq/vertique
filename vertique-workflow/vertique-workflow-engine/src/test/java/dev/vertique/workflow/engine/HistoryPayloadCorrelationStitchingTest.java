@@ -87,8 +87,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
  * Verifies {@code commandCorrelationId} history stitching on the engine-side command drives —
- * {@code migrate}, {@code cancel}, {@code retry}, and {@code taskCompleted} (PRD FR-WF-CTX-050/051,
- * AC-5, Contract Appendix C5).
+ * {@code migrate}, {@code cancel}, {@code retry}, and {@code taskCompleted}.
  *
  * <p>Each drive is exercised with ambient correlation bound via {@link ContextValues#bind} on a
  * duplicated Vert.x context (the {@code runOnDuplicated} pattern shared with

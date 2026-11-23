@@ -73,8 +73,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * Live-signal ambient-authority test for {@link WorkflowEngine#signal} (PRD AC-3,
- * FR-WF-CTX-020/024).
+ * Live-signal ambient-authority test for {@link WorkflowEngine#signal}.
  *
  * <p>An instance started under correlation A + tenant T (persisted metadata) receives a live signal
  * delivered under ambient correlation B (no explicit carrier). The binder-row bind must observe

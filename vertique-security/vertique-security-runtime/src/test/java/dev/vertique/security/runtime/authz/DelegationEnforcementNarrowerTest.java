@@ -39,7 +39,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link DelegationEnforcementNarrower} — the first concrete
- * {@link dev.vertique.security.authz.AuthorizationNarrower} (PRD identity-002 FR-ID-DG-006).
+ * {@link dev.vertique.security.authz.AuthorizationNarrower}.
  *
  * <p>Pins: the non-delegated passthrough, the four-quadrant intersection semantics
  * (base permit/deny &times; grant permit/deny), the missing/expired-grant fail-closed deny, the

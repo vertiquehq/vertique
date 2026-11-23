@@ -39,8 +39,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for {@link AssuranceRequirementNarrower} — the minimum-assurance policy hook narrower
- * (PRD identity-002 FR-ID-CA-005, FR-ID-AR-003).
+ * Unit tests for {@link AssuranceRequirementNarrower} — the minimum-assurance policy hook narrower.
  *
  * <p>Pins: the no-requirement/existing-deny passthroughs, the below-minimum-level deny, the
  * reconstructed-context deny (even when the snapshot's own assurance would otherwise pass), the

@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test;
  * Verifies {@link RequestValue} — the full-parity drop-in for
  * {@code io.vertx.openapi.validation.RequestParameter}. Pins nullable-getter, default-getter, and
  * type-predicate semantics, plus the {@link RequestValue#of(Object)} factory round-trip, so later
- * slices and third-party body decoders can rely on the contract frozen in rest-017 PRD §A.2 (FR-024).
+ * slices and third-party body decoders can rely on the frozen contract.
  */
 class RequestValueTest {
 
