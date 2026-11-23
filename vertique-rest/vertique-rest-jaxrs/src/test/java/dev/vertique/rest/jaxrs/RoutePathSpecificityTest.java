@@ -112,6 +112,15 @@ class RoutePathSpecificityTest {
         }
 
         @Test
+        @DisplayName("an alternation or an optional separator keeps the constraint one segment")
+        void alternationOrOptionalSeparatorStaysOneSegment() {
+            assertMoreSpecific("/r/{a:\\w+}", "/r/{p:b/c|a}");
+            assertMoreSpecific("/r/{a:\\w+}", "/r/{p:[^/]+/?admin}");
+            assertMoreSpecific("/r/{a:\\w+}", "/r/{p:x/*y}");
+            assertMoreSpecific("/r/{a:\\w+}", "/r/{p:x\\/?y}");
+        }
+
+        @Test
         @DisplayName("a mixed segment stays literal and beats a regex segment")
         void mixedSegmentStaysLiteral() {
             assertMoreSpecific("/files/{name}.txt", "/files/{name:[^/]+}");

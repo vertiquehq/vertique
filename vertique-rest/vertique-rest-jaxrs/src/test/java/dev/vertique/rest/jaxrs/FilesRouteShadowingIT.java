@@ -142,6 +142,40 @@ class FilesRouteShadowingIT {
         }
     }
 
+    /** Open route whose constraint has a top-level alternation beside a secured one-segment regex. */
+    @Path("/alt")
+    public static class AlternationResource {
+
+        /**
+         * Open route matching either two segments or the single segment {@code a}.
+         *
+         * @param p the bound value
+         * @return the bound value echoed back
+         */
+        @GET
+        @Path("/{p:b/c|a}")
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "altOpen")
+        public String open(@PathParam("p") String p) {
+            return "open=" + p;
+        }
+
+        /**
+         * Secured one-segment regex route.
+         *
+         * @param a the bound value
+         * @return a constant body when authentication passes
+         */
+        @GET
+        @Path("/{a:\\w+}")
+        @Produces(MediaType.TEXT_PLAIN)
+        @SecurityRequirement(name = "bearerAuth")
+        @Operation(operationId = "altSecured")
+        public String secured(@PathParam("a") String a) {
+            return "secured";
+        }
+    }
+
     @AfterEach
     void tearDown(Vertx vertx, VertxTestContext ctx) {
         if (server == null) {
@@ -216,5 +250,17 @@ class FilesRouteShadowingIT {
                     return body(client, port, "/repos/x/other");
                 })
                 .andThen(r -> ctx.verify(() -> assertEquals("open=x/other", r.result()))));
+    }
+
+    @Test
+    @DisplayName("A secured /alt/{a:\\w+} is not shadowed by an open /alt/{p:b/c|a}")
+    void alternationConstraintNotRankedAsTwoSegments(Vertx vertx, VertxTestContext ctx) {
+        WebClient client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
+        run(vertx, ctx, new AlternationResource(), port -> status(client, port, "/alt/a")
+                .compose(code -> {
+                    ctx.verify(() -> assertEquals(401, code, "anonymous /alt/a must hit the auth handler"));
+                    return body(client, port, "/alt/b/c");
+                })
+                .andThen(r -> ctx.verify(() -> assertEquals("open=b/c", r.result()))));
     }
 }

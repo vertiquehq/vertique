@@ -212,9 +212,10 @@ final class RoutePathSpecificity {
     }
 
     /**
-     * Splits a regex constraint on each {@code /} (or an escaped {@code \/}) that matches a literal path
-     * separator: one outside a character class and a group. A constraint without such a separator is
-     * returned whole.
+     * Splits a regex constraint on each {@code /} (or an escaped {@code \/}) that matches a required
+     * literal path separator: one outside a character class and a group and not followed by a
+     * quantifier. A constraint without such a separator, or with a top-level alternation or an
+     * optional separator (either of which can let it match fewer segments), is returned whole.
      */
     private static List<String> splitConstraint(String constraint) {
         List<String> pieces = new ArrayList<>();
@@ -225,6 +226,9 @@ final class RoutePathSpecificity {
             char c = constraint.charAt(i);
             if (c == '\\') {
                 if (!inClass && groups == 0 && i + 1 < constraint.length() && constraint.charAt(i + 1) == '/') {
+                    if (quantified(constraint, i + 2)) {
+                        return List.of(constraint);
+                    }
                     addPiece(pieces, constraint, start, i); // an escaped slash is still a separator
                     start = i + 2;
                 }
@@ -237,7 +241,12 @@ final class RoutePathSpecificity {
                 groups++;
             } else if (c == ')') {
                 groups = Math.max(0, groups - 1);
+            } else if (c == '|' && groups == 0) {
+                return List.of(constraint); // an alternative may match a single segment
             } else if (c == '/' && groups == 0) {
+                if (quantified(constraint, i + 1)) {
+                    return List.of(constraint);
+                }
                 addPiece(pieces, constraint, start, i);
                 start = i + 1;
             }
@@ -247,6 +256,11 @@ final class RoutePathSpecificity {
             pieces.add(constraint);
         }
         return pieces;
+    }
+
+    /** Returns whether the character at {@code index} quantifies the separator before it. */
+    private static boolean quantified(String constraint, int index) {
+        return index < constraint.length() && "?*{".indexOf(constraint.charAt(index)) >= 0;
     }
 
     private static void addPiece(List<String> pieces, String constraint, int from, int to) {
