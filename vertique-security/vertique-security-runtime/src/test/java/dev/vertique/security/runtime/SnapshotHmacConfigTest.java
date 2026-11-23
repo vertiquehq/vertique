@@ -19,8 +19,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for the {@link SnapshotHmacConfig} keyset config and its {@link SnapshotHmacKeyConfig}
- * entries, covering the fail-fast, secret-free validation contract (PRD-ID-002 §14.3 "Durable
- * carriage", ADR-0162).
+ * entries, covering the fail-fast, secret-free validation contract for the keys that sign durably
+ * carried identity snapshots.
  *
  * <p>Two security-critical validation guarantees are proven here:
  * <ul>
