@@ -69,7 +69,7 @@ public class FutureModelConverter implements ModelConverter {
         }
 
         // A raw Future carries no type argument; document it like Future<Object>.
-        JavaType[] typeArguments = _type.findTypeParameters(_type.getRawClass());
+        JavaType[] typeArguments = _type.findTypeParameters(Future.class);
         JavaType valueType = typeArguments.length == 0 ? Json.mapper().constructType(Object.class) : typeArguments[0];
         return new AnnotatedType().type(valueType).resolveAsRef(true);
     }
