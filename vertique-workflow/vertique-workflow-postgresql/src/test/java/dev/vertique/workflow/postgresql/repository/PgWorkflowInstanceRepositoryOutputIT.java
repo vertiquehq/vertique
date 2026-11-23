@@ -107,6 +107,24 @@ public class PgWorkflowInstanceRepositoryOutputIT {
     }
 
     @Test
+    @DisplayName("a scalar output (a JSON string, number or array) reads back as the text that was written")
+    void scalarOutputsReadBackAsWritten() {
+        for (String scalar : new String[] {"\"TRK9\"", "42", "true", "[1,2,3]"}) {
+            // Given a completed instance whose output encodes as a JSON scalar or array
+            WorkflowInstanceId id = newId();
+            WorkflowInstance completed =
+                    instance(id, WorkflowStatus.COMPLETED, 0L).withOutput(scalar, "java.lang.Object");
+
+            // When it is inserted and read back
+            join(pool.withTransaction(tx -> repository.insert(completed, tx)));
+            WorkflowInstance found = join(repository.findById(id)).orElseThrow();
+
+            // Then the text is the one that was written
+            assertThat(found.outputJson()).as("output %s", scalar).isEqualTo(scalar);
+        }
+    }
+
+    @Test
     @DisplayName("an instance inserted without an output reads back with both output components null")
     void insertWithoutAnOutputReadsBackNull() {
         // Given a running instance with no output

@@ -612,7 +612,7 @@ final class WorkflowTransitionDriver {
         Map<String, Object> eventAttributes = Map.of();
         if (outputTypeName != null) {
             try {
-                outputJson = computeOutput(inst, cn, rw);
+                outputJson = computeOutput(recordValidator, inst, cn, rw);
             } catch (WorkflowDefinitionException e) {
                 return Future.failedFuture(e);
             }
@@ -664,7 +664,8 @@ final class WorkflowTransitionDriver {
      * @throws WorkflowDefinitionException if the state cannot be decoded, the mapper throws or returns {@code null},
      *     or the encoded value crosses a bound
      */
-    private String computeOutput(WorkflowInstance inst, CompleteNode cn, RuntimeWorkflow rw) {
+    static String computeOutput(
+            RecordTimePayloadValidator recordValidator, WorkflowInstance inst, CompleteNode cn, RuntimeWorkflow rw) {
         String where = "definition '" + inst.definitionId() + "' v" + inst.definitionVersion() + " at step '"
                 + cn.stepId() + "'";
         Object output;
