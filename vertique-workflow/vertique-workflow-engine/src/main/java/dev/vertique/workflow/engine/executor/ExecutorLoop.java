@@ -49,7 +49,8 @@ import org.slf4j.LoggerFactory;
  * pass, the earliest-delay read, the queue snapshot and the mark writes that follow a segment), so that such work does
  * not race the close of the pool; none of it starts once the loop has stopped claiming, except the mark writes of
  * segments still in flight. Work still running when that interval ends, including a mark write of a segment that ends
- * later, is not waited for.
+ * later, is not waited for. A segment's failure, reschedule or release write that fails after the stop began is not
+ * tried again, so a segment whose database pool has closed ends at once; its claim lapses with its lease.
  *
  * <p>All state is touched on the instance's event loop. Instances share nothing but the database: the execution lock,
  * the claim token and the lease coordinate them.
@@ -158,12 +159,14 @@ final class ExecutorLoop {
     /**
      * Ends claiming and completes once every segment that was in flight has committed or been rolled back by its own
      * deadline and, until one poll interval after this call, once the loop's other database work has ended. No claim
-     * starts after this call.
+     * starts after this call. A segment's failure, reschedule or release write that fails after this call is not tried
+     * again.
      *
      * @return a future that completes when the instance is idle
      */
     Future<Void> stop() {
         running = false;
+        segmentRunner.stop();
         cancelTimer();
         cancelEarliest();
         cancelHintTimer();
