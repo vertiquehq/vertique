@@ -82,10 +82,22 @@ final class OutboxQueueSampler implements ApplicationStartupStep, ApplicationShu
             reading = true;
         }
         Future<OutboxQueueSample> read;
+        boolean probed = false;
         try {
-            read = Objects.requireNonNull(probe.sample(), "probe returned null instead of a future");
-        } catch (Exception | LinkageError | AssertionError e) {
-            read = Future.failedFuture(e);
+            try {
+                read = Objects.requireNonNull(probe.sample(), "probe returned null instead of a future");
+            } catch (Exception | AssertionError e) {
+                read = Future.failedFuture(e);
+            }
+            probed = true;
+        } finally {
+            if (!probed) {
+                // A throwable that is not contained (a LinkageError, a fatal error) propagates; the
+                // read it abandoned must not leave the guard set for every later read.
+                synchronized (this) {
+                    reading = false;
+                }
+            }
         }
         read.onComplete(result -> {
             synchronized (this) {
@@ -97,7 +109,7 @@ final class OutboxQueueSampler implements ApplicationStartupStep, ApplicationShu
             }
             try {
                 metrics.record(result.result());
-            } catch (Exception | LinkageError | AssertionError e) {
+            } catch (Exception | AssertionError e) {
                 log.debug("The outbox queue size could not be recorded", e);
             }
         });
