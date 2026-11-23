@@ -489,7 +489,8 @@ public final class EffectiveJaxRsContractResolver {
 
     /**
      * Resolves the media types from {@code @Consumes} or {@code @Produces} using the precedence
-     * rule.
+     * rule: the method, the declarations it overrides, then the class-level annotation of the
+     * resource class, its superclasses and its interfaces.
      *
      * @param method         the concrete method
      * @param resourceClass  the resource class
@@ -509,7 +510,31 @@ public final class EffectiveJaxRsContractResolver {
                 return v;
             }
         }
+        // Precedence 3: class level — resource class, superclass chain, then BFS interfaces
+        for (TypeElement type : classHierarchy(resourceClass)) {
+            List<String> v = findAnnotationStringArray(type, annotationFqn);
+            if (v != null) {
+                return v;
+            }
+        }
         return List.of();
+    }
+
+    /**
+     * The resource class, its superclass chain (excluding {@code Object}) and its transitively
+     * implemented interfaces, in the order the runtime resolves class-level annotations.
+     */
+    private List<TypeElement> classHierarchy(TypeElement resourceClass) {
+        List<TypeElement> types = new ArrayList<>();
+        types.add(resourceClass);
+        TypeElement current = JaxRsHierarchy.superClass(ctx, resourceClass);
+        while (current != null
+                && !"java.lang.Object".equals(current.getQualifiedName().toString())) {
+            types.add(current);
+            current = JaxRsHierarchy.superClass(ctx, current);
+        }
+        types.addAll(JaxRsHierarchy.allInterfaces(ctx, resourceClass));
+        return types;
     }
 
     /**
