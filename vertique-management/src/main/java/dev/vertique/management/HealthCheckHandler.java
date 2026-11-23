@@ -13,6 +13,9 @@ import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.Objects;
 import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 
@@ -84,7 +87,8 @@ public class HealthCheckHandler implements Handler<RoutingContext> {
      * {@value HealthCheckAggregator#DEFAULT_CHECK_TIMEOUT_SECONDS}-second per-check timeout.
      *
      * <p>A defensive unmodifiable copy of {@code checks} is taken at construction time, so
-     * subsequent mutations to the caller's set have no effect.
+     * subsequent mutations to the caller's set have no effect. The copy keeps the caller's
+     * iteration order, which is the order of the {@code checks} array in the response.
      *
      * @param checks the health checks to run on each request; must not be {@code null}
      */
@@ -97,7 +101,8 @@ public class HealthCheckHandler implements Handler<RoutingContext> {
      * timeout.
      *
      * <p>A defensive unmodifiable copy of {@code checks} is taken at construction time, so
-     * subsequent mutations to the caller's set have no effect.
+     * subsequent mutations to the caller's set have no effect. The copy keeps the caller's
+     * iteration order, which is the order of the {@code checks} array in the response.
      *
      * @param checks              the health checks to run on each request; must not be {@code null}
      * @param checkTimeoutSeconds the per-check timeout in seconds; must be positive
@@ -105,7 +110,12 @@ public class HealthCheckHandler implements Handler<RoutingContext> {
      */
     public HealthCheckHandler(Set<HealthCheck> checks, long checkTimeoutSeconds) {
         this.aggregator = new HealthCheckAggregator(checkTimeoutSeconds);
-        this.checks = Set.copyOf(checks);
+        Set<HealthCheck> copy = new LinkedHashSet<>();
+        for (HealthCheck check : checks) {
+            copy.add(Objects.requireNonNull(check, "checks must not contain null"));
+        }
+        // Insertion-ordered so the probe body lists checks in the order the caller's set iterates them.
+        this.checks = Collections.unmodifiableSet(copy);
     }
 
     // --- Request handling ---
