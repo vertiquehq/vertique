@@ -30,6 +30,7 @@ SPDX-License-Identifier: EUPL-1.2
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-resilience</artifactId>
+            <scope>test</scope>
         </dependency>
         <!-- APT helpers from CG-001 -->
         <dependency>

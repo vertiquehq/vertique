@@ -483,8 +483,12 @@ types.
 The processor itself contributes no Dagger bindings. It emits a `@Module` into the consuming
 module's generated sources; that module is part of the application's graph, not this artifact's.
 
+The processor matches the resilience annotations (`@Timeout`, `@CircuitBreaker`, `@Retry`) by name, so
+it does not depend on `dev.vertique:vertique-resilience`; the generated contributor links against
+`ResilienceAnnotations` there, which an application receives through `vertique-services`.
+
 Test-only dependencies: `vertique-codegen-test`, `vertique-services`, `vertique-core`,
-`vertique-config-core`, and Dagger.
+`vertique-config-core`, `vertique-resilience`, and Dagger.
 
 ---
 
