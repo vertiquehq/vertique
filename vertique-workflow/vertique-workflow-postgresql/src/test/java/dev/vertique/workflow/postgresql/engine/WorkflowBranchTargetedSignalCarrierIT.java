@@ -63,8 +63,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Branch-targeted explicit-carrier signal tests (PRD-WF-007, Contract Appendix C3, AC-4
- * branch-targeted case) exercised end-to-end through the real {@code SignalHandler} →
+ * Branch-targeted explicit-carrier signal tests exercised end-to-end through the real {@code SignalHandler} →
  * {@code BranchTransitionEngine} path.
  *
  * <p>Exercises {@link WorkflowEngine}'s 8-arg {@code signal(...)} override for a branch-targeted

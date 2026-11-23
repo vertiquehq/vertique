@@ -13,7 +13,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for {@link WorkflowSignalRequest} (PRD-WF-007, Contract Appendix C4).
+ * Unit tests for {@link WorkflowSignalRequest}.
  *
  * <p>Verifies that the existing {@code instance(...)}/{@code branch(...)} factory arities remain
  * source-compatible (NFR-WF-CTX-006) after the additive {@code metadata} component, that the new

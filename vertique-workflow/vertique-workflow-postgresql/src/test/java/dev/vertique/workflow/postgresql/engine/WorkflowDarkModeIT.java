@@ -58,7 +58,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@link dev.vertique.context.ContextRuntimeModule} multibinding defaults, contributed transitively
  * by {@link WorkflowPostgresqlModule} with no additional context-provider module installed), the
  * full lifecycle — start, live signal, and a branch-targeted signal — runs exactly as it
- * did before PRD-WF-007: {@code workflow_instances.metadata} is {@code NULL} throughout (every
+ * did before durable context support: {@code workflow_instances.metadata} is {@code NULL} throughout (every
  * capture is empty per FR-WF-CTX-010), no bind-related failure occurs (the FR-CTX-157b strict-context
  * guard never trips because the bind gate — explicit carrier {@code null} AND instance metadata
  * {@code null} — always skips the bind, per C2), and every side effect the definition emits still
@@ -339,7 +339,7 @@ public class WorkflowDarkModeIT {
                             WorkflowStatus.COMPLETED,
                             ar.result().instance().status(),
                             "the signalled branch must drive the ALL_REQUIRED join to completion,"
-                                    + " exactly as it did before PRD-WF-007 with no context registered");
+                                    + " exactly as it does with no context registered");
                     ctx.completeNow();
                 })));
     }

@@ -39,7 +39,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * End-to-end tests for the default {@code web-validation} gate wired into a plain-{@link
- * io.vertx.ext.web.Router} {@code JaxRsRouterMount} (PRD-REST-017 slice 9). These build a real mount
+ * io.vertx.ext.web.Router} {@code JaxRsRouterMount}. These build a real mount
  * through {@link ValidationMountComponent} (the {@code vertique-rest-test} fixture), so the graph
  * carries the real {@link WebValidationStrategy} (selected by id {@code "web-validation"}, the
  * framework default), the victools-backed {@link AnnotationSchemaSource}, and the production

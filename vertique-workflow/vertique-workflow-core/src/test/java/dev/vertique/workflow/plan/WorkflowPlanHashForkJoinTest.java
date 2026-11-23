@@ -14,11 +14,11 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Differential plan-hash coverage for the PRD-WF-002 fork/join nodes.
+ * Differential plan-hash coverage for the fork/join nodes.
  *
  * <p>Each test mutates exactly one field of a baseline fork+join plan and asserts the resulting
- * plan hash differs from the baseline's. This is the per-field drift coverage required by
- * PRD-WF-002 §A.4.8: a plan hash MUST change when any of the following changes —
+ * plan hash differs from the baseline's. This is the per-field drift coverage required by the rule that a plan hash
+ * MUST change when any of the following changes —
  * <ol>
  *   <li>branch declaration order,</li>
  *   <li>branch id,</li>

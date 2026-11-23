@@ -55,7 +55,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Tests for durable carriage of {@link IdentitySnapshot} over the existing durable-context seam
- * (PRD-ID-002 §14.3 "Durable carriage", §14.6 amendment A9 F1/F6 — re-encode of a receive-side
+ * (re-encode of a receive-side
  * context and the capturedAt-anchored envelope expiry).
  */
 @ExtendWith(VertxExtension.class)

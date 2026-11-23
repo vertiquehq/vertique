@@ -57,7 +57,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Integration tests verifying that {@link WorkflowEngineHandle#migrate} throws
- * {@link WorkflowMigrationIllegalStateException} in disallowed states (AC #15 / PRD-WF-003 §7.4):
+ * {@link WorkflowMigrationIllegalStateException} in disallowed states:
  * <ul>
  *   <li>Migration on a COMPLETED instance.</li>
  *   <li>Migration on a CANCELLED instance.</li>

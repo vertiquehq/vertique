@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for the metadata-aware 8-arg {@code signal(...)} default method on
- * {@link TransactionalWorkflowOperations} (PRD-WF-007, Contract Appendix C4).
+ * {@link TransactionalWorkflowOperations}.
  *
  * <p>Uses a minimal test-double implementation that overrides only the legacy 7-arg
  * {@code signal(...)} overload, proving the delegation contract without a real engine: a

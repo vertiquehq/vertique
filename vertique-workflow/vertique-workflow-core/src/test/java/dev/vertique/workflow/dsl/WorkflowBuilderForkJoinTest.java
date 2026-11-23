@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Tests for the PRD-WF-002 fork/join DSL on {@link WorkflowBuilder}.
+ * Tests for the fork/join DSL on {@link WorkflowBuilder}.
  *
  * <p>Verifies that {@code wf.fork(...).branch(...).join(...)} produces a {@link ForkNode} appended
  * to the canonical {@link WorkflowPlan#nodes()} list, that {@code wf.join(...)} produces a

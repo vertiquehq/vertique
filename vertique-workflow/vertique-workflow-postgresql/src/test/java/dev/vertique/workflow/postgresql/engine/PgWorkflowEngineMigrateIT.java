@@ -60,7 +60,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Integration tests verifying the happy-path migration flow for
- * {@link WorkflowEngineHandle#migrate(WorkflowInstanceId, long)} (AC #6 / PRD-WF-003 §7.4).
+ * {@link WorkflowEngineHandle#migrate(WorkflowInstanceId, long)}.
  *
  * <p>Uses two engines that share the same repository layer but have different registries:
  * <ul>

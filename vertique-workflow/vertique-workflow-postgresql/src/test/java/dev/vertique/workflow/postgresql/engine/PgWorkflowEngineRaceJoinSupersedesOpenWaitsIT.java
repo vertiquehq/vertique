@@ -66,7 +66,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Verifies that a FIRST_SUCCESS race-join supersede closes the losing branch's owned timers and
- * tasks before marking it SUPERSEDED (PRD-WF-002 FR-WF-PAR-049/050/053).
+ * tasks before marking it SUPERSEDED (FR-WF-PAR-049/050/053).
  *
  * <p>Lock order assertion: timers → tasks → branch token (the SUPERSEDED update) →
  * instance (advanced through join next-step).

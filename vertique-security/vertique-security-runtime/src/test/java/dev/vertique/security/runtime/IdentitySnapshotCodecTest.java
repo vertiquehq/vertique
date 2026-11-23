@@ -48,8 +48,8 @@ import org.junit.jupiter.api.Test;
 import thirdparty.fixture.ThirdPartyRecordFixture;
 
 /**
- * Tests for {@link IdentitySnapshotCodec} against the schema-v2 content/envelope split (PRD-ID-002
- * §14.6 amendment A9): a signed {@link IdentitySnapshot} carries an {@link IdentitySnapshotContent}
+ * Tests for {@link IdentitySnapshotCodec} against the schema-v2 content/envelope split: a signed {@link
+ * IdentitySnapshot} carries an {@link IdentitySnapshotContent}
  * plus a {@link SnapshotCarrierBinding}, {@code issuedAt}/{@code expiresAt}, and the integrity
  * envelope. The codec signs the whole v2 envelope, and {@code decode} verifies the HMAC before
  * enforcing freshness.

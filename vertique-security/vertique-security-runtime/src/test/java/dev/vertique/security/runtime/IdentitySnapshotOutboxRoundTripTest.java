@@ -54,7 +54,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@link IdentitySnapshotReconstructionInitializer} — across the outbox constants,
  * {@link DispatchBoundary#OUTBOX} (producer / {@code mergeCaptured} side) &rarr;
  * {@link DispatchBoundary#OUTBOX_SERVICE} (relay / {@code decodeToDispatchContext} side)
- * (PRD-ID-002 §14.3 "Durable carriage", §14.6 slice P1.S5-iii; §14.6 amendment F3a fail-closed
+ * (F3a fail-closed
  * sentinel backstop; F3b real per-row outbox carrier binding).
  *
  * <ul>

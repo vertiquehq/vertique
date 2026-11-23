@@ -50,7 +50,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Integration smoke test for PRD-WF-002 ALL_REQUIRED fan-out / fan-in.
+ * Integration smoke test for ALL_REQUIRED fan-out / fan-in.
  *
  * <p>Builds a minimal definition: {@code init → fork → join → complete} where each branch is just
  * a {@code CompleteNode}. Asserts that:

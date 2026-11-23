@@ -52,8 +52,8 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * End-to-end routing tests for the plain-{@link Router} {@link JaxRsRouterMount} (PRD-REST-017 slice 9,
- * core routing rewrite). These drive the real {@code createRouter()} path under the {@code none}
+ * End-to-end routing tests for the plain-{@link Router} {@link JaxRsRouterMount} (core routing rewrite). These drive
+ * the real {@code createRouter()} path under the {@code none}
  * validation strategy (no schema-gen dependency), exercising:
  *
  * <ul>

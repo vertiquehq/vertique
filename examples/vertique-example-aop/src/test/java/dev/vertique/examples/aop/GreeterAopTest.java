@@ -17,7 +17,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * End-to-end runtime-DI proof for PRD-CODEGEN-013 Phase 1.
+ * End-to-end runtime-DI proof.
  *
  * <p>This is the integration proof that the earlier characterization tests lacked: it compiles the
  * real {@code vertique-codegen-aop} processor over {@link Greeter} (in main sources), lets the real

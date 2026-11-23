@@ -15,8 +15,8 @@ import org.junit.jupiter.api.Test;
 /**
  * Unit tests for {@link WorkflowDedupScopes}.
  *
- * <p>Verifies the length-bounded encodings the persistence layer relies on (PRD-WF-002 finding
- * R2-3): dispatch keys and branch signal keys are 64-char SHA-256 hex strings; the inbox-message
+ * <p>Verifies the length-bounded encodings the persistence layer relies on: dispatch keys and branch signal keys are
+ * 64-char SHA-256 hex strings; the inbox-message
  * id stays within {@link WorkflowDedupScopes#INBOX_MESSAGE_ID_MAX_LENGTH}; non-branch inbox ids
  * remain identical to today's {@code workflowId + ":" + dedupKey}; {@code dispatch} kind fits
  * {@code workflow_dedup.kind VARCHAR(16)}.

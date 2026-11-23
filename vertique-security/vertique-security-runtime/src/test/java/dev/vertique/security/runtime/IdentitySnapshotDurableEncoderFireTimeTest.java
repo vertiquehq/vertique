@@ -27,7 +27,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link IdentitySnapshotDurableEncoder}'s F5 doomed-expiry degrade path
- * (PRD-ID-002 §14.6 amendment A9, P2.S0 security review): a delayed-job row scheduled beyond the
+ * (P2.S0 security review): a delayed-job row scheduled beyond the
  * signed envelope's effective expiry must be caught at encode time and policy-mirrored, rather than
  * persisting a snapshot that is guaranteed to fail closed at first decode with no signal at
  * schedule time.

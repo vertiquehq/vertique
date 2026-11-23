@@ -15,8 +15,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * End-to-end runtime proof for PRD-CODEGEN-013 Phase 3 slice 3.3 (multi-module observer
- * aggregation).
+ * End-to-end runtime proof of multi-module observer aggregation.
  *
  * <p>This test builds a real Dagger component that includes the processor-generated
  * {@code GeneratedEventsModule}, fires an {@code Event<OrderCreated>} via {@link OrderService}, and

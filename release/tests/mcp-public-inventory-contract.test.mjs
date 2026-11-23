@@ -50,7 +50,7 @@ test('mcp public inventory union equals the master release record', () => {
     {
       module: 'vertique-rest-core',
       reason:
-        'Its only MCP-001 surface change was completed by T001 and is part of the T004 replacement-task baseline; no replacement task alters it.',
+        'Its MCP-related surface is already final; no planned MCP change alters it.',
     },
   ]);
   assert.deepEqual(master.delegatedModules, [

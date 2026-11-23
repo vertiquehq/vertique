@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for the {@link IdentitySnapshotCapture} ingress seam
- * ({@link IdentitySnapshotCapture#captureFrom(SecurityContext)}) — PRD-ID-002 §15 A3, slice P1.S5-i
+ * ({@link IdentitySnapshotCapture#captureFrom(SecurityContext)}) — the
  * "ingress capture seam".
  *
  * <p>Verifies both capture paths: when the {@code captureEnabled} kill-switch is on,

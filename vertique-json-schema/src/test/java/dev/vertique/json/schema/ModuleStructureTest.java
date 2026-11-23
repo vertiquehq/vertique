@@ -30,8 +30,7 @@ import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
 /**
- * Architecture and dependency-isolation guards for {@code vertique-json-schema} (PRD-JSON-005
- * FR-JSON-070, NFR-JSON-017).
+ * Architecture and dependency-isolation guards for {@code vertique-json-schema} (FR-JSON-070, NFR-JSON-017).
  *
  * <p>Follows the source-level dependency-boundary pattern established by {@code
  * dev.vertique.kafka.CoreDependencyBoundaryTest} and {@code
@@ -43,8 +42,8 @@ import org.w3c.dom.NodeList;
 class ModuleStructureTest {
 
     /**
-     * The exact, frozen compile-scope dependency allowlist for {@code vertique-json-schema}
-     * (PRD-JSON-005 §6.1). Test-scope entries (JUnit, {@code vertique-json},
+     * The exact, frozen compile-scope dependency allowlist for {@code vertique-json-schema}. Test-scope entries
+     * (JUnit, {@code vertique-json},
      * {@code vertx-json-schema}) are deliberately excluded — they exist only to exercise the real
      * built-in {@code vertique-strict} profile and to pin validator wire-honesty, and are not part
      * of the artifact's production dependency contract.

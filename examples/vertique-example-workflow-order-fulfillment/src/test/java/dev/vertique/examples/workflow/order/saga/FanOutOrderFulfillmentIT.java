@@ -25,7 +25,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Integration test for the ALL_REQUIRED fan-out order-fulfillment workflow (PRD-WF-002 §A.5.1).
+ * Integration test for the ALL_REQUIRED fan-out order-fulfillment workflow.
  *
  * <p>Exercises {@link dev.vertique.examples.workflow.order.OrderFulfillmentFanOutDefinition}
  * end-to-end:

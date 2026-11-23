@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Record-shape and invariant unit tests for the PRD-WF-002 plan-model types: {@link ForkNode},
+ * Record-shape and invariant unit tests for the plan-model types: {@link ForkNode},
  * {@link JoinNode}, {@link BranchStart}, {@link BranchRetryPolicy}, and the
  * {@link JoinPolicy} hierarchy.
  *

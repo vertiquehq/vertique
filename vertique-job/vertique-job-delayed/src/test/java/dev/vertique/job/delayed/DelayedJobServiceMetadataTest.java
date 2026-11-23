@@ -503,7 +503,7 @@ class DelayedJobServiceMetadataTest {
     }
 
     @Nested
-    @DisplayName("F5 row-carrier binding (PRD-ID-002 §14.6/A9/F5)")
+    @DisplayName("F5 row-carrier binding")
     class CarrierBinding {
 
         @Test

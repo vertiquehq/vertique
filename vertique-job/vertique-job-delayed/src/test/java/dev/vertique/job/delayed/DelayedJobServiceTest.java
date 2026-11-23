@@ -632,7 +632,7 @@ class DelayedJobServiceTest {
     }
 
     /**
-     * F5 doomed-expiry fire-time threading (PRD-ID-002 §14.6 A9): verifies that {@code toExecution}
+     * F5 doomed-expiry fire-time threading: verifies that {@code toExecution}
      * threads {@link DelayedJob#runAt()} (or "now" when unset) into the encode context's
      * {@link DurableEncodeContext#fireTime()}, and that a
      * {@link DurableEncodeRejectedException} thrown by a durable-context encoder — the exact shape

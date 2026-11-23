@@ -26,7 +26,7 @@ import org.junit.jupiter.api.Test;
  * {@link dev.vertique.core.codegen.ParameterMetadata} SPI (compose-not-replace) and exposes the
  * parameter's annotations through that view instead of an eager {@code Annotation[]} field.
  *
- * <p>The intended end-state (per PRD-REST-018 slice 3.1) is:
+ * <p>The intended end-state is:
  * <ul>
  *   <li>{@code ParamMeta} exposes a {@link ParameterMetadata} view via {@code parameterMetadata()};
  *   <li>{@code ParamMeta} delegates the reflection-free accessors

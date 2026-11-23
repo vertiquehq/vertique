@@ -58,8 +58,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@link dev.vertique.context.DurableContextMetadataRegistry}, and the
  * {@link InboundExecutionContextScope} that runs the registered
  * {@link IdentitySnapshotReconstructionInitializer} — when {@link IdentitySnapshotReconstructionModule}
- * is installed on a delayed-job-style Dagger component (PRD-ID-002 §14.3 "Durable carriage",
- * §14.6 slice P1.S5-ii).
+ * is installed on a delayed-job-style Dagger component.
  *
  * <p>Every collaborator is resolved from a live Dagger graph, never hand-rolled: capture binds an
  * {@link IdentitySnapshotContext} through the config-driven {@link IdentitySnapshotCapture}; the

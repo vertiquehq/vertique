@@ -57,7 +57,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * End-to-end IT for PRD-WF-002 AC #2 — branch compensation under {@code ALL_REQUIRED}.
+ * End-to-end IT for branch compensation under {@code ALL_REQUIRED}.
  *
  * <p>Workflow shape:
  * <pre>

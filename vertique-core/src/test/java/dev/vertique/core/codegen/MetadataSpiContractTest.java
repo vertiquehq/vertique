@@ -21,8 +21,8 @@ import org.junit.jupiter.api.Test;
  * Contract test for the metadata SPI ({@link MethodMetadata} / {@link ParameterMetadata}) in
  * {@code dev.vertique.core.codegen}.
  *
- * <p>This proves the SPI surface compiles to the frozen shape declared in PRD-CODEGEN-013 Appendix
- * A.2: hand-written in-test stubs implement both interfaces, and the test asserts that every
+ * <p>This proves the SPI surface compiles to the frozen shape: hand-written in-test stubs implement both interfaces,
+ * and the test asserts that every
  * frozen accessor is callable and returns the stubbed value. The accessors fall into two groups:
  * the constant-only <em>reflection-free core</em> ({@code name}, {@code declaringType},
  * {@code returnType}, {@code parameterTypes}, {@code parameters}, {@code findAnnotation},

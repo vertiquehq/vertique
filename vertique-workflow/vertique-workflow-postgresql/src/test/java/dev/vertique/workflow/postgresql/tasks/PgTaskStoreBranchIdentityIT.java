@@ -43,7 +43,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 /**
  * Integration tests proving {@link PgTaskStore} round-trips the branch-identity columns
  * ({@code branch_token_id}, {@code fork_step_id}, {@code branch_id}) added by the V2
- * migration for PRD-WF-002.
+ * migration.
  *
  * <p>These columns are nullable for backward compatibility with single-path workflows, but the
  * V1 implementation of {@code insertOpen}/{@code mapRow} dropped the values silently. AC #4

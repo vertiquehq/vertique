@@ -33,8 +33,7 @@ import org.junit.jupiter.api.Test;
  * {@link IdentitySnapshotCodec} → {@link IdentityReconstruction} → the initializer) and that
  * {@link IdentitySnapshotReconstructionInitializer} lands in the {@code Set<InboundContextInitializer>}
  * multibinding — the same multibinding {@code CorrelationContextSeeder} contributes to, and the one
- * {@code InboundExecutionContextScope} injects on every {@code SERVICE_DISPATCH} receive (PRD-ID-002
- * §14.6 slice P1.S5c).
+ * {@code InboundExecutionContextScope} injects on every {@code SERVICE_DISPATCH} receive.
  */
 class IdentitySnapshotReconstructionModuleTest {
 
