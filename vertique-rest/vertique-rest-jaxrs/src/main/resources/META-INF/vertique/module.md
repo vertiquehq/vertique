@@ -175,7 +175,10 @@ the scan is **collected**, and the whole set is thrown once as `RouteRegistratio
 resources have been scanned — so a bad resource class reports all of its faults in one build cycle,
 not one per restart.
 
-The `operationId` comes from `@Operation(operationId = "…")` or falls back to the Java method name. It
+The `operationId` comes from `@Operation(operationId = "…")` or falls back to the Java method name. It is
+taken per attribute: the method's own `@Operation` is read first, then each declaration it overrides (the
+superclass methods, then the interfaces), and the first id that is not blank wins, so an override that
+carries `@Operation` without an id, or with a blank one, keeps the id of the declaration it overrides. It
 identifies the route internally; it is **not** checked against the generated `openapi.json` at
 runtime.
 

@@ -287,18 +287,22 @@ class ResourceScanner {
     // --- Resolution helpers ---
 
     /**
-     * Resolves the operationId for a method from pre-resolved method annotations. Uses the value
-     * from {@link io.swagger.v3.oas.annotations.Operation#operationId()} if present and non-empty,
-     * otherwise falls back to the method name.
+     * Resolves the operationId for a method from pre-resolved method annotations. Walks the merged
+     * declarations in order (the method itself, then each declaration it overrides) and takes the
+     * first {@link io.swagger.v3.oas.annotations.Operation#operationId()} that is not blank, so an
+     * override whose {@code @Operation} sets no id takes the id of the declaration it overrides;
+     * falls back to the method name when none has one.
      *
      * @param methodAnnotations merged annotations from the method and its overrides
      * @param method            the resource method (used only for name fallback)
      * @return the resolved operationId
      */
     String resolveOperationId(List<Annotation> methodAnnotations, Method method) {
-        Operation opAnnotation = findAnnotation(methodAnnotations, Operation.class);
-        if (opAnnotation != null && !opAnnotation.operationId().isEmpty()) {
-            return opAnnotation.operationId();
+        for (Annotation annotation : methodAnnotations) {
+            if (annotation instanceof Operation operation
+                    && !operation.operationId().isBlank()) {
+                return operation.operationId();
+            }
         }
         return method.getName();
     }

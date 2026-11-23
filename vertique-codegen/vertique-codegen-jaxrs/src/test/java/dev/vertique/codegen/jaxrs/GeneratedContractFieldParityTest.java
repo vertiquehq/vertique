@@ -12,6 +12,7 @@ import dev.vertique.core.validation.ValidateWith;
 import dev.vertique.rest.jaxrs.JaxRsRouteRegistrar;
 import dev.vertique.rest.jaxrs.ResourceMethodMeta;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsDescriptorSupport;
+import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.ext.web.FileUpload;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.ws.rs.BeanParam;
@@ -46,6 +47,7 @@ class GeneratedContractFieldParityTest {
     private static JavaFileObject src(String simpleName, String body) {
         return SourceFiles.inline(PKG + "." + simpleName, "package " + PKG + ";\n\n" + """
                 import dev.vertique.core.validation.ValidateWith;
+                import io.swagger.v3.oas.annotations.Operation;
                 import io.vertx.ext.web.FileUpload;
                 import io.vertx.ext.web.RoutingContext;
                 import jakarta.ws.rs.BeanParam;
@@ -493,5 +495,98 @@ class GeneratedContractFieldParityTest {
         // A scalar source keeps its default on both engines.
         assertEquals("x", pick(scans.reflective(), "query").params().get(0).defaultValue());
         assertEquals("x", pick(scans.generated(), "query").params().get(0).defaultValue());
+    }
+
+    // --- Operation identifier per attribute ---
+
+    interface ItemsApi {
+        @GET
+        @Path("/items")
+        @Operation(operationId = "listItems")
+        String list();
+
+        @GET
+        @Path("/blank")
+        @Operation(operationId = "fromInterface")
+        String blank();
+
+        @GET
+        @Path("/own")
+        @Operation(operationId = "inherited")
+        String own();
+    }
+
+    @Path("/api")
+    static class ItemsResource implements ItemsApi {
+        @Override
+        @Operation(summary = "x")
+        public String list() {
+            return "list";
+        }
+
+        @Override
+        @Operation(operationId = " ")
+        public String blank() {
+            return "blank";
+        }
+
+        @Override
+        @Operation(operationId = "own")
+        public String own() {
+            return "own";
+        }
+    }
+
+    @Test
+    @DisplayName("an override's @Operation without an id takes the overridden declaration's id in both engines")
+    void operationIdPerAttribute() throws Exception {
+        Scans scans = scan(new ItemsResource(), "ItemsResource", src("ItemsApi", """
+                public interface ItemsApi {
+                    @GET
+                    @Path("/items")
+                    @Operation(operationId = "listItems")
+                    String list();
+
+                    @GET
+                    @Path("/blank")
+                    @Operation(operationId = "fromInterface")
+                    String blank();
+
+                    @GET
+                    @Path("/own")
+                    @Operation(operationId = "inherited")
+                    String own();
+                }
+                """), src("ItemsResource", """
+                @Path("/api")
+                public class ItemsResource implements ItemsApi {
+                    @Override
+                    @Operation(summary = "x")
+                    public String list() {
+                        return "list";
+                    }
+
+                    @Override
+                    @Operation(operationId = " ")
+                    public String blank() {
+                        return "blank";
+                    }
+
+                    @Override
+                    @Operation(operationId = "own")
+                    public String own() {
+                        return "own";
+                    }
+                }
+                """));
+        assertEquals("listItems", pick(scans.generated(), "list").operationId());
+        assertEquals("fromInterface", pick(scans.generated(), "blank").operationId());
+        assertEquals("own", pick(scans.generated(), "own").operationId());
+        for (String method : List.of("list", "blank", "own")) {
+            assertEquals(
+                    pick(scans.generated(), method).operationId(),
+                    pick(scans.reflective(), method).operationId(),
+                    "operation id of " + method);
+        }
     }
 }
