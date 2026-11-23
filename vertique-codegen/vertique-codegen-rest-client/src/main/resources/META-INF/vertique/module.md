@@ -180,8 +180,8 @@ public final class PageRequest_BeanParamAccessor implements BeanParamAccessor<Pa
 For each field in a `@BeanParam` type, the emitter selects the first applicable path (in order):
 
 1. **Record component** — call `bean.{name}()` (the generated accessor method).
-2. **Public or protected getter** — call `bean.get{Name}()` or `bean.is{Name}()`.
-3. **Same-package field** — emit direct field access `bean.{name}` (the generated class is in the same package as the bean, so package-private and public fields are accessible without `setAccessible`).
+2. **Direct field** — emit direct field access `bean.{name}` for a public field, or a non-private field declared in the bean's own package (the generated class is in that package, so package-private and protected fields there are accessible without `setAccessible`).
+3. **Public getter** — call `bean.get{Name}()`, `bean.is{Name}()` or the fluent `bean.{name}()` for a field that cannot be read directly; the lookup walks the superclass chain and accepts public methods only.
 4. **None of the above** — abort emission for the entire bean (see "Bean-level fallback" below).
 
 ### Bean-level Fallback
