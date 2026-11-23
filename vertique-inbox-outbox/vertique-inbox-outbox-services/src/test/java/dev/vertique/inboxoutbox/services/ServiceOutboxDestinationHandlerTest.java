@@ -121,7 +121,7 @@ class ServiceOutboxDestinationHandlerTest {
      * Builds an envelope shaped like a real relay-built envelope: {@link OutboxMetadata#delivery()}
      * carries an {@link OutboxRelayControl} whose {@link OutboxRelayControl#carrierId()} is the given
      * id — mirroring what {@code OutboxRelay.buildEnvelope} always projects from the row's first-class
-     * {@code carrier_id} column (PRD identity-002 F3b).
+     * {@code carrier_id} column.
      */
     private OutboxEnvelope makeEnvelopeWithCarrier(UUID carrierId) {
         OutboxRelayControl relayControl =
@@ -358,10 +358,10 @@ class ServiceOutboxDestinationHandlerTest {
                 "default", new TransactionalMessageContext(1L, "order.placed", null, null, Map.of(), null).scopeKey());
     }
 
-    // --- F3b: per-row carrier reproduction ---
+    // --- Per-row carrier reproduction ---
 
     @Nested
-    @DisplayName("F3b per-row carrier reproduction (PRD identity-002 §14.6/A9)")
+    @DisplayName("Per-row carrier reproduction: the handler reproduces the row's carrier id")
     class CarrierReproduction {
 
         /** Namespace used by the recording test decoder. */
