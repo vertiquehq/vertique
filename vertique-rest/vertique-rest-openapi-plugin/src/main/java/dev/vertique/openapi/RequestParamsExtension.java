@@ -200,9 +200,11 @@ public class RequestParamsExtension extends AbstractOpenAPIExtension {
                 .anyMatch(a -> NULLABLE_CLASS.equals(a.annotationType().getName()));
 
         Schema<?> schema = resolveSchema(memberType, components);
+        // OpenAPI requires every path parameter to be required: true, whatever its nullability or default.
+        boolean isPath = param instanceof PathParameter;
         if (nullable) {
             schema.setNullable(true);
-            param.setRequired(false);
+            param.setRequired(isPath);
         } else if (param.getRequired() == null) {
             param.setRequired(true);
         }
@@ -210,7 +212,7 @@ public class RequestParamsExtension extends AbstractOpenAPIExtension {
         DefaultValue dv = element.getAnnotation(DefaultValue.class);
         if (dv != null) {
             schema.setDefault(dv.value());
-            param.setRequired(false);
+            param.setRequired(isPath);
         }
 
         param.setSchema(schema);
