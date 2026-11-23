@@ -80,6 +80,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 /**
  * Real-transport proof of the per-mount request deadline {@code mcp.requestDeadlineMs}, on h2c and
@@ -91,6 +92,7 @@ import org.junit.jupiter.api.Test;
  * committed streaming response is reset instead of silently truncated, that a stalled upload is
  * answered before MCP begins the request, and that requests that finish in time are unaffected.
  */
+@Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpRequestDeadlineIT {
 
     private static final String LOOPBACK = "127.0.0.1";

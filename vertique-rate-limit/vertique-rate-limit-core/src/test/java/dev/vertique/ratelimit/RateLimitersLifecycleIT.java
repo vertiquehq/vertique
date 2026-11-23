@@ -28,8 +28,10 @@ import io.vertx.junit5.VertxExtension;
 import jakarta.inject.Singleton;
 import java.time.Duration;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
@@ -40,6 +42,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * own {@code @IntoSet ApplicationShutdownStep} contribution, not a hand-constructed test double.
  */
 @ExtendWith(VertxExtension.class)
+@Timeout(value = 20, unit = TimeUnit.SECONDS)
 class RateLimitersLifecycleIT {
 
     private static final String POLICY_NAME = "lifecycle-quota";

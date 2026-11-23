@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
@@ -27,6 +28,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * to close here.
  */
 @ExtendWith(VertxExtension.class)
+@Timeout(value = 20, unit = TimeUnit.SECONDS)
 class RateLimitersLocalWalkingSkeletonIT {
 
     private static final long CAPACITY = 2L;

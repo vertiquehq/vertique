@@ -24,11 +24,14 @@ import dev.vertique.config.parser.ConfigParsingModule;
 import jakarta.inject.Singleton;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import javax.inject.Provider;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 /** Dagger composition proof for the local cache provider and generated-proxy seam. */
+@Timeout(value = 20, unit = TimeUnit.SECONDS)
 class CacheDaggerGraphIT {
 
     @Test

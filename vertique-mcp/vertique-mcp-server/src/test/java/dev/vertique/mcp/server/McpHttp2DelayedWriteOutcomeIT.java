@@ -69,6 +69,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 /**
  * Real-transport pin for the transport outcome of a response written from a timer task.
@@ -81,6 +82,7 @@ import org.junit.jupiter.api.Test;
  * the settled outcome of a delayed and an immediate response on h2c and HTTP/1.1, and that a
  * genuine disconnect and a stream reset mid-wait are still reported.
  */
+@Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpHttp2DelayedWriteOutcomeIT {
 
     private static final String LOOPBACK = "127.0.0.1";
