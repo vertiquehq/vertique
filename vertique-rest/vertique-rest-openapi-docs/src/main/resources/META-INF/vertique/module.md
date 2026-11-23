@@ -638,7 +638,7 @@ entry may still set `enabled`; a configured `info` or `serverUrl` is refused (se
   or none, is refused before the location is read. A JSON contract with content after its one JSON
   value is refused as not valid JSON. A YAML contract holds exactly one document: a second document
   is refused as not valid YAML. A YAML contract larger than the YAML parser's code-point limit
-  (about 3 MB, the limit the request-validation library applies too) also fails as not valid YAML.
+  (3,145,728 code points, not bytes; the request-validation library applies the same limit) also fails as not valid YAML.
 - **No YAML anchors.** YAML anchors, aliases, and `<<` merge keys are not expanded: an alias is
   served as its anchor's name, while the validation strategy expands them. Write a served contract
   without anchors, aliases, and merge keys.
