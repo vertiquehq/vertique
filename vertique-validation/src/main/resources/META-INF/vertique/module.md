@@ -399,7 +399,8 @@ the reflective tier is available, so policies with injected dependencies will no
 | `@AllowedCharacters` | `allowed_characters` |
 
 A contributed `ViolationTypeMapping` for an annotation already in the table replaces the built-in
-one (last-wins merge).
+one, whatever order the bindings are collected in. Two contributions for the same
+annotation have no defined winner; contribute one.
 
 `args` is resolved by the first contributed `ViolationArgsInspector` whose `supports(...)` returns
 `true`, otherwise by the built-in inspector.

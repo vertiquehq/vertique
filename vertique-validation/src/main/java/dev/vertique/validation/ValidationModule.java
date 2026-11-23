@@ -129,6 +129,45 @@ public abstract class ValidationModule {
     // --- Built-in type mappings ---
 
     /**
+     * The built-in violation type mappings for standard Jakarta and Hibernate Validator constraints.
+     * Shared with {@link ViolationDetailMapper}, which lets any other mapping for the same annotation
+     * replace these regardless of set iteration order.
+     */
+    static final Set<ViolationTypeMapping> BUILT_IN_TYPE_MAPPINGS = Set.of(
+
+            // Jakarta constraints
+            new ViolationTypeMapping(NotNull.class, "required"),
+            new ViolationTypeMapping(NotBlank.class, "required"),
+            new ViolationTypeMapping(NotEmpty.class, "required"),
+            new ViolationTypeMapping(Null.class, "null"),
+            new ViolationTypeMapping(Size.class, "size"),
+            new ViolationTypeMapping(DecimalMin.class, "min"),
+            new ViolationTypeMapping(DecimalMax.class, "max"),
+            new ViolationTypeMapping(Min.class, "min"),
+            new ViolationTypeMapping(Max.class, "max"),
+            new ViolationTypeMapping(Positive.class, "min"),
+            new ViolationTypeMapping(PositiveOrZero.class, "min"),
+            new ViolationTypeMapping(Negative.class, "max"),
+            new ViolationTypeMapping(NegativeOrZero.class, "max"),
+            new ViolationTypeMapping(Future.class, "date"),
+            new ViolationTypeMapping(FutureOrPresent.class, "date"),
+            new ViolationTypeMapping(Past.class, "date"),
+            new ViolationTypeMapping(PastOrPresent.class, "date"),
+            new ViolationTypeMapping(Pattern.class, "pattern"),
+            new ViolationTypeMapping(Email.class, "email"),
+            new ViolationTypeMapping(Digits.class, "digits"),
+            new ViolationTypeMapping(AssertTrue.class, "assert_true"),
+            new ViolationTypeMapping(AssertFalse.class, "assert_false"),
+            // Hibernate constraints
+            new ViolationTypeMapping(Length.class, "length"),
+            new ViolationTypeMapping(CodePointLength.class, "length"),
+            new ViolationTypeMapping(Range.class, "range"),
+            new ViolationTypeMapping(UniqueElements.class, "unique_elements"),
+            new ViolationTypeMapping(URL.class, "url"),
+            // Character policy constraints
+            new ViolationTypeMapping(AllowedCharacters.class, "allowed_characters"));
+
+    /**
      * Provides built-in violation type mappings for standard Jakarta and Hibernate Validator constraints.
      *
      * @return the set of built-in type mappings
@@ -136,38 +175,7 @@ public abstract class ValidationModule {
     @Provides
     @ElementsIntoSet
     static Set<ViolationTypeMapping> builtInTypeMappings() {
-        return Set.of(
-                // Jakarta constraints
-                new ViolationTypeMapping(NotNull.class, "required"),
-                new ViolationTypeMapping(NotBlank.class, "required"),
-                new ViolationTypeMapping(NotEmpty.class, "required"),
-                new ViolationTypeMapping(Null.class, "null"),
-                new ViolationTypeMapping(Size.class, "size"),
-                new ViolationTypeMapping(DecimalMin.class, "min"),
-                new ViolationTypeMapping(DecimalMax.class, "max"),
-                new ViolationTypeMapping(Min.class, "min"),
-                new ViolationTypeMapping(Max.class, "max"),
-                new ViolationTypeMapping(Positive.class, "min"),
-                new ViolationTypeMapping(PositiveOrZero.class, "min"),
-                new ViolationTypeMapping(Negative.class, "max"),
-                new ViolationTypeMapping(NegativeOrZero.class, "max"),
-                new ViolationTypeMapping(Future.class, "date"),
-                new ViolationTypeMapping(FutureOrPresent.class, "date"),
-                new ViolationTypeMapping(Past.class, "date"),
-                new ViolationTypeMapping(PastOrPresent.class, "date"),
-                new ViolationTypeMapping(Pattern.class, "pattern"),
-                new ViolationTypeMapping(Email.class, "email"),
-                new ViolationTypeMapping(Digits.class, "digits"),
-                new ViolationTypeMapping(AssertTrue.class, "assert_true"),
-                new ViolationTypeMapping(AssertFalse.class, "assert_false"),
-                // Hibernate constraints
-                new ViolationTypeMapping(Length.class, "length"),
-                new ViolationTypeMapping(CodePointLength.class, "length"),
-                new ViolationTypeMapping(Range.class, "range"),
-                new ViolationTypeMapping(UniqueElements.class, "unique_elements"),
-                new ViolationTypeMapping(URL.class, "url"),
-                // Character policy constraints
-                new ViolationTypeMapping(AllowedCharacters.class, "allowed_characters"));
+        return BUILT_IN_TYPE_MAPPINGS;
     }
 
     // --- Providers ---

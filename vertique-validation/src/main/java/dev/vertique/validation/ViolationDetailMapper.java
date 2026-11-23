@@ -8,10 +8,10 @@ import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import jakarta.validation.ConstraintViolation;
 import java.lang.annotation.Annotation;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * Maps {@link ConstraintViolation} instances to {@link ViolationDetail} records by
@@ -51,12 +51,17 @@ class ViolationDetailMapper {
             Set<ViolationTypeMapping> typeMappings,
             Set<ViolationTypeMapper> typeMappers,
             Set<ViolationArgsInspector> argsInspectors) {
-        // Last-wins merge: user-contributed mappings override built-in defaults
-        this.typeMappings = typeMappings.stream()
-                .collect(Collectors.toMap(
-                        ViolationTypeMapping::annotationType,
-                        ViolationTypeMapping::type,
-                        (existing, override) -> override));
+        // Built-in defaults go in first, then every other mapping: a contribution for a built-in
+        // annotation always replaces the default, whatever order the set iterates in. Two distinct
+        // contributions for the same annotation remain last-wins in set order.
+        Map<Class<? extends Annotation>, String> merged = new HashMap<>();
+        typeMappings.stream()
+                .filter(ValidationModule.BUILT_IN_TYPE_MAPPINGS::contains)
+                .forEach(m -> merged.put(m.annotationType(), m.type()));
+        typeMappings.stream()
+                .filter(m -> !ValidationModule.BUILT_IN_TYPE_MAPPINGS.contains(m))
+                .forEach(m -> merged.put(m.annotationType(), m.type()));
+        this.typeMappings = Map.copyOf(merged);
         this.typeMappers = List.copyOf(typeMappers);
         this.argsInspectors = List.copyOf(argsInspectors);
         this.builtInArgsInspector = new BuiltInViolationArgsInspector();
