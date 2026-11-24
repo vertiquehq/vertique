@@ -42,8 +42,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Unit tests for {@link ReconstructedAuthorityResolvingAuthorizer} — the Mode-2/Mode-3 outermost
  * {@link Authorizer} decorator that re-resolves a reconstructed context's current authority live,
- * at authorization time, unless the context's own marker carries the {@code CAPTURED} disposition
- * (PRD identity-002 §14.3 Phase-2 Appendix).
+ * at authorization time, unless the context's own marker carries the {@code CAPTURED} disposition.
  *
  * <p>Pins: live re-resolution on an {@code ATTRIBUTION_ONLY}-marked reconstruction, fail-closed
  * resolver-failure deny, the {@link ReconstructedAuthorityResolvingAuthorizer#AUTHORITY_MODE_ATTRIBUTE}

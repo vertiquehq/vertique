@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link PrincipalKey} — the capability-minimized durable principal key consumed by
- * {@link PrincipalAuthorityResolver} (PRD identity-002 §14.3 Phase-2 Appendix, A8/FR-ID-CA-012).
+ * {@link PrincipalAuthorityResolver}.
  */
 class PrincipalKeyTest {
 

@@ -14,8 +14,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Verifies the generated proxy builds its interceptor chain ordered outermost-by-higher
- * {@code @Aspect.ordering()}, with ties broken deterministically by annotation fully-qualified name
- * (PRD A.1 / FR-013-02 / §4.1).
+ * name.
  *
  * <p>Both methods read the chain-construction expression from the generated proxy source and assert
  * the relative position of each aspect's annotation simple name. A higher-ordered aspect (outermost)

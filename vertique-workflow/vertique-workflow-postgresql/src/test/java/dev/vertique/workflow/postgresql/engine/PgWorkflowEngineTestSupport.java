@@ -92,8 +92,8 @@ import org.mockito.invocation.InvocationOnMock;
  * pre-built {@code BranchTransitionEngine} / {@code BranchCompensationOrchestrator}):
  * <ul>
  *   <li>{@link #create(Pool, WorkflowRegistry, WorkflowInstanceRepository, WorkflowHistoryRepository,
- *       WorkflowDedupRepository, Set, Set, TimerStore, TaskStore, Clock)} — omits the PRD-WF-002
- *       fork/join repositories (branch/join) and the PRD-WF-003 migration registry.</li>
+ *       WorkflowDedupRepository, Set, Set, TimerStore, TaskStore, Clock)} — omits the
+ *       fork/join repositories (branch/join) and the migration registry.</li>
  *   <li>{@link #create(Pool, WorkflowRegistry, WorkflowInstanceRepository, WorkflowHistoryRepository,
  *       WorkflowDedupRepository, Set, Set, TimerStore, TaskStore, Clock, BranchTokenRepository,
  *       JoinStateRepository)} — includes the fork/join repositories but omits the migration
@@ -117,7 +117,7 @@ public final class PgWorkflowEngineTestSupport {
     // --- create overloads (one per former test-only constructor variant) ---
 
     /**
-     * Builds an engine that omits the PRD-WF-002 fork/join repositories and the PRD-WF-003 migration
+     * Builds an engine that omits the fork/join repositories and the migration
      * registry. Plans containing {@link dev.vertique.workflow.plan.ForkNode} cannot execute through
      * an engine constructed this way (the dispatcher will NPE on the branch repository); legacy
      * single-path tests are unaffected. Calling {@code migrate} on an engine built without a
@@ -164,7 +164,7 @@ public final class PgWorkflowEngineTestSupport {
     }
 
     /**
-     * Builds an engine that includes the PRD-WF-002 fork/join repositories but omits the PRD-WF-003
+     * Builds an engine that includes the fork/join repositories but omits the
      * migration registry. Calling {@code migrate} on an engine built this way will fail with
      * {@link UnsupportedOperationException}.
      *
@@ -213,8 +213,8 @@ public final class PgWorkflowEngineTestSupport {
     }
 
     /**
-     * Builds an engine that includes the PRD-WF-002 fork/join repositories, an optional
-     * durable-context propagator, and the PRD-WF-003 migration registry. Builds the transaction
+     * Builds an engine that includes the fork/join repositories, an optional
+     * durable-context propagator, and the migration registry. Builds the transaction
      * runner from {@code pool} via {@link #runnerFor(Pool)} so the layered exception mapping is
      * exercised; used by migration ITs and fork-capture ITs that construct the engine directly.
      *

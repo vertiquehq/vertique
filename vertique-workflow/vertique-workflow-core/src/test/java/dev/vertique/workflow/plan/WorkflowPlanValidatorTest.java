@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Test;
  * Unit tests for {@link WorkflowPlanValidator}.
  *
  * <p>Hand-builds {@link WorkflowPlan} instances containing fork/join structures and asserts the
- * validator accepts well-formed plans and rejects each of the PRD-WF-002 invariants.
+ * validator accepts well-formed plans and rejects each of the fork/join invariants.
  *
  * <p>Coverage:
  * <ul>

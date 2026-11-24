@@ -629,7 +629,7 @@ class DurableContextPropagatorTest {
         });
     }
 
-    // --- carrier threading (F5 row binding, PRD-ID-002 §14.6/A9/F5) ---
+    // --- carrier threading (F5 row binding) ---
 
     @Test
     @DisplayName("mergeCaptured threads the supplied carrier into the DurableEncodeContext (F5 row binding)")

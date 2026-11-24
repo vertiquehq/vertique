@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link JsonSchemaFragment} parsing, dialect-keyword rejection, canonicalization,
- * and detachment from the caller's input (PRD-JSON-005 §6.2).
+ * and detachment from the caller's input.
  */
 class JsonSchemaFragmentTest {
 

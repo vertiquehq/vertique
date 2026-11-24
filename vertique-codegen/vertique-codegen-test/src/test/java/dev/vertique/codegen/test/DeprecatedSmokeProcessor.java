@@ -16,7 +16,7 @@ import javax.lang.model.element.TypeElement;
 import javax.tools.JavaFileObject;
 
 /**
- * Smoke-test processor that satisfies PRD CG-001 acceptance criterion #2.
+ * Smoke-test processor that proves the harness can run a processor and assert on its generated output.
  *
  * <p>For each {@code @Deprecated} {@link TypeElement} encountered, this processor writes a
  * generated source file {@code dev.vertique.codegen.test.generated.<Name>Marker} containing a

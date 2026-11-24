@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for the PRD-WF-002 {@link RaceSafetyTargetRegistry} SPI.
+ * Unit tests for the {@link RaceSafetyTargetRegistry} SPI.
  *
  * <p>Verifies:
  * <ul>

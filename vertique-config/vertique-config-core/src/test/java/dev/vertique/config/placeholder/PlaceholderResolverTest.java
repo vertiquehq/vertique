@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Unit tests for {@link PlaceholderResolver}.
  *
- * <p>Each nested group maps to one named bullet in the PRD §9 engine specification. Tests assert
+ * <p>Each nested group covers one named rule of the placeholder engine. Tests assert
  * on semantics (values in/out, failure keys, ordering) and never on internal implementation shape.
  *
  * <h2>NFR-CONF-002 guard</h2>

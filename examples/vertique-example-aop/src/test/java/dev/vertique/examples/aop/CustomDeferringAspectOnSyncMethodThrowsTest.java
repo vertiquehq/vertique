@@ -12,7 +12,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Runtime proof for PRD-CODEGEN-013 slice 2.3 / FR-013-05 — a deliberately-deferring custom aspect on
+ * Runtime proof that a deliberately-deferring custom aspect on
  * a sync-returning method throws {@link IllegalStateException} through the real generated proxy.
  *
  * <p>{@link DeferringBean#compute(String)} returns a plain {@link String} (sync) but carries the

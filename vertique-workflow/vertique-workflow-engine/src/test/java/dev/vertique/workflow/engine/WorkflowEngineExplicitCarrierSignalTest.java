@@ -74,8 +74,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * Explicit signal-carrier tests for the engine's 8-arg {@code signal(...)} override (PRD-WF-007,
- * Contract Appendix C4, AC-4).
+ * Explicit signal-carrier tests for the engine's 8-arg {@code signal(...)} override.
  *
  * <p>Exercises the engine override of the metadata-aware
  * {@link TransactionalWorkflowOperations#signal(WorkflowInstanceId, String, Object, String, String,

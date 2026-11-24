@@ -50,7 +50,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * Verifies the engine's race-policy guard.
  *
  * <p>The DSL and {@link WorkflowPlanValidator} accept {@code FirstSuccessJoinPolicy} and
- * {@code FirstFailureJoinPolicy} (so plans validate cleanly), but PRD-WF-002 V1 only implements
+ * {@code FirstFailureJoinPolicy} (so plans validate cleanly), but the engine currently only implements
  * {@code AllRequiredJoinPolicy} evaluation. The engine guards {@code evaluateJoin} against
  * non-{@code AllRequired} policies and fails the workflow with a
  * {@link WorkflowDefinitionException} that names the unimplemented policy. Without this guard, a

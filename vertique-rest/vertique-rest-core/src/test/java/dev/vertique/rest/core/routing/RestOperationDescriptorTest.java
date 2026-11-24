@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Test;
  * decoupling: {@link RestOperationDescriptor} identity accessors, {@link SecurityRequirement}
  * record equality, and the fluent {@link RouteRegistration#addHandler} contract.
  *
- * <p>These tests pin the shapes frozen in the rest-017 PRD §A.2 so later slices can consume them
+ * <p>These tests pin the frozen shapes so later slices can consume them
  * without re-deriving signatures.
  */
 class RestOperationDescriptorTest {

@@ -882,7 +882,7 @@ class ExecutionPlanEmitterTest {
 
     /**
      * RED tests for literal-backed parameter annotations on {@code ExecutionPlanEmitter}'s
-     * generated {@code P{n}} constants (GitHub issue #162, PRD-REST-018 §3.1b follow-up).
+     * generated {@code P{n}} constants (GitHub issue #162).
      *
      * <p>Before this slice, {@code buildParamMetaConstants} wraps every parameter's
      * {@code ParameterMetadata} view in a jaxrs-local {@code ReflectiveParameterMetadata} whose

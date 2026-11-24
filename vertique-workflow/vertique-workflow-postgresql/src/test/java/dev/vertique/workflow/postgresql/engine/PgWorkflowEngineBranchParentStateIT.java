@@ -58,7 +58,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Verifies that a branch's payload factory sees the parent workflow instance's state when the
- * fork is dispatched (PRD-WF-002 §3 §10, FR-WF-PAR-031).
+ * fork is dispatched (FR-WF-PAR-031).
  *
  * <p>Before the fix, {@code BranchTransitionEngine} decoded the branch's own
  * {@link dev.vertique.workflow.state.BranchToken#resultJson()} (which is null for a freshly

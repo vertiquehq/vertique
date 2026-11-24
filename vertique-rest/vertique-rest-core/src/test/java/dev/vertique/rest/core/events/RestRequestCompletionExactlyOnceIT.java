@@ -44,7 +44,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Integration test proving that {@link RestRequestCompletionEmitter} fires <em>exactly one</em>
- * completion event per request across all success and failure paths (FR-AUD-300, PRD-AUD-002 §21): a
+ * completion event per request across all success and failure paths (FR-AUD-300): a
  * {@link RestRequestCompletedEvent} for a request an operation route claimed, and an
  * {@link HttpRequestCompletedEvent} for a request no transport claimed.
  *

@@ -54,8 +54,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link DefaultCapturedAuthorityReconstruction} and {@link
- * CapturedAuthorityReconstructionModule} — Mode 3 of PRD identity-002 §14.3 Phase-2 Appendix
- * (FR-ID-CA-010). Covers the captured-claims-as-current-authority inversion, the per-target-kind
+ * CapturedAuthorityReconstructionModule} — Mode 3 of captured-authority
+ * reconstruction. Covers the captured-claims-as-current-authority inversion, the per-target-kind
  * allowlist fail-closed gate, the startup REQUIRED-carriage validation, and the structural
  * never-default binding boundary (§14.6 P2.S4) — including that the opt-in module exposes only
  * the audited {@link CapturedAuthorityActivation} seam, never the raw, event-silent {@link

@@ -177,9 +177,7 @@ SPDX-License-Identifier: EUPL-1.2
         <!--
           Test-scope only: WorkflowContextBinderTest asserts fill-before-seeding
           ordering against the real CorrelationContext type + CorrelationContextSeeder initializer,
-          per the workflow-007 plan S3 fixture note ("tests use the real CorrelationContext type for
-          correlation-namespace assertions, not a test double"). No production code in this module
-          depends on vertique-correlation.
+          not a test double. No production code in this module depends on vertique-correlation.
         -->
         <dependency>
             <groupId>dev.vertique</groupId>

@@ -42,7 +42,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 /**
  * Integration tests proving {@link PgTimerStore} round-trips the branch-identity columns
  * ({@code branch_token_id}, {@code fork_step_id}, {@code branch_id}) added by the V2
- * migration for PRD-WF-002.
+ * migration.
  *
  * <p>The values are required end-to-end for AC #5 (branch-owned timers and branch-owned
  * signal timeouts) and for branch-owned task due-date / reminder timers under AC #4.

@@ -30,8 +30,7 @@ import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
 /**
- * Architecture and dependency-isolation guards for {@code vertique-json-schema} (PRD-JSON-005
- * FR-JSON-070, NFR-JSON-017).
+ * Architecture and dependency-isolation guards for {@code vertique-json-schema} (FR-JSON-070, NFR-JSON-017).
  *
  * <p>Follows the source-level dependency-boundary pattern established by {@code
  * dev.vertique.kafka.CoreDependencyBoundaryTest} and {@code
@@ -43,8 +42,8 @@ import org.w3c.dom.NodeList;
 class ModuleStructureTest {
 
     /**
-     * The exact, frozen compile-scope dependency allowlist for {@code vertique-json-schema}
-     * (PRD-JSON-005 §6.1). Test-scope entries (JUnit, {@code vertique-json},
+     * The exact, frozen compile-scope dependency allowlist for {@code vertique-json-schema}. Test-scope entries
+     * (JUnit, {@code vertique-json},
      * {@code vertx-json-schema}) are deliberately excluded — they exist only to exercise the real
      * built-in {@code vertique-strict} profile and to pin validator wire-honesty, and are not part
      * of the artifact's production dependency contract.
@@ -93,7 +92,7 @@ class ModuleStructureTest {
             "io.opentelemetry.");
 
     /**
-     * The only seven types this module may expose publicly (PRD §6.2, plan §3a): the generator, its
+     * The only seven types this module may expose publicly: the generator, its
      * bounded failure type, the canonical schema and redaction manifest the generator's {@code
      * describe} returns, the output rename its {@code outputRenames} reports, and the hidden member
      * and hiding marker its {@code hiddenMembers} reports.
@@ -110,7 +109,7 @@ class ModuleStructureTest {
     // --- #1: dependency allowlist ---
 
     @Test
-    @DisplayName("vertique-json-schema pom.xml declares exactly the PRD §6.1 compile-scope dependency set")
+    @DisplayName("vertique-json-schema pom.xml declares exactly the allowed compile-scope dependency set")
     void dependencyAllowlistIsExact() throws Exception {
         Path pom = Path.of(System.getProperty("user.dir"), "pom.xml");
         assertTrue(Files.isRegularFile(pom), "Expected pom.xml to exist at " + pom);
@@ -119,7 +118,7 @@ class ModuleStructureTest {
         assertEquals(
                 ALLOWED_COMPILE_DEPENDENCIES,
                 actual,
-                "vertique-json-schema compile-scope dependencies must be exactly the PRD §6.1 allowlist");
+                "vertique-json-schema compile-scope dependencies must be exactly the allowlist");
     }
 
     /**
@@ -176,7 +175,7 @@ class ModuleStructureTest {
     // --- #2: main-source import allowlist ---
 
     @Test
-    @DisplayName("dev.vertique.json.schema main sources import only the PRD §6.1 allowed packages")
+    @DisplayName("dev.vertique.json.schema main sources import only the allowed packages")
     void mainSourcesImportOnlyAllowedPackages() throws IOException {
         Path srcMain = Path.of(System.getProperty("user.dir"), "src", "main", "java");
         assertTrue(Files.isDirectory(srcMain), "Expected src/main/java to exist at " + srcMain);

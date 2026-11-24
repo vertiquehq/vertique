@@ -38,7 +38,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 /**
- * Verifies plan-hash determinism requirements from PRD-WF-003 (FR-WF-DEF-006):
+ * Verifies plan-hash determinism requirements (FR-WF-DEF-006):
  *
  * <ul>
  *   <li>Compiling the same document object twice produces the same plan hash.</li>

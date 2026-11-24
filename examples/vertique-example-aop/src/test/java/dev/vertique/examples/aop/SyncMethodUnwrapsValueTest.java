@@ -14,7 +14,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Runtime proof for PRD-CODEGEN-013 slice 2.3 — sync-returning interception through the real
+ * Runtime proof of sync-returning interception through the real
  * generated proxy and Dagger graph.
  *
  * <p>{@link Greeter#greetSync(String)} returns a plain {@link String} (not a {@code Future}) and

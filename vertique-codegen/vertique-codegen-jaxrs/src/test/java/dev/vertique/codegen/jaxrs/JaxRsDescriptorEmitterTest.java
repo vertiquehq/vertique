@@ -611,7 +611,7 @@ class JaxRsDescriptorEmitterTest {
 
     /**
      * RED tests for literal-backed parameter annotations on {@code JaxRsDescriptorEmitter}'s
-     * generated {@code describe()} output (GitHub issue #162, PRD-REST-018 §3.1b follow-up).
+     * generated {@code describe()} output (GitHub issue #162).
      *
      * <p>Before this slice, the descriptor's per-parameter {@code ParameterMetadata} view is
      * wrapped in a jaxrs-local {@code ReflectiveParameterMetadata} backed by a live

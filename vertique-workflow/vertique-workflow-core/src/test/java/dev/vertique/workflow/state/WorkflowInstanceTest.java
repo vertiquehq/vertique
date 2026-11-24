@@ -18,8 +18,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Verifies the {@link WorkflowInstance#metadata()} field invariants introduced by PRD-WF-007
- * (durable context completion):
+ * Verifies the {@link WorkflowInstance#metadata()} field invariants introduced by durable context completion:
  *
  * <ul>
  *   <li>{@code metadata} is {@code null}-preserving — unlike {@link BranchToken#metadata()}, it is

@@ -33,7 +33,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Integration tests for the PRD-WF-002 dispatch dedup added to
+ * Integration tests for the dispatch dedup added to
  * {@link PgWorkflowDedupRepository#claimOrResolveDispatch}.
  *
  * <p>Verifies: first claim wins (returns true); second claim with the same {@code (scope, key)}

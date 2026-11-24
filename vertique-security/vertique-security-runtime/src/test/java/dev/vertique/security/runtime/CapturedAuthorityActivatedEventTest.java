@@ -58,8 +58,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Unit tests for the Mode-3 activation seam ({@link CapturedAuthorityActivation}) and the
- * {@link CapturedAuthorityActivatedEvent} it emits — PRD identity-002 §14.3 Phase-2 Appendix,
- * §14.6 P2.S4b-ii (FR-ID-CA-007, FR-ID-CA-010).
+ * {@link CapturedAuthorityActivatedEvent} it emits.
  *
  * <p>Verifies the emit-and-await contract: {@link CapturedAuthorityActivation#activateResume}
  * invokes the underlying {@link CapturedAuthorityReconstruction} synchronously, builds a

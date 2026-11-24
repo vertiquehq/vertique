@@ -34,7 +34,7 @@ import org.mockito.Mockito;
  *   <li>Mixed when/condition paths: a named condition coexisting with a {@code when} expression.</li>
  *   <li>Named conditions receive the raw state instance, not a JSON Map.</li>
  *   <li>Fingerprint stability: identical route tables → identical {@link CallbackId}; semantic
- *       changes → different {@link CallbackId} (AC #8 of PRD-WF-003).</li>
+ *       changes → different {@link CallbackId}.</li>
  * </ul>
  */
 class DecisionRouteCompilerTest {

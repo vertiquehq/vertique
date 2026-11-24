@@ -48,7 +48,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Verifies the fail-fast startup/build validation introduced in PRD-REST-018 slice 1.3: registering a
+ * Verifies the fail-fast startup/build validation: registering a
  * resource that declares a conversion-applicable parameter (path/query/header/cookie/form) whose type
  * no converter or provider can satisfy MUST fail at router-build time, while a resource whose only
  * "exotic" param is a built-in (or provider-backed) must build cleanly.

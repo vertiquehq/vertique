@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link InMemoryDelegationGrantValidator} — the framework-shipped default
- * {@link dev.vertique.security.DelegationGrantValidator} (PRD identity-002 FR-ID-DG-003).
+ * {@link dev.vertique.security.DelegationGrantValidator}.
  *
  * <p>Verifies the actor=grantee / subject=grantor direction, the expiry and scope checks the
  * framework default ships, and the fail-closed guarantee: an internal evaluation failure (including a

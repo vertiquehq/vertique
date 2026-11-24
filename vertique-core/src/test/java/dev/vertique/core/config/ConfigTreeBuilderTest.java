@@ -376,7 +376,7 @@ class ConfigTreeBuilderTest {
          * literal-dot map key is expressed here as {@code bindings["http.server"]} (not the raw
          * SmallRye quoted-dot {@code bindings."http.server"}). Converting a raw SmallRye/Spring
          * property name whose segment contains a dot into this bracket form is the <em>bridge's</em>
-         * normalization step, which is out of Phase-0 scope and deferred to the Quarkus bridge PRD;
+         * normalization step, which is out of scope here and left to the Quarkus bridge;
          * this fixture therefore feeds the already-normalized bracket key directly. The two fixtures
          * differ only cosmetically and must build the identical tree.
          *

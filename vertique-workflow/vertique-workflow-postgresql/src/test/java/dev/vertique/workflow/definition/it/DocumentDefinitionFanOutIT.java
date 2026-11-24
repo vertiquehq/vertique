@@ -119,7 +119,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>Assertions verified:
  * <ul>
  *   <li>AC #2 — a document-defined approval workflow uses parallel legal/finance review branches
- *       from PRD-WF-002 (demonstrated here with three parallel pre-fulfillment checks).</li>
+ *       (demonstrated here with three parallel pre-fulfillment checks).</li>
  *   <li>After {@code start()}, the instance is in {@link WorkflowStatus#RUNNING} (parked at the
  *       fork join with {@code waitType=JOIN}) with all three branch tokens present in
  *       {@code workflow_branch_tokens}.</li>
@@ -528,7 +528,7 @@ public class DocumentDefinitionFanOutIT {
      * Drives the document-defined fan-out workflow from start to COMPLETED by manually sending
      * three branch signals (one per branch) and asserting intermediate and final state.
      *
-     * <p>Verifies AC #2: a document-defined workflow uses parallel branches from PRD-WF-002.
+     * <p>Verifies AC #2: a document-defined workflow uses parallel branches.
      * After start, the instance is in RUNNING (parked at the fork join with waitType=JOIN)
      * with all three branch tokens present. Delivering each branch signal one at a time keeps
      * the instance in RUNNING until all three branches are done and the join fires.

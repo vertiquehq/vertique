@@ -247,7 +247,7 @@ public class PgWorkflowInstanceRepositoryIT {
     }
 
     // =========================================================================
-    // Durable metadata persistence (PRD-WF-007 AC-1, AC-6)
+    // Durable metadata persistence
     // =========================================================================
 
     @Test

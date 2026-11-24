@@ -47,8 +47,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for {@link DefaultIdentityReconstruction} against schema v2 (PRD-ID-002 §14.6 amendment
- * A9). Reconstruction is the trust boundary (FR-ID-CA-008): it re-verifies the snapshot's HMAC and its
+ * Unit tests for {@link DefaultIdentityReconstruction} against schema v2. Reconstruction is the trust boundary
+ * (FR-ID-CA-008): it re-verifies the snapshot's HMAC and its
  * F5 carrier binding before minting a {@link SecurityContext}. Every test that needs a genuinely valid
  * signed snapshot builds one via {@link #signedSnapshot} — an unsigned envelope round-tripped through
  * {@code codec.encode}/{@code codec.decode} so the returned snapshot carries a real, verifiable tag.

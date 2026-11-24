@@ -22,8 +22,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Slice-2.1 RED tests for reflection-free <em>parameter-level</em> {@code findAnnotation}/
- * {@code hasAnnotation} on the generated proxy's nested {@code ParameterMetadataImpl} (FR-015-07 /
- * PRD-REST-018 AC-6).
+ * {@code hasAnnotation} on the generated proxy's nested {@code ParameterMetadataImpl} (FR-015-07).
  *
  * <p>The bean's intercepted method carries an aspect trigger ({@code @TestTimed}) so the proxy is
  * generated, and its <em>parameter</em> carries a runtime-retained, {@code PARAMETER}-targeted

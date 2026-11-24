@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Verifies the explicit default exception mappings the framework registers for the two
- * param-conversion failure types (PRD-REST-018 FR-015-08a): {@link ParamConversionException} maps to
+ * param-conversion failure types (FR-015-08a): {@link ParamConversionException} maps to
  * {@code 400} and {@link ParamConverterNotFoundException} maps to {@code 500}. These are registered
  * explicitly in {@link RestModule#defaultExceptionMapper()} rather than relying on the
  * {@code ValidationException}→400 / {@code Throwable}→500 hierarchy fallback, so this test pins the

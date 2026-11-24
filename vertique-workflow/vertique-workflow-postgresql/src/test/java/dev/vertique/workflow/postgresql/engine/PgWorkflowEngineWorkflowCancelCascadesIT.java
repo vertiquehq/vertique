@@ -67,7 +67,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 /**
  * Verifies that an explicit {@code cancel()} call cascades through every active fan-out branch,
  * closing branch-owned timers and tasks before marking each branch CANCELLED, and finally marking
- * the workflow instance CANCELLED (PRD-WF-002 lock order: timers → tasks → branch tokens →
+ * the workflow instance CANCELLED (lock order: timers → tasks → branch tokens →
  * instance).
  *
  * <p>Workflow shape:

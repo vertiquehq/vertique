@@ -15,8 +15,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Verifies {@link TaskCancelledHistoryPayload}'s required-field validation and the
- * {@code commandCorrelationId} stitching field (PRD FR-WF-CTX-050/051, AC-5, Contract Appendix
- * C5).
+ * {@code commandCorrelationId} stitching field.
  */
 class TaskCancelledHistoryPayloadTest {
 

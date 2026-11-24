@@ -51,9 +51,8 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Unit tests for {@link IdentitySnapshotReconstructionInitializer} (PRD-ID-002 §14.3 "Frozen
- * binding-precedence rule", §14.3 amendment A6 "deferred-execution provenance gate", §14.6 amendment
- * A9 "origin-or-verified mint evidence", §14.6 slice P1.S5 / P2.S0).
+ * Unit tests for {@link IdentitySnapshotReconstructionInitializer} (the frozen binding-precedence rule, the
+ * deferred-execution provenance gate, and origin-or-verified mint evidence).
  *
  * <p>Verifies the five receive-side cases: a live {@link SecurityContext} already bound wins
  * (idempotent no-op); a verified {@link dev.vertique.security.runtime.IdentitySnapshotContext}

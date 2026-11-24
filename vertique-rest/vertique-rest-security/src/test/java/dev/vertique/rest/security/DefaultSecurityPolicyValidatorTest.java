@@ -91,7 +91,7 @@ class DefaultSecurityPolicyValidatorTest {
     @DisplayName("@RolesAllowed (restrictive) with no security requirement produces a violation")
     void rolesAllowedPolicyWithoutRequirementReturnsViolation() {
         // Startup-consistency check: a restrictive annotation with no declared scheme means the
-        // authentication handler will never run. (Reframed from the PRD's mis-specified
+        // authentication handler will never run. (This is not a
         // "check role against a SecurityContext" — this validator is a startup check with no
         // request/SecurityContext.)
         RestOperationDescriptor descriptor =

@@ -81,8 +81,7 @@ import org.mockito.ArgumentCaptor;
 /**
  * Proves the full identity-snapshot deferred-execution path end to end — capture, durable
  * carriage, receive-side reconstruction, and (on degradation) the async {@link SnapshotDegradationGate}
- * — without needing postgres or a real event-bus dispatch (PRD-ID-002 §14.3 "Durable carriage",
- * §14.6 slice P1.S5c).
+ * — without needing postgres or a real event-bus dispatch.
  *
  * <p>The harness uses the real {@link DefaultContextHolder} (backed by a duplicated Vert.x context,
  * exactly as production dispatch does), the real {@link IdentitySnapshotDurableEncoder}/

@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test;
  * Unit tests for {@link CarriageRequirement}.
  *
  * <p>Verifies: all three enum constants exist; {@code valueOf} round-trips for each constant; the
- * enum has exactly three constants (P2.S0 commit 5b, PRD-ID-002 §14.6 A9).
+ * enum has exactly three constants (P2.S0 commit 5b).
  */
 class CarriageRequirementTest {
 

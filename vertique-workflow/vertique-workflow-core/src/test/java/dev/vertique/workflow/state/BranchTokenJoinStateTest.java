@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for the PRD-WF-002 persistence state types: {@link BranchToken},
+ * Unit tests for the persistence state types: {@link BranchToken},
  * {@link JoinState}, {@link BranchStatus}, {@link JoinStateStatus}, {@link JoinPolicyType}, and
  * {@link BranchTokenFilter}.
  *

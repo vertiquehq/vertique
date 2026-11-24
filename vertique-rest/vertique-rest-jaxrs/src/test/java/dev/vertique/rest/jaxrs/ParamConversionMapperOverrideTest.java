@@ -37,7 +37,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 /**
  * Verifies that an application-registered {@link ExceptionMapper} for the framework
  * {@link ParamConversionException} overrides the default {@code 400} response body/status when an
- * inbound parameter fails conversion (PRD-REST-018 slice 1.3, AC-4).
+ * inbound parameter fails conversion.
  *
  * <p><b>RED rationale (compile-RED, then behavior-RED once it compiles):</b> this test needs two
  * not-yet-existing pieces — a {@code TestFactories.builder().exceptionMapperRegistry(...)} hook so the

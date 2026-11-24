@@ -456,7 +456,7 @@ class DelayedJobPollerTest {
     }
 
     @Nested
-    @DisplayName("carrier binding (F5 row binding, PRD-ID-002 §14.6/A9/F5)")
+    @DisplayName("carrier binding (F5 row binding)")
     class CarrierBinding {
 
         /** Test-only ContextValue whose decoder records the DurableDecodeContext it is handed. */

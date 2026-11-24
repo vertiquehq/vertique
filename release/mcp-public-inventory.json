@@ -698,7 +698,7 @@
   "excludedModules": [
     {
       "module": "vertique-rest-core",
-      "reason": "Its only MCP-001 surface change was completed by T001 and is part of the T004 replacement-task baseline; no replacement task alters it."
+      "reason": "Its MCP-related surface is already final; no planned MCP change alters it."
     }
   ],
   "delegatedModules": [

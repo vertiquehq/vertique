@@ -7,7 +7,7 @@ import dev.vertique.core.context.ContextValue;
 
 /**
  * Minimal {@link ContextValue} wrapper for a tenant identifier, used across the engine module's
- * durable-context test suites (PRD-WF-007) so that the codec's type parameter satisfies the
+ * durable-context test suites so that the codec's type parameter satisfies the
  * {@code <T extends ContextValue>} bound on {@link dev.vertique.core.context.DurableContextMetadataEncoder}
  * / {@link dev.vertique.core.context.DurableContextMetadataDecoder}.
  *

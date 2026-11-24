@@ -21,8 +21,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Dagger-wiring proof that {@link IdentitySnapshotReconstructionModule}, installed on a delayed-job
- * -style component, composes standalone into a working durable-carriage graph (PRD-ID-002 §14.3
- * "Durable carriage", §14.6 slice P1.S5-ii).
+ * -style component, composes standalone into a working durable-carriage graph.
  *
  * <p>Asserts that the substrate's {@link DurableContextMetadataRegistry} — the boot-time-validated
  * registry {@code DurableContextPropagator} injects — reports both the identity-snapshot durable

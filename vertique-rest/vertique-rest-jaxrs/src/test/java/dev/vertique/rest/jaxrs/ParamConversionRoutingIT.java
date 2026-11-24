@@ -35,8 +35,8 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * End-to-end inbound param-conversion tests for the plain-{@code Router} {@link JaxRsRouterMount}
- * (PRD-REST-018 slice 1.3). These drive the real {@code createRouter()} path under the {@code none}
+ * End-to-end inbound param-conversion tests for the plain-{@code Router} {@link JaxRsRouterMount}. These drive the
+ * real {@code createRouter()} path under the {@code none}
  * validation strategy and prove that non-scalar JAX-RS parameter types
  * ({@link UUID}/{@link Instant}/{@link BigDecimal}/enum/collection-of-{@code UUID}) are converted to
  * their declared Java types before reaching the resource method.
