@@ -30,10 +30,11 @@ public final class PathTemplateVariables {
     /**
      * Matches one path variable {@code {name}} or {@code {name:regex}}. Group 1 is the variable name;
      * group 2 (optional) is the regex constraint without the leading colon. The constraint allows
-     * nested braces (for example {@code \d{3}}).
+     * nested braces (for example {@code \d{3}}). It is written as runs of non-brace characters with
+     * possessive repetition, so a long constraint cannot overflow the stack.
      */
-    public static final Pattern VARIABLE =
-            Pattern.compile("\\{\\s*(\\w[\\w.-]*)\\s*(?::\\s*((?:[^{}]|\\{[^{}]*})+))?\\s*}");
+    public static final Pattern VARIABLE = Pattern.compile(
+            "\\{\\s*(\\w[\\w.-]*)\\s*(?::\\s*((?=[^{}]|\\{[^{}]*})[^{}]*+(?:\\{[^{}]*+}[^{}]*+)*+))?\\s*}");
 
     private static final Pattern REGEX_GROUP_NAME = Pattern.compile("[A-Za-z][A-Za-z0-9]*");
 

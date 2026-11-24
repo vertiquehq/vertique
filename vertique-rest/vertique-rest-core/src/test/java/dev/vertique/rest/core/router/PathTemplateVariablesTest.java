@@ -54,4 +54,24 @@ class PathTemplateVariablesTest {
         assertTrue(message.contains("'user_id'"), message);
         assertTrue(message.contains("letter followed by letters and digits"), message);
     }
+
+    @Test
+    @DisplayName("constraints with nested braces, empty braces and trailing text are read as before")
+    void constraintGrammar() {
+        var m = PathTemplateVariables.VARIABLE.matcher("/{id:\\d{3}}/{x : [a-z]+ }/{e:{}}/{plain}");
+        List<String> constraints = new java.util.ArrayList<>();
+        while (m.find()) {
+            constraints.add(m.group(1) + "=" + m.group(2));
+        }
+        assertEquals(List.of("id=\\d{3}", "x=[a-z]+ ", "e={}", "plain=null"), constraints);
+    }
+
+    @Test
+    @DisplayName("a very long constraint is matched without a stack overflow")
+    void veryLongConstraint() {
+        String template = "/{id:" + "a".repeat(200_000) + "}";
+        assertEquals(List.of(), PathTemplateVariables.invalidRegexVariableNames(template));
+        String braces = "/{id:" + "{a}".repeat(100_000) + "}";
+        assertEquals(List.of(), PathTemplateVariables.invalidRegexVariableNames(braces));
+    }
 }
