@@ -225,6 +225,14 @@ The strategy still passes the framework's `ParamConversionResolver` (`vertique-r
 - **operationId matching is exact.** A route whose operationId is absent from its mount's contract
   fails requests with HTTP 500 and logs an `ERROR` naming the mount path and the contract path; it
   never falls back to an unvalidated route.
+- **Upgrade note: the id of an override follows the declaration it overrides.** An override whose
+  `@Operation` carries no `operationId`, or a blank one, takes the id of the interface or superclass
+  declaration it overrides instead of its Java method name (see `dev.vertique:vertique-rest-jaxrs`).
+  Two consequences for an upgrade: a contract generated before the change names such an operation by
+  its method name, so under `openapi-contract` the operation is absent from the contract and its
+  requests fail with HTTP 500 until the contract is regenerated; and two methods of one mount that
+  now resolve to the same id fail startup with `DUPLICATE_OPERATION_ID`. Regenerate the contract,
+  and give an override an explicit `operationId` where a coincidental duplicate appears.
 - **File verification is inactive.** `openapi-contract` does not run `@FilePart` constraints or
   `FileContentVerifier`; bound verifiers cause a per-mount startup WARN.
 - **Known limit: pattern and format input is not bounded.** The pattern-input bound

@@ -185,6 +185,21 @@ class SchemaPatternsTest {
                     .containsExactly("/properties/const/pattern");
         }
 
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"properties", "patternProperties", "$defs", "dependentSchemas"})
+        @DisplayName("a member named like a literal keyword is read as a schema in every container of schemas")
+        void aMemberNamedLikeALiteralKeywordIsWalkedInEveryContainer(String container) {
+            for (String name : List.of("const", "enum", "default", "examples", "example")) {
+                JsonObject schema =
+                        Schemas.json("{'" + container + "':{'" + name + "':{'pattern':'" + UNCLOSED_GROUP + "'}}}");
+
+                assertThat(SchemaPatterns.precompile(schema))
+                        .as("%s under %s", name, container)
+                        .hasSize(1)
+                        .allSatisfy(failure -> assertThat(failure.pointer()).endsWith("/pattern"));
+            }
+        }
+
         @Test
         @DisplayName("a property literally named pattern is a subschema and is not compiled")
         void aPropertyNamedPatternIsNotCompiled() {
