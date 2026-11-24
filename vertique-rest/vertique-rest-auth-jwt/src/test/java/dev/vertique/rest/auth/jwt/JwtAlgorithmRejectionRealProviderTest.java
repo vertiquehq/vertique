@@ -23,7 +23,9 @@ import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.NoSuchKeyIdException;
+import io.vertx.ext.auth.PubSecKeyOptions;
 import io.vertx.ext.auth.jwt.JWTAuth;
+import io.vertx.ext.auth.jwt.JWTAuthOptions;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.HttpException;
 import io.vertx.junit5.VertxExtension;
@@ -54,12 +56,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>For each attack token the assertions run in this order: the authentication future failed with
  * a 401, the provider's failure is the expected cause type, and exactly one rejection event was
- * reported.
+ * reported, with the reason code {@code JWT_ALG_UNSUPPORTED}, so the audit log names the attack.
  *
- * <p>Observed reason codes with the real provider (Vert.x 5.2.3): the unsigned token fails with
- * {@code IllegalStateException("JWT is in secure mode but token is not signed.")} and the
- * key-confusion token with {@code NoSuchKeyIdException("algorithm [HS256]: <null>")}; the handler
- * reports both as {@code JWT_INVALID}, not {@code JWT_ALG_UNSUPPORTED}.
+ * <p>The provider fails an unsigned token with {@code IllegalStateException} ("JWT is in secure mode
+ * but token is not signed." without a signature segment, {@code Algorithm "none" not allowed} with
+ * one) and a token whose algorithm it holds no key for with {@code NoSuchKeyIdException}. A kid that
+ * matches no key of an algorithm the provider does hold keys for is not an algorithm attack, so it
+ * stays {@code JWT_INVALID}.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 10, unit = TimeUnit.SECONDS)
@@ -88,7 +91,54 @@ class JwtAlgorithmRejectionRealProviderTest {
         String payload = base64Url(claims().encode().getBytes(StandardCharsets.UTF_8));
         String unsigned = header + "." + payload + ".";
 
-        assertRejectedWithRealProvider(provider, unsigned, IllegalStateException.class, testContext);
+        assertRejectedWithRealProvider(
+                provider, unsigned, IllegalStateException.class, "JWT_ALG_UNSUPPORTED", testContext);
+    }
+
+    @Test
+    @DisplayName("An alg=none token that carries a signature segment is rejected as JWT_ALG_UNSUPPORTED")
+    void unsignedTokenWithSignatureSegmentIsRejected(Vertx vertx, VertxTestContext testContext) throws Exception {
+        KeyPair keyPair = generateRsaKeyPair();
+        JWTAuth provider = JwtAuthFactory.fromPublicKey(vertx, RS256, pem("PUBLIC KEY", keyPair.getPublic()));
+
+        String header = base64Url("{\"alg\":\"none\",\"typ\":\"JWT\"}".getBytes(StandardCharsets.UTF_8));
+        String payload = base64Url(claims().encode().getBytes(StandardCharsets.UTF_8));
+        String unsigned = header + "." + payload + "." + base64Url("junk".getBytes(StandardCharsets.UTF_8));
+
+        assertRejectedWithRealProvider(
+                provider, unsigned, IllegalStateException.class, "JWT_ALG_UNSUPPORTED", testContext);
+    }
+
+    @Test
+    @DisplayName("A token whose algorithm the provider holds no key for is rejected as JWT_ALG_UNSUPPORTED")
+    void tokenWithUnconfiguredAlgorithmIsRejected(Vertx vertx, VertxTestContext testContext) throws Exception {
+        KeyPair keyPair = generateRsaKeyPair();
+        JWTAuth provider = JwtAuthFactory.fromPublicKey(vertx, RS256, pem("PUBLIC KEY", keyPair.getPublic()));
+
+        String token = base64Url("{\"alg\":\"ES256\",\"typ\":\"JWT\"}".getBytes(StandardCharsets.UTF_8))
+                + "."
+                + base64Url(claims().encode().getBytes(StandardCharsets.UTF_8))
+                + "."
+                + base64Url("junk".getBytes(StandardCharsets.UTF_8));
+
+        assertRejectedWithRealProvider(provider, token, NoSuchKeyIdException.class, "JWT_ALG_UNSUPPORTED", testContext);
+    }
+
+    @Test
+    @DisplayName("A kid that matches no key of a configured algorithm stays JWT_INVALID")
+    void unknownKidOnConfiguredAlgorithmStaysInvalid(Vertx vertx, VertxTestContext testContext) throws Exception {
+        KeyPair keyPair = generateRsaKeyPair();
+        JWTAuth provider = JWTAuth.create(
+                vertx,
+                new JWTAuthOptions()
+                        .addPubSecKey(new PubSecKeyOptions()
+                                .setAlgorithm(RS256)
+                                .setBuffer(pem("PUBLIC KEY", keyPair.getPublic()))
+                                .setId("current-key")));
+
+        String token = signRs256(keyPair, "{\"alg\":\"RS256\",\"typ\":\"JWT\",\"kid\":\"rotated-away\"}");
+
+        assertRejectedWithRealProvider(provider, token, NoSuchKeyIdException.class, "JWT_INVALID", testContext);
     }
 
     @Test
@@ -105,7 +155,8 @@ class JwtAlgorithmRejectionRealProviderTest {
         mac.init(new SecretKeySpec(publicKeyPem.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
         String confused = signingInput + "." + base64Url(mac.doFinal(signingInput.getBytes(StandardCharsets.UTF_8)));
 
-        assertRejectedWithRealProvider(provider, confused, NoSuchKeyIdException.class, testContext);
+        assertRejectedWithRealProvider(
+                provider, confused, NoSuchKeyIdException.class, "JWT_ALG_UNSUPPORTED", testContext);
     }
 
     @Test
@@ -114,13 +165,7 @@ class JwtAlgorithmRejectionRealProviderTest {
         KeyPair keyPair = generateRsaKeyPair();
         JWTAuth provider = JwtAuthFactory.fromPublicKey(vertx, RS256, pem("PUBLIC KEY", keyPair.getPublic()));
 
-        String signingInput = base64Url("{\"alg\":\"RS256\",\"typ\":\"JWT\"}".getBytes(StandardCharsets.UTF_8))
-                + "."
-                + base64Url(claims().encode().getBytes(StandardCharsets.UTF_8));
-        Signature signature = Signature.getInstance("SHA256withRSA");
-        signature.initSign(keyPair.getPrivate());
-        signature.update(signingInput.getBytes(StandardCharsets.UTF_8));
-        String signed = signingInput + "." + base64Url(signature.sign());
+        String signed = signRs256(keyPair, "{\"alg\":\"RS256\",\"typ\":\"JWT\"}");
 
         CapturingObserver observer = new CapturingObserver();
         handler(provider, observer)
@@ -134,7 +179,11 @@ class JwtAlgorithmRejectionRealProviderTest {
     }
 
     private static void assertRejectedWithRealProvider(
-            JWTAuth provider, String token, Class<? extends Throwable> expectedCause, VertxTestContext testContext) {
+            JWTAuth provider,
+            String token,
+            Class<? extends Throwable> expectedCause,
+            String expectedReasonCode,
+            VertxTestContext testContext) {
         CapturingObserver observer = new CapturingObserver();
         handler(provider, observer)
                 .authenticate(context(token))
@@ -148,10 +197,9 @@ class JwtAlgorithmRejectionRealProviderTest {
                             causeChainContains(failure, expectedCause),
                             "expected a " + expectedCause.getSimpleName() + " in the cause chain, got: "
                                     + failure.getCause());
-                    // 3. exactly one rejection event is reported. The reason code is deliberately not pinned
-                    // to JWT_ALG_UNSUPPORTED: the real provider does not produce the "Algorithm not
-                    // supported/allowed" message for these two tokens (see the class Javadoc).
+                    // 3. exactly one rejection event is reported, naming the expected reason
                     assertEquals(1, observer.rejections.size());
+                    assertEquals(expectedReasonCode, observer.rejections.get(0).reasonCode());
                     testContext.completeNow();
                 }));
     }
@@ -189,6 +237,16 @@ class JwtAlgorithmRejectionRealProviderTest {
 
     private static JsonObject claims() {
         return new JsonObject().put("sub", "alg-rejection-user").put("exp", JwtAuthTestSupport.secondsFromNow(300));
+    }
+
+    private static String signRs256(KeyPair keyPair, String headerJson) throws Exception {
+        String signingInput = base64Url(headerJson.getBytes(StandardCharsets.UTF_8))
+                + "."
+                + base64Url(claims().encode().getBytes(StandardCharsets.UTF_8));
+        Signature signature = Signature.getInstance("SHA256withRSA");
+        signature.initSign(keyPair.getPrivate());
+        signature.update(signingInput.getBytes(StandardCharsets.UTF_8));
+        return signingInput + "." + base64Url(signature.sign());
     }
 
     private static KeyPair generateRsaKeyPair() throws Exception {
