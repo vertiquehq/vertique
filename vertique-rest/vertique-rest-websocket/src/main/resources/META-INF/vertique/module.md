@@ -301,7 +301,9 @@ the message parameter or on the method:
 | anything else | Text frames decoded from JSON into that type |
 
 An endpoint listens for either text or binary messages, never both — the `Buffer` parameter is what
-switches it. With no message parameter (or no `@OnMessage` at all) the endpoint receives nothing.
+switches it. With no `@OnMessage` method the endpoint receives nothing. An `@OnMessage` method with
+no message parameter is still invoked once per **text** message, without a payload; binary messages
+do not reach it.
 
 JSON encoding and decoding — inbound typed messages and `session.send(Object)` — use the process
 JSON codec's mapper (`VertiqueJson.mapper()`), the same mapper every other unmanaged framework path
