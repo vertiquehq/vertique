@@ -11,6 +11,7 @@ import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.core.exception.ConfigurationException;
 import io.vertx.core.json.JsonObject;
+import java.math.BigDecimal;
 import java.util.Optional;
 import java.util.Set;
 
@@ -104,6 +105,9 @@ public abstract class HealthCheckModule {
         Object value = management.getValue("healthCheckTimeoutSeconds");
         long seconds;
         if (value instanceof Number number) {
+            if (hasFractionalPart(number)) {
+                throw new ConfigurationException("management.healthCheckTimeoutSeconds must be a whole number");
+            }
             seconds = number.longValue();
         } else if (value instanceof String text) {
             // Property-source values arrive as strings; the management probes coerce them the same way.
@@ -119,5 +123,23 @@ public abstract class HealthCheckModule {
             throw new ConfigurationException("management.healthCheckTimeoutSeconds must be positive");
         }
         return seconds;
+    }
+
+    /**
+     * Tells whether a number is not a whole number: a floating-point or decimal value with a
+     * fractional part, or one that is not finite.
+     *
+     * @param number the configured number
+     * @return {@code true} when the number cannot be read as a whole number of seconds
+     */
+    private static boolean hasFractionalPart(Number number) {
+        if (number instanceof Double || number instanceof Float) {
+            double d = number.doubleValue();
+            return Double.isNaN(d) || Double.isInfinite(d) || d != Math.rint(d);
+        }
+        if (number instanceof BigDecimal decimal) {
+            return decimal.stripTrailingZeros().scale() > 0;
+        }
+        return false;
     }
 }

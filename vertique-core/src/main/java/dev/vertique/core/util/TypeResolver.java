@@ -321,7 +321,7 @@ public final class TypeResolver {
             return null;
         }
         Type[] typeArgs = parameterized.getActualTypeArguments();
-        if (index >= typeArgs.length) {
+        if (index < 0 || index >= typeArgs.length) {
             return null;
         }
         Type arg = typeArgs[index];

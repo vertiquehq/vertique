@@ -163,6 +163,34 @@ class ManagementConfigTest {
         }
 
         @Test
+        @DisplayName("the module provider rejects a fractional timeout with a ConfigurationException")
+        void fractionalTimeoutRejectedAsConfigurationException() {
+            for (Object bad : new Object[] {2.5, 2.5f}) {
+                JsonObject config =
+                        new JsonObject().put("management", new JsonObject().put("healthCheckTimeoutSeconds", bad));
+
+                ConfigurationException failure = assertThrows(
+                        ConfigurationException.class,
+                        () -> ManagementModule.managementConfig(
+                                config, new DefaultConfigParser(DefaultConfigMapper.lenient())));
+                assertTrue(failure.getMessage().contains("healthCheckTimeoutSeconds"), failure.getMessage());
+                assertFalse(failure.getMessage().contains("2.5"), failure.getMessage());
+            }
+        }
+
+        @Test
+        @DisplayName("a fractional numeric string is rejected by the parser, not truncated")
+        void fractionalStringTimeoutRejected() {
+            JsonObject config =
+                    new JsonObject().put("management", new JsonObject().put("healthCheckTimeoutSeconds", "2.5"));
+
+            assertThrows(
+                    ConfigurationException.class,
+                    () -> ManagementModule.managementConfig(
+                            config, new DefaultConfigParser(DefaultConfigMapper.lenient())));
+        }
+
+        @Test
         @DisplayName("a positive timeout and an absent section both pass")
         void positiveAndAbsentAccepted() {
             DefaultConfigParser parser = new DefaultConfigParser(DefaultConfigMapper.lenient());

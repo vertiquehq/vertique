@@ -13,6 +13,7 @@ import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.health.HealthCheckModule;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
+import java.math.BigDecimal;
 import java.util.Set;
 
 /**
@@ -53,16 +54,30 @@ public abstract class ManagementModule {
      * @param config the application configuration
      * @param parser the injected config parser
      * @return the management configuration with defaults applied for any missing fields
-     * @throws ConfigurationException if {@code healthCheckTimeoutSeconds} is not positive
+     * @throws ConfigurationException if {@code healthCheckTimeoutSeconds} is not a positive whole number
      */
     @Provides
     @Singleton
     static ManagementConfig managementConfig(@VertxConfig JsonObject config, ConfigParser parser) {
-        ManagementConfig managementConfig =
-                parser.parse(JsonConfigPaths.navigateObject(config, "management"), ManagementConfig.class);
+        JsonObject management = JsonConfigPaths.navigateObject(config, "management");
+        if (management.getValue("healthCheckTimeoutSeconds") instanceof Number number && !isWhole(number)) {
+            throw new ConfigurationException("management.healthCheckTimeoutSeconds must be a whole number");
+        }
+        ManagementConfig managementConfig = parser.parse(management, ManagementConfig.class);
         if (managementConfig.healthCheckTimeoutSeconds() <= 0) {
             throw new ConfigurationException("management.healthCheckTimeoutSeconds must be positive");
         }
         return managementConfig;
+    }
+
+    private static boolean isWhole(Number number) {
+        if (number instanceof Double || number instanceof Float) {
+            double d = number.doubleValue();
+            return !Double.isNaN(d) && !Double.isInfinite(d) && d == Math.rint(d);
+        }
+        if (number instanceof BigDecimal decimal) {
+            return decimal.stripTrailingZeros().scale() <= 0;
+        }
+        return true;
     }
 }

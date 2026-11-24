@@ -12,6 +12,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Set;
 import java.util.function.BiFunction;
+import java.util.function.Supplier;
 
 /**
  * {@link ConfigPropertySourceFactory} for Azure Key Vault.
@@ -169,7 +170,7 @@ public class AzureKeyVaultPropertySourceFactory implements ConfigPropertySourceF
         String prefix = nullIfBlank(sourceConfig.getString("prefix"));
 
         // --- auth block (optional; defaults to method="default") ---
-        JsonObject auth = sourceConfig.getJsonObject("auth");
+        JsonObject auth = typed(name, "auth", () -> sourceConfig.getJsonObject("auth"));
         String authMethod;
         String clientId;
         if (auth == null) {
@@ -195,6 +196,26 @@ public class AzureKeyVaultPropertySourceFactory implements ConfigPropertySourceF
 
         return new AzureConnectionSettings(
                 endpoint, canonicalEndpoint, prefix, authMethod, clientId, connectTimeoutMs, readTimeoutMs);
+    }
+
+    /**
+     * Reads a configuration value, converting a wrong-typed value (for example a string where an
+     * array is required) into a {@link ConfigPropertySourceException} that names the field and
+     * never echoes the value.
+     *
+     * @param sourceName the source instance name for the exception message
+     * @param field      the config field name (used in the error message)
+     * @param read       the typed read of the field
+     * @param <T>        the field type
+     * @return the value read
+     * @throws ConfigPropertySourceException if the value does not have the expected type
+     */
+    private static <T> T typed(String sourceName, String field, Supplier<T> read) {
+        try {
+            return read.get();
+        } catch (ClassCastException e) {
+            throw new ConfigPropertySourceException(sourceName, "field '" + field + "' has the wrong type");
+        }
     }
 
     private static String nullIfBlank(String value) {

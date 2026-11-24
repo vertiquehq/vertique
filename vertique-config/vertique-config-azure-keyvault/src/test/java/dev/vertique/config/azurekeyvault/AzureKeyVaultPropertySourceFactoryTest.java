@@ -935,4 +935,36 @@ class AzureKeyVaultPropertySourceFactoryTest {
             assertDoesNotThrow(source::close);
         }
     }
+
+    // --- Wrong-typed fields ---
+
+    @Nested
+    @DisplayName("wrong-typed fields")
+    class WrongTypedFields {
+
+        @Test
+        @DisplayName("a string where the auth object is required names the field and not the value")
+        void wrongTypedAuthBlock() {
+            ConfigPropertySourceException e = assertThrows(ConfigPropertySourceException.class, () -> factoryWithStub(
+                            Map.of())
+                    .create(
+                            "src",
+                            minimalConfig("https://myvault.vault.azure.net").put("auth", "managed-identity")));
+
+            assertTrue(e.getMessage().contains("auth"), e.getMessage());
+            assertFalse(e.getMessage().contains("managed-identity"), e.getMessage());
+        }
+
+        @Test
+        @DisplayName("a number in a string field is still accepted as its string form")
+        void numberInStringFieldIsCoerced() {
+            ConfigPropertySource source = factoryWithStub(Map.of("password", "v"))
+                    .create(
+                            "src",
+                            minimalConfig("https://myvault.vault.azure.net").put("prefix", 2024));
+
+            assertEquals(Optional.of("v"), source.lookup("2024password"));
+            assertEquals(Optional.empty(), source.lookup("other"));
+        }
+    }
 }

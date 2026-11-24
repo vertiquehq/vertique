@@ -139,7 +139,7 @@ public final class RateLimiter {
         if (!rateLimitEnabled || !policy.enabled()) {
             return dispatchOnCallingContext(Future.succeededFuture(disabledDecision(algorithm, cost)));
         }
-        String storageKey = policy.name() + ':' + policy.revision() + ':' + key.canonicalEncoding();
+        String storageKey = RateLimitStorageIdentity.canonicalInput(policy.name(), policy.revision(), key);
         RateLimitBackendRequest request = new RateLimitBackendRequest(storageKey, algorithm, cost);
         long startedAt = System.nanoTime();
         Future<RateLimitBackendResult> consumeFuture = fencedConsume(request);

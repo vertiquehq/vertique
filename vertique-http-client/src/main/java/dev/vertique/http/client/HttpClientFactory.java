@@ -58,6 +58,9 @@ public final class HttpClientFactory {
      */
     public HttpClient client(String name) {
         Objects.requireNonNull(name, "name");
+        if (closeFuture.get() != null) {
+            throw new HttpClientClosedException();
+        }
         return clients.computeIfAbsent(name, key -> newBuilder(key).build());
     }
 

@@ -15,11 +15,11 @@ package dev.vertique.config.store.ssm;
  *
  * @param path             the SSM path prefix, always starts with {@code "/"} and ends with
  *                         {@code "/"}; e.g. {@code "/myapp/prod/"}
- * @param region           optional AWS region string (e.g. {@code "us-east-1"}); {@code null}
- *                         means use the SDK default region provider chain
+ * @param region           optional AWS region string (e.g. {@code "us-east-1"}); {@code null} or
+ *                         blank means use the SDK default region provider chain
  * @param endpointOverride optional endpoint override URL string (e.g.
- *                         {@code "http://localhost:4566"} for LocalStack); {@code null} means
- *                         use the standard AWS endpoint
+ *                         {@code "http://localhost:4566"} for LocalStack); {@code null} or
+ *                         blank means use the standard AWS endpoint
  * @param recursive        whether to fetch parameters recursively under {@code path};
  *                         default {@code true}
  * @param withDecryption   whether to decrypt {@code SecureString} parameters; default
@@ -38,4 +38,11 @@ record SsmStoreSettings(
         boolean withDecryption,
         String prefix,
         int connectTimeoutMs,
-        int readTimeoutMs) {}
+        int readTimeoutMs) {
+
+    /** Normalizes a blank {@code region} or {@code endpointOverride} to {@code null} (absent). */
+    SsmStoreSettings {
+        region = region == null || region.isBlank() ? null : region;
+        endpointOverride = endpointOverride == null || endpointOverride.isBlank() ? null : endpointOverride;
+    }
+}

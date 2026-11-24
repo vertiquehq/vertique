@@ -168,6 +168,13 @@ class TypeResolverTest {
     }
 
     @Test
+    @DisplayName("Should return null for negative index")
+    void shouldReturnNullForNegativeIndex() {
+        Class<?> result = TypeResolver.resolveTypeArgument(TwoParamImpl.class, TwoParam.class, -1);
+        assertNull(result);
+    }
+
+    @Test
     @DisplayName("Indexed overload at index 0 should behave the same as the single-arg overload")
     void shouldMatchSingleArgOverloadAtIndex0() {
         Class<?> indexed = TypeResolver.resolveTypeArgument(DirectImpl.class, GenericInterface.class, 0);

@@ -367,6 +367,29 @@ class SsmConfigStoreFactoryTest {
         }
     }
 
+    // --- Connection settings ---
+
+    @Nested
+    @DisplayName("Connection settings")
+    class ConnectionSettings {
+
+        @Test
+        @DisplayName("blank region and blank endpointOverride count as absent")
+        void blankRegionAndEndpointOverrideAreAbsent(Vertx vertx) {
+            SsmStoreSettings[] captured = new SsmStoreSettings[1];
+            SsmConfigStoreFactory capturing = new SsmConfigStoreFactory(settings -> {
+                captured[0] = settings;
+                return gateway;
+            });
+
+            capturing.create(
+                    vertx, configWithPath("/myapp/prod/").put("region", "  ").put("endpointOverride", ""));
+
+            assertNull(captured[0].region());
+            assertNull(captured[0].endpointOverride());
+        }
+    }
+
     // --- StringList handling ---
 
     @Nested
@@ -837,6 +860,41 @@ class SsmConfigStoreFactoryTest {
                     "second request must carry the nextToken from the first response");
 
             ctx.completeNow();
+        }
+    }
+
+    // --- Wrong-typed fields ---
+
+    @Nested
+    @DisplayName("Wrong-typed fields")
+    class WrongTypedFields {
+
+        @Test
+        @DisplayName("a string where a boolean is required fails naming the field, not the value")
+        void wrongTypedBooleanNamesTheField(Vertx vertx) {
+            for (String field : new String[] {"recursive", "withDecryption"}) {
+                JsonObject config = configWithPath("/myapp/prod/").put(field, "perhaps");
+
+                IllegalArgumentException e =
+                        assertThrows(IllegalArgumentException.class, () -> factory.create(vertx, config));
+
+                assertTrue(e.getMessage().contains("'" + field + "'"), e.getMessage());
+                assertFalse(e.getMessage().contains("perhaps"), e.getMessage());
+            }
+        }
+
+        @Test
+        @DisplayName("a number in a string field is still accepted as its string form")
+        void numberInStringFieldIsCoerced(Vertx vertx) {
+            SsmStoreSettings[] captured = new SsmStoreSettings[1];
+            SsmConfigStoreFactory capturing = new SsmConfigStoreFactory(settings -> {
+                captured[0] = settings;
+                return gateway;
+            });
+
+            capturing.create(vertx, configWithPath("/myapp/prod/").put("region", 2024));
+
+            assertEquals("2024", captured[0].region());
         }
     }
 }

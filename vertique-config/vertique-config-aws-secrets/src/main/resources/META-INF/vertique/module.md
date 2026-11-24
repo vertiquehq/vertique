@@ -101,8 +101,8 @@ The full per-source configuration block under `config.propertySources[*]`:
 |-------|----------|---------|-------------|
 | `type` | Yes | — | Must be `"aws-secrets"` |
 | `name` | No | `aws-secrets[{index}]` | Source instance name for diagnostics |
-| `region` | No | SDK default region chain | AWS region string (e.g. `"eu-west-1"`). When absent, the SDK resolves the region via `AWS_REGION`, `aws.region`, instance metadata, etc. Passed to the SDK unvalidated (see below). |
-| `endpointOverride` | No | none | Override the Secrets Manager endpoint URL. Use for LocalStack (`http://localhost:4566`) or other test endpoints. Passed to the SDK unvalidated (see below). |
+| `region` | No | SDK default region chain | AWS region string (e.g. `"eu-west-1"`). When absent or blank, the SDK resolves the region via `AWS_REGION`, `aws.region`, instance metadata, etc. Passed to the SDK unvalidated (see below). |
+| `endpointOverride` | No | none | Override the Secrets Manager endpoint URL. A blank string counts as absent. Use for LocalStack (`http://localhost:4566`) or other test endpoints. Passed to the SDK unvalidated (see below). |
 | `connectTimeoutMs` | No | 5000 | Connection timeout in milliseconds, applied to `UrlConnectionHttpClient`. A blank string counts as absent and takes the default. |
 | `readTimeoutMs` | No | 5000 | Socket/read timeout in milliseconds, applied to `UrlConnectionHttpClient`. A blank string counts as absent and takes the default. |
 | `secrets` | Yes | — | Non-empty array of secret entry objects |
@@ -122,6 +122,8 @@ Each element of the `secrets` array:
 - A `secrets` element that is not a JSON object (`null`, string, number, boolean, or array). The
   `ConfigPropertySourceException` names the source and the element's index and the JSON type it found,
   never the element's value.
+- A `secrets` field that is not an array; the `ConfigPropertySourceException` names the field and never the value.
+  A number or boolean in a string field (for example an unquoted `region: 2024`) is read as its string form
 - Missing or blank `secretId`
 - A blank `key` (an entry in key mode must name a non-blank key)
 - Both `prefix` and `key` present on the same entry
@@ -129,8 +131,8 @@ Each element of the `secrets` array:
 
 ### `region` and `endpointOverride` Are Not Validated
 
-`region` and `endpointOverride` are handed to the AWS SDK as given: a non-null `region` becomes
-`Region.of(...)` and a non-null `endpointOverride` becomes `URI.create(...)`. This module does not check
+`region` and `endpointOverride` are handed to the AWS SDK as given: a non-blank `region` becomes
+`Region.of(...)` and a non-blank `endpointOverride` becomes `URI.create(...)`. This module does not check
 either value. An unknown region string or a malformed endpoint URI surfaces as the SDK's or JDK's own
 exception (for example `IllegalArgumentException`) from `create()`, not as a
 `ConfigPropertySourceException`; bootstrap still fails, so the fail-closed outcome holds. Every other

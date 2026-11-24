@@ -74,6 +74,14 @@ class HealthCheckModuleGraphTest {
     }
 
     @Test
+    @DisplayName("an integral floating-point timeout is accepted as the whole number it denotes")
+    void aggregatorAcceptsAnIntegralFloatingPointTimeout() {
+        JsonObject config = new JsonObject().put("management", new JsonObject().put("healthCheckTimeoutSeconds", 7.0));
+
+        assertEquals(7L, aggregatorFor(config).checkTimeoutSeconds());
+    }
+
+    @Test
     @DisplayName("a bound configuration without the key keeps the default timeout")
     void aggregatorKeepsTheDefaultWhenTheKeyIsAbsent() {
         assertEquals(
@@ -88,7 +96,7 @@ class HealthCheckModuleGraphTest {
     @Test
     @DisplayName("a zero, negative or non-numeric timeout fails with a configuration error naming the key")
     void aggregatorRejectsAnInvalidTimeout() {
-        for (Object bad : new Object[] {0, -3, "0", "soon", true}) {
+        for (Object bad : new Object[] {0, -3, "0", "soon", true, 2.5, 2.5f, "2.5"}) {
             JsonObject config =
                     new JsonObject().put("management", new JsonObject().put("healthCheckTimeoutSeconds", bad));
 

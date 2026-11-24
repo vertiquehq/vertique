@@ -4,6 +4,7 @@
 package dev.vertique.micrometer.outbox;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.lifecycle.LifecyclePhase;
@@ -94,6 +95,27 @@ class OutboxQueueSamplerTest {
         sampler.sample();
 
         assertEquals(5, depth());
+    }
+
+    @Test
+    @DisplayName("a probe that throws a LinkageError propagates it and the next read still runs")
+    void linkageErrorPropagatesAndResetsTheReadingFlag() {
+        AtomicInteger calls = new AtomicInteger();
+        OutboxQueueSampler sampler = sampler(
+                () -> {
+                    if (calls.incrementAndGet() == 1) {
+                        throw new NoClassDefFoundError("missing.Dependency");
+                    }
+                    return Future.succeededFuture(new OutboxQueueSample(6, Duration.ZERO, 0));
+                },
+                1000,
+                true);
+
+        assertThrows(NoClassDefFoundError.class, sampler::sample);
+        sampler.sample();
+
+        assertEquals(2, calls.get(), "the read flag is reset, so a following read runs");
+        assertEquals(6, depth());
     }
 
     @Test

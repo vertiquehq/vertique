@@ -109,6 +109,8 @@ The full per-source configuration block under `config.propertySources[*]`:
 | `connectTimeoutMs` | No | 5000 | Connection timeout in milliseconds. Must be > 0. A blank string counts as absent and takes the default. Applied via `HttpClientOptions` to the underlying Netty client. |
 | `readTimeoutMs` | No | 5000 | Read and response timeout in milliseconds. Must be > 0. A blank string counts as absent and takes the default. Applied as both `readTimeout` and `responseTimeout` via `HttpClientOptions`, bounding per-chunk read time and total time-to-first-byte from the server. |
 
+An `auth` value that is not an object is rejected at `create()` time with a `ConfigPropertySourceException` that names the field and does not echo the value. A number or boolean in a string field (for example an unquoted `prefix: 2024`) is read as its string form.
+
 ### Endpoint Validation
 
 `endpoint` is parsed as a URI at `create()` time. Any violation throws `ConfigPropertySourceException` naming the source and the `endpoint` field. The messages describe the violation only; they never echo the configured value, userinfo, or path.

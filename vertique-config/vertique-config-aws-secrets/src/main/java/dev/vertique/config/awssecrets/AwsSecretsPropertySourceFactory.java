@@ -12,6 +12,7 @@ import io.vertx.core.json.JsonObject;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BiFunction;
+import java.util.function.Supplier;
 
 /**
  * {@link ConfigPropertySourceFactory} for AWS Secrets Manager.
@@ -144,7 +145,7 @@ public class AwsSecretsPropertySourceFactory implements ConfigPropertySourceFact
         int readTimeoutMs = SourceConfigValues.positiveInt(name, sourceConfig, "readTimeoutMs", DEFAULT_TIMEOUT_MS);
 
         // --- secrets (required, non-empty) ---
-        JsonArray secretsArray = sourceConfig.getJsonArray("secrets");
+        JsonArray secretsArray = typed(name, "secrets", () -> sourceConfig.getJsonArray("secrets"));
         if (secretsArray == null || secretsArray.isEmpty()) {
             throw new ConfigPropertySourceException(name, "required field 'secrets' is missing or empty");
         }
@@ -224,6 +225,26 @@ public class AwsSecretsPropertySourceFactory implements ConfigPropertySourceFact
             result.add(new SecretEntry(secretId, prefix, key));
         }
         return List.copyOf(result);
+    }
+
+    /**
+     * Reads a configuration value, converting a wrong-typed value (for example a string where an
+     * array is required) into a {@link ConfigPropertySourceException} that names the field and
+     * never echoes the value.
+     *
+     * @param sourceName the source instance name for the exception message
+     * @param field      the config field name (used in the error message)
+     * @param read       the typed read of the field
+     * @param <T>        the field type
+     * @return the value read
+     * @throws ConfigPropertySourceException if the value does not have the expected type
+     */
+    private static <T> T typed(String sourceName, String field, Supplier<T> read) {
+        try {
+            return read.get();
+        } catch (ClassCastException e) {
+            throw new ConfigPropertySourceException(sourceName, "field '" + field + "' has the wrong type");
+        }
     }
 
     /**

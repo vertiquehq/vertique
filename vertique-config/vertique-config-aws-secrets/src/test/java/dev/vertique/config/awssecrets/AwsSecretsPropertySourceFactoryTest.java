@@ -290,6 +290,23 @@ class AwsSecretsPropertySourceFactoryTest {
         }
 
         @Test
+        @DisplayName("blank region and blank endpointOverride count as absent")
+        void blankRegionAndEndpointOverrideAreAbsent() {
+            AwsConnectionSettings[] captured = new AwsConnectionSettings[1];
+            AwsSecretsPropertySourceFactory factory = new AwsSecretsPropertySourceFactory((name, settings) -> {
+                captured[0] = settings;
+                return secretId -> "value";
+            });
+
+            JsonObject config =
+                    minimalKeyConfig("my/secret", "my.key").put("region", "  ").put("endpointOverride", "");
+            factory.create("src", config);
+
+            assertNull(captured[0].region());
+            assertNull(captured[0].endpointOverride());
+        }
+
+        @Test
         @DisplayName("endpointOverride is passed through to connection settings")
         void endpointOverridePassedThrough() {
             AwsConnectionSettings[] captured = new AwsConnectionSettings[1];
@@ -1062,6 +1079,42 @@ class AwsSecretsPropertySourceFactoryTest {
             public void close() {
                 closeCalled.set(true);
             }
+        }
+    }
+
+    // --- Wrong-typed fields ---
+
+    @Nested
+    @DisplayName("wrong-typed fields")
+    class WrongTypedFields {
+
+        private ConfigPropertySourceException createFailing(JsonObject config) {
+            AwsSecretsPropertySourceFactory factory =
+                    new AwsSecretsPropertySourceFactory((name, settings) -> secretId -> "value");
+            return assertThrows(ConfigPropertySourceException.class, () -> factory.create("src", config));
+        }
+
+        @Test
+        @DisplayName("a string where the secrets array is required names the field and not the value")
+        void wrongTypedSecrets() {
+            ConfigPropertySourceException e = createFailing(new JsonObject().put("secrets", "not-an-array"));
+
+            assertTrue(e.getMessage().contains("secrets"), e.getMessage());
+            assertFalse(e.getMessage().contains("not-an-array"), e.getMessage());
+        }
+
+        @Test
+        @DisplayName("a number in a string field is still accepted as its string form")
+        void numberInStringFieldIsCoerced() {
+            AwsConnectionSettings[] captured = new AwsConnectionSettings[1];
+            AwsSecretsPropertySourceFactory factory = new AwsSecretsPropertySourceFactory((name, settings) -> {
+                captured[0] = settings;
+                return secretId -> "value";
+            });
+
+            factory.create("src", minimalKeyConfig("my/secret", "my.key").put("region", 2024));
+
+            assertEquals("2024", captured[0].region());
         }
     }
 }
