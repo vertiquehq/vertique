@@ -1001,6 +1001,29 @@ class ServiceAuthorizationInterceptorTest {
             assertThrows(ServiceRegistrationException.class, () -> gateWithoutEngine(meta));
         }
 
+        @Test
+        @DisplayName("a typed denial carries a generated joinable correlation when none is bound")
+        void dispatch_typedDenial_mintsCorrelationWhenNoneIsBound() {
+            ServiceMethodMeta meta = metaOf("rolesOnly");
+            bind(null);
+            when(holder.current(dev.vertique.core.correlation.CorrelationContext.class))
+                    .thenReturn(Optional.empty());
+
+            Future<ServiceDispatchContext> result = gateWithEngine(meta).beforeDispatch(contextOf(meta));
+
+            assertDeniedNonRecoverably(result);
+            var correlation = onlyEvent().correlation();
+            assertAll(
+                    () -> assertNotEquals(
+                            UnboundCorrelationContext.SENTINEL_ID_VALUE,
+                            correlation.requestId().value(),
+                            "a typed denial must mint a real joinable requestId"),
+                    () -> assertEquals(
+                            "generated:service-authorization",
+                            correlation.requestId().source(),
+                            "the generated fallback tags its source"));
+        }
+
         // --- runtime: lookup by address ---
 
         @Test
