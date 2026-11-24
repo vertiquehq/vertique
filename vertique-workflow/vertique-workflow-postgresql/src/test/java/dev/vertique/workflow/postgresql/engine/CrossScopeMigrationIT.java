@@ -534,7 +534,7 @@ public class CrossScopeMigrationIT {
 
     @Test
     @DisplayName("a refused migration does not repeat an over-long caller-supplied target scope")
-    void refusalOfAMigrationBoundsTheTargetScope() throws Exception {
+    void refusalOfAMigrationDoesNotRepeatTheTargetScope() throws Exception {
         // Given: an instance started in acme and pinned to the default version 1
         Harness harness = open(registry -> registry.register(defaultCode(1L)), scoped -> {});
         try {
