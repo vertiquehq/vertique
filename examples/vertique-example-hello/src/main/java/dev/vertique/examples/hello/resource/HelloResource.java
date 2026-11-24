@@ -388,9 +388,10 @@ public class HelloResource {
     }
 
     /**
-     * Always denied endpoint demonstrating {@code @DenyAll}.
+     * Always denied endpoint demonstrating {@code @DenyAll}. Authenticated callers are refused with
+     * 403; unauthenticated callers are refused by authentication first, with 401.
      *
-     * @return never returns (always throws 403)
+     * @return never returns (authenticated callers get 403)
      */
     @GET
     @Path("/denied")
@@ -399,8 +400,9 @@ public class HelloResource {
     @Operation(
             operationId = "deniedEndpoint",
             summary = "Always denied endpoint",
-            description = "Always returns 403, even for authenticated users",
+            description = "Authenticated callers always get 403; unauthenticated callers get 401 first",
             security = @SecurityRequirement(name = "bearerAuth"))
+    @ApiResponse(responseCode = "401", description = "Not authenticated")
     @ApiResponse(responseCode = "403", description = "Access denied")
     public Future<GreetingResponse> deniedEndpoint() {
         return Future.succeededFuture(new GreetingResponse("You should never see this"));
