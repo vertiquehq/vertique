@@ -216,9 +216,14 @@ class ApplicationDecoderPolicyStartupTest {
     }
 
     @Test
-    @DisplayName("an application decoder behind the framework decoders never claims the body, so the route starts")
+    @DisplayName(
+            "an application decoder behind the framework decoders never claims a body they accept, so the route starts")
     void fallbackDecoderStarts() {
-        RequestBodyDecoder fallback = new AppDecoder(2000, (type, contentType) -> true);
+        RequestBodyDecoder fallback = new AppDecoder(
+                2000,
+                (type, contentType) -> contentType == null
+                        || contentType.contains("json")
+                        || contentType.startsWith("application/x-www-form-urlencoded"));
 
         assertDoesNotThrow(() -> register(
                 new FieldPolicyResource(),
@@ -231,12 +236,32 @@ class ApplicationDecoderPolicyStartupTest {
     }
 
     @Test
-    @DisplayName("a decoder that claims only a content type the engine never binds inline leaves the route starting")
-    void decoderForOtherContentTypeStarts() {
+    @DisplayName("a decoder for a content type the route accepts fails startup even when the engine never binds it")
+    void decoderForOtherAcceptedContentTypeFails() {
+        RequestBodyDecoder csv = new AppDecoder(0, (type, contentType) -> "text/csv".equals(contentType));
+
+        ConfigurationException failure = assertThrows(
+                ConfigurationException.class,
+                () -> register(new CsvResource(), List.of(csv, new JsonRequestBodyDecoder())));
+        assertTrue(failure.getMessage().contains("POST /csv"), failure.getMessage());
+    }
+
+    @Test
+    @DisplayName("a decoder for a content type the route does not accept leaves it starting")
+    void decoderForUnacceptedContentTypeStarts() {
         RequestBodyDecoder csv = new AppDecoder(0, (type, contentType) -> "text/csv".equals(contentType));
 
         assertDoesNotThrow(() -> register(new JsonOnlyResource(), List.of(csv, new JsonRequestBodyDecoder())));
-        assertDoesNotThrow(() -> register(new CsvResource(), List.of(csv, new JsonRequestBodyDecoder())));
+    }
+
+    @Test
+    @DisplayName("an unconstrained route is probed with XML and text types too")
+    void unconstrainedRouteProbesXml() {
+        RequestBodyDecoder xml = new AppDecoder(0, (type, contentType) -> "application/xml".equals(contentType));
+
+        assertThrows(
+                ConfigurationException.class,
+                () -> register(new FieldPolicyResource(), List.of(xml, new JsonRequestBodyDecoder())));
     }
 
     @Test

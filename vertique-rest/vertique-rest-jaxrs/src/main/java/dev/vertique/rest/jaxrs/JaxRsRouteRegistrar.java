@@ -824,7 +824,8 @@ public class JaxRsRouteRegistrar {
             EffectiveInputPolicies[] policies = ParameterExtractor.invocationPolicies(meta);
             for (int i = 0; i < params.size(); i++) {
                 ResourceMethodMeta.ParamMeta param = params.get(i);
-                if (param.source() != ResourceMethodMeta.ParamSource.BODY) {
+                if (param.source() != ResourceMethodMeta.ParamSource.BODY
+                        || ParameterExtractor.isBinaryBodyTarget(param.type())) {
                     continue;
                 }
                 Type declaredType = param.genericType() != null ? param.genericType() : param.type();
@@ -852,15 +853,25 @@ public class JaxRsRouteRegistrar {
                 + "value inside the decoder.");
     }
 
+    /** Content types probed for a route that declares no {@code @Consumes} or declares a wildcard. */
+    private static final List<String> UNCONSTRAINED_PROBE_TYPES = List.of(
+            "application/json",
+            "application/x-www-form-urlencoded",
+            "application/xml",
+            "text/xml",
+            "text/plain",
+            "text/csv",
+            "application/octet-stream");
+
     @Nullable
     private static RequestBodyDecoder claimingApplicationDecoder(
             ResourceMethodMeta meta, ResourceMethodMeta.ParamMeta param, List<RequestBodyDecoder> decoders) {
         Set<String> probes = new LinkedHashSet<>();
         List<String> consumes = meta.mediaTypes().consumes();
         if (consumes.isEmpty()) {
+            // The route admits any application/* or text/* type; the request-time refusal covers the rest.
             probes.add(null);
-            probes.add("application/json");
-            probes.add("application/x-www-form-urlencoded");
+            probes.addAll(UNCONSTRAINED_PROBE_TYPES);
         }
         for (String declared : consumes) {
             probes.add(declared);
@@ -870,15 +881,11 @@ public class JaxRsRouteRegistrar {
                     .toLowerCase(Locale.ROOT);
             probes.add(bare);
             if (bare.contains("*")) {
-                // A wildcard admits the JSON and form types the engine binds itself.
-                probes.add("application/json");
-                probes.add("text/plain");
+                // A wildcard admits every common type.
+                probes.addAll(UNCONSTRAINED_PROBE_TYPES);
             }
         }
         for (String contentType : probes) {
-            if (!ParameterExtractor.engineBindsInline(param.type(), contentType)) {
-                continue;
-            }
             RequestBodyDecoder claiming = claimingDecoderOrNull(decoders, param.type(), contentType);
             if (claiming != null) {
                 return claiming;

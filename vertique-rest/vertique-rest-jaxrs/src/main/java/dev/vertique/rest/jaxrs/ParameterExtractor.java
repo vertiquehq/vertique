@@ -4,7 +4,6 @@
 package dev.vertique.rest.jaxrs;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.sanitization.Canonicalize;
 import dev.vertique.core.sanitization.Canonicalizer;
@@ -88,6 +87,8 @@ final class ParameterExtractor {
     private final RestContextResolution restContextResolution;
     private final @Nullable InputObjectProcessor objectProcessor;
     private final ConcurrentHashMap<java.lang.reflect.Type, Boolean> declaresBodyPolicies = new ConcurrentHashMap<>();
+    private final java.util.concurrent.atomic.AtomicBoolean decoderRefusalLogged =
+            new java.util.concurrent.atomic.AtomicBoolean();
 
     /**
      * The wire &rarr; Java property-name projection applied to every OBJECT body this route processes.
@@ -1144,22 +1145,16 @@ final class ParameterExtractor {
                 // A decoder that cannot answer for this header does not claim it, unless a declared chain
                 // would then be left to an unknown outcome: that is refused like a claim.
                 if (!policies.isEmpty() || bodyDeclaresPolicies(targetType, genericType)) {
-                    throw new ConfigurationException("An application RequestBodyDecoder failed while deciding whether"
-                            + " it claims a body on a route that declares a canonicalizer or sanitizer chain"
-                            + " (operationId=" + meta.operationId() + ")");
+                    throw refuseDecoder(
+                            "An application RequestBodyDecoder failed while deciding whether it claims a body"
+                                    + " on a route that declares a canonicalizer or sanitizer chain (operationId="
+                                    + meta.operationId() + ")");
                 }
                 applicationDecoder = null;
             }
             if (applicationDecoder != null) {
-                if (engineBindsInline(targetType, contentType)
-                        && (!policies.isEmpty() || bodyDeclaresPolicies(targetType, genericType))) {
-                    // Startup probes a bounded set of content types; this is the enforcement. The message
-                    // carries no request value.
-                    throw new ConfigurationException("A declared canonicalizer or sanitizer chain cannot run on"
-                            + " a body decoded by "
-                            + applicationDecoder.getClass().getName() + " (operationId="
-                            + meta.operationId() + "): give the decoder a priority above 1100, narrow its canDecode,"
-                            + " or remove the declared policies");
+                if (!policies.isEmpty() || bodyDeclaresPolicies(targetType, genericType)) {
+                    throw refuseDecoder(decoderRefusalMessage(applicationDecoder));
                 }
                 return applicationDecoder.decode(ctx, body, targetType, genericType);
             }
@@ -1318,6 +1313,11 @@ final class ParameterExtractor {
 
         for (RequestBodyDecoder decoder : decoders) {
             if (decoder.canDecode(targetType, contentType)) {
+                if (objectProcessor != null
+                        && !isFrameworkDecoder(decoder)
+                        && (!policies.isEmpty() || bodyDeclaresPolicies(targetType, genericType))) {
+                    throw refuseDecoder(decoderRefusalMessage(decoder));
+                }
                 return decoder.decode(ctx, body, targetType, genericType);
             }
         }
@@ -1352,6 +1352,24 @@ final class ParameterExtractor {
         return null;
     }
 
+    private String decoderRefusalMessage(RequestBodyDecoder decoder) {
+        return "A declared canonicalizer or sanitizer chain cannot run on a body decoded by "
+                + decoder.getClass().getName() + " (operationId=" + meta.operationId()
+                + "): narrow its canDecode, give it a priority above 1100 where a framework decoder claims the body,"
+                + " or remove the declared policies";
+    }
+
+    /**
+     * Logs the refusal once per route, at WARN with the decoder and route, and returns the exception that
+     * fails the request. The message carries no request value.
+     */
+    private DecoderChainRefusedException refuseDecoder(String message) {
+        if (decoderRefusalLogged.compareAndSet(false, true)) {
+            log.warn("{}; requests whose body it claims are refused", message);
+        }
+        return new DecoderChainRefusedException(message);
+    }
+
     /**
      * Returns whether the body type's own graph declares a canonicalizer or sanitizer chain, computed once
      * per type: the query walks the type graph with a throw-away metadata cache.
@@ -1363,26 +1381,6 @@ final class ParameterExtractor {
     private boolean bodyDeclaresPolicies(Class<?> targetType, @Nullable java.lang.reflect.Type genericType) {
         java.lang.reflect.Type declared = genericType != null ? genericType : targetType;
         return declaresBodyPolicies.computeIfAbsent(declared, InputObjectProcessor::declaresPolicies);
-    }
-
-    /**
-     * Returns whether the input-processing engine binds a body of this target type and content type
-     * inline, in place of the framework decoders: a non-binary target whose content type is absent, JSON
-     * or form-urlencoded, or a {@code String} target of any content type.
-     *
-     * @param targetType  the raw body target class
-     * @param contentType the declared or request {@code Content-Type}, or {@code null}
-     * @return {@code true} when the engine would bind the body itself
-     */
-    static boolean engineBindsInline(Class<?> targetType, @Nullable String contentType) {
-        if (isBinaryBodyTarget(targetType)) {
-            return false;
-        }
-        String lower = contentType == null ? "" : contentType.toLowerCase(Locale.ROOT);
-        return lower.isEmpty()
-                || lower.contains("json")
-                || lower.startsWith("application/x-www-form-urlencoded")
-                || targetType == String.class;
     }
 
     private static boolean isFrameworkDecoder(RequestBodyDecoder decoder) {

@@ -469,6 +469,10 @@ public abstract class RestModule {
                         .entity(ProblemDetail.of(503, ex.getMessage()))
                         .type("application/problem+json")
                         .build())
+                .on(DecoderChainRefusedException.class, ex -> Response.status(500)
+                        .entity(ProblemDetail.of(500, "Internal Server Error"))
+                        .type("application/problem+json")
+                        .build())
                 .on(
                         Throwable.class,
                         ex ->

@@ -334,4 +334,32 @@ class ParameterExtractorApplicationDecoderOrderTest {
                 ConfigurationException.class,
                 () -> decode(extractor(List.of(throwing, new JsonRequestBodyDecoder())), "application/json"));
     }
+
+    @Test
+    @DisplayName("a claimed body is refused in a content type the engine never binds inline, once per route in the log")
+    void claimedNonInlineBodyWithDeclaredChainIsRefused() throws Exception {
+        ApplicationDecoder application = new ApplicationDecoder(0, Person.class);
+        ParameterExtractor extractor = extractor(List.of(application, new JsonRequestBodyDecoder()));
+
+        for (String contentType : List.of("application/xml", "text/csv")) {
+            assertThrows(
+                    DecoderChainRefusedException.class,
+                    () -> decode(extractor, contentType),
+                    contentType + " must be refused");
+        }
+        assertEquals(0, application.decoded.get(), "the decoder must not run");
+    }
+
+    @Test
+    @DisplayName("a body no framework decoder claims is still refused on a chain route and decoded on a plain one")
+    void fallThroughDecoderRespectsDeclaredChain() throws Exception {
+        ApplicationDecoder forPlain = new ApplicationDecoder(0, Plain.class);
+
+        assertSame(
+                forPlain.result,
+                decode(
+                        extractor(List.of(forPlain, new JsonRequestBodyDecoder()), Plain.class),
+                        "text/csv",
+                        Plain.class));
+    }
 }
