@@ -11,6 +11,7 @@ import dev.vertique.rest.security.HolderBackedSecurityRuntime;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpServer;
+import io.vertx.core.http.WebSocket;
 import io.vertx.core.http.WebSocketClient;
 import io.vertx.core.http.WebSocketConnectOptions;
 import io.vertx.ext.web.Router;
@@ -80,11 +81,24 @@ public class WebSocketOnOpenFailureDispatchIT {
                         .setHost("127.0.0.1")
                         .setPort(port)
                         .setURI(path))
-                .onComplete(ctx.succeeding(ws -> ws.closeHandler(v -> ctx.verify(() -> {
-                    assertEquals(Short.valueOf((short) 1011), ws.closeStatusCode());
-                    verify.run();
-                    ctx.completeNow();
-                }))));
+                .onComplete(ctx.succeeding(ws -> {
+                    // The server may already have closed the socket by the time the connect future
+                    // completes, and a handler cannot be registered on a closed socket. The callback and
+                    // the close both run on the same event loop, so checking first is race-free.
+                    if (ws.isClosed()) {
+                        finishWith1011(ws, ctx, verify);
+                    } else {
+                        ws.closeHandler(v -> finishWith1011(ws, ctx, verify));
+                    }
+                }));
+    }
+
+    private static void finishWith1011(WebSocket ws, VertxTestContext ctx, Runnable verify) {
+        ctx.verify(() -> {
+            assertEquals(Short.valueOf((short) 1011), ws.closeStatusCode());
+            verify.run();
+            ctx.completeNow();
+        });
     }
 
     @Test
