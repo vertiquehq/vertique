@@ -6,7 +6,6 @@ package dev.vertique.core.exception;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -18,8 +17,8 @@ class OperationTimeoutExceptionTest {
     void isTechnicalAndNotUnavailable() {
         OperationTimeoutException timeout = new OperationTimeoutException("deadline elapsed");
 
-        assertTrue(timeout instanceof TechnicalException);
-        assertFalse(((Object) timeout) instanceof UnavailableException);
+        assertSame(TechnicalException.class, OperationTimeoutException.class.getSuperclass());
+        assertFalse(UnavailableException.class.isAssignableFrom(OperationTimeoutException.class));
         assertEquals("deadline elapsed", timeout.getMessage());
     }
 
