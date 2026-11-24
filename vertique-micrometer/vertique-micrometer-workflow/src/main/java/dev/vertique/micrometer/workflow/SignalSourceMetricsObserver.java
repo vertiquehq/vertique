@@ -74,9 +74,19 @@ public final class SignalSourceMetricsObserver implements SignalSourceObserver {
                     .tag("outcome", tag(event.outcome().name()))
                     .register(registry)
                     .increment();
-        } catch (Throwable ignored) {
+        } catch (Throwable failure) {
+            if (isFatal(failure)) {
+                throw (Error) failure;
+            }
             // Telemetry must never alter a message's fate.
         }
+    }
+
+    @SuppressWarnings("removal")
+    private static boolean isFatal(Throwable failure) {
+        return failure instanceof VirtualMachineError
+                || failure instanceof ThreadDeath
+                || failure instanceof LinkageError;
     }
 
     private static String tag(@Nullable String value) {

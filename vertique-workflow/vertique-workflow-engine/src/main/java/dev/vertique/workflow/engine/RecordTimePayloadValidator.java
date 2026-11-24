@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.engine;
 
+import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.validation.ViolationDetail;
 import dev.vertique.json.schema.validation.JsonSchemaValidationOptions;
 import dev.vertique.json.schema.validation.PathForm;
@@ -13,7 +14,6 @@ import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
-import io.vertx.core.json.jackson.DatabindCodec;
 import io.vertx.json.schema.OutputUnit;
 import io.vertx.json.schema.Validator;
 import jakarta.annotation.Nullable;
@@ -294,7 +294,7 @@ public final class RecordTimePayloadValidator {
         validateDepth(payload);
         BoundedSink sink = new BoundedSink(maxPayloadBytes);
         try {
-            DatabindCodec.mapper().writeValue(sink, payload);
+            VertiqueJson.mapper().writeValue(sink, payload);
         } catch (IOException | RuntimeException failure) {
             if (sink.tooLarge) {
                 throw invalid("payload exceeds maxPayloadBytes " + maxPayloadBytes);

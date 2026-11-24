@@ -112,9 +112,19 @@ public final class WorkflowExecutorMetricsObserver implements WorkflowExecutorOb
                     // A transition of the intake limit has no meter: it is reported by the event and a warn log.
                 }
             }
-        } catch (Throwable ignored) {
+        } catch (Throwable failure) {
+            if (isFatal(failure)) {
+                throw (Error) failure;
+            }
             // Telemetry must never alter command execution.
         }
+    }
+
+    @SuppressWarnings("removal")
+    private static boolean isFatal(Throwable failure) {
+        return failure instanceof VirtualMachineError
+                || failure instanceof ThreadDeath
+                || failure instanceof LinkageError;
     }
 
     private void settled(CommandSettled settled) {

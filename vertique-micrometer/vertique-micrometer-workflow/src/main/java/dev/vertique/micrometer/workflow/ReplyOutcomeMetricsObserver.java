@@ -40,8 +40,18 @@ public final class ReplyOutcomeMetricsObserver implements ReplyOutcomeObserver {
                     .tag("outcome", outcome.name().toLowerCase(Locale.ROOT))
                     .register(registry)
                     .increment();
-        } catch (Throwable ignored) {
+        } catch (Throwable failure) {
+            if (isFatal(failure)) {
+                throw (Error) failure;
+            }
             // Metrics must not affect delivery.
         }
+    }
+
+    @SuppressWarnings("removal")
+    private static boolean isFatal(Throwable failure) {
+        return failure instanceof VirtualMachineError
+                || failure instanceof ThreadDeath
+                || failure instanceof LinkageError;
     }
 }

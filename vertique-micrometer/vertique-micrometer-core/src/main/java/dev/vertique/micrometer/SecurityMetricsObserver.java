@@ -100,7 +100,10 @@ final class SecurityMetricsObserver implements SecurityEventObserver {
         if (enabled) {
             try {
                 registry.gauge(ACTIVE_CHANNELS_GAUGE, activeChannels);
-            } catch (Exception ex) {
+            } catch (Throwable ex) {
+                if (isFatal(ex)) {
+                    throw (Error) ex;
+                }
                 log.warn(
                         "SecurityMetricsObserver: failed to register active-channels gauge: {}",
                         ex.getClass().getName());
@@ -125,7 +128,10 @@ final class SecurityMetricsObserver implements SecurityEventObserver {
         try {
             String method = resolveMethodTag(event.authentication().primaryMethod());
             credentialsCounter("accepted", method).increment();
-        } catch (Exception ex) {
+        } catch (Throwable ex) {
+            if (isFatal(ex)) {
+                throw (Error) ex;
+            }
             log.warn(
                     "SecurityMetricsObserver: failed to record onCredentialAccepted metric: {}",
                     ex.getClass().getName());
@@ -148,7 +154,10 @@ final class SecurityMetricsObserver implements SecurityEventObserver {
         try {
             String method = resolveMethodTag(event.attemptedMethod());
             credentialsCounter("rejected", method).increment();
-        } catch (Exception ex) {
+        } catch (Throwable ex) {
+            if (isFatal(ex)) {
+                throw (Error) ex;
+            }
             log.warn(
                     "SecurityMetricsObserver: failed to record onCredentialRejected metric: {}",
                     ex.getClass().getName());
@@ -171,7 +180,10 @@ final class SecurityMetricsObserver implements SecurityEventObserver {
         try {
             String decision = event.decision().permitted() ? "permit" : "deny";
             registry.counter(AUTHZ_DECISIONS_COUNTER, "decision", decision).increment();
-        } catch (Exception ex) {
+        } catch (Throwable ex) {
+            if (isFatal(ex)) {
+                throw (Error) ex;
+            }
             log.warn(
                     "SecurityMetricsObserver: failed to record onAuthorizationDecided metric: {}",
                     ex.getClass().getName());
@@ -205,7 +217,10 @@ final class SecurityMetricsObserver implements SecurityEventObserver {
                     // ChannelIdentityRefreshedEvent — no-op
                 }
             }
-        } catch (Exception ex) {
+        } catch (Throwable ex) {
+            if (isFatal(ex)) {
+                throw (Error) ex;
+            }
             log.warn(
                     "SecurityMetricsObserver: failed to record onChannelLifecycle metric: {}",
                     ex.getClass().getName());
@@ -264,5 +279,13 @@ final class SecurityMetricsObserver implements SecurityEventObserver {
         }
         String name = kind.name();
         return (name == null || name.isBlank()) ? "unknown" : name;
+    }
+
+    /** Telemetry never catches these: they mean the JVM or class loading is broken. */
+    @SuppressWarnings("removal")
+    private static boolean isFatal(Throwable failure) {
+        return failure instanceof VirtualMachineError
+                || failure instanceof ThreadDeath
+                || failure instanceof LinkageError;
     }
 }
