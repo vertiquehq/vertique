@@ -815,7 +815,10 @@ class ServiceReplyIT {
 
     @Test
     void closedWaitSettlesTheRowAndCountsItStale(Vertx vertx) {
-        try (ReplyGraph run = new ReplyGraph(vertx, db)) {
+        // The call is held in flight for several seconds. With the default 1 s lease, the stale-lease recovery
+        // cron (every 30 s on the wall clock) reclaims the in-flight row whenever the run spans :00 or :30, and the
+        // redelivery makes the second service call arrive before the wait timeout re-enters the step.
+        try (ReplyGraph run = new ReplyGraph(vertx, db, 10_000, false, 60_000)) {
             run.graph.inventoryProbe().held = Promise.promise();
             WorkflowInstanceId id = run.startCall("cancel-in-flight");
             run.until("the service call", () -> run.graph.inventoryProbe().callsFor("cancel-in-flight") == 1);
