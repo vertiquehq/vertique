@@ -202,6 +202,18 @@ class InputPolicyMetadataResolverTest {
         }
 
         @Test
+        @DisplayName("@Sanitize + @SkipSanitization on same field throws ConfigurationException")
+        void fieldSanitizationConflictThrows() {
+            assertThrows(ConfigurationException.class, () -> resolver.resolve(ConflictingSanitizeFieldDto.class));
+        }
+
+        @Test
+        @DisplayName("@Canonicalize + @SkipCanonicalization on same type throws ConfigurationException")
+        void typeCanonicalizationConflictThrows() {
+            assertThrows(ConfigurationException.class, () -> resolver.resolve(ConflictingCanonicalizeTypeDto.class));
+        }
+
+        @Test
         @DisplayName("@Sanitize + @SkipSanitization on same type throws ConfigurationException")
         void typeSanitizationConflictThrows() {
             assertThrows(ConfigurationException.class, () -> resolver.resolve(ConflictingTypeDto.class));
@@ -568,6 +580,18 @@ class InputPolicyMetadataResolverTest {
         @Canonicalize(TestTrimCanonicalizer.class)
         @SkipCanonicalization
         String bad;
+    }
+
+    static class ConflictingSanitizeFieldDto {
+        @Sanitize(TestStripControlsSanitizer.class)
+        @SkipSanitization
+        String bad;
+    }
+
+    @Canonicalize(TestTrimCanonicalizer.class)
+    @SkipCanonicalization
+    static class ConflictingCanonicalizeTypeDto {
+        String name;
     }
 
     @Sanitize(TestStripControlsSanitizer.class)
