@@ -134,6 +134,24 @@ class DefaultAuthorizerTest {
     }
 
     @Test
+    @DisplayName("denies POLICY_NOT_FOUND for a missing name whichever order the resolver yields it")
+    void deny_policyNotFound_independentOfResolverOrder() {
+        for (List<String> order :
+                List.of(List.of("ghost-policy", "admin-policy"), List.of("admin-policy", "ghost-policy"))) {
+            DefaultAuthorizer authorizer = new DefaultAuthorizer(
+                    registryWith(CMS_CONTENT_READ),
+                    source(allowPolicy("admin-policy", CMS_CONTENT_READ)),
+                    roles -> new java.util.LinkedHashSet<>(order));
+
+            AuthorizationDecision decision =
+                    await(authorizer.authorize(request(ctxWithRoles("admin"), CMS_CONTENT_READ)));
+
+            assertFalse(decision.permitted(), order.toString());
+            assertEquals(AuthzReasonCodes.POLICY_NOT_FOUND, decision.reasonCode(), order.toString());
+        }
+    }
+
+    @Test
     @DisplayName("denies POLICY_NOT_FOUND when a mapped policy name is absent from the source")
     void deny_policyNotFound_byName() {
         DefaultAuthorizer authorizer = new DefaultAuthorizer(

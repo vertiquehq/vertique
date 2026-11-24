@@ -11,6 +11,7 @@ import jakarta.validation.Validation;
 import jakarta.validation.Validator;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -30,6 +31,20 @@ class ViolationDetailMapperTest {
 
         assertEquals(1, details.size());
         assertEquals("required", details.get(0).type());
+    }
+
+    @Test
+    void contributionForBuiltInAnnotationWinsWhenOrderedBeforeTheBuiltIn() {
+        var contribution = new ViolationTypeMapping(NotNull.class, "custom");
+        var builtIn = new ViolationTypeMapping(NotNull.class, "required");
+        var mappings = new LinkedHashSet<ViolationTypeMapping>();
+        mappings.add(contribution);
+        mappings.add(builtIn);
+        var mapper = new ViolationDetailMapper(mappings, Set.of(), Set.of());
+
+        var details = mapper.toDetails(validator.validate(new RequiredDto(null)));
+
+        assertEquals("custom", details.get(0).type());
     }
 
     @Test

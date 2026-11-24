@@ -784,6 +784,27 @@ class HealthCheckHandlerTest {
         }
 
         @Test
+        @DisplayName("renders checks in the order the caller's set iterates them")
+        void rendersChecksInSuppliedOrder(VertxTestContext ctx) {
+            List<String> names = IntStream.iterate(15, i -> i - 1)
+                    .limit(16)
+                    .mapToObj(i -> "check-" + (char) ('a' + i))
+                    .toList();
+            Set<HealthCheck> checks = new java.util.LinkedHashSet<>();
+            names.forEach(name -> checks.add(new UpCheck(name)));
+            HealthCheckHandler handler = new HealthCheckHandler(checks);
+            startServer(vertx, handler).compose(p -> request(vertx, p)).onComplete(ctx.succeeding(json -> {
+                ctx.verify(() -> {
+                    List<String> rendered = json.getJsonArray("checks").stream()
+                            .map(o -> ((JsonObject) o).getString("name"))
+                            .toList();
+                    assertEquals(names, rendered);
+                });
+                ctx.completeNow();
+            }));
+        }
+
+        @Test
         @DisplayName("omits data field when check result has no data")
         void omitsDataWhenEmpty(VertxTestContext ctx) {
             HealthCheckHandler handler = new HealthCheckHandler(Set.of(new UpCheck("simple")));

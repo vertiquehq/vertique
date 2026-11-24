@@ -65,7 +65,8 @@ A policy is one `RateLimitPolicy`: `name`, `enabled`, `mode` (`LOCAL`/`CLUSTERED
 `failureMode` (`OPEN`/`CLOSED`, no default for any policy), `revision`, `defaultCost`,
 and one `RateLimitAlgorithm` — v1 ships `TokenBucketRateLimit(capacity, refill)` with
 `GreedyRateLimitRefill`/`IntervalRateLimitRefill`. Configuration-declared policies
-replace a same-named Dagger-contributed policy wholesale (fields never merge); a
+replace a same-named Dagger-contributed policy wholesale (fields never merge); two
+Dagger-contributed policies with the same name fail startup; a
 semantic change needs a new `revision`. **Choose `failureMode` deliberately for
 key-space saturation, not only for a genuine backend outage:** under `OPEN`, a LOCAL
 registry at its configured `maxTrackedKeys` budget silently *admits* every request for
