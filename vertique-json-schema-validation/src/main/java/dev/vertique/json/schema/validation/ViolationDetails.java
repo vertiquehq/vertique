@@ -790,7 +790,7 @@ public final class ViolationDetails {
      */
     private static JsonObject resolveLocalRef(JsonObject node, JsonObject root) {
         JsonObject current = node;
-        for (int hop = 0; hop < MAX_LOCAL_REF_HOPS; hop++) {
+        for (int hop = 0; ; hop++) {
             if (current == null || root == null) {
                 return current;
             }
@@ -798,9 +798,11 @@ public final class ViolationDetails {
             if (!(ref instanceof String pointer) || !pointer.startsWith("#")) {
                 return current;
             }
+            if (hop == MAX_LOCAL_REF_HOPS) {
+                return null;
+            }
             current = navigateSchema(root, pointer.substring(1));
         }
-        return null;
     }
 
     /**

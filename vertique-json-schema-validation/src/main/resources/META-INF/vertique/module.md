@@ -107,6 +107,8 @@ entries:
   `null` when there are none. Resolution reads at most 10 index digits in an array-index segment;
   beyond that it returns no arguments rather than guessing. The cut-back to a declared location
   follows at most 16 `$ref` hops and 64 composed subschemas, and shares the 10-digit index bound. A
+  chain of exactly 16 hops resolves; upgrading from a release that stopped at 15 hops, such a chain now
+  keeps its declared location where it used to be cut back to the containing location. A
   segment with the empty name after the first is the member `""`: it is kept when the schema declares
   it and otherwise ends the location there, so a cut-back location is shorter, never different.
 
