@@ -415,16 +415,21 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
         String definitionId = def.definitionId();
         long definitionVersion = def.definitionVersion();
         WorkflowBuilder builder = new WorkflowBuilder<>(names);
-        def.define(builder);
-        String stateTypeName = names.nameOf(def.stateType());
+        WorkflowPlan plan;
+        try {
+            def.define(builder);
+            String stateTypeName = names.nameOf(def.stateType());
 
-        // build() validates that init() was called; throws WorkflowDefinitionException if not
-        WorkflowPlan plan = builder.build(definitionId, definitionVersion, stateTypeName);
+            // build() validates that init() was called; throws WorkflowDefinitionException if not
+            plan = builder.build(definitionId, definitionVersion, stateTypeName);
 
-        // Fork/join semantic validation runs FIRST so structural fork/join issues
-        // surface before the existing graph/signal/callback checks.
-        if (forkJoinValidator != null) {
-            forkJoinValidator.validate(plan);
+            // Fork/join semantic validation runs FIRST so structural fork/join issues
+            // surface before the existing graph/signal/callback checks.
+            if (forkJoinValidator != null) {
+                forkJoinValidator.validate(plan);
+            }
+        } catch (WorkflowDefinitionException e) {
+            throw named(e, scopeKey, definitionId, definitionVersion);
         }
 
         // Validate plan graph shape BEFORE building the nodeById map (so errors surface early)
@@ -562,6 +567,22 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
             throw new WorkflowDefinitionException("definition '" + definitionId + "' v" + definitionVersion
                     + " cannot be registered: " + e.getMessage());
         }
+    }
+
+    /**
+     * Names the definition in a refusal raised while it was defined, built or checked. Only the plain
+     * {@link WorkflowDefinitionException} is relabelled; a subclass carries typed accessors and is
+     * rethrown unchanged, as is a refusal that already names the definition id and version.
+     */
+    private static WorkflowDefinitionException named(
+            WorkflowDefinitionException e, String scopeKey, String definitionId, long definitionVersion) {
+        String message = e.getMessage();
+        String idAndVersion = "'" + definitionId + "' v" + definitionVersion;
+        if (e.getClass() != WorkflowDefinitionException.class || message == null || message.contains(idAndVersion)) {
+            return e;
+        }
+        return new WorkflowDefinitionException(
+                "definition " + describe(scopeKey, definitionId, definitionVersion) + ": " + message, e);
     }
 
     /** Names a definition version and its scope for a refusal message. */
