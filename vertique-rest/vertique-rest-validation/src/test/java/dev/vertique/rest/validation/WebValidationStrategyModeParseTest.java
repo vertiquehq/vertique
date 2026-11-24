@@ -4,6 +4,7 @@
 package dev.vertique.rest.validation;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -25,14 +26,15 @@ class WebValidationStrategyModeParseTest {
 
     @Test
     @DisplayName(
-            "An unknown validationMode fails startup with RestConfigurationException naming the value and allowed set")
+            "An unknown validationMode fails startup with RestConfigurationException naming the setting and allowed set, never the value")
     void unknownValidationModeFailsStartup() {
         JaxRsConfig config = JaxRsConfig.builder().validationMode("agregate").build();
 
         RestConfigurationException ex =
                 assertThrows(RestConfigurationException.class, () -> new WebValidationStrategy(config));
 
-        assertTrue(ex.getMessage().contains("agregate"), "message must name the bad value");
+        assertTrue(ex.getMessage().contains("jaxrs.validationMode"), "message must name the setting");
+        assertFalse(ex.getMessage().contains("agregate"), "message must not echo the configured value");
         assertTrue(ex.getMessage().contains("aggregate"), "message must list the allowed 'aggregate'");
         assertTrue(ex.getMessage().contains("failFast"), "message must list the allowed 'failFast'");
     }
