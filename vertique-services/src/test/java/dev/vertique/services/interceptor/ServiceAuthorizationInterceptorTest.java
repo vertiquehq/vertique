@@ -1024,6 +1024,44 @@ class ServiceAuthorizationInterceptorTest {
                             "the generated fallback tags its source"));
         }
 
+        @Test
+        @DisplayName("an unexpected failure while capturing the correlation denies with a minted joinable correlation")
+        void dispatch_captureFailure_deniesWithMintedCorrelation() {
+            ServiceMethodMeta meta = metaOf("rolesOnly");
+            when(holder.current(dev.vertique.core.correlation.CorrelationContext.class))
+                    .thenThrow(new IllegalStateException("holder unavailable"));
+
+            Future<ServiceDispatchContext> result = gateWithEngine(meta).beforeDispatch(contextOf(meta));
+
+            assertDeniedNonRecoverably(result);
+            AuthorizationDecisionEvent event = onlyEvent();
+            assertAll(
+                    () -> assertEquals(
+                            AuthzReasonCodes.INTERNAL_AUTHZ_ERROR,
+                            event.decision().reasonCode()),
+                    () -> assertNotEquals(
+                            UnboundCorrelationContext.SENTINEL_ID_VALUE,
+                            event.correlation().requestId().value()),
+                    () -> assertEquals(
+                            "generated:service-authorization",
+                            event.correlation().requestId().source()));
+        }
+
+        @Test
+        @DisplayName("an unexpected failure after the correlation is captured denies carrying the bound correlation")
+        void dispatch_failureAfterCapture_deniesWithBoundCorrelation() {
+            ServiceMethodMeta meta = metaOf("rolesOnly");
+            var bound = dev.vertique.core.correlation.CorrelationContext.generated("test-bound");
+            when(holder.current(dev.vertique.core.correlation.CorrelationContext.class))
+                    .thenReturn(Optional.of(bound));
+            when(holder.current(SecurityContext.class)).thenThrow(new IllegalStateException("security unavailable"));
+
+            Future<ServiceDispatchContext> result = gateWithEngine(meta).beforeDispatch(contextOf(meta));
+
+            assertDeniedNonRecoverably(result);
+            assertEquals(bound.requestId(), onlyEvent().correlation().requestId());
+        }
+
         // --- runtime: lookup by address ---
 
         @Test
