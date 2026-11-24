@@ -102,11 +102,12 @@ import lombok.extern.slf4j.Slf4j;
  * </ol>
  *
  * <p>Used by both {@link AuthorizationContributor} (JAX-RS routes) and the WebSocket module for
- * consistent authorization enforcement across transports — but not as one shared instance.
- * {@link AuthorizationContributor} injects the single Dagger {@code @Singleton} this class declares
- * above; the WebSocket transport's own factory constructs its own, separate instance from the same
- * constructor arguments (including the same operator-configured {@link AuthorizationGateConfig}), so
- * each transport enforces identically-configured policy through its own instance, not a shared one.
+ * consistent authorization enforcement across transports. {@link AuthorizationContributor} injects
+ * the {@code @Singleton} that {@code AuthModule} provides from
+ * {@link IdentityPipelineFactory#policyEnforcer()}, and the WebSocket transport's factory takes
+ * {@code policyEnforcer()} from the same {@link IdentityPipelineFactory}. That accessor memoizes, so
+ * a graph holding one factory enforces through one enforcer (with the operator-configured
+ * {@link AuthorizationGateConfig}) on every transport.
  */
 @Slf4j
 @Singleton
@@ -834,7 +835,7 @@ public class SecurityPolicyEnforcer {
             // app-provided async AuthorizationDecisionPoint (the documented remote-PDP pattern) may
             // complete its Future off this context, where the holder no longer sees the request
             // correlation; capturing here ensures the emitted event carries the inbound correlation
-            // rather than degrading to unbound() after the async hop.
+            // rather than a freshly generated one after the async hop.
             CorrelationContext correlation = captureCorrelation();
             String path = pathOf(ctx);
             String method = methodOf(ctx);

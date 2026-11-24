@@ -199,6 +199,45 @@ class InboundExecutionContextScopeTest {
         });
     }
 
+    // --- installDispatch: initializer throws an Error — scopes cleaned up, Error propagates unconverted ---
+
+    @Test
+    @DisplayName("when an initializer throws an Error, earlier initializer and inbound bindings are cleaned up and"
+            + " the same Error propagates")
+    void installDispatchInitializerThrowsErrorCleansUpAndPropagates(Vertx vertx, VertxTestContext ctx) {
+        InboundContextInitializer bindingInitializer =
+                initCtx -> holder.bind(TestInitValue.class, new TestInitValue("earlier"));
+        AssertionError fatal = new AssertionError("initializer error");
+        InboundContextInitializer errorInitializer = initCtx -> {
+            throw fatal;
+        };
+        InboundExecutionContextScope scope = new InboundExecutionContextScope(
+                inboundDispatchScope,
+                durablePropagator,
+                new java.util.LinkedHashSet<>(java.util.List.of(bindingInitializer, errorInitializer)));
+        Map<String, Object> dispatchCtx =
+                Map.of(TestDispatchValue.class.getName(), new TestDispatchValue("dispatch-error"));
+
+        runOnDuplicated(vertx, v -> {
+            try {
+                AssertionError thrown = assertThrows(
+                        AssertionError.class,
+                        () -> scope.installDispatch(dispatchCtx, "test"),
+                        "an Error from an initializer must propagate, not be converted");
+                assertSame(fatal, thrown, "the original Error instance must propagate");
+                assertFalse(
+                        holder.current(TestInitValue.class).isPresent(),
+                        "the earlier initializer's binding must be cleaned up after the Error");
+                assertFalse(
+                        holder.current(TestDispatchValue.class).isPresent(),
+                        "the inbound binding must be cleaned up after the Error");
+                ctx.completeNow();
+            } catch (Throwable t) {
+                ctx.failNow(t);
+            }
+        });
+    }
+
     // --- installDurable with no initializers ---
 
     @Test
@@ -334,6 +373,33 @@ class InboundExecutionContextScopeTest {
                                 + " synchronous action throw");
                 ctx.completeNow();
             }));
+        });
+    }
+
+    @Test
+    @DisplayName("installDurableAndRun does not convert an Error thrown by the action: it propagates unchanged and the"
+            + " scope is left open")
+    void installDurableAndRunPropagatesErrorAndLeavesScopeOpen(Vertx vertx, VertxTestContext ctx) {
+        InboundExecutionContextScope scope =
+                new InboundExecutionContextScope(inboundDispatchScope, durablePropagator, Set.of());
+        AssertionError fatal = new AssertionError("action error");
+
+        runOnDuplicated(vertx, v -> {
+            try {
+                AssertionError thrown = assertThrows(
+                        AssertionError.class,
+                        () -> scope.installDurableAndRun(DurableMetadata.empty(), "test-durable", () -> {
+                            throw fatal;
+                        }),
+                        "an Error must propagate as a thrown Error, not become a failed Future");
+                assertSame(fatal, thrown);
+                assertTrue(
+                        holder.current(DurablePropagationMetadata.class).isPresent(),
+                        "documented behaviour: on an Error the scope is deliberately left open");
+                ctx.completeNow();
+            } catch (Throwable t) {
+                ctx.failNow(t);
+            }
         });
     }
 }

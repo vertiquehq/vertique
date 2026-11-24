@@ -22,8 +22,9 @@ import java.util.stream.Collectors;
  *   <li>{@code "permissions"} — fine-grained action rights (Auth0 convention)</li>
  * </ul>
  *
- * <p>Both {@link dev.vertique.rest.auth.jwt.JwtClaimAuthorizationProvider} and
- * {@link DefaultSecurityClaimMapper} delegate to this class for consistent claim parsing.
+ * <p>Only {@link dev.vertique.rest.auth.jwt.JwtClaimAuthorizationProvider} delegates to this class.
+ * {@link DefaultSecurityClaimMapper} reads the same claim names but parses them with its own
+ * private parser, so the two are kept aligned by convention rather than by shared code.
  */
 public final class JwtClaimExtractor {
 

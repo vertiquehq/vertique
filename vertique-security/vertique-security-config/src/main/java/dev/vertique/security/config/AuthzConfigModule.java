@@ -20,7 +20,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * Dagger module providing config/YAML-backed authorization bindings for {@code vertique-config-core}.
+ * Dagger module providing config/YAML-backed authorization bindings, reading the application config provided by {@code vertique-config-core}.
  *
  * <p>Reads the {@code "authorization"} section of the application config and contributes, via Dagger
  * {@code @IntoSet} multibinding into the sets declared by

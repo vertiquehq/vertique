@@ -28,7 +28,8 @@ import java.util.Optional;
  * <p>Includes {@link RateLimitCoreModule} and contributes the {@link RateLimitExceptionMapper}'s
  * two nested mappers unconditionally, plus the edge {@link RateLimitEdgeMiddleware} when {@code
  * rateLimit.rest.edge.enabled} is {@code true} and a no-op middleware otherwise. Carries a compile dependency on {@code
- * vertique-rest-security} for {@link OriginCaptureMiddleware}/{@code RequestOrigin} only — this
+ * vertique-rest-security} for {@link OriginCaptureMiddleware} only (and on {@code vertique-security-core}, which
+ * owns {@code RequestOrigin}) — this
  * module never contributes or requires {@code AuthModule}/{@code SecurityModule} itself;
  * co-installing {@code AuthModule} so {@link OriginCaptureMiddleware} is bound remains the
  * application's responsibility, enforced by the {@code IP}-dimension startup validation in {@link

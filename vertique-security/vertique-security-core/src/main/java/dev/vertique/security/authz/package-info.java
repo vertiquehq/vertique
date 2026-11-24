@@ -42,10 +42,10 @@
  *       registry at startup; bound {@code @IntoSet} by framework and application modules</li>
  *   <li>{@link dev.vertique.security.authz.PolicyDefinitionSource} — contributes policy
  *       definitions; default in-memory impl in {@code dev.vertique.security.runtime.authz}; config-backed impl in
- *       {@code vertique-config-core}</li>
+ *       {@code vertique-security-config}</li>
  *   <li>{@link dev.vertique.security.authz.RolePolicyResolver} — maps role names to policy
  *       names; default in-memory impl in {@code dev.vertique.security.runtime.authz}; config-backed impl in
- *       {@code vertique-config-core}</li>
+ *       {@code vertique-security-config}</li>
  * </ul>
  *
  * <h2>Dagger wiring</h2>

@@ -40,8 +40,8 @@ import java.util.Set;
  * <p>Non-string array elements and blank values are silently skipped. All extracted authorizations
  * are stored under the provider ID {@code "jwt-claims"}.
  *
- * <p>Claim parsing is delegated to {@link JwtClaimExtractor} for consistent behaviour with
- * {@link dev.vertique.rest.security.DefaultSecurityClaimMapper}.
+ * <p>Claim parsing is delegated to {@link JwtClaimExtractor}. {@link dev.vertique.rest.security.DefaultSecurityClaimMapper}
+ * reads the same claim names with its own parser and does not use the extractor.
  *
  * <p><strong>These authorizations are not what {@code @RolesAllowed} and
  * {@code @Authorized(scopes = ...)} enforce.</strong> The framework's decision point evaluates

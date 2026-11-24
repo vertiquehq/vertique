@@ -8,7 +8,7 @@ package dev.vertique.security.authz;
  *
  * <p>Each constant is a frozen wire value: it is emitted on authorization events and may be returned
  * in error responses, so the strings must not drift. The set is a deliberate <strong>superset</strong>
- * of the codes the {@code vertique-core} default engine ({@code DefaultAuthorizer}) produces — it also
+ * of the codes the {@code vertique-security-runtime} default engine ({@code DefaultAuthorizer}) produces — it also
  * reserves codes for concerns the engine itself does not decide (e.g. {@link #AUTHENTICATION_REQUIRED}
  * and the scope-related codes are owned by the enforcement layer / future evaluators). Exactly one
  * top-level reason code is reported per decision.

@@ -24,7 +24,7 @@ import java.lang.annotation.Target;
  * rejected at compile time (by the code-generation annotation processor) and at startup.
  *
  * <p><strong>Transport neutrality:</strong> this annotation is defined in
- * {@code vertique-core} and carries no dependency on any transport module. Each transport surface
+ * {@code vertique-security-core} and carries no dependency on any transport module. Each transport surface
  * (REST, WebSocket, services) provides its own PEP adapter that reads and enforces it.
  *
  * <p><strong>Fail-closed invariant:</strong> any surface that does <em>not</em> enforce

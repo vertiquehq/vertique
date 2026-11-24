@@ -233,8 +233,8 @@ public final class GeneratedInputProcessorDispatcher {
 
     /**
      * Performs the classloader lookup for the generated companion class of {@code type}. The
-     * derivation algorithm matches {@code Identifiers.generatedClassName} produced by the
-     * codegen emitter:
+     * derivation, done through {@code GeneratedNames.companionFqn}, is meant to match
+     * {@code Identifiers.generatedClassName} used by the codegen emitter:
      * <ul>
      *   <li>package: same as the source type</li>
      *   <li>simple name: binary class part (after last {@code '.'}) with {@code '$'} replaced by
@@ -290,9 +290,11 @@ public final class GeneratedInputProcessorDispatcher {
     }
 
     /**
-     * Derives the generated class FQN for a source type. Package-private for
-     * {@link GeneratedInputProcessorDispatcherTest} to assert byte-equality with
-     * {@code Identifiers.generatedClassName(...)} from {@code vertique-codegen-core}.
+     * Derives the generated class FQN for a source type through
+     * {@code GeneratedNames.companionFqn}. Package-private for
+     * {@link GeneratedInputProcessorDispatcherTest}, which checks the derived name against literal
+     * expectations and against the name {@code Identifiers.generatedClassName(...)} from
+     * {@code vertique-codegen-core} gives the same type.
      *
      * @param type the source type
      * @return the FQN of the expected generated companion class

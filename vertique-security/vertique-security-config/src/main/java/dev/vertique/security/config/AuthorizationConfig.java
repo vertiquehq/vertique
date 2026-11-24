@@ -28,7 +28,7 @@ import java.util.Objects;
  *
  * <p>When the section is absent the config defaults to no role mappings and no inline policies
  * (the empty defaults). Applications that need programmatic policies should contribute them via
- * the {@link dev.vertique.security.authz.PolicyDefinitionSource} SPI in {@code vertique-core}.
+ * the {@link dev.vertique.security.authz.PolicyDefinitionSource} SPI in {@code vertique-security-core}.
  *
  * @param rolePolicies a map from role name to the list of policy names that role grants; never
  *     {@code null}; defaults to an empty map when absent in config

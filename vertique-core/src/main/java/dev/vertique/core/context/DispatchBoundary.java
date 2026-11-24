@@ -49,9 +49,10 @@ public final class DispatchBoundary {
      * and the branch-recovery sweep to bind the persisted metadata back via {@code bindFrom}
      * before invoking the branch advance.
      *
-     * <p>Workflow timer durable propagation rides on the {@link #DELAYED_JOB} boundary, not this
-     * one — timer fire flows through the delayed-job dispatch pipeline, so timer metadata must be
-     * encoded for that boundary's decoders.
+     * <p>Workflow timer metadata is captured with the {@link #DELAYED_JOB} boundary's encoders when
+     * the timer row is recorded, not with this one. Timers are not delayed jobs: the timer row is
+     * stored in {@code workflow_timers} and fired by the workflow command executor, which binds the
+     * stored metadata under this boundary.
      */
     public static final String WORKFLOW = "workflow";
 

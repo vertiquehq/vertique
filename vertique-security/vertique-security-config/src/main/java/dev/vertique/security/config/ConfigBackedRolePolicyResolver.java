@@ -18,7 +18,7 @@ import java.util.stream.Collectors;
  * {@link AuthorizationConfig}.
  *
  * <p>This resolver is the config-aware counterpart to the in-memory programmatic default in
- * {@code vertique-core}. It reads its mappings from the {@code authorization.rolePolicies} section
+ * {@code vertique-security-runtime}. It reads its mappings from the {@code authorization.rolePolicies} section
  * of the application config.
  *
  * <p><strong>Where role→policy existence is validated.</strong> This resolver does <em>not</em>

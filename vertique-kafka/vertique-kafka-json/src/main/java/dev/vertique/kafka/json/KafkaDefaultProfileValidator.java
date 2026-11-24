@@ -16,7 +16,7 @@ import jakarta.inject.Singleton;
  * {@link JsonMapperProfileRegistry} does not know.
  *
  * <p>The validation is performed in the {@code @Inject} constructor (the
- * constructible-as-validation pattern), mirroring {@link JaxRsDefaultProfileValidator}. When
+ * constructible-as-validation pattern), mirroring {@code JaxRsDefaultProfileValidator} in {@code vertique-rest-jaxrs}. When
  * {@code kafka.jsonProfile} is non-null and non-blank, the constructor resolves it through the
  * registry; resolving an unknown id throws {@link JsonProfileConfigurationException}. A
  * {@code null}/blank id is a no-op.

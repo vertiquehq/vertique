@@ -12,9 +12,9 @@ import java.util.Set;
  * claims on the security context) to policy names ({@link PolicyDefinition#name()}) that the
  * authorization engine should evaluate for the requesting principal.
  *
- * <p>The framework provides an in-memory, programmatic default in {@code vertique-core}; a
- * config/YAML-backed implementation lives in a separate config-aware module so that
- * {@code vertique-core} stays free of any configuration dependency.
+ * <p>The framework provides an in-memory, programmatic default in {@code vertique-security-runtime}; a
+ * config/YAML-backed implementation lives in {@code vertique-security-config} so that
+ * {@code vertique-security-core} and {@code vertique-security-runtime} stay free of any configuration dependency.
  *
  * <p>Multiple implementations may be registered via Dagger {@code @IntoSet} multibinding. The
  * authorization engine merges (union) the results from all registered resolvers.

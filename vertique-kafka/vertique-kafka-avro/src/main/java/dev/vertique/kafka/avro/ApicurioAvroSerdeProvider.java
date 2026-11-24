@@ -51,7 +51,7 @@ public final class ApicurioAvroSerdeProvider implements KafkaSerdeProvider {
     private static final String CFG_HEADERS_ENABLED = "apicurio.registry.headers.enabled";
     private static final String CFG_USE_SPECIFIC_AVRO_READER = "apicurio.registry.use-specific-avro-reader";
     private static final String CFG_AUTO_REGISTER = "apicurio.registry.auto-register";
-    // Bounded registry-call defaults. Apicurio 3.2.4 exposes no config-map socket
+    // Bounded registry-call defaults. The Apicurio registry client exposes no config-map socket
     // read-timeout key; the JDK client adapter applies a 30s connect timeout, and these bound the
     // retry storm. All are overridable via serdeProperties. The worker-threading
     // contract remains the primary event-loop protection.

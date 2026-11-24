@@ -10,14 +10,14 @@ import dev.vertique.cache.spi.event.CacheEvent;
  *
  * <p>Events are emitted synchronously by the shared cache runtime (and by provider
  * maintenance jobs for cleanup events). Implementations must remain bounded and
- * non-blocking; observer failures are logged-and-suppressed by the emitter and never
- * alter cache or business outcomes.
+ * non-blocking; observer failures are suppressed silently by the emitter (nothing is logged) and never
+ * alter cache or business outcomes. Fatal errors such as {@link VirtualMachineError} are rethrown.
  */
 @FunctionalInterface
 public interface CacheObserver {
     /**
-     * Observes one redacted cache event. Exceptions thrown by this callback are caught, logged,
-     * and swallowed; they do not affect the enclosing operation.
+     * Observes one redacted cache event. Exceptions thrown by this callback are caught and
+     * swallowed without logging; they do not affect the enclosing operation. Fatal errors are rethrown.
      *
      * @param event the sealed, immutable event payload
      */
