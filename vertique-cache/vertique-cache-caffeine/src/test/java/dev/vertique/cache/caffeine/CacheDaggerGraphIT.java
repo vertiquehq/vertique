@@ -21,6 +21,7 @@ import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.cache.spi.CacheStore;
 import dev.vertique.cache.spi.event.CacheOperation;
 import dev.vertique.config.parser.ConfigParsingModule;
+import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 import java.util.Map;
 import java.util.Set;
@@ -67,8 +68,32 @@ class CacheDaggerGraphIT {
     }
 
     private static LocalComponent localComponent() {
+        // The shared fixture service also declares a method with an explicit CLUSTERED mode, and
+        // an explicit mode fails when its cache is built unless a clustered provider is installed.
+        // This graph installs only the local provider, so route that cache to LOCAL by name.
+        JsonObject config = new JsonObject()
+                .put(
+                        "cache",
+                        new JsonObject()
+                                .put("enabled", true)
+                                .put("defaultMode", "LOCAL")
+                                .put("defaultTtlSeconds", 60)
+                                .put("maxTtlSeconds", 86_400)
+                                .put("jsonProfile", "system")
+                                .put("maxKeyBytes", 1_024)
+                                .put("maxValueBytes", 1_048_576)
+                                .put("maximumEntries", 10_000)
+                                .put("backendTimeoutMs", 100)
+                                .put(
+                                        "caches",
+                                        new JsonObject()
+                                                .put(
+                                                        "clustered-profiles",
+                                                        new JsonObject()
+                                                                .put("mode", "LOCAL")
+                                                                .put("ttlSeconds", -1))));
         return DaggerCacheDaggerGraphIT_LocalComponent.builder()
-                .configModule(new T011CacheCompositionFixtures.ConfigModule(new io.vertx.core.json.JsonObject()))
+                .configModule(new T011CacheCompositionFixtures.ConfigModule(config))
                 .build();
     }
 
