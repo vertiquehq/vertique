@@ -29,7 +29,6 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
-import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.VertxException;
 import io.vertx.core.json.JsonObject;
@@ -687,9 +686,9 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                     throw new WorkflowDefinitionContractMismatchException(
                             key,
                             "Scope '" + scope + "' cannot load '" + key.definitionId()
-                                    + "' under contract '" + EchoedNames.bounded(contractName)
+                                    + "' under contract '" + contractName
                                     + "': the default scope holds it under contract '"
-                                    + EchoedNames.bounded(defaultRow.getString("contract_name")) + "'");
+                                    + defaultRow.getString("contract_name") + "'");
                 });
     }
 
@@ -708,19 +707,19 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
             if (!key.scopeKey().equals(r.getString("scope_key"))
                     || key.definitionVersion() == r.getLong("definition_version")
                     || DefinitionStatus.RETIRED.name().equals(r.getString("status"))) continue;
-            String described = "definition '" + EchoedNames.bounded(key.definitionId()) + "' v"
-                    + key.definitionVersion() + " in scope '" + EchoedNames.bounded(key.scopeKey()) + "'";
+            String described = "definition '" + key.definitionId() + "' v" + key.definitionVersion() + " in scope '"
+                    + key.scopeKey() + "'";
             if (!contractName.equals(r.getString("contract_name")))
                 throw new WorkflowDefinitionException(described + " names contract '"
-                        + EchoedNames.bounded(contractName) + "' but earlier versions of '"
-                        + EchoedNames.bounded(key.definitionId()) + "' in that scope name contract '"
-                        + EchoedNames.bounded(r.getString("contract_name"))
+                        + contractName + "' but earlier versions of '"
+                        + key.definitionId() + "' in that scope name contract '"
+                        + r.getString("contract_name")
                         + "'; every version of a definition in a scope must name the same contract");
             if (!stateTypeName.equals(r.getString("state_type_name")))
                 throw new WorkflowDefinitionException(described + " has state type '"
-                        + EchoedNames.bounded(stateTypeName) + "' but earlier versions of '"
-                        + EchoedNames.bounded(key.definitionId()) + "' in that scope have state type '"
-                        + EchoedNames.bounded(r.getString("state_type_name"))
+                        + stateTypeName + "' but earlier versions of '"
+                        + key.definitionId() + "' in that scope have state type '"
+                        + r.getString("state_type_name")
                         + "'; every version of a definition in a scope must have the same state type");
         }
     }
@@ -739,9 +738,9 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
             throw new WorkflowDefinitionContractMismatchException(
                     new DefinitionKey(WorkflowScopes.DEFAULT, activation.definitionId(), activation.version()),
                     "Scope '" + activation.scopeKey() + "' holds '" + activation.definitionId()
-                            + "' under contract '" + EchoedNames.bounded(r.getString("contract_name"))
+                            + "' under contract '" + r.getString("contract_name")
                             + "', so it cannot follow the default scope's version, which implements contract '"
-                            + EchoedNames.bounded(targetContractName) + "'");
+                            + targetContractName + "'");
         }
     }
 
@@ -963,7 +962,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
 
     /**
      * Maps the rows, skipping a row that cannot be mapped so that one bad row neither stops the startup nor the
-     * propagation pass for every other row. The skipped row is logged by its bounded, printable scope and id.
+     * propagation pass for every other row. The skipped row is logged by its scope and id.
      */
     private static <T> List<T> readable(RowSet<Row> rows, String what, Function<Row, T> mapper) {
         List<T> mapped = new java.util.ArrayList<>();
@@ -974,8 +973,8 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 log.warn(
                         "Skipped a stored {} row that cannot be read: scope '{}' id '{}' ({})",
                         what,
-                        EchoedNames.bounded(safeString(row, "scope_key")),
-                        EchoedNames.bounded(safeString(row, "definition_id")),
+                        safeString(row, "scope_key"),
+                        safeString(row, "definition_id"),
                         e.getClass().getSimpleName());
             }
         }

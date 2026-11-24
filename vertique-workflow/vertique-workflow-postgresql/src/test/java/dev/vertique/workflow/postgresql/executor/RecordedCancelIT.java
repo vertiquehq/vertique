@@ -98,22 +98,21 @@ public class RecordedCancelIT {
     private static final java.time.Duration DEAD_LETTERED = java.time.Duration.ofSeconds(45);
 
     @Test
-    @DisplayName(
-            "a cancellation reason is cut at 255 code points and stripped of control characters before it is stored")
-    void cancellationReasonIsBoundedBeforeItIsStored() {
+    @DisplayName("a cancellation reason is stored as supplied, long and with control characters")
+    void cancellationReasonIsStoredAsSupplied() {
         try (SignalFixture f =
                 new SignalFixture(db.toPoolConfig(), new TimeoutWait(), List.of("approve", "note", "finish"))) {
             Node node = f.node("engine").build();
 
             // Given a waiting instance and a reason of 400 code points with a line break, an escape and a supplementary
             // character in it
-            WorkflowInstanceId id = f.waiting(node, "bounded-reason");
+            WorkflowInstanceId id = f.waiting(node, "as-supplied-reason");
             String reason = "a\nb\u001bc" + "\uD83D\uDE00".repeat(100) + "z".repeat(300);
 
             // When the caller cancels the instance with it
             await(f.caller(() -> node.pool.withTransaction(tx -> node.engine.cancel(id, reason, tx))));
 
-            // Then the history and the instance hold at most 255 code points, without control characters
+            // Then the history and the instance hold the reason unchanged
             String storedInHistory = f.history(id).stream()
                     .filter(h -> h.type().equals("CANCELLED"))
                     .findFirst()
@@ -123,9 +122,7 @@ public class RecordedCancelIT {
             String storedOnInstance = f.row("SELECT error_message FROM workflow_instances WHERE id=$1", id)
                     .getString("error_message");
             for (String stored : List.of(storedInHistory, storedOnInstance)) {
-                assertThat(stored.codePointCount(0, stored.length())).isEqualTo(255);
-                assertThat(stored).startsWith("a?b?c\uD83D\uDE00");
-                assertThat(stored.chars().anyMatch(Character::isISOControl)).isFalse();
+                assertThat(stored).isEqualTo(reason);
             }
         }
     }

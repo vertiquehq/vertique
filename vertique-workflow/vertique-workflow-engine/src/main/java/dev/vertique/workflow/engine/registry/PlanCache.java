@@ -18,7 +18,6 @@ import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.PersistedDefinitionLoader;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
-import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
@@ -175,8 +174,8 @@ public final class PlanCache implements DocumentPlanSource {
         }
         log.warn(
                 "Definition scope '{}' id '{}' version {} does not build and is not runnable: {}",
-                EchoedNames.bounded(key.scopeKey()),
-                EchoedNames.bounded(key.definitionId()),
+                key.scopeKey(),
+                key.definitionId(),
                 key.definitionVersion(),
                 failure.getClass().getName());
     }

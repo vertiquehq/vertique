@@ -19,7 +19,6 @@ import dev.vertique.workflow.registry.store.PersistedDefinitionLoader;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
-import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.Future;
 import java.util.List;
@@ -48,7 +47,7 @@ public final class DefinitionPublication {
      * Fails when a name in the row's binding no longer resolves to a class, so a version bound to the binary name
      * of a class that moved is refused before anything is registered instead of failing its instances later.
      * Names resolve only through the type-name index; no class is loaded by a stored name. The message lists at
-     * most {@value #MAX_LISTED_NAMES} names, each bounded and printable, and states the total.
+     * most {@value #MAX_LISTED_NAMES} names, and states the total.
      *
      * @throws WorkflowUnknownTypeNameException when the binding names a class that no longer resolves
      */
@@ -60,13 +59,10 @@ public final class DefinitionPublication {
                 .toList();
         if (unresolved.isEmpty()) return;
         DefinitionKey key = row.key();
-        String listed = unresolved.stream()
-                .limit(MAX_LISTED_NAMES)
-                .map(EchoedNames::bounded)
-                .collect(Collectors.joining(", "));
+        String listed = unresolved.stream().limit(MAX_LISTED_NAMES).collect(Collectors.joining(", "));
         String count = unresolved.size() > MAX_LISTED_NAMES ? " (" + unresolved.size() + " names in total)" : "";
-        throw new WorkflowUnknownTypeNameException("definition '" + EchoedNames.bounded(key.definitionId())
-                + "' version " + key.definitionVersion() + " in scope '" + EchoedNames.bounded(key.scopeKey())
+        throw new WorkflowUnknownTypeNameException("definition '" + key.definitionId()
+                + "' version " + key.definitionVersion() + " in scope '" + key.scopeKey()
                 + "' was recorded with type names that no class resolves any more: " + listed + count
                 + "; keep the class under that name, or retire the version before moving the class");
     }
@@ -193,7 +189,7 @@ public final class DefinitionPublication {
      * @param defaultRow the default scope's current row of the id, as {@link #defaultCurrentRow} reads it
      * @return the built plan, which the caller may validate but does not register
      * @throws WorkflowDefinitionException when the document does not build or its state type does not extend the
-     *     default scope's; a failure that is not one is the cause of the exception thrown and its bounded message ends
+     *     default scope's; a failure that is not one is the cause of the exception thrown and its message ends
      *     the message
      */
     static RuntimeWorkflow buildPublished(
@@ -214,41 +210,16 @@ public final class DefinitionPublication {
             StateComparison comparison = compareWithDefault(framework, plan, defaultRow);
             if (!comparison.accepted())
                 throw new WorkflowDefinitionException("Definition " + key + ": the state type does not extend the"
-                        + " state type of the default scope's '" + EchoedNames.bounded(key.definitionId())
+                        + " state type of the default scope's '" + key.definitionId()
                         + "' of the same contract");
         }
         return plan;
     }
 
-    /** The most code points of a failure's own message that a refusal repeats. */
-    private static final int MAX_CAUSE_CODE_POINTS = 512;
-
     /** The refusal of a document that did not build for a reason other than the definition rules. */
     static WorkflowDefinitionException unbuildable(DefinitionKey key, RuntimeException failure) {
         return new WorkflowDefinitionException(
-                "Cannot build DOCUMENT " + key + " from its stored source: " + boundedCause(failure.getMessage()),
-                failure);
-    }
-
-    /**
-     * The message of a failure the framework did not write, cut at {@value #MAX_CAUSE_CODE_POINTS} code points with
-     * a cut marker and its control characters replaced, so that a validator an application contributes can neither
-     * flood a refusal nor forge a log line. The cause keeps the full text.
-     */
-    private static String boundedCause(String message) {
-        if (message == null) return "null";
-        int end = message.offsetByCodePoints(
-                0, Math.min(message.codePointCount(0, message.length()), MAX_CAUSE_CODE_POINTS));
-        StringBuilder out = new StringBuilder(end + 3);
-        message.substring(0, end)
-                .codePoints()
-                .forEach(codePoint -> out.appendCodePoint(
-                        Character.isISOControl(codePoint)
-                                        || (codePoint >= Character.MIN_SURROGATE
-                                                && codePoint <= Character.MAX_SURROGATE)
-                                ? '?'
-                                : codePoint));
-        return end < message.length() ? out.append("...").toString() : out.toString();
+                "Cannot build DOCUMENT " + key + " from its stored source: " + failure.getMessage(), failure);
     }
 
     static WorkflowDefinitionLifecycleException failure(Reason reason, DefinitionKey key, String message) {

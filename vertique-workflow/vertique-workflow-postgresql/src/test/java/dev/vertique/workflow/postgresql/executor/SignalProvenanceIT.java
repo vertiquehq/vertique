@@ -32,7 +32,6 @@ import dev.vertique.workflow.postgresql.executor.KeyedWaitFixture.Payment;
 import dev.vertique.workflow.postgresql.executor.KeyedWaitFixture.SignalRow;
 import dev.vertique.workflow.postgresql.executor.KeyedWaitFixture.Written;
 import dev.vertique.workflow.postgresql.history.RecordedHistory;
-import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.Tuple;
@@ -279,7 +278,7 @@ class SignalProvenanceIT {
                         assertThat(failure.contractName()).isEqualTo(route.contractName(f));
                         assertThat(failure.signalName()).isEqualTo(route.signalName);
                         assertThat(failure.getMessage())
-                                .contains(EchoedNames.bounded(route.contractName(f)), route.signalName)
+                                .contains(route.contractName(f), route.signalName)
                                 .doesNotContain(route.key);
                     });
 
@@ -312,7 +311,7 @@ class SignalProvenanceIT {
                         assertThat(failure.contractName()).isEqualTo(route.contractName(f));
                         assertThat(failure.signalName()).isEqualTo(route.signalName);
                         assertThat(failure.getMessage())
-                                .contains(EchoedNames.bounded(route.contractName(f)), route.signalName)
+                                .contains(route.contractName(f), route.signalName)
                                 .doesNotContain(route.key);
                     });
 

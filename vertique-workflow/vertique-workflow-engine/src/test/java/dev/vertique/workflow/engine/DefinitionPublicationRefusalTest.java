@@ -11,14 +11,14 @@ import dev.vertique.workflow.registry.store.WorkflowScopes;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-/** Verifies that a refusal repeats the message of a failure it did not write only in bounded form. */
+/** Verifies that a refusal repeats the message of a failure it did not write as supplied. */
 class DefinitionPublicationRefusalTest {
 
     private static final DefinitionKey KEY = new DefinitionKey(WorkflowScopes.DEFAULT, "ship", 1);
 
     @Test
-    @DisplayName("a long message with a forged line is cut and cleaned in the refusal and kept whole in the cause")
-    void longMessageWithAForgedLineIsCutAndCleaned() {
+    @DisplayName("a long message with a line break is repeated as supplied in the refusal and the cause")
+    void longMessageIsRepeatedAsSupplied() {
         // Given a failure whose message is long and holds a line break
         String hostile = "validator said\nforged line " + "z".repeat(5000);
         IllegalStateException failure = new IllegalStateException(hostile);
@@ -26,11 +26,8 @@ class DefinitionPublicationRefusalTest {
         // When the refusal is made
         WorkflowDefinitionException refusal = DefinitionPublication.unbuildable(KEY, failure);
 
-        // Then the refusal names the key, carries the start of the message without the line break and is bounded
-        assertThat(refusal.getMessage())
-                .contains("ship", "validator said?forged line")
-                .doesNotContain("\n", "z".repeat(600));
-        assertThat(refusal.getMessage().length()).isLessThan(800);
+        // Then the refusal names the key and carries the whole message unchanged
+        assertThat(refusal.getMessage()).contains("ship").endsWith("from its stored source: " + hostile);
 
         // And the cause keeps the failure unchanged
         assertThat(refusal.getCause()).isSameAs(failure);

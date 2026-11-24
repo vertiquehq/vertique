@@ -5,7 +5,6 @@ package dev.vertique.workflow.exception;
 
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.registry.store.DefinitionKey;
-import dev.vertique.workflow.types.EchoedNames;
 import java.util.Objects;
 
 /**
@@ -60,8 +59,8 @@ public class WorkflowVersionNotRunnableException extends WorkflowVersionPinUnava
 
     @Override
     public String getMessage() {
-        return "Workflow definition '" + EchoedNames.bounded(definitionId()) + "' version " + version()
-                + " in scope '" + EchoedNames.bounded(scopeKey())
+        return "Workflow definition '" + definitionId() + "' version " + version()
+                + " in scope '" + scopeKey()
                 + "' is not runnable on this node: its code is not deployed here";
     }
 }

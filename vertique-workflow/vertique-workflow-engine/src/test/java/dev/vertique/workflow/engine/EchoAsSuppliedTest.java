@@ -41,25 +41,24 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies that a refusal never repeats a caller-supplied name raw: a signal name or a caller
- * contract name that carries control characters or is thousands of code points long is cut and
- * sanitized in the message, while ordinary names and the typed accessors stay intact.
+ * Verifies that a refusal repeats a caller-supplied name as supplied: a signal name or a caller
+ * contract name that carries control characters or is long appears whole in the message, exactly like
+ * an ordinary name. Cleaning untrusted text is the job of the boundary that accepts it.
  *
  * <p>The refusals tested here are decided before any repository, timer store or transaction is
  * touched, so the handler is built without them.
  */
-class BoundedEchoTest {
+class EchoAsSuppliedTest {
 
     private static final Instant NOW = Instant.parse("2026-10-21T10:00:00Z");
-    private static final String DEFINITION_ID = "bounded-echo-def";
+    private static final String DEFINITION_ID = "echo-def";
     private static final String PINNED_CONTRACT = "approval";
     private static final String PLAN_HASH = "plan-hash";
     private static final int GRINNING_FACE = 0x1F600;
-    private static final int ECHO_CODE_POINTS = 64;
 
-    /** A name with a line break, a control character and 10000 supplementary code points after them. */
+    /** A name with a line break, a control character and 100 supplementary code points after them. */
     private static final String HOSTILE_NAME = "forged" + "\r\n" + "LOG-LINE" + (char) 7
-            + Character.toString(GRINNING_FACE).repeat(10_000);
+            + Character.toString(GRINNING_FACE).repeat(100);
 
     // --- Fixtures ---
 
@@ -160,25 +159,16 @@ class BoundedEchoTest {
         return future.cause();
     }
 
-    /** Asserts the message is short, free of control characters and unpaired surrogates, and cut at 64 code points. */
-    private static void assertBoundedAndSanitized(String message) {
-        assertThat(message).as("message").isNotNull().hasSizeLessThan(1_000);
-        assertThat(message.codePoints().noneMatch(Character::isISOControl))
-                .as("no control character in the message")
-                .isTrue();
-        assertThat(message.codePoints().noneMatch(cp -> cp >= 0xD800 && cp <= 0xDFFF))
-                .as("no unpaired surrogate in the message")
-                .isTrue();
-        assertThat(message).doesNotContain(Character.toString(GRINNING_FACE).repeat(ECHO_CODE_POINTS + 1));
-        // The name stays recognizable by its start; control characters are shown as question marks.
-        assertThat(message).contains("forged??LOG-LINE?");
+    /** Asserts the message repeats the name exactly as supplied, with no cut marker after it. */
+    private static void assertEchoedAsSupplied(String message) {
+        assertThat(message).as("message").isNotNull().contains(HOSTILE_NAME).doesNotContain(HOSTILE_NAME + "...");
     }
 
     // --- Tests ---
 
     @Test
-    @DisplayName("a signal the pinned plan never waits for is refused with its name cut and sanitized")
-    void unawaitedSignalNameIsCutAndSanitized() {
+    @DisplayName("a signal the pinned plan never waits for is refused with its name repeated as supplied")
+    void unawaitedSignalNameIsRepeatedAsSupplied() {
         // Given: an instance pinned to a plan that waits for approve only
         SignalHandler handler = handlerResolving(pinnedWorkflow());
         WorkflowInstance instance = waitingInstance();
@@ -192,8 +182,8 @@ class BoundedEchoTest {
                 .isInstanceOf(WorkflowSignalRejectedException.class)
                 .hasMessageContaining(instance.id().value().toString())
                 .hasMessageContaining("'" + DEFINITION_ID + "' v3");
-        // and: it repeats the hostile name only cut and sanitized, in both places it names it
-        assertBoundedAndSanitized(failure.getMessage());
+        // and: it repeats the hostile name as supplied, in both places it names it
+        assertEchoedAsSupplied(failure.getMessage());
     }
 
     @Test
@@ -214,8 +204,8 @@ class BoundedEchoTest {
     }
 
     @Test
-    @DisplayName("a branch signal refused for a step that waits for no signal repeats its name cut and sanitized")
-    void branchSignalNameIsCutAndSanitized() {
+    @DisplayName("a branch signal refused for a step that waits for no signal repeats its name as supplied")
+    void branchSignalNameIsRepeatedAsSupplied() {
         // Given: a branch token whose current step is not a signal wait
         SignalHandler handler = handlerResolving(pinnedWorkflow());
         WorkflowInstance instance = waitingInstance();
@@ -224,14 +214,14 @@ class BoundedEchoTest {
         Throwable failure = failureOf(handler.applyBranchSignal(
                 instance, tokenOnCompletedStep(instance), pinnedWorkflow(), HOSTILE_NAME, "payload", null, null));
 
-        // Then: it is refused as a definition error with the hostile name cut and sanitized
+        // Then: it is refused as a definition error with the hostile name as supplied
         assertThat(failure).isInstanceOf(WorkflowDefinitionException.class);
-        assertBoundedAndSanitized(failure.getMessage());
+        assertEchoedAsSupplied(failure.getMessage());
     }
 
     @Test
-    @DisplayName("a caller contract name is repeated cut and sanitized, and the pinned ids stay typed")
-    void callerContractNameIsCutAndSanitized() {
+    @DisplayName("a caller contract name is repeated as supplied, and the pinned ids stay typed")
+    void callerContractNameIsRepeatedAsSupplied() {
         // Given: an instance pinned to a definition of the approval contract
         RuntimeWorkflow pinned = pinnedWorkflow();
         WorkflowInstance instance = waitingInstance();
@@ -240,18 +230,9 @@ class BoundedEchoTest {
         WorkflowDefinitionContractMismatchException refusal =
                 ContractMismatch.refusal(instance, pinned, HOSTILE_NAME, "signal");
 
-        // Then: the refusal repeats the caller's name only cut and sanitized
+        // Then: the refusal repeats the caller's name as supplied
         assertThat(refusal).isNotNull();
-        assertThat(refusal.getMessage()).hasSizeLessThan(1_000);
-        assertThat(refusal.getMessage().codePoints().noneMatch(Character::isISOControl))
-                .as("no control character in the message")
-                .isTrue();
-        assertThat(refusal.getMessage().codePoints().noneMatch(cp -> cp >= 0xD800 && cp <= 0xDFFF))
-                .as("no unpaired surrogate in the message")
-                .isTrue();
-        assertThat(refusal.getMessage())
-                .contains("forged??LOG-LINE?")
-                .doesNotContain(Character.toString(GRINNING_FACE).repeat(ECHO_CODE_POINTS + 1));
+        assertEchoedAsSupplied(refusal.getMessage());
         // and: it still names the pinned version and contract, and carries them as typed ids
         assertThat(refusal.getMessage())
                 .contains("'" + DEFINITION_ID + "' v3")

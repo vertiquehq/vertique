@@ -525,8 +525,7 @@ instance's execution lock (it waits up to `workflow.recording.lockTimeoutMs`), i
 an `INSTANCE_CANCELLED` reason that names the kind and never a payload value; cancels the timer rows of the cancelled timer commands
 (the wait's timer and the task's reminders write `TIMER_CANCELLED`); cancels the task the instance waits for and every task a cancelled
 completion reserved (`COMPLETING` as well as `OPEN`), and the open tasks of active branches; cancels the active branches; and marks the
-instance `CANCELLED` with the `CANCELLED` entry and `WORKFLOW_CANCELLED` (the caller's reason is cut at 255 code points, and its control
-characters are replaced, before it is stored). Every task the instance still has open or reserved is cancelled with its due date and
+instance `CANCELLED` with the `CANCELLED` entry and `WORKFLOW_CANCELLED` (the caller's reason is stored as supplied). Every task the instance still has open or reserved is cancelled with its due date and
 reminders, also when the instance failed and no longer names a wait. A `FAILED` instance can be cancelled,
 because `retry` could have resumed it; a `PENDING` instance, or a `FAILED` one whose start failed before initialization, is cancelled
 without computing an initial state, resolving a subject or running any workflow code, and keeps `state_json`, `current_step_id` and

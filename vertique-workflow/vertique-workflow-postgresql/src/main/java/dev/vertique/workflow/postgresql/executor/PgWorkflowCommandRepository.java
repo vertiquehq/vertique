@@ -36,7 +36,6 @@ import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.timer.TimerPurpose;
 import dev.vertique.workflow.timer.TimerRecord;
 import dev.vertique.workflow.timer.TimerStatus;
-import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonArray;
@@ -1352,12 +1351,12 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history attribute")));
     }
 
-    /** The payload of the history entry of a command a bulk write settled; a signal's also names the signal, bounded. */
+    /** The payload of the history entry of a command a bulk write settled; a signal's also names the signal. */
     private static JsonObject settledPayload(long commandId, String kind, @Nullable String signalName, String reason) {
         JsonObject payload =
                 new JsonObject().put("commandId", commandId).put("kind", kind).put("reason", reason);
         if ("SIGNAL".equals(kind)) {
-            payload.put("signalName", EchoedNames.bounded(signalName));
+            payload.put("signalName", signalName);
         }
         return payload;
     }

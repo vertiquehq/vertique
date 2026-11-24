@@ -66,7 +66,7 @@ public final class EndedInstanceOutcomes {
     /**
      * What identifies the command beyond its kind, for the reason that is stored.
      *
-     * @param name            a signal's or a decision's name, echoed bounded; {@code null} when the command names none
+     * @param name            a signal's or a decision's name, repeated as supplied; {@code null} when the command names none
      * @param branchAddressed whether a signal addresses a branch
      * @param branchEnded     whether the branch a signal addresses has ended or was superseded
      * @param timerKind       a timer command's kind, or {@code null}

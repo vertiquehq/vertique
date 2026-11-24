@@ -27,7 +27,6 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
-import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -178,8 +177,8 @@ public final class DefinitionPlanLoader {
             log.warn(
                     "Definition scope '{}' id '{}' version {} is failing: its state type does not extend the default"
                             + " scope's",
-                    EchoedNames.bounded(plan.definitionScopeKey()),
-                    EchoedNames.bounded(plan.plan().definitionId()),
+                    plan.definitionScopeKey(),
+                    plan.plan().definitionId(),
                     plan.plan().definitionVersion());
         }
         return new Evaluation(failure, defaultStateTypeName(plan.plan().definitionId()), stored);
@@ -271,8 +270,8 @@ public final class DefinitionPlanLoader {
             DefinitionKey key = record.key();
             log.warn(
                     "The signal names of definition scope '{}' id '{}' version {} could not be filled: {}",
-                    EchoedNames.bounded(key.scopeKey()),
-                    EchoedNames.bounded(key.definitionId()),
+                    key.scopeKey(),
+                    key.definitionId(),
                     key.definitionVersion(),
                     failure.getClass().getName());
             log.debug("Fill failure", failure);

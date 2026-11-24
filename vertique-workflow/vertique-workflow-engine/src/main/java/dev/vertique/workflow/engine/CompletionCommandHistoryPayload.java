@@ -15,7 +15,7 @@ import java.util.UUID;
  * @param commandId    the command's row id
  * @param kind         the command kind
  * @param taskId       the task the completion reserves
- * @param decisionName the decision's name, bounded
+ * @param decisionName the decision's name
  * @param reason       the sanitized reason, or {@code null} when the outcome has none
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)

@@ -6,7 +6,6 @@ package dev.vertique.workflow.exception;
 import dev.vertique.workflow.registry.store.DefinitionFailure;
 import dev.vertique.workflow.registry.store.DefinitionFailure.Rule;
 import dev.vertique.workflow.registry.store.DefinitionKey;
-import dev.vertique.workflow.types.EchoedNames;
 import java.util.Objects;
 
 /**
@@ -23,7 +22,7 @@ import java.util.Objects;
  * retryable unavailability.
  *
  * <p>The message names the scope key, the definition id, the version and the rule only; it never includes document
- * content, state values or class names. The scope key and the id are repeated in bounded form.
+ * content, state values or class names. The scope key and the id are repeated as supplied.
  */
 public class WorkflowDefinitionFailingException extends WorkflowConfigurationException {
 
@@ -44,8 +43,8 @@ public class WorkflowDefinitionFailingException extends WorkflowConfigurationExc
     }
 
     private static String message(DefinitionKey key, DefinitionFailure failure) {
-        return "Definition '" + EchoedNames.bounded(key.definitionId()) + "' version " + key.definitionVersion()
-                + " in scope '" + EchoedNames.bounded(key.scopeKey()) + "' is marked failing (" + failure.rule()
+        return "Definition '" + key.definitionId() + "' version " + key.definitionVersion()
+                + " in scope '" + key.scopeKey() + "' is marked failing (" + failure.rule()
                 + ") and does not accept new starts";
     }
 

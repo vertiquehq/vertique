@@ -7,7 +7,6 @@ import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchExcepti
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.state.WorkflowInstance;
-import dev.vertique.workflow.types.EchoedNames;
 import jakarta.annotation.Nullable;
 
 /**
@@ -71,7 +70,7 @@ final class ContractMismatch {
                 pinnedKey,
                 "Instance '" + inst.id().value() + "' is pinned to '" + pinnedKey.definitionId() + "' v"
                         + pinnedKey.definitionVersion() + ", which implements contract '" + pinnedContractName
-                        + "'; a client of contract '" + EchoedNames.bounded(callerContractName) + "' cannot "
+                        + "'; a client of contract '" + callerContractName + "' cannot "
                         + operation + " it");
     }
 }

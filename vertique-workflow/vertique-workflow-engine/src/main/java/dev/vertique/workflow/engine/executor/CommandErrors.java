@@ -4,7 +4,6 @@
 package dev.vertique.workflow.engine.executor;
 
 import dev.vertique.workflow.registry.store.DefinitionFailure;
-import dev.vertique.workflow.types.EchoedNames;
 import java.util.Locale;
 
 /**
@@ -200,13 +199,13 @@ public final class CommandErrors {
      * The value for a signal whose application failed in a way a retry repeats; the signal is rejected and its
      * instance is unchanged.
      *
-     * @param signalName the signal's name, echoed bounded
+     * @param signalName the signal's name, repeated as supplied
      * @return the stored value
      */
     public static String signalFailure(String signalName) {
         return format(
                 Reason.DETERMINISTIC_FAILURE,
-                "SIGNAL command for signal '" + EchoedNames.bounded(signalName)
+                "SIGNAL command for signal '" + signalName
                         + "' failed with a non-retryable error and was rejected; the instance is unchanged;"
                         + " see the executor log");
     }
@@ -223,35 +222,35 @@ public final class CommandErrors {
     /**
      * The value for a signal whose application executed more nodes than the step cap allows a segment.
      *
-     * @param signalName the signal's name, echoed bounded
+     * @param signalName the signal's name, repeated as supplied
      * @param cap        the step cap that was exceeded
      * @return the stored value
      */
     public static String signalStepLimit(String signalName, int cap) {
         return format(
                 Reason.STEP_LIMIT,
-                "SIGNAL command for signal '" + EchoedNames.bounded(signalName) + "' executed more than " + cap
+                "SIGNAL command for signal '" + signalName + "' executed more than " + cap
                         + " steps in one segment without reaching a wait and was rejected; the instance is unchanged");
     }
 
     /**
      * The value for a signal that the pinned definition version never waits for.
      *
-     * @param signalName the signal's name, echoed bounded
+     * @param signalName the signal's name, repeated as supplied
      * @param version    the definition version the instance is pinned to
      * @return the stored value
      */
     public static String signalUndeclared(String signalName, long version) {
         return format(
                 Reason.UNDECLARED_SIGNAL,
-                "SIGNAL command rejected: signal '" + EchoedNames.bounded(signalName) + "' is not declared by version "
-                        + version + " of the pinned definition");
+                "SIGNAL command rejected: signal '" + signalName + "' is not declared by version " + version
+                        + " of the pinned definition");
     }
 
     /**
      * The value for a signal whose instance had ended.
      *
-     * @param signalName the signal's name, echoed bounded
+     * @param signalName the signal's name, repeated as supplied
      * @param status     the status of the ended instance
      * @param stale      whether the signal is settled stale (a branch-addressed one) rather than rejected
      * @return the stored value
@@ -259,35 +258,33 @@ public final class CommandErrors {
     public static String signalInstanceEnded(String signalName, String status, boolean stale) {
         return format(
                 Reason.INSTANCE_ENDED,
-                "SIGNAL command for signal '" + EchoedNames.bounded(signalName) + "' was "
-                        + (stale ? "settled stale" : "rejected") + ": instance ended with status " + token(status));
+                "SIGNAL command for signal '" + signalName + "' was " + (stale ? "settled stale" : "rejected")
+                        + ": instance ended with status " + token(status));
     }
 
     /**
      * The value for a branch-addressed signal whose branch was superseded or ended.
      *
-     * @param signalName the signal's name, echoed bounded
+     * @param signalName the signal's name, repeated as supplied
      * @return the stored value
      */
     public static String signalBranchEnded(String signalName) {
         return format(
                 Reason.BRANCH_ENDED,
-                "SIGNAL command for signal '" + EchoedNames.bounded(signalName)
-                        + "' is stale: its branch was superseded or ended");
+                "SIGNAL command for signal '" + signalName + "' is stale: its branch was superseded or ended");
     }
 
     /**
      * The value for a signal delivered by key whose wait entry is no longer open: the wait was left, or entered again
      * as a new entry, before the signal could apply.
      *
-     * @param signalName the signal's name, echoed bounded
+     * @param signalName the signal's name, repeated as supplied
      * @return the stored value
      */
     public static String signalWaitEntryClosed(String signalName) {
         return format(
                 Reason.WAIT_ENTRY_CLOSED,
-                "SIGNAL command for signal '" + EchoedNames.bounded(signalName)
-                        + "' is stale: the wait entry it matched is no longer open");
+                "SIGNAL command for signal '" + signalName + "' is stale: the wait entry it matched is no longer open");
     }
 
     /**
@@ -305,13 +302,13 @@ public final class CommandErrors {
      * The value for a completion whose application failed in a way a retry repeats; the completion is rejected, its
      * task is open again and its instance is unchanged.
      *
-     * @param decisionName the decision's name, echoed bounded
+     * @param decisionName the decision's name, repeated as supplied
      * @return the stored value
      */
     public static String completionFailure(String decisionName) {
         return format(
                 Reason.DETERMINISTIC_FAILURE,
-                "COMPLETION command for decision '" + EchoedNames.bounded(decisionName)
+                "COMPLETION command for decision '" + decisionName
                         + "' failed with a non-retryable error and was rejected; the task is open again;"
                         + " see the executor log");
     }
@@ -319,55 +316,55 @@ public final class CommandErrors {
     /**
      * The value for a completion whose application executed more nodes than the step cap allows a segment.
      *
-     * @param decisionName the decision's name, echoed bounded
+     * @param decisionName the decision's name, repeated as supplied
      * @param cap          the step cap that was exceeded
      * @return the stored value
      */
     public static String completionStepLimit(String decisionName, int cap) {
         return format(
                 Reason.STEP_LIMIT,
-                "COMPLETION command for decision '" + EchoedNames.bounded(decisionName) + "' executed more than " + cap
+                "COMPLETION command for decision '" + decisionName + "' executed more than " + cap
                         + " steps in one segment without reaching a wait and was rejected; the task is open again");
     }
 
     /**
      * The value for a completion whose task is no longer reserved by it.
      *
-     * @param decisionName the decision's name, echoed bounded
+     * @param decisionName the decision's name, repeated as supplied
      * @return the stored value
      */
     public static String completionNotReserved(String decisionName) {
         return format(
                 Reason.TASK_NOT_RESERVED,
-                "COMPLETION command for decision '" + EchoedNames.bounded(decisionName)
+                "COMPLETION command for decision '" + decisionName
                         + "' is stale: its task is no longer reserved by it");
     }
 
     /**
      * The value for a completion whose instance had failed.
      *
-     * @param decisionName the decision's name, echoed bounded
+     * @param decisionName the decision's name, repeated as supplied
      * @return the stored value
      */
     public static String completionInstanceFailed(String decisionName) {
         return format(
                 Reason.INSTANCE_FAILED,
-                "COMPLETION command for decision '" + EchoedNames.bounded(decisionName)
+                "COMPLETION command for decision '" + decisionName
                         + "' was rejected: its instance has failed; the task is open again");
     }
 
     /**
      * The value for a completion whose instance had ended.
      *
-     * @param decisionName the decision's name, echoed bounded
+     * @param decisionName the decision's name, repeated as supplied
      * @param status       the status of the ended instance
      * @return the stored value
      */
     public static String completionInstanceEnded(String decisionName, String status) {
         return format(
                 Reason.INSTANCE_ENDED,
-                "COMPLETION command for decision '" + EchoedNames.bounded(decisionName)
-                        + "' was rejected: instance ended with status " + token(status) + "; the task is cancelled");
+                "COMPLETION command for decision '" + decisionName + "' was rejected: instance ended with status "
+                        + token(status) + "; the task is cancelled");
     }
 
     /**
@@ -447,16 +444,12 @@ public final class CommandErrors {
      * Joins a reason code and a framework-composed message, and bounds the result.
      *
      * @param reason  the reason code
-     * @param message the message; control characters are replaced by spaces
+     * @param message the message, appended as supplied
      * @return {@code <REASON_CODE>: <message>}, at most {@link #MAX_LENGTH} characters
      */
     static String format(Reason reason, String message) {
-        StringBuilder text = new StringBuilder(reason.name()).append(": ");
-        for (int i = 0; i < message.length(); i++) {
-            char c = message.charAt(i);
-            text.append(Character.isISOControl(c) ? ' ' : c);
-        }
-        return text.length() <= MAX_LENGTH ? text.toString() : text.substring(0, MAX_LENGTH);
+        String text = reason.name() + ": " + message;
+        return text.length() <= MAX_LENGTH ? text : text.substring(0, MAX_LENGTH);
     }
 
     /** Reduces a value to a short identifier: letters, digits, underscore and hyphen, upper-cased. */

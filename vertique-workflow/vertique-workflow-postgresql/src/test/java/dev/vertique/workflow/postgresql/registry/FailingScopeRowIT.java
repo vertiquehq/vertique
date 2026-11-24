@@ -581,8 +581,8 @@ public class FailingScopeRowIT {
     }
 
     @Test
-    @DisplayName("the warning of a failing row repeats a long definition id only in bounded form")
-    void startupWarningBoundsALongDefinitionId(Vertx vertx) {
+    @DisplayName("the warning of a failing row repeats a long definition id as supplied")
+    void startupWarningRepeatsALongDefinitionIdAsSupplied(Vertx vertx) {
         String longId = "purchase-" + "x".repeat(200);
         try (DefinitionScenario database = new DefinitionScenario(vertx, db);
                 BootstrapLog log = new BootstrapLog()) {
@@ -598,11 +598,9 @@ public class FailingScopeRowIT {
             evaluate(second, key, true);
             assertThat(listed(second, key).failure()).isNotNull();
 
-            // Then the log line names the row and repeats neither the whole id nor a long run of it
+            // Then the log line names the row and repeats the whole id
             assertThat(log.warnings()).isNotEmpty();
-            assertThat(log.warnings()).allSatisfy(line -> assertThat(line)
-                    .doesNotContain(longId, "x".repeat(100))
-                    .contains("x".repeat(10)));
+            assertThat(log.warnings()).allSatisfy(line -> assertThat(line).contains(longId));
         }
     }
 

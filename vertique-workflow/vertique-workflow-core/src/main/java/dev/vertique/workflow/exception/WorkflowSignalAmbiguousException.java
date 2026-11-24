@@ -3,16 +3,13 @@
 
 package dev.vertique.workflow.exception;
 
-import dev.vertique.workflow.types.EchoedNames;
-
 /**
  * Thrown when a signal addressed by contract, signal name and key finds more than one open wait record: several
  * instances, several definitions or scopes, or several branches of one instance wait on the same key.
  *
  * <p>The delivery fails in the caller's transaction and writes nothing: no command, no deduplication row and no history
  * entry. Narrowing the signal by definition id or scope may select one wait. The message names the contract and the
- * signal, each cut at a bounded length and cleaned of control characters, never the key. The accessors keep the full
- * names.
+ * signal as supplied, never the key. The accessors return the same names.
  */
 public final class WorkflowSignalAmbiguousException extends WorkflowConflictException {
 
@@ -26,8 +23,7 @@ public final class WorkflowSignalAmbiguousException extends WorkflowConflictExce
      * @param signalName the name of the signal
      */
     public WorkflowSignalAmbiguousException(String contractName, String signalName) {
-        super("Signal '" + EchoedNames.bounded(signalName) + "' of contract '" + EchoedNames.bounded(contractName)
-                + "' matched more than one open wait");
+        super("Signal '" + signalName + "' of contract '" + contractName + "' matched more than one open wait");
         this.contractName = contractName;
         this.signalName = signalName;
     }

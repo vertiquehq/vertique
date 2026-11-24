@@ -32,7 +32,6 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
-import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -288,7 +287,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                     key = new DefinitionKey(WorkflowScopes.DEFAULT, definition.definitionId(), definition.version());
                 } catch (IllegalArgumentException invalid) {
                     return Future.failedFuture(new WorkflowDefinitionException(
-                            "Code definition " + printable(definition.definitionId()) + " version "
+                            "Code definition " + definition.definitionId() + " version "
                                     + definition.version() + " cannot be recorded as a durable definition because it"
                                     + " violates the definition key rules: " + invalid.getMessage(),
                             invalid));
@@ -468,10 +467,10 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                         Reason.INVALID_TRANSITION,
                         key,
                         subject + " reconciliation " + outcome + ": the stored row is "
-                                + previous.map(row -> row.kind() + " from " + described(row.provenance()))
+                                + previous.map(row -> row.kind() + " from " + row.provenance())
                                         .orElse("of another kind")
                                 + ", but this start provides " + source.kind() + " from "
-                                + described(source.provenance())
+                                + source.provenance()
                                 + "; a definition id and version belongs either to code or to a document"));
             }
             case DRIFT -> {
@@ -485,9 +484,9 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                                     + " differs from deployed code hash " + source.planHash()
                                     + ", and instances pinned to this exact version are still running, waiting or"
                                     + " compensating; stored "
-                                    + previous.map(row -> described(row.provenance()))
+                                    + previous.map(row -> String.valueOf(row.provenance()))
                                             .orElse("source unavailable")
-                                    + ", deployed " + described(source.provenance())
+                                    + ", deployed " + source.provenance()
                                     + ". Keep the code of this version unchanged until those instances finish, or"
                                     + " bump the version."));
                 if (previous.filter(row -> row.planHash().equals(source.planHash()))
@@ -498,18 +497,17 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                             "static DOCUMENT reconciliation " + outcome + ": the text digest of the packaged document"
                                     + " differs from the stored text under an equal plan hash " + source.planHash()
                                     + "; stored from "
-                                    + described(previous.orElseThrow().provenance()) + ", packaged from "
-                                    + described(source.provenance())
+                                    + previous.orElseThrow().provenance() + ", packaged from "
+                                    + source.provenance()
                                     + ". Bump the version of the changed document; it is not enough to retire the old row, because a stored row of"
                                     + " the same id and version blocks startup in every status."));
-                String stored = previous.map(
-                                row -> "stored hash " + row.planHash() + " from " + described(row.provenance()))
+                String stored = previous.map(row -> "stored hash " + row.planHash() + " from " + row.provenance())
                         .orElse("stored source unavailable");
                 return Future.failedFuture(failure(
                         Reason.DRIFT,
                         key,
                         "static DOCUMENT reconciliation " + outcome + ": " + stored + "; static hash "
-                                + source.planHash() + " from " + described(source.provenance())));
+                                + source.planHash() + " from " + source.provenance()));
             }
         }
         throw new IllegalStateException("Unhandled reconcile outcome " + outcome);
@@ -528,7 +526,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                         Reason.CODE_UNAVAILABLE,
                         row.key(),
                         "the stored " + row.status() + " CODE definition (hash " + row.planHash() + ", "
-                                + described(row.provenance()) + ") is not provided by the deployed code any more;"
+                                + row.provenance() + ") is not provided by the deployed code any more;"
                                 + " restore the code, or retire the definition before removing its code"));
         }
         return Future.succeededFuture();
@@ -573,10 +571,9 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
         return chain;
     }
 
-    /** The key in a form that is safe to log: bounded and without control characters. */
+    /** The key as a message repeats it. */
     private static String printable(DefinitionKey key) {
-        return "scope '" + EchoedNames.bounded(key.scopeKey()) + "' id '" + EchoedNames.bounded(key.definitionId())
-                + "' version " + key.definitionVersion();
+        return "scope '" + key.scopeKey() + "' id '" + key.definitionId() + "' version " + key.definitionVersion();
     }
 
     private static <T> Future<T> work(Supplier<T> action) {
@@ -587,32 +584,6 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
         } catch (RuntimeException failure) {
             return Future.failedFuture(failure);
         }
-    }
-
-    /** Renders a source record for a message, with every non-printable character of its labels escaped. */
-    private static String described(Object provenance) {
-        return printable(String.valueOf(provenance));
-    }
-
-    /** Renders text for a message with every non-printable character escaped, so that it cannot forge log lines. */
-    private static String printable(String text) {
-        StringBuilder out = new StringBuilder(text.length());
-        text.codePoints().forEach(codePoint -> {
-            int type = Character.getType(codePoint);
-            boolean visible = type != Character.CONTROL
-                    && type != Character.FORMAT
-                    && type != Character.SURROGATE
-                    && type != Character.LINE_SEPARATOR
-                    && type != Character.PARAGRAPH_SEPARATOR
-                    && type != Character.PRIVATE_USE
-                    && type != Character.UNASSIGNED;
-            if (visible) {
-                out.appendCodePoint(codePoint);
-            } else {
-                for (char unit : Character.toChars(codePoint)) out.append(String.format("\\u%04X", (int) unit));
-            }
-        });
-        return out.toString();
     }
 
     private static WorkflowDefinitionLifecycleException failure(Reason reason, DefinitionKey key, String detail) {

@@ -10,7 +10,6 @@ import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
-import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import jakarta.annotation.Nullable;
 import java.util.Objects;
@@ -94,8 +93,8 @@ public final class FailingMarks {
             } else {
                 log.warn(
                         "The failing mark of definition scope '{}' id '{}' version {} could not be written: {}",
-                        EchoedNames.bounded(key.scopeKey()),
-                        EchoedNames.bounded(key.definitionId()),
+                        key.scopeKey(),
+                        key.definitionId(),
                         key.definitionVersion(),
                         result.cause().getClass().getName());
                 log.debug("Mark write failure", result.cause());

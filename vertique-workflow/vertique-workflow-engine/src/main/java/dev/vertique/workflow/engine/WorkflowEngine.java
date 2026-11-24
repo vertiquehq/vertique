@@ -93,7 +93,6 @@ import dev.vertique.workflow.tasks.TaskStore;
 import dev.vertique.workflow.timer.TimerRecord;
 import dev.vertique.workflow.timer.TimerStatusTransition;
 import dev.vertique.workflow.timer.TimerStore;
-import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
@@ -1209,7 +1208,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                     "start",
                     cmd.idempotencyKey(),
                     "contract=" + pinnedContract.get(),
-                    "contract=" + EchoedNames.bounded(cmd.contractName())));
+                    "contract=" + cmd.contractName()));
         }
         if (cmd.requestedDefinitionVersion() == null) {
             return Future.succeededFuture(existing);
@@ -1392,7 +1391,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 resolved,
                 "Definition '" + resolved.definitionId() + "' v" + resolved.definitionVersion()
                         + " implements contract '" + implementedContract + "'; a client of contract '"
-                        + EchoedNames.bounded(cmd.contractName()) + "' cannot start it");
+                        + cmd.contractName() + "' cannot start it");
     }
 
     /**
@@ -1747,8 +1746,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 initialState = rw.initialState().apply(coercedPayload);
             } catch (Exception e) {
                 return Future.failedFuture(new WorkflowDefinitionException(
-                        "initialState function threw for definition '" + EchoedNames.bounded(inst.definitionId()) + "'",
-                        e));
+                        "initialState function threw for definition '" + inst.definitionId() + "'", e));
             }
             subjectRef = resolveSubjectRef(recordedSubject(command), rw.plan(), initialState, rw.callbacks());
         } catch (Exception e) {
@@ -2241,7 +2239,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         if (forkStepId == null || branchId == null) {
             return Future.failedFuture(
                     new IllegalArgumentException("forkStepId and branchId must be supplied together; got forkStepId="
-                            + EchoedNames.bounded(forkStepId) + ", branchId=" + EchoedNames.bounded(branchId)));
+                            + forkStepId + ", branchId=" + branchId));
         }
         if (branchTokens == null || branchEngine == null) {
             return Future.failedFuture(new UnsupportedOperationException(
@@ -2328,7 +2326,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         if ((forkStepId == null) != (branchId == null)) {
             return Future.failedFuture(
                     new IllegalArgumentException("forkStepId and branchId must be supplied together; got forkStepId="
-                            + EchoedNames.bounded(forkStepId) + ", branchId=" + EchoedNames.bounded(branchId)));
+                            + forkStepId + ", branchId=" + branchId));
         }
         if (forkStepId != null && (branchTokens == null || branchEngine == null)) {
             return Future.failedFuture(new UnsupportedOperationException(
@@ -2519,8 +2517,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         String signalName = signal.signalName();
         if (signalName.length() > MAX_NAME_LENGTH) {
             return Future.failedFuture(new WorkflowInvalidPayloadException(
-                    "Signal for contract '" + EchoedNames.bounded(contractName) + "' is refused: the signal name"
-                            + " exceeds " + MAX_NAME_LENGTH + " characters",
+                    "Signal for contract '" + contractName + "' is refused: the signal name" + " exceeds "
+                            + MAX_NAME_LENGTH + " characters",
                     List.of(ViolationDetail.unlocated("the signal name is too long", "payload"))));
         }
         if (dev.vertique.workflow.plan.ReplySignals.isReserved(signalName)) {
@@ -2548,8 +2546,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                     payloadJson = signal.payload() == null ? null : Json.encode(signal.payload());
                 } catch (WorkflowInvalidPayloadException e) {
                     return Future.<CorrelatedSignalReceipt>failedFuture(new WorkflowInvalidPayloadException(
-                            "Signal '" + EchoedNames.bounded(signalName) + "' of contract '"
-                                    + EchoedNames.bounded(contractName) + "' is refused: " + e.getMessage(),
+                            "Signal '" + signalName + "' of contract '" + contractName + "' is refused: "
+                                    + e.getMessage(),
                             e.violations()));
                 }
                 // The last refusal before the execution lock: a replay, a refusal that a retry cannot change and an
@@ -2833,8 +2831,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                             carrierJson = carrierDocument == null ? null : carrierDocument.encode();
                         } catch (WorkflowInvalidPayloadException e) {
                             return Future.<Void>failedFuture(new WorkflowInvalidPayloadException(
-                                    "Signal '" + EchoedNames.bounded(signalName) + "' for instance '" + id.value()
-                                            + "' is refused: " + e.getMessage(),
+                                    "Signal '" + signalName + "' for instance '" + id.value() + "' is refused: "
+                                            + e.getMessage(),
                                     e.violations()));
                         }
                         // The last refusal before the execution lock: a replay, a terminal refusal and an invalid
@@ -2963,7 +2961,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                             new WorkflowSignalNoMatchException(noMatchContractName, signalName));
                 }
                 return Future.<WorkflowInstance>failedFuture(new WorkflowSignalRejectedException("Instance '"
-                        + id.value() + "' cannot receive signal '" + EchoedNames.bounded(signalName)
+                        + id.value() + "' cannot receive signal '" + signalName
                         + "': instance ended with status " + inst.status()));
             }
             DefinitionKey pin =
@@ -2978,7 +2976,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                             }
                             return Future.<WorkflowInstance>failedFuture(
                                     new WorkflowSignalRejectedException("Instance '" + id.value()
-                                            + "' cannot receive signal '" + EchoedNames.bounded(signalName)
+                                            + "' cannot receive signal '" + signalName
                                             + "': '" + inst.definitionId() + "' v" + inst.definitionVersion()
                                             + " does not declare it for the addressed wait"));
                         }
@@ -3011,7 +3009,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                     pin,
                     "Instance '" + inst.id().value() + "' is pinned to '" + pin.definitionId() + "' v"
                             + pin.definitionVersion() + ", which implements contract '" + pinned.get()
-                            + "'; a client of contract '" + EchoedNames.bounded(callerContractName)
+                            + "'; a client of contract '" + callerContractName
                             + "' cannot signal it"));
         });
     }
@@ -3039,8 +3037,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * claimed is cancelled, so its late settlement finds nothing to settle and writes nothing.
      *
      * @param id the workflow instance id; must not be null
-     * @param callerReason human-readable reason for the cancellation; cut at 255 code points, with control characters
-     *     replaced, and then stored in history
+     * @param callerReason human-readable reason for the cancellation; stored in history as supplied
      * @param tx the active SQL transaction; must not be null
      * @return a {@link Future} that completes when the cancellation has been persisted
      */
@@ -3050,10 +3047,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         if (invalidClient != null) {
             return invalidClient;
         }
-        // The reason is stored in the history, the instance and the events: bound it once, here.
-        String reason = boundedReason(callerReason);
         return historyPublisher.around(
-                WorkflowHistoryFailure.Action.CANCEL, id, tx, () -> cancelUnannounced(id, reason, tx));
+                WorkflowHistoryFailure.Action.CANCEL, id, tx, () -> cancelUnannounced(id, callerReason, tx));
     }
 
     /** The cancellation of {@link #cancel(WorkflowInstanceId, String, SqlClient)}, inside the announcement of its history. */
@@ -3079,32 +3074,6 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                             .withBound(inst, null, () -> doCancel(id, reason, inst, canceller, tx))
                             .compose(done -> commands.attributeHistory(id, from, canceller, tx)));
                 }));
-    }
-
-    /** The most code points of a cancellation's reason that are stored. */
-    static final int MAX_REASON_CODE_POINTS = 255;
-
-    /**
-     * Cuts a caller's cancellation reason at {@value #MAX_REASON_CODE_POINTS} code points and replaces every control
-     * character and unpaired surrogate with a question mark, so that the reason can neither flood the history nor forge
-     * a log line.
-     */
-    @Nullable
-    static String boundedReason(@Nullable String reason) {
-        if (reason == null) {
-            return null;
-        }
-        StringBuilder out = new StringBuilder(Math.min(reason.length(), MAX_REASON_CODE_POINTS));
-        int index = 0;
-        int kept = 0;
-        while (index < reason.length() && kept < MAX_REASON_CODE_POINTS) {
-            int codePoint = reason.codePointAt(index);
-            index += Character.charCount(codePoint);
-            boolean unpairedSurrogate = codePoint >= Character.MIN_SURROGATE && codePoint <= Character.MAX_SURROGATE;
-            out.appendCodePoint(Character.isISOControl(codePoint) || unpairedSurrogate ? '?' : codePoint);
-            kept++;
-        }
-        return out.toString();
     }
 
     /**

@@ -4,7 +4,6 @@
 package dev.vertique.workflow.exception;
 
 import dev.vertique.workflow.ops.WorkflowInstanceId;
-import dev.vertique.workflow.types.EchoedNames;
 
 /**
  * Thrown when a signal cannot be recorded because its instance already holds the configured number of open signals
@@ -44,7 +43,7 @@ public class WorkflowSignalLimitException extends WorkflowException {
      */
     public WorkflowSignalLimitException(
             WorkflowInstanceId instanceId, int limit, String contractName, String signalName) {
-        super("Signal '" + EchoedNames.bounded(signalName) + "' of contract '" + EchoedNames.bounded(contractName)
+        super("Signal '" + signalName + "' of contract '" + contractName
                 + "' cannot be recorded: the instance it matched already holds " + limit
                 + " open signals, the configured maximum (workflow.recording.maxOpenSignalsPerInstance)");
         this.instanceId = instanceId;
