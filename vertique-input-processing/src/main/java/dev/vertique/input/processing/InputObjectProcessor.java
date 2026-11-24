@@ -143,8 +143,8 @@ public interface InputObjectProcessor {
      *                                                            cannot be composed, or a reachable type
      *                                                            strands a declared policy behind a
      *                                                            {@code Map} value or a polymorphic subtype
-     * @throws IllegalStateException if a reachable type declares conflicting policy annotations —
-     *                               previously surfaced on the first request, now at registration
+     * @throws dev.vertique.core.exception.ConfigurationException if a reachable type declares conflicting policy
+     *     annotations — previously surfaced on the first request, now at registration
      */
     default void precomputeFieldNameResolution(@Nullable Type declaredType, InputFieldNameResolver resolver) {
         // No-op by default. A processor that resolves per-type field-name metadata overrides this to

@@ -145,7 +145,7 @@ Two bounds are deliberate. A platform (`java.*` only — not `javax.*` or `jakar
 
 When a generated processor exists for a type it answers for itself: its `fieldNameOwnerTypes()` **replaces** the reflective contributions rather than supplementing them, so each execution path prepares what it actually dispatches against. An empty return means "declares no owner set" and falls back to the reflective walk, which keeps a hand-written or previously-generated processor working. That fallback is logged at `DEBUG` on `dev.vertique.input.processing.OwnerTypeWalk`, naming the processor and the type — enable it when a stale generated class on the classpath is suspected, since the fallback is otherwise indistinguishable from the ordinary reflective case.
 
-Composing a projection can fail, and failing here is the point: a wire-name collision that would otherwise throw on every request instead fails registration once. The call also resolves each reachable type's policy metadata, so conflicting annotations (`@Canonicalize` with `@SkipCanonicalization`) surface at registration as `IllegalStateException` rather than on the first request.
+Composing a projection can fail, and failing here is the point: a wire-name collision that would otherwise throw on every request instead fails registration once. The call also resolves each reachable type's policy metadata, so conflicting annotations (`@Canonicalize` with `@SkipCanonicalization`) surface at registration as `ConfigurationException` rather than on the first request.
 
 Both shifts are **consumer-visible**: an application carrying either fault boots today and fails on the request that reaches it. After this change it fails at startup instead. That is the intended direction — the fault was always there, and a startup failure is the one you can act on.
 
@@ -229,7 +229,7 @@ Both throw `InvocationPolicyConflictException` when a source declares both an ad
 
 ### `InvocationPolicyConflictException`
 
-A `ConfigurationException` (it extended `IllegalStateException` before), so a conflicting declaration fails startup like any other configuration error. Thrown with the conflicting axis and both declaration sites. The message names both sites so the fix is unambiguous:
+A `ConfigurationException` (it extended `IllegalStateException` before), so a conflicting declaration fails startup like any other configuration error. The same conflict on a field or a type, found while a payload type is resolved, now fails with a `ConfigurationException` too (it was an `IllegalStateException`). Thrown with the conflicting axis and both declaration sites. The message names both sites so the fix is unambiguous:
 
 > `Conflicting @Sanitize (declared on IFoo.bar) and @SkipSanitization (declared on FooImpl.bar) for method FooImpl.bar — an override cannot remove an inherited policy; remove one of the annotations.`
 

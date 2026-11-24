@@ -3,6 +3,7 @@
 
 package dev.vertique.input.processing;
 
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.sanitization.Canonicalize;
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.Sanitize;
@@ -37,7 +38,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>Conflict detection: if both {@code @Canonicalize} and {@code @SkipCanonicalization} are
  * declared on the same element (or both {@code @Sanitize} and {@code @SkipSanitization}),
- * an {@link IllegalStateException} is thrown at resolution time.
+ * a {@link ConfigurationException} is thrown at resolution time.
  *
  * <p><strong>Resolution is per type and non-recursive.</strong> The returned metadata describes
  * only {@code targetType}'s own fields; a field that holds a nested object records that field's
@@ -83,7 +84,7 @@ class InputPolicyMetadataResolver {
      *
      * @param targetType the type to inspect
      * @return the resolved (and cached) metadata; never {@code null}
-     * @throws IllegalStateException if conflicting annotations are detected on the same element
+     * @throws ConfigurationException if conflicting annotations are detected on the same element
      */
     public InputPolicyMetadata resolve(Class<?> targetType) {
         return cache.computeIfAbsent(targetType, this::resolveInternal);
@@ -264,12 +265,12 @@ class InputPolicyMetadataResolver {
         SkipSanitization typeSkipSanit = AnnotationResolver.findMetaAnnotation(type, SkipSanitization.class);
 
         if (typeCanonicalize != null && typeSkipCanon != null) {
-            throw new IllegalStateException(
+            throw new ConfigurationException(
                     "Type " + type.getName() + " has both @Canonicalize and @SkipCanonicalization — "
                             + "these annotations are mutually exclusive.");
         }
         if (typeSanitize != null && typeSkipSanit != null) {
-            throw new IllegalStateException("Type " + type.getName() + " has both @Sanitize and @SkipSanitization — "
+            throw new ConfigurationException("Type " + type.getName() + " has both @Sanitize and @SkipSanitization — "
                     + "these annotations are mutually exclusive.");
         }
 
@@ -575,7 +576,7 @@ class InputPolicyMetadataResolver {
     }
 
     /**
-     * Throws {@link IllegalStateException} if conflicting annotations are detected.
+     * Throws {@link ConfigurationException} if conflicting annotations are detected.
      *
      * @param location  human-readable location string for the error message
      * @param canon     {@code @Canonicalize} or {@code null}
@@ -590,11 +591,11 @@ class InputPolicyMetadataResolver {
             Sanitize sanit,
             SkipSanitization skipSanit) {
         if (canon != null && skipCanon != null) {
-            throw new IllegalStateException(location + " has both @Canonicalize and @SkipCanonicalization — "
+            throw new ConfigurationException(location + " has both @Canonicalize and @SkipCanonicalization — "
                     + "these annotations are mutually exclusive.");
         }
         if (sanit != null && skipSanit != null) {
-            throw new IllegalStateException(location + " has both @Sanitize and @SkipSanitization — "
+            throw new ConfigurationException(location + " has both @Sanitize and @SkipSanitization — "
                     + "these annotations are mutually exclusive.");
         }
     }

@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.sanitization.Canonicalize;
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputValueContext;
@@ -195,15 +196,15 @@ class InputPolicyMetadataResolverTest {
     class ConflictDetection {
 
         @Test
-        @DisplayName("@Canonicalize + @SkipCanonicalization on same field throws IllegalStateException")
+        @DisplayName("@Canonicalize + @SkipCanonicalization on same field throws ConfigurationException")
         void fieldCanonicalizationConflictThrows() {
-            assertThrows(IllegalStateException.class, () -> resolver.resolve(ConflictingFieldDto.class));
+            assertThrows(ConfigurationException.class, () -> resolver.resolve(ConflictingFieldDto.class));
         }
 
         @Test
-        @DisplayName("@Sanitize + @SkipSanitization on same type throws IllegalStateException")
+        @DisplayName("@Sanitize + @SkipSanitization on same type throws ConfigurationException")
         void typeSanitizationConflictThrows() {
-            assertThrows(IllegalStateException.class, () -> resolver.resolve(ConflictingTypeDto.class));
+            assertThrows(ConfigurationException.class, () -> resolver.resolve(ConflictingTypeDto.class));
         }
     }
 
