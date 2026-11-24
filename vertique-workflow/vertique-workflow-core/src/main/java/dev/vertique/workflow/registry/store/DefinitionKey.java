@@ -3,7 +3,8 @@
 
 package dev.vertique.workflow.registry.store;
 
-import dev.vertique.workflow.types.ScopeKeyRules;
+import dev.vertique.core.scope.ScopeKey;
+import java.util.Objects;
 
 /**
  * Scoped durable identity of one definition version; the default scope is {@link WorkflowScopes#DEFAULT}.
@@ -22,7 +23,7 @@ import dev.vertique.workflow.types.ScopeKeyRules;
  */
 public record DefinitionKey(String scopeKey, String definitionId, long definitionVersion) {
     public DefinitionKey {
-        ScopeKeyRules.require(scopeKey, "scopeKey");
+        ScopeKey.requireValid(Objects.requireNonNull(scopeKey, "scopeKey"));
         DefinitionValues.identifier(definitionId, "definitionId", 255);
         if (definitionVersion <= 0) throw new IllegalArgumentException("definitionVersion must be positive");
     }
