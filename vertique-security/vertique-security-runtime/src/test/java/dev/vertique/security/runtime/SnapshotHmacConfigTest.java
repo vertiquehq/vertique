@@ -19,8 +19,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for the {@link SnapshotHmacConfig} keyset config and its {@link SnapshotHmacKeyConfig}
- * entries, covering the fail-fast, secret-free validation contract (PRD-ID-002 §14.3 "Durable
- * carriage", ADR-0162).
+ * entries, covering the fail-fast, secret-free validation contract for the keys that sign durably
+ * carried identity snapshots.
  *
  * <p>Two security-critical validation guarantees are proven here:
  * <ul>
@@ -117,6 +117,34 @@ class SnapshotHmacConfigTest {
             assertEquals("***", json.getJsonObject("active").getString("secretRef"));
             assertEquals("active-key", json.getJsonObject("active").getString("keyId"));
             assertEquals("***", json.getJsonArray("previous").getJsonObject(0).getString("secretRef"));
+        }
+
+        @Test
+        @DisplayName("toString of a key config names the keyId, shows *** and omits the secret")
+        void keyConfigToStringRedactsSecret() {
+            String secret = "01234567890123456789012345678901";
+
+            String rendered = new SnapshotHmacKeyConfig("active-key", secret).toString();
+
+            assertTrue(rendered.contains("active-key"), rendered);
+            assertTrue(rendered.contains("***"), rendered);
+            assertFalse(rendered.contains(secret), rendered);
+        }
+
+        @Test
+        @DisplayName("toString of the keyset config omits the active and previous secrets")
+        void keysetConfigToStringRedactsSecrets() {
+            String activeSecret = "01234567890123456789012345678901";
+            String previousSecret = "abcdefghijabcdefghijabcdefghijab";
+            SnapshotHmacConfig config = new SnapshotHmacConfig(
+                    new SnapshotHmacKeyConfig("active-key", activeSecret),
+                    List.of(new SnapshotHmacKeyConfig("previous-key", previousSecret)));
+
+            String rendered = config.toString();
+
+            assertTrue(rendered.contains("active-key") && rendered.contains("previous-key"), rendered);
+            assertFalse(rendered.contains(activeSecret), rendered);
+            assertFalse(rendered.contains(previousSecret), rendered);
         }
     }
 }

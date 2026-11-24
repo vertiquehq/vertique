@@ -5,17 +5,22 @@ package dev.vertique.kafka.json;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.vertique.core.exception.TechnicalException;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.json.JacksonDefaults;
 import dev.vertique.kafka.DeserializationException;
 import dev.vertique.kafka.KafkaRecordHeaders;
+import dev.vertique.kafka.SerializationException;
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
@@ -170,6 +175,62 @@ class JacksonKafkaSerializerTest {
             assertTrue(json.contains("\"shipment\""), "Serialized JSON must contain the 'shipment' value");
             assertTrue(json.contains("\"count\""), "Serialized JSON must contain the 'count' field");
             assertTrue(json.contains("7"), "Serialized JSON must contain the count value '7'");
+        }
+    }
+
+    // --- Failure message ---
+
+    /** Bean whose getter fails with a message carrying a record value. */
+    public static class SecretBean {
+        public String getToken() {
+            throw new IllegalStateException("secret-123");
+        }
+    }
+
+    @Nested
+    @DisplayName("Serialization failure")
+    class SerializationFailure {
+
+        @Test
+        @DisplayName("failure is a SerializationException with a value-free message that names the type and topic")
+        void failureMessageIsValueFree() {
+            JacksonKafkaSerializer<SecretBean> serializer = new JacksonKafkaSerializer<>(new ObjectMapper());
+
+            Throwable thrown = assertThrows(
+                    Throwable.class,
+                    () -> serializer.serialize(new SecretBean(), "orders-topic", KafkaRecordHeaders.empty()));
+
+            SerializationException failure = assertInstanceOf(SerializationException.class, thrown);
+            assertInstanceOf(TechnicalException.class, failure);
+            assertFalse(failure.getMessage().contains("secret-123"), "message must not carry the value");
+            assertTrue(failure.getMessage().contains("SecretBean"), "message must name the type");
+            assertTrue(failure.getMessage().contains("orders-topic"), "message must name the topic");
+            assertInstanceOf(JsonMappingException.class, failure.getCause());
+            assertTrue(failure.getCause().getMessage().contains("secret-123"), "Jackson cause is preserved");
+        }
+
+        @Test
+        @DisplayName("a null value that cannot be serialized is named null")
+        void nullValueIsNamedNull() {
+            ObjectMapper failing = new ObjectMapper();
+            failing.getSerializerProvider()
+                    .setNullValueSerializer(new com.fasterxml.jackson.databind.JsonSerializer<>() {
+                        @Override
+                        public void serialize(
+                                Object value,
+                                com.fasterxml.jackson.core.JsonGenerator gen,
+                                com.fasterxml.jackson.databind.SerializerProvider serializers)
+                                throws java.io.IOException {
+                            throw new java.io.IOException("boom");
+                        }
+                    });
+            JacksonKafkaSerializer<Object> serializer = new JacksonKafkaSerializer<>(failing);
+
+            SerializationException failure = assertThrows(
+                    SerializationException.class,
+                    () -> serializer.serialize(null, "orders-topic", KafkaRecordHeaders.empty()));
+
+            assertTrue(failure.getMessage().contains("null"));
         }
     }
 

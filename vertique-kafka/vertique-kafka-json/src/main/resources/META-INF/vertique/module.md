@@ -63,6 +63,10 @@ For Model-3 router consumers that use `matchProperty` routing, `JsonSerdeProvide
 
 `JsonSerdeProvider` intentionally omits the offending record value from `DeserializationException` messages. Jackson exception messages can embed scalar values from the untrusted wire record, which must not leak into operator logs or dead-letter queue headers. The Jackson cause is preserved as `DeserializationException.getCause()` for stacktrace debugging.
 
+### Value-free serialization failure messages
+
+`JacksonKafkaSerializer` throws `SerializationException` when a value cannot be serialized. Its message names the value type and the topic and carries no record value, because Jackson exception messages can embed field values of the record being sent. The Jackson exception is preserved as `SerializationException.getCause()` for stacktrace debugging.
+
 ---
 
 ## Key Classes
@@ -294,7 +298,7 @@ This module owns no configuration keys. Format and profile selection are consume
 
 | Artifact | Scope | Purpose |
 |----------|-------|---------|
-| `dev.vertique:vertique-kafka-core` | compile | `KafkaSerdeProvider` SPI, `KafkaSerializer`, `KafkaDeserializer`, `DeserializationException` |
+| `dev.vertique:vertique-kafka-core` | compile | `KafkaSerdeProvider` SPI, `KafkaSerializer`, `KafkaDeserializer`, `DeserializationException`, `SerializationException` |
 | `dev.vertique:vertique-json` | compile | `JsonRuntimeModule`, `JsonConfig` |
 | `dev.vertique:vertique-core` | compile | `JsonMapperProfileRegistry`, `JsonProfileId`, `VertiqueJson` (package `dev.vertique.core.json`) |
 | `com.fasterxml.jackson.core:jackson-databind` | compile | `ObjectMapper`, `JsonNode`, `treeToValue` |
