@@ -6,6 +6,7 @@ package dev.vertique.rest.jaxrs;
 import dev.vertique.rest.core.context.RestContextMessages;
 import dev.vertique.rest.core.context.RestContextTypes;
 import dev.vertique.rest.core.request.FilePart;
+import dev.vertique.rest.core.router.PathTemplateVariables;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.jaxrs.routing.FilePartDescriptor;
 import io.vertx.ext.web.FileUpload;
@@ -75,6 +76,25 @@ class RouteValidator {
         addFilePartViolations(meta, violations);
         addMultipartCollectionShapeViolations(meta, violations);
         addDuplicateParamNameViolations(meta, violations);
+        return violations;
+    }
+
+    /**
+     * Rejects a path template that carries a {@code :regex} constraint and declares a variable whose
+     * name a regex group cannot carry. Such a template is registered as one anchored regex in which every
+     * variable becomes a named group, and route creation would otherwise fail with a raw pattern error.
+     *
+     * @param meta the resource method metadata to inspect
+     * @return one violation per offending variable name; empty when the template is registrable
+     */
+    static List<RouteRegistrationViolation> validatePathTemplate(ResourceMethodMeta meta) {
+        List<RouteRegistrationViolation> violations = new ArrayList<>();
+        for (String name : PathTemplateVariables.invalidRegexVariableNames(meta.path())) {
+            violations.add(new RouteRegistrationViolation(
+                    meta.operationId(),
+                    RouteRegistrationViolation.ViolationType.INVALID_PATH_TEMPLATE,
+                    PathTemplateVariables.invalidRegexVariableNameMessage(meta.path(), name)));
+        }
         return violations;
     }
 

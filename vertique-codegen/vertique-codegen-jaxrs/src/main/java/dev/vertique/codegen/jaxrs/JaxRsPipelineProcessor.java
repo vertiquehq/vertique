@@ -15,6 +15,7 @@ import dev.vertique.codegen.jaxrs.processor.validate.BodyFormValidator;
 import dev.vertique.codegen.jaxrs.processor.validate.ContextParamValidator;
 import dev.vertique.codegen.jaxrs.processor.validate.HttpVerbValidator;
 import dev.vertique.codegen.jaxrs.processor.validate.PathParamAlignmentValidator;
+import dev.vertique.codegen.jaxrs.processor.validate.ResourceMemberContextValidator;
 import dev.vertique.codegen.jaxrs.processor.validate.SecurityAnnotationValidator;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -125,6 +126,7 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
     private EffectiveJaxRsContractResolver resolver;
     private SecurityAnnotationValidator security;
     private ContextParamValidator contextParam;
+    private ResourceMemberContextValidator resourceMembers;
     private HttpVerbValidator verbs;
     private PathParamAlignmentValidator path;
     private BodyFormValidator bodyForm;
@@ -177,6 +179,7 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
         resolver = new EffectiveJaxRsContractResolver(ctx);
         security = new SecurityAnnotationValidator(ctx);
         contextParam = new ContextParamValidator(ctx);
+        resourceMembers = new ResourceMemberContextValidator(ctx);
         verbs = new HttpVerbValidator(ctx);
         path = new PathParamAlignmentValidator(ctx);
         bodyForm = new BodyFormValidator(ctx);
@@ -254,6 +257,10 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
             if (contract.hasNoMethods() && contract.classPath() == null) {
                 continue;
             }
+
+            // @Context is injected into resource-method parameters only; a field or constructor
+            // parameter would stay unset, so it is rejected here as the runtime rejects it at startup.
+            resourceMembers.validate(candidate);
 
             List<EffectiveMethodContract> methods = contract.methods();
 

@@ -1570,8 +1570,8 @@ Dagger wiring, the assembled instance and the error pipeline that consumes it ar
 
 ### Framework seams
 
-Twelve public types are framework seams that no application uses — `RestContextMessages`,
-`RestContextModule`, `RestContextTypes`, `RequestCompletionRecorder`, `MountCompositionValidator`,
+Thirteen public types are framework seams that no application uses — `RestContextMessages`,
+`RestContextModule`, `RestContextTypes`, `PathTemplateVariables`, `RequestCompletionRecorder`, `MountCompositionValidator`,
 `SecurityRequirementSet`, `AuthEnforcementCapability`, `SecurityPolicyViolation`,
 `RequiresActionResolver`, `DeferredCredentialRejectionAuthHandler`,
 `AnnotationSecurityPolicyResolver`, and `AuthenticationOrChain`. They are public because sibling
