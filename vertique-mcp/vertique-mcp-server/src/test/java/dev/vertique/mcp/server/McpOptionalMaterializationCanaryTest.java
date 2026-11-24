@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Test;
  * <p>Drives the real generated {@code OptionalProbe} canary — emitted by {@link
  * dev.vertique.codegen.mcp.McpToolInvokerEmitter} only for a tool with an {@code Optional<T>}
  * parameter, and run once, from the generated invoker's constructor, through {@code McpToolRuntime
- * #verifyOptionalMaterialization} — with omitted, explicit-null, and present cases (contract §4.1).
+ * #verifyOptionalMaterialization} — with omitted, explicit-null, and present cases.
  *
  * <p><strong>Every case is real, not synthetic.</strong> {@code shouldMountForTheZeroConfigDefaultProfile}
  * exercises the framework's actual zero-config default — before R13 item 3 (issue #440), that default

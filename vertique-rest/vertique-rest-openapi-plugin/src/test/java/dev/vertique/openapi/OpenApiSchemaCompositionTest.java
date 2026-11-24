@@ -334,7 +334,7 @@ class OpenApiSchemaCompositionTest {
         }
 
         /**
-         * Regression for {@code vertiquehq/vertique-dev#395}: {@code Future<ReadStream<SseEvent>>}
+         * Regression: {@code Future<ReadStream<SseEvent>>}
          * must resolve to the SSE string schema through the <em>actual</em> plugin configuration
          * path — {@link ContextUtils#deepCopy} then {@link GenericOpenApiContext}'s {@code
          * buildModelConverters}, then sequential {@link ModelConverters#addConverter} prepends —

@@ -34,7 +34,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * Coverage for {@link MetadataConstraintSource}: shapes the annotation walk cannot join by wire name
  * (a constructor-parameter constraint without {@code -parameters}, a container-element constraint, an
  * inherited or interface constraint, a composed constraint's leaves, an XML-mapped constraint), the
- * group filter, and the vertiquehq/vertique-dev#606 render gaps (victools' Jakarta module renders
+ * group filter, and the render gaps (victools' Jakarta module renders
  * {@code @Range} with its annotation defaults, drops {@code @Pattern} flags, and ignores
  * {@code @Length}/{@code @URL}).
  *

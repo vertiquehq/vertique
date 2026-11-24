@@ -26,8 +26,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * MCP-001 P04 remediation TP-001 — proves the mandatory input-processing pipeline (contract §4.7)
- * genuinely runs for a real, generated <strong>parameterized</strong> {@code @McpTool} invoker,
+ * Proves the mandatory input-processing pipeline genuinely
+ * runs for a real, generated <strong>parameterized</strong> {@code @McpTool} invoker,
  * closing the exact gap the phase-exit security review named: T015's real-processor proof
  * ({@code McpInputPipelineIT}) exercises a hand-written {@code PipelineToolInvoker} stand-in for
  * {@code prepare()}, and T012's real-generated-invoker proof ({@code McpGeneratedHelloToolIT}) uses a

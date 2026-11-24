@@ -36,7 +36,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * rest-023 T005 ({@code D005}). A member-level {@code @Schema(additionalProperties = FALSE)} on a
+ * A member-level {@code @Schema(additionalProperties = FALSE)} on a
  * property whose value type carries its own any-setter reuses the <strong>existing</strong>
  * member-level inline path — the case-insensitive (CI) branch's override-first rule, {@code
  * requireNotDelegating} refusal, and scalar-creator check — with an added extras-suppressed flag,
@@ -624,7 +624,7 @@ class MemberLevelAdditionalPropertiesClosureTest {
     // ==================================================================================================
 
     /**
-     * Carried follow-up from rest-023 T005 (vertiquehq/vertique-dev#624): a value type closed at the
+     * A value type closed at the
      * <strong>class</strong> level with {@code @Schema(additionalProperties = FALSE)}, reached only
      * through the plain case-insensitive inline path (member-level {@code @JsonFormat} only — no
      * member-level {@code FALSE}), must still publish {@code additionalProperties: false}. The hand-built

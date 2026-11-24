@@ -585,7 +585,7 @@ public class WebSocketSecurityPipelineIT {
      * {@link DispatchBoundary#WEBSOCKET} on the emitted {@link AuthorizationDecisionEvent} and never
      * invokes identity-snapshot capture (ADR-0164). A REST control route on the same pipeline must
      * still bind {@link DispatchBoundary#REST} — origin-conditional policy can distinguish the two
-     * transports (vertiquehq/vertique-dev#414).
+     * transports.
      *
      * <p>Without an explicit origin bind, {@link SecurityPolicyEnforcer} falls back to
      * {@link InvocationOrigin#unspecified()} rather than inventing a privileged {@code rest} origin.

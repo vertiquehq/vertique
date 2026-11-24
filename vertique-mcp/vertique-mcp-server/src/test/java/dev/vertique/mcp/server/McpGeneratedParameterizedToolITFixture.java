@@ -40,7 +40,7 @@ import java.util.concurrent.TimeUnit;
 import javax.tools.JavaFileObject;
 
 /**
- * Framework wiring for {@link McpGeneratedParameterizedToolIT} (MCP-001 P04 remediation TP-001):
+ * Framework wiring for {@link McpGeneratedParameterizedToolIT}:
  * compiles one real, parameterized {@code com.example.greeting.GreetingTools} application source —
  * declaring a real {@code @Sanitize} chain and a real Jakarta Bean Validation {@code @NotBlank}
  * constraint directly on the tool parameter — with the real {@link McpToolProcessor}, loads the
@@ -49,7 +49,7 @@ import javax.tools.JavaFileObject;
  * InputObjectProcessor}, {@code Optional<jakarta.validation.Validator>}), and mounts it behind one
  * real port-0 stateless Streamable HTTP server —
  * exactly {@link McpGeneratedHelloToolITFixture}'s shape, extended to a real parameterized tool so
- * the mandatory input-processing pipeline (contract §4.7) runs against genuine annotation-processor
+ * the mandatory input-processing pipeline runs against genuine annotation-processor
  * output rather than a hand-written stand-in.
  *
  * <p><strong>Reflection boundary.</strong> Same boundary as {@link McpGeneratedHelloToolITFixture}:
@@ -131,15 +131,9 @@ final class McpGeneratedParameterizedToolITFixture {
                     }
                 }
                 """);
-        // A custom Bean Validation constraint — declared @Target({PARAMETER, FIELD}) only, deliberately
-        // excluding TYPE_USE, to sidestep a pre-existing, unrelated McpToolModelValidator defect: its
-        // input-representability check compares TypeMirror#toString() against a scalar allowlist, and
-        // a TYPE_USE-targeted annotation (every jakarta.validation.constraints.* built-in, e.g.
-        // @NotBlank, includes TYPE_USE) renders into that string, so a scalar parameter carrying one is
-        // wrongly rejected as "no JSON schema representation" before this feature's own code ever runs.
-        // Reported to the caller (see final report); this fixture routes around it rather than fixing
-        // it. Using a custom constraint also proves the meta-annotation-based
-        // McpToolInvokerEmitter#addValidationAnnotations detection generalizes beyond the built-ins.
+        // A custom Bean Validation constraint, declared @Target({PARAMETER, FIELD}) only. Using a custom
+        // constraint proves the meta-annotation-based McpToolInvokerEmitter#addValidationAnnotations
+        // detection generalizes beyond the built-in constraints.
         JavaFileObject constraintSource = SourceFiles.inline(CONSTRAINT_SOURCE_FQN, """
                 package com.example.greeting;
 

@@ -50,7 +50,7 @@ import org.junit.jupiter.api.Timeout;
 
 /**
  * P04 remediation proof for issue W6 — a cyclic structured result must degrade to the bounded
- * internal-error fallback, not silently strand the request. Before the fix, stage 7 (contract §4.7)
+ * internal-error fallback, not silently strand the request. Before the fix, stage 7
  * ran unguarded inside {@code invokeAndRespond}'s {@code result.onComplete} handler: an exception
  * escaping {@code normalizeStructuredContent}'s {@code convertValue} call (or a native-recursion
  * {@code StackOverflowError}) after SSE was already selected — before {@code beginWrite} was ever

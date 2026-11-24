@@ -31,7 +31,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Parity proof for superclass-declared methods that inherit JAX-RS annotations from interfaces the
- * resource class implements (vertiquehq/vertique-dev#636).
+ * resource class implements.
  *
  * <p>Each shape is represented twice: as a plain compiled nested fixture scanned through
  * {@link JaxRsRouteRegistrar#scanResource(Object)}, and as source compiled through

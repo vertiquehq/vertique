@@ -370,7 +370,7 @@ class GeneratedArrayParamParityTest {
     /**
      * Parameterized-owner inner-class element: core reflection reifies
      * {@code Outer<String>.Inner} as a {@code ParameterizedType} (empty args, parameterized owner),
-     * so neither path may resolve a component type (vertique-dev#71).
+     * so neither path may resolve a component type.
      */
     @Path("/matrix-parameterized-owner-inner")
     @PermitAll
@@ -387,7 +387,7 @@ class GeneratedArrayParamParityTest {
 
     /**
      * Array-of-parameterized-owner-inner element: reaches the same gate through
-     * {@code GenericArrayType} recursion (vertique-dev#71).
+     * {@code GenericArrayType} recursion.
      */
     @Path("/matrix-parameterized-owner-inner-array")
     @PermitAll

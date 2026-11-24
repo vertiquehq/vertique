@@ -39,11 +39,9 @@ import org.junit.jupiter.api.Timeout;
  * (in {@code vertique-json-schema}) folds every such {@code allOf} into one flat {@code properties}
  * set before this boundary's schema is published, removing the shape the closure guard targets.
  *
- * <p>Measured rows: {@code docs/specs/rest-021-deserializer-driven-schema-description
- * /evidence/proof-runs/gap-3c89fb8e-v.txt} lines 68-71 (HJ03) and 115-118 (UW2) — binder ACCEPT, REST
- * ACCEPT, MCP REJECT for both {@code HJ03} and {@code UW2} (the pre-fix measurement). The shapes are
- * copied verbatim from that package's {@code evidence/proof-harness/deser-validation-bv/src/probe
- * /Shapes.java}.
+ * <p>Measured rows: for both {@code HJ03} and {@code UW2}, the binder ACCEPTed, REST
+ * ACCEPTed, and MCP REJECTed (the pre-fix measurement). The shapes are
+ * copied verbatim from the probe harness that took that measurement.
  *
  * <p>Each acceptance row proves the fold widens acceptance to match the binder/REST gate; each control
  * row proves a rejection the fold must never widen away — a wrong-typed value, an over-long alias, a
@@ -101,7 +99,7 @@ class McpUnmergedAllOfAcceptanceIT {
                                         .put("kind", "any")
                                         .put("name", "a")
                                         .put("x", "1")),
-                "HJ03 (evidence/proof-runs/gap-3c89fb8e-v.txt line 68-71): binder ACCEPT, REST ACCEPT,"
+                "HJ03: binder ACCEPT, REST ACCEPT,"
                         + " but the MCP hardener closes each unmerged allOf part separately, so 'name' and 'x'"
                         + " — properties of J03AnySub's part only — are rejected as additional properties of"
                         + " J03PlainSub's part");
@@ -156,7 +154,7 @@ class McpUnmergedAllOfAcceptanceIT {
         assertAccepted(
                 McpUnmergedAllOfAcceptanceITFixture.UW2_TOOL,
                 new JsonObject().put("label", "l").put("nm", "ab"),
-                "UW2 (evidence/proof-runs/gap-3c89fb8e-v.txt line 115-118): binder ACCEPT, REST ACCEPT,"
+                "UW2: binder ACCEPT, REST ACCEPT,"
                         + " but the MCP hardener closes each unmerged allOf part separately, so 'nm' — the"
                         + " unwrapped child's alias, published on the child's own allOf part — is rejected as"
                         + " an additional property of the parent's part");

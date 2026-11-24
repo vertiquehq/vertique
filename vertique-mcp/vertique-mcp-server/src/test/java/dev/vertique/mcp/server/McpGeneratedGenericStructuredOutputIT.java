@@ -147,8 +147,8 @@ class McpGeneratedGenericStructuredOutputIT {
                 .as("the selected profile's output name must reach the wire through the generated writer")
                 .isEqualTo("hello");
         // R37 (review finding C4): a structured result with no handler-authored text must still carry
-        // exactly one canonical-JSON text item alongside structuredContent (contract §4.3's SHOULD for
-        // backwards compatibility). DECISIVE: pre-fix, "content" serializes as an empty array here —
+        // exactly one canonical-JSON text item alongside structuredContent, for
+        // backwards compatibility. DECISIVE: pre-fix, "content" serializes as an empty array here —
         // the structured adaptation carries no text content (McpToolResult.structured(...) itself is
         // correctly empty; the encoder never derived a canonical text item from the normalized value).
         JsonArray validContent = validResult.getJsonArray("content");

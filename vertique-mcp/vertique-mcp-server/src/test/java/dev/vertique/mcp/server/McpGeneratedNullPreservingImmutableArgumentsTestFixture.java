@@ -33,7 +33,7 @@ import javax.tools.JavaFileObject;
  * McpGeneratedParameterizedToolITFixture} but without the HTTP layer: this proof only needs {@link
  * McpToolInvoker#prepare}, never the dispatcher or a live request.
  *
- * <p>Bound to an {@code Optional}-materialization-capable {@code strict} profile (R03, contract §4.1),
+ * <p>Bound to an {@code Optional}-materialization-capable {@code strict} profile,
  * not the zero-config {@code vertx} profile: this tool declares an {@code Optional<T>} parameter, so
  * composition now runs the generated {@code OptionalProbe} canary before construction completes, and
  * {@code vertx}'s mapper (Vert.x's {@code DatabindCodec}) has no {@code Jdk8Module} registered. This

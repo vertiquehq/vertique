@@ -79,9 +79,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * T015 TP-001 — real port-0 contract matrix for the fixed request-time input pipeline (contract
- * §4.7): the precompiled schema validator (T009), INP-001 canonicalization/sanitization at {@code
- * InputLocation.PAYLOAD}, materialization through the effective mapper, and Bean Validation, in that
+ * Real port-0 matrix for the fixed request-time input pipeline: the precompiled schema
+ * validator, input canonicalization/sanitization at {@code InputLocation.PAYLOAD}, materialization through the effective mapper, and Bean Validation, in that
  * fixed order, failing closed at the first authoritative stage without ever invoking the handler.
  *
  * <p>Exposes one record-argument tool ({@code Args}, carrying a {@code @NotBlank} component and a
@@ -205,8 +204,8 @@ class McpInputPipelineIT {
                         .put("contact", new JsonObject().put("type", "fax").put("number", "000"));
                 HttpResponse<Buffer> response = await(callTool(arguments, 3));
 
-                // Then: the withdrawn startup polymorphism check's legitimate request-time replacement
-                // (contract "Carried obligations") — rejected at stage 1, prepare() never called.
+                // Then: the withdrawn startup polymorphism check's legitimate request-time replacement:
+                // rejected at stage 1, prepare() never called.
                 assertThat(response.statusCode()).isEqualTo(200);
                 assertBoundedTextOnlyError(sseResult(response.bodyAsString()), SCHEMA_MESSAGE);
                 assertThat(tool.prepareCallCount())
@@ -224,7 +223,7 @@ class McpInputPipelineIT {
                         .put("contact", new JsonObject().put("type", "email").put("address", "ada@example.com"));
                 HttpResponse<Buffer> response = await(callTool(arguments, 4));
 
-                // Then: stage 1 passed (prepare() was entered) and stage 2 (INP-001 sanitization) itself
+                // Then: stage 1 passed (prepare() was entered) and stage 2 (sanitization) itself
                 // rejected — DECISIVE: materialization and Bean Validation were never attempted after it,
                 // and the handler never ran.
                 assertThat(response.statusCode()).isEqualTo(200);
@@ -240,7 +239,7 @@ class McpInputPipelineIT {
             }
             case SHOULD_REJECT_BEAN_VALIDATION_FAILURE -> {
                 // Given/When: schema-valid and sanitization-clean, but the materialized name is blank
-                // once INP-001 canonicalization trims it — @NotBlank rejects it only after materialization.
+                // once canonicalization trims it — @NotBlank rejects it only after materialization.
                 JsonObject arguments = new JsonObject()
                         .put("name", "   ")
                         .put("contact", new JsonObject().put("type", "email").put("address", "ada@example.com"));
@@ -342,7 +341,7 @@ class McpInputPipelineIT {
     }
 
     /**
-     * Asserts the exact bounded text-only {@code isError=true} shape §4.7 requires for a pipeline
+     * Asserts the exact bounded text-only {@code isError=true} shape required for a pipeline
      * rejection: one text content item carrying {@code expectedMessage}, no structured content. The
      * same assertion runs for every rejection row, so the shape itself — not merely "some error came
      * back" — is compared across rows.
@@ -498,7 +497,7 @@ class McpInputPipelineIT {
 
     /**
      * Stands in for one {@code @McpTool}-generated invoker's {@code prepare()}: the generated fixed
-     * input boundary that owns stages 2-4 (contract §4.2/§4.7) — INP-001 canonicalization/sanitization
+     * input boundary that owns stages 2-4 — canonicalization/sanitization
      * at {@code InputLocation.PAYLOAD}, materialization through the effective mapper, and Bean
      * Validation — exactly as {@code McpPreparedToolCallTestFixture}'s {@code GeneratedInvoker} stood
      * in for T014's boundary. Every stage counter here is incremented at the point that stage is
@@ -535,9 +534,9 @@ class McpInputPipelineIT {
         public McpPreparedToolCall prepare(Map<String, Object> arguments, McpCancellationSignal cancellation) {
             prepareCallCount.incrementAndGet();
 
-            // Stage 2 — INP-001 canonicalization/sanitization at InputLocation.PAYLOAD (contract §4.7
-            // point 2): the generated invocation-level literal is always EffectiveInputPolicies.NONE
-            // (§4.1) — declared per-field policies are discovered reflectively from the carrier's own
+            // Stage 2 — canonicalization/sanitization at InputLocation.PAYLOAD:
+            // the generated invocation-level literal is always EffectiveInputPolicies.NONE;
+            // declared per-field policies are discovered reflectively from the carrier's own
             // annotations, not passed as invocation-level policies.
             sanitizationAttempted.incrementAndGet();
             Object processed;
@@ -549,7 +548,7 @@ class McpInputPipelineIT {
                         "Invalid tool arguments: input sanitization failed", sanitizationFailure);
             }
 
-            // Stage 3 — materialization through the effective mapper (contract §4.7 point 3).
+            // Stage 3 — materialization through the effective mapper.
             materializationAttempted.incrementAndGet();
             Args materialized;
             try {
@@ -559,7 +558,7 @@ class McpInputPipelineIT {
                         "Invalid tool arguments: materialization failed", materializationFailure);
             }
 
-            // Stage 4 — Bean Validation on the materialized carrier (contract §4.7 point 4).
+            // Stage 4 — Bean Validation on the materialized carrier.
             beanValidationAttempted.incrementAndGet();
             if (!McpBeanValidation.validate(materialized, Optional.empty()).isEmpty()) {
                 throw new McpInputRejectionException("Invalid tool arguments: constraint validation failed");
@@ -615,7 +614,7 @@ class McpInputPipelineIT {
      * subtype is not statically knowable ({@link InputObjectProcessor#precomputeFieldNameResolution}),
      * so a policy declared only inside one closed subtype could never be reliably reached before
      * materialization. The polymorphic member instead proves the schema-level closed-discriminator
-     * boundary (contract "Carried obligations").
+     * boundary.
      */
     private record Args(
             @JsonProperty("name") @NotBlank @Canonicalize(TrimCanonicalizer.class) @Sanitize(RejectingSanitizer.class)

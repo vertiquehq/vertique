@@ -54,9 +54,8 @@ import org.junit.jupiter.params.provider.MethodSource;
  * using the T004 manual clock the coordinator already accepts, so the whole race is reproduced
  * deterministically on one Vert.x context with no reliance on real transport timing.
  *
- * <p>Per the caution in {@code docs/specs/mcp-001-server-support/tasks/T013-*.md}: {@code
- * HttpServerResponse#ended()} is never stubbed here — the write path this class exercises never reads
- * it. {@code headWritten()} is instead backed by a live {@link AtomicBoolean} that this fixture flips
+ * <p>{@code HttpServerResponse#ended()} is never stubbed here — the write path this class exercises
+ * never reads it. {@code headWritten()} is instead backed by a live {@link AtomicBoolean} that this fixture flips
  * only when the mocked {@code end(Buffer)} is actually invoked, so every {@code responseCommitted}
  * assertion reads a value that genuinely changes with the mock's own call history, never a literal the
  * test hard-codes into the assertion.

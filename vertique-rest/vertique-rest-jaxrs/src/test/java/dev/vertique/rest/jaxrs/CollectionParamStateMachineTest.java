@@ -69,8 +69,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.slf4j.LoggerFactory;
 
 /**
- * Tests for the collection parameter state machine frozen in
- * {@code docs/plans/feat-param-shape-parity.md} §4 decisions 2–5 (slice S4).
+ * Tests for the collection parameter state machine.
  *
  * <p>Drives the reflective {@link ParameterExtractor} directly with hand-built
  * {@link ResourceMethodMeta.ParamMeta}/{@link BoundRequest} fixtures, mirroring

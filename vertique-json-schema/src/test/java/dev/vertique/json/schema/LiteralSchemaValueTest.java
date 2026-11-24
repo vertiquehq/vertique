@@ -36,7 +36,7 @@ import org.junit.jupiter.params.provider.ValueSource;
  * are JSON data. A data object carrying the generator's private alias-plan keyword is an ordinary
  * member of that data: expansion must neither strip it nor execute it, and the marker refusal must
  * not read it as a published property. A schema position carrying the keyword, which only a profile
- * override fragment can write, is refused instead of silently stripped (vertiquehq/vertique-dev#599).
+ * override fragment can write, is refused instead of silently stripped.
  * A property whose own name is one of those keywords is still a schema, so a plan beneath it is still
  * expanded.
  */

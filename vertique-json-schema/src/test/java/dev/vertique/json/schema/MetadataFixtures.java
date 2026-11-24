@@ -172,7 +172,7 @@ final class MetadataFixtures {
         public String label;
     }
 
-    /** vertiquehq/vertique-dev#606 shapes, plus a CASE_INSENSITIVE @Pattern. */
+    /** Shapes with render gaps, plus a CASE_INSENSITIVE @Pattern. */
     static final class Sharp606Dto {
         @Range(min = 10, max = 20)
         public int range;

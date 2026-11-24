@@ -436,7 +436,7 @@ class ManagementVerticleTest {
             // Intentionally an unpinned builder chain: this test asserts the default and never
             // deploys, so nothing binds; the config.host() getter on the next line is what
             // satisfies the bind-policy checker's presence window — future checker tightening
-            // must keep a getter-tolerant regex or add suppression (vertiquehq/vertique-dev#170).
+            // must keep a getter-tolerant regex or add suppression.
             ManagementConfig config = ManagementConfig.builder().port(0).build();
 
             assertEquals("0.0.0.0", config.host());
