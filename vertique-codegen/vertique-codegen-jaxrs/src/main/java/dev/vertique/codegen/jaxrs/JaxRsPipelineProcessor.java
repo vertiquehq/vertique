@@ -407,11 +407,13 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
      * without ever emitting the disjoint-packages compile error that {@link PackageResolver#resolve}
      * reports, because no module is written in that mode: the {@code -Avertique.codegen.package}
      * override when set; otherwise the origins' longest common package prefix, computed locally,
-     * when they share one; otherwise {@code null}.
+     * when they share one, which is the empty string when every origin is in the unnamed package;
+     * otherwise {@code null} for genuinely disjoint packages.
      *
      * @param origins the DI-eligible resources, or (in a unit without them) the
      *                {@code @RestApplication} declarations; must not be {@code null}
-     * @return the resolved package, or {@code null} when none could be determined
+     * @return the resolved package ({@code ""} for the unnamed package), or {@code null} when none
+     *     could be determined
      */
     private String resolvePackageWithoutFailing(List<TypeElement> origins) {
         if (origins.isEmpty()) {
@@ -422,12 +424,18 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
             return override;
         }
         String commonPrefix = null;
+        boolean allUnnamed = true;
         for (TypeElement origin : origins) {
             String originPackage = ctx.packageNameOf(origin);
+            allUnnamed &= originPackage.isEmpty();
             commonPrefix = commonPrefix == null
                     ? originPackage
                     : PackageResolver.longestCommonPrefix(commonPrefix, originPackage);
         }
-        return (commonPrefix == null || commonPrefix.isEmpty()) ? null : commonPrefix;
+        if (allUnnamed) {
+            // The unnamed package is one package, not "no package": its members see each other.
+            return "";
+        }
+        return commonPrefix.isEmpty() ? null : commonPrefix;
     }
 }

@@ -127,6 +127,33 @@ class ResourceScannerInterfaceBackedTest {
         }
     }
 
+    /** Override carrying its own {@code @Operation} without an id over an interface id. */
+    static class IdlessOperationResource implements ItemsApi {
+        @Override
+        @Operation(summary = "List the items")
+        public List<String> list() {
+            return List.of();
+        }
+    }
+
+    /** Override carrying a blank {@code operationId} over an interface id. */
+    static class BlankOperationIdResource implements ItemsApi {
+        @Override
+        @Operation(operationId = " ")
+        public List<String> list() {
+            return List.of();
+        }
+    }
+
+    /** Override carrying its own {@code operationId}, which wins over the interface id. */
+    static class OwnOperationIdResource implements ItemsApi {
+        @Override
+        @Operation(operationId = "ownList")
+        public List<String> list() {
+            return List.of();
+        }
+    }
+
     // --- Concrete class @Path overrides interface @Path ---
 
     /**
@@ -420,6 +447,35 @@ class ResourceScannerInterfaceBackedTest {
             assertEquals(1, groups.length, "Expected exactly one validation group");
             assertEquals(
                     CreateGroup.class, groups[0], "Validation group must be CreateGroup as declared on the interface");
+        }
+    }
+
+    @Nested
+    @DisplayName("operation id taken per attribute along the override chain")
+    class OperationIdPerAttribute {
+
+        private String operationId(Object resource) {
+            List<ResourceMethodMeta> metas = scanner().scanResource(resource);
+            assertEquals(1, metas.size());
+            return metas.get(0).operationId();
+        }
+
+        @Test
+        @DisplayName("an override's @Operation without an id inherits the interface id")
+        void idlessOverrideInheritsInterfaceId() {
+            assertEquals("listItems", operationId(new IdlessOperationResource()));
+        }
+
+        @Test
+        @DisplayName("a blank override id counts as absent")
+        void blankOverrideIdCountsAsAbsent() {
+            assertEquals("listItems", operationId(new BlankOperationIdResource()));
+        }
+
+        @Test
+        @DisplayName("an override's own id wins")
+        void ownOverrideIdWins() {
+            assertEquals("ownList", operationId(new OwnOperationIdResource()));
         }
     }
 }

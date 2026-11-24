@@ -489,7 +489,8 @@ public final class EffectiveJaxRsContractResolver {
 
     /**
      * Resolves the media types from {@code @Consumes} or {@code @Produces} using the precedence
-     * rule.
+     * rule: the method, the declarations it overrides, then the class-level annotation of the
+     * resource class, its superclasses and its interfaces.
      *
      * @param method         the concrete method
      * @param resourceClass  the resource class
@@ -509,7 +510,31 @@ public final class EffectiveJaxRsContractResolver {
                 return v;
             }
         }
+        // Precedence 3: class level — resource class, superclass chain, then BFS interfaces
+        for (TypeElement type : classHierarchy(resourceClass)) {
+            List<String> v = findAnnotationStringArray(type, annotationFqn);
+            if (v != null) {
+                return v;
+            }
+        }
         return List.of();
+    }
+
+    /**
+     * The resource class, its superclass chain (excluding {@code Object}) and its transitively
+     * implemented interfaces, in the order the runtime resolves class-level annotations.
+     */
+    private List<TypeElement> classHierarchy(TypeElement resourceClass) {
+        List<TypeElement> types = new ArrayList<>();
+        types.add(resourceClass);
+        TypeElement current = JaxRsHierarchy.superClass(ctx, resourceClass);
+        while (current != null
+                && !"java.lang.Object".equals(current.getQualifiedName().toString())) {
+            types.add(current);
+            current = JaxRsHierarchy.superClass(ctx, current);
+        }
+        types.addAll(JaxRsHierarchy.allInterfaces(ctx, resourceClass));
+        return types;
     }
 
     /**
@@ -586,7 +611,8 @@ public final class EffectiveJaxRsContractResolver {
      *
      * @param method        the concrete method
      * @param resourceClass the resource class
-     * @return the list of validation group type mirrors, or {@code null} if the annotation is absent
+     * @return the list of validation group type mirrors, empty when the first declaration carries an
+     *     explicit {@code @ValidateWith({})}, or {@code null} if the annotation is absent
      */
     private List<TypeMirror> resolveValidationGroups(ExecutableElement method, TypeElement resourceClass) {
         // Precedence 1: direct on method
@@ -647,8 +673,10 @@ public final class EffectiveJaxRsContractResolver {
         // Param name — from the classification annotation (e.g. @PathParam("id"))
         String name = resolveParamName(concreteParam, paramIndex, method, resourceClass, source);
 
-        // @DefaultValue
-        String defaultValue = resolveDefaultValue(concreteParam, paramIndex, method, resourceClass);
+        // @DefaultValue — only a scalar binding source takes one; the runtime drops it for the rest
+        String defaultValue = takesDefaultValue(source)
+                ? resolveDefaultValue(concreteParam, paramIndex, method, resourceClass)
+                : null;
 
         // Merged annotation sources: concreteParam plus the matching parameter
         // on each superclass/interface override that declares it, mirroring the runtime
@@ -703,6 +731,18 @@ public final class EffectiveJaxRsContractResolver {
                 genericType,
                 paramCanonicalizers,
                 paramSanitizers);
+    }
+
+    /**
+     * Whether the runtime scanner keeps {@code @DefaultValue} for the source: the path, query,
+     * header, cookie and form sources do; body, bean, context, precondition, file and entity-part
+     * parameters drop it.
+     */
+    private static boolean takesDefaultValue(JaxRsParamSource source) {
+        return switch (source) {
+            case PATH, QUERY, HEADER, COOKIE, FORM -> true;
+            case CONTEXT, PRECONDITIONS, BEAN_PARAM, FILE_UPLOADS, ENTITY_PARTS, BODY -> false;
+        };
     }
 
     /**
@@ -1532,7 +1572,8 @@ public final class EffectiveJaxRsContractResolver {
 
     /**
      * Returns the {@code Class[]}-typed attribute value from the given annotation as a
-     * {@code List<TypeMirror>}, or {@code null} if the annotation is absent.
+     * {@code List<TypeMirror>}, or {@code null} if the annotation is absent. A present annotation
+     * with an empty array yields an empty list.
      *
      * @param element       the element to inspect
      * @param annotationFqn the annotation FQN
@@ -1549,7 +1590,7 @@ public final class EffectiveJaxRsContractResolver {
                             mirrors.add(tm);
                         }
                     }
-                    return mirrors.isEmpty() ? null : (List<TypeMirror>) mirrors;
+                    return (List<TypeMirror>) mirrors;
                 })
                 .orElse(null);
     }
