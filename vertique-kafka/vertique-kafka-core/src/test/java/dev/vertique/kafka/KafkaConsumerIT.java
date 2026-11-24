@@ -52,7 +52,7 @@ import org.testcontainers.kafka.KafkaContainer;
  * </ul>
  */
 @ExtendWith(VertxExtension.class)
-@org.junit.jupiter.api.Timeout(value = 60, unit = TimeUnit.SECONDS)
+@org.junit.jupiter.api.Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class KafkaConsumerIT {
 
     // --- Testcontainers ---

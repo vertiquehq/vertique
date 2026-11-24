@@ -64,7 +64,7 @@ import org.testcontainers.kafka.KafkaContainer;
  * in {@link #tearDown}.
  */
 @ExtendWith(VertxExtension.class)
-@org.junit.jupiter.api.Timeout(value = 90, unit = TimeUnit.SECONDS)
+@org.junit.jupiter.api.Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class KafkaInterceptorIT {
 
     // --- Testcontainers ---

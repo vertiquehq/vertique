@@ -233,7 +233,7 @@ SPDX-License-Identifier: EUPL-1.2
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
-            <!-- Micrometer BOM — declared before vertx-dependencies so 1.16.6 wins over any
+            <!-- Micrometer BOM — declared before vertx-dependencies so micrometer.version wins over any
                  version that vertx-dependencies transitively manages. -->
             <dependency>
                 <groupId>io.micrometer</groupId>

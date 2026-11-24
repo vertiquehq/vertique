@@ -42,7 +42,7 @@ import org.testcontainers.kafka.KafkaContainer;
  * it back directly using a raw Vert.x {@link KafkaConsumer} to verify the bytes on wire.
  */
 @ExtendWith(VertxExtension.class)
-@org.junit.jupiter.api.Timeout(value = 30, unit = TimeUnit.SECONDS)
+@org.junit.jupiter.api.Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class KafkaProducerIT {
 
     // --- Testcontainers ---

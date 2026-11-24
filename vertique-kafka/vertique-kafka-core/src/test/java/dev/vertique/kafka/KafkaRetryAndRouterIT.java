@@ -63,7 +63,7 @@ import org.testcontainers.kafka.KafkaContainer;
  * {@link #setUp} and torn down in {@link #tearDown}.
  */
 @ExtendWith(VertxExtension.class)
-@org.junit.jupiter.api.Timeout(value = 120, unit = TimeUnit.SECONDS)
+@org.junit.jupiter.api.Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class KafkaRetryAndRouterIT {
 
     // --- Testcontainers ---
