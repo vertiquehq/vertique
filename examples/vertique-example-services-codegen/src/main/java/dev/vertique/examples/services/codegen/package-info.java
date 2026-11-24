@@ -13,8 +13,9 @@
  * {@link dev.vertique.examples.services.codegen.AppComponent} — the annotation processor generates
  * {@code AppComponentVertiqueComponentFactory} and the host-neutral lifecycle runner
  * ({@code VertiqueApplicationBootstrap}) drives startup and shutdown without a hand-written
- * {@code MainVerticle}. The runner reproduces the old startup choreography: Jackson configuration
- * runs as a {@code CONFIGURE}-phase step; management verticle deploys in {@code INFRA}; service
+ * {@code MainVerticle}. The runner reproduces the old startup choreography: the process JSON codec
+ * installs in the {@code CONFIGURE} phase ({@code JsonRuntimeModule}, via {@code RestModule});
+ * management verticle deploys in {@code INFRA}; service
  * verticles deploy via the {@code SERVICES}-phase step contributed by {@code DispatchModule};
  * the HTTP verticle deploys in {@code EDGE}.
  *

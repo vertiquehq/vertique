@@ -28,8 +28,9 @@ import jakarta.inject.Singleton;
  * ({@code VertiqueApplicationBootstrap}) drives startup and shutdown — there is no hand-written
  * {@code MainVerticle}. The inherited {@code startupSteps()}/{@code shutdownSteps()}/
  * {@code verticleDeploymentManager()} accessors expose the lifecycle inputs the runner consumes;
- * Jackson configuration runs as the {@code CONFIGURE}-phase step contributed by
- * {@link CoreLifecycleStepsModule}.
+ * the {@code CONFIGURE}-phase step of {@code JsonRuntimeModule} (brought in by {@code RestModule})
+ * installs the process JSON codec; {@link CoreLifecycleStepsModule} contributes the {@code
+ * VALIDATE}-phase compose-validation step and the {@code AFTER_START} readiness step.
  *
  * <p>Includes:
  * <ul>
@@ -38,8 +39,8 @@ import jakarta.inject.Singleton;
  *   <li>{@link RestValidationModule} — default {@code web-validation} request-validation strategy</li>
  *   <li>{@link ManagementModule} — Health check endpoints on management port</li>
  *   <li>{@link DeployerModule} — Verticle deployment multibinding</li>
- *   <li>{@link CoreLifecycleStepsModule} — framework {@code CONFIGURE}/{@code VALIDATE} lifecycle
- *       steps (Jackson configuration + compose-validator harness)</li>
+ *   <li>{@link CoreLifecycleStepsModule} — framework {@code VALIDATE} compose-validation step and
+ *       {@code AFTER_START} readiness step</li>
  *   <li>{@link AppModule} — Application-specific verticle deployments and null security bindings</li>
  *   <li>{@link JobModule} — Job service and JAX-RS resource multibinding</li>
  *   <li>{@link HttpClientModule} — governed HTTP clients configured from {@code httpClient.{name}}</li>

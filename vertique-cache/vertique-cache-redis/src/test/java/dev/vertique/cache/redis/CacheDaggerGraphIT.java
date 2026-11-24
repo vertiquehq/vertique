@@ -22,11 +22,14 @@ import jakarta.inject.Singleton;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import javax.inject.Provider;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 /** Dagger composition proof for the explicitly installed clustered Redis provider. */
+@Timeout(value = 20, unit = TimeUnit.SECONDS)
 class CacheDaggerGraphIT {
 
     @Test

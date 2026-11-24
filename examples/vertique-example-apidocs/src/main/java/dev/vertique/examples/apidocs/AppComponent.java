@@ -36,8 +36,8 @@ import jakarta.inject.Singleton;
  *   <li>{@link OpenApiDocsModule} — publishes the OpenAPI document of every declared application
  *       annotated {@code @ApiDocs} under {@code /apidocs}</li>
  *   <li>{@link DeployerModule} — verticle deployment multibinding</li>
- *   <li>{@link CoreLifecycleStepsModule} — framework {@code CONFIGURE}/{@code VALIDATE} lifecycle
- *       steps</li>
+ *   <li>{@link CoreLifecycleStepsModule} — framework {@code VALIDATE} compose-validation step and
+ *       {@code AFTER_START} readiness step</li>
  *   <li>{@link AppModule} — the {@code JWTAuth} binding, the HTTP verticle deployment, and the API
  *       documentation page</li>
  *   <li>{@link GeneratedJaxRsResourcesModule} — generated at compile time: the resource bindings and

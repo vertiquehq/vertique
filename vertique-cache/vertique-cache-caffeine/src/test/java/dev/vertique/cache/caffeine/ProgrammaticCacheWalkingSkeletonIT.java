@@ -16,10 +16,13 @@ import dev.vertique.cache.CacheIdentity;
 import dev.vertique.cache.aop.T011CacheCompositionFixtures;
 import dev.vertique.cache.spi.CacheObserver;
 import jakarta.inject.Singleton;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 /** Walking proof for the injected programmatic API on a real Caffeine graph. */
+@Timeout(value = 20, unit = TimeUnit.SECONDS)
 class ProgrammaticCacheWalkingSkeletonIT {
     @Test
     void scalarProgrammaticAndAnnotationCallsShareCaffeineExecution() throws Exception {

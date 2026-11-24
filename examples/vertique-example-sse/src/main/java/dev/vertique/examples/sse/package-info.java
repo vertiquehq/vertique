@@ -11,8 +11,9 @@
  * {@code AppComponentVertiqueComponentFactory} (and its {@code META-INF/services} registration) for
  * that component; at runtime the launcher's bootstrap verticle discovers that factory and the
  * host-neutral lifecycle runner ({@code VertiqueApplicationBootstrap}) builds the component from the
- * pre-resolved {@code config()} tree, runs the framework {@code CONFIGURE}/{@code VALIDATE} steps
- * (Jackson configuration via {@code CoreLifecycleStepsModule}), and deploys the verticles per
+ * pre-resolved {@code config()} tree, runs the {@code CONFIGURE}-phase process JSON codec install
+ * ({@code JsonRuntimeModule}, via {@code RestModule}) and the {@code VALIDATE}-phase compose-validation
+ * step, and deploys the verticles per
  * lifecycle phase ({@link dev.vertique.management.ManagementVerticle} in {@code INFRA}, then
  * {@link dev.vertique.rest.core.router.HttpVerticle} in {@code EDGE}).
  *

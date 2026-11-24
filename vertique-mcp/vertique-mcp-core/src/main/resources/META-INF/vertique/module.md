@@ -30,7 +30,7 @@ Include `vertique-mcp-core` when an application needs to:
 - read immutable MCP lifecycle facts (`McpRequestTerminalEvent`, `McpRequestCompletedEvent`) from
   those extension points.
 
-Pair with `vertique-codegen-mcp` so annotated tools compile to invokers, and install
+Annotated tools compile to invokers through `vertique-codegen-mcp` (in the `vertique-codegen-all` facade); install
 `vertique-mcp-server` (`McpServerModule`) for the HTTP mount and runtime composition. Do not add
 this artifact alone expecting a listening MCP endpoint.
 

@@ -11,7 +11,7 @@
  * {@link dev.vertique.workflow.migration.DefaultWorkflowMigrationRegistry}.
  *
  * <p>The narrow context record passed to each handler, {@link dev.vertique.workflow.migration.MigrationContext},
- * references {@link dev.vertique.workflow.migration.WorkflowHistoryEntrySummary} — a projection
+ * references {@link dev.vertique.workflow.state.WorkflowHistoryEntrySummary} — a projection
  * over the full {@link dev.vertique.workflow.state.WorkflowHistoryEntry} that lives in
  * {@code dev.vertique.workflow.state}.
  *

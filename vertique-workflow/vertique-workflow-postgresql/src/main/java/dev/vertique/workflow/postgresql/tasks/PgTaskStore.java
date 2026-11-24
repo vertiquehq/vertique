@@ -48,9 +48,10 @@ import java.util.UUID;
  * {@link #findByFilter}, which uses the keyset-paged query builder that accepts the pool for
  * read-only access.
  *
- * <p>This implementation is storage-only: it does not perform dedup, does not append history, and
- * does not read or update the {@code workflow_instances} table. The engine
- * ({@link dev.vertique.workflow.engine.WorkflowEngineHandle}) owns those concerns.
+ * <p>This implementation is storage-only: it does not perform dedup and does not append history.
+ * It does not write {@code workflow_instances}; it reads that table for a new task's scope and for
+ * the archive and subject filters. The engine
+ * ({@link dev.vertique.workflow.engine.WorkflowEngineHandle}) owns dedup, history and instance writes.
  *
  * <p>The {@code mark*} methods follow the same compare-and-swap pattern as
  * {@link dev.vertique.workflow.postgresql.timer.PgTimerStore}: an {@code UPDATE … WHERE status='OPEN'}

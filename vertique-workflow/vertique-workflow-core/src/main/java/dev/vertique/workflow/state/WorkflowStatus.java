@@ -11,11 +11,12 @@ package dev.vertique.workflow.state;
  *   <li>{@link #RUNNING} — active; engine is processing transitions</li>
  *   <li>{@link #WAITING} — suspended waiting for an external signal, timer, or human task</li>
  *   <li>{@link #COMPLETED} — terminal; reached a {@code CompleteNode}</li>
- *   <li>{@link #FAILED} — terminal; reached a {@code FailNode} with no compensable steps</li>
+ *   <li>{@link #FAILED} — reached a {@code FailNode} with no compensable steps; not terminal, because an
+ *       operator retry resumes it</li>
  *   <li>{@link #COMPENSATING} — compensation flow in progress after a failure</li>
  *   <li>{@link #COMPENSATED} — terminal; all compensation intents recorded</li>
  *   <li>{@link #CANCELLED} — terminal; cancelled via management API</li>
- *   <li>{@link #EXPIRED} — terminal; TTL exceeded (cycle 2+)</li>
+ *   <li>{@link #EXPIRED} — terminal; reserved: the engine never sets it, though it treats it as ended</li>
  *   <li>{@link #PENDING} — accepted but not yet initialized; not terminal</li>
  * </ul>
  */
@@ -29,7 +30,7 @@ public enum WorkflowStatus {
     /** Terminal: the workflow reached a {@code CompleteNode} successfully. */
     COMPLETED,
 
-    /** Terminal: the workflow failed with no compensable steps to roll back. */
+    /** The workflow failed with no compensable steps to roll back. Not terminal: an operator retry resumes it. */
     FAILED,
 
     /** The compensation flow is in progress following a failure. */
@@ -41,7 +42,7 @@ public enum WorkflowStatus {
     /** Terminal: the workflow was cancelled via a management API call. */
     CANCELLED,
 
-    /** Terminal: the workflow exceeded its configured TTL (cycle 2+). */
+    /** Terminal, but reserved: the engine does not set this status, though it treats it as ended. */
     EXPIRED,
 
     /**

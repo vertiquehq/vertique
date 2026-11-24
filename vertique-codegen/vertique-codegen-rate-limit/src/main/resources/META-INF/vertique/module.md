@@ -17,8 +17,9 @@ remains owned by the generic Vertique AOP processor.
 
 ## When To Use It
 
-Add this artifact to the compiler's annotation-processor path of any application
-that uses `@RateLimited`, alongside the generic AOP processor. Runtime applications
+The `vertique-codegen-all` facade includes this processor transitively, so applications on
+`vertique-app-parent` or the facade that use `@RateLimited` get it automatically, alongside the
+generic AOP processor; list it directly only in a hand-assembled processor path. Runtime applications
 separately declare `vertique-rate-limit-aop` and, for CLUSTERED policies,
 `vertique-rate-limit-redis`.
 

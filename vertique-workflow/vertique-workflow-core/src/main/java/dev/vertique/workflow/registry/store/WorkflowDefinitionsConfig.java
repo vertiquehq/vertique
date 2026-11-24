@@ -11,7 +11,7 @@ import jakarta.annotation.Nullable;
 /**
  * Shared document admission policy, default-scope startup build and publication claim timeout.
  *
- * @param maxDocumentSizeBytes the largest accepted document, in code points; positive, with a representable stored
+ * @param maxDocumentSizeBytes the largest accepted document, in bytes; positive, with a representable stored
  *     envelope
  * @param buildDefaultScopeDocumentsAtStartup whether startup builds the plan of every live default-scope document
  *     into the plan cache ({@code workflow.definitions.buildDefaultScopeDocumentsAtStartup}), so that a document that

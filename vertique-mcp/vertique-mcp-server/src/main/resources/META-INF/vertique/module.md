@@ -168,7 +168,7 @@ settings, with no direct replacement MCP setting.
 
 Install `vertique-mcp-server` when an application should expose an HTTP Model Context Protocol
 mount. Include `McpServerModule` in the Dagger component, bind an immutable `McpServerConfig`, and
-pair with `vertique-codegen-mcp` so `@McpTool` methods become invokers. Require a direct
+rely on `vertique-codegen-mcp` (in the `vertique-codegen-all` facade) so `@McpTool` methods become invokers. Require a direct
 `InputObjectProcessor` binding (for example via `SanitizationModule`) and, when the mount is
 enabled, a qualifying shared HTTP idle or read timeout.
 

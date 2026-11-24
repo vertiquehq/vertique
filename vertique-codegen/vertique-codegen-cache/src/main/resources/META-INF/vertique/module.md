@@ -16,8 +16,9 @@ annotation-processor artifact, not a runtime dependency.
 
 ## When To Use It
 
-Use this artifact in the compile-time processor path of applications that use cache annotations.
-Runtime applications should declare `vertique-cache-aop` and a concrete provider according to
+The `vertique-codegen-all` facade includes this processor transitively, so applications on
+`vertique-app-parent` or the facade get it automatically; list it directly only in a hand-assembled
+processor path. Runtime applications should declare `vertique-cache-aop` and a concrete provider according to
 their composition.
 
 ## Core Concepts

@@ -61,15 +61,15 @@ import java.util.Set;
  *
  * <p>Source-agnostic declarative workflow definitions. Declares:
  * <ul>
- *   <li>11 {@code @Multibinds} methods — one empty-set default per named callback registry, and
+ *   <li>{@code @Multibinds} methods — one empty-set default per named callback registry, and
  *       one for {@link WorkflowDefinitionSource} contributions.</li>
- *   <li>10 {@code @Binds @Singleton} methods — binding each {@code Default*Registry}
+ *   <li>{@code @Binds @Singleton} methods — binding each {@code Default*Registry}
  *       implementation to its corresponding interface.</li>
- *   <li>1 {@code @Binds @Singleton} binding — {@link CelExpressionProfile} to
+ *   <li>a {@code @Binds @Singleton} binding — {@link CelExpressionProfile} to
  *       {@link ExpressionProfile}.</li>
- *   <li>1 {@code @Binds @Singleton} binding — {@link DefaultWorkflowDefinitionService} to
+ *   <li>a {@code @Binds @Singleton} binding — {@link DefaultWorkflowDefinitionService} to
  *       {@link WorkflowDefinitionService}.</li>
- *   <li>1 {@code @Provides @IntoSet @Singleton} method — exposes
+ *   <li>a {@code @Provides @IntoSet @Singleton} method — exposes
  *       {@link WorkflowDefinitionBootstrap} as a {@link WorkflowContributor} into the
  *       core multibinding so it runs at registry construction time.</li>
  *   <li>{@link dev.vertique.workflow.definition.compiler.DecisionRouteCompiler},

@@ -12,8 +12,9 @@
  * that component; at runtime the launcher's bootstrap verticle discovers that factory and the
  * host-neutral lifecycle runner ({@code VertiqueApplicationBootstrap}) builds the component from the
  * pre-resolved {@code config()} tree and drives startup per lifecycle phase. The runner reproduces
- * the legacy choreography: Jackson configuration via {@code CoreLifecycleStepsModule}
- * ({@code CONFIGURE}); the {@code MIGRATE}-phase {@code FlywayMigrationStartupStep} contributed by
+ * the legacy choreography: the {@code CONFIGURE}-phase step of {@code JsonRuntimeModule}
+ * (via {@code RestModule}) installs the process JSON codec; {@code CoreLifecycleStepsModule} contributes the
+ * {@code VALIDATE}-phase compose-validation step and the {@code AFTER_START} readiness step; the {@code MIGRATE}-phase {@code FlywayMigrationStartupStep} contributed by
  * {@code DbFlywayModule} runs the Flyway migration before any verticle deploys (replacing the manual
  * {@code migrationRunner().migrate(vertx)} call); then the management verticle
  * ({@link dev.vertique.management.ManagementVerticle} in {@code INFRA}) and the

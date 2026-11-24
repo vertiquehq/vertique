@@ -28,11 +28,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 /** Clustered cache lifecycle and disabled/readiness composition proof. */
+@Timeout(value = 20, unit = TimeUnit.SECONDS)
 class CacheLifecycleIT {
 
     @Test

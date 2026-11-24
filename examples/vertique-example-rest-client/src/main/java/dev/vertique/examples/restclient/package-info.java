@@ -10,8 +10,8 @@
  * {@code AppComponentVertiqueComponentFactory} (and its {@code META-INF/services} registration) for
  * that component; at runtime the launcher's bootstrap verticle discovers that factory and the
  * host-neutral lifecycle runner ({@code VertiqueApplicationBootstrap}) builds the component from the
- * pre-resolved {@code config()} tree and runs the framework {@code CONFIGURE}/{@code VALIDATE} steps
- * (the process JSON codec install and the compose-validator harness).
+ * pre-resolved {@code config()} tree and runs the {@code CONFIGURE}-phase process JSON codec install
+ * ({@code JsonRuntimeModule}) and the {@code VALIDATE}-phase compose-validation step.
  *
  * <p>This is a pure REST <em>client</em> application — it deploys no verticles. {@code AppComponent}
  * wires {@code VertxModule}, {@code RestClientModule}, {@code DeployerModule},
