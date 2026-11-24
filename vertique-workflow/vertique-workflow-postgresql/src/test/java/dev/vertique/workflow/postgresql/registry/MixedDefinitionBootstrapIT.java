@@ -429,14 +429,14 @@ public class MixedDefinitionBootstrapIT {
     }
 
     @Test
-    @DisplayName("control characters of a source label are escaped in the startup failure message")
-    void escapesControlCharactersOfProvenanceInStartupFailures(Vertx vertx) {
+    @DisplayName("a source label is repeated as packaged in the startup failure message")
+    void repeatsTheSourceLabelAsPackagedInStartupFailures(Vertx vertx) {
         String id = "mixed-bootstrap-static-drift";
 
         try (DefinitionScenario scenario = new DefinitionScenario(vertx, db)) {
             scenario.ownRows(id);
 
-            // Given a stored document row with a different hash, and a packaged label that tries to forge a log line
+            // Given a stored document row with a different hash, and a packaged label that holds a line break
             String text = documentText(id, 1, StaticDriftV1.class);
             scenario.seedDocument(WorkflowScopes.DEFAULT, id, 1, "f".repeat(64), "AVAILABLE", text);
             String label = "forged\r\nERROR injected line";
@@ -444,15 +444,12 @@ public class MixedDefinitionBootstrapIT {
             // When the application starts with that packaged document
             Boot drifted = scenario.attempt(packaged(text, label, Instant.parse("2026-10-18T12:00:00Z")), unobserved());
 
-            // Then startup fails as drift, and the message carries the label with its control characters escaped
+            // Then startup fails as drift, and the message carries the label as it was packaged
             assertThat(drifted.failure())
                     .isNotNull()
                     .isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                         assertThat(failure.reason()).isEqualTo(Reason.DRIFT);
-                        assertThat(failure.getMessage())
-                                .contains("forged\\u000D\\u000AERROR injected line")
-                                .doesNotContain("\r")
-                                .doesNotContain("\n");
+                        assertThat(failure.getMessage()).contains(label);
                     });
             drifted.close();
         }
@@ -1383,15 +1380,12 @@ public class MixedDefinitionBootstrapIT {
             // When the application starts with it
             Boot refused = scenario.attempt(none(), unobserved(), List.of(breaking), null, 10);
 
-            // Then startup fails with a definition error whose message names the escaped id and the version
+            // Then startup fails with a definition error whose message names the id as declared and the version
             assertThat(refused.failure())
                     .as("startup with a code definition that breaks the key rules")
                     .isNotNull()
                     .isInstanceOfSatisfying(WorkflowDefinitionException.class, failure -> {
-                        assertThat(failure.getMessage())
-                                .contains("mixed-bootstrap-key-rules\\u0007id")
-                                .doesNotContain(id)
-                                .containsPattern("\\b7\\b");
+                        assertThat(failure.getMessage()).contains(id).containsPattern("\\b7\\b");
                         assertThat(failure.getCause()).isInstanceOf(IllegalArgumentException.class);
                     });
         }

@@ -24,7 +24,6 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
-import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.SqlClient;
 import jakarta.annotation.Nullable;
@@ -538,9 +537,9 @@ public class InMemoryWorkflowDefinitionRegistryStore
                 .map(defaultRow -> new WorkflowDefinitionContractMismatchException(
                         record.key(),
                         "Scope '" + scope + "' cannot load '" + id + "' under contract '"
-                                + EchoedNames.bounded(record.contractName())
+                                + record.contractName()
                                 + "': the default scope holds it under contract '"
-                                + EchoedNames.bounded(defaultRow.contractName()) + "'"))
+                                + defaultRow.contractName() + "'"))
                 .orElse(null);
     }
 
@@ -557,9 +556,9 @@ public class InMemoryWorkflowDefinitionRegistryStore
                 .map(own -> new WorkflowDefinitionContractMismatchException(
                         target.key(),
                         "Scope '" + activation.scopeKey() + "' holds '" + activation.definitionId()
-                                + "' under contract '" + EchoedNames.bounded(own.contractName())
+                                + "' under contract '" + own.contractName()
                                 + "', so it cannot follow the default scope's version, which implements contract '"
-                                + EchoedNames.bounded(target.contractName()) + "'"))
+                                + target.contractName() + "'"))
                 .orElse(null);
     }
 

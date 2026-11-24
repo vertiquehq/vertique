@@ -5,7 +5,6 @@ package dev.vertique.workflow.exception;
 
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
-import dev.vertique.workflow.types.EchoedNames;
 
 /**
  * Thrown when a workflow instance is pinned to a specific definition version that is no longer
@@ -54,11 +53,11 @@ public class WorkflowVersionPinUnavailableException extends WorkflowUnavailableE
     public WorkflowVersionPinUnavailableException(
             String scopeKey, String definitionId, long version, WorkflowInstanceId instanceId) {
         super("Workflow definition '"
-                + EchoedNames.bounded(definitionId)
+                + definitionId
                 + "' version "
                 + version
                 + " in scope '"
-                + EchoedNames.bounded(scopeKey)
+                + scopeKey
                 + "' is no longer registered"
                 + (instanceId != null
                         ? "; in-flight instance " + instanceId.value()

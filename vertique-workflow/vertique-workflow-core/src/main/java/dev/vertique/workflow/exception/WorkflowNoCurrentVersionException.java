@@ -3,8 +3,6 @@
 
 package dev.vertique.workflow.exception;
 
-import dev.vertique.workflow.types.EchoedNames;
-
 /**
  * Thrown when a start without a version finds no current version: the start scope has no activation record, the
  * default scope has no record either, and the default scope holds no version that can be started.
@@ -49,7 +47,6 @@ public class WorkflowNoCurrentVersionException extends WorkflowDefinitionMissing
 
     @Override
     public String getMessage() {
-        return "Workflow definition '" + EchoedNames.bounded(definitionId) + "' has no current version for scope '"
-                + EchoedNames.bounded(scopeKey) + "'.";
+        return "Workflow definition '" + definitionId + "' has no current version for scope '" + scopeKey + "'.";
     }
 }

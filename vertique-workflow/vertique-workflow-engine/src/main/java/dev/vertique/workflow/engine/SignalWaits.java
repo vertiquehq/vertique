@@ -16,7 +16,6 @@ import dev.vertique.workflow.plan.WaitSignalNode;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowInstance;
-import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.Json;
@@ -316,7 +315,7 @@ final class SignalWaits {
                                         tx)
                                 .onSuccess(done -> log.info(
                                         "Signal '{}' (command {}) of instance {} settled stale: its wait entry closed",
-                                        EchoedNames.bounded(signal.signalName()),
+                                        signal.signalName(),
                                         signal.commandId(),
                                         instance.value())));
     }

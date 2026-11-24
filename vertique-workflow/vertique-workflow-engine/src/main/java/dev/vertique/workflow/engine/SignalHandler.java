@@ -44,7 +44,6 @@ import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
 import dev.vertique.workflow.timer.TimerStore;
-import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.Json;
@@ -249,7 +248,7 @@ final class SignalHandler {
         if (!(node instanceof WaitSignalNode wsn) || !wsn.acceptedSignalNames().contains(signalName)) {
             return Future.failedFuture(new WorkflowDefinitionException("Branch '" + waiting.branchId()
                     + "' currentStepId '" + waiting.currentStepId() + "' is not a WaitSignalNode for signal '"
-                    + EchoedNames.bounded(signalName) + "'"));
+                    + signalName + "'"));
         }
         // Coerce the payload to the declared type.
         Class<?> payloadClass = rw.signalPayloadTypes().get(signalName);
@@ -405,10 +404,10 @@ final class SignalHandler {
         if (!waitsForSignal(rw, ctx.signalName())) {
             return Future.failedFuture(
                     new WorkflowSignalRejectedException("Instance '" + inst.id().value()
-                            + "' cannot receive signal '" + EchoedNames.bounded(ctx.signalName()) + "': '"
+                            + "' cannot receive signal '" + ctx.signalName() + "': '"
                             + rw.plan().definitionId() + "' v"
                             + rw.plan().definitionVersion() + " does not wait for signal '"
-                            + EchoedNames.bounded(ctx.signalName()) + "'"));
+                            + ctx.signalName() + "'"));
         }
 
         // Validate instance is in WAITING status for this signal.
@@ -417,7 +416,7 @@ final class SignalHandler {
                 || !accepts(rw, inst.currentStepId(), inst.waitKey(), ctx.signalName())) {
             return Future.failedFuture(
                     new WorkflowSignalRejectedException("Instance '" + inst.id().value() + "' cannot receive signal '"
-                            + EchoedNames.bounded(ctx.signalName()) + "': status=" + inst.status() + ", waitType="
+                            + ctx.signalName() + "': status=" + inst.status() + ", waitType="
                             + inst.waitType()
                             + ", waitKey=" + inst.waitKey()));
         }
@@ -846,7 +845,7 @@ final class SignalHandler {
             recorded = WorkflowContextBinder.decodeCarrier(command.contextJson());
         } catch (RuntimeException e) {
             return Future.failedFuture(new WorkflowInvalidPayloadException(
-                    "The recorded signal '" + EchoedNames.bounded(signal.name()) + "' cannot be read", List.of()));
+                    "The recorded signal '" + signal.name() + "' cannot be read", List.of()));
         }
         // The binder strips the identity snapshot from every source it binds, so no drive binds an identity from the
         // explicit carrier, the recorded context or an instance carrier recorded before the snapshot was dropped.
@@ -863,9 +862,8 @@ final class SignalHandler {
                             tx));
         }
         if (waiting == null) {
-            return Future.failedFuture(
-                    new WorkflowSignalRejectedException("Instance '" + inst.id().value()
-                            + "' has no branch waiting for signal '" + EchoedNames.bounded(signal.name()) + "'"));
+            return Future.failedFuture(new WorkflowSignalRejectedException(
+                    "Instance '" + inst.id().value() + "' has no branch waiting for signal '" + signal.name() + "'"));
         }
         // A branch drive never binds the recorded context: the explicit carrier with the instance fill, else the
         // branch token's own carrier.
@@ -934,7 +932,7 @@ final class SignalHandler {
             ClaimedCommand claim, SegmentCommand command, SignalTarget signal, String reason, SqlClient tx) {
         log.info(
                 "Signal '{}' (command {}) of instance {} settled stale",
-                EchoedNames.bounded(signal.name()),
+                signal.name(),
                 command.commandId(),
                 command.workflowId().value());
         return commands.stale(command.commandId(), claim.token(), reason, tx)
@@ -1155,7 +1153,7 @@ final class SignalHandler {
             return WorkflowPayloads.coercePayload(payload, payloadClass);
         } catch (RuntimeException e) {
             throw new WorkflowInvalidPayloadException(
-                    "The payload of signal '" + EchoedNames.bounded(signalName) + "' for instance '"
+                    "The payload of signal '" + signalName + "' for instance '"
                             + inst.id().value() + "' does not bind to the declared signal type",
                     List.of());
         }

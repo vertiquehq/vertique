@@ -16,7 +16,6 @@ import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
 import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import dev.vertique.workflow.state.WorkflowInstance;
-import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.Future;
 import io.vertx.core.json.DecodeException;
@@ -114,7 +113,7 @@ final class WorkflowPayloads {
         Class<?> payloadClass = typeNames
                 .find(payloadTypeName)
                 .orElseThrow(() -> new WorkflowDefinitionException(
-                        "Decision payloadTypeName '" + EchoedNames.bounded(payloadTypeName) + "' cannot be resolved"));
+                        "Decision payloadTypeName '" + payloadTypeName + "' cannot be resolved"));
 
         if (payload == null) {
             throw invalidPayload(DECISION_REJECTION, "payload is required", "payload", null);

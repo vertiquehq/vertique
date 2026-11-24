@@ -35,19 +35,18 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Real PostgreSQL proof that a failed start never repeats a caller-supplied definition id or scope raw: the
- * message is cut and sanitized while the typed accessors keep the full identifiers.
+ * Real PostgreSQL proof that a failed start repeats a caller-supplied definition id or scope as supplied: the
+ * message holds the whole text and the typed accessors carry the same identifiers.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class ScopedStartEchoIT {
 
     private static final int GRINNING_FACE = 0x1F600;
-    private static final int ECHO_CODE_POINTS = 64;
 
-    /** An id with a line break, a control character and 10000 supplementary code points after them. */
+    /** An id with a line break, a control character and 100 supplementary code points after them. */
     private static final String HOSTILE_ID = "forged" + "\r\n" + "LOG-LINE" + (char) 7
-            + Character.toString(GRINNING_FACE).repeat(10_000);
+            + Character.toString(GRINNING_FACE).repeat(100);
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_scoped_start_echo_test")
@@ -82,13 +81,8 @@ public class ScopedStartEchoIT {
         }
     }
 
-    private static void assertBoundedAndSanitized(String message) {
-        assertThat(message).as("message").isNotNull().hasSizeLessThan(1_000);
-        assertThat(message.codePoints().noneMatch(Character::isISOControl))
-                .as("no control character in the message")
-                .isTrue();
-        assertThat(message).doesNotContain(Character.toString(GRINNING_FACE).repeat(ECHO_CODE_POINTS + 1));
-        assertThat(message).contains("forged??LOG-LINE?");
+    private static void assertEchoedAsSupplied(String message) {
+        assertThat(message).as("message").isNotNull().contains(HOSTILE_ID);
     }
 
     private static StartCommand command(String definitionId, Long version, String startScope, String targetScope) {
@@ -105,61 +99,61 @@ public class ScopedStartEchoIT {
     }
 
     @Test
-    @DisplayName("an unknown definition id is repeated cut and sanitized")
-    void unknownDefinitionIdIsCutAndSanitized() throws Exception {
+    @DisplayName("an unknown definition id is repeated as supplied")
+    void unknownDefinitionIdIsAsSupplied() throws Exception {
         // Given: an engine that knows only the purchase definition
         Harness harness = ScopedStartFixture.open(pool, new Purchase(ID, 1L, "done"));
 
-        // When: a start names an unknown id with a line break and 10000 code points
+        // When: a start names an unknown id with a line break and a long tail
         Throwable failure = failureOf(() -> harness.engine().start(command(HOSTILE_ID, null, null, null)));
 
-        // Then: it is refused as a missing definition whose message holds the id only cut and sanitized
+        // Then: it is refused as a missing definition whose message holds the id as supplied
         assertThat(failure).isInstanceOf(WorkflowDefinitionMissingException.class);
-        assertBoundedAndSanitized(failure.getMessage());
+        assertEchoedAsSupplied(failure.getMessage());
     }
 
     @Test
-    @DisplayName("a version in a foreign scope is refused with the definition id cut and sanitized")
-    void foreignScopeVersionIsCutAndSanitized() throws Exception {
+    @DisplayName("a version in a foreign scope is refused with the definition id as supplied")
+    void foreignScopeVersionIsAsSupplied() throws Exception {
         // Given: an engine that knows the purchase definition
         Harness harness = ScopedStartFixture.open(pool, new Purchase(ID, 1L, "done"));
 
         // When: acme starts version 1 of a hostile id in globex, a scope it cannot name
         Throwable failure = failureOf(() -> harness.engine().start(command(HOSTILE_ID, 1L, ACME, GLOBEX)));
 
-        // Then: it is refused as a missing definition whose message holds the id only cut and sanitized
+        // Then: it is refused as a missing definition whose message holds the id as supplied
         assertThat(failure).isInstanceOf(WorkflowDefinitionMissingException.class);
-        assertBoundedAndSanitized(failure.getMessage());
+        assertEchoedAsSupplied(failure.getMessage());
     }
 
     @Test
-    @DisplayName("a version that no key can hold is refused with the definition id cut and sanitized")
-    void badVersionIsCutAndSanitizedAndKeepsTheFullIdTyped() throws Exception {
+    @DisplayName("a version that no key can hold is refused with the definition id as supplied")
+    void badVersionIsAsSuppliedAndKeepsTheFullIdTyped() throws Exception {
         // Given: an engine that knows the purchase definition
         Harness harness = ScopedStartFixture.open(pool, new Purchase(ID, 1L, "done"));
 
         // When: a start names an explicit version of an id that no definition key can hold
         Throwable failure = failureOf(() -> harness.engine().start(command(HOSTILE_ID, 1L, null, null)));
 
-        // Then: the unavailable-version refusal holds the id only cut and sanitized
+        // Then: the unavailable-version refusal holds the id as supplied
         assertThat(failure).isInstanceOf(WorkflowVersionPinUnavailableException.class);
-        assertBoundedAndSanitized(failure.getMessage());
+        assertEchoedAsSupplied(failure.getMessage());
         // and: the typed accessor still carries the full id
         assertThat(((WorkflowVersionPinUnavailableException) failure).definitionId())
                 .isEqualTo(HOSTILE_ID);
     }
 
     @Test
-    @DisplayName("a non-positive version is refused with the definition id cut and sanitized")
-    void nonPositiveVersionIsCutAndSanitized() throws Exception {
+    @DisplayName("a non-positive version is refused with the definition id as supplied")
+    void nonPositiveVersionIsAsSupplied() throws Exception {
         // Given: an engine that knows the purchase definition
         Harness harness = ScopedStartFixture.open(pool, new Purchase(ID, 1L, "done"));
 
         // When: a start names version 0 of a hostile id
         Throwable failure = failureOf(() -> harness.engine().start(command(HOSTILE_ID, 0L, null, null)));
 
-        // Then: the refusal holds the id only cut and sanitized
+        // Then: the refusal holds the id as supplied
         assertThat(failure).isInstanceOf(WorkflowVersionPinUnavailableException.class);
-        assertBoundedAndSanitized(failure.getMessage());
+        assertEchoedAsSupplied(failure.getMessage());
     }
 }

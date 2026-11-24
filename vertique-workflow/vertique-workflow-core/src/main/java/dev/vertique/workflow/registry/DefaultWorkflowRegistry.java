@@ -25,7 +25,6 @@ import dev.vertique.workflow.plan.WorkflowPlanValidator;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
-import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.Future;
 import jakarta.inject.Provider;
@@ -567,8 +566,7 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
 
     /** Names a definition version and its scope for a refusal message. */
     private static String describe(String scopeKey, String definitionId, long definitionVersion) {
-        return "'" + EchoedNames.bounded(definitionId) + "' v" + definitionVersion + " in scope '"
-                + EchoedNames.bounded(scopeKey) + "'";
+        return "'" + definitionId + "' v" + definitionVersion + " in scope '" + scopeKey + "'";
     }
 
     /** Atomic publish phase: the write lock is held for the entire multi-step publish. */
@@ -603,7 +601,7 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                     throw new WorkflowDefinitionException("definition "
                             + describe(scopeKey, definitionId, definitionVersion)
                             + " has another state type than the earlier versions of '"
-                            + EchoedNames.bounded(definitionId)
+                            + definitionId
                             + "' in that scope; every version of a definition in a scope must have the same state"
                             + " type");
                 }
@@ -649,7 +647,7 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
             return;
         }
         String subject = "definition " + describe(scopeKey, definitionId, scopeOwnedVersion)
-                + " has another state type than the default scope's '" + EchoedNames.bounded(definitionId)
+                + " has another state type than the default scope's '" + definitionId
                 + "' of the same contract";
         if (stateCompatibility.isEmpty()) {
             throw new WorkflowDefinitionException(subject
@@ -955,13 +953,10 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
 
     /**
      * Describes the undeclared signals for an error message: the first {@value #MAX_REPORTED_SIGNALS} names in
-     * sorted order, each cut and sanitized because document authors supply them, and a count of the rest.
+     * sorted order, repeated as supplied, and a count of the rest.
      */
     private static String describeMissing(SortedSet<String> missing) {
-        String named = missing.stream()
-                .limit(MAX_REPORTED_SIGNALS)
-                .map(EchoedNames::bounded)
-                .collect(Collectors.joining(", "));
+        String named = missing.stream().limit(MAX_REPORTED_SIGNALS).collect(Collectors.joining(", "));
         int rest = missing.size() - MAX_REPORTED_SIGNALS;
         return rest > 0 ? named + ", and " + rest + " more" : named;
     }

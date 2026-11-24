@@ -12,7 +12,6 @@ import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import dev.vertique.workflow.state.WorkflowInstance;
-import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.json.Json;
 import io.vertx.sqlclient.SqlClient;
@@ -196,7 +195,7 @@ final class WorkflowHistoryRecorder {
             SqlClient tx) {
         return history.nextSequence(workflowId, tx).compose(seq -> {
             String payload = Json.encode(new SignalCommandHistoryPayload(
-                    commandId, "SIGNAL", EchoedNames.bounded(signalName), decisions.redactReason(reason, tx)));
+                    commandId, "SIGNAL", signalName, decisions.redactReason(reason, tx)));
             return history.append(new WorkflowHistoryEntry(workflowId, seq, type, payload, clock.instant()), tx);
         });
     }
@@ -252,11 +251,7 @@ final class WorkflowHistoryRecorder {
             SqlClient tx) {
         return history.nextSequence(workflowId, tx).compose(seq -> {
             String payload = Json.encode(new CompletionCommandHistoryPayload(
-                    commandId,
-                    "COMPLETION",
-                    taskId,
-                    EchoedNames.bounded(decisionName),
-                    decisions.redactReason(reason, tx)));
+                    commandId, "COMPLETION", taskId, decisionName, decisions.redactReason(reason, tx)));
             return history.append(new WorkflowHistoryEntry(workflowId, seq, type, payload, clock.instant()), tx);
         });
     }

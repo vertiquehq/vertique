@@ -159,8 +159,7 @@ public interface TransactionalWorkflowOperations<TX> {
      * unsettled command, timer and task of the instance is cancelled with it.
      *
      * @param id id of the workflow instance to cancel
-     * @param reason human-readable reason for the cancellation; cut at 255 code points, with its control characters
-     *     replaced, before it is stored
+     * @param reason human-readable reason for the cancellation; stored as supplied
      * @param tx the active transaction context
      * @return a {@link Future} that completes when the instance has been transitioned to
      *     {@code CANCELLED}

@@ -925,36 +925,23 @@ class WorkflowRegistryTest {
     }
 
     @Test
-    @DisplayName("the refusal repeats a document-supplied signal name cut and without control characters")
-    void refusalCutsAndSanitizesHostileSignalNames() {
+    @DisplayName("the refusal repeats a document-supplied signal name exactly as supplied")
+    void refusalRepeatsSignalNamesAsSupplied() {
         // Given: definitions waiting for undeclared signals whose names carry a line break, a control
-        // character and 10000 supplementary code points, and one name of exactly 64 plain code points
+        // character and supplementary code points, and one name longer than 64 plain code points
         String hostile = "audit" + "\r\n" + "FORGED-LOG-LINE" + (char) 7
-                + Character.toString(GRINNING_FACE).repeat(10_000);
-        String plain64 = "p".repeat(64);
-        String plain65 = plain64 + "q";
+                + Character.toString(GRINNING_FACE).repeat(100);
+        String plain65 = "p".repeat(65);
 
         // When: each registers
         Throwable hostileRefusal = catchThrowable(() -> registry.register(new ManyUndeclaredWaits(hostile)));
-        Throwable plain64Refusal = catchThrowable(() -> registry.register(new ManyUndeclaredWaits(plain64)));
         Throwable plain65Refusal = catchThrowable(() -> registry.register(new ManyUndeclaredWaits(plain65)));
 
-        // Then: the hostile name is cut, holds no control character and no lone surrogate, and is still
-        // recognizable by its start; the message stays short
+        // Then: the refusal repeats each name whole, with its control characters and without a cut marker
         assertThat(hostileRefusal).isInstanceOf(WorkflowDefinitionException.class);
-        String message = hostileRefusal.getMessage();
-        assertThat(message.codePoints().noneMatch(Character::isISOControl))
-                .as("no control characters in the refusal")
-                .isTrue();
-        assertThat(message.codePoints().noneMatch(cp -> cp >= 0xD800 && cp <= 0xDFFF))
-                .as("no unpaired surrogate")
-                .isTrue();
-        assertThat(message).hasSizeLessThan(1_000).contains("audit??FORGED-LOG-LINE?");
-        assertThat(message).doesNotContain(Character.toString(GRINNING_FACE).repeat(100));
-
-        // and: a name of 64 code points is repeated whole, one of 65 is cut at 64
-        assertThat(plain64Refusal.getMessage()).contains(plain64).doesNotContain(plain65);
-        assertThat(plain65Refusal.getMessage()).contains(plain64).doesNotContain(plain65);
+        assertThat(hostileRefusal.getMessage()).contains(hostile);
+        assertThat(plain65Refusal).isInstanceOf(WorkflowDefinitionException.class);
+        assertThat(plain65Refusal.getMessage()).contains(plain65).doesNotContain(plain65 + "...");
     }
 
     @Test

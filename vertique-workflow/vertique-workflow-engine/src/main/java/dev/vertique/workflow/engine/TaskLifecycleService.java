@@ -65,7 +65,6 @@ import dev.vertique.workflow.tasks.TaskRecord;
 import dev.vertique.workflow.tasks.TaskStore;
 import dev.vertique.workflow.tasks.TaskTransition;
 import dev.vertique.workflow.timer.TimerStore;
-import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
@@ -591,8 +590,7 @@ final class TaskLifecycleService {
             if (schema == null) {
                 recordValidator.validate(cmd.payload());
             } else {
-                recordValidator.validate(
-                        cmd.payload(), schema, "decision '" + EchoedNames.bounded(cmd.decisionName()) + "'");
+                recordValidator.validate(cmd.payload(), schema, "decision '" + cmd.decisionName() + "'");
             }
         } catch (WorkflowInvalidPayloadException e) {
             throw new WorkflowInvalidPayloadException(
@@ -656,7 +654,7 @@ final class TaskLifecycleService {
             }
             if (!Objects.equals(cmd.reviewedSubjectVersion(), locked.subjectVersionAtCreation())) {
                 return new WorkflowStaleSubjectVersionException("Task '" + cmd.taskId() + "' (step '"
-                        + locked.stepId() + "'): reviewed version '" + EchoedNames.bounded(cmd.reviewedSubjectVersion())
+                        + locked.stepId() + "'): reviewed version '" + cmd.reviewedSubjectVersion()
                         + "' is not the version the task was created for");
             }
         }
@@ -1040,7 +1038,7 @@ final class TaskLifecycleService {
             if (!Objects.equals(cmd.reviewedSubjectVersion(), task.subjectVersionAtCreation())) {
                 return Future.failedFuture(
                         new WorkflowStaleSubjectVersionException("Task '" + cmd.taskId() + "' (step '" + htn.stepId()
-                                + "'): reviewed version '" + EchoedNames.bounded(cmd.reviewedSubjectVersion())
+                                + "'): reviewed version '" + cmd.reviewedSubjectVersion()
                                 + "' is not the version the task was created for"));
             }
         }
@@ -1278,7 +1276,7 @@ final class TaskLifecycleService {
                                     return Future.failedFuture(new WorkflowStaleSubjectVersionException(
                                             "Branch task '" + taskId + "' (step '" + htn.stepId()
                                                     + "'): reviewed version '"
-                                                    + EchoedNames.bounded(cmd.reviewedSubjectVersion())
+                                                    + cmd.reviewedSubjectVersion()
                                                     + "' is not the version the task was created for"));
                                 }
                             }

@@ -64,15 +64,15 @@ class CommandErrorsTest {
     }
 
     @Test
-    @DisplayName("control characters of a message become spaces")
-    void controlCharactersBecomeSpaces() {
+    @DisplayName("a message is appended as supplied, control characters included")
+    void aMessageIsAppendedAsSupplied() {
         // Given a message with a newline and a tab
 
         // When it is formatted
         String value = CommandErrors.format(Reason.DETERMINISTIC_FAILURE, "a\nb\tc");
 
-        // Then none remains
-        assertThat(value).isEqualTo("DETERMINISTIC_FAILURE: a b c");
+        // Then it is unchanged
+        assertThat(value).isEqualTo("DETERMINISTIC_FAILURE: a\nb\tc");
     }
 
     @Test

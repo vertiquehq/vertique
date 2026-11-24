@@ -168,7 +168,7 @@ public sealed interface WorkflowHistoryEvent {
      *
      * @param entryInfo    the shared entry information
      * @param taskId       the task
-     * @param decisionName the name of the decision that was applied, bounded
+     * @param decisionName the name of the decision that was applied
      */
     record TaskDecided(EntryInfo entryInfo, UUID taskId, String decisionName) implements WorkflowHistoryEvent {}
 

@@ -17,7 +17,6 @@ import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
-import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.Future;
 import io.vertx.core.json.JsonObject;
@@ -219,8 +218,8 @@ final class DefaultWorkflowPayloadSchemas implements WorkflowPayloadSchemas {
                 log.warn(
                         "Definition scope '{}' id '{}' version {} is reported as unknown because its plan does not"
                                 + " load: {}",
-                        EchoedNames.bounded(key.scopeKey()),
-                        EchoedNames.bounded(key.definitionId()),
+                        key.scopeKey(),
+                        key.definitionId(),
                         key.definitionVersion(),
                         failure.getClass().getName());
                 log.debug("Plan load failure", failure);
