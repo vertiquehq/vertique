@@ -13,6 +13,7 @@ import dev.vertique.resilience.ResolvedResiliencePolicy;
 import dev.vertique.resilience.TimeoutConfig;
 import dev.vertique.resilience.adapter.AdapterOperationIdentity;
 import dev.vertique.resilience.exception.ResilienceException;
+import dev.vertique.resilience.exception.ResilienceTimeoutException;
 import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.authz.AccessPolicy;
@@ -396,7 +397,7 @@ public final class ServiceAuthorizationInterceptor implements ServiceInterceptor
                 // The Authorizer contract forbids a failed future for a normal deny; map a
                 // contract-violating failure to a fail-closed INTERNAL_AUTHZ_ERROR deny.
                 .otherwise(t -> {
-                    if (t instanceof ResilienceException) {
+                    if (t instanceof ResilienceException || t instanceof ResilienceTimeoutException) {
                         // The deadline elapsed or the runtime closed; the exception carries no more.
                         log.warn(
                                 "[{}] Authorizer did not answer for action {}; failing closed",
