@@ -282,8 +282,8 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
         if (MODE_AGGREGATE.equals(validationMode)) {
             return false;
         }
-        throw new RestConfigurationException("Invalid jaxrs.validationMode '" + validationMode
-                + "'; allowed values are {" + MODE_AGGREGATE + ", " + MODE_FAIL_FAST + "} (case-sensitive)");
+        throw new RestConfigurationException("Invalid jaxrs.validationMode; allowed values are {" + MODE_AGGREGATE
+                + ", " + MODE_FAIL_FAST + "} (case-sensitive)");
     }
 
     @Override
