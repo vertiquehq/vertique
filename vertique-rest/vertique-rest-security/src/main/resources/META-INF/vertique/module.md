@@ -782,7 +782,7 @@ public Future<Response> handle(jakarta.ws.rs.core.SecurityContext sc) { ... }
 
 | Annotation | Effect |
 |---|---|
-| `@DenyAll` | Always 403. A method-level `@DenyAll` overrides a class-level `@PermitAll`, `@RolesAllowed` or `@Authorized`. At the same level, `@DenyAll` together with `@PermitAll`, `@RolesAllowed` or `@Authorized` is a conflict, and so is `@DenyAll` together with `@RequiresAction` even across levels. A conflict fails the build (generated descriptors) or startup (reflective scan) |
+| `@DenyAll` | An authenticated caller gets 403 whatever its roles. An unauthenticated caller (no credentials, or an invalid token) is refused by authentication first, with 401. A method-level `@DenyAll` overrides a class-level `@PermitAll`, `@RolesAllowed` or `@Authorized`. At the same level, `@DenyAll` together with `@PermitAll`, `@RolesAllowed` or `@Authorized` is a conflict, and so is `@DenyAll` together with `@RequiresAction` even across levels. A conflict fails the build (generated descriptors) or startup (reflective scan) |
 | `@PermitAll` | No authorization handler installed |
 | `@RolesAllowed("a", "b")` | OR — any one listed role is sufficient |
 | `@Authorized(scopes = "write")` | The listed scope is required |

@@ -189,6 +189,22 @@ public class AuthSecurityIT {
     }
 
     @Test
+    @DisplayName("GET /hello/denied returns 401 without an Authorization header (DenyAll)")
+    void denyAllEndpointReturns401WithoutCredentials() {
+        given().when().get("/hello/denied").then().statusCode(401);
+    }
+
+    @Test
+    @DisplayName("GET /hello/denied returns 401 for an invalid bearer token (DenyAll)")
+    void denyAllEndpointReturns401WithInvalidToken() {
+        given().header("Authorization", "Bearer not-a-valid-token")
+                .when()
+                .get("/hello/denied")
+                .then()
+                .statusCode(401);
+    }
+
+    @Test
     @DisplayName("GET /hello/scoped requires both 'user' role and 'write' scope")
     void scopedEndpointRequiresBothRoleAndScope() {
         String token = generateToken("testuser", List.of("user"), "read write");
