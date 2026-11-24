@@ -8,8 +8,11 @@ import dagger.Module;
 /**
  * Dagger module that contributes OpenTelemetry REST span enrichment components via multibinding.
  *
- * <p>Install this module alongside {@code RestCoreModule} (or {@code RestModule}) in the
- * application's Dagger component:
+ * <p>Install this module in a Dagger component that also installs the JAX-RS REST module
+ * ({@code vertique-rest-jaxrs}, for example through {@code RestModule}). Installing it beside
+ * {@code RestCoreModule} alone enriches nothing: only the JAX-RS route registrar and router mount
+ * run the contributed {@code OperationHandlerContributor} and {@code RequestInterceptor} sets, so
+ * the per-operation and outcome enrichment applies to JAX-RS routes only.
  *
  * <pre>{@code
  * @Component(modules = {

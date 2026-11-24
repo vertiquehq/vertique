@@ -729,8 +729,9 @@ public class VertiqueApplication extends VertxApplication implements VertxApplic
     /**
      * Returns the {@link BootstrapShutdown} coordinator, constructing a fallback instance if
      * {@link #createVertxBuilder} never completed (e.g. CLI usage errors, or an abort between a
-     * successful bootstrap load and the eager construction — a malformed {@code vertx.options}
-     * section or a contributor-discovery failure).
+     * successful bootstrap load and the eager construction, such as a contributor-discovery
+     * failure). A malformed {@code vertx.options} overlay is not such a window: it is detected in
+     * {@link #beforeStartingVertx}, after the coordinator already exists.
      *
      * <p>Uses {@link AtomicReference#compareAndSet} so all racing callers share exactly one
      * instance. The fallback carries any property sources from a completed bootstrap load so

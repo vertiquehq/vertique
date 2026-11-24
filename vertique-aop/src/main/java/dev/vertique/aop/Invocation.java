@@ -47,10 +47,9 @@ public interface Invocation {
      * underlying {@code super.method(...)} call.
      *
      * <p>Re-entrant by construction: each call independently invokes the downstream chain from this
-     * position, with the continuation captured per-call rather than as a mutated shared index. v1
-     * aspects call it exactly once; building it re-entrant lets a future deferring aspect (for
-     * example a retry) call it {@code 0..n} times with no SPI change. The result is normalized to a
-     * {@link Future}.
+     * position, with the continuation captured per-call rather than as a mutated shared index. Most
+     * aspects call it exactly once; a deferring aspect such as the resilience retry calls it
+     * {@code 0..n} times. The result is normalized to a {@link Future}.
      *
      * @return a future of the downstream result
      */

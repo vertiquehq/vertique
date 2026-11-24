@@ -32,8 +32,8 @@ public @interface Retry {
     /**
      * Returns the custom backoff class, or the sentinel for inline parameters.
      * Custom strategies are instantiated reflectively by consumers and must expose
-     * a public no-argument constructor; consumers report construction failures as
-     * an {@link IllegalStateException}.
+     * a public no-argument constructor; a construction failure surfaces as a
+     * {@link dev.vertique.resilience.exception.ResiliencePolicyException} from the policy resolver.
      *
      * @return the custom backoff class
      */

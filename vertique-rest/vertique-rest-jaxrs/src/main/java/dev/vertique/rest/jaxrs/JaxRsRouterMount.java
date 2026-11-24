@@ -508,7 +508,7 @@ public class JaxRsRouterMount implements RouterMount {
 
         // Mount API-scoped middlewares with explicit order so they execute before the per-operation
         // handlers (which get auto-orders starting from 0+).
-        // BodyHandler: MIN_VALUE, request interceptors: MIN_VALUE + 1, middlewares:
+        // BodyHandler: MIN_VALUE, upload cleanup: MIN_VALUE + 1, request interceptors: MIN_VALUE + 2, middlewares:
         // MIN_VALUE + 100 + <position in the OrderedExtension-sorted list>. Using the sorted index
         // (not priority()) makes the Vert.x route order honor the full OrderedExtension contract
         // (phase -> priority -> orderKey), not priority alone.

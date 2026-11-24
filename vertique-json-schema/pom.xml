@@ -98,9 +98,9 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
         <!--
           Test scope only: exercises MetadataConstraintSource against a real Bean Validation
-          implementation. Production code recognizes Hibernate's @Length/@Range/@URL by annotation
-          simple name alone, never by importing hibernate-validator's constraint classes, so the
-          metadata source stays usable with any Jakarta Validation provider.
+          implementation. Production code recognizes Hibernate's @Length/@Range/@URL by their
+          fully-qualified annotation type names, never by importing hibernate-validator's constraint
+          classes, so the metadata source stays usable with any Jakarta Validation provider.
         -->
         <dependency>
             <groupId>org.hibernate.validator</groupId>

@@ -20,7 +20,7 @@ import java.util.stream.Collectors;
  * {@link AuthorizationConfig}.
  *
  * <p>This source is the config-aware counterpart to the in-memory programmatic default in
- * {@code vertique-core}. It parses the {@code authorization.policies} section of the application
+ * {@code vertique-security-runtime}. It parses the {@code authorization.policies} section of the application
  * config into {@link PolicyDefinition} objects at construction time.
  *
  * <p>Startup validation is inherited from

@@ -320,7 +320,7 @@ final class KafkaRecordDispatcher {
      *
      * <p>Before constructing the dispatch envelope, inbound Kafka record headers are bound into
      * the current {@link dev.vertique.core.context.ContextHolder} scope via
-     * {@link InboundExecutionContextScope#installDurable(Map, String)}. The substrate
+     * {@link InboundExecutionContextScope#installDurable(dev.vertique.core.context.DurableMetadata, String)}. The substrate
      * helper also runs registered {@code InboundContextInitializer}s — notably the correlation
      * seeder, so records arriving without an encoded CorrelationContext still get a freshly seeded
      * one bound. The scope is closed in the terminal handler of the dispatch future

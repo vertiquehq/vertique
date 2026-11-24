@@ -30,8 +30,9 @@ import jakarta.inject.Singleton;
  *
  * <p>This module installs {@link JsonRuntimeModule} so the
  * {@link JsonMapperProfileRegistry} and {@link JsonConfig} are available to the JSON serde provider
- * and to {@link KafkaDefaultProfileValidator}. The serde provider applies the three-tier precedence:
- * per-endpoint bag id &gt; {@code json.jsonProfile} global default &gt; {@code vertx} floor.
+ * and to {@link KafkaDefaultProfileValidator}. The serde provider applies a two-tier precedence:
+ * per-endpoint bag id &gt; {@code json.jsonProfile} global default, which itself floors to the reserved
+ * {@code vertique} profile when unconfigured.
  */
 @Module(includes = JsonRuntimeModule.class)
 public abstract class KafkaJsonModule {
@@ -42,7 +43,8 @@ public abstract class KafkaJsonModule {
      * {@link JsonConfig} so it can resolve named JSON mapper profiles selected per endpoint and apply
      * the global {@code json.jsonProfile} tier when no per-endpoint id is set.
      *
-     * @param registry the JSON mapper profile registry used to resolve non-{@code vertx} profile ids
+     * @param registry the JSON mapper profile registry used to resolve every profile id, including the reserved
+     *                 {@code system} and {@code vertique} ids
      * @param jsonConfig the global JSON config carrying {@code json.jsonProfile}
      * @return the {@link JsonSerdeProvider} instance
      */

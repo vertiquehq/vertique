@@ -252,9 +252,10 @@ class VertxAwareAppenderTest {
     }
 
     @Test
-    @DisplayName("drops an INFO event once the queue fill exceeds the default discarding threshold")
+    @DisplayName("drops an INFO event once the remaining queue capacity falls below the default discarding threshold")
     void shouldDropLowPriorityEventAboveDiscardingThreshold() throws Exception {
-        // Given: an appender with a queue of 10 (default threshold: 20% of the queue size) whose delegate
+        // Given: an appender with a queue of 10 (default threshold: 20% of the queue size, applied to the remaining
+        // capacity) whose delegate
         // holds the worker thread until released, so the queue fills
         CountDownLatch workerBusy = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
@@ -292,7 +293,9 @@ class VertxAwareAppenderTest {
         List<String> delivered = holding.events().stream()
                 .map(ILoggingEvent::getFormattedMessage)
                 .toList();
-        assertFalse(delivered.contains("low-priority"), "an INFO event should be discarded above the threshold");
+        assertFalse(
+                delivered.contains("low-priority"),
+                "an INFO event should be discarded once remaining capacity is below the threshold");
     }
 
     // --- Inner test double ---

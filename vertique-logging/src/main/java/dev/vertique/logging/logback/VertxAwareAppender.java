@@ -109,8 +109,9 @@ public class VertxAwareAppender extends AsyncAppenderBase<ILoggingEvent> {
     }
 
     /**
-     * Marks events at INFO level or below (TRACE, DEBUG, INFO) as droppable once the queue fill passes
-     * the {@code discardingThreshold}; WARN and ERROR events are always kept while the queue has room.
+     * Marks events at INFO level or below (TRACE, DEBUG, INFO) as droppable once the queue's remaining
+     * capacity falls below the {@code discardingThreshold} (default one fifth of the queue size); WARN and ERROR
+     * events are always kept while the queue has room.
      *
      * @param event the event being queued
      * @return {@code true} when the event's level is INFO or lower

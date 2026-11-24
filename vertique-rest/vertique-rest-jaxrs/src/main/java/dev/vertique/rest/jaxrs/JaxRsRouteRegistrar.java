@@ -113,11 +113,19 @@ import lombok.extern.slf4j.Slf4j;
  *       Multiple alternative requirements are an OpenAPI OR, composed into a single
  *       {@link AuthenticationOrChain#any()} (a request satisfying any one is authenticated) rather
  *       than chained sequentially — see {@code applySecurity}.</li>
+ *   <li>The authentication-stage {@link OperationHandlerContributor}s (those whose
+ *       {@link OperationHandlerContributor#authenticationStage()} is {@code true}): contributors that
+ *       authenticate the caller outside the operation's declared security schemes, or check the
+ *       authenticated credential. They run right after the scheme handler(s), so an unauthenticated
+ *       or rejected credential gets a 401 before any request content is examined.</li>
  *   <li>A {@code @Consumes} 415-check handler — installed only when the operation declares a
  *       non-empty {@code @Consumes} list; rejects requests whose {@code Content-Type} does not
  *       match any declared consume via wildcard-aware {@link MediaType#isCompatible} matching.</li>
+ *   <li>A small handler that stashes the resolved request-body JSON profile mapper on the routing
+ *       context — installed only when the profile's mapper differs from the process codec's.</li>
  *   <li>The validation gate produced by the selected {@link RequestValidationStrategy} (when present).</li>
- *   <li>The sorted {@link OperationHandlerContributor}s (identity, authorization, etc.).</li>
+ *   <li>The remaining sorted {@link OperationHandlerContributor}s (authorization, security context,
+ *       etc.), those that are not authentication-stage ones.</li>
  *   <li>The terminal {@link ResourceMethodInvoker}.</li>
  * </ol>
  *

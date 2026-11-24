@@ -11,9 +11,9 @@ import java.util.Objects;
  * engine.
  *
  * <p>Sources are aggregated via Dagger {@code @IntoSet} multibinding and consulted once at startup.
- * The framework ships an in-memory, programmatic default in {@code vertique-core}; a config/YAML-backed
- * source lives in a separate config-aware module so that {@code vertique-core} stays free of any
- * configuration dependency.
+ * The framework ships an in-memory, programmatic default in {@code vertique-security-runtime}; a config/YAML-backed
+ * source lives in {@code vertique-security-config} so that {@code vertique-security-core} and
+ * {@code vertique-security-runtime} stay free of any configuration dependency.
  *
  * <p>The policies a source contributes are validated against the {@link ActionRegistry} at startup:
  * every exact action a policy references must be registered, and every wildcard must match at least

@@ -950,8 +950,9 @@ public final class RestClientBuilder {
         T builtProxy;
         try {
             // Build the governed client: one per built proxy, from the effective options. The client adds
-            // no timer, body bound, header validation, egress policy or credentials of its own; the
-            // per-method pipeline and the REST interceptors own those concerns. It is created inside the
+            // no timer, body bound, egress policy or credentials of its own, and its only header
+            // check is rejecting a header name or value that holds CR, LF or NUL; the per-method pipeline
+            // and the REST interceptors own the other concerns. It is created inside the
             // try so that a failure of anything built after it closes it.
             httpClient = buildHttpClient(effectiveWebClientOptions, effectivePoolOptions);
             RestClientInterceptorChain interceptorChain =

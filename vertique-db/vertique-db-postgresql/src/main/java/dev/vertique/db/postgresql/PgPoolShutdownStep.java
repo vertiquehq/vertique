@@ -12,7 +12,9 @@ import jakarta.inject.Singleton;
 
 /**
  * Application shutdown contribution that closes the PostgreSQL connection pool this module
- * provides, after the other shutdown steps and before verticles are undeployed.
+ * provides. Shutdown steps run in reverse lifecycle order, so the pool closes after the steps of
+ * the same and later phases and before verticles are undeployed; steps of earlier phases (for
+ * example {@code MIGRATE}) still run after it.
  *
  * <p>The step owns only the pool {@link DbPostgresqlModule} creates. The application host owns
  * {@link io.vertx.core.Vertx}, so stopping this step never closes the host runtime.
