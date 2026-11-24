@@ -14,10 +14,12 @@ import java.util.List;
  * INTERNAL: installs framework-owned synthetic operations through the resource security chain.
  *
  * <p>An installed route runs exactly the chain an equally annotated JAX-RS resource method gets:
- * the scheme's authentication handler, then the authentication-stage {@code OperationHandlerContributor}s,
+ * the scheme's authentication handler (none for a public typed operation that names no scheme),
+ * then the authentication-stage {@code OperationHandlerContributor}s,
  * then every other registered contributor in resource order with the same effective security policy, then the caller's terminal handler. The
  * contributors receive a descriptor that reports the synthetic security annotations the policy is
- * built from, the literal route path as its route template, no media types, and no required action.
+ * built from, the literal route path as its route template, no media types, and the action the operation's typed policy requires, if
+ * any.
  *
  * <p>The route ends every failure itself: a 4xx or 5xx answers with an {@code
  * application/problem+json} body {@code {"type":"about:blank","title":<reason phrase>,"status":<code>}}
@@ -35,7 +37,8 @@ public interface SyntheticOperationInstaller {
 
     /**
      * Installs one route answering {@code methods} at {@code path} on {@code router}: the
-     * scheme's authentication handler, the authentication-stage {@code OperationHandlerContributor}s,
+     * scheme's authentication handler (none for a public typed operation that names no scheme), the
+     * authentication-stage {@code OperationHandlerContributor}s,
      * every other registered contributor in resource order with the effective policy of an equally annotated resource method, then
      * {@code terminal}.
      *
@@ -61,7 +64,9 @@ public interface SyntheticOperationInstaller {
      * @param path      the literal route path, also reported as the operation's route template
      * @param methods   the HTTP methods the route answers; the first is the operation's primary
      *                  method; never empty
-     * @param operation the synthetic operation describing origin, id, scheme, application, and roles
+     * @param operation the synthetic operation describing origin, id, scheme (empty only for a public typed
+     *                  operation), application, and its access: authenticated-only, restricted to
+     *                  roles, or governed by a typed {@code AccessPolicy}
      * @param terminal  the handler run after authentication and every contributor have passed
      * @throws RestConfigurationException message prefixed by operation.origin(), before any route
      *     exists, for every condition a resource route would fail on; also, with the failure as its
