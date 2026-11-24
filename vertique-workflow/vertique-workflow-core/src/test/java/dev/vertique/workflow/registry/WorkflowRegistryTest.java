@@ -386,6 +386,37 @@ class WorkflowRegistryTest {
         }
     };
 
+    /** Invalid definition: a timer whose next step does not exist. */
+    static final WorkflowDefinition<OrderState, OrderSagaContract> DEF_TIMER_UNKNOWN_NEXT = new WorkflowDefinition<>() {
+        @Override
+        public Class<OrderSagaContract> contract() {
+            return OrderSagaContract.class;
+        }
+
+        @Override
+        public Class<OrderState> stateType() {
+            return OrderState.class;
+        }
+
+        @Override
+        public String definitionId() {
+            return "timer-def";
+        }
+
+        @Override
+        public long definitionVersion() {
+            return 1L;
+        }
+
+        @Override
+        public void define(WorkflowBuilder<OrderState> wf) {
+            wf.init(StartCmd.class, cmd -> new OrderState(cmd.id()))
+                    .initialStep("pause")
+                    .timer("pause", Duration.ofMinutes(1))
+                    .toStep("missing-step");
+        }
+    };
+
     private DefaultWorkflowRegistry registry;
 
     @BeforeEach
@@ -452,6 +483,48 @@ class WorkflowRegistryTest {
             assertThatThrownBy(() -> registry.register(DEF_DUPLICATE_SIGNAL))
                     .isInstanceOf(WorkflowDefinitionException.class)
                     .hasMessageContaining("same.signal");
+        }
+    }
+
+    @Nested
+    @DisplayName("refusals name the definition")
+    class RefusalNames {
+
+        @Test
+        @DisplayName("a builder refusal names the definition id, version and scope and keeps the original text")
+        void shouldNameDefinitionInBuilderRefusal() {
+            Throwable thrown = catchThrowable(() -> registry.register(DEF_NO_INIT));
+
+            assertThat(thrown)
+                    .isExactlyInstanceOf(WorkflowDefinitionException.class)
+                    .hasMessageStartingWith("definition 'bad-def' v1 in scope '" + WorkflowScopes.DEFAULT + "': ")
+                    .hasMessageContaining("init(");
+            assertThat(thrown.getCause()).isInstanceOf(WorkflowDefinitionException.class);
+        }
+
+        @Test
+        @DisplayName("a timer that names an unknown next step is refused naming the definition once")
+        void shouldNameDefinitionForUnknownTimerTarget() {
+            Throwable thrown = catchThrowable(() -> registry.register(DEF_TIMER_UNKNOWN_NEXT));
+
+            assertThat(thrown)
+                    .isExactlyInstanceOf(WorkflowDefinitionException.class)
+                    .hasMessageContaining("'timer-def' v1 in scope '" + WorkflowScopes.DEFAULT + "'")
+                    .hasMessageContaining("missing-step");
+            assertThat(thrown.getMessage().split("'timer-def' v1", -1)).hasSize(2);
+        }
+
+        @Test
+        @DisplayName("a plan validator refusal that already names the definition is not labelled again")
+        void shouldNotLabelARefusalThatAlreadyNamesTheDefinition() {
+            var validated = new DefaultWorkflowRegistry(new dev.vertique.workflow.plan.WorkflowPlanValidator(
+                    new dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry(java.util.Set.of())));
+
+            Throwable thrown = catchThrowable(() -> validated.register(DEF_DUPLICATE_SIGNAL));
+
+            assertThat(thrown).isExactlyInstanceOf(WorkflowDefinitionException.class);
+            assertThat(thrown.getMessage()).doesNotStartWith("definition ");
+            assertThat(thrown.getMessage().split("'dup-signal-def' v1", -1)).hasSize(2);
         }
     }
 
