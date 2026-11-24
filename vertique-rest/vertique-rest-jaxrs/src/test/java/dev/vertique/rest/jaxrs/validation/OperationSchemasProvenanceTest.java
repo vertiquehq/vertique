@@ -24,8 +24,6 @@ import org.junit.jupiter.api.TestFactory;
  * earlier two-argument call on the same builder), and {@code toBuilder()} copies the body, its
  * provenance, and every parameter schema into an independent builder without ever changing the
  * instance it came from.
- *
- * <p>TP-001 and TP-005 of {@code docs/specs/rest-022-application-scoped-openapi/tasks/T003-manifest-carrier.md}.
  */
 class OperationSchemasProvenanceTest {
 

@@ -34,7 +34,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Exercises the T022 {@link McpServerSpanObserver} contract (contract §4.10 amendment): the span is
+ * Exercises the T022 {@link McpServerSpanObserver} contract: the span is
  * captured exactly once, at {@code open}, and every enrichment — including the optional body-trace
  * link — lands on that exact retained span, never on whatever span (if any) is current at callback
  * time. No span is ever created or renamed.

@@ -20,7 +20,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Proves the supported filesystem config path for this example (vertique-dev#19).
+ * Proves the supported filesystem config path for this example.
  *
  * <p>Config lives at the module root ({@code config/application.json}), not under
  * {@code src/main/resources/config}. Surefire uses the module basedir as cwd. The documented

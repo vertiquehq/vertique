@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Verifies that a method declared by a superclass inherits JAX-RS annotations from interfaces the
- * resource class implements (vertiquehq/vertique-dev#636).
+ * resource class implements.
  *
  * <p>Jakarta REST treats the resource-class member as implementing the interface method; the
  * reflective scanner must therefore walk the resource class's interfaces, not only the

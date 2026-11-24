@@ -57,14 +57,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Framework wiring and argument shapes for {@link McpUnmergedAllOfAcceptanceIT}: the gap-3c89fb8e
- * false-reject fixtures. {@code HJ03} is a discriminator-carrying polymorphic property whose
+ * Framework wiring and argument shapes for {@link McpUnmergedAllOfAcceptanceIT}: the false-reject
+ * fixtures. {@code HJ03} is a discriminator-carrying polymorphic property whose
  * subtypes' generated {@code allOf} parts victools cannot consolidate (the discriminator {@code kind}
  * is declared on both the base and each subtype, once as {@code const} and once as a plain string);
  * {@code UW2UnwrappedAlias} is a {@code @JsonUnwrapped} child whose definition provider leaves an
  * {@code allOf} part carrying the child's own properties. Both are copied verbatim (identifiers kept)
- * from {@code evidence/proof-harness/deser-validation-bv/src/probe/Shapes.java} under
- * {@code docs/specs/rest-021-deserializer-driven-schema-description/} (HJ03, J03Base, J03AnySub,
+ * from the probe harness that measured the pre-fix rejection (HJ03, J03Base, J03AnySub,
  * J03PlainSub, UW2AliasChild, UW2UnwrappedAlias).
  *
  * <p>Every tool here is composed through the real {@link McpToolRuntimeFactory}, so its published

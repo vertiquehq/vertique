@@ -49,8 +49,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Tests for multi-value {@code @FormParam} collection binding, frozen in
- * {@code docs/plans/feat-param-shape-parity.md} §4 decisions 2–6 (slice S5). Mirrors
+ * Tests for multi-value {@code @FormParam} collection binding. Mirrors
  * {@link SetAndArrayQueryParamBindTest}'s and {@link CollectionParamStateMachineTest}'s style: most
  * tests build a {@link ResourceMethodMeta.ParamMeta} directly so they exercise
  * {@link ParameterExtractor}'s FORM extraction against the <em>declared</em> collection type.

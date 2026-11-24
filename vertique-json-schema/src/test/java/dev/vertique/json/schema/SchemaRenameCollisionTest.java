@@ -25,7 +25,7 @@ import org.junit.jupiter.api.function.Executable;
 /**
  * A member walked by the schema library that Jackson does not attach to any property, renamed with
  * {@code @Schema(name = ...)} to a name another Jackson property already carries, is refused rather
- * than described with that other property's visibility and wire name (vertiquehq/vertique-dev#596).
+ * than described with that other property's visibility and wire name.
  */
 class SchemaRenameCollisionTest {
 

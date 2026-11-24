@@ -38,7 +38,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Exercises the T021 Micrometer MCP observer contract (contract §4.10): the frozen request timer,
+ * Exercises the T021 Micrometer MCP observer contract: the frozen request timer,
  * active gauge, validation-failures counter, and tool-call timer, with bounded low-cardinality
  * dimensions and no payload, identity, or trace-id label.
  *

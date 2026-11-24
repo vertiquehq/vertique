@@ -70,7 +70,7 @@ import org.junit.jupiter.api.Timeout;
  * determinism claim</strong>: {@link McpWritePhaseSettlementTest} proves the identical settlement race
  * deterministically by owning the write future directly, with no socket at all.
  *
- * <p>Per the caution in {@code docs/specs/mcp-001-server-support/tasks/T013-*.md}: the response here
+ * <p>The response here
  * is a real {@link io.vertx.core.http.HttpServerResponse} throughout — no mock, no stubbed {@code
  * ended()} value — and {@code reset()} failing a pending {@code end()} future is never assumed;
  * whichever transport-cancellation classification the coordinator's own first-observed-wins guard

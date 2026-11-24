@@ -48,7 +48,7 @@ public final class McpToolRuntimeFactoryTestSupport {
      * when {@code null}).
      *
      * <p>Used by a proof whose tool needs a profile other than the resolver's own tail — e.g. one
-     * explicitly selected to be {@code Optional}-materialization-incapable (contract §4.1), to prove
+     * explicitly selected to be {@code Optional}-materialization-incapable, to prove
      * the canary still fails startup for a genuinely incapable profile regardless of which profile the
      * zero-config tail resolves to.
      *

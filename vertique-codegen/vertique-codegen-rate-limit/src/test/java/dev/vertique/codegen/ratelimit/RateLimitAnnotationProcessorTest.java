@@ -26,8 +26,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * TP-001/TP-002 — the frozen T008 contract matrix for {@link RateLimitAnnotationProcessor}
- * ({@code docs/specs/ratelimit-001-runtime-and-rest-adapter/tasks/T008-compile-time-annotation-validation.md}).
+ * TP-001/TP-002 — the compile-time annotation validation matrix for
+ * {@link RateLimitAnnotationProcessor}.
  *
  * <p>Every row compiles one inline fixture once with the real processor. The valid declaration must
  * compile and generate zero sources; every declared invalid declaration must fail with a diagnostic

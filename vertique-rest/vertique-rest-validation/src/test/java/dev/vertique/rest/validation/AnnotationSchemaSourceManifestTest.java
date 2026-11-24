@@ -51,9 +51,6 @@ import org.junit.jupiter.api.TestFactory;
  * {@code ##default} sentinel strip, and that a source which replaces or edits the body — including a
  * decorator using {@link OperationSchemas#toBuilder()} or the one-argument builder form — carries no
  * provenance, or carries a manifest that no longer matches.
- *
- * <p>TP-002 to TP-004 of
- * {@code docs/specs/rest-022-application-scoped-openapi/tasks/T003-manifest-carrier.md}.
  */
 class AnnotationSchemaSourceManifestTest {
 

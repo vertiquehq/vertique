@@ -190,7 +190,7 @@ class AnnotationResolverTest {
         void viewTypeIncludesResourceInterfaces() throws NoSuchMethodException {
             // SuperclassBase.delete is declared by a class that implements nothing; ResourceView
             // implements AnnotatedApi. Resolving with the declaring class misses @TestMethodAnno;
-            // resolving with the resource view finds it (vertiquehq/vertique-dev#636).
+            // resolving with the resource view finds it.
             Method inherited = SuperclassBase.class.getMethod("delete", String.class);
 
             List<java.lang.annotation.Annotation> fromDeclaring =

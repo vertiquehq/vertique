@@ -74,7 +74,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * T027 TP-001 — runs the pinned official conformance runner against exactly MCP-001's ten-id
+ * Runs the pinned official conformance runner against exactly the ten-id
  * supported server partition. The longer timeout is deliberate: the first bounded runner process
  * installs the exact committed npm lock before executing; later scenario processes reuse that
  * target-local installation.

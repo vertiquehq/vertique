@@ -129,7 +129,7 @@ The released MCP surface targets the final `2026-07-28` protocol and carries a s
 conformance claim for discovery, tool listing, and tool calls. Its canonical module references
 define the exact HTTP, configuration, generated-code, authorization, validation, lifecycle, and
 observability contracts. Transport families and operation families outside that documented scope
-are not part of MCP-001.
+are outside the released MCP surface.
 
 Start with the [`vertique-mcp-server` module reference](vertique-mcp/vertique-mcp-server/src/main/resources/META-INF/vertique/module.md)
 and the complete [module index](docs/modules.md).

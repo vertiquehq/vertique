@@ -77,7 +77,7 @@ class BigDecimalModelConverterTest {
     /**
      * {@link FutureModelConverter} restarts resolution after unwrap, so {@link
      * BigDecimalModelConverter} sees the inner {@link BigDecimal} whether it sits ahead of or
-     * behind Future in the chain (see {@code vertiquehq/vertique-dev#395}).
+     * behind Future in the chain.
      */
     @Test
     @DisplayName("BigDecimal nested inside Future<T> resolves to the decimal string schema in either chain order")

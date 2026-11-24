@@ -79,7 +79,7 @@ import org.mockito.ArgumentCaptor;
  * (an {@code @Inject}-only constructor, resolved through a Dagger-aware {@link
  * ConstraintValidatorFactory}) do not yet run at the MCP tool-input boundary.
  *
- * <p>{@code McpBeanValidation} (stage 4 of the fixed request-time input pipeline, contract §4.7)
+ * <p>{@code McpBeanValidation} (stage 4 of the fixed request-time input pipeline)
  * bootstraps its one shared {@link Validator} through the static {@link
  * Validation#buildDefaultValidatorFactory()}, which resolves every {@link ConstraintValidator} by
  * reflection only (no-arg constructor). A {@link ConstraintValidator} whose only constructor is

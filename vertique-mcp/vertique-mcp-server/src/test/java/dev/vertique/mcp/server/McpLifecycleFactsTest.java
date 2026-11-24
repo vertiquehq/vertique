@@ -195,7 +195,7 @@ class McpLifecycleFactsTest {
         assertThat(terminal.errorType()).isEqualTo(McpErrorType.AUTHENTICATION);
         assertThat(terminal.protocolVersion())
                 .as("DECISIVE: a request rejected before negotiation ever ran carries no negotiated "
-                        + "version — 'or that it negotiated nothing' (contract §4.7)")
+                        + "version — 'or that it negotiated nothing'")
                 .isNull();
         assertCorrelationPresent(terminal);
         assertThat(terminal.authorization())

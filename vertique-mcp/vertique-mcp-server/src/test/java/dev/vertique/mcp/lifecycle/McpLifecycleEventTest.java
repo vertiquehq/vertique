@@ -752,7 +752,7 @@ class McpLifecycleEventTest {
                                 null,
                                 RequestOrigin.unknown())),
                 // R05 (issue #431): a null protocolVersion is always legal — "emit only when negotiation
-                // completed" (contract §4.7) means every rejection path this repair did not touch (and
+                // completed" means every rejection path this repair did not touch (and
                 // every request that never negotiates) must still construct cleanly.
                 Arguments.of("a null protocolVersion", (ThrowingConstruction) () -> McpRequestTerminalEvent.success(
                         STARTED_AT,

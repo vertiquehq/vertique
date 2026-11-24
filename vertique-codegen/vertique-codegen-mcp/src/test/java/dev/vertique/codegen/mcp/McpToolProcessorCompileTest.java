@@ -2786,8 +2786,8 @@ class McpToolProcessorCompileTest {
         }
 
         /**
-         * A compiled stub of {@code dev.vertique.mcp.server.runtime.McpToolRuntimeFactory} (MCP-001
-         * P04 remediation): every generated invoker's {@code @Inject} constructor now takes one as a
+         * A compiled stub of {@code dev.vertique.mcp.server.runtime.McpToolRuntimeFactory}:
+         * every generated invoker's {@code @Inject} constructor now takes one as a
          * parameter and calls {@code create(...)} on it to obtain its runtime binding. Same rationale
          * and constraint as {@link #mcpToolParameterMetadataStub()} — {@code vertique-mcp-server}
          * cannot become a dependency of this module.
@@ -2822,12 +2822,12 @@ class McpToolProcessorCompileTest {
         }
 
         /**
-         * A compiled stub of {@code dev.vertique.mcp.server.runtime.McpToolRuntime} (MCP-001 P04
-         * remediation): every generated invoker retains one, obtained from
+         * A compiled stub of {@code dev.vertique.mcp.server.runtime.McpToolRuntime}:
+         * every generated invoker retains one, obtained from
          * {@link #mcpToolRuntimeFactoryStub()}, and calls {@code descriptor()},
          * {@code materializeArguments(...)}, and {@code fieldNameResolver()} on it. An Optional-reaching
          * tool's invoker additionally calls {@code verifyOptionalMaterialization(...)} once during
-         * construction (R03, contract §4.1). Same rationale and constraint as
+         * construction. Same rationale and constraint as
          * {@link #mcpToolParameterMetadataStub()}.
          *
          * @return the {@code dev.vertique.mcp.server.runtime.McpToolRuntime} stub source
@@ -2870,8 +2870,8 @@ class McpToolProcessorCompileTest {
         }
 
         /**
-         * A compiled stub of {@code dev.vertique.input.processing.InputObjectProcessor} (MCP-001 P04
-         * remediation): every generated invoker's {@code @Inject} constructor now takes one as a
+         * A compiled stub of {@code dev.vertique.input.processing.InputObjectProcessor}:
+         * every generated invoker's {@code @Inject} constructor now takes one as a
          * parameter and calls {@code precomputeFieldNameResolution(...)} once during construction and
          * {@code processInput(...)} once per {@code prepare()}. {@code vertique-input-processing} is
          * deliberately not a dependency of this module for the same reason
@@ -2905,9 +2905,9 @@ class McpToolProcessorCompileTest {
         }
 
         /**
-         * A compiled stub of {@code dev.vertique.input.processing.EffectiveInputPolicies} (MCP-001 P04
-         * remediation): every generated invoker's {@code prepare()} passes the frozen {@code NONE}
-         * literal to {@code processInput(...)} (contract §4.1 — declared per-field policies are
+         * A compiled stub of {@code dev.vertique.input.processing.EffectiveInputPolicies}:
+         * every generated invoker's {@code prepare()} passes the frozen {@code NONE}
+         * literal to {@code processInput(...)} (declared per-field policies are
          * discovered from the carrier's own annotations, never passed as invocation-level policies).
          * Same rationale and constraint as {@link #inputObjectProcessorStub()}.
          *
