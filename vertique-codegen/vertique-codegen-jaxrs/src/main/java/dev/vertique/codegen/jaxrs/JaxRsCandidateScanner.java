@@ -62,7 +62,8 @@ public final class JaxRsCandidateScanner {
     /**
      * Adds {@code typeElement} when it is a candidate, then descends into its static nested types.
      * A non-static inner class cannot be constructed without an enclosing instance, so neither it nor
-     * anything nested inside it is a candidate.
+     * anything nested inside it is a candidate; a private nested type is skipped too, with everything
+     * inside it, because generated code cannot reference it.
      */
     private static void collect(
             TypeElement typeElement, EffectiveJaxRsContractResolver resolver, Set<TypeElement> out) {
@@ -72,7 +73,9 @@ public final class JaxRsCandidateScanner {
             out.add(typeElement);
         }
         for (Element enclosed : typeElement.getEnclosedElements()) {
-            if (enclosed instanceof TypeElement nested && nested.getModifiers().contains(Modifier.STATIC)) {
+            if (enclosed instanceof TypeElement nested
+                    && nested.getModifiers().contains(Modifier.STATIC)
+                    && !nested.getModifiers().contains(Modifier.PRIVATE)) {
                 collect(nested, resolver, out);
             }
         }

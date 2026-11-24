@@ -452,6 +452,38 @@ class JaxRsPipelineProcessorTest {
                             """));
 
             result.assertFailed();
+            result.assertErrorMessage("@GET");
+        }
+
+        @Test
+        @DisplayName("private static nested and non-static inner @Path classes are not candidates")
+        void privateAndInnerResources_areNotCandidates() {
+            var result = ProcessorTestHarness.run(
+                    new JaxRsPipelineProcessor(), SourceFiles.inline("dev.vertique.test.Outer", """
+                            package dev.vertique.test;
+
+                            import jakarta.ws.rs.GET;
+                            import jakarta.ws.rs.POST;
+                            import jakarta.ws.rs.Path;
+
+                            public class Outer {
+                                @Path("/private")
+                                private static class Hidden {
+                                    @GET
+                                    @POST
+                                    public String both() { return ""; }
+                                }
+
+                                @Path("/inner")
+                                public class Inner {
+                                    @GET
+                                    @POST
+                                    public String both() { return ""; }
+                                }
+                            }
+                            """));
+
+            result.assertSuccess();
         }
     }
 
