@@ -75,7 +75,9 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -853,26 +855,45 @@ public class JaxRsRouteRegistrar {
     @Nullable
     private static RequestBodyDecoder claimingApplicationDecoder(
             ResourceMethodMeta meta, ResourceMethodMeta.ParamMeta param, List<RequestBodyDecoder> decoders) {
-        List<String> declared = meta.mediaTypes().consumes();
-        List<String> probes = new ArrayList<>();
-        if (declared.isEmpty()) {
-            probes.add(null);
-            probes.add("application/json");
-            probes.add("application/x-www-form-urlencoded");
-        } else {
-            probes.addAll(declared);
+        Set<String> probes = new LinkedHashSet<>();
+        probes.add(null);
+        probes.add("application/json");
+        probes.add("application/x-www-form-urlencoded");
+        for (String declared : meta.mediaTypes().consumes()) {
+            probes.add(declared);
+            int parameters = declared.indexOf(';');
+            String bare = (parameters < 0 ? declared : declared.substring(0, parameters))
+                    .trim()
+                    .toLowerCase(Locale.ROOT);
+            probes.add(bare);
+            if (bare.contains("*")) {
+                // A wildcard admits the JSON and form types the engine binds itself.
+                probes.add("application/json");
+                probes.add("text/plain");
+            }
         }
         for (String contentType : probes) {
             if (!ParameterExtractor.engineBindsInline(param.type(), contentType)) {
                 continue;
             }
-            RequestBodyDecoder claiming =
-                    ParameterExtractor.claimingApplicationDecoder(decoders, param.type(), contentType);
+            RequestBodyDecoder claiming = claimingDecoderOrNull(decoders, param.type(), contentType);
             if (claiming != null) {
                 return claiming;
             }
         }
         return null;
+    }
+
+    @Nullable
+    private static RequestBodyDecoder claimingDecoderOrNull(
+            List<RequestBodyDecoder> decoders, Class<?> type, @Nullable String contentType) {
+        try {
+            return ParameterExtractor.claimingApplicationDecoder(decoders, type, contentType);
+        } catch (RuntimeException e) {
+            // A decoder that cannot answer for a probe value does not claim it; the request-time check
+            // is the enforcement.
+            return null;
+        }
     }
 
     /**

@@ -99,6 +99,26 @@ class ApplicationDecoderPolicyStartupTest {
         }
     }
 
+    @Path("/wildcard")
+    @PermitAll
+    static class WildcardResource {
+        @POST
+        @Consumes("*/*")
+        public Future<String> create(GovernedBody body) {
+            return Future.succeededFuture(body.name());
+        }
+    }
+
+    @Path("/parameterised")
+    @PermitAll
+    static class ParameterisedResource {
+        @POST
+        @Consumes("Application/JSON;charset=UTF-8")
+        public Future<String> create(GovernedBody body) {
+            return Future.succeededFuture(body.name());
+        }
+    }
+
     /** An application decoder with a configurable claim and priority. */
     private static final class AppDecoder implements RequestBodyDecoder {
         private final int priority;
@@ -228,5 +248,32 @@ class ApplicationDecoderPolicyStartupTest {
         assertThrows(
                 ConfigurationException.class,
                 () -> register(new FieldPolicyResource(), List.of(json, new JsonRequestBodyDecoder())));
+    }
+
+    @Test
+    @DisplayName("a wildcard @Consumes admits JSON, so a catch-all decoder fails startup")
+    void wildcardConsumesFails() {
+        assertThrows(
+                ConfigurationException.class,
+                () -> register(new WildcardResource(), List.of(claimsEverything(), new JsonRequestBodyDecoder())));
+    }
+
+    @Test
+    @DisplayName("a declared type with a parameter and different case is probed in its bare form too")
+    void parameterisedConsumesFails() {
+        RequestBodyDecoder exactJson = new AppDecoder(0, (type, contentType) -> "application/json".equals(contentType));
+
+        assertThrows(
+                ConfigurationException.class,
+                () -> register(new ParameterisedResource(), List.of(exactJson, new JsonRequestBodyDecoder())));
+    }
+
+    @Test
+    @DisplayName("a decoder that throws for a probe value does not claim it and does not break startup")
+    void throwingDecoderDoesNotBreakStartup() {
+        RequestBodyDecoder throwing = new AppDecoder(0, (type, contentType) -> contentType.isEmpty());
+
+        assertDoesNotThrow(() -> register(new NoPolicyResource(), List.of(throwing, new JsonRequestBodyDecoder())));
+        assertDoesNotThrow(() -> register(new FieldPolicyResource(), List.of(throwing, new JsonRequestBodyDecoder())));
     }
 }

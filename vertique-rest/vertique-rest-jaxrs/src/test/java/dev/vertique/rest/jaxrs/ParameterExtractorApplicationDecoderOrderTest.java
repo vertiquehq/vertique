@@ -4,13 +4,17 @@
 package dev.vertique.rest.jaxrs;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.sanitization.Sanitizer;
@@ -54,10 +58,18 @@ class ParameterExtractorApplicationDecoderOrderTest {
     public record Person(
             @Sanitize(UppercasingSanitizer.class) String name) {}
 
-    /** Resource fixture whose method takes the body. */
+    /** Body that declares no policy anywhere. */
+    public record Plain(String name) {}
+
+    /** Resource fixture whose methods take the bodies. */
     static final class Resource {
         @SuppressWarnings("unused")
         public String create(Person body) {
+            return body.name();
+        }
+
+        @SuppressWarnings("unused")
+        public String createPlain(Plain body) {
             return body.name();
         }
     }
@@ -66,10 +78,13 @@ class ParameterExtractorApplicationDecoderOrderTest {
     private static final class ApplicationDecoder implements RequestBodyDecoder {
         private final int priority;
         private final AtomicInteger decoded = new AtomicInteger();
-        private final Person result = new Person("from-application-decoder");
+        private final Object result;
+        private final Class<?> claimed;
 
-        ApplicationDecoder(int priority) {
+        ApplicationDecoder(int priority, Class<?> claimed) {
             this.priority = priority;
+            this.claimed = claimed;
+            this.result = claimed == Plain.class ? new Plain("from-application-decoder") : new Person("from-decoder");
         }
 
         @Override
@@ -79,7 +94,7 @@ class ParameterExtractorApplicationDecoderOrderTest {
 
         @Override
         public boolean canDecode(Class<?> targetType, String contentType) {
-            return targetType == Person.class;
+            return targetType == claimed;
         }
 
         @Override
@@ -94,14 +109,18 @@ class ParameterExtractorApplicationDecoderOrderTest {
     }
 
     private static ParameterExtractor extractor(List<RequestBodyDecoder> decoders) throws Exception {
-        Method create = Resource.class.getDeclaredMethod("create", Person.class);
+        return extractor(decoders, Person.class);
+    }
+
+    private static ParameterExtractor extractor(List<RequestBodyDecoder> decoders, Class<?> bodyType) throws Exception {
+        Method create = Resource.class.getDeclaredMethod(bodyType == Plain.class ? "createPlain" : "create", bodyType);
         ResourceMethodMeta meta = new ResourceMethodMeta(
                 new Resource(),
                 create,
                 "create",
                 "POST",
                 "/people",
-                List.of(new ResourceMethodMeta.ParamMeta("body", ResourceMethodMeta.ParamSource.BODY, Person.class)),
+                List.of(new ResourceMethodMeta.ParamMeta("body", ResourceMethodMeta.ParamSource.BODY, bodyType)),
                 String.class,
                 false,
                 false,
@@ -133,9 +152,13 @@ class ParameterExtractorApplicationDecoderOrderTest {
     }
 
     private static Object decode(ParameterExtractor extractor, String contentType) {
+        return decode(extractor, contentType, Person.class);
+    }
+
+    private static Object decode(ParameterExtractor extractor, String contentType, Class<?> bodyType) {
         return extractor.deserializeBody(
                 RequestValue.of(new JsonObject().put("name", "ada")),
-                Person.class,
+                bodyType,
                 null,
                 context(contentType),
                 EffectiveInputPolicies.NONE);
@@ -144,9 +167,12 @@ class ParameterExtractorApplicationDecoderOrderTest {
     @Test
     @DisplayName("an application decoder ahead of the framework decoders decodes a JSON body")
     void applicationDecoderDecodesJson() throws Exception {
-        ApplicationDecoder application = new ApplicationDecoder(0);
+        ApplicationDecoder application = new ApplicationDecoder(0, Plain.class);
 
-        Object result = decode(extractor(List.of(application, new JsonRequestBodyDecoder())), "application/json");
+        Object result = decode(
+                extractor(List.of(application, new JsonRequestBodyDecoder()), Plain.class),
+                "application/json",
+                Plain.class);
 
         assertSame(application.result, result);
         assertEquals(1, application.decoded.get());
@@ -155,11 +181,12 @@ class ParameterExtractorApplicationDecoderOrderTest {
     @Test
     @DisplayName("an application decoder ahead of the framework decoders decodes a form body")
     void applicationDecoderDecodesForm() throws Exception {
-        ApplicationDecoder application = new ApplicationDecoder(0);
+        ApplicationDecoder application = new ApplicationDecoder(0, Plain.class);
 
         Object result = decode(
-                extractor(List.of(application, new FormUrlencodedRequestBodyDecoder())),
-                "application/x-www-form-urlencoded");
+                extractor(List.of(application, new FormUrlencodedRequestBodyDecoder()), Plain.class),
+                "application/x-www-form-urlencoded",
+                Plain.class);
 
         assertSame(application.result, result);
         assertEquals(1, application.decoded.get());
@@ -168,7 +195,7 @@ class ParameterExtractorApplicationDecoderOrderTest {
     @Test
     @DisplayName("an application decoder behind the framework decoders stays a fallback")
     void applicationDecoderBehindFrameworkDecodersIsNotAsked() throws Exception {
-        ApplicationDecoder fallback = new ApplicationDecoder(2000);
+        ApplicationDecoder fallback = new ApplicationDecoder(2000, Person.class);
 
         Object result = decode(extractor(List.of(new JsonRequestBodyDecoder(), fallback)), "application/json");
 
@@ -211,7 +238,7 @@ class ParameterExtractorApplicationDecoderOrderTest {
         RequestBodyDecoder nullDecoder = new RequestBodyDecoder() {
             @Override
             public boolean canDecode(Class<?> targetType, String contentType) {
-                return targetType == Person.class;
+                return targetType == Plain.class;
             }
 
             @Override
@@ -220,7 +247,10 @@ class ParameterExtractorApplicationDecoderOrderTest {
             }
         };
 
-        assertNull(decode(extractor(List.of(nullDecoder, new JsonRequestBodyDecoder())), "application/json"));
+        assertNull(decode(
+                extractor(List.of(nullDecoder, new JsonRequestBodyDecoder()), Plain.class),
+                "application/json",
+                Plain.class));
     }
 
     @Test
@@ -243,5 +273,39 @@ class ParameterExtractorApplicationDecoderOrderTest {
                         RequestValue.of("raw"), String.class, null, context("text/plain"), EffectiveInputPolicies.NONE);
 
         assertEquals("decoded-by-application", result);
+    }
+
+    @Test
+    @DisplayName("an application decoder claiming a body whose type declares a chain is refused at request time")
+    void claimedBodyWithDeclaredChainIsRefused() throws Exception {
+        ApplicationDecoder application = new ApplicationDecoder(0, Person.class);
+
+        ParameterExtractor extractor = extractor(List.of(application, new JsonRequestBodyDecoder()));
+
+        for (String contentType : List.of("application/json", "application/vnd.api+json", "Application/JSON; v=2")) {
+            ConfigurationException failure =
+                    assertThrows(ConfigurationException.class, () -> decode(extractor, contentType));
+            assertTrue(failure.getMessage().contains(ApplicationDecoder.class.getName()), failure.getMessage());
+            assertFalse(failure.getMessage().contains(contentType), "the message carries no request value");
+        }
+        assertEquals(0, application.decoded.get(), "the decoder must not run");
+    }
+
+    @Test
+    @DisplayName("a claimed body with a route-level chain and no declared type policy is refused too")
+    void claimedBodyWithRouteLevelChainIsRefused() throws Exception {
+        ApplicationDecoder application = new ApplicationDecoder(0, Plain.class);
+        ParameterExtractor extractor = extractor(List.of(application, new JsonRequestBodyDecoder()), Plain.class);
+        EffectiveInputPolicies routeChain = new EffectiveInputPolicies(List.of(), List.of(UppercasingSanitizer.class));
+
+        assertThrows(
+                ConfigurationException.class,
+                () -> extractor.deserializeBody(
+                        RequestValue.of(new JsonObject().put("name", "ada")),
+                        Plain.class,
+                        null,
+                        context("application/json"),
+                        routeChain));
+        assertEquals(0, application.decoded.get(), "the decoder must not run");
     }
 }

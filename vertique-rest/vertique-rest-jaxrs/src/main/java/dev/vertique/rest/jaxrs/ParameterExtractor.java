@@ -4,6 +4,7 @@
 package dev.vertique.rest.jaxrs;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.sanitization.Canonicalize;
 import dev.vertique.core.sanitization.Canonicalizer;
@@ -86,6 +87,7 @@ final class ParameterExtractor {
     private final List<RequestBodyDecoder> decoders;
     private final RestContextResolution restContextResolution;
     private final @Nullable InputObjectProcessor objectProcessor;
+    private final ConcurrentHashMap<java.lang.reflect.Type, Boolean> declaresBodyPolicies = new ConcurrentHashMap<>();
 
     /**
      * The wire &rarr; Java property-name projection applied to every OBJECT body this route processes.
@@ -1137,6 +1139,16 @@ final class ParameterExtractor {
         if (objectProcessor != null && isStructuredBodyTarget(targetType)) {
             RequestBodyDecoder applicationDecoder = claimingApplicationDecoder(decoders, targetType, contentType);
             if (applicationDecoder != null) {
+                if (engineBindsInline(targetType, contentType)
+                        && (!policies.isEmpty() || bodyDeclaresPolicies(targetType, genericType))) {
+                    // Startup probes a bounded set of content types; this is the enforcement. The message
+                    // carries no request value.
+                    throw new ConfigurationException("A declared canonicalizer or sanitizer chain cannot run on"
+                            + " a body decoded by "
+                            + applicationDecoder.getClass().getName() + " (operationId="
+                            + meta.operationId() + "): give the decoder a priority above 1100, narrow its canDecode,"
+                            + " or remove the declared policies");
+                }
                 return applicationDecoder.decode(ctx, body, targetType, genericType);
             }
         }
@@ -1326,6 +1338,19 @@ final class ParameterExtractor {
             }
         }
         return null;
+    }
+
+    /**
+     * Returns whether the body type's own graph declares a canonicalizer or sanitizer chain, computed once
+     * per type: the query walks the type graph with a throw-away metadata cache.
+     *
+     * @param targetType  the raw body class
+     * @param genericType the generic body type, or {@code null}
+     * @return {@code true} when the type or a type reachable from it declares a chain
+     */
+    private boolean bodyDeclaresPolicies(Class<?> targetType, @Nullable java.lang.reflect.Type genericType) {
+        java.lang.reflect.Type declared = genericType != null ? genericType : targetType;
+        return declaresBodyPolicies.computeIfAbsent(declared, InputObjectProcessor::declaresPolicies);
     }
 
     /**

@@ -270,14 +270,19 @@ order and the first decoder that claims the body decodes it. The engine binds a 
 `String` body inline, standing in for the framework's own decoders, so an application decoder that sorts ahead
 of them (the default priority `0` does) and claims the body decodes it instead, and the engine never sees it:
 a route-, parameter- or type-level `@Canonicalize` or `@Sanitize` would not run on what the decoder returns.
-Rather than skip it silently, startup fails with a `ConfigurationException` that names each such route and the
-decoder, when the engine is bound and a body parameter declares a chain (on the route, the parameter, or the
-fields of its type) that a decoder claims. The check probes the route's `@Consumes` types, or the JSON,
-form-urlencoded and absent types when none is declared, and only the content types the engine would bind inline;
-a decoder for another content type, such as `text/csv`, is not affected. To resolve it, give the decoder a
-priority above `1100` so it sits behind the framework decoders and never claims a JSON or form body they
-accept, narrow its `canDecode`, or remove the declared policies and clean the value inside `decode`. A route
-that declares no chain is unaffected, and so is an application with no engine bound.
+Rather than skip it silently, the framework refuses in two places. **At startup**, when the engine is bound
+and a body parameter declares a chain (on the route, the parameter, or the fields of its type) that a decoder
+claims, startup fails with a `ConfigurationException` naming each such route and the decoder; the check probes
+the route's declared `@Consumes` types (also without parameters and in lower case, and the JSON and form types
+for a wildcard), plus the JSON, form-urlencoded and absent types, and ignores a probe a decoder cannot answer.
+**At request time**, the same refusal is the enforcement: a request whose body such a decoder claims, in a
+content type the engine would have bound itself, fails with a `ConfigurationException` (a 500 with the fixed
+message, which names the decoder and never the request's content type) before the decoder runs. A decoder for
+a content type the engine does not bind inline, such as `text/csv` with a POJO target, is not covered by either
+check and is decoded as before, without the chains. To resolve a refusal, give the decoder a priority above
+`1100` so it sits behind the framework decoders and never claims a JSON or form body they accept, narrow its
+`canDecode`, or remove the declared policies and clean the value inside `decode`. A route that declares no
+chain is unaffected, and so is an application with no engine bound.
 
 A policy declared on a parameter the engine never sees — a `@Context` parameter, a `RequestPreconditions`
 parameter, or a raw multipart `FileUpload` / `EntityPart` parameter (including a `@FormParam` of those
