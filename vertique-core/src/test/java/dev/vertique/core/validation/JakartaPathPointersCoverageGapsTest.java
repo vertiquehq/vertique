@@ -31,7 +31,7 @@ import org.junit.jupiter.api.Test;
 @DisplayName("JakartaPathPointers coverage gaps")
 class JakartaPathPointersCoverageGapsTest {
 
-    /** Final, so a default typer that types only non-final types leaves the bean itself alone. */
+    /** A final record. The resolver stops at it under any default typer, whether or not the typer would type it. */
     public record Strings(List<String> items) {}
 
     /** A final element type, so only the list holding it can carry type information. */
