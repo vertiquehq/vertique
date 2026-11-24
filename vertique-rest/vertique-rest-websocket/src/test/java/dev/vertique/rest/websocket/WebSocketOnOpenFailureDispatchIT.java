@@ -5,7 +5,6 @@ package dev.vertique.rest.websocket;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.security.HolderBackedSecurityRuntime;
@@ -21,7 +20,6 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -76,19 +74,14 @@ public class WebSocketOnOpenFailureDispatchIT {
         Future.join(s, c).onComplete(ar -> ctx.completeNow());
     }
 
-    /**
-     * Connects and, once the server closes the socket, hands the close code and the number of
-     * {@link OnError} invocations already seen at that moment to the assertion.
-     */
-    private void expectCloseWith1011(
-            String path, Supplier<Object> onErrorSeenAtClose, VertxTestContext ctx, Runnable verify) {
+    /** Connects, waits for the server's 1011 close, then runs {@code verify} on the test thread. */
+    private void expectCloseWith1011(String path, VertxTestContext ctx, Runnable verify) {
         wsClient.connect(new WebSocketConnectOptions()
                         .setHost("127.0.0.1")
                         .setPort(port)
                         .setURI(path))
                 .onComplete(ctx.succeeding(ws -> ws.closeHandler(v -> ctx.verify(() -> {
                     assertEquals(Short.valueOf((short) 1011), ws.closeStatusCode());
-                    onErrorSeenAtClose.get();
                     verify.run();
                     ctx.completeNow();
                 }))));
@@ -98,58 +91,36 @@ public class WebSocketOnOpenFailureDispatchIT {
     @DisplayName("a thrown @OnOpen failure reaches @OnError before the socket is closed with 1011")
     void thrownOnOpenFailureReachesOnError(VertxTestContext ctx) {
         ThrowingOpen.error.set(null);
-        AtomicReference<Throwable> seenAtClose = new AtomicReference<>();
-        expectCloseWith1011(
-                "/ws/open-throws",
-                () -> {
-                    seenAtClose.set(ThrowingOpen.error.get());
-                    return null;
-                },
-                ctx,
-                () -> {
-                    assertNotNull(seenAtClose.get(), "@OnError must have run before the close reached the client");
-                    assertEquals("simulated @OnOpen throw", seenAtClose.get().getMessage());
-                });
+        expectCloseWith1011("/ws/open-throws", ctx, () -> {
+            assertNotNull(ThrowingOpen.error.get(), "@OnError must have run before the close reached the client");
+            assertEquals("simulated @OnOpen throw", ThrowingOpen.error.get().getMessage());
+        });
     }
 
     @Test
     @DisplayName("a failed @OnOpen future reaches @OnError before the socket is closed with 1011")
     void failedOnOpenFutureReachesOnError(VertxTestContext ctx) {
         FailedFutureOpen.error.set(null);
-        AtomicReference<Throwable> seenAtClose = new AtomicReference<>();
-        expectCloseWith1011(
-                "/ws/open-fails",
-                () -> {
-                    seenAtClose.set(FailedFutureOpen.error.get());
-                    return null;
-                },
-                ctx,
-                () -> {
-                    assertNotNull(seenAtClose.get(), "@OnError must have run before the close reached the client");
-                    assertEquals(
-                            "simulated @OnOpen failed future", seenAtClose.get().getMessage());
-                });
+        expectCloseWith1011("/ws/open-fails", ctx, () -> {
+            assertNotNull(FailedFutureOpen.error.get(), "@OnError must have run before the close reached the client");
+            assertEquals(
+                    "simulated @OnOpen failed future",
+                    FailedFutureOpen.error.get().getMessage());
+        });
     }
 
     @Test
     @DisplayName("without @OnError a failing @OnOpen still closes with 1011")
     void noOnErrorStillCloses(VertxTestContext ctx) {
-        expectCloseWith1011("/ws/open-no-error", () -> null, ctx, () -> {});
+        expectCloseWith1011("/ws/open-no-error", ctx, () -> {});
     }
 
     @Test
     @DisplayName("a failing @OnError is not dispatched again and the socket still closes with 1011")
     void failingOnErrorIsNotRedispatched(VertxTestContext ctx) {
         ThrowingOpenAndError.errorCalls.set(0);
-        AtomicInteger seenAtClose = new AtomicInteger();
         expectCloseWith1011(
-                "/ws/open-and-error-throw",
-                () -> {
-                    seenAtClose.set(ThrowingOpenAndError.errorCalls.get());
-                    return null;
-                },
-                ctx,
-                () -> assertTrue(seenAtClose.get() == 1, "@OnError must run exactly once, saw " + seenAtClose.get()));
+                "/ws/open-and-error-throw", ctx, () -> assertEquals(1, ThrowingOpenAndError.errorCalls.get()));
     }
 
     @WebSocketEndpoint("/ws/open-throws")

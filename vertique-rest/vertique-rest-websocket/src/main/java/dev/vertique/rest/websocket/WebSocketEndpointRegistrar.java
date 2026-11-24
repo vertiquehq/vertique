@@ -1104,10 +1104,11 @@ class WebSocketEndpointRegistrar {
                         "WebSocket session bootstrap failed for {} — @OnOpen returned a failed future",
                         session.id(),
                         cause);
-                // Dispatch the failure to @OnError (never when @OnOpen itself is the @OnError method;
+                // Dispatch the failure to @OnError (not when the socket already closed, never when @OnOpen itself is
+                // the @OnError method;
                 // an @OnError failure is logged inside invokeLifecycleMethod, not re-dispatched), then
                 // fall through to the 1011 close below.
-                if (meta.onError() != null && meta.onError() != meta.onOpen()) {
+                if (meta.onError() != null && meta.onError() != meta.onOpen() && !ws.isClosed()) {
                     invokeLifecycleMethod(meta.onError(), meta.instance(), session, meta, null, cause);
                 }
                 // Close the scope only if the adapter has NOT taken ownership; otherwise let the
