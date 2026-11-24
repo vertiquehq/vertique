@@ -638,7 +638,7 @@ entry may still set `enabled`; a configured `info` or `serverUrl` is refused (se
   or none, is refused before the location is read. A JSON contract with content after its one JSON
   value is refused as not valid JSON. A YAML contract holds exactly one document: a second document
   is refused as not valid YAML. A YAML contract larger than the YAML parser's code-point limit
-  (about 3 MB, the limit the request-validation library applies too) also fails as not valid YAML.
+  (3,145,728 code points, not bytes; the request-validation library applies the same limit) also fails as not valid YAML.
 - **No YAML anchors.** YAML anchors, aliases, and `<<` merge keys are not expanded: an alias is
   served as its anchor's name, while the validation strategy expands them. Write a served contract
   without anchors, aliases, and merge keys.
@@ -942,7 +942,8 @@ Method parameters come first, then the fields of composite beans, each group in 
 hidden input becomes nothing (see [Hidden inputs](#hidden-inputs)).
 
 The members are written in this order: `name`, `in`, `description`, `required`, `deprecated`,
-`schema`, `example`, `examples`, each optional member only when set.
+`schema`, `example`, `examples`, each optional member only when set; a protected document may add
+the marker of [Validation disclosure](#validation-disclosure) last.
 
 - **`name` and `in`.** The bound name and the lowercase location (`path`, `query`, `header`,
   `cookie`).
@@ -1047,7 +1048,8 @@ component, or example.
 ### Request bodies
 
 The Request Body Object holds `description` (when set), `content`, and `required` (when written), in
-that order, and nothing else: no `example`, `examples`, or `deprecated`. Each Media Type Object holds
+that order, and nothing else: no `example`, `examples`, or `deprecated`, except the marker a protected
+document may add last (see [Validation disclosure](#validation-disclosure)). Each Media Type Object holds
 `schema`, then `examples` or `example` when the request body's `@RequestBody` supplies one (see
 [Swagger annotations](#swagger-annotations)).
 
@@ -1407,8 +1409,10 @@ first failure wins.
 - **Message.** `<subject>: operation '<id>' declares <attribute> on <input>, which contradicts how the
   runtime binds it (<fact>); documentation metadata cannot change it, so remove the attribute or make
   it agree`, one line, where `<input>` is `query parameter q`, `header parameter X-Trace`, `form field
-  f`, `request body`, and so on, and `<subject>` is as in [Hidden inputs](#hidden-inputs). No
-  annotation value is echoed.
+  f`, `request body`, and so on, and `<subject>` is as in [Hidden inputs](#hidden-inputs). The
+  `@Operation.operationId` and `ref` failures use their own wording: the first says the attribute
+  differs from the runtime operation id, and a `ref` says the document declares no reusable
+  parameters, request bodies, or examples to name. No annotation value is echoed.
 
 **Requiredness.** For each parameter and form field the runtime reports whether a missing value is
 rejected, with one of three answers. `@Parameter(required = true)` is checked against it:

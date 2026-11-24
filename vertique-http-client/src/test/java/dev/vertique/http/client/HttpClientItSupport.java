@@ -6,7 +6,7 @@ package dev.vertique.http.client;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
-import ch.qos.logback.core.read.ListAppender;
+import ch.qos.logback.core.AppenderBase;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.MultiMap;
@@ -45,13 +45,43 @@ final class HttpClientItSupport {
     /** Logger name Vert.x uses for blocked-thread reports. */
     static final String BLOCKED_THREAD_LOGGER = "io.vertx.core.impl.BlockedThreadChecker";
 
+    /** The event-loop execution limit of the guard, in milliseconds. */
+    static final long MAX_EVENT_LOOP_EXECUTE_MS = 200;
+
     /** How long a test waits for something that must happen. */
     static final long WAIT_MS = 10_000;
 
     final Vertx vertx;
 
     private final Logger blockedThreadLogger;
-    private final ListAppender<ILoggingEvent> blockedThreadEvents = new ListAppender<>();
+    private final EventLoopStallClassifier classifier = new EventLoopStallClassifier(MAX_EVENT_LOOP_EXECUTE_MS);
+    private final List<EventLoopStallClassifier.Report> blockedThreadReports = new ArrayList<>();
+    private final AppenderBase<ILoggingEvent> blockedThreadEvents = new AppenderBase<>() {
+        @Override
+        protected void append(ILoggingEvent event) {
+            if (event.getLevel().isGreaterOrEqual(Level.WARN)) {
+                EventLoopStallClassifier.Report report;
+                try {
+                    report = classify(event);
+                } catch (RuntimeException e) {
+                    report = new EventLoopStallClassifier.Report(
+                            event.getFormattedMessage(), true, "classification failed: " + e);
+                }
+                synchronized (blockedThreadReports) {
+                    blockedThreadReports.add(report);
+                }
+            }
+        }
+
+        /** Classifies on the checker's thread, while the loop thread's CPU time is current. */
+        private EventLoopStallClassifier.Report classify(ILoggingEvent event) {
+            var proxy = event.getThrowableProxy();
+            StackTraceElement top = proxy == null || proxy.getStackTraceElementProxyArray().length == 0
+                    ? null
+                    : proxy.getStackTraceElementProxyArray()[0].getStackTraceElement();
+            return classifier.classify(event.getFormattedMessage(), top);
+        }
+    };
     private final List<Supplier<Future<?>>> closers = new CopyOnWriteArrayList<>();
 
     private HttpClientItSupport(Vertx vertx, Logger blockedThreadLogger) {
@@ -69,10 +99,18 @@ final class HttpClientItSupport {
                 Vertx.vertx(new VertxOptions()
                         .setBlockedThreadCheckInterval(100)
                         .setBlockedThreadCheckIntervalUnit(TimeUnit.MILLISECONDS)
-                        .setMaxEventLoopExecuteTime(200)
-                        .setMaxEventLoopExecuteTimeUnit(TimeUnit.MILLISECONDS)),
+                        .setMaxEventLoopExecuteTime(MAX_EVENT_LOOP_EXECUTE_MS)
+                        .setMaxEventLoopExecuteTimeUnit(TimeUnit.MILLISECONDS)
+                        // a stack with every report, so the classifier can see where the thread is stopped
+                        .setWarningExceptionTime(1)
+                        .setWarningExceptionTimeUnit(TimeUnit.MILLISECONDS)),
                 logger);
-        support.warmUp();
+        try {
+            support.warmUp();
+        } catch (RuntimeException | Error e) {
+            support.classifier.close();
+            throw e;
+        }
         support.blockedThreadEvents.start();
         logger.addAppender(support.blockedThreadEvents);
         return support;
@@ -148,23 +186,40 @@ final class HttpClientItSupport {
     }
 
     /**
-     * Fails when the blocked-thread checker logged a warning or error since the previous check, then forgets
-     * them, so one test's warning does not fail the tests after it.
+     * Fails when the blocked-thread checker reported a turn that product code spent on the loop since the
+     * previous check, then forgets the reports, so one test's report does not fail the tests after it. A turn
+     * that only the host stalled (see {@link EventLoopStallClassifier}) is printed and does not fail.
      */
     void assertNoBlockedThreadWarning() {
-        List<String> warnings = new ArrayList<>();
-        List<ILoggingEvent> events;
-        synchronized (blockedThreadEvents) { // AppenderBase.doAppend holds this lock while appending
-            events = new ArrayList<>(blockedThreadEvents.list);
-            blockedThreadEvents.list.clear();
+        List<EventLoopStallClassifier.Report> reports;
+        synchronized (blockedThreadReports) {
+            reports = new ArrayList<>(blockedThreadReports);
+            blockedThreadReports.clear();
         }
-        for (ILoggingEvent event : events) {
-            if (event.getLevel().isGreaterOrEqual(Level.WARN)) {
-                warnings.add(event.getLevel() + " " + event.getFormattedMessage());
+        List<String> warnings = new ArrayList<>();
+        for (EventLoopStallClassifier.Report report : reports) {
+            if (report.blocking()) {
+                warnings.add(report.message() + " (" + report.reason() + ")");
+            } else {
+                System.err.println("Event-loop turn not counted: " + report.message() + " (" + report.reason() + ")");
             }
         }
         if (!warnings.isEmpty()) {
             throw new AssertionError("Vert.x reported a blocked thread during the test: " + warnings);
+        }
+    }
+
+    /** Forgets the blocked-thread reports so far, for a test that provokes them on purpose. */
+    void discardBlockedThreadReports() {
+        synchronized (blockedThreadReports) {
+            blockedThreadReports.clear();
+        }
+    }
+
+    /** Whether the checker reported a turn that has not been checked yet. */
+    boolean hasBlockedThreadReport() {
+        synchronized (blockedThreadReports) {
+            return !blockedThreadReports.isEmpty();
         }
     }
 
@@ -176,6 +231,7 @@ final class HttpClientItSupport {
         } finally {
             blockedThreadLogger.detachAppender(blockedThreadEvents);
             blockedThreadEvents.stop();
+            classifier.close();
         }
         assertNoBlockedThreadWarning();
     }

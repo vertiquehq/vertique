@@ -1066,9 +1066,11 @@ serde or routing artifact — including for `"json"`. Paths that build nothing n
 | Router with any property route or a non-`Void` payload route | Yes |
 | All-`Void` property router (the selector is still read) | Yes |
 | Model-2 binding with a custom `deserializer` | No |
-| Model-4 raw `KafkaRecordHandler` | No |
-| Non-property `Void` or no-payload binding or handler | No |
+| Binding whose source method has no payload parameter (no value type) | No |
 | Header- or default-only all-`Void` router | No |
+
+A raw `KafkaRecordHandler`, and a binding or handler whose value type is `Void`, still resolve a value type and build a
+deserializer, so they need a provider unless the binding supplies its own deserializer.
 
 ### Adding a format
 

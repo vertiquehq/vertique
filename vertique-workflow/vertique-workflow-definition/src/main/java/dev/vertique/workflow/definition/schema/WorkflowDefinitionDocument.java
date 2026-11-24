@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.definition.schema;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
 import jakarta.annotation.Nullable;
 import java.util.List;
 
@@ -32,6 +33,9 @@ import java.util.List;
  *       initial state from the start payload.
  *   <li>{@code subjectResolver} — optional registered {@code SubjectResolver} id; {@code null}
  *       when not needed.
+ *   <li>{@code outputType} and {@code outputMapper} — optional pair declaring the output an instance produces on
+ *       success: the logical type name of the output class, and the id of a registered {@code NamedOutputMapper}
+ *       that maps the final state to it. Both are present or both are absent.
  *   <li>{@code initialStep} — id of the first step to execute after initialization.
  *   <li>{@code steps} — ordered list of all step nodes in the workflow graph.
  *   <li>{@code activateOnDeploy} — optional; {@code false} publishes a packaged document without making it the
@@ -50,6 +54,9 @@ import java.util.List;
  * @param steps ordered list of all step nodes
  * @param activateOnDeploy whether a packaged version activates when first published; {@code null} is read as
  *     {@code true}
+ * @param outputType optional logical type name of the declared output; {@code null} when the definition declares no
+ *     output
+ * @param outputMapper optional registered output mapper id; {@code null} exactly when {@code outputType} is
  */
 public record WorkflowDefinitionDocument(
         String definitionId,
@@ -61,11 +68,55 @@ public record WorkflowDefinitionDocument(
         @Nullable String subjectResolver,
         String initialStep,
         List<StepNode> steps,
-        @Nullable Boolean activateOnDeploy) {
+        @Nullable Boolean activateOnDeploy,
+        @Nullable String outputType,
+        @Nullable String outputMapper) {
 
     /** Normalizes an absent {@code activateOnDeploy} to {@code true}. */
+    @JsonCreator
     public WorkflowDefinitionDocument {
         if (activateOnDeploy == null) activateOnDeploy = Boolean.TRUE;
+    }
+
+    /**
+     * Creates a document that declares no output.
+     *
+     * @param definitionId unique identifier for the workflow definition
+     * @param definitionVersion monotonically increasing version number
+     * @param stateType logical type name of the workflow state type
+     * @param contract logical contract name
+     * @param startPayloadType logical type name of the start command payload type
+     * @param initialStateMapper registered start-state mapper id
+     * @param subjectResolver optional registered subject resolver id
+     * @param initialStep id of the first step
+     * @param steps ordered list of all step nodes
+     * @param activateOnDeploy whether a packaged version activates when first published; {@code null} is read as
+     *     {@code true}
+     */
+    public WorkflowDefinitionDocument(
+            String definitionId,
+            long definitionVersion,
+            String stateType,
+            String contract,
+            String startPayloadType,
+            String initialStateMapper,
+            @Nullable String subjectResolver,
+            String initialStep,
+            List<StepNode> steps,
+            @Nullable Boolean activateOnDeploy) {
+        this(
+                definitionId,
+                definitionVersion,
+                stateType,
+                contract,
+                startPayloadType,
+                initialStateMapper,
+                subjectResolver,
+                initialStep,
+                steps,
+                activateOnDeploy,
+                null,
+                null);
     }
 
     /**
@@ -101,6 +152,8 @@ public record WorkflowDefinitionDocument(
                 subjectResolver,
                 initialStep,
                 steps,
-                Boolean.TRUE);
+                Boolean.TRUE,
+                null,
+                null);
     }
 }

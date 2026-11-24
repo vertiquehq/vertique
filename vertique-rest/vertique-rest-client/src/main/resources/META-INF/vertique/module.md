@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.rest.client`
 > **Artifact:** `vertique-rest-client`
-> **Depends on:** core, rest-core, json, http-client
+> **Depends on:** core, resilience, rest-core, json, http-client
 
 Declarative HTTP client for Vert.x. Annotate a Java interface with standard JAX-RS annotations
 (`@GET`, `@Path`, `@QueryParam`, …) plus `@RestClient`, then ask `RestClientBuilder` or the
@@ -69,8 +69,9 @@ operation of the client:
 - **Method metadata reads the same annotations.** `MethodMetadata#findAnnotation` and `hasAnnotation` on an
   operation (as seen by a capturer or the resilience pipeline) include the annotations of the declarations it
   overrides. The generated static proxy and the reflective proxy treat inherited operations alike; a client
-  whose inherited operation is declared by an interface the generated proxy cannot name gets the reflective
-  proxy.
+  whose inherited operation is declared by an interface the generated proxy cannot name (package-private to
+  another package, or nested in a private type) fails to compile when the codegen processor is on the path,
+  instead of falling back to the reflective proxy.
 
 ```java
 @RestClient(name = "user-service", value = "http://user-service:8080")
@@ -149,7 +150,7 @@ timeout it can fire after the retry or recovery decision.
 it when present; otherwise it returns a JDK dynamic proxy. Both flavors run the identical pipeline
 above and the identical parameter conversion, so adding or removing
 `dev.vertique:vertique-codegen-rest-client` from `annotationProcessorPaths` changes performance, not
-behavior — with the two exceptions noted under [Common mistakes](#common-mistakes).
+behavior — with the one exception noted under [Common mistakes](#common-mistakes).
 
 ---
 
@@ -237,9 +238,12 @@ method) and on a method (overrides the interface default).
 
 | Attribute | Default | Description |
 |-----------|---------|-------------|
-| `timeoutMs` | `30000` | Per-operation timeout; an operation exceeding it counts as a failure |
+| `timeoutMs` | `-1` | Request timeout in milliseconds, used when no `@Timeout` applies; `-1` leaves the client default |
 | `maxFailures` | `5` | Consecutive failures that open the circuit |
 | `resetTimeoutMs` | `10000` | Time before an open circuit goes half-open |
+
+A transport failure, a timeout, and a rejected response with a status below 400 or at least 500 count as
+failures; a rejected 4xx response, 429 included, does not.
 
 ```java
 @RestClient(name = "payment-service")
@@ -898,7 +902,7 @@ standalone `new RestClientBuilder(vertx)` has no factory and is not checked acro
 | `restClient.{name}.jsonProfile` | String | — | Named JSON mapper profile id |
 | `restClient.{name}.webClient.*` | object | — | Vert.x `WebClientOptions` fields (below); merged onto builder-level options |
 | `restClient.{name}.circuitBreaker.maxFailures` | int | 5 | Failures before the circuit opens |
-| `restClient.{name}.circuitBreaker.timeoutMs` | long | -1 | Per-attempt timeout inside the breaker; -1 = none |
+| `restClient.{name}.circuitBreaker.timeoutMs` | long | — | Per-attempt request timeout (ms) used when `readTimeoutMs` is not set; must be `> 0` |
 | `restClient.{name}.circuitBreaker.resetTimeoutMs` | long | 10000 | Time before half-open (ms) |
 | `restClient.{name}.pool.http1MaxSize` | int | 5 | HTTP/1.1 pool size |
 | `restClient.{name}.pool.http2MaxSize` | int | 1 | HTTP/2 pool size |
@@ -1032,7 +1036,7 @@ the first standalone `build(Class)` call needs it — a hand-built client has no
 ordering, unlike the Dagger-wired process codec; the registry's default-typing guard still refuses a
 mapper that was mutated before that moment.
 
-**Reserved-id asymmetry (AR-013).** A standalone builder with no injected registry can still select
+**Reserved-id asymmetry.** A standalone builder with no injected registry can still select
 `system`, `vertique`, or `vertique-strict` — its private registry resolves them without any
 application wiring. Selecting any other profile id on such a builder has no registry available to
 resolve it and fails fast with `RestClientConfigurationException` (message unchanged). This asymmetry
@@ -1175,9 +1179,9 @@ configured or every client overrides it.
   outranks every profile source.
 - **Using raw Vert.x duration names in `webClient`.** `connectTimeout`, `idleTimeout`, and their five
   siblings are rejected at startup; use the explicit-unit keys.
-- **Assuming the generated proxy behaves identically for a `null` path value.** A `null` PATH
-  parameter without `@DefaultValue` throws `NullPointerException` in a generated proxy, where the JDK
-  proxy historically dropped the segment. Add `@DefaultValue` or guard before calling.
+- **Passing a `null` path value.** A `null` PATH parameter (or `@BeanParam` path field) without
+  `@DefaultValue` fails the returned future with `RestClientException` in both proxy flavors, because a
+  path placeholder is never left unresolved. Add `@DefaultValue` or guard before calling.
 - **Expecting a generated proxy for an interface with an external `@BeanParam` type.** When a
   `@BeanParam` type lives outside the compilation unit the processor cannot scan its fields, emits a
   compile-time `WARNING`, and skips proxy emission for that whole interface; it falls back to the JDK
@@ -1222,10 +1226,10 @@ interface AppComponent {
 
 | Dependency | Why |
 |---|---|
-| `dev.vertique:vertique-core` | `OrderedExtension`/`ExtensionPhase` ordering, the exception hierarchy, `FailureMapper` behind the default exception mapper, `ConfigParser`, `core.codegen` metadata SPI, optional `BeanValidator` |
+| `dev.vertique:vertique-core` | `OrderedExtension`/`ExtensionPhase` ordering, the exception hierarchy, `FailureMapper` behind the default exception mapper, `ConfigParser`, `core.codegen` metadata SPI, the `JsonMapperProfileRegistry` and `@JsonProfile` types, optional `BeanValidator` |
 | `dev.vertique:vertique-resilience` | Canonical timeout, retry, circuit-breaker, and bulkhead annotations plus backoff and retry contracts |
 | `dev.vertique:vertique-rest-core` | `ParamConversionResolver`, `ParamConverterRegistry`, `ConversionContext`, `ParamSource`, and `RestCoreModule` — the outbound half of the conversion stack `rest-jaxrs` uses inbound |
-| `dev.vertique:vertique-json` | `JsonMapperProfileRegistry`, `JsonConfig`, and `JsonRuntimeModule` for named mapper profiles |
+| `dev.vertique:vertique-json` | `DefaultJsonMapperProfileRegistry`, `JsonConfig`, and `JsonRuntimeModule` for named mapper profiles |
 | `dev.vertique:vertique-http-client` | The governed transport: `HttpClient` sends every physical attempt through the method's resilience pipeline, and its normalizer translates the `webClient` option keys |
 | `io.vertx:vertx-web-client` | `WebClient`, `WebClientOptions`, `PoolOptions` |
 | `jakarta.ws.rs:jakarta.ws.rs-api` | The JAX-RS annotations that describe each interface |

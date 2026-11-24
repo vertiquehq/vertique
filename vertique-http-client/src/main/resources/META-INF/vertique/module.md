@@ -69,8 +69,8 @@ connection and again on every redirect hop. The default, `EgressPolicy.allowAll(
 with a host and without user information; a target with user information (in a redirect `Location` or a
 `UriTemplate` request) is refused with `HttpEgressDeniedException` (`USER_INFO`). Every policy refuses a
 domain-socket server address (`CONNECT_ADDRESS`). `EgressPolicy.allowHosts(hosts, allowPlainHttp)` admits
-only listed hosts, and then also refuses a server address, a virtual host (`virtualHost(...)` or a
-caller-set `Host` header) and a request-level proxy unless its host is listed. A refusal fails the
+only listed hosts, and then also refuses a virtual host (`virtualHost(...)` or a caller-set `Host`
+header) outright, and a server address or a request-level proxy unless its host is listed. A refusal fails the
 request once with a constant message and dials nothing.
 
 **Egress matching.** Hosts compare in lower case with one trailing dot removed, and names are never
@@ -289,7 +289,7 @@ runs an attempt function (with `CallOptions.defaults()` or the given options), `
 whose body is read incrementally (see Streams), and `close()` fails the calls
 still running and the open streams with `HttpClientClosedException`, closes the agent (it closes no pipelines), and resets requests still open. Closing again returns the same future.
 A call started after `close()` fails with `HttpClientClosedException` without opening a connection and without
-notifying interceptors.
+notifying interceptors; a request created from `webClient()` after `close()` throws it at creation.
 
 ### Configuration records
 
@@ -614,7 +614,7 @@ client is built.
 | `readTimeoutMs` | long | 30000 | Attempt timeout in milliseconds, above 0 |
 | `pool.http1MaxSize`, `pool.http2MaxSize`, `pool.maxWaitQueueSize`, `pool.eventLoopSize`, `pool.cleanerPeriodMs`, `pool.maxLifetimeSeconds` | int | Vert.x defaults | `http1MaxSize` and `http2MaxSize` at least 1; `eventLoopSize` and `maxLifetimeSeconds` not negative; the other two passed to Vert.x unchecked |
 | `webClient` | object | `{}` | Vert.x `WebClientOptions` pass-through, see below |
-| `defaultHeaders` | object of string | `{}` | Rejects CR, LF, NUL and the names `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Upgrade` and `TE`; rendered as `***` in logs |
+| `defaultHeaders` | object of string | `{}` | As `defaultHeader(...)`: rejects a name that is not a token, the names `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Upgrade` and `TE`, and a value with a control character; rendered as `***` in logs |
 | `egress.allowHosts` | string list | absent: every host | Exact host, `*.suffix` or `*`; an empty list is rejected |
 | `egress.allowPlainHttp` | boolean | `false` | Read only together with `egress.allowHosts` |
 | `allowCredentialsOverPlainHttp` | boolean | `false` | As `allowCredentialsOverPlainHttp(...)` |

@@ -53,6 +53,31 @@ class RateLimitRedisTtlMaintenanceIT {
         vertx = hostVertx;
         registry = RateLimitRedisTestFixture.registry(vertx, REDIS.getHost(), REDIS.getMappedPort(6379));
         rawCommands = RedisAPI.api(registry.client(RateLimitRedisTestFixture.CONNECTION));
+        warmUp();
+    }
+
+    /**
+     * Pays the cold-start cost of the first {@code consume(...)} (pooled connection, CAS script
+     * load, class initialisation) outside any operation deadline. Under host load that first call
+     * takes several times longer than a warm one, and the tests below give {@code consume} a 2 s
+     * deadline: without this, whichever test runs first can see a {@code TIMEOUT} result and fail
+     * on an assertion about the TTL write that the late completion has not reached yet.
+     */
+    private static void warmUp() {
+        TokenBucketRateLimit algorithm = RateLimitRedisTestFixture.greedyAlgorithm(5, 5, 60_000);
+        RateLimitBackend backend = RateLimitRedisTestFixture.backend(
+                registry.client(RateLimitRedisTestFixture.CONNECTION), vertx, 10_000, 1_000);
+        String storageKey = RateLimitRedisTestFixture.storageKey("warm-up-" + UUID.randomUUID());
+        try {
+            RateLimitBackendResult result = RateLimitRedisTestFixture.await(
+                    backend.consume(RateLimitRedisTestFixture.request(storageKey, algorithm, 1)));
+            // consume reports a deadline or connection failure as a result, not a failed future.
+            if (!result.consumed() || result.failureCode().isPresent()) {
+                throw new IllegalStateException("warm-up consume did not commit: " + result);
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("warm-up consume against the Redis container failed", e);
+        }
     }
 
     @AfterAll
@@ -136,7 +161,9 @@ class RateLimitRedisTtlMaintenanceIT {
                 backend.consume(RateLimitRedisTestFixture.request(storageKey, algorithm, 1)));
 
         // Then: the decision is unaffected by the forced PEXPIRE failure.
-        assertTrue(failingPexpire.observedFailedCommand(), "the fake must have forced at least one PEXPIRE failure");
+        assertTrue(
+                failingPexpire.observedFailedCommand(),
+                "the fake must have forced at least one PEXPIRE failure; consume returned " + result);
         assertEquals(true, result.consumed());
         assertEquals(4L, result.remaining());
         assertTrue(result.failureCode().isEmpty(), "a TTL-write failure must never surface as a failure code");

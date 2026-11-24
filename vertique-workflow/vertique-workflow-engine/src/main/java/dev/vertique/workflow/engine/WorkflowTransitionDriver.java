@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.engine;
 
+import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.engine.executor.ParkedSignals;
 import dev.vertique.workflow.engine.executor.StepLimitExceededException;
 import dev.vertique.workflow.engine.history.DecisionLog;
@@ -13,6 +14,7 @@ import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.events.WorkflowEventType;
 import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
+import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import dev.vertique.workflow.exception.WorkflowSubjectVersionUnavailableException;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.plan.CompensationNode;
@@ -52,6 +54,7 @@ import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
 
@@ -110,6 +113,7 @@ final class WorkflowTransitionDriver {
     private final Clock clock;
     private final DecisionLog decisions;
     private final SignalWaits signalWaits;
+    private final RecordTimePayloadValidator recordValidator;
 
     /**
      * Lazy back-edge to {@link TimerLifecycleService} for the {@code resolveFireAt} helper used by
@@ -169,6 +173,8 @@ final class WorkflowTransitionDriver {
      * @param clock the clock used to timestamp entries and state updates
      * @param decisions the decision log that records each step the driver takes
      * @param signalWaits the open wait records written when an instance enters a signal wait that declares a key
+     * @param recording the recording bounds a declared output is held to when its instance completes; the defaults
+     *     when absent
      * @param timerPvd lazy provider of the timer-lifecycle service, used for the {@code resolveFireAt}
      *     helper when handling a timer node, a wait-signal node with a timeout, or a human-task node
      *     with a due date; lazy to break the driver↔timer constructor cycle, dereferenced only at
@@ -191,8 +197,10 @@ final class WorkflowTransitionDriver {
             Clock clock,
             DecisionLog decisions,
             SignalWaits signalWaits,
+            Optional<WorkflowRecordingConfig> recording,
             Provider<TimerLifecycleService> timerPvd,
             Provider<TaskLifecycleService> taskPvd) {
+        this.recordValidator = new RecordTimePayloadValidator(recording.orElseGet(WorkflowRecordingConfig::defaults));
         this.instances = instances;
         this.history = history;
         this.recorders = recorders;
@@ -325,7 +333,7 @@ final class WorkflowTransitionDriver {
             case ServiceDispatchNode sdn -> handleServiceDispatch(inst, sdn, rw, tx);
             case WaitSignalNode wsn -> handleWaitSignal(inst, wsn, rw, tx);
             case DecisionNode dn -> handleDecision(inst, dn, rw, tx);
-            case CompleteNode cn -> handleComplete(inst, cn, tx);
+            case CompleteNode cn -> handleComplete(inst, cn, rw, tx);
             case FailNode fn -> handleFail(inst, fn, rw, tx);
             case CompensationNode cn ->
                 Future.failedFuture(new WorkflowDefinitionException("CompensationNode '" + cn.stepId()
@@ -586,18 +594,38 @@ final class WorkflowTransitionDriver {
     /**
      * Handles a {@link CompleteNode}: transitions the instance to {@code COMPLETED} (terminal).
      *
+     * <p>When the pinned plan declares an output, the mapper runs first, before any write, and its encoded value is
+     * stored with {@code COMPLETED} in the same optimistic update and carried by the {@code WORKFLOW_COMPLETED} event.
+     * A mapper that throws, returns {@code null} or produces a value over the recording bounds fails the segment with a
+     * {@link WorkflowDefinitionException}, a deterministic failure the driving command settles as it does any
+     * throwing callback.
+     *
      * @param inst the current instance
      * @param cn the node to process
+     * @param rw the resolved runtime workflow
      * @param tx the active transaction
      * @return a {@link Future} that completes after the COMPLETED state is persisted
      */
-    private Future<Void> handleComplete(WorkflowInstance inst, CompleteNode cn, SqlClient tx) {
+    private Future<Void> handleComplete(WorkflowInstance inst, CompleteNode cn, RuntimeWorkflow rw, SqlClient tx) {
+        String outputJson = null;
+        String outputTypeName = rw.plan().outputTypeName();
+        Map<String, Object> eventAttributes = Map.of();
+        if (outputTypeName != null) {
+            try {
+                outputJson = computeOutput(recordValidator, inst, cn, rw);
+            } catch (WorkflowDefinitionException e) {
+                return Future.failedFuture(e);
+            }
+            eventAttributes = Map.of("output", Json.decodeValue(Buffer.buffer(outputJson), Object.class));
+        }
+        Map<String, Object> completedAttributes = eventAttributes;
         long prevVersion = inst.version();
         WorkflowInstance completed = inst.withVersion(prevVersion + 1)
                 .withStatus(WorkflowStatus.COMPLETED)
                 .withCurrentStepId(cn.stepId())
                 .withWait(null, null)
                 .withError(null, null)
+                .withOutput(outputJson, outputJson == null ? null : outputTypeName)
                 .withUpdatedAt(clock.instant());
 
         return instances
@@ -615,8 +643,54 @@ final class WorkflowTransitionDriver {
                                             inst.id(), seq, WorkflowEntryType.COMPLETED, histPayload, clock.instant()),
                                     tx)
                             .compose(v2 -> eventEmitter.emitEvent(
-                                    inst, WorkflowEventType.WORKFLOW_COMPLETED, seq, null, null, Map.of(), tx));
+                                    inst,
+                                    WorkflowEventType.WORKFLOW_COMPLETED,
+                                    seq,
+                                    null,
+                                    null,
+                                    completedAttributes,
+                                    tx));
                 });
+    }
+
+    /**
+     * Runs the plan's output mapper over the final state and encodes the result with the codec the engine uses for
+     * state, within the recording bounds.
+     *
+     * <p>Every failure message names the definition, its version and the step, plus the bound that was crossed and its
+     * limit; none carries the value or the text of the cause.
+     *
+     * @return the encoded output; never {@code null}
+     * @throws WorkflowDefinitionException if the state cannot be decoded, the mapper throws or returns {@code null},
+     *     or the encoded value crosses a bound
+     */
+    static String computeOutput(
+            RecordTimePayloadValidator recordValidator, WorkflowInstance inst, CompleteNode cn, RuntimeWorkflow rw) {
+        String where = "definition '" + inst.definitionId() + "' v" + inst.definitionVersion() + " at step '"
+                + cn.stepId() + "'";
+        Object output;
+        try {
+            Object stateObj = Json.decodeValue(Buffer.buffer(inst.stateJson()), rw.stateType());
+            output = rw.callbacks()
+                    .<Object>outputMapper(rw.plan().outputMapperCallbackId())
+                    .apply(stateObj);
+        } catch (Exception e) {
+            throw new WorkflowDefinitionException(
+                    "output mapper failed with " + e.getClass().getName() + " for " + where);
+        }
+        if (output == null) {
+            throw new WorkflowDefinitionException("output mapper returned null for " + where);
+        }
+        try {
+            recordValidator.validate(output);
+        } catch (WorkflowInvalidPayloadException e) {
+            throw new WorkflowDefinitionException("output of " + where + " is refused: " + e.getMessage());
+        }
+        String json = Json.encode(output);
+        if ("null".equals(json)) {
+            throw new WorkflowDefinitionException("output mapper returned null for " + where);
+        }
+        return json;
     }
 
     /**

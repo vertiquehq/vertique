@@ -173,6 +173,11 @@ public final class McpSubprocessHarness {
 
         boolean timedOut = process.isAlive();
         int forcedTerminationCount = terminateAlive(process, observedDescendants);
+        // ProcessHandle.isAlive turns false when the OS has reaped the child; Process.exitValue only becomes
+        // available once the JDK reaper thread has published the exit code, a moment later. Wait for that.
+        if (!process.waitFor(timeout.toNanos(), TimeUnit.NANOSECONDS)) {
+            throw new IOException("subprocess exit status was not published after forced termination");
+        }
         return new Settlement(timedOut, forcedTerminationCount);
     }
 

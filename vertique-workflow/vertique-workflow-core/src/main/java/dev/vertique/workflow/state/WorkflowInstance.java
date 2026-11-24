@@ -60,6 +60,11 @@ import java.util.Objects;
  *     value, not an isolation or authorization boundary.
  * @param definitionScopeKey the scope of the definition version this instance is pinned to;
  *     {@link WorkflowScopes#DEFAULT} for rows created without one. Every {@code with*} updater passes it through.
+ * @param outputJson JSON-encoded declared output of the definition version this instance completed on; written once,
+ *     together with {@link WorkflowStatus#COMPLETED}, and {@code null} otherwise: for an instance that has not
+ *     completed, one whose definition declares no output, and rows written before the output existed
+ * @param outputTypeName the output type name of the plan that produced {@code outputJson} (the plan's bound name);
+ *     {@code null} exactly when {@code outputJson} is
  */
 public record WorkflowInstance(
         WorkflowInstanceId id,
@@ -81,7 +86,9 @@ public record WorkflowInstance(
         Instant updatedAt,
         @Nullable DurableMetadata metadata,
         String scopeKey,
-        String definitionScopeKey) {
+        String definitionScopeKey,
+        @Nullable String outputJson,
+        @Nullable String outputTypeName) {
 
     /**
      * Validates that both scope keys are present.
@@ -136,7 +143,59 @@ public record WorkflowInstance(
                 updatedAt,
                 metadata,
                 WorkflowScopes.DEFAULT,
-                WorkflowScopes.DEFAULT);
+                WorkflowScopes.DEFAULT,
+                null,
+                null);
+    }
+
+    /**
+     * Creates an instance with both scope keys and no output. Retained so existing callers keep compiling; equivalent
+     * to the canonical constructor with {@code null} for both output components.
+     */
+    public WorkflowInstance(
+            WorkflowInstanceId id,
+            String definitionId,
+            long definitionVersion,
+            String planHash,
+            long version,
+            WorkflowStatus status,
+            @Nullable String businessKey,
+            @Nullable WorkflowSubjectRef subjectRef,
+            @Nullable String currentStepId,
+            @Nullable WaitType waitType,
+            @Nullable String waitKey,
+            @Nullable java.util.UUID waitAuxId,
+            @Nullable String stateJson,
+            @Nullable String errorType,
+            @Nullable String errorMessage,
+            Instant createdAt,
+            Instant updatedAt,
+            @Nullable DurableMetadata metadata,
+            String scopeKey,
+            String definitionScopeKey) {
+        this(
+                id,
+                definitionId,
+                definitionVersion,
+                planHash,
+                version,
+                status,
+                businessKey,
+                subjectRef,
+                currentStepId,
+                waitType,
+                waitKey,
+                waitAuxId,
+                stateJson,
+                errorType,
+                errorMessage,
+                createdAt,
+                updatedAt,
+                metadata,
+                scopeKey,
+                definitionScopeKey,
+                null,
+                null);
     }
 
     // --- Fluent updaters ---
@@ -169,7 +228,9 @@ public record WorkflowInstance(
                 updatedAt,
                 metadata,
                 scopeKey,
-                definitionScopeKey);
+                definitionScopeKey,
+                outputJson,
+                outputTypeName);
     }
 
     /**
@@ -200,7 +261,9 @@ public record WorkflowInstance(
                 updatedAt,
                 metadata,
                 scopeKey,
-                definitionScopeKey);
+                definitionScopeKey,
+                outputJson,
+                outputTypeName);
     }
 
     /**
@@ -231,7 +294,9 @@ public record WorkflowInstance(
                 updatedAt,
                 metadata,
                 scopeKey,
-                definitionScopeKey);
+                definitionScopeKey,
+                outputJson,
+                outputTypeName);
     }
 
     /**
@@ -268,7 +333,9 @@ public record WorkflowInstance(
                 updatedAt,
                 metadata,
                 scopeKey,
-                definitionScopeKey);
+                definitionScopeKey,
+                outputJson,
+                outputTypeName);
     }
 
     /**
@@ -316,7 +383,9 @@ public record WorkflowInstance(
                 updatedAt,
                 metadata,
                 scopeKey,
-                definitionScopeKey);
+                definitionScopeKey,
+                outputJson,
+                outputTypeName);
     }
 
     /**
@@ -348,7 +417,9 @@ public record WorkflowInstance(
                 updatedAt,
                 metadata,
                 scopeKey,
-                definitionScopeKey);
+                definitionScopeKey,
+                outputJson,
+                outputTypeName);
     }
 
     /**
@@ -379,6 +450,42 @@ public record WorkflowInstance(
                 when,
                 metadata,
                 scopeKey,
-                definitionScopeKey);
+                definitionScopeKey,
+                outputJson,
+                outputTypeName);
+    }
+
+    /**
+     * Returns a copy of this instance with {@code outputJson} and {@code outputTypeName} replaced together and all other
+     * fields preserved.
+     *
+     * @param newOutputJson JSON-encoded declared output, or {@code null} for none
+     * @param newOutputTypeName the plan's bound output type name, or {@code null} for none
+     * @return a new {@link WorkflowInstance} with the updated output
+     */
+    public WorkflowInstance withOutput(@Nullable String newOutputJson, @Nullable String newOutputTypeName) {
+        return new WorkflowInstance(
+                id,
+                definitionId,
+                definitionVersion,
+                planHash,
+                version,
+                status,
+                businessKey,
+                subjectRef,
+                currentStepId,
+                waitType,
+                waitKey,
+                waitAuxId,
+                stateJson,
+                errorType,
+                errorMessage,
+                createdAt,
+                updatedAt,
+                metadata,
+                scopeKey,
+                definitionScopeKey,
+                newOutputJson,
+                newOutputTypeName);
     }
 }

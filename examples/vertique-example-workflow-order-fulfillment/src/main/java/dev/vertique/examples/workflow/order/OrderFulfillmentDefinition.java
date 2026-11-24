@@ -12,6 +12,7 @@ import dev.vertique.examples.workflow.order.command.VoidAuthorization;
 import dev.vertique.examples.workflow.order.signal.InventoryReserved;
 import dev.vertique.examples.workflow.order.signal.PaymentCaptured;
 import dev.vertique.examples.workflow.order.signal.ShipmentCreated;
+import dev.vertique.examples.workflow.order.state.OrderReceipt;
 import dev.vertique.examples.workflow.order.state.OrderState;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
@@ -30,7 +31,7 @@ import jakarta.inject.Singleton;
  *     → wait-payment (waits for payment.captured, matched to the order by its order id)
  *     → create-shipment (SERVICE)
  *     → create-shipment.reply (waits for the shipment)
- *     → completed (CompleteNode)
+ *     → completed (CompleteNode; the declared output is the OrderReceipt)
  *
  *   Compensation nodes:
  *     release-inventory (compensates reserve-inventory)
@@ -75,6 +76,11 @@ public final class OrderFulfillmentDefinition implements WorkflowDefinition<Orde
         wf
                 // --- Init ---
                 .init(PlaceOrder.class, OrderState::fromCommand)
+                // The value a caller reads with result(id, OrderReceipt.class) once the order completes
+                .output(
+                        OrderReceipt.class,
+                        state -> new OrderReceipt(
+                                state.orderId(), state.customerId(), state.totalCents(), state.trackingNumber()))
                 .initialStep("reserve-inventory")
 
                 // --- Forward steps ---

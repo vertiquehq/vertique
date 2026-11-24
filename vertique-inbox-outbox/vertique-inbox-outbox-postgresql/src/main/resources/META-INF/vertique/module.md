@@ -172,7 +172,7 @@ The exception message names only the destination TYPE and reason category — ne
 - Durable propagation context bound at publish is captured into `metadata.context` and, at the Kafka boundary, projected to reserved `vertique-<namespace>` headers (e.g. `vertique-correlation`).
 - Relay control (message id, `eventType`, `aggregateType`, `aggregateId`) is exposed at relay time via `metadata.delivery.outbox` (projected from the row columns) — it is **not** merged into `headers` and is internal to the relay. `aggregateId` is still used as the Kafka message key.
 
-**Shutdown:** On `stop()`, the poll timer and LISTEN connection are closed. In-flight publish calls complete independently.
+**Shutdown:** On `stop()`, the poll timer and LISTEN connection are closed. In-flight publish calls complete independently. A claim that is still in flight when the relay stops delivers nothing: the entries it returns go back to `PENDING`, available at once and with their attempt count unchanged, so the next relay (or another node) takes them. If that release fails, stale lease recovery resets the entries.
 
 ### `PgOutboxQueryService` and `PgOutboxOperations`
 

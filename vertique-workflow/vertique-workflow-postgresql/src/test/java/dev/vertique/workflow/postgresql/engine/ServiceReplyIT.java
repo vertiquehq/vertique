@@ -20,11 +20,16 @@ import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.internal.ContextInternal;
 import io.vertx.junit5.VertxExtension;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -40,6 +45,20 @@ class ServiceReplyIT {
         migrate("classpath:db/migration/workflow", "flyway_workflow_history", false);
         migrate("classpath:db/migration/inbox-outbox", "flyway_inbox_outbox_history", true);
         migrate("classpath:db/migration/job", "flyway_job_history", true);
+    }
+
+    /**
+     * Every test shares this database, and a test that ends while a delivery is still retryable (a
+     * fatal service error leaves its outbox row with attempts to spare) would otherwise have that row
+     * claimed by the next test's relay. Re-delivering it fails the next test's service again, which
+     * burns the supervisor's restart budget until the service is marked unavailable.
+     */
+    @BeforeEach
+    void clearLeftoverRows() throws SQLException {
+        try (Connection connection = DriverManager.getConnection(db.jdbcUrl(), db.username(), db.password());
+                Statement statement = connection.createStatement()) {
+            statement.execute("TRUNCATE TABLE outbox, workflow_instances CASCADE");
+        }
     }
 
     static void migrate(String path, String table, boolean baseline) {
@@ -796,7 +815,10 @@ class ServiceReplyIT {
 
     @Test
     void closedWaitSettlesTheRowAndCountsItStale(Vertx vertx) {
-        try (ReplyGraph run = new ReplyGraph(vertx, db)) {
+        // The call is held in flight for several seconds. With the default 1 s lease, the stale-lease recovery
+        // cron (every 30 s on the wall clock) reclaims the in-flight row whenever the run spans :00 or :30, and the
+        // redelivery makes the second service call arrive before the wait timeout re-enters the step.
+        try (ReplyGraph run = new ReplyGraph(vertx, db, 10_000, false, 60_000)) {
             run.graph.inventoryProbe().held = Promise.promise();
             WorkflowInstanceId id = run.startCall("cancel-in-flight");
             run.until("the service call", () -> run.graph.inventoryProbe().callsFor("cancel-in-flight") == 1);

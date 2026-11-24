@@ -271,7 +271,7 @@ itself (a thrown exception or a failed future) is only logged, never dispatched 
 
 | Parameter shape | Bound to |
 |---|---|
-| `WebSocketSession` (or a supertype) | The current session |
+| `WebSocketSession` (or a subtype) | The current session |
 | `Throwable` (or a subtype) | The error on `@OnError`; left `null` on `@OnOpen` and `@OnClose`. On `@OnMessage` it is not an error slot: it counts as the message parameter (see [Message typing](#message-typing)) |
 | `dev.vertique.security.SecurityContext` | `SecurityRuntime.current()` at invocation time; `null` when no security module is installed |
 | `@PathParam("name") T` | The extracted path segment, converted to `T` |
@@ -660,7 +660,7 @@ connection's context scope is released directly on close.
 declarations; identity resolution, authorization, claim mapping, and Vert.x authorization import are
 no longer separately declared here — they live entirely behind the single
 `IdentityPipelineFactory` optional binding, owned by `dev.vertique:vertique-rest-security`'s
-`AuthModule` (issue #256; a second module declaring those collaborators would re-create the duplicate
+`AuthModule` (a second module declaring those collaborators would re-create the duplicate
 assembly that change closed).
 
 | Binding | Purpose |

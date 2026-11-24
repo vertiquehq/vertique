@@ -636,8 +636,8 @@ that differ by a control character stay different (`evil.php` with U+0001 before
 written `evil.ph_p`, never `evil.php`); a value that held a control character therefore parses back with `_` in its place. `isCompatible(MediaType)` is wildcard-aware
 and ignores parameters. A wildcard type with a concrete subtype such as `*/xml` is not a media range:
 `MediaType.parse` returns `null` for it, an `Accept` entry of that shape is dropped as malformed, and
-`isCompatible` treats only `*/*` as matching every type. `specificity()` returns 0 for `*/*`, 1 for `type/*`, 2 for `type/subtype`, and
-3 when parameters are present. Equality ignores the quality factor.
+`isCompatible` treats only `*/*` as matching every type. `specificity()` returns 0 for `*/*`, 1 for `type/*` (even with
+parameters), 2 for `type/subtype`, and 3 for `type/subtype` with parameters. Equality ignores the quality factor.
 
 `AcceptNegotiator.negotiate(String acceptHeader, List<String> serverTypes)` returns the best matching
 server type as `"type/subtype"`, or `null` when nothing matches — the signal a caller turns into a
@@ -939,6 +939,7 @@ contributor that reads an authenticated identity above 100:
 |---:|---|---|
 | 40 | action-gate authentication (authentication stage) | `vertique-rest-security` |
 | 50 | JWT claims validation (authentication stage) | `vertique-rest-auth-jwt` |
+| 55 | JWT session enrichment | `vertique-rest-auth-jwt` |
 | 80 | identity resolution | `vertique-rest-security` |
 | 100 | authorization | `vertique-rest-security` |
 | 360 | server-span enrichment | `vertique-opentelemetry-rest` |
@@ -1255,7 +1256,7 @@ string. A native or JAX-RS converter that returns `null` for that present value 
 `ParamConversionException` (400) — the same rule for a submitted value and for a `@DefaultValue`
 string routed through the resolver. Absence of a parameter is a caller concern (empty collection,
 `null` scalar, or applying a default); it is not expressed by a converter returning `null`. The
-exception message names the parameter and target type and never echoes the raw value.
+exception message names the parameter, not the target type (`targetType()` carries it), and never echoes the raw value.
 
 ### `RestRequestCompletedListener`, `HttpRequestCompletedListener`, and `RequestCompletionScope`
 
@@ -1559,7 +1560,7 @@ public interface RestExceptionMapperCustomizer extends OrderedExtension {
 @Provides @IntoSet
 static RestExceptionMapperCustomizer myTranslator() {
     return mapper -> mapper.on(MyInfrastructureException.class,
-            ex -> new WebApplicationException("Upstream error", 502, ex));
+            ex -> new WebApplicationException("Upstream error", ex, 502));
 }
 ```
 
@@ -1569,12 +1570,12 @@ Dagger wiring, the assembled instance and the error pipeline that consumes it ar
 
 ### Framework seams
 
-Eleven public types are named nowhere above because no application uses one — `RestContextMessages`,
+Twelve public types are framework seams that no application uses — `RestContextMessages`,
 `RestContextModule`, `RestContextTypes`, `RequestCompletionRecorder`, `MountCompositionValidator`,
 `SecurityRequirementSet`, `AuthEnforcementCapability`, `SecurityPolicyViolation`,
-`RequiresActionResolver`, `DeferredCredentialRejectionAuthHandler`, and
-`AnnotationSecurityPolicyResolver`. They are public because sibling framework modules call them
-across package boundaries: the JAX-RS route registrar, the security enforcement modules, the
+`RequiresActionResolver`, `DeferredCredentialRejectionAuthHandler`,
+`AnnotationSecurityPolicyResolver`, and `AuthenticationOrChain`. They are public because sibling
+framework modules call them across package boundaries: the JAX-RS route registrar, the security enforcement modules, the
 WebSocket transport, the OpenTelemetry integration, and the annotation processors that emit against
 the same vocabulary.
 
@@ -1843,8 +1844,9 @@ multi-scheme AND requirement, scopes declared on an OR alternative, and scopes d
   registration are skipped. Observe disconnects, resets, and normal ends through
   `ctx.addEndHandler(...)` (multicast), never through the response setters. Framework code that needs
   disconnect notification (SSE, MCP settlement) already follows this rule; application code must too.
-- **Registering on the `Handle` after completion.** `onClose`, `afterClose`, and `bindMdc` throw
-  `IllegalStateException` once the lifecycle has closed. Leaks are loud, not silent.
+- **Registering on the `Handle` after completion.** `onClose`, `afterClose`, and `bindMdc` with a
+  non-empty map throw `IllegalStateException` once the lifecycle has closed. Leaks are loud, not
+  silent.
 - **Giving a middleware `API` scope on a non-JAX-RS mount.** It is dropped without warning. Only the
   JAX-RS mount honors `MiddlewareScope.API`.
 - **Forgetting `priority()`.** `Middleware` and `OperationHandlerContributor` re-declare it as

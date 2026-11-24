@@ -111,7 +111,9 @@ class RowMappers {
                             ? DurableMetadata.fromCarrier(row.getJsonObject("metadata"))
                             : null,
                     row.getString("scope_key"),
-                    row.getString("definition_scope_key"));
+                    row.getString("definition_scope_key"),
+                    extractJsonb(row, "output_json"),
+                    row.getString("output_type_name"));
         };
     }
 

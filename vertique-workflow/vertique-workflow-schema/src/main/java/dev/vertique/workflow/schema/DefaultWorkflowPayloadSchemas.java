@@ -112,7 +112,10 @@ final class DefaultWorkflowPayloadSchemas implements WorkflowPayloadSchemas {
                             steps.add(new HumanTaskStepDescriptor(task.stepId(), decisions));
                         }
                     }
-                    return new WorkflowDefinitionDescriptor(key.definitionId(), key.definitionVersion(), start, steps);
+                    String outputTypeName = workflow.plan().outputTypeName();
+                    PayloadSchema output = outputTypeName == null ? null : schemaOf(outputTypeName);
+                    return new WorkflowDefinitionDescriptor(
+                            key.definitionId(), key.definitionVersion(), start, steps, output);
                 }));
     }
 

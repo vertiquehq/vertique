@@ -9,7 +9,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 ## Overview
 
-`vertique-codegen-rest-client` is an annotation processor that eliminates per-call reflection in the REST client hot path. The bottleneck is `RestClientRequestFactory.extractFieldValue`, which runs on every call that uses `@BeanParam`: it iterates `getRecordComponents()` or walks the class hierarchy via `getDeclaredField()`, calls `setAccessible(true)`, and invokes `Method.invoke()` / `Field.get()` — per call, no caching.
+`vertique-codegen-rest-client` is an annotation processor that eliminates per-call reflection in the REST client hot path. Without generated code, `RestClientRequestFactory.extractFieldValue` runs on every call that uses `@BeanParam` and reads each bean field through `ReflectiveBeanParamAccessor`, which invokes a cached `Method` or `Field` reflectively — per call.
 
 The processor generates two artifact types per compilation unit:
 
@@ -95,12 +95,13 @@ Example for a two-parameter method:
 
 ```java
 @Generated("dev.vertique.codegen.rest.client.processor.RestClientProcessor")
+@dev.vertique.core.codegen.Generated
 public final class UserClient_RestClientProxy implements UserClient {
 
-    private static final Method M_GET_USER;
+    private static final Method M_GETUSER_0;
     static {
         try {
-            M_GET_USER = UserClient.class.getDeclaredMethod("getUser", String.class, PageRequest.class);
+            M_GETUSER_0 = UserClient.class.getDeclaredMethod("getUser", String.class, PageRequest.class);
         } catch (NoSuchMethodException e) {
             throw new ExceptionInInitializerError(e);
         }
@@ -108,7 +109,7 @@ public final class UserClient_RestClientProxy implements UserClient {
 
     private final RestClientDispatcher dispatcher;
     private final BeanParamAccessor<PageRequest> pageRequestAccessor;
-    private final ClientMethodMeta metaGetUser;
+    private final ClientMethodMeta metaGetUser_0;
 
     public UserClient_RestClientProxy(
             RestClientDispatcher dispatcher,
@@ -116,21 +117,21 @@ public final class UserClient_RestClientProxy implements UserClient {
             Map<Method, ClientMethodMeta> methodMetas) {
         this.dispatcher = dispatcher;
         this.pageRequestAccessor = registry.resolve(PageRequest.class);
-        this.metaGetUser = methodMetas.get(M_GET_USER);
+        this.metaGetUser_0 = methodMetas.get(M_GETUSER_0);
     }
 
     @Override
     public Future<User> getUser(String id, PageRequest paging) {
         try {
-            RestRequestBuilder req = dispatcher.newRequest(metaGetUser);
+            RestRequestBuilder _req_ = dispatcher.newRequest(metaGetUser_0);
             if (id == null) {
                 throw new RestClientException("path param 'id' was null and has no @DefaultValue");
             }
-            req = dispatcher.applyPathParam(req, metaGetUser, "id", id, null);
-            req = dispatcher.applyQueryParam(req, metaGetUser, "page", pageRequestAccessor.extract(paging, "page"), null);
-            req = dispatcher.applyQueryParam(req, metaGetUser, "size", pageRequestAccessor.extract(paging, "size"), null);
-            req = dispatcher.applyHeaderParam(req, metaGetUser, "X-Sort", pageRequestAccessor.extract(paging, "sort"), null);
-            return dispatcher.send(req, metaGetUser);
+            _req_ = dispatcher.applyPathParam(_req_, metaGetUser_0, "id", id, null);
+            _req_ = dispatcher.applyQueryParam(_req_, metaGetUser_0, "page", pageRequestAccessor.extract(paging, "page"), null);
+            _req_ = dispatcher.applyQueryParam(_req_, metaGetUser_0, "size", pageRequestAccessor.extract(paging, "size"), null);
+            _req_ = dispatcher.applyHeaderParam(_req_, metaGetUser_0, "X-Sort", pageRequestAccessor.extract(paging, "sort"), null);
+            return dispatcher.send(_req_, metaGetUser_0);
         } catch (Exception _e_) {
             return Future.failedFuture(new RestClientException("Failed to build request for getUser", _e_));
         }
@@ -148,6 +149,7 @@ Example for a record bean:
 
 ```java
 @Generated("dev.vertique.codegen.rest.client.processor.RestClientProcessor")
+@dev.vertique.core.codegen.Generated
 public final class PageRequest_BeanParamAccessor implements BeanParamAccessor<PageRequest> {
 
     public PageRequest_BeanParamAccessor() {}
@@ -178,8 +180,8 @@ public final class PageRequest_BeanParamAccessor implements BeanParamAccessor<Pa
 For each field in a `@BeanParam` type, the emitter selects the first applicable path (in order):
 
 1. **Record component** — call `bean.{name}()` (the generated accessor method).
-2. **Public or protected getter** — call `bean.get{Name}()` or `bean.is{Name}()`.
-3. **Same-package field** — emit direct field access `bean.{name}` (the generated class is in the same package as the bean, so package-private and public fields are accessible without `setAccessible`).
+2. **Direct field** — emit direct field access `bean.{name}` for a public field, or a non-private field declared in the bean's own package (the generated class is in that package, so package-private and protected fields there are accessible without `setAccessible`).
+3. **Public getter** — call `bean.get{Name}()`, `bean.is{Name}()` or the fluent `bean.{name}()` for a field that cannot be read directly; the lookup walks the superclass chain and accepts public methods only.
 4. **None of the above** — abort emission for the entire bean (see "Bean-level fallback" below).
 
 ### Bean-level Fallback
@@ -204,7 +206,7 @@ When multiple `@RestClient` interfaces in the same compilation unit reference th
 
 ### `Class.forName` Discovery Contract
 
-Both discovery lookups follow the same pattern: one reflective call per type at first resolution, then cached forever in a `ConcurrentHashMap`.
+Both discovery lookups follow the same pattern: `Class.forName` on the companion name, a fallback when the class is absent, a loud failure when it is present but broken. The proxy lookup runs on each `build()`; the accessor lookup runs once per bean type, cached by the registry (see "`BeanParamAccessorRegistry` Ownership").
 
 **Proxy lookup** (in `RestClientBuilder.build`):
 ```java
@@ -258,6 +260,8 @@ The processor enforces the same `@Url` constraints as the runtime scanner:
 - `@Url` and `@PathParam`/`@QueryParam`/`@HeaderParam`/`@CookieParam`/`@BeanParam` are mutually exclusive on the same parameter.
 - `@DefaultValue` is not allowed on a `@Url` parameter.
 - `@Path` on the interface or method is not allowed when `@Url` is present on any parameter of that method.
+- A method has at most one `@Url` parameter.
+- A method with a `@Url` parameter has no `@PathParam` parameter, at the top level or among the fields of a `@BeanParam` type.
 
 These are compile errors (`ERROR`-level diagnostics), not warnings.
 
@@ -272,7 +276,7 @@ These are compile errors (`ERROR`-level diagnostics), not warnings.
 
 ### PATH `null` Without `@DefaultValue`: Aligned Fail-Fast
 
-Both the generated proxy and the reflective fallback (`RestClientRequestFactory.collectParams`) raise `RestClientException` when a `@PathParam` — whether a top-level method parameter or a `@BeanParam` field — is `null` and no `@DefaultValue` is set. The message is:
+Both the generated proxy and the reflective fallback (`RestClientRequestFactory.collectParamsWithMeta`) raise `RestClientException` when a `@PathParam` — whether a top-level method parameter or a `@BeanParam` field — is `null` and no `@DefaultValue` is set. The message is:
 
 ```
 path param '<name>' was null and has no @DefaultValue
@@ -309,6 +313,6 @@ None. The processor emits no Dagger binding modules. Generated proxies and acces
 
 ## Dependencies
 
-- `dev.vertique:vertique-codegen-core` — `CodegenContext`, `TypeResolver`, `AnnotationMirrors`, `Diagnostics`, `Identifiers`
+- `dev.vertique:vertique-codegen-core` — `CodegenContext`, `AnnotationMirrors`, `Diagnostics`, `Identifiers`, `JaxRsBeanScanner`, `PathPlaceholders`, `TypeVisibility`, `NoAutoWire`, `GeneratedMarker`
 - `com.palantir.javapoet:javapoet` — source generation (compile scope of the processor; not on the application runtime classpath)
 - `javax.annotation.processing` APIs — part of the JDK; not a separate Maven dependency

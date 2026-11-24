@@ -18,6 +18,7 @@ import dev.vertique.workflow.definition.callbacks.DefaultBranchResultReducerRegi
 import dev.vertique.workflow.definition.callbacks.DefaultCorrelationKeyResolverRegistry;
 import dev.vertique.workflow.definition.callbacks.DefaultFailMessageFactoryRegistry;
 import dev.vertique.workflow.definition.callbacks.DefaultNamedConditionRegistry;
+import dev.vertique.workflow.definition.callbacks.DefaultOutputMapperRegistry;
 import dev.vertique.workflow.definition.callbacks.DefaultPayloadMapperRegistry;
 import dev.vertique.workflow.definition.callbacks.DefaultStartStateMapperRegistry;
 import dev.vertique.workflow.definition.callbacks.DefaultStateMutatorRegistry;
@@ -29,6 +30,8 @@ import dev.vertique.workflow.definition.callbacks.FailMessageFactoryContributor;
 import dev.vertique.workflow.definition.callbacks.FailMessageFactoryRegistry;
 import dev.vertique.workflow.definition.callbacks.NamedConditionContributor;
 import dev.vertique.workflow.definition.callbacks.NamedConditionRegistry;
+import dev.vertique.workflow.definition.callbacks.OutputMapperContributor;
+import dev.vertique.workflow.definition.callbacks.OutputMapperRegistry;
 import dev.vertique.workflow.definition.callbacks.PayloadMapperContributor;
 import dev.vertique.workflow.definition.callbacks.PayloadMapperRegistry;
 import dev.vertique.workflow.definition.callbacks.StartStateMapperContributor;
@@ -199,6 +202,14 @@ public abstract class WorkflowDefinitionModule {
     @Multibinds
     abstract Set<CorrelationKeyResolverContributor> correlationKeyResolverContributors();
 
+    /**
+     * Declares the empty-set default for {@link OutputMapperContributor} multibinding.
+     *
+     * @return empty set (Dagger-generated)
+     */
+    @Multibinds
+    abstract Set<OutputMapperContributor> outputMapperContributors();
+
     // --- Binds (interface → implementation) ---
 
     /**
@@ -324,6 +335,16 @@ public abstract class WorkflowDefinitionModule {
     @Binds
     @Singleton
     abstract CorrelationKeyResolverRegistry correlationKeyResolverRegistry(DefaultCorrelationKeyResolverRegistry impl);
+
+    /**
+     * Binds {@link DefaultOutputMapperRegistry} to {@link OutputMapperRegistry}.
+     *
+     * @param impl the singleton implementation; non-null
+     * @return the registry interface
+     */
+    @Binds
+    @Singleton
+    abstract OutputMapperRegistry outputMapperRegistry(DefaultOutputMapperRegistry impl);
 
     /**
      * Binds {@link DefaultWorkflowDefinitionService} as the singleton

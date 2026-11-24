@@ -51,7 +51,7 @@ public class FutureModelConverter implements ModelConverter {
 - Result: `Future<GreetingResponse>` becomes `GreetingResponse` in the spec; `Future<ReadStream<SseEvent>>` reaches `SseModelConverter` regardless of registration order
 
 **Why a separate module:**
-The swagger-maven-plugin runs during the Maven `compile` phase and loads ModelConverters from its own classpath. Putting `FutureModelConverter` in the `rest` module would require the swagger-maven-plugin to depend on the entire `rest` module and all its transitive dependencies. This separate module has minimal dependencies (swagger-core-jakarta and vertx-core) to avoid classpath pollution.
+The swagger-maven-plugin runs during the Maven `compile` phase and loads ModelConverters from its own classpath. Putting `FutureModelConverter` in the `rest` module would require the swagger-maven-plugin to depend on the entire `rest` module and all its transitive dependencies. This separate module has minimal dependencies (swagger-core-jakarta, swagger-jaxrs2-jakarta, jakarta.ws.rs-api, and vertx-core; see [Dependencies](#dependencies)) to avoid classpath pollution.
 
 ### SseModelConverter
 

@@ -17,7 +17,7 @@ import java.util.List;
  * contract and outside the maturity promise.
  *
  * <p>Lists the contract and type names a parsed document refers to, in the order they are resolved:
- * the contract, the state type, the start payload type, then the signal payload type of each
+ * the contract, the state type, the start payload type, the output type, then the signal payload type of each
  * wait-for-signal step and the payload type of each human-task decision, in step order. Blank and
  * absent names are left out; the validator reports them. Step fields are labelled without the step id,
  * so a label never carries document text.
@@ -60,6 +60,7 @@ public final class DocumentTypeReferences {
         add(references, true, "contract", doc.contract());
         add(references, false, "stateType", doc.stateType());
         add(references, false, "startPayloadType", doc.startPayloadType());
+        add(references, false, "outputType", doc.outputType());
         if (doc.steps() != null) {
             for (StepNode step : doc.steps()) {
                 if (step instanceof ServiceStep service && service.reply() != null) {

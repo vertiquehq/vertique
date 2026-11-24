@@ -1,7 +1,7 @@
 # Vertique MCP Server
 
 > **Status:** Stable
-> **Package:** `dev.vertique.mcp.server`
+> **Package:** `dev.vertique.mcp.server`, `dev.vertique.mcp.server.runtime`
 > **Artifact:** `vertique-mcp-server`
 > **Depends on:** `vertique-mcp-core`, `vertique-core`, `vertique-input-processing`, `vertique-json`,
 > `vertique-json-schema`, `vertique-rate-limit-core`, `vertique-resilience`, `vertique-rest-core`,
@@ -665,7 +665,7 @@ conflicting implementation classes, rather than silently picking one order.
 
 Each permitted interceptor runs sequentially in that frozen order, on the request's owning Vert.x
 context, observing an `McpRequestContext` that carries the recognized method, the always-non-null
-established `SecurityContext`, and the optional correlation and body trace context — no request body,
+established `SecurityContext`, and the optional correlation — no request body,
 header, or credential accessor exists, so an interceptor can reject a request but never observe or
 mutate its payload. A synchronous `beforeRequest` throw, a `null` returned `Future`, or a `Future`
 that resolves failed all reject fail-closed the same way: the remaining interceptors and the method
@@ -1096,7 +1096,9 @@ invoker's constructor additionally accepts `Optional<Validator>` and threads it 
 application-composed, Dagger-aware one whose `ConstraintValidatorFactory` can resolve an
 `@Inject`-only `ConstraintValidator` — tool-input Bean Validation runs through it; when the graph
 binds none, behavior is byte-for-byte identical to `vertique-mcp-core`'s zero-config
-`McpBeanValidation` default. This module adds `hibernate-validator` and `org.glassfish.expressly` as
+`McpBeanValidation` default. The same optional `Validator` is also handed to the input-direction
+schema generator by `McpToolRuntimeFactory`: when it is bound, the published `inputSchema` constraints
+are additionally sourced from Bean Validation metadata; the output direction is unaffected. This module adds `hibernate-validator` and `org.glassfish.expressly` as
 runtime-scoped dependencies (not compile) so that zero-config default has a Jakarta Bean Validation
 provider on the classpath of every MCP application, even one that composes no `Validator` binding of
 its own — `vertique-mcp-core` itself declares only the Bean Validation API at compile scope.

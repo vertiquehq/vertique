@@ -90,6 +90,12 @@ final class DefaultWorkflowPlanSchemaProducer implements WorkflowPlanSchemaProdu
         return schemas;
     }
 
+    @Override
+    public JsonObject outputSchema(RuntimeWorkflow plan) {
+        String typeName = plan.plan().outputTypeName();
+        return typeName == null ? null : schemaOf(typeName, null);
+    }
+
     private JsonObject schemaOf(String typeName, Class<?> knownType) {
         Optional<CachedPayloadSchema> cached = cache.findByTypeName(typeName);
         if (cached.isPresent()) {
