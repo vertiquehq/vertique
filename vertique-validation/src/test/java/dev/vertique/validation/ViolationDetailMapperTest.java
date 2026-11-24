@@ -6,7 +6,10 @@ package dev.vertique.validation;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.vertique.core.exception.ConfigurationException;
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;
 import jakarta.validation.constraints.NotNull;
@@ -45,6 +48,42 @@ class ViolationDetailMapperTest {
         var details = mapper.toDetails(validator.validate(new RequiredDto(null)));
 
         assertEquals("custom", details.get(0).type());
+    }
+
+    @Test
+    void twoContributionsForOneAnnotationFailStartup() {
+        var mappings = new LinkedHashSet<ViolationTypeMapping>();
+        mappings.add(new ViolationTypeMapping(Size.class, "first"));
+        mappings.add(new ViolationTypeMapping(Size.class, "second"));
+
+        var failure = assertThrows(
+                ConfigurationException.class, () -> new ViolationDetailMapper(mappings, Set.of(), Set.of()));
+
+        assertTrue(failure.getMessage().contains(Size.class.getName()));
+    }
+
+    @Test
+    void twoContributionsOverridingOneBuiltInFailStartupWhateverTheOrder() {
+        var builtIn = new ViolationTypeMapping(NotNull.class, "required");
+        var first = new ViolationTypeMapping(NotNull.class, "first");
+        var second = new ViolationTypeMapping(NotNull.class, "second");
+        var builtInFirst = new LinkedHashSet<ViolationTypeMapping>(java.util.List.of(builtIn, first, second));
+        var builtInLast = new LinkedHashSet<ViolationTypeMapping>(java.util.List.of(first, second, builtIn));
+
+        assertThrows(ConfigurationException.class, () -> new ViolationDetailMapper(builtInFirst, Set.of(), Set.of()));
+        assertThrows(ConfigurationException.class, () -> new ViolationDetailMapper(builtInLast, Set.of(), Set.of()));
+    }
+
+    @Test
+    void identicalContributionsForOneAnnotationAreOneBinding() {
+        var mappings = new LinkedHashSet<ViolationTypeMapping>();
+        mappings.add(new ViolationTypeMapping(Size.class, "same"));
+        mappings.add(new ViolationTypeMapping(Size.class, "same"));
+        var mapper = new ViolationDetailMapper(mappings, Set.of(), Set.of());
+
+        assertEquals(
+                "same",
+                mapper.toDetails(validator.validate(new SizedDto("x"))).get(0).type());
     }
 
     @Test

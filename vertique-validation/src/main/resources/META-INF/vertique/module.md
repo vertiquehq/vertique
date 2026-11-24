@@ -400,7 +400,8 @@ the reflective tier is available, so policies with injected dependencies will no
 
 A contributed `ViolationTypeMapping` for an annotation already in the table replaces the built-in
 one, whatever order the bindings are collected in. Two contributions for the same
-annotation have no defined winner; contribute one.
+annotation fail startup with a `ConfigurationException`; contribute one. Earlier releases let the iteration
+order of the bindings pick the winner.
 
 `args` is resolved by the first contributed `ViolationArgsInspector` whose `supports(...)` returns
 `true`, otherwise by the built-in inspector.

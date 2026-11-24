@@ -3,12 +3,14 @@
 
 package dev.vertique.validation;
 
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.validation.ViolationDetail;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import jakarta.validation.ConstraintViolation;
 import java.lang.annotation.Annotation;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -53,14 +55,23 @@ class ViolationDetailMapper {
             Set<ViolationArgsInspector> argsInspectors) {
         // Built-in defaults go in first, then every other mapping: a contribution for a built-in
         // annotation always replaces the default, whatever order the set iterates in. Two distinct
-        // contributions for the same annotation remain last-wins in set order.
+        // contributions for the same annotation fail startup, since the set order would pick the
+        // winner.
         Map<Class<? extends Annotation>, String> merged = new HashMap<>();
+        Set<Class<? extends Annotation>> contributed = new HashSet<>();
         typeMappings.stream()
                 .filter(ValidationModule.BUILT_IN_TYPE_MAPPINGS::contains)
                 .forEach(m -> merged.put(m.annotationType(), m.type()));
         typeMappings.stream()
                 .filter(m -> !ValidationModule.BUILT_IN_TYPE_MAPPINGS.contains(m))
-                .forEach(m -> merged.put(m.annotationType(), m.type()));
+                .forEach(m -> {
+                    if (!contributed.add(m.annotationType())) {
+                        throw new ConfigurationException("Duplicate violation type mapping for "
+                                + m.annotationType().getName()
+                                + ": contribute one ViolationTypeMapping per annotation");
+                    }
+                    merged.put(m.annotationType(), m.type());
+                });
         this.typeMappings = Map.copyOf(merged);
         this.typeMappers = List.copyOf(typeMappers);
         this.argsInspectors = List.copyOf(argsInspectors);
