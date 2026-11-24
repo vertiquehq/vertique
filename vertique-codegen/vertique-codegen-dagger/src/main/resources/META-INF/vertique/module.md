@@ -94,7 +94,7 @@ In the final synthetic round the processor collects and emits nothing; it only a
 
 `@Path`-resource collection is not part of this processor. JAX-RS resource discovery and DI binding emission are owned by `JaxRsPipelineProcessor` in `vertique-codegen-jaxrs`.
 
-In the first non-final round the processor calls the appropriate emitter for each qualifier with non-empty bindings, then flips an `emitted` flag so subsequent rounds (e.g., the round triggered when Dagger writes its own generated sources) skip collection and emission. See "Pitfalls" below for the multi-round consequence — types first introduced by another processor's generated source in a later round are NOT auto-wired.
+In the first non-final round the processor calls the appropriate emitter for each qualifier with non-empty bindings, then flips an `emitted` flag so subsequent rounds (e.g., the round triggered when Dagger writes its own generated sources) skip collection and emission. See "Pitfalls" below for the multi-round consequence — types first introduced by another processor's generated source in a later round are not collected, except a generated signal-source class, which is bound by its predicted name from an interface present in the round where emission happens.
 
 ### `Qualifier`
 
@@ -329,7 +329,7 @@ public class AdminResource { ... }
 
 ### Multi-round emission limitation
 
-APT processes types from the current compilation unit only. Types introduced by *other* processors in later rounds (e.g., a processor that generates a `@Path`-annotated class from another annotation) are not visible to `AutoWireProcessor`. Only types present in the original source files are auto-wired.
+Collection and emission happen once, in the first non-final round. Types first introduced by *other* processors' generated sources in a later round (e.g., a processor that generates a `@Path`-annotated class from another annotation) are not collected by `AutoWireProcessor`. The exception is a generated signal-source class (`<Interface>_SignalSource`): it is bound by its predicted name from an interface present in that round, and checked in the final round.
 
 ### `@SupportedAnnotationTypes("*")` and warning suppression
 
