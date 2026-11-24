@@ -3,6 +3,7 @@
 
 package dev.vertique.codegen.rest.client.processor;
 
+import dev.vertique.codegen.Diagnostics;
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
 import org.junit.jupiter.api.DisplayName;
@@ -34,6 +35,46 @@ class RestClientProcessorHttpVerbTest {
                                 """));
 
         result.assertFailed().assertErrorMessage("is missing a supported HTTP verb annotation");
+    }
+
+    @Test
+    @DisplayName("invalid interfaces in one compilation each report their own error")
+    void invalidInterfaces_reportEveryError() {
+        var result = ProcessorTestHarness.run(
+                new RestClientProcessor(),
+                RestClientProcessorFixtures.restClientAnnotation(),
+                RestClientProcessorFixtures.futureClass(),
+                SourceFiles.inline("dev.vertique.examples.client.NoVerbClient", """
+                                package dev.vertique.examples.client;
+
+                                import dev.vertique.rest.client.RestClient;
+                                import io.vertx.core.Future;
+
+                                @RestClient
+                                public interface NoVerbClient {
+                                    Future<String> getUser();
+                                }
+                                """),
+                SourceFiles.inline("dev.vertique.examples.client.UnboundPathClient", """
+                                package dev.vertique.examples.client;
+
+                                import dev.vertique.rest.client.RestClient;
+                                import io.vertx.core.Future;
+                                import jakarta.ws.rs.GET;
+                                import jakarta.ws.rs.Path;
+
+                                @RestClient
+                                @Path("/users")
+                                public interface UnboundPathClient {
+                                    @GET
+                                    @Path("/{id}")
+                                    Future<String> getUser();
+                                }
+                                """));
+
+        result.assertFailed()
+                .assertErrorMessage("is missing a supported HTTP verb annotation")
+                .assertErrorMessage(Diagnostics.pathPlaceholderMissingParam("id", "getUser"));
     }
 
     @Test

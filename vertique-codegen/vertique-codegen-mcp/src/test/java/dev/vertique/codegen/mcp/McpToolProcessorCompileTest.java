@@ -123,6 +123,78 @@ class McpToolProcessorCompileTest {
     }
 
     @Test
+    @DisplayName("a type-use annotated String parameter or list element compiles as a scalar")
+    void shouldCompileTypeUseAnnotatedStringParameters() {
+        JavaFileObject annotated = SourceFiles.inline(TOOLS_PACKAGE + ".AnnotatedStringTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+                import jakarta.validation.constraints.NotBlank;
+                import java.util.List;
+
+                public class AnnotatedStringTools {
+
+                    @Inject
+                    public AnnotatedStringTools() {}
+
+                    @McpTool(name = "weather.annotated_string", description = "Look up the current weather.")
+                    public Future<WeatherReport> lookup(
+                            @McpToolParam(name = "location", description = "The location to look up.")
+                            @NotBlank String location,
+                            @McpToolParam(name = "aliases", description = "Alternative names.")
+                            List<@NotBlank String> aliases) {
+                        return Future.succeededFuture(new WeatherReport(location, 21));
+                    }
+                }
+                """);
+        try (McpToolCompilation compilation = McpToolCompilation.of(weatherReport(), annotated)) {
+            compilation.result().assertSuccess();
+        }
+    }
+
+    @Test
+    @DisplayName(
+            "a type-use annotated String result is text content and an annotated Optional beside a primitive keeps the probe")
+    void shouldEmitTypeUseAnnotatedStringResultAsTextAndKeepTheOptionalProbe() {
+        JavaFileObject annotated = SourceFiles.inline(TOOLS_PACKAGE + ".AnnotatedResultTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+                import jakarta.validation.Valid;
+                import jakarta.validation.constraints.NotBlank;
+                import java.util.Optional;
+
+                public class AnnotatedResultTools {
+
+                    @Inject
+                    public AnnotatedResultTools() {}
+
+                    @McpTool(name = "weather.annotated_result", description = "Describe the current weather.")
+                    public Future<@NotBlank String> lookup(
+                            @McpToolParam(name = "days", description = "How many days to describe.") int days,
+                            @McpToolParam(name = "nickname", description = "An optional nickname.")
+                            @Valid Optional<String> nickname) {
+                        return Future.succeededFuture("sunny");
+                    }
+                }
+                """);
+        String invokerFqn = TOOLS_PACKAGE + ".AnnotatedResultTools_lookup_McpToolInvoker";
+        try (McpToolCompilation compilation = McpToolCompilation.of(annotated)) {
+            compilation
+                    .result()
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(invokerFqn, "McpToolResult.text(value)")
+                    .assertGeneratedSourceContains(invokerFqn, "OptionalProbe");
+        }
+    }
+
+    @Test
     @DisplayName("a @NotNull Optional<T> parameter is rejected at compile time, naming the parameter")
     void shouldRejectNotNullOptionalParameter() {
         JavaFileObject requiredOptional = SourceFiles.inline(TOOLS_PACKAGE + ".RequiredOptionalTools", """

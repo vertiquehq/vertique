@@ -610,7 +610,7 @@ final class McpToolInvokerEmitter {
      * with no structured-output schema.
      */
     private boolean isTextResult(McpToolModel model) {
-        return ctx.types().erasure(model.returnModel().resultType()).toString().equals(String.class.getName());
+        return erasedName(model.returnModel().resultType()).equals(String.class.getName());
     }
 
     /**
@@ -642,8 +642,7 @@ final class McpToolInvokerEmitter {
      * Returns the erased-generic <b>source</b>-form name of {@code type}, suitable for interpolation
      * into a generated {@code TypeReference<...>} literal (a binary {@code Outer$Inner} form would not
      * compile there). A parameterized type recurses into its own type arguments so nested generics
-     * (e.g. {@code Map<String, List<Foo>>}) render fully; a raw or non-declared type falls back to its
-     * erasure's own {@code toString()}.
+     * (e.g. {@code Map<String, List<Foo>>}) render fully; any other type renders as {@link #erasedName(TypeMirror)}.
      *
      * @param type the type mirror to render
      * @return the source-form type name string
@@ -654,7 +653,7 @@ final class McpToolInvokerEmitter {
         }
         if (!(type instanceof DeclaredType declared)
                 || declared.getTypeArguments().isEmpty()) {
-            return ctx.types().erasure(type).toString();
+            return erasedName(type);
         }
         Element rawElement = ctx.types().asElement(ctx.types().erasure(declared));
         String rawName = rawElement instanceof TypeElement te
@@ -771,7 +770,7 @@ final class McpToolInvokerEmitter {
 
     /** Returns {@code true} when {@code parameter}'s declared type erases to {@code java.util.Optional}. */
     private boolean isOptional(McpToolParameterModel parameter) {
-        return ctx.types().erasure(parameter.type()).toString().equals(OPTIONAL_FQN);
+        return erasedName(parameter.type()).equals(OPTIONAL_FQN);
     }
 
     /**
@@ -807,5 +806,19 @@ final class McpToolInvokerEmitter {
                                 .build())
                         .build())
                 .build();
+    }
+
+    /**
+     * Returns the source-form name of {@code type}'s erasure without type-use annotations: the
+     * qualified name of a declared type's element, and the erasure's own {@code toString()} for any
+     * other type. The string form of an annotated declared type carries its annotations
+     * ({@code java.lang.@NotBlank String}), so it can neither be compared with a type name nor be
+     * interpolated into generated source.
+     */
+    private String erasedName(TypeMirror type) {
+        if (type instanceof DeclaredType declared && declared.asElement() instanceof TypeElement element) {
+            return element.getQualifiedName().toString();
+        }
+        return ctx.types().erasure(type).toString();
     }
 }
