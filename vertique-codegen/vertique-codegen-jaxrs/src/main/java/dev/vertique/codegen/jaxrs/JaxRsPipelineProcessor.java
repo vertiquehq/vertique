@@ -13,6 +13,7 @@ import dev.vertique.codegen.jaxrs.processor.emit.JaxRsDescriptorEmitter;
 import dev.vertique.codegen.jaxrs.processor.validate.ApplicationAnnotationValidator;
 import dev.vertique.codegen.jaxrs.processor.validate.BodyFormValidator;
 import dev.vertique.codegen.jaxrs.processor.validate.ContextParamValidator;
+import dev.vertique.codegen.jaxrs.processor.validate.DocumentSecurityPlacementValidator;
 import dev.vertique.codegen.jaxrs.processor.validate.HttpVerbValidator;
 import dev.vertique.codegen.jaxrs.processor.validate.PathParamAlignmentValidator;
 import dev.vertique.codegen.jaxrs.processor.validate.ResourceMemberContextValidator;
@@ -131,6 +132,7 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
     private PathParamAlignmentValidator path;
     private BodyFormValidator bodyForm;
     private ApplicationAnnotationValidator applicationAnnotations;
+    private DocumentSecurityPlacementValidator documentSecurityPlacement;
     private GeneratedJaxRsResourcesModuleEmitter moduleEmitter;
     private JaxRsDescriptorEmitter descriptorEmitter;
     private BeanParamModelEmitter beanParamEmitter;
@@ -184,6 +186,7 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
         path = new PathParamAlignmentValidator(ctx);
         bodyForm = new BodyFormValidator(ctx);
         applicationAnnotations = new ApplicationAnnotationValidator(ctx);
+        documentSecurityPlacement = new DocumentSecurityPlacementValidator(ctx);
         moduleEmitter = new GeneratedJaxRsResourcesModuleEmitter(ctx);
         packageResolver = new PackageResolver(env);
         descriptorEmitter = new JaxRsDescriptorEmitter(ctx);
@@ -348,6 +351,7 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
         JaxRsApplicationScanner.scan(roundEnv, ctx);
         List<TypeElement> declarations = RestApplicationScanner.scan(roundEnv, ctx);
         Set<TypeElement> rejectedDeclarations = applicationAnnotations.validate(declarations);
+        documentSecurityPlacement.validate(roundEnv, declarations);
         emitModule(diCandidates, declarations, rejectedDeclarations);
 
         emitted = true;

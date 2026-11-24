@@ -145,7 +145,11 @@ public record SecurityRequirementSet(List<SecurityRequirement> schemes) {
 Sets are produced from annotations: a standalone `@SecurityRequirement(name)` becomes a
 single-scheme set; `@SecurityRequirement(combine = {…})` becomes a multi-scheme AND-set; repeated
 `@SecurityRequirement`, `@SecurityRequirements`, or `@Operation(security = …)` become multiple sets
-(the OR alternatives).
+(the OR alternatives). An operation that declares none at the method or class level inherits its
+application's document-level sets, `@OpenAPIDefinition(security = …)` on the `@RestApplication`
+declaring interface, unless the resource class or its own method declares the empty
+`@SecurityRequirements({})` marker (see the rest-jaxrs reference, "Document-level security"). Inherited
+sets go through every check below exactly as declared ones do.
 
 ### Fail-closed startup matrix
 
@@ -924,7 +928,7 @@ provider that exceeds the bound fails the import with the generic 503 described 
 | `RestConfigurationException` | Any shape in the [fail-closed matrix](#fail-closed-startup-matrix): a multi-scheme AND-set, scopes on an OR alternative, scopes from both `@Authorized` and `@SecurityRequirement`, or duplicate `schemeName()` |
 | `RestConfigurationException` | `@RolesAllowed` / `@Authorized` / `@DenyAll` on an operation with no declared security requirement — the handler would never run |
 | `RestConfigurationException` | A declared security requirement with no matching `SecuritySchemeHandler` registered |
-| `RestConfigurationException` | `@PermitAll` on an operation that also declares a security requirement — conflicting intent |
+| `RestConfigurationException` | `@PermitAll` on an operation that also declares or inherits a security requirement — conflicting intent; under document-level security, the message names the fix: `@SecurityRequirements({})` on the resource class or method keeps the operation anonymous |
 | `IllegalStateException` | Two `SecurityIdentityResolver`s share the same `(priority, id)` pair. Raised while the Dagger graph is constructed, not on first request |
 | `IllegalStateException` | An action-only `@RequiresAction` route that declares no security scheme, with no `RouteAuthHandler` registered or with more than one — JAX-RS has no per-route scheme selector, so the framework fails rather than guess. A route that declares a scheme is authenticated by that scheme's handler and needs no `RouteAuthHandler` |
 | `IllegalStateException` | A `SecurityPolicy.Constrained` with both empty roles and empty scopes. Raised at handler creation, not on first request |

@@ -44,7 +44,7 @@ class ApplicationAnnotationBackstopTest {
     private static final Logger LOG = LoggerFactory.getLogger(ApplicationAnnotationBackstopTest.class);
 
     /** R-007: TP-013's {@code @OpenAPIDefinition} row's reason fragment. */
-    private static final String ONLY_INFO_ELEMENT_FRAGMENT = "only its info element";
+    private static final String ONLY_INFO_ELEMENT_FRAGMENT = "only its info and security elements";
 
     /** R-007: TP-014's every row's reason fragment. */
     private static final String HONORED_ONLY_ON_DECLARING_INTERFACE_FRAGMENT =

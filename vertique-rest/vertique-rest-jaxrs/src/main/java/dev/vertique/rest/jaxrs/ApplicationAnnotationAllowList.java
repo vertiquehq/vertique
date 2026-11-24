@@ -25,7 +25,7 @@ import java.util.Objects;
  * on the declaring interface must be one of {@code @RestApplication}, the annotation whose type name
  * equals {@link ApiDocsModuleInstalled#ANNOTATION_NAME} (read by name so this module never depends on the
  * docs module that declares the real annotation), {@link OpenAPIDefinition} with every element other
- * than {@code info} at its declared default (compared with {@link Method#getDefaultValue()} via
+ * than {@code info} and {@code security} at its declared default (compared with {@link Method#getDefaultValue()} via
  * {@link Objects#deepEquals}), or a type in package {@code java.lang} or
  * {@code java.lang.annotation}. On a superinterface, only a {@code java.lang} or
  * {@code java.lang.annotation} type is allowed: one of the three honored-only annotations above gets
@@ -126,15 +126,17 @@ final class ApplicationAnnotationAllowList {
     }
 
     /**
-     * Returns whether every element of {@code annotation} other than {@code info} equals its
+     * Returns whether every element of {@code annotation} other than {@code info} and {@code security}
+     * (the document-level security requirements) equals its
      * declared default, compared structurally with {@link Objects#deepEquals}.
      *
      * @param annotation the {@link OpenAPIDefinition} instance to check
-     * @return {@code true} when every element other than {@code info} is at its declared default
+     * @return {@code true} when every element other than {@code info} and {@code security} is at its
+     *     declared default
      */
     private static boolean isDefaultOpenApiDefinition(OpenAPIDefinition annotation) {
         for (Method element : OpenAPIDefinition.class.getDeclaredMethods()) {
-            if ("info".equals(element.getName())) {
+            if ("info".equals(element.getName()) || "security".equals(element.getName())) {
                 continue;
             }
             if (!Objects.deepEquals(invoke(element, annotation), element.getDefaultValue())) {
@@ -176,7 +178,7 @@ final class ApplicationAnnotationAllowList {
         String base = "Application '" + name + "' (" + declaringType.getName() + ") carries @"
                 + annotationType.getName() + " on " + typeInScope.getName()
                 + ", which is not allowed: application declarations carry no resource semantics";
-        return openApiSuffix ? base + "; only its info element may be set" : base;
+        return openApiSuffix ? base + "; only its info and security elements may be set" : base;
     }
 
     /**
