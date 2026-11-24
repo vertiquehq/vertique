@@ -229,7 +229,7 @@ Both throw `InvocationPolicyConflictException` when a source declares both an ad
 
 ### `InvocationPolicyConflictException`
 
-Thrown with the conflicting axis and both declaration sites. The message names both sites so the fix is unambiguous:
+A `ConfigurationException` (it extended `IllegalStateException` before), so a conflicting declaration fails startup like any other configuration error. Thrown with the conflicting axis and both declaration sites. The message names both sites so the fix is unambiguous:
 
 > `Conflicting @Sanitize (declared on IFoo.bar) and @SkipSanitization (declared on FooImpl.bar) for method FooImpl.bar — an override cannot remove an inherited policy; remove one of the annotations.`
 

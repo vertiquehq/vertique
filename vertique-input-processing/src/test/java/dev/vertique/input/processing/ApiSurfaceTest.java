@@ -407,6 +407,13 @@ class ApiSurfaceTest {
             assertNoPublicFields(InvocationPolicyConflictException.class);
             assertConstructors(InvocationPolicyConflictException.class, "<init>(PolicyAxis,String,String,String)");
         }
+
+        @Test
+        @DisplayName("is a configuration error")
+        void invocationPolicyConflictExceptionIsAConfigurationError() {
+            assertTrue(dev.vertique.core.exception.ConfigurationException.class.isAssignableFrom(
+                    InvocationPolicyConflictException.class));
+        }
     }
 
     @Nested
