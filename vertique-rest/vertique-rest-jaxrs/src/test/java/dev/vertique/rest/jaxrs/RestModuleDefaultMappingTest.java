@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.exception.BusinessRuleException;
 import dev.vertique.core.exception.ConflictException;
+import dev.vertique.core.exception.OperationTimeoutException;
 import dev.vertique.core.exception.TooManyRequestsException;
 import dev.vertique.core.exception.UnavailableException;
 import dev.vertique.core.exception.ValidationException;
@@ -132,6 +133,29 @@ class RestModuleDefaultMappingTest {
     }
 
     // --- Tests ---
+
+    /** A module's own deadline failure, rooted in the core timeout type. */
+    private static final class ModuleDeadlineException extends OperationTimeoutException {
+        ModuleDeadlineException() {
+            super("Module operation timed out");
+        }
+    }
+
+    @Test
+    @DisplayName("OperationTimeoutException and its subclasses map to a 504 problem response")
+    void operationTimeoutShouldMapTo504() {
+        DefaultExceptionMapper mapper = RestModule.defaultExceptionMapper();
+
+        for (Throwable timeout : List.of(new OperationTimeoutException("timed out"), new ModuleDeadlineException())) {
+            Response response = mapper.toResponse(timeout);
+
+            assertEquals(504, response.getStatus());
+            assertEquals("application/problem+json", response.getMediaType().toString());
+            ProblemDetail body = assertInstanceOf(ProblemDetail.class, response.getEntity());
+            assertEquals(504, body.status());
+            assertEquals(timeout.getMessage(), body.detail());
+        }
+    }
 
     @Test
     @DisplayName("ConflictException should map to 409 Conflict")

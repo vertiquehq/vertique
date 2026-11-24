@@ -6,8 +6,7 @@ package dev.vertique.resilience.exception;
 import dev.vertique.core.exception.TechnicalException;
 
 /** Technical failure produced by the resilience runtime. */
-public abstract sealed class ResilienceException extends TechnicalException
-        permits ResilienceTimeoutException, ResiliencePolicyException {
+public abstract sealed class ResilienceException extends TechnicalException permits ResiliencePolicyException {
 
     /**
      * Creates a cause-free resilience failure with a safe message.

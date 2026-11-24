@@ -590,6 +590,7 @@ The framework's `ExceptionMapper<Throwable>`, pre-configured by `RestModule`:
 | `NotFoundException` (core.exception) | 404 | `ProblemDetail` |
 | `TooManyRequestsException` (core.exception) | 429 | `ProblemDetail`; when the exception carries a retry hint, a `Retry-After` header in whole seconds, rounded up and at least `1` |
 | `UnavailableException` (core.exception) | 503 | `ProblemDetail` |
+| `OperationTimeoutException` (core.exception) | 504 | `ProblemDetail` — an operation's own deadline elapsed; `ResilienceTimeoutException`, thrown when an inbound `@Timeout` expires, extends it. Like a 503, it is logged as a handled mapping (a warning without a stack), not as an unhandled fault |
 | `Throwable` (catch-all) | 500 | `ProblemDetail` with the fixed detail `"Internal Server Error"` — the exception message is never echoed. Logging is deferred to `ErrorPipeline` (see below) so a Vert.x 4xx fallback is not recorded as an unhandled server fault |
 
 A `ViolationCarrier` detail renders with `detail`, `type` and `args` and neither `pointer` nor `parameter` nor

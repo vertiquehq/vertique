@@ -326,9 +326,10 @@ the `@Multibinds Set<ResilienceObserver>` declared by `ResilienceModule`.
 
 ### Runtime exception surface
 
-Runtime failures use two sealed public roots: `ResilienceException` extends
-`dev.vertique.core.exception.TechnicalException` and permits `ResilienceTimeoutException` and
-`ResiliencePolicyException`; `ResilienceUnavailableException` extends
+Runtime failures use two sealed public roots and one core-rooted timeout: `ResilienceException` extends
+`dev.vertique.core.exception.TechnicalException` and permits `ResiliencePolicyException`;
+`ResilienceTimeoutException` extends `dev.vertique.core.exception.OperationTimeoutException` (a REST boundary
+answers it with 504) and is not a `ResilienceException`; `ResilienceUnavailableException` extends
 `dev.vertique.core.exception.UnavailableException` and permits `ResilienceClosedException`,
 `CircuitOpenException`, `BulkheadRejectedException`, and `BulkheadQueueTimeoutException`.
 `CircuitOpenException`, `BulkheadRejectedException`, and `BulkheadQueueTimeoutException` are part of

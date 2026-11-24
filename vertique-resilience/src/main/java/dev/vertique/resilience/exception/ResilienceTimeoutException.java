@@ -3,10 +3,16 @@
 
 package dev.vertique.resilience.exception;
 
+import dev.vertique.core.exception.OperationTimeoutException;
 import java.util.regex.Pattern;
 
-/** Signals that a resilience operation exceeded its per-attempt timeout. */
-public final class ResilienceTimeoutException extends ResilienceException {
+/**
+ * Signals that a resilience operation exceeded its per-attempt timeout.
+ *
+ * <p>It is an {@link OperationTimeoutException}, so a REST boundary answers it with 504 without knowing this
+ * module. It is not a {@link ResilienceException}.
+ */
+public final class ResilienceTimeoutException extends OperationTimeoutException {
 
     private static final String MESSAGE = "Resilience operation timed out";
     private static final Pattern KEY_PATTERN = Pattern.compile("[a-z0-9:-]{1,32}:[0-9a-f]{64}");
