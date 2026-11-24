@@ -4,10 +4,8 @@
 package dev.vertique.workflow.registry.store;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import dev.vertique.workflow.history.HistoryAttribution;
-import dev.vertique.workflow.state.HistoryActor;
+import dev.vertique.workflow.actor.WorkflowActor;
 import java.time.Instant;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
@@ -20,10 +18,9 @@ import org.junit.jupiter.api.Test;
 class DefinitionChangeActorRecordsTest {
 
     private static final Instant NOW = Instant.parse("2026-01-02T03:04:05Z");
-    private static final DefinitionChangeActor ALICE = new DefinitionChangeActor(
-            new HistoryActor(HistoryActor.Kind.USER, "alice", null), "carol", HistoryAttribution.VERIFIED);
+    private static final WorkflowActor ALICE = new WorkflowActor.User("alice");
 
-    private static WorkflowDefinitionRecord record(DefinitionChangeActor changedBy) {
+    private static WorkflowDefinitionRecord record(WorkflowActor changedBy) {
         return new WorkflowDefinitionRecord(
                 new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1),
                 DefinitionKind.CODE,
@@ -96,16 +93,5 @@ class DefinitionChangeActorRecordsTest {
         assertThat(shortForm)
                 .isEqualTo(
                         new DefinitionActivation(WorkflowScopes.DEFAULT, "wf", WorkflowScopes.DEFAULT, 1, NOW, null));
-    }
-
-    @Test
-    @DisplayName("an actor needs its actor and its attribution, and the system actor needs a reason")
-    void anActorRequiresItsComponents() {
-        assertThatThrownBy(() -> new DefinitionChangeActor(null, null, HistoryAttribution.ABSENT))
-                .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() ->
-                        new DefinitionChangeActor(new HistoryActor(HistoryActor.Kind.NONE, null, null), null, null))
-                .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> DefinitionChangeActor.system(null)).isInstanceOf(NullPointerException.class);
     }
 }

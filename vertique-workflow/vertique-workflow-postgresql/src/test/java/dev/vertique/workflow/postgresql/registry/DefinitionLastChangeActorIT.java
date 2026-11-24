@@ -16,6 +16,7 @@ import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContexts;
 import dev.vertique.security.SecurityIdentity;
+import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.definition.it.fixture.OrderDocumentSignals;
 import dev.vertique.workflow.definition.it.fixture.PlaceOrderDoc;
@@ -23,17 +24,14 @@ import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
-import dev.vertique.workflow.history.HistoryAttribution;
 import dev.vertique.workflow.postgresql.registry.ActivationFixtures.Scenario;
 import dev.vertique.workflow.postgresql.registry.DefinitionScenario.Boot;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
 import dev.vertique.workflow.registry.store.DefinitionActivation;
-import dev.vertique.workflow.registry.store.DefinitionChangeActor;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
-import dev.vertique.workflow.state.HistoryActor;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
@@ -69,7 +67,7 @@ public class DefinitionLastChangeActorIT {
             .withDatabaseName("workflow_definition_last_actor_it")
             .withMigration("classpath:db/migration/workflow");
 
-    private static final DefinitionChangeActor BOOTSTRAP = DefinitionChangeActor.system("bootstrap");
+    private static final WorkflowActor BOOTSTRAP = new WorkflowActor.System("bootstrap");
 
     @Test
     @DisplayName("a document is attributed from its registration through publication, activation and retirement")
@@ -93,7 +91,7 @@ public class DefinitionLastChangeActorIT {
             // Then the candidate names the user and the time of the registration
             WorkflowDefinitionRecord candidate = record(scenario, key);
             assertThat(candidate.status()).isEqualTo(DefinitionStatus.CANDIDATE);
-            assertThat(candidate.statusChangedBy()).isEqualTo(verified(HistoryActor.Kind.USER, "alice"));
+            assertThat(candidate.statusChangedBy()).isEqualTo(new WorkflowActor.User("alice"));
             assertThat(candidate.statusChangedAt()).isAfterOrEqualTo(before);
 
             // When a service principal publishes it
@@ -102,7 +100,7 @@ public class DefinitionLastChangeActorIT {
             // Then the row names the publisher in place of the registrant, and its status change time moved on
             WorkflowDefinitionRecord published = record(scenario, key);
             assertThat(published.status()).isEqualTo(DefinitionStatus.AVAILABLE);
-            assertThat(published.statusChangedBy()).isEqualTo(verified(HistoryActor.Kind.SERVICE, "deployer"));
+            assertThat(published.statusChangedBy()).isEqualTo(new WorkflowActor.Service("deployer"));
             assertThat(published.statusChangedAt()).isAfterOrEqualTo(candidate.statusChangedAt());
 
             // When a user activates it in the default scope
@@ -110,27 +108,27 @@ public class DefinitionLastChangeActorIT {
 
             // Then the activation record names who wrote it and when
             DefinitionActivation activation = scenario.activations(DEFAULT, doc).getFirst();
-            assertThat(activation.activatedBy()).isEqualTo(verified(HistoryActor.Kind.USER, "bob"));
+            assertThat(activation.activatedBy()).isEqualTo(new WorkflowActor.User("bob"));
             assertThat(activation.activatedAt()).isAfterOrEqualTo(before);
 
             // And a later activation of the same record replaces who wrote it
             as(vertx, scenario, user("bella"), () -> scenario.service().activate(DEFAULT, doc, DEFAULT, 1));
             assertThat(scenario.activations(DEFAULT, doc).getFirst().activatedBy())
-                    .isEqualTo(verified(HistoryActor.Kind.USER, "bella"));
+                    .isEqualTo(new WorkflowActor.User("bella"));
 
             // When it is taken off the default, deprecated and reinstated by users, and deprecated again with no
             // identity
             await(scenario.service().deactivateDefault(doc));
             as(vertx, scenario, user("dave"), () -> scenario.service().deprecate(key));
-            assertThat(record(scenario, key).statusChangedBy()).isEqualTo(verified(HistoryActor.Kind.USER, "dave"));
+            assertThat(record(scenario, key).statusChangedBy()).isEqualTo(new WorkflowActor.User("dave"));
             as(vertx, scenario, user("erin"), () -> scenario.service().reinstate(key));
-            assertThat(record(scenario, key).statusChangedBy()).isEqualTo(verified(HistoryActor.Kind.USER, "erin"));
+            assertThat(record(scenario, key).statusChangedBy()).isEqualTo(new WorkflowActor.User("erin"));
             await(scenario.service().deprecate(key));
 
             // Then the last change replaces the earlier ones: with no identity the row records none at all
             WorkflowDefinitionRecord unattributed = record(scenario, key);
             assertThat(unattributed.status()).isEqualTo(DefinitionStatus.DEPRECATED);
-            assertThat(unattributed.statusChangedBy()).isEqualTo(DefinitionChangeActor.unattributed());
+            assertThat(unattributed.statusChangedBy()).isNull();
 
             // When a service principal retires it
             as(vertx, scenario, service("janitor"), () -> scenario.service().retire(key));
@@ -138,7 +136,7 @@ public class DefinitionLastChangeActorIT {
             // Then the retirement is the last change
             WorkflowDefinitionRecord retired = record(scenario, key);
             assertThat(retired.status()).isEqualTo(DefinitionStatus.RETIRED);
-            assertThat(retired.statusChangedBy()).isEqualTo(verified(HistoryActor.Kind.SERVICE, "janitor"));
+            assertThat(retired.statusChangedBy()).isEqualTo(new WorkflowActor.Service("janitor"));
         }
     }
 
@@ -208,27 +206,25 @@ public class DefinitionLastChangeActorIT {
             // Then the document is a candidate again, and the system reset it
             WorkflowDefinitionRecord reset = record(scenario, key);
             assertThat(reset.status()).isEqualTo(DefinitionStatus.CANDIDATE);
-            assertThat(reset.statusChangedBy())
-                    .isEqualTo(new DefinitionChangeActor(
-                            new HistoryActor(HistoryActor.Kind.SYSTEM, null, "stale publication reset"),
-                            null,
-                            HistoryAttribution.VERIFIED));
+            assertThat(reset.statusChangedBy()).isEqualTo(new WorkflowActor.System("stale publication reset"));
         }
     }
 
     @Test
-    @DisplayName("an actor that acted for a subject is recorded with the subject")
-    void theSubjectAndTheAttributionAreRecorded(Vertx vertx) {
+    @DisplayName("a service acting for a user is recorded as the service the mapper names, with its id as it is")
+    void aServiceActingForAUserIsRecordedAsTheService(Vertx vertx) {
         String doc = "last-actor-subject";
 
         try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
             own(database, doc);
             Scenario scenario = scenario(database, boot(database));
 
-            // Given a service that acts for a user registers a document
+            // A service and a delegated user share an id of the longest storable length that holds a control character,
+            // but are different principals.
+            String sharedId = "relay\t" + "x".repeat(249);
             SecurityIdentity relayed = new SecurityIdentity(
-                    new PrincipalRef(PrincipalType.SERVICE, "relay", Map.of()),
-                    Optional.of(new PrincipalRef(PrincipalType.USER, "zoe", Map.of())),
+                    new PrincipalRef(PrincipalType.SERVICE, sharedId, Map.of()),
+                    Optional.of(new PrincipalRef(PrincipalType.USER, sharedId, Map.of("issuer", "local"))),
                     Optional.empty(),
                     Optional.empty());
             as(vertx, scenario, relayed, () -> scenario.service()
@@ -238,16 +234,9 @@ public class DefinitionLastChangeActorIT {
                             DocumentFormat.YAML,
                             DefinitionScenario.source("last-actor-subject", Instant.now())));
 
-            // Then the row names the service and the user it acted for
-            DefinitionChangeActor actor = record(scenario, key(doc, 1)).statusChangedBy();
-            assertThat(actor.actor()).isEqualTo(new HistoryActor(HistoryActor.Kind.SERVICE, "relay", null));
-            assertThat(actor.onBehalfOf()).isEqualTo("zoe");
-            assertThat(actor.attribution()).isEqualTo(HistoryAttribution.VERIFIED);
+            // Then the row names the service, with its id exactly as given
+            assertThat(record(scenario, key(doc, 1)).statusChangedBy()).isEqualTo(new WorkflowActor.Service(sharedId));
         }
-    }
-
-    private static DefinitionChangeActor verified(HistoryActor.Kind kind, String id) {
-        return new DefinitionChangeActor(new HistoryActor(kind, id, null), null, HistoryAttribution.VERIFIED);
     }
 
     private static WorkflowDefinitionRecord record(Scenario scenario, DefinitionKey key) {

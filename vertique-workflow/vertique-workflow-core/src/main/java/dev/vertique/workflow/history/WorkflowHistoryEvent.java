@@ -3,9 +3,9 @@
 
 package dev.vertique.workflow.history;
 
+import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.registry.store.DefinitionKey;
-import dev.vertique.workflow.state.HistoryActor;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.tasks.TaskAssignment;
 import jakarta.annotation.Nullable;
@@ -49,9 +49,7 @@ public sealed interface WorkflowHistoryEvent {
      * @param commandId   the id of the command the entry names, or {@code null} when it names none
      * @param commandKind the kind of that command, or {@code null} when the entry names no command or the stored kind
      *                    is not known to this node
-     * @param actor       who the entry is attributed to; {@code HistoryActor.Kind.NONE} when it was never attributed
-     * @param onBehalfOf  the subject the actor acted for, or {@code null}
-     * @param attribution how far the actor can be relied on; {@code ABSENT} when it was never attributed
+     * @param actor       who acted, or {@code null} when the action had no actor
      * @param recordedAt  when the entry was persisted
      */
     record EntryInfo(
@@ -61,9 +59,7 @@ public sealed interface WorkflowHistoryEvent {
             @Nullable String stepId,
             @Nullable Long commandId,
             @Nullable CommandKind commandKind,
-            HistoryActor actor,
-            @Nullable String onBehalfOf,
-            HistoryAttribution attribution,
+            @Nullable WorkflowActor actor,
             Instant recordedAt) {}
 
     /**

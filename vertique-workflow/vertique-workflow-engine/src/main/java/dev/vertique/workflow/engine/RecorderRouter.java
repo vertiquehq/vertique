@@ -3,7 +3,8 @@
 
 package dev.vertique.workflow.engine;
 
-import dev.vertique.workflow.engine.spi.CommandActor;
+import dev.vertique.workflow.actor.WorkflowActor;
+import dev.vertique.workflow.actor.WorkflowActorMaps;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.RecorderResult;
@@ -15,6 +16,8 @@ import io.vertx.sqlclient.SqlClient;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
@@ -149,11 +152,12 @@ final class RecorderRouter {
 
     /**
      * Routes an intent a segment writes for the command it executes: every application-set header whose name starts
-     * with {@code x-workflow-}, in any letter case, is removed, and the command's actor is added as attribution
-     * headers. A {@link IntentKind#SERVICE} dispatch, which stays inside the deployment's own services, gets the full
-     * set ({@code x-workflow-actor-kind}, {@code -actor-id}, {@code -actor-reason}, {@code -on-behalf-of} and
-     * {@code -attribution}; absent values are omitted). Any other intent, such as a workflow event that reaches brokers
-     * and webhooks, gets only the actor kind and the attribution status, so no subject identifier leaves the
+     * with {@code x-workflow-}, in any letter case, is removed, and the command's actor is added as headers. Every
+     * intent gets {@code x-workflow-actor-kind} ({@code NONE} when the command has no actor). A
+     * {@link IntentKind#SERVICE} dispatch, which stays inside the deployment's own services, also gets
+     * {@code x-workflow-actor-id} for a user or a service and {@code x-workflow-actor-reason} for the system, in
+     * percent-encoding; an anonymous caller and a command with no actor add none. Any other intent, such as a workflow
+     * event that reaches brokers and webhooks, gets only the actor kind, so no actor identifier leaves the
      * deployment. The headers are data for audit and logs only: they are unauthenticated, and nothing reads them as an
      * identity. Without a command, the application-set workflow headers are removed and none are added.
      *
@@ -188,14 +192,23 @@ final class RecorderRouter {
             }
         }
         if (command != null) {
-            CommandActor actor = command.actor() == null ? CommandActor.none() : command.actor();
-            headers.put(PREFIX + "actor-kind", actor.kind().name());
+            WorkflowActor actor = command.actor();
+            headers.put(
+                    PREFIX + "actor-kind",
+                    actor == null ? "NONE" : WorkflowActorMaps.toMap(actor).get("kind"));
             if (intent.kind() == IntentKind.SERVICE) {
-                putIfPresent(headers, PREFIX + "actor-id", actor.id());
-                putIfPresent(headers, PREFIX + "actor-reason", actor.reason());
-                putIfPresent(headers, PREFIX + "on-behalf-of", actor.onBehalfOf());
+                switch (actor) {
+                    case WorkflowActor.User user -> putEncoded(headers, "actor-id", user.userId());
+                    case WorkflowActor.Service service -> putEncoded(headers, "actor-id", service.serviceId());
+                    case WorkflowActor.System system -> putEncoded(headers, "actor-reason", system.reason());
+                    case WorkflowActor.Anonymous anonymous -> {
+                        // an anonymous caller has no identifier to pass on
+                    }
+                    case null -> {
+                        // no actor, no identifier
+                    }
+                }
             }
-            headers.put(PREFIX + "attribution", actor.attribution().name());
         }
         return headers.equals(intent.headers())
                 ? intent
@@ -203,9 +216,8 @@ final class RecorderRouter {
                         intent.kind(), intent.targetId(), intent.payload(), headers, intent.correlation());
     }
 
-    private static void putIfPresent(Map<String, String> headers, String name, @Nullable String value) {
-        if (value != null) {
-            headers.put(name, value);
-        }
+    private static void putEncoded(Map<String, String> headers, String name, String value) {
+        headers.put(
+                PREFIX + name, URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20"));
     }
 }

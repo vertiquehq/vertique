@@ -191,7 +191,6 @@ class SignalProvenanceIT {
             assertThat(actor.actorKind()).isEqualTo("SYSTEM");
             assertThat(actor.actorId()).isNull();
             assertThat(actor.actorReason()).isEqualTo(KAFKA_REASON);
-            assertThat(actor.attribution()).isEqualTo("VERIFIED");
 
             // And the target holds the signal name and the wait id and no provenance key
             assertThat(command.target().getString("name")).isEqualTo(PAYMENT_CAPTURED);
@@ -422,26 +421,49 @@ class SignalProvenanceIT {
             }
             assertThat(f.provenanceRows()).isZero();
 
-            // And the calls with no identity recorded an absent actor, and those with the system identity a verified
-            // system actor
+            // And the calls with no identity recorded no actor, and those with the system identity the system
+            // actor
             for (WorkflowInstanceId bare : List.of(payment77, order42)) {
                 assertThat(f.signalRows(bare)).isNotEmpty().allSatisfy(command -> {
                     Attributed actor = f.actorOf(command.id());
                     assertThat(actor.actorKind()).isEqualTo("NONE");
-                    assertThat(actor.attribution()).isEqualTo("ABSENT");
                 });
             }
             for (WorkflowInstanceId carried : List.of(payment78, order43)) {
                 assertThat(f.signalRows(carried)).singleElement().satisfies(command -> {
                     Attributed actor = f.actorOf(command.id());
                     assertThat(actor.actorKind()).isEqualTo("SYSTEM");
-                    assertThat(actor.attribution()).isEqualTo("VERIFIED");
                 });
             }
 
             // And the existing absence report was made for each of the three signals recorded with no actor
             awaitCondition("the absence reports to be delivered", IDLE, () -> absences(observer) >= 3);
             assertThat(absences(observer)).isEqualTo(3);
+        }
+    }
+
+    @Test
+    @DisplayName("a delivery without provenance from an anonymous caller is recorded with the anonymous actor")
+    void anonymousDeliveryWithoutProvenanceIsRecordedAsAnonymous() {
+        RecordedSignalIT.RecordingObserver observer = new RecordedSignalIT.RecordingObserver();
+        try (KeyedWaitFixture f = KeyedWaitFixture.open(db.toPoolConfig())) {
+            // Given an instance waiting on PAY-77 and a signal carrying no provenance
+            Node node = f.node("engine").observers(observer).build();
+            WorkflowInstanceId id = f.startKeyed(node, "PAY-77");
+            f.idle(node, id);
+
+            // When an anonymous caller delivers it
+            Delivery delivery =
+                    Route.KEY.deliver(f, node, SecurityIdentity.anonymous(), plain(Route.KEY, "PAY-77", "d-1"));
+
+            // Then the delivery is recorded, with the anonymous actor, and no absence is reported for it
+            assertThat(delivery.receiptOrFail().outcome()).isEqualTo(CorrelatedSignalReceipt.Outcome.RECORDED);
+            assertThat(f.signalRows(id)).singleElement().satisfies(command -> {
+                Attributed actor = f.actorOf(command.id());
+                assertThat(actor.actorKind()).isEqualTo("ANONYMOUS");
+                assertThat(actor.actorId()).isNull();
+            });
+            assertThat(absences(observer)).isZero();
         }
     }
 

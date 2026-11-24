@@ -311,7 +311,6 @@ final class SourceScenario implements AutoCloseable {
      * @param actorKind the kind of the actor
      * @param actorId the id of a user or service actor
      * @param actorReason the reason of a system actor
-     * @param attribution the attribution status
      * @param dedupKey the dedup key stored on the command
      * @param payload the stored payload, or {@code null}
      * @param context the stored context, or {@code null}
@@ -323,7 +322,6 @@ final class SourceScenario implements AutoCloseable {
             @Nullable String actorKind,
             @Nullable String actorId,
             @Nullable String actorReason,
-            @Nullable String attribution,
             @Nullable String dedupKey,
             @Nullable String payload,
             @Nullable String context,
@@ -956,11 +954,12 @@ final class SourceScenario implements AutoCloseable {
     /** The {@code SIGNAL} commands of the instance, oldest first. */
     List<CommandRow> commands(Waiting waiting) {
         List<CommandRow> rows = new ArrayList<>();
-        for (Row row : await(readPool.preparedQuery(
-                        "SELECT id, state, actor_kind, actor_id, actor_reason, attribution_status, dedup_key,"
-                                + " payload_json::text AS payload, context_json::text AS context,"
-                                + " provenance_json::text AS provenance FROM workflow_commands"
-                                + " WHERE workflow_id = $1 AND kind = 'SIGNAL' ORDER BY id")
+        for (Row row : await(readPool.preparedQuery("SELECT id, state, actor->>'kind' AS actor_kind,"
+                        + " CASE WHEN actor->>'kind' IN ('USER', 'SERVICE') THEN actor->>'value' END AS actor_id,"
+                        + " CASE WHEN actor->>'kind' = 'SYSTEM' THEN actor->>'value' END AS actor_reason, dedup_key,"
+                        + " payload_json::text AS payload, context_json::text AS context,"
+                        + " provenance_json::text AS provenance FROM workflow_commands"
+                        + " WHERE workflow_id = $1 AND kind = 'SIGNAL' ORDER BY id")
                 .execute(Tuple.of(waiting.uuid())))) {
             rows.add(new CommandRow(
                     row.getLong("id"),
@@ -968,7 +967,6 @@ final class SourceScenario implements AutoCloseable {
                     row.getString("actor_kind"),
                     row.getString("actor_id"),
                     row.getString("actor_reason"),
-                    row.getString("attribution_status"),
                     row.getString("dedup_key"),
                     row.getString("payload"),
                     row.getString("context"),

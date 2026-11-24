@@ -8,6 +8,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.workflow.actor.WorkflowActor;
+import dev.vertique.workflow.actor.WorkflowActorMaps;
 import dev.vertique.workflow.history.PendingCommand;
 import dev.vertique.workflow.history.WorkflowInstanceHistoryService;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
@@ -15,7 +17,6 @@ import dev.vertique.workflow.ops.WorkflowView;
 import dev.vertique.workflow.postgresql.executor.ActorScenario;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
-import dev.vertique.workflow.state.HistoryActor;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import io.vertx.core.Future;
@@ -108,37 +109,20 @@ public class WorkflowInstanceHistoryServiceIT {
             HistoryAssert.of(all)
                     .ofTypes(WorkflowEntryType.COMMAND_RECEIVED, WorkflowEntryType.DECISION)
                     .hasSteps(
-                            step(WorkflowEntryType.COMMAND_RECEIVED, start, "NONE ABSENT", null),
-                            step(WorkflowEntryType.DECISION, start, "NONE ABSENT", "wait-task"),
-                            step(WorkflowEntryType.COMMAND_RECEIVED, completion, "USER/u-1 VERIFIED", null),
-                            step(WorkflowEntryType.DECISION, completion, "USER/u-1 VERIFIED", "task-decided"),
-                            step(WorkflowEntryType.DECISION, completion, "USER/u-1 VERIFIED", "wait-signal"),
-                            step(
-                                    WorkflowEntryType.COMMAND_RECEIVED,
-                                    signal,
-                                    "SERVICE/relay-svc for u-2 VERIFIED",
-                                    null),
-                            step(
-                                    WorkflowEntryType.DECISION,
-                                    signal,
-                                    "SERVICE/relay-svc for u-2 VERIFIED",
-                                    "signal-applied"),
-                            step(
-                                    WorkflowEntryType.DECISION,
-                                    signal,
-                                    "SERVICE/relay-svc for u-2 VERIFIED",
-                                    "completed"));
+                            step(WorkflowEntryType.COMMAND_RECEIVED, start, "NONE", null),
+                            step(WorkflowEntryType.DECISION, start, "NONE", "wait-task"),
+                            step(WorkflowEntryType.COMMAND_RECEIVED, completion, "USER/u-1", null),
+                            step(WorkflowEntryType.DECISION, completion, "USER/u-1", "task-decided"),
+                            step(WorkflowEntryType.DECISION, completion, "USER/u-1", "wait-signal"),
+                            step(WorkflowEntryType.COMMAND_RECEIVED, signal, "SERVICE/relay-svc", null),
+                            step(WorkflowEntryType.DECISION, signal, "SERVICE/relay-svc", "signal-applied"),
+                            step(WorkflowEntryType.DECISION, signal, "SERVICE/relay-svc", "completed"));
 
-            // And the service entry names the service as the actor, acting for the user who wrote the outbox row
+            // And the service entry names the service as the actor
             assertThat(all)
                     .filteredOn(entry -> entry.entryType() == WorkflowEntryType.SIGNAL_RECEIVED)
                     .singleElement()
-                    .satisfies(entry -> {
-                        assertThat(entry.actor())
-                                .isEqualTo(new HistoryActor(HistoryActor.Kind.SERVICE, "relay-svc", null));
-                        assertThat(entry.onBehalfOf()).isEqualTo("u-2");
-                        assertThat(entry.attributionStatus()).isEqualTo("VERIFIED");
-                    });
+                    .satisfies(entry -> assertThat(entry.actor()).isEqualTo(new WorkflowActor.Service("relay-svc")));
 
             // And every decision names its definition, step, one plan hash, an executor and the entry version two
             List<WorkflowHistoryEntry> decisions = all.stream()
@@ -176,25 +160,38 @@ public class WorkflowInstanceHistoryServiceIT {
                                 .isEqualTo(decisions.getFirst().planHash());
                     });
 
-            // And the other entries are the ones of entry version one, which carry the attribution but no decision data
+            // And the other entries are the ones of entry version one, which carry no decision data
             assertThat(all)
                     .filteredOn(entry -> entry.entryType() == WorkflowEntryType.COMMAND_RECEIVED)
                     .isNotEmpty()
                     .allSatisfy(entry -> {
                         assertThat(entry.entryVersion()).isEqualTo(1);
-                        assertThat(entry.attributionStatus()).isNotNull();
                         assertThat(entry.executorId()).isNull();
                         assertThat(entry.planHash()).isNull();
                         assertThat(entry.patchJson()).isNull();
                     });
 
-            // And a start recorded with no security context is logged as no actor, not as a missing one
-            assertThat(all.getFirst().actor()).isEqualTo(new HistoryActor(HistoryActor.Kind.NONE, null, null));
+            // And a start recorded with no security context reads as no actor, and is stored as attributed to no one
+            assertThat(all.getFirst().actor()).isNull();
+            assertThat(await(run.pool()
+                                    .preparedQuery("SELECT actor->>'kind' AS kind FROM workflow_history"
+                                            + " WHERE workflow_id = $1 AND sequence = 1")
+                                    .execute(Tuple.of(id.value())))
+                            .iterator()
+                            .next()
+                            .getString("kind"))
+                    .isEqualTo("NONE");
 
-            // And the pages concatenate to the same list, with every entry carrying its attribution status
+            // And the pages concatenate to the same list, and no entry of the instance is left unattributed
             assertThat(paged).isEqualTo(all);
-            assertThat(paged)
-                    .allSatisfy(entry -> assertThat(entry.attributionStatus()).isNotNull());
+            assertThat(await(run.pool()
+                                    .preparedQuery("SELECT count(*) AS unattributed FROM workflow_history"
+                                            + " WHERE workflow_id = $1 AND actor IS NULL")
+                                    .execute(Tuple.of(id.value())))
+                            .iterator()
+                            .next()
+                            .getLong("unattributed"))
+                    .isZero();
 
             // And afterSequence starts after the given entry and the limit bounds the page, at both ends of its range
             assertThat(await(history.entries(id, 3, 2)))
@@ -450,10 +447,6 @@ public class WorkflowInstanceHistoryServiceIT {
     /** Every new component except the entry version is null. */
     private static void assertNothingElseNew(WorkflowHistoryEntry entry) {
         assertThat(entry.actor()).as("actor of %d", entry.sequence()).isNull();
-        assertThat(entry.onBehalfOf()).as("onBehalfOf of %d", entry.sequence()).isNull();
-        assertThat(entry.attributionStatus())
-                .as("attributionStatus of %d", entry.sequence())
-                .isNull();
         assertThat(entry.executorId()).as("executorId of %d", entry.sequence()).isNull();
         assertThat(entry.commandId()).as("commandId of %d", entry.sequence()).isNull();
         assertThat(entry.stepId()).as("stepId of %d", entry.sequence()).isNull();
@@ -501,14 +494,10 @@ public class WorkflowInstanceHistoryServiceIT {
         }
 
         private static Step stepOf(WorkflowHistoryEntry entry) {
-            HistoryActor actor = entry.actor();
-            String described = actor == null
-                    ? "no actor"
-                    : actor.kind()
-                            + (actor.id() == null ? "" : "/" + actor.id())
-                            + (entry.onBehalfOf() == null ? "" : " for " + entry.onBehalfOf())
-                            + " "
-                            + entry.attributionStatus();
+            WorkflowActor actor = entry.actor();
+            Map<String, String> mapped = actor == null ? Map.of("kind", "NONE") : WorkflowActorMaps.toMap(actor);
+            String described = mapped.get("kind")
+                    + (actor == null || actor instanceof WorkflowActor.System ? "" : "/" + mapped.get("value"));
             return new Step(entry.entryType(), entry.commandId(), described, entry.outcome());
         }
     }

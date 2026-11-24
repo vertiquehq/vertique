@@ -4,18 +4,16 @@
 package dev.vertique.workflow.engine.history;
 
 import dev.vertique.db.TransactionCompletion;
-import dev.vertique.workflow.engine.executor.CommandActors;
-import dev.vertique.workflow.engine.spi.CommandActor;
+import dev.vertique.workflow.actor.CurrentWorkflowActor;
+import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.engine.spi.CommittedHistoryEntry;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
-import dev.vertique.workflow.history.HistoryAttribution;
 import dev.vertique.workflow.history.WorkflowHistoryChange;
 import dev.vertique.workflow.history.WorkflowHistoryEvent;
 import dev.vertique.workflow.history.WorkflowHistoryFailure;
 import dev.vertique.workflow.history.WorkflowHistoryListener;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
-import dev.vertique.workflow.state.HistoryActor;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
@@ -89,7 +87,7 @@ public final class WorkflowHistoryEventPublisher {
     private final List<WorkflowHistoryListener> listeners;
     private final WorkflowHistoryRepository<SqlClient> history;
     private final SqlClient readClient;
-    private final Supplier<CommandActor> actors;
+    private final Supplier<Optional<WorkflowActor>> actors;
     private final Clock clock;
     private final BiFunction<WorkflowInstanceId, SqlClient, Future<Void>> lock;
 
@@ -107,7 +105,7 @@ public final class WorkflowHistoryEventPublisher {
      * @param history   the history repository
      * @param pool      the pool the committed range is read from, after the commit
      * @param commands  the command repository whose execution lock an action takes before its range starts
-     * @param actors    the capture of the actor of the current caller
+     * @param actor     the reader of the actor of the current caller
      */
     @Inject
     public WorkflowHistoryEventPublisher(
@@ -115,8 +113,8 @@ public final class WorkflowHistoryEventPublisher {
             WorkflowHistoryRepository<SqlClient> history,
             Pool pool,
             WorkflowCommandRepository<SqlClient> commands,
-            CommandActors actors) {
-        this(listeners, history, pool, commands::lockInstance, actors::capture, Clock.systemUTC());
+            CurrentWorkflowActor actor) {
+        this(listeners, history, pool, commands::lockInstance, actor::get, Clock.systemUTC());
     }
 
     /**
@@ -142,7 +140,7 @@ public final class WorkflowHistoryEventPublisher {
             WorkflowHistoryRepository<SqlClient> history,
             SqlClient readClient,
             BiFunction<WorkflowInstanceId, SqlClient, Future<Void>> lock,
-            Supplier<CommandActor> actors,
+            Supplier<Optional<WorkflowActor>> actors,
             Clock clock) {
         this.lock = lock;
         this.listeners = List.copyOf(listeners);
@@ -181,7 +179,28 @@ public final class WorkflowHistoryEventPublisher {
             @Nullable WorkflowInstanceId id,
             SqlClient tx,
             Supplier<Future<T>> work) {
-        return run(action, id, tx, true, true, work);
+        return run(() -> attempt(action, id), id, tx, true, true, work);
+    }
+
+    /**
+     * Runs the work of an action like {@link #around}, for an action whose command names its own actor, such as a task
+     * completion: a failure is reported with that actor and the current caller is not read.
+     *
+     * @param action the caller-driven action, for the failure report
+     * @param id     the instance the action concerns, or {@code null} when it never resolved one
+     * @param actor  the actor the command names
+     * @param tx     the transaction the work runs in
+     * @param work   the work
+     * @param <T>    the result of the work
+     * @return the future of the work, unchanged
+     */
+    public <T> Future<T> aroundAs(
+            WorkflowHistoryFailure.Action action,
+            @Nullable WorkflowInstanceId id,
+            WorkflowActor actor,
+            SqlClient tx,
+            Supplier<Future<T>> work) {
+        return run(() -> new Attempt(action, id, actor), id, tx, true, true, work);
     }
 
     /**
@@ -199,7 +218,7 @@ public final class WorkflowHistoryEventPublisher {
      */
     public <T> Future<T> aroundNotWriting(
             WorkflowHistoryFailure.Action action, WorkflowInstanceId id, SqlClient tx, Supplier<Future<T>> work) {
-        return run(action, id, tx, false, false, work);
+        return run(() -> attempt(action, id), id, tx, false, false, work);
     }
 
     /**
@@ -215,11 +234,11 @@ public final class WorkflowHistoryEventPublisher {
      */
     public <T> Future<T> aroundLocked(
             WorkflowHistoryFailure.Action action, WorkflowInstanceId id, SqlClient tx, Supplier<Future<T>> work) {
-        return run(action, id, tx, false, true, work);
+        return run(() -> attempt(action, id), id, tx, false, true, work);
     }
 
     private <T> Future<T> run(
-            @Nullable WorkflowHistoryFailure.Action action,
+            Supplier<Attempt> attempts,
             @Nullable WorkflowInstanceId id,
             SqlClient tx,
             boolean takeLock,
@@ -234,7 +253,7 @@ public final class WorkflowHistoryEventPublisher {
         }
         Future<T> announced;
         try {
-            Attempt attempt = attempt(action, id);
+            Attempt attempt = attempts.get();
             Future<Void> locked =
                     takeLock && id != null ? invoke(attempt, () -> lock.apply(id, tx)) : Future.succeededFuture();
             announced = locked.compose(
@@ -541,8 +560,6 @@ public final class WorkflowHistoryEventPublisher {
                 attempt.instanceId,
                 attempt.action,
                 attempt.actor,
-                attempt.onBehalfOf,
-                attempt.attribution,
                 cause == null ? null : cause.getClass().getSimpleName(),
                 clock.instant());
         ListenerDispatch.forEach(
@@ -559,28 +576,36 @@ public final class WorkflowHistoryEventPublisher {
 
     /** An action of {@code null} announces commits only: no failure is reported and no actor is captured. */
     Attempt attempt(@Nullable WorkflowHistoryFailure.Action action, @Nullable WorkflowInstanceId id) {
-        return new Attempt(action, id, action == null ? CapturedActor.unattributed() : CapturedActor.capture(actors));
+        return new Attempt(action, id, action == null ? null : bestEffortActor());
+    }
+
+    /** The actor of the current caller; none when there is none or the mapper fails, which a report must survive. */
+    private @Nullable WorkflowActor bestEffortActor() {
+        try {
+            return actors.get().orElse(null);
+        } catch (RuntimeException failure) {
+            log.warn(
+                    "Could not capture the workflow actor ({})",
+                    failure.getClass().getName());
+            return null;
+        }
     }
 
     /** One attempt of an action: its identity, its captured actor and whether its failure was reported. */
     static final class Attempt {
         final UUID attemptId = UUID.randomUUID();
         final @Nullable WorkflowHistoryFailure.Action action;
-        final HistoryActor actor;
-        final @Nullable String onBehalfOf;
-        final HistoryAttribution attribution;
+        final @Nullable WorkflowActor actor;
         final AtomicBoolean reported = new AtomicBoolean();
         volatile @Nullable WorkflowInstanceId instanceId;
 
         private Attempt(
                 @Nullable WorkflowHistoryFailure.Action action,
                 @Nullable WorkflowInstanceId id,
-                CapturedActor captured) {
+                @Nullable WorkflowActor captured) {
             this.action = action;
             this.instanceId = id;
-            this.actor = captured.actor();
-            this.onBehalfOf = captured.onBehalfOf();
-            this.attribution = captured.attribution();
+            this.actor = captured;
         }
     }
 

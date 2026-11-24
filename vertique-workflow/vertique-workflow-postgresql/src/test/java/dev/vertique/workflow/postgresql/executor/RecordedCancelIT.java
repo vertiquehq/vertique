@@ -668,8 +668,8 @@ public class RecordedCancelIT {
             faults.afterClaimOf(id, claim -> setStatus(f, id, "CANCELLED").compose(done -> f.fixture
                     .observer()
                     .preparedQuery("INSERT INTO workflow_history (workflow_id, sequence, entry_type, payload_json,"
-                            + " recorded_at, actor_kind, actor_id, attribution_status) SELECT $1, COALESCE(MAX(sequence),"
-                            + " 0) + 1, 'CANCELLED', '{}'::jsonb, now(), 'USER', 'canceller', 'VERIFIED' FROM"
+                            + " recorded_at, actor) SELECT $1, COALESCE(MAX(sequence),"
+                            + " 0) + 1, 'CANCELLED', '{}'::jsonb, now(), '{\"kind\":\"USER\",\"value\":\"canceller\"}'::jsonb FROM"
                             + " workflow_history WHERE workflow_id = $1")
                     .execute(Tuple.of(id.value()))
                     .mapEmpty()));
@@ -689,9 +689,11 @@ public class RecordedCancelIT {
             long command = f.signal(id, "k").id();
             var entry = await(f.fixture
                             .observer()
-                            .preparedQuery("SELECT actor_kind, actor_id FROM workflow_history WHERE workflow_id = $1"
-                                    + " AND entry_type = 'COMMAND_CANCELLED'"
-                                    + " AND COALESCE(command_id, (payload_json->>'commandId')::bigint) = $2")
+                            .preparedQuery(
+                                    "SELECT actor->>'kind' AS actor_kind, actor->>'value' AS actor_id FROM workflow_history"
+                                            + " WHERE workflow_id = $1"
+                                            + " AND entry_type = 'COMMAND_CANCELLED'"
+                                            + " AND COALESCE(command_id, (payload_json->>'commandId')::bigint) = $2")
                             .execute(Tuple.of(id.value(), command)))
                     .iterator()
                     .next();
@@ -699,7 +701,66 @@ public class RecordedCancelIT {
             assertThat(entry.getString("actor_kind")).isEqualTo("USER");
             var row = await(f.fixture
                             .observer()
-                            .preparedQuery("SELECT actor_id FROM workflow_commands WHERE id = $1")
+                            .preparedQuery("SELECT actor->>'value' AS actor_id FROM workflow_commands WHERE id = $1")
+                            .execute(Tuple.of(command)))
+                    .iterator()
+                    .next();
+            assertThat(row.getString("actor_id")).isEqualTo("recorder");
+        }
+    }
+
+    @Test
+    @DisplayName("a claimed command cancelled in its own segment by a cancel with no caller is logged with nobody")
+    void claimedCommandCancelledInItsOwnSegmentWithNoCallerIsLoggedWithNobody() {
+        try (SignalFixture f = order()) {
+            CommandFaults faults = new CommandFaults();
+            Node node = f.node("engine").commands(faults.decorator()).build();
+            WorkflowInstanceId id = f.waiting(node, "claimed-no-canceller");
+            // Given a signal that user "recorder" recorded, and an instance whose cancellation with no caller is
+            // logged after the signal's command was claimed and before its segment ran, so that the claimed command
+            // meets the cancelled instance itself
+            await(f.caller(() -> asUser(
+                    "recorder",
+                    f,
+                    () -> node.pool.withTransaction(tx -> node.engine.signal(id, "paid", signal("paid"), "k", tx)))));
+            faults.afterClaimOf(id, claim -> setStatus(f, id, "CANCELLED").compose(done -> f.fixture
+                    .observer()
+                    .preparedQuery("INSERT INTO workflow_history (workflow_id, sequence, entry_type, payload_json,"
+                            + " recorded_at, actor) SELECT $1, COALESCE(MAX(sequence),"
+                            + " 0) + 1, 'CANCELLED', '{}'::jsonb, now(), '{\"kind\":\"NONE\"}'::jsonb FROM"
+                            + " workflow_history WHERE workflow_id = $1")
+                    .execute(Tuple.of(id.value()))
+                    .mapEmpty()));
+
+            // When the command's segment runs
+            node.startExecutor();
+            try {
+                awaitCondition("the command to settle", IDLE, () -> f.signal(id, "k")
+                        .state()
+                        .equals("CANCELLED"));
+                node.awaitIdle(id);
+            } finally {
+                node.stopExecutor();
+            }
+
+            // Then the command-cancelled entry carries nobody, not the user who recorded the command
+            long command = f.signal(id, "k").id();
+            var entry = await(f.fixture
+                            .observer()
+                            .preparedQuery("SELECT actor->>'kind' AS actor_kind, actor->>'value' AS actor_id FROM"
+                                    + " workflow_history WHERE workflow_id = $1"
+                                    + " AND entry_type = 'COMMAND_CANCELLED'"
+                                    + " AND COALESCE(command_id, (payload_json->>'commandId')::bigint) = $2")
+                            .execute(Tuple.of(id.value(), command)))
+                    .iterator()
+                    .next();
+            assertThat(entry.getString("actor_kind")).isEqualTo("NONE");
+            assertThat(entry.getString("actor_id")).isNull();
+
+            // And the command row still keeps its recorder
+            var row = await(f.fixture
+                            .observer()
+                            .preparedQuery("SELECT actor->>'value' AS actor_id FROM workflow_commands WHERE id = $1")
                             .execute(Tuple.of(command)))
                     .iterator()
                     .next();

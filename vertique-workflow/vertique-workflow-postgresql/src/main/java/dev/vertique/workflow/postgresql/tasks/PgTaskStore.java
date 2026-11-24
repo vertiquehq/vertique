@@ -12,6 +12,7 @@ import dev.vertique.db.query.PageCursor;
 import dev.vertique.db.query.PagedResult;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.postgresql.repository.PgWorkflowActor;
 import dev.vertique.workflow.tasks.TaskAssignment;
 import dev.vertique.workflow.tasks.TaskDecisionDescriptor;
 import dev.vertique.workflow.tasks.TaskFilter;
@@ -315,7 +316,7 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
             Instant completedAt,
             WorkflowActor completedBy,
             SqlClient tx) {
-        JsonObject actorJson = actorJson(completedBy);
+        JsonObject actorJson = PgWorkflowActor.toJson(completedBy);
         Instant now = completedAt != null ? completedAt : Instant.now();
         Tuple params =
                 Tuple.of(taskId, decisionName, payloadJson, toOffsetDateTime(now), actorJson, toOffsetDateTime(now));
@@ -336,7 +337,7 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
     @Override
     public Future<TaskTransition> markCancelled(
             UUID taskId, String reason, Instant cancelledAt, WorkflowActor cancelledBy, SqlClient tx) {
-        JsonObject actorJson = actorJson(cancelledBy);
+        JsonObject actorJson = PgWorkflowActor.toJson(cancelledBy);
         Instant now = cancelledAt != null ? cancelledAt : Instant.now();
         Tuple params = Tuple.of(taskId, reason, toOffsetDateTime(now), actorJson, toOffsetDateTime(now));
         return tx.preparedQuery(sqlMarkCancelled)
@@ -382,7 +383,7 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
             SqlClient tx) {
         String newKind = assignmentKindString(newAssignment);
         String newValue = assignmentValueString(newAssignment);
-        JsonObject actorJson = actorJson(reassignedBy);
+        JsonObject actorJson = PgWorkflowActor.toJson(reassignedBy);
         // Normalize blank reason to null, matching FingerprintCanonicalizer contract.
         String normalizedReason = (reason != null && reason.isBlank()) ? null : reason;
         Instant now = updatedAt != null ? updatedAt : Instant.now();
@@ -739,9 +740,9 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
         String decisionName = row.getString("decision_name");
         String decisionPayloadJson = extractJsonb(row, "decision_payload_json");
 
-        WorkflowActor completedBy = parseActorJson(row.getJsonObject("completed_by"));
-        WorkflowActor cancelledBy = parseActorJson(row.getJsonObject("cancelled_by"));
-        WorkflowActor reassignedBy = parseActorJson(row.getJsonObject("reassigned_by"));
+        WorkflowActor completedBy = storedActor(row, "completed_by");
+        WorkflowActor cancelledBy = storedActor(row, "cancelled_by");
+        WorkflowActor reassignedBy = storedActor(row, "reassigned_by");
 
         Instant dueAt = toInstant(row.getOffsetDateTime("due_at"));
         UUID dueDateTimerId = row.getUUID("due_date_timer_id");
@@ -803,48 +804,17 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
         };
     }
 
-    /**
-     * Builds the canonical {@code {"kind": "...", "value": "..."}} JSON object for a
-     * {@link WorkflowActor}. Bound to the JSONB column via {@link Tuple} as a {@link JsonObject};
-     * the pg-client driver handles native JSONB encoding without an explicit cast.
-     *
-     * @param actor the actor to serialize; must not be null
-     * @return a 2-field {@link JsonObject}
-     */
-    private static JsonObject actorJson(WorkflowActor actor) {
-        return switch (actor) {
-            case WorkflowActor.User u -> new JsonObject().put("kind", "USER").put("value", u.userId());
-            case WorkflowActor.Service s ->
-                new JsonObject().put("kind", "SERVICE").put("value", s.serviceId());
-            case WorkflowActor.System sys ->
-                new JsonObject().put("kind", "SYSTEM").put("value", sys.reason());
-        };
-    }
-
-    /**
-     * Parses a {@link WorkflowActor} from the JSONB column value (canonical
-     * {@code {"kind": "...", "value": "..."}} shape).
-     *
-     * @param json the {@link JsonObject} read from the column, or {@code null} if no actor was
-     *             recorded
-     * @return the corresponding {@link WorkflowActor}, or {@code null} if {@code json} is null
-     */
-    @Nullable
-    private static WorkflowActor parseActorJson(@Nullable JsonObject json) {
-        if (json == null) {
+    /** Reads an actor column; a stored actor that cannot be read fails the read, and the message holds no stored text. */
+    private static @Nullable WorkflowActor storedActor(Row row, String column) {
+        JsonObject stored = row.getJsonObject(column);
+        if (stored == null) {
             return null;
         }
-        String kind = json.getString("kind");
-        String value = json.getString("value");
-        if (kind == null || value == null) {
-            throw new IllegalStateException("workflow_tasks actor JSONB missing kind/value field: " + json.encode());
+        WorkflowActor actor = PgWorkflowActor.fromJson(stored);
+        if (actor == null) {
+            throw new IllegalArgumentException("The stored task actor names no one");
         }
-        return switch (kind) {
-            case "USER" -> new WorkflowActor.User(value);
-            case "SERVICE" -> new WorkflowActor.Service(value);
-            case "SYSTEM" -> new WorkflowActor.System(value);
-            default -> throw new IllegalStateException("Unknown actor kind in workflow_tasks JSONB: " + kind);
-        };
+        return actor;
     }
 
     /**

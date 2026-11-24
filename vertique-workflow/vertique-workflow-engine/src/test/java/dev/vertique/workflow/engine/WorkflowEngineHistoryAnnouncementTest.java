@@ -8,9 +8,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import dev.vertique.context.DefaultContextHolder;
+import dev.vertique.workflow.actor.CurrentWorkflowActor;
+import dev.vertique.workflow.actor.DefaultWorkflowActorMapper;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
-import dev.vertique.workflow.engine.executor.CommandActors;
 import dev.vertique.workflow.engine.history.WorkflowHistoryEventPublisher;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
@@ -100,7 +102,11 @@ class WorkflowEngineHistoryAnnouncementTest {
         };
         EmptyCommandRepository commands = new EmptyCommandRepository();
         WorkflowHistoryEventPublisher publisher = new WorkflowHistoryEventPublisher(
-                Set.of(listener), history, mock(Pool.class), commands, CommandActors.ambient());
+                Set.of(listener),
+                history,
+                mock(Pool.class),
+                commands,
+                new CurrentWorkflowActor(new DefaultContextHolder(), new DefaultWorkflowActorMapper()));
         WorkflowRegistry registry = mock(WorkflowRegistry.class);
         return new WorkflowEngine(
                 mock(WorkflowTransactionRunner.class),
@@ -136,7 +142,7 @@ class WorkflowEngineHistoryAnnouncementTest {
                 Optional.empty(),
                 key -> Optional.empty(),
                 null,
-                CommandActors.ambient(),
+                RecordedActors.ambient(),
                 publisher);
     }
 
@@ -205,6 +211,10 @@ class WorkflowEngineHistoryAnnouncementTest {
                 .extracting(WorkflowHistoryFailure::action)
                 .containsExactly(Action.TASK_COMPLETE, Action.TASK_REASSIGN);
         assertThat(failures).extracting(WorkflowHistoryFailure::instanceId).containsOnlyNulls();
+        // and each failure names the actor its command names, though no caller is bound here
+        assertThat(failures)
+                .extracting(WorkflowHistoryFailure::actor)
+                .containsExactly(new WorkflowActor.User("u-1"), new WorkflowActor.User("u-1"));
     }
 
     @Test

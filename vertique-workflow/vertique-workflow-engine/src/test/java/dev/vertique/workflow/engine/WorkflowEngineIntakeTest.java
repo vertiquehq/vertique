@@ -22,9 +22,9 @@ import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.context.DurableContextMetadataDecoder;
 import dev.vertique.core.context.DurableDecodeContext;
 import dev.vertique.core.context.DurableMetadata;
+import dev.vertique.workflow.actor.CurrentWorkflowActor;
 import dev.vertique.workflow.actor.DefaultWorkflowActorMapper;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
-import dev.vertique.workflow.engine.executor.CommandActors;
 import dev.vertique.workflow.engine.history.WorkflowHistoryEventPublisher;
 import dev.vertique.workflow.engine.intake.IntakeAdmission;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
@@ -333,7 +333,7 @@ class WorkflowEngineIntakeTest {
                         history,
                         mock(Pool.class),
                         lockWatching,
-                        new CommandActors(new DefaultContextHolder(), new DefaultWorkflowActorMapper(), Set.of())));
+                        new CurrentWorkflowActor(new DefaultContextHolder(), new DefaultWorkflowActorMapper())));
 
         @Test
         @DisplayName("a refused signal takes no execution lock and reports the refusal as a failed action")

@@ -62,10 +62,10 @@ with the transaction, so the relay retries it.
 **Who is logged.** The endpoint records the signal inside the dispatch context the relay rebuilt for the delivery, and the engine
 logs the signal's actor from the identity of that context (see "Who asked for a command" in the engine module reference). The
 actor is never read from `WorkflowSignalRequest`, its payload or its carrier. By default the relay's identity is `SYSTEM` with the
-outbox row's event type as the reason; a bound `ServiceIdentityResolver` names a service instead. Either acts for the user whose
-transaction wrote the outbox row (`on_behalf_of`). A snapshot that cannot be verified refuses the delivery under the default
-degradation policy, so no command, dedup or inbox row is written; under `CONTINUE_WITHOUT_IDENTITY` the signal is logged `DEGRADED`
-and acts for no one. A graph without identity carriage logs the signal as `NONE`.
+outbox row's event type as the reason; a bound `ServiceIdentityResolver` names a service instead. The user whose transaction wrote
+the outbox row is not recorded. A snapshot that cannot be verified refuses the delivery under the default
+degradation policy, so no command, dedup or inbox row is written; under `CONTINUE_WITHOUT_IDENTITY` the signal is recorded with the relay's actor
+like any other, and the security module's own degradation event is the record of the degradation. A graph without identity carriage logs the signal with no actor.
 
 Signal dedup happens at two layers:
 
@@ -235,6 +235,6 @@ When a service intent names a reply wait, the outbox recorder accepts a value-re
 
 A reply call is recorded by the in-process reply consumer in a separate transaction under the internal system identity, with the outbox correlation and provenance. A closed wait settles its row without another service call; a duplicate also settles without recording again. A reply that cannot be recorded as a payload takes the failure route with `REPLY_REFUSED`.
 
-A call marked `completesLater()` must target a `Future<Void>` service and declare a timeout; its reply type is independent of the service return type. The service stores the latest `TransactionalMessageContext.replyHandle()` and completes it through `OutboxReplies`. Completions run in their own transaction on a fresh context, under the caller's non-anonymous identity or the internal system identity when none is present, and return to the caller's context. A caller's degraded identity marker is retained for attribution. They require no outbox row and can run after restart. The handle is a bearer value and must be protected.
+A call marked `completesLater()` must target a `Future<Void>` service and declare a timeout; its reply type is independent of the service return type. The service stores the latest `TransactionalMessageContext.replyHandle()` and completes it through `OutboxReplies`. Completions run in their own transaction on a fresh context, under the caller's non-anonymous identity or the internal system identity when none is present, and return to the caller's context. A caller's degraded identity marker is retained. They require no outbox row and can run after restart. The handle is a bearer value and must be protected.
 
 Every node handling a reply-producing service target, or completing a deferred handle, installs `WorkflowServicesModule` and reaches the workflow database. The reply consumer runs in process; it cannot forward a plain call (one without `completesLater`) to another node.

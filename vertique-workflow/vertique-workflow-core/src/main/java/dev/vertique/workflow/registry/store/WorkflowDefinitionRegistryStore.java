@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.registry.store;
 
+import dev.vertique.workflow.actor.WorkflowActor;
 import io.vertx.core.Future;
 import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
@@ -127,10 +128,10 @@ public interface WorkflowDefinitionRegistryStore {
      * ignores it; the default drops the actor and calls {@link #claim(DefinitionKey)}.
      *
      * @param key   scoped definition key to claim
-     * @param actor who made the change
+     * @param actor who made the change, or {@code null} for none
      * @return the claim
      */
-    default Future<ActivationClaim> claim(DefinitionKey key, DefinitionChangeActor actor) {
+    default Future<ActivationClaim> claim(DefinitionKey key, @Nullable WorkflowActor actor) {
         return claim(key);
     }
 
@@ -149,10 +150,10 @@ public interface WorkflowDefinitionRegistryStore {
      * {@link #complete(ActivationClaim)}.
      *
      * @param claim the claim to complete
-     * @param actor who made the change
+     * @param actor who made the change, or {@code null} for none
      * @return a future completed after the status changed
      */
-    default Future<Void> complete(ActivationClaim claim, DefinitionChangeActor actor) {
+    default Future<Void> complete(ActivationClaim claim, @Nullable WorkflowActor actor) {
         return complete(claim);
     }
 
@@ -170,10 +171,10 @@ public interface WorkflowDefinitionRegistryStore {
      * {@link #release(ActivationClaim)}.
      *
      * @param claim the claim to release
-     * @param actor who made the change
+     * @param actor who made the change, or {@code null} for none
      * @return a future completed after the claim is released
      */
-    default Future<Void> release(ActivationClaim claim, DefinitionChangeActor actor) {
+    default Future<Void> release(ActivationClaim claim, @Nullable WorkflowActor actor) {
         return release(claim);
     }
 
@@ -208,11 +209,11 @@ public interface WorkflowDefinitionRegistryStore {
      * @param key   scoped definition key
      * @param from  the expected current status
      * @param to    the new status
-     * @param actor who made the change
+     * @param actor who made the change, or {@code null} for none
      * @return a future completed after the status changed
      */
     default Future<Void> transition(
-            DefinitionKey key, DefinitionStatus from, DefinitionStatus to, DefinitionChangeActor actor) {
+            DefinitionKey key, DefinitionStatus from, DefinitionStatus to, @Nullable WorkflowActor actor) {
         return transition(key, from, to);
     }
 
@@ -238,10 +239,10 @@ public interface WorkflowDefinitionRegistryStore {
      * {@link #retire(DefinitionKey)}.
      *
      * @param key   scoped definition key
-     * @param actor who made the change
+     * @param actor who made the change, or {@code null} for none
      * @return a future completed after the status changed
      */
-    default Future<Void> retire(DefinitionKey key, DefinitionChangeActor actor) {
+    default Future<Void> retire(DefinitionKey key, @Nullable WorkflowActor actor) {
         return retire(key);
     }
 

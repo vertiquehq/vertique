@@ -4,7 +4,6 @@
 package dev.vertique.workflow.actor;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 
 import dev.vertique.security.PrincipalRef;
@@ -28,7 +27,7 @@ import org.junit.jupiter.api.Test;
  *       with that reason</li>
  *   <li>SYSTEM identity without {@code system.reason} attribute → {@link WorkflowActor.System}
  *       with fallback reason {@code "unspecified"}</li>
- *   <li>ANONYMOUS identity → {@link IllegalArgumentException}</li>
+ *   <li>ANONYMOUS identity → {@link WorkflowActor.Anonymous}</li>
  *   <li>Null input → {@link NullPointerException}</li>
  * </ul>
  */
@@ -144,13 +143,13 @@ class DefaultWorkflowActorMapperTest {
     class AnonymousIdentity {
 
         @Test
-        @DisplayName("throws IllegalArgumentException — workflow requires a named actor")
-        void throwsForAnonymous() {
+        @DisplayName("maps to WorkflowActor.Anonymous")
+        void mapsToAnonymous() {
             SecurityIdentity anonymous = SecurityIdentity.anonymous();
 
-            assertThatIllegalArgumentException()
-                    .isThrownBy(() -> mapper.toWorkflowActor(anonymous))
-                    .withMessageContaining("ANONYMOUS");
+            WorkflowActor actor = mapper.toWorkflowActor(anonymous);
+
+            assertThat(actor).isEqualTo(new WorkflowActor.Anonymous());
         }
     }
 

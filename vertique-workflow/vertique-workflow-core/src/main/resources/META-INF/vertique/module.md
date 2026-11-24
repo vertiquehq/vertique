@@ -144,7 +144,7 @@ Both are default methods that fail the returned future with `UnsupportedOperatio
 
 `CorrelatedSignal` is a record of `contract`, `signalName`, `key`, `payload`, `dedupKey`, `definitionId`, `scopeKey` and `provenance`. `CorrelatedSignal.of(contract, signalName, key, payload, dedupKey)` leaves `definitionId`, `scopeKey` and `provenance` null, so the delivery matches across definitions and scopes; `withDefinition`, `withScope` and `withProvenance` return a copy that differs in that one component. The key must be non-blank, at most 255 characters and free of NUL; the dedup key must be non-blank; `withScope` applies the scope key rules. A refusal names the component and never repeats the value, and `toString` prints the contract and signal name only, never the key, dedup key or payload.
 
-`CorrelatedSignalReceipt(outcome, definitionId)` reports `RECORDED` with the id of the definition of the matched instance, or `DUPLICATE` with a null definition id. A delivery that finds no open wait fails with `WorkflowSignalNoMatchException`, and one that finds more than one with `WorkflowSignalAmbiguousException` (narrow it with `withDefinition` or `withScope`); each exposes `contractName()` and `signalName()`, its message names those two and never the key, and a caller may deliver again later because a wait may open. `WorkflowDedupScopes.correlatedScope(contractName, signalName, scope)` and `correlatedKey(dedupKey)` encode the dedup row of a delivery by key: each is a 64-character lowercase SHA-256 hex digest, the first of the three parts joined by the unit separator `0x1F` with the empty string for an absent scope, the second of the dedup key, so a dedup key of any length fits and no key is stored. `SignalProvenance(transport, source, attributes)` names where a signal came from: `SignalProvenance.kafka(source, topic, partition, offset)` and `SignalProvenance.camel(source, triggerId, messageHash)` fill `transport` and `source` and put their other arguments in `attributes` (numbers as decimal strings); the map is copied immutably. Both delivery methods store the provenance with the command, in its own column and never in the command's target, and an executor does not read it. A delivery that carries a provenance and captures no actor (no identity bound, or an anonymous one), or whose identity the actor mapper refuses, fails with `WorkflowSignalActorException` and writes nothing, so a source never records a command that no actor stands behind; the exception exposes `contractName()` and `signalName()`, its message names those two and never the key, and it is neither a no-match nor an ambiguity, so a caller does not retry it as one. A delivery without provenance records with an absent actor as before.
+`CorrelatedSignalReceipt(outcome, definitionId)` reports `RECORDED` with the id of the definition of the matched instance, or `DUPLICATE` with a null definition id. A delivery that finds no open wait fails with `WorkflowSignalNoMatchException`, and one that finds more than one with `WorkflowSignalAmbiguousException` (narrow it with `withDefinition` or `withScope`); each exposes `contractName()` and `signalName()`, its message names those two and never the key, and a caller may deliver again later because a wait may open. `WorkflowDedupScopes.correlatedScope(contractName, signalName, scope)` and `correlatedKey(dedupKey)` encode the dedup row of a delivery by key: each is a 64-character lowercase SHA-256 hex digest, the first of the three parts joined by the unit separator `0x1F` with the empty string for an absent scope, the second of the dedup key, so a dedup key of any length fits and no key is stored. `SignalProvenance(transport, source, attributes)` names where a signal came from: `SignalProvenance.kafka(source, topic, partition, offset)` and `SignalProvenance.camel(source, triggerId, messageHash)` fill `transport` and `source` and put their other arguments in `attributes` (numbers as decimal strings); the map is copied immutably. Both delivery methods store the provenance with the command, in its own column and never in the command's target, and an executor does not read it. A delivery that carries a provenance and has no actor (no identity bound), comes from an anonymous caller (the mapped actor is `WorkflowActor.Anonymous`), or whose identity the actor mapper refuses, fails with `WorkflowSignalActorException` and writes nothing, so a source never records a command that no named actor stands behind; the exception exposes `contractName()` and `signalName()`, its message names those two and never the key, and it is neither a no-match nor an ambiguity, so a caller does not retry it as one. A delivery without provenance records whatever was captured: no actor, or the anonymous actor.
 
 
 ### Parallel Branches
@@ -270,7 +270,7 @@ Future<List<PendingCommand>> openCommands(WorkflowInstanceId id);
 
 - **Paging.** `entries` returns entries in ascending sequence order after `afterSequence` (exclusive; `0` for the first page). `limit` must be 1 to 500; anything else throws `IllegalArgumentException` before anything is read. Page by passing the last sequence read.
 - **Open commands.** `openCommands` lists the commands that are `PENDING`, `DEFERRED`, `CLAIMED`, `PARKED` or `DEAD`, in sequence order, as `PendingCommand`. `lastError` is the reason code plus the sanitized message stored when the command failed (never raw exception text); the service returns it as stored.
-- **The entry.** `WorkflowHistoryEntry` keeps its five original components and gains trailing nullable ones: `entryVersion` (boxed `Integer`; the stored format version: 2 for `DECISION` and `STATE_BASELINE` entries, 1 for every other entry), `actor` (`HistoryActor`), `onBehalfOf`, `attributionStatus` (`VERIFIED`, `ABSENT` or `DEGRADED`), `executorId`, `commandId`, `stepId`, `outcome`, `definitionKey`, `planHash`, `stateVersionBefore`, `stateVersionAfter` and `patchJson` (a JSON array; `[]` for no change). The five-argument constructor stays and reports `entryVersion` 1 with every other new component null. An entry that was never attributed has a null `actor`; work that ran with no identity is recorded as `HistoryActor.Kind.NONE`, a kind that exists only in the history and never on `WorkflowActor`.
+- **The entry.** `WorkflowHistoryEntry` keeps its five original components and gains trailing nullable ones: `entryVersion` (boxed `Integer`; the stored format version: 2 for `DECISION` and `STATE_BASELINE` entries, 1 for every other entry), `actor` (`WorkflowActor`), `executorId`, `commandId`, `stepId`, `outcome`, `definitionKey`, `planHash`, `stateVersionBefore`, `stateVersionAfter` and `patchJson` (a JSON array; `[]` for no change). The five-argument constructor stays and reports `entryVersion` 1 with every other new component null. An entry with no actor, whether it was recorded without a caller or is not attributed yet, returns a null `actor`; an entry whose stored actor cannot be read does too.
 - **Command and definition on the entry.** An entry records the command it names in `commandId`: its own column, or the `commandId` of
   its payload where the writer put it there. An entry that names no command keeps a null `commandId`; the engine does not give it the
   command of the segment it was written in, because it may belong to another command, such as a parked signal applied during the
@@ -279,7 +279,7 @@ Future<List<PendingCommand>> openCommands(WorkflowInstanceId id);
   definition its writer recorded, which is null for most and the target for the entry that logs the migration. An entry that already
   records a value keeps it. An entry written outside a segment can also have a null `commandId` or `definitionKey`.
 - **`query()` stays narrow.** The history in the `WorkflowView` that `WorkflowOperations.query` returns carries the five original components and the stored `entryVersion`; every other new component is null there. Only this service returns the enriched entry.
-- **Every instance command is attributed.** The `START`, `RETRIED`, `CANCELLED` and `WORKFLOW_MIGRATED` entries, and the entries of signals, completions and reassignments, carry the actor and attribution status of the command that caused them, taken from the caller's identity when the command was recorded.
+- **Every instance command is attributed.** The `START`, `RETRIED`, `CANCELLED` and `WORKFLOW_MIGRATED` entries, and the entries of signals, completions and reassignments, carry the actor of the command that caused them: the caller's, taken from the identity when the command was recorded, except for a completion and a reassignment, whose command supplies its own actor (`completedBy`, `reassignedBy`).
 - **Reading is not authorized here.** Entries name actors and carry state patches, and open commands carry stored failure text. The framework performs no authorization on these reads; the application authorizes them before exposing them.
 - **No lock.** The service reads on a pooled connection outside any caller transaction and takes no execution lock.
 
@@ -518,8 +518,8 @@ a definition before it is published. Applications should not implement them.
 
 SPI (`dev.vertique.workflow.actor`) that maps a `SecurityIdentity` to a `WorkflowActor`. Provides the
 bridge between the framework's identity model and the workflow audit identity model — every mutating
-workflow task operation requires a `WorkflowActor` so the append-only workflow history records who
-initiated the change.
+workflow operation is recorded with one `WorkflowActor` so the append-only workflow history records who
+initiated the change. The mapper decides who a caller is recorded as, including a service acting for a user.
 
 ```java
 public interface WorkflowActorMapper {
@@ -537,9 +537,13 @@ mapping rules:
 | `USER` | `WorkflowActor.User(actor.id())` |
 | `SERVICE` | `WorkflowActor.Service(actor.id())` |
 | `SYSTEM` | `WorkflowActor.System(actor.attributes().get("system.reason") ?: "unspecified")` |
-| `ANONYMOUS` | `IllegalArgumentException` — workflow operations require a named actor |
+| `ANONYMOUS` | `WorkflowActor.Anonymous()`, JSON `{"anonymous":true}` |
 
-Anonymous identities must be rejected at the authorization layer before reaching the workflow engine.
+`WorkflowActor` has four permits: `User`, `Service`, `System` and `Anonymous`. An anonymous caller is recorded as `Anonymous`,
+which is different from an action with no caller at all, which has no actor. A signal delivery that carries a provenance still
+refuses an anonymous caller. `WorkflowActorMaps.toMap(actor)` projects an actor to the `{"kind","value"}` pair the stores keep
+(`USER`, `SERVICE`, `SYSTEM`, `ANONYMOUS`, with the empty string for `ANONYMOUS`), and `WorkflowActorMaps.toActor(kind, value)` reads it
+back, refusing an unknown kind without repeating the value.
 `WorkflowCoreModule` declares the mapper with `@BindsOptionalOf`, so an application replaces it with a plain
 `@Provides WorkflowActorMapper` binding, for example when a service principal should map to a specific system reason
 rather than a generic service id. A consumer injects `Optional<WorkflowActorMapper>` and calls
@@ -552,10 +556,28 @@ static WorkflowActorMapper customActorMapper() {
         case USER -> new WorkflowActor.User(identity.actor().id());
         case SERVICE -> new WorkflowActor.Service("billing-service");
         case SYSTEM -> new WorkflowActor.System("scheduled-maintenance");
-        case ANONYMOUS -> throw new IllegalArgumentException("anonymous actor not permitted");
+        case ANONYMOUS -> new WorkflowActor.Anonymous();
     };
 }
 ```
+
+#### CurrentWorkflowActor
+
+`CurrentWorkflowActor` (`dev.vertique.workflow.actor`, `@Singleton`) is the supported way to get the caller as a `WorkflowActor`.
+It reads the `SecurityContext` of the current context through the `ContextHolder` and maps the identity with the
+`WorkflowActorMapper` (the application's binding, else the default). `get()` returns `Optional.empty()` when there is no security
+context, and otherwise the mapper's result for every kind of caller, an anonymous one included; an exception the mapper throws
+propagates, and a `null` result is refused. Call it on the thread that handles the request, before an asynchronous hop. It does not
+look at the snapshot-degradation marker. The engine takes the actor of a start, a signal, a cancel, a retry and a migration the same
+way. A task command carries its own actor, so an application takes it from its authenticated caller:
+
+```java
+WorkflowActor actor = currentActor.get().orElseThrow();
+var command = new TaskCompletionCommand(taskId, "approve", payload, idempotencyKey, actor, null);
+```
+
+The engine records that actor everywhere the completion or reassignment is recorded and never re-reads the security context for it,
+so deriving it correctly is the application's responsibility; never take it from a request body.
 
 ### TaskPrincipals and TaskPrincipalsMapper
 
@@ -730,19 +752,17 @@ static WorkflowHistoryListener historyNotifier(Notifier notifier) {
 - **Nothing sensitive.** An event carries no payload, state, patch or failure message. Task events read only the task id, the
   decision name and the assignments, each cut at 255 characters, and a decision node's choice reads only the chosen step id, cut at 40 characters.
 - **Each event knows its own provenance.** `WorkflowHistoryEvent.EntryInfo` holds the instance, sequence, definition pin, step, the
-  command id and `CommandKind` (`START`, `SIGNAL`, `COMPLETION`, `RETRY`, `MIGRATION` or `TIMER`), the `HistoryActor`, `onBehalfOf`, a
-  `HistoryAttribution` and the recording time. One change can mix actors and definition pins: a parked signal applied by another
+  command id and `CommandKind` (`START`, `SIGNAL`, `COMPLETION`, `RETRY`, `MIGRATION` or `TIMER`), the `WorkflowActor` and the recording time. One change can mix actors and definition pins: a parked signal applied by another
   command's segment carries the actor that recorded the signal, and a migration logs the target `DefinitionKey`.
 - **Provenance is never guessed.** `commandId` is set only from the entry's own command column or the `commandId` in its payload;
   an entry that names no command does not take the command of the segment it was written in. The `definition` pin is filled from the
   instance's head only for an entry written in a command's segment that is not a migration. So `commandId`, `commandKind`,
   `definition` and `stepId` are `null` whenever the writer did not record them: for example an entry written outside a command, or
   inside a `MIGRATION` segment, whose pin changes part-way, except the entry that logs the migration itself. `commandKind` is also
-  `null` when the command row's kind is not one this node knows. `actor` is `HistoryActor.Kind.NONE` and `attribution` is `ABSENT`
-  for an entry that was never attributed.
-- **Attribution.** `VERIFIED` is a verified caller identity, `ABSENT` means there was none (the actor is `HistoryActor.Kind.NONE`),
-  and `DEGRADED` means the identity was rebuilt from a snapshot that could not be verified and the work continued. Treat `DEGRADED` as
-  unverified for authorization or compliance use.
+  `null` when the command row's kind is not one this node knows. The actor is null when the entry records none.
+- **Actor.** `EntryInfo.actor()` and `WorkflowHistoryFailure.actor()` are a `WorkflowActor`, or `null` when there was no actor: no
+  security context, a best-effort capture that failed, or a stored row that cannot be read. The text is kept as given: nothing is
+  stripped, cut or validated. Whoever prints the text formats it. Use the actor as evidence only.
 - **Failures.** `onHistoryFailed` reports a caller action that failed, whose transaction did not commit or whose commit was not
   confirmed. It is reported once per attempt, with an `attemptId` minted for that attempt (a repeat of the action is a new attempt), the
   `Action` (`START`, `SIGNAL`, `CANCEL`, `RETRY`, `MIGRATE`, `TASK_COMPLETE`, `TASK_REASSIGN` or `FAILURE_DISPOSITION`, the terminal
@@ -829,7 +849,7 @@ static WorkflowDefinitionLifecycleListener registryNotifier(Notifier notifier) {
   **`ActivationChange`** carries an `ActivationOperation` (`ACTIVATE`, `DEACTIVATE_DEFAULT`, `FOLLOW`), the scope key whose default
   changed, the definition id, the target scope key and the version (`null` when none). The target scope key is the scope that owns
   the version for `ACTIVATE`, always `WorkflowScopes.DEFAULT` for `FOLLOW`, and `null` for `DEACTIVATE_DEFAULT`; the version is set
-  only for `ACTIVATE`. Both carry the `changeId`, the actor, `onBehalfOf`, the `HistoryAttribution` and `occurredAt`. The variants
+  only for `ACTIVATE`. Both carry the `changeId`, the `actor` (a `WorkflowActor`, or `null` for none) and `occurredAt`. The variants
   grow additively, so keep a `default` branch.
 - **Actor and time.** The actor is the caller's identity, captured on the calling thread before the operation is queued, and
   `occurredAt` is stamped at the same moment, when the call was made, not when the change committed.
@@ -838,8 +858,8 @@ static WorkflowDefinitionLifecycleListener registryNotifier(Notifier notifier) {
   and the simple class name of the failure, never its message. The failure carries the same `changeId` as the change of that call.
 - **Repeats are reported.** A repeat that changes nothing, such as publishing an available version, is accepted and reported like any
   other change, because the registry result cannot tell the two apart.
-- **Startup.** The versions startup records for the first time are reported as a `PUBLISH` by `HistoryActor.Kind.SYSTEM` with the
-  reason `bootstrap` and `VERIFIED` attribution, and a version that also became the default scope's current version is followed by
+- **Startup.** The versions startup records for the first time are reported as a `PUBLISH` by `WorkflowActor.System` with the
+  reason `bootstrap`, and a version that also became the default scope's current version is followed by
   an `ACTIVATE` in the default scope (scope key and target scope key both `WorkflowScopes.DEFAULT`). A restart that finds nothing new
   reports nothing, and startup reports no failures.
 - **Only in a Dagger graph.** The events are built by the engine module's Dagger-injected lifecycle and startup step. A
@@ -913,16 +933,14 @@ non-default scope's record (`follow` on the default scope fails with `IllegalArg
 requires one.
 
 **Who made the last change.** A `WorkflowDefinitionRecord` carries `statusChangedBy` and a `DefinitionActivation` carries
-`activatedBy`, each a `DefinitionChangeActor(actor, onBehalfOf, attribution)` in the shape the instance history uses (`actor` is a
-`HistoryActor`, `attribution` a `HistoryAttribution`), dated by `statusChangedAt` and `activatedAt`. Both are trailing components:
+`activatedBy`, each a `WorkflowActor`, dated by `statusChangedAt` and `activatedAt`. Both are trailing components:
 the constructors without them stay and leave them `null`, which a row written before the actor was stored also reads as. The registry
 keeps only the last change of a row, never a history: the next change replaces the actor, a refused change leaves it as it was, and
 removing an activation record (`deactivateDefault`, `follow`) leaves no row to name anyone. The actor is taken from the calling
 identity through the `WorkflowActorMapper`, never from a payload: a registered document (`WorkflowDefinitionService.load`), a
 lifecycle call and a stale-publication reset made by the system on startup all store theirs, and startup stores the system with the
-reason `bootstrap`. `DefinitionChangeActor.capture(holder, mapper)` takes it from a `ContextHolder`; `unattributed()` and
-`system(reason)` build the other two. The store gains `claim`, `complete`, `release`, `transition` and `retire` overloads with a
-trailing `DefinitionChangeActor`; their defaults drop the actor and call the older method, so a store written before them keeps
+reason `bootstrap`. A failed best-effort capture and an absent identity both record no actor. The store gains `claim`, `complete`, `release`, `transition` and `retire` overloads with a
+trailing nullable `WorkflowActor`; their defaults drop the actor and call the older method, so a store written before them keeps
 working without recording it. A full history of definition changes is the `WorkflowDefinitionLifecycleListener`'s, which receives
 every change with its actor.
 
@@ -1320,14 +1338,14 @@ Behaviors that are load-bearing for correct use and not obvious from method sign
 - **Recorders must be durable, never live.** A `WorkflowSideEffectRecorder<TX>` may persist an outbox row, or write to another transactional store, but must not call a downstream service before commit.
 - **A history listener must not block, and must have a default branch.** Callbacks run on a Vert.x thread, and the variants of `WorkflowHistoryEvent`, `DefinitionLifecycleChange` and their enums grow additively. A `switch` without `default` fails to compile, or throws `MatchException`, when a version adds a variant. See `WorkflowHistoryListener`.
 - **A history listener may miss events.** Delivery is after the commit and at most once; a process stop between the two loses the notification. Catch up from `WorkflowInstanceHistoryService` by `sequence` when a consumer must be complete, and never use a listener as the only copy of a record.
-- **Listener events are not authorization input.** An event with `HistoryAttribution.DEGRADED` or `ABSENT` was not attributed to a verified identity.
+- **Listener events are not authorization input.** The `actor` of an event is `null` when no caller could be attributed, and nothing in it says how the caller was verified.
 - **A listener makes a call wait for the instance lock.** With a `WorkflowHistoryListener` bound, even a duplicate signal waits for the instance's execution lock, and a lock timeout fails the call with a retryable `WorkflowPersistenceException`.
 - **Human task DSL guard rails.** A task step's decision list must be non-empty with unique decision names (enforced by the `HumanTaskNode` compact constructor). The optional due-date triplet (`dueDate`, `onDueMutator`, `dueNextStepId`) is all-or-nothing — supplying a partial subset is rejected at construction.
 - **`assignedTo` filter.** `TaskFilter.withAssignedTo(TaskPrincipals)` lists the tasks assigned to the caller's user id, any of its roles or any of its queues, in one query, combined with the other fields. Among the tasks that pass those fields and the archived-instance rule, the query returns exactly those `TaskAssignment.matches` accepts. Principals that cannot match an assignment (any type but `USER`) match no task, never every task. `TaskFilter` gains `assignedTo` as a trailing nullable component and keeps its earlier constructors; record patterns that deconstruct it by component list must add it. A `TaskStore` must honour the component: ignoring it would list every task.
 - **`TaskFilter` single-assignee-kind guard.** At most one of `assigneeUser` / `assigneeRole` / `assigneeQueue` / `assignedTo` may be set, mirroring the single-`assignee_type` storage shape. Use `TaskFilter.empty()` plus `with*` copies to compose filters. The optional `scopeKey` filter is an exact match, not validated, and `null` means every scope. The optional `taskType` filter is an exact match on the task type the step declared; a task created without a type matches no task type.
 - **Version-stable approvals.** `.requireVersionStability()` on a task captures `subject_version` at task creation; completion fails with `WorkflowStaleSubjectVersionException` when the reviewer's `reviewedSubjectVersion` does not match the snapshot. Creating a stability-required task with a null `subject_version` fails with `WorkflowSubjectVersionUnavailableException`.
 - **Subject resolver precedence.** An explicit `StartCommand.subjectRef` wins; otherwise a definition-level `.subject(...)` resolver is invoked with the initial state. A configured resolver returning `null` is a contract violation (`WorkflowDefinitionException`), not a silent "no subject".
-- **`WorkflowActor` is required on every task mutation command.** `TaskCompletionCommand` and `TaskReassignmentCommand` reject null / blank actor identity through their compact constructors. Blank `reason` is normalized to `null` before the command is fingerprinted for idempotency.
+- **`WorkflowActor` is required on every task mutation command.** `TaskCompletionCommand` and `TaskReassignmentCommand` reject null / blank actor identity through their compact constructors, and the actor they carry is the one recorded for the completion or the reassignment everywhere (task row, history payload, event and history entry); take it from `CurrentWorkflowActor`, never from a request body. Blank `reason` is normalized to `null` before the command is fingerprinted for idempotency.
 - **Optional `expectedAssignment` precondition.** `TaskCompletionCommand` and `TaskReassignmentCommand` accept a nullable `expectedAssignment`: the assignment the caller observed when it decided the actor was eligible. The engine compares it against the `FOR UPDATE`-locked task row (never against the earlier non-locking read) and fails with `WorkflowStaleAssignmentException`, a `WorkflowConflictException` with 409 semantics, when the assignment has moved. `null` keeps the unchecked behavior. The value is a precondition, not mutation content, so it is excluded from the idempotency fingerprint and a retry resolves through dedup regardless of it.
 
 ---

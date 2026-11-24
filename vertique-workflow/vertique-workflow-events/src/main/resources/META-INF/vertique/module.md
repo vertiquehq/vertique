@@ -185,7 +185,7 @@ Applications normally only provide the binding and destination handler.
   text the engine holds. The history entry of the same transition stores that text after the history redactor has replaced the values at its
   pointers, so a value the application hides in history can still reach an event consumer. Keep text that must stay hidden out of the cancel
   reason and the fail node's message.
-- **Attribution headers.** The outbox entry of an event a workflow segment emits carries only the attribution headers `x-workflow-actor-kind` and `x-workflow-attribution` (`VERIFIED`, `ABSENT` or `DEGRADED`), taken from the command the segment executes; the actor id, reason and party acted for are not sent to event consumers. They are for audit and logs. They are unauthenticated: anyone who can write an outbox record or publish to the broker can forge them, so a consumer must never treat them as the identity of the caller. The envelope is unchanged.
+- **Attribution headers.** The outbox entry of an event a workflow segment emits carries only the attribution header `x-workflow-actor-kind`, taken from the command the segment executes; the actor id and reason are not sent to event consumers. They are for audit and logs. They are unauthenticated: anyone who can write an outbox record or publish to the broker can forge them, so a consumer must never treat them as the identity of the caller. The envelope is unchanged.
 - **Envelope contract is versioned.** External consumers depend on the v1 event envelope contract; breaking changes require a new envelope version, not field-shape changes in place.
 
 ---

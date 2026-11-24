@@ -101,7 +101,7 @@ class ReplyApplicationFailureIT {
             await(f.fixture
                     .observer()
                     .preparedQuery(
-                            "UPDATE workflow_commands SET actor_kind = 'SYSTEM', actor_reason = 'reply test', attribution_status = 'VERIFIED' WHERE workflow_id = $1 AND kind = 'SIGNAL'")
+                            "UPDATE workflow_commands SET actor = '{\"kind\":\"SYSTEM\",\"value\":\"reply test\"}'::jsonb WHERE workflow_id = $1 AND kind = 'SIGNAL'")
                     .execute(Tuple.of(id.value())));
             f.retry(node, id);
             node.awaitIdle(id);
@@ -109,7 +109,7 @@ class ReplyApplicationFailureIT {
             Row failureActor = await(f.fixture
                             .observer()
                             .preparedQuery(
-                                    "SELECT actor_kind, actor_reason FROM workflow_history WHERE workflow_id = $1 AND entry_type = 'FAILED' ORDER BY sequence DESC LIMIT 1")
+                                    "SELECT actor->>'kind' AS actor_kind, actor->>'value' AS actor_reason FROM workflow_history WHERE workflow_id = $1 AND entry_type = 'FAILED' ORDER BY sequence DESC LIMIT 1")
                             .execute(Tuple.of(id.value())))
                     .iterator()
                     .next();

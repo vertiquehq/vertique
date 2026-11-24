@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.engine.spi;
 
+import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import jakarta.annotation.Nullable;
 import java.util.UUID;
@@ -26,7 +27,7 @@ import java.util.UUID;
  *                    {@code REMINDER}), or {@code null}
  * @param timerId     the timer row a {@code TIMER} command fires, or {@code null}
  * @param taskId      the task a {@code TIMER} command of a due date or reminder belongs to, or {@code null}
- * @param actor       who recorded the command, or {@code null} for a command recorded before actors were logged
+ * @param actor      who recorded the command, or {@code null} when it was recorded with no actor
  */
 public record SegmentCommand(
         long commandId,
@@ -40,7 +41,7 @@ public record SegmentCommand(
         @Nullable String timerKind,
         @Nullable UUID timerId,
         @Nullable UUID taskId,
-        @Nullable CommandActor actor) {
+        @Nullable WorkflowActor actor) {
 
     /**
      * Creates a command that carries the timer fields and no recorded actor.

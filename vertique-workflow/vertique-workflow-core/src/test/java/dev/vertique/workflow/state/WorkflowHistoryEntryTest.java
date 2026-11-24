@@ -5,6 +5,7 @@ package dev.vertique.workflow.state;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import java.lang.reflect.RecordComponent;
@@ -38,9 +39,7 @@ class WorkflowHistoryEntryTest {
                 "{\"name\":\"go\"}",
                 RECORDED_AT,
                 2,
-                new HistoryActor(HistoryActor.Kind.SERVICE, "relay-svc", "post"),
-                "u-2",
-                "VERIFIED",
+                new WorkflowActor.Service("relay-svc"),
                 "node-1",
                 11L,
                 "wait",
@@ -69,10 +68,8 @@ class WorkflowHistoryEntryTest {
         // And the entry version is the boxed one
         assertThat(entry.entryVersion()).isEqualTo(Integer.valueOf(1));
 
-        // And every other new component is null, the attribution status included
+        // And every other new component is null, the actor included
         assertThat(entry.actor()).isNull();
-        assertThat(entry.onBehalfOf()).isNull();
-        assertThat(entry.attributionStatus()).isNull();
         assertThat(entry.executorId()).isNull();
         assertThat(entry.commandId()).isNull();
         assertThat(entry.stepId()).isNull();
@@ -91,8 +88,6 @@ class WorkflowHistoryEntryTest {
                 "{\"name\":\"go\"}",
                 RECORDED_AT,
                 1,
-                null,
-                null,
                 null,
                 null,
                 null,
@@ -129,8 +124,6 @@ class WorkflowHistoryEntryTest {
                 null,
                 null,
                 null,
-                null,
-                null,
                 null);
 
         // Then it is accepted and reports no version, and the component is a boxed integer
@@ -156,9 +149,7 @@ class WorkflowHistoryEntryTest {
                         "String payloadJson",
                         "Instant recordedAt",
                         "Integer entryVersion",
-                        "HistoryActor actor",
-                        "String onBehalfOf",
-                        "String attributionStatus",
+                        "WorkflowActor actor",
                         "String executorId",
                         "Long commandId",
                         "String stepId",
@@ -180,40 +171,16 @@ class WorkflowHistoryEntryTest {
         // When each new component differs in turn, then the entries differ
         assertThat(base)
                 .isNotEqualTo(with(base, 5, 1))
-                .isNotEqualTo(with(base, 6, new HistoryActor(HistoryActor.Kind.USER, "u-1", null)))
-                .isNotEqualTo(with(base, 7, "u-3"))
-                .isNotEqualTo(with(base, 8, "DEGRADED"))
-                .isNotEqualTo(with(base, 9, "node-2"))
-                .isNotEqualTo(with(base, 10, 12L))
-                .isNotEqualTo(with(base, 11, "other-step"))
-                .isNotEqualTo(with(base, 12, "reject"))
-                .isNotEqualTo(with(base, 13, new DefinitionKey("default", "audit-flow", 4L)))
-                .isNotEqualTo(with(base, 14, "def456"))
-                .isNotEqualTo(with(base, 15, 40L))
-                .isNotEqualTo(with(base, 16, 50L))
-                .isNotEqualTo(with(base, 17, "[]"));
-    }
-
-    @Test
-    @DisplayName("the actor kinds are user, service, system and none, and an actor carries its id and reason")
-    void actorKindsAreUserServiceSystemAndNone() {
-        // Given the kinds of a logged actor
-        // Then they are exactly these four, in this order
-        assertThat(HistoryActor.Kind.values())
-                .containsExactly(
-                        HistoryActor.Kind.USER,
-                        HistoryActor.Kind.SERVICE,
-                        HistoryActor.Kind.SYSTEM,
-                        HistoryActor.Kind.NONE);
-
-        // And an actor keeps its kind, id and reason, which may be null
-        HistoryActor none = new HistoryActor(HistoryActor.Kind.NONE, null, null);
-        assertThat(none.kind()).isEqualTo(HistoryActor.Kind.NONE);
-        assertThat(none.id()).isNull();
-        assertThat(none.reason()).isNull();
-        assertThat(new HistoryActor(HistoryActor.Kind.SYSTEM, null, "post"))
-                .isEqualTo(new HistoryActor(HistoryActor.Kind.SYSTEM, null, "post"))
-                .isNotEqualTo(none);
+                .isNotEqualTo(with(base, 6, new WorkflowActor.User("u-1")))
+                .isNotEqualTo(with(base, 7, "node-2"))
+                .isNotEqualTo(with(base, 8, 12L))
+                .isNotEqualTo(with(base, 9, "other-step"))
+                .isNotEqualTo(with(base, 10, "reject"))
+                .isNotEqualTo(with(base, 11, new DefinitionKey("default", "audit-flow", 4L)))
+                .isNotEqualTo(with(base, 12, "def456"))
+                .isNotEqualTo(with(base, 13, 40L))
+                .isNotEqualTo(with(base, 14, 50L))
+                .isNotEqualTo(with(base, 15, "[]"));
     }
 
     /** The entry with the component at the index replaced, built through the canonical constructor. */
@@ -226,8 +193,6 @@ class WorkflowHistoryEntryTest {
             entry.recordedAt(),
             entry.entryVersion(),
             entry.actor(),
-            entry.onBehalfOf(),
-            entry.attributionStatus(),
             entry.executorId(),
             entry.commandId(),
             entry.stepId(),
@@ -246,17 +211,15 @@ class WorkflowHistoryEntryTest {
                 (String) values[3],
                 (Instant) values[4],
                 (Integer) values[5],
-                (HistoryActor) values[6],
+                (WorkflowActor) values[6],
                 (String) values[7],
-                (String) values[8],
+                (Long) values[8],
                 (String) values[9],
-                (Long) values[10],
-                (String) values[11],
+                (String) values[10],
+                (DefinitionKey) values[11],
                 (String) values[12],
-                (DefinitionKey) values[13],
-                (String) values[14],
-                (Long) values[15],
-                (Long) values[16],
-                (String) values[17]);
+                (Long) values[13],
+                (Long) values[14],
+                (String) values[15]);
     }
 }

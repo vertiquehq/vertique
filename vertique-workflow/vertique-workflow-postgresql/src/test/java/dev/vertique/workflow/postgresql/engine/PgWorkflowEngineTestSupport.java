@@ -3,17 +3,19 @@
 
 package dev.vertique.workflow.postgresql.engine;
 
+import dev.vertique.context.DefaultContextHolder;
 import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.core.context.InboundContextInitializer;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
+import dev.vertique.workflow.actor.CurrentWorkflowActor;
+import dev.vertique.workflow.actor.DefaultWorkflowActorMapper;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.engine.WorkflowEngineFactory;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
 import dev.vertique.workflow.engine.WorkflowEngineParts;
-import dev.vertique.workflow.engine.executor.CommandActors;
 import dev.vertique.workflow.engine.history.WorkflowHistoryEventPublisher;
 import dev.vertique.workflow.engine.intake.IntakeAdmission;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
@@ -740,7 +742,11 @@ public final class PgWorkflowEngineTestSupport {
                     pool, ex, DbSchemas.empty(), WorkflowRecordingConfig.defaults(), propagator, () -> publisher[0]));
             if (!historyListeners.isEmpty()) {
                 publisher[0] = new WorkflowHistoryEventPublisher(
-                        historyListeners, history, pool, commands, CommandActors.ambient());
+                        historyListeners,
+                        history,
+                        pool,
+                        commands,
+                        new CurrentWorkflowActor(new DefaultContextHolder(), new DefaultWorkflowActorMapper()));
             }
             WorkflowEngineParts.Builder parts = WorkflowEngineParts.builder()
                     .txRunner(runnerDecorator.apply(runnerFor(pool)))

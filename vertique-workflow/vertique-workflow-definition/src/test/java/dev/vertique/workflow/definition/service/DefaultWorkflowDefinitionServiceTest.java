@@ -15,6 +15,7 @@ import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContexts;
 import dev.vertique.security.SecurityIdentity;
 import dev.vertique.workflow.actor.DefaultWorkflowActorMapper;
+import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.actor.WorkflowActorMapper;
 import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.definition.callbacks.DefaultBranchResultReducerRegistry;
@@ -45,9 +46,7 @@ import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegist
 import dev.vertique.workflow.engine.testsupport.NoOpWorkflowDefinitionLifecycle;
 import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
-import dev.vertique.workflow.history.HistoryAttribution;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
-import dev.vertique.workflow.registry.store.DefinitionChangeActor;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
@@ -55,7 +54,6 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
-import dev.vertique.workflow.state.HistoryActor;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
@@ -383,7 +381,7 @@ class DefaultWorkflowDefinitionServiceTest {
         }
     }
 
-    private DefinitionChangeActor registeredBy(ContextHolder holder, WorkflowActorMapper mapper) {
+    private WorkflowActor registeredBy(ContextHolder holder, WorkflowActorMapper mapper) {
         WorkflowDefinitionRegistryStore durable = Mockito.mock(WorkflowDefinitionRegistryStore.class);
         Mockito.when(durable.insertCandidate(
                         Mockito.any(WorkflowDefinitionRecord.class), Mockito.any(WorkflowDefinitionDocument.class)))
@@ -419,17 +417,15 @@ class DefaultWorkflowDefinitionServiceTest {
                         SecurityContexts.unauthenticated(SecurityIdentity.user(
                                 new PrincipalRef(PrincipalType.USER, "alice", java.util.Map.of()))));
 
-        DefinitionChangeActor actor = registeredBy(holder, new DefaultWorkflowActorMapper());
+        WorkflowActor actor = registeredBy(holder, new DefaultWorkflowActorMapper());
 
-        assertThat(actor.actor()).isEqualTo(new HistoryActor(HistoryActor.Kind.USER, "alice", null));
-        assertThat(actor.attribution()).isEqualTo(HistoryAttribution.VERIFIED);
+        assertThat(actor).isEqualTo(new WorkflowActor.User("alice"));
     }
 
     @Test
     @DisplayName("a durable load with no identity stores the candidate as unattributed")
     void aDurableLoadWithNoIdentityIsUnattributed() {
-        assertThat(registeredBy(new Held(), new DefaultWorkflowActorMapper()))
-                .isEqualTo(DefinitionChangeActor.unattributed());
+        assertThat(registeredBy(new Held(), new DefaultWorkflowActorMapper())).isNull();
     }
 
     @Test
@@ -444,7 +440,7 @@ class DefaultWorkflowDefinitionServiceTest {
             throw new IllegalArgumentException("alice cannot be mapped");
         };
 
-        assertThat(registeredBy(holder, failing)).isEqualTo(DefinitionChangeActor.unattributed());
+        assertThat(registeredBy(holder, failing)).isNull();
     }
 
     @Nested

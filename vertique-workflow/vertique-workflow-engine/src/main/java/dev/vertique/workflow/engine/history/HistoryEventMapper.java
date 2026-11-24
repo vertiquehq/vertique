@@ -5,7 +5,6 @@ package dev.vertique.workflow.engine.history;
 
 import dev.vertique.workflow.engine.spi.CommittedHistoryEntry;
 import dev.vertique.workflow.history.CommandKind;
-import dev.vertique.workflow.history.HistoryAttribution;
 import dev.vertique.workflow.history.WorkflowHistoryEvent;
 import dev.vertique.workflow.history.WorkflowHistoryEvent.BranchChange;
 import dev.vertique.workflow.history.WorkflowHistoryEvent.CommandDisposition;
@@ -14,7 +13,6 @@ import dev.vertique.workflow.history.WorkflowHistoryEvent.DecisionKind;
 import dev.vertique.workflow.history.WorkflowHistoryEvent.EntryInfo;
 import dev.vertique.workflow.history.WorkflowHistoryEvent.FanInChange;
 import dev.vertique.workflow.history.WorkflowHistoryEvent.TimerChange;
-import dev.vertique.workflow.state.HistoryActor;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import dev.vertique.workflow.tasks.TaskAssignment;
@@ -119,8 +117,6 @@ final class HistoryEventMapper {
 
     private static EntryInfo entryInfo(CommittedHistoryEntry committed) {
         WorkflowHistoryEntry entry = committed.entry();
-        HistoryActor actor =
-                entry.actor() != null ? entry.actor() : new HistoryActor(HistoryActor.Kind.NONE, null, null);
         return new EntryInfo(
                 entry.instanceId(),
                 entry.sequence(),
@@ -128,9 +124,7 @@ final class HistoryEventMapper {
                 entry.stepId(),
                 entry.commandId(),
                 commandKind(committed.commandKind()),
-                actor,
-                entry.onBehalfOf(),
-                attribution(entry.attributionStatus()),
+                entry.actor(),
                 entry.recordedAt());
     }
 
@@ -143,17 +137,6 @@ final class HistoryEventMapper {
             return CommandKind.valueOf(stored);
         } catch (IllegalArgumentException unknown) {
             return null;
-        }
-    }
-
-    private static HistoryAttribution attribution(@Nullable String stored) {
-        if (stored == null) {
-            return HistoryAttribution.ABSENT;
-        }
-        try {
-            return HistoryAttribution.valueOf(stored);
-        } catch (IllegalArgumentException unknown) {
-            return HistoryAttribution.ABSENT;
         }
     }
 

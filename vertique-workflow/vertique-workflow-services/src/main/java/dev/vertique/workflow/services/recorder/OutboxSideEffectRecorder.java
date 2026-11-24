@@ -86,10 +86,9 @@ public final class OutboxSideEffectRecorder implements WorkflowSideEffectRecorde
      * {@link IllegalArgumentException} that names the key (never the value); nothing is thrown
      * synchronously and nothing is published.
      *
-     * <p>An intent a workflow segment writes arrives with the attribution headers
-     * {@code x-workflow-actor-kind}, {@code x-workflow-actor-id}, {@code x-workflow-actor-reason},
-     * {@code x-workflow-on-behalf-of} and {@code x-workflow-attribution} (absent values omitted), added by the engine
-     * from the actor of the command the segment executes. They are copied to the outbox entry as they are. They are
+     * <p>An intent a workflow segment writes arrives with the attribution headers {@code x-workflow-actor-kind}
+     * ({@code NONE} when the command has no actor) and, for a user or a service, {@code x-workflow-actor-id}, or, for the
+     * system, {@code x-workflow-actor-reason}, added by the engine from the actor of the command the segment executes. They are copied to the outbox entry as they are. They are
      * unauthenticated and are not an identity; nothing here reads them.
      *
      * @param intent the side-effect intent to record; must have {@code kind=SERVICE}

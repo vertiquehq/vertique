@@ -499,7 +499,7 @@ public class ParkedSignalIT {
         List<String> actors = new ArrayList<>();
         for (Row row : await(f.fixture
                 .observer()
-                .preparedQuery("SELECT actor_id FROM workflow_history WHERE workflow_id = $1"
+                .preparedQuery("SELECT actor->>'value' AS actor_id FROM workflow_history WHERE workflow_id = $1"
                         + " AND entry_type = 'DECISION' AND command_id = $2")
                 .execute(Tuple.of(id.value(), commandId)))) {
             actors.add(row.getString("actor_id"));

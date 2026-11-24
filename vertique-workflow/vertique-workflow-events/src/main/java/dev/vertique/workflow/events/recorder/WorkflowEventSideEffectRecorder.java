@@ -155,7 +155,7 @@ public final class WorkflowEventSideEffectRecorder implements WorkflowSideEffect
 
         // --- Outbox entry construction ---
         // The intent's headers include the attribution headers the engine adds to the events of a segment
-        // (x-workflow-actor-kind and x-workflow-attribution only, so no subject identifier reaches a consumer); they
+        // (x-workflow-actor-kind only, so no actor identifier reaches a consumer); they
         // are unauthenticated, are not an identity, and are carried to the outbox entry as they are.
         OutboxEntry entry = OutboxEntry.builder()
                 .destinationType(binding.destinationType())

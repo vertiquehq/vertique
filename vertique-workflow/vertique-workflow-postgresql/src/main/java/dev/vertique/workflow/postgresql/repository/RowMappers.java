@@ -9,7 +9,6 @@ import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
-import dev.vertique.workflow.state.HistoryActor;
 import dev.vertique.workflow.state.JoinPolicyType;
 import dev.vertique.workflow.state.JoinState;
 import dev.vertique.workflow.state.JoinStateStatus;
@@ -154,8 +153,6 @@ class RowMappers {
                     null,
                     null,
                     null,
-                    null,
-                    null,
                     null);
         };
     }
@@ -164,18 +161,13 @@ class RowMappers {
      * Returns a {@link RowMapper} that maps a full row from {@code workflow_history} to a
      * {@link WorkflowHistoryEntry} with every component set that the row holds.
      *
-     * <p>The actor is {@code null} when {@code actor_kind} is {@code null}; the definition key is {@code null} when
+     * <p>The actor is {@code null} when {@code actor} is {@code null} or names no one; the definition key is {@code null} when
      * {@code definition_scope_key} is {@code null}. Used only by the history service.
      *
      * @return a row mapper for the enriched {@link WorkflowHistoryEntry}
      */
     static RowMapper<WorkflowHistoryEntry> enrichedWorkflowHistoryEntry() {
         return row -> {
-            String actorKind = row.getString("actor_kind");
-            HistoryActor actor = actorKind == null
-                    ? null
-                    : new HistoryActor(
-                            historyActorKind(actorKind), row.getString("actor_id"), row.getString("actor_reason"));
             String scopeKey = row.getString("definition_scope_key");
             DefinitionKey definitionKey = scopeKey == null
                     ? null
@@ -187,9 +179,7 @@ class RowMappers {
                     extractJsonb(row, "payload_json"),
                     toInstant(row.getOffsetDateTime("recorded_at")),
                     row.getInteger("entry_version"),
-                    actor,
-                    row.getString("on_behalf_of"),
-                    row.getString("attribution_status"),
+                    PgWorkflowActor.read(row, "actor"),
                     row.getString("executor_id"),
                     row.getLong("command_id"),
                     row.getString("step_id"),
@@ -200,18 +190,6 @@ class RowMappers {
                     row.getLong("state_version_after"),
                     extractJsonb(row, "patch_json"));
         };
-    }
-
-    /**
-     * The kind of a stored actor. A value this version does not know, such as one a newer version wrote, is read as
-     * {@link HistoryActor.Kind#NONE} so that it does not fail the whole page.
-     */
-    private static HistoryActor.Kind historyActorKind(String stored) {
-        try {
-            return HistoryActor.Kind.valueOf(stored);
-        } catch (IllegalArgumentException e) {
-            return HistoryActor.Kind.NONE;
-        }
     }
 
     // --- BranchToken ---

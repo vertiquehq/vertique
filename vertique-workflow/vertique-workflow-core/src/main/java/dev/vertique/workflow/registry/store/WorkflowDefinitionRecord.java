@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.registry.store;
 
+import dev.vertique.workflow.actor.WorkflowActor;
 import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
 import java.time.Instant;
@@ -37,8 +38,8 @@ import java.util.Objects;
  *     defensively
  * @param startSchema the JSON Schema of the version's start payload; {@code null} when the row was written without
  *     schema production or the version declares no start payload; copied defensively
- * @param statusChangedBy who made the last status change, which {@code statusChangedAt} dates; {@code null} when it was
- *     not attributed. The registry keeps only the last change, never a history of changes.
+ * @param statusChangedBy who made the last status change, which {@code statusChangedAt} dates; {@code null} when it had no
+ *     actor. The registry keeps only the last change, never a history of changes.
  */
 public record WorkflowDefinitionRecord(
         DefinitionKey key,
@@ -55,10 +56,10 @@ public record WorkflowDefinitionRecord(
         @Nullable DefinitionFailure failure,
         @Nullable JsonObject signalNames,
         @Nullable JsonObject startSchema,
-        @Nullable DefinitionChangeActor statusChangedBy) {
+        @Nullable WorkflowActor statusChangedBy) {
 
     /**
-     * Constructs a record that carries no attribution of its last status change.
+     * Constructs a record that carries no actor for its last status change.
      *
      * @param key the scoped identity of the definition version
      * @param kind whether the definition comes from code or from a document

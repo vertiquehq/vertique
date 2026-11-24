@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.workflow.engine.executor;
+package dev.vertique.workflow.actor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -15,10 +15,7 @@ import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContexts;
 import dev.vertique.security.SecurityIdentity;
-import dev.vertique.workflow.actor.WorkflowActor;
-import dev.vertique.workflow.actor.WorkflowActorMapper;
 import dev.vertique.workflow.di.WorkflowCoreModule;
-import dev.vertique.workflow.engine.spi.CommandActor;
 import jakarta.inject.Singleton;
 import java.util.Map;
 import java.util.Optional;
@@ -26,10 +23,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies with Dagger-compiled components that the actor a recorded command is logged with comes from the
- * application's {@link WorkflowActorMapper} when it binds one, and from the default mapper without one.
+ * Verifies with Dagger-compiled components that the current actor comes from the application's
+ * {@link WorkflowActorMapper} when it binds one, and from the default mapper without one.
  */
-class CommandActorsBindingTest {
+class CurrentWorkflowActorBindingTest {
 
     private static final SecurityIdentity ALICE =
             SecurityIdentity.user(new PrincipalRef(PrincipalType.USER, "alice", Map.of()));
@@ -50,7 +47,7 @@ class CommandActorsBindingTest {
 
                 @Override
                 public <T extends ContextValue> Scope bind(Class<T> type, T value) {
-                    throw new UnsupportedOperationException("the recording path only reads the context");
+                    throw new UnsupportedOperationException("the actor is only read from the context");
                 }
             };
         }
@@ -70,34 +67,33 @@ class CommandActorsBindingTest {
     @Component(modules = {WorkflowCoreModule.class, CallerModule.class, ApplicationMapperModule.class})
     interface OverridingComponent {
 
-        CommandActors actors();
+        CurrentWorkflowActor currentActor();
     }
 
     @Singleton
     @Component(modules = {WorkflowCoreModule.class, CallerModule.class})
     interface PlainComponent {
 
-        CommandActors actors();
+        CurrentWorkflowActor currentActor();
     }
 
     @Test
-    @DisplayName("an application mapper binding decides the actor of a recorded command")
+    @DisplayName("an application mapper binding decides the current actor")
     void applicationMapperIsUsed() {
-        CommandActor actor = DaggerCommandActorsBindingTest_OverridingComponent.create()
-                .actors()
-                .capture();
+        Optional<WorkflowActor> actor = DaggerCurrentWorkflowActorBindingTest_OverridingComponent.create()
+                .currentActor()
+                .get();
 
-        assertThat(actor.kind()).isEqualTo(CommandActor.Kind.SERVICE);
-        assertThat(actor.id()).isEqualTo("custom");
+        assertThat(actor).contains(new WorkflowActor.Service("custom"));
     }
 
     @Test
-    @DisplayName("without an application mapper the default decides the actor")
+    @DisplayName("without an application mapper the default decides the current actor")
     void defaultMapperWithoutBinding() {
-        CommandActor actor =
-                DaggerCommandActorsBindingTest_PlainComponent.create().actors().capture();
+        Optional<WorkflowActor> actor = DaggerCurrentWorkflowActorBindingTest_PlainComponent.create()
+                .currentActor()
+                .get();
 
-        assertThat(actor.kind()).isEqualTo(CommandActor.Kind.USER);
-        assertThat(actor.id()).isEqualTo("alice");
+        assertThat(actor).contains(new WorkflowActor.User("alice"));
     }
 }

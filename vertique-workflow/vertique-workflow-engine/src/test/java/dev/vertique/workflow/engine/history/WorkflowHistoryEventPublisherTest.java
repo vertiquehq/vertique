@@ -15,17 +15,15 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import dev.vertique.workflow.engine.spi.CommandActor;
+import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.engine.spi.CommittedHistoryEntry;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
-import dev.vertique.workflow.history.HistoryAttribution;
 import dev.vertique.workflow.history.WorkflowHistoryChange;
 import dev.vertique.workflow.history.WorkflowHistoryEvent;
 import dev.vertique.workflow.history.WorkflowHistoryFailure;
 import dev.vertique.workflow.history.WorkflowHistoryFailure.Action;
 import dev.vertique.workflow.history.WorkflowHistoryListener;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
-import dev.vertique.workflow.state.HistoryActor;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import io.vertx.core.Future;
@@ -39,6 +37,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -101,14 +100,13 @@ class WorkflowHistoryEventPublisherTest {
         return publisher(
                 () -> {
                     actorCaptures.incrementAndGet();
-                    return new CommandActor(
-                            CommandActor.Kind.USER, "alice", null, "bob", CommandActor.Attribution.VERIFIED);
+                    return Optional.of(new WorkflowActor.User("alice"));
                 },
                 listeners);
     }
 
     private WorkflowHistoryEventPublisher publisher(
-            java.util.function.Supplier<CommandActor> actor, WorkflowHistoryListener... listeners) {
+            java.util.function.Supplier<Optional<WorkflowActor>> actor, WorkflowHistoryListener... listeners) {
         Set<WorkflowHistoryListener> set = new LinkedHashSet<>(List.of(listeners));
         return new WorkflowHistoryEventPublisher(
                 set,
@@ -305,11 +303,29 @@ class WorkflowHistoryEventPublisherTest {
         assertThat(failure.instanceId()).isEqualTo(ID);
         assertThat(failure.errorType()).isEqualTo("IllegalArgumentException");
         assertThat(failure.occurredAt()).isEqualTo(NOW);
-        assertThat(failure.actor()).isEqualTo(new HistoryActor(HistoryActor.Kind.USER, "alice", null));
-        assertThat(failure.onBehalfOf()).isEqualTo("bob");
-        assertThat(failure.attribution()).isEqualTo(HistoryAttribution.VERIFIED);
+        assertThat(failure.actor()).isEqualTo(new WorkflowActor.User("alice"));
         // and no settlement is registered for a failed work
         verify(transaction, never()).completion();
+    }
+
+    @Test
+    @DisplayName("aroundAs reports a failure with the actor the command names and never reads the current actor")
+    void aroundAsReportsTheCommandActor() {
+        // Given a listener and a current actor that is alice
+        when(history.nextSequence(ID, tx)).thenReturn(Future.succeededFuture(1L));
+        WorkflowHistoryEventPublisher publisher = publisher(recorder);
+        WorkflowActor commandActor = new WorkflowActor.User("bob");
+
+        // When a work that fails runs with the command's actor
+        Future<String> result = publisher.aroundAs(
+                Action.TASK_COMPLETE, ID, commandActor, tx, () -> Future.failedFuture(new RuntimeException("no")));
+
+        // Then the failure names the command's actor and the current actor supplier was not called
+        assertThat(result.failed()).isTrue();
+        assertThat(failures).hasSize(1);
+        assertThat(failures.get(0).action()).isEqualTo(Action.TASK_COMPLETE);
+        assertThat(failures.get(0).actor()).isEqualTo(commandActor);
+        assertThat(actorCaptures).hasValue(0);
     }
 
     @Test
@@ -402,9 +418,7 @@ class WorkflowHistoryEventPublisherTest {
         // Then the action's failure is unchanged and reported with the unattributed actor
         assertThat(result.failed()).isTrue();
         assertThat(failures).hasSize(1);
-        assertThat(failures.get(0).actor()).isEqualTo(new HistoryActor(HistoryActor.Kind.NONE, null, null));
-        assertThat(failures.get(0).attribution()).isEqualTo(HistoryAttribution.ABSENT);
-        assertThat(failures.get(0).onBehalfOf()).isNull();
+        assertThat(failures.get(0).actor()).isNull();
     }
 
     @Test
@@ -759,7 +773,7 @@ class WorkflowHistoryEventPublisherTest {
                 history,
                 readClient,
                 (id, client) -> Future.failedFuture(new IllegalStateException("lock timeout")),
-                () -> new CommandActor(CommandActor.Kind.USER, "alice", null, null, CommandActor.Attribution.VERIFIED),
+                () -> Optional.of(new WorkflowActor.User("alice")),
                 Clock.fixed(NOW, ZoneOffset.UTC));
         AtomicInteger runs = new AtomicInteger();
 

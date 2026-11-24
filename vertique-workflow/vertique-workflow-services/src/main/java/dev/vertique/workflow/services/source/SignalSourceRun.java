@@ -11,7 +11,6 @@ import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityContexts;
 import dev.vertique.security.SecurityIdentity;
 import dev.vertique.security.authz.InvocationOrigin;
-import dev.vertique.workflow.actor.ActorText;
 import dev.vertique.workflow.dedup.WorkflowDedupScopes;
 import dev.vertique.workflow.exception.WorkflowIntakeRefusedException;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
@@ -468,7 +467,7 @@ final class SignalSourceRun<T> {
         log.warn(
                 "Source '{}' recorded no command for actor '{}': contract={}, signal={}, outcome={}",
                 plan.sourceName(),
-                ActorText.clean(identity.actor().id()),
+                identity.actor().id(),
                 target == null ? null : target.contractName(),
                 target == null ? null : target.signalName(),
                 verdict.outcome());

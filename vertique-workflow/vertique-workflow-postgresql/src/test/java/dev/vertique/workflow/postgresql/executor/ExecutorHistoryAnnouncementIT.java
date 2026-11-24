@@ -11,6 +11,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.history.CommandKind;
 import dev.vertique.workflow.history.WorkflowHistoryEvent;
 import dev.vertique.workflow.history.WorkflowHistoryEvent.CommandChanged;
@@ -21,7 +22,6 @@ import dev.vertique.workflow.postgresql.executor.RecordedRecoveryIT.BreakableTim
 import dev.vertique.workflow.postgresql.executor.RecordedSignalIT.SignalFixture;
 import dev.vertique.workflow.postgresql.executor.TimerCommandIT.TimerFixture;
 import dev.vertique.workflow.postgresql.history.RecordedHistory;
-import dev.vertique.workflow.state.HistoryActor;
 import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.Tuple;
 import java.time.Duration;
@@ -96,16 +96,15 @@ public class ExecutorHistoryAnnouncementIT {
             // And the failure of a timer is the system's doing, for the timer command; the retry entry is written by
             // the segment that runs it, which records no command for it, and none is inferred
             assertThat(failed.entryInfo().commandKind()).isEqualTo(CommandKind.TIMER);
-            assertThat(failed.entryInfo().actor().kind()).isEqualTo(HistoryActor.Kind.SYSTEM);
-            assertThat(failed.entryInfo().actor().reason()).isEqualTo("timer");
+            assertThat(failed.entryInfo().actor()).isEqualTo(new WorkflowActor.System("timer"));
             assertThat(retried.entryInfo().commandKind()).isNull();
 
             // And none that a timer wrote is without the system actor
             assertThat(events)
                     .filteredOn(event -> event.entryInfo().commandKind() == CommandKind.TIMER)
                     .isNotEmpty()
-                    .allSatisfy(event ->
-                            assertThat(event.entryInfo().actor().kind()).isEqualTo(HistoryActor.Kind.SYSTEM));
+                    .allSatisfy(
+                            event -> assertThat(event.entryInfo().actor()).isInstanceOf(WorkflowActor.System.class));
 
             // And nothing was reported as failed, since an internal retry is not, while the throwing listener changed
             // nothing

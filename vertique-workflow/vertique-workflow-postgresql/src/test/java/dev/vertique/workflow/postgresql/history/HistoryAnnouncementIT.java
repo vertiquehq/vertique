@@ -10,7 +10,6 @@ import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.history.CommandKind;
-import dev.vertique.workflow.history.HistoryAttribution;
 import dev.vertique.workflow.history.WorkflowHistoryChange;
 import dev.vertique.workflow.history.WorkflowHistoryEvent;
 import dev.vertique.workflow.history.WorkflowHistoryFailure;
@@ -133,12 +132,13 @@ public class HistoryAnnouncementIT {
             assertThat(reassigned.to()).isEqualTo(new TaskAssignment.Role("other-auditors"));
             WorkflowHistoryEvent.TaskDecided decided = only(endedEvents, WorkflowHistoryEvent.TaskDecided.class);
             assertThat(decided.decisionName()).isEqualTo("approve");
-            assertThat(decided.entryInfo().actor().id()).isEqualTo(AuditRun.TASK_USER);
+            assertThat(((WorkflowActor.User) decided.entryInfo().actor()).userId())
+                    .isEqualTo(AuditRun.TASK_USER);
             assertThat(decisionOf(endedEvents, WorkflowHistoryEvent.DecisionKind.TASK_DECIDED)
                             .entryInfo())
                     .satisfies(info -> {
                         assertThat(info.commandKind()).isEqualTo(CommandKind.COMPLETION);
-                        assertThat(info.actor().id()).isEqualTo(AuditRun.TASK_USER);
+                        assertThat(((WorkflowActor.User) info.actor()).userId()).isEqualTo(AuditRun.TASK_USER);
                     });
             assertThat(decisionOf(endedEvents, WorkflowHistoryEvent.DecisionKind.SIGNAL_APPLIED)
                             .entryInfo()
@@ -153,10 +153,9 @@ public class HistoryAnnouncementIT {
             for (WorkflowHistoryEvent event : endedEvents) {
                 CommandKind kind = event.entryInfo().commandKind();
                 if (kind == null && !(event instanceof WorkflowHistoryEvent.TaskReassigned)) {
-                    assertThat(event.entryInfo().actor().id())
+                    assertThat(((WorkflowActor.User) event.entryInfo().actor()).userId())
                             .as(event.toString())
                             .isIn("u-0", "u-1", "u-4");
-                    assertThat(event.entryInfo().attribution()).isEqualTo(HistoryAttribution.VERIFIED);
                     continue;
                 }
                 String expected = event instanceof WorkflowHistoryEvent.TaskReassigned
@@ -167,8 +166,9 @@ public class HistoryAnnouncementIT {
                             case SIGNAL -> "u-4";
                             default -> throw new AssertionError("unexpected command kind " + kind + " of " + event);
                         };
-                assertThat(event.entryInfo().actor().id()).as(event.toString()).isEqualTo(expected);
-                assertThat(event.entryInfo().attribution()).isEqualTo(HistoryAttribution.VERIFIED);
+                assertThat(((WorkflowActor.User) event.entryInfo().actor()).userId())
+                        .as(event.toString())
+                        .isEqualTo(expected);
             }
             // and the entries that name their command carry its kind, none inferred from the segment
             assertThat(endedEvents)
@@ -178,8 +178,9 @@ public class HistoryAnnouncementIT {
                     .filteredOn(event -> event instanceof WorkflowHistoryEvent.InstanceCancelled
                             || event instanceof WorkflowHistoryEvent.TaskCancelled)
                     .hasSize(2)
-                    .allSatisfy(
-                            event -> assertThat(event.entryInfo().actor().id()).isEqualTo("u-5"));
+                    .allSatisfy(event -> assertThat(
+                                    ((WorkflowActor.User) event.entryInfo().actor()).userId())
+                            .isEqualTo("u-5"));
 
             // And no action failed, while the throwing listener was told of every commit and did not alter one
             assertThat(recorded.failures()).isEmpty();
@@ -229,6 +230,64 @@ public class HistoryAnnouncementIT {
             // And neither announced anything
             assertThat(recorded.changes()).hasSize(announced);
         }
+    }
+
+    @Test
+    @Timeout(value = 120, unit = TimeUnit.SECONDS)
+    @DisplayName("a refused completion and a refused reassignment are reported with the actor the command names")
+    void refusedTaskActionsAreReportedWithTheCommandsActor(Vertx vertx) {
+        RecordedHistory recorded = new RecordedHistory();
+        try (AuditRun run = AuditRun.startAnnouncing(vertx, db, recorded)) {
+            // Given an instance at its task, and a caller u-x whose commands name the actor u-y
+            WorkflowInstanceId id = run.startAtTask("refused-actor");
+            awaitUntil("the start to be announced", () -> !recorded.eventsOf(id).isEmpty());
+            UUID task = taskOf(run, id);
+            WorkflowActor named = new WorkflowActor.User("u-y");
+
+            // When u-x has a completion of a task that does not exist, a completion of the open task with a decision
+            // it does not have, and a reassignment of a task that does not exist refused, each in a transaction
+            TaskCompletionCommand unknownTask = new TaskCompletionCommand(
+                    UUID.randomUUID(), "approve", new Approve("fine"), "unknown-task-key", named, null);
+            TaskCompletionCommand unknownDecision = new TaskCompletionCommand(
+                    task, "no-such-decision", new Approve("fine"), "unknown-key", named, null);
+            TaskReassignmentCommand unknownReassignment = new TaskReassignmentCommand(
+                    UUID.randomUUID(),
+                    new TaskAssignment.Role("other-auditors"),
+                    named,
+                    "unknown-reassign-key",
+                    "gone");
+            Throwable first =
+                    refusedAs(run, "u-x", tx -> run.graph().taskCallbacks().taskCompleted(unknownTask, tx));
+            Throwable second =
+                    refusedAs(run, "u-x", tx -> run.graph().taskCallbacks().taskCompleted(unknownDecision, tx));
+            Throwable third =
+                    refusedAs(run, "u-x", tx -> run.graph().taskCallbacks().taskReassigned(unknownReassignment, tx));
+            awaitUntil("the failures to be reported", () -> recorded.failures().size() >= 3);
+
+            // Then each failure names the actor the command names, and none names the caller
+            assertThat(first).isNotNull();
+            assertThat(second).isNotNull();
+            assertThat(third).isNotNull();
+            List<WorkflowHistoryFailure> failures = recorded.failures();
+            assertThat(failures).hasSize(3);
+            assertThat(failures)
+                    .extracting(WorkflowHistoryFailure::action)
+                    .containsExactlyInAnyOrder(
+                            WorkflowHistoryFailure.Action.TASK_COMPLETE,
+                            WorkflowHistoryFailure.Action.TASK_COMPLETE,
+                            WorkflowHistoryFailure.Action.TASK_REASSIGN);
+            assertThat(failures).extracting(WorkflowHistoryFailure::actor).containsOnly(named);
+        }
+    }
+
+    /** Runs the work in a transaction as the user and returns what refused it, or null when it succeeded. */
+    private static <R> Throwable refusedAs(
+            AuditRun run,
+            String userId,
+            java.util.function.Function<io.vertx.sqlclient.SqlConnection, Future<R>> work) {
+        return run.asUser(userId, () -> run.pool()
+                .withTransaction(work)
+                .transform(outcome -> Future.succeededFuture(outcome.failed() ? outcome.cause() : null)));
     }
 
     @Test
