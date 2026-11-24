@@ -27,17 +27,18 @@ import javax.lang.model.type.TypeMirror;
  * <ul>
  *   <li><strong>Record</strong> ({@code ElementKind.RECORD}) — iterates record components; each
  *       component's annotations are inspected for JAX-RS param annotations.</li>
- *   <li><strong>Class</strong> — walks the declared fields on the type element (does not walk
- *       the superclass chain in the APT model — that requires reflective {@code Class} access).
- *       Only direct fields are scanned.</li>
+ *   <li><strong>Class</strong> — walks the declared fields on the type element and then up the
+ *       superclass chain, up to but excluding {@code Object}. A more-derived field hides a
+ *       same-named superclass field.</li>
  * </ul>
  *
  * <p>Access-path resolution for {@link BeanModel#fullyGeneratable()}:
  * <ol>
  *   <li>Record component → record accessor method ({@code name()}) is always accessible.</li>
- *   <li>Public getter ({@code getName()} / {@code isName()}) on the type → accessible.</li>
- *   <li>Public or package-private field → accessible (the generated accessor lives in the same
- *       package as the bean).</li>
+ *   <li>Public no-argument getter ({@code getName()}, {@code isName()}, or fluent {@code name()})
+ *       declared on the type or a superclass → accessible.</li>
+ *   <li>Public field, or non-private (package-private or protected) field declared in the same
+ *       package as the bean → accessible (the generated accessor lives in the bean's package).</li>
  *   <li>None of the above → not generatable; the entire bean falls back to the reflective
  *       accessor.</li>
  * </ol>
@@ -207,7 +208,8 @@ public final class BeanParamScanner {
     // --- Access-path helpers ---
 
     /**
-     * Resolves the public getter method name for the given private field, or {@code null} if none.
+     * Resolves the public getter method name for the given field, which cannot be read directly
+     * (private, or non-public and declared in another package), or {@code null} if none.
      *
      * <p>Candidates (first match wins):
      * <ol>
