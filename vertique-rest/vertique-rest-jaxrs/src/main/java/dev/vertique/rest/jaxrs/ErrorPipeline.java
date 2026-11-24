@@ -497,7 +497,7 @@ public class ErrorPipeline {
      *                          non-{@code ProblemDetail} override)
      * @return the built response with the source's headers
      */
-    private static Response rebuildWithHeaders(
+    static Response rebuildWithHeaders(
             Response source, Response.ResponseBuilder builder, boolean entityReplaced, boolean mediaTypeReplaced) {
         source.getStringHeaders().forEach((name, values) -> {
             String lower = name.toLowerCase(Locale.ROOT);

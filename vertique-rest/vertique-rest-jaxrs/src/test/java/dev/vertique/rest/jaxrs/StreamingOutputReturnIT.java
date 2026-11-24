@@ -90,6 +90,11 @@ public class StreamingOutputReturnIT {
                         assertEquals(500, resp.statusCode());
                         assertEquals("application/problem+json", resp.getHeader("Content-Type"));
                         assertFalse(resp.bodyAsString().contains("hello"), "the streamed bytes must not be sent");
+                        assertEquals(
+                                "Internal Server Error", resp.bodyAsJsonObject().getString("detail"));
+                        assertFalse(
+                                resp.bodyAsString().contains("StreamingOutputReturnIT"),
+                                "the error body must not name a server-side class");
                     });
                     ctx.completeNow();
                 }));
