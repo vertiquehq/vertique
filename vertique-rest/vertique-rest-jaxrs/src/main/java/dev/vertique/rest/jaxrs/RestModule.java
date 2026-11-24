@@ -343,7 +343,8 @@ public abstract class RestModule {
      * Provides the framework's default exception mapper, pre-configured with mappings for:
      * <ul>
      *   <li>{@link WebApplicationException} — preserves an existing response entity if present,
-     *       otherwise produces a {@link ProblemDetail} body with the embedded status code</li>
+     *       otherwise produces a {@link ProblemDetail} body with the embedded status code and the
+     *       headers the carried response declared</li>
      *   <li>{@link ValidationException} (400) — framework input validation failures; a
      *       {@link ViolationCarrier} is rendered as a {@link ValidationProblemDetail} with one error
      *       per violation, any other validation exception as a message-only {@link ProblemDetail}</li>
@@ -390,10 +391,15 @@ public abstract class RestModule {
                     if (original.getEntity() != null) {
                         return original;
                     }
-                    return Response.status(original.getStatus())
-                            .entity(ProblemDetail.of(original.getStatus(), ex.getMessage()))
-                            .type("application/problem+json")
-                            .build();
+                    // The carried headers (Location, WWW-Authenticate, Retry-After, Allow, ...) stay on the
+                    // problem response; those describing the carried body or its media type do not.
+                    return ErrorPipeline.rebuildWithHeaders(
+                            original,
+                            Response.status(original.getStatus())
+                                    .entity(ProblemDetail.of(original.getStatus(), ex.getMessage()))
+                                    .type("application/problem+json"),
+                            true,
+                            true);
                 })
                 .on(RestValidationException.class, ex -> Response.status(400)
                         .entity(ValidationProblemDetail.of(ex.getMessage(), ex.errors()))

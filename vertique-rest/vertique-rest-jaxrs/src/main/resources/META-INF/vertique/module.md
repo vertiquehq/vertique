@@ -577,7 +577,7 @@ The framework's `ExceptionMapper<Throwable>`, pre-configured by `RestModule`:
 
 | Exception | Status | Body |
 |-----------|--------|------|
-| `jakarta.ws.rs.WebApplicationException` | from `getResponse()` | the JAX-RS `Response` as-is — entity passthrough when present, else a problem detail |
+| `jakarta.ws.rs.WebApplicationException` | from `getResponse()` | the JAX-RS `Response` as-is — entity passthrough when present, else a problem detail that keeps the carried response's headers (`Location`, `WWW-Authenticate`, `Retry-After`, `Allow` and the rest), except those that describe the carried body (`Content-Length`, `Content-Encoding`, `ETag` and the like) and its media type (`Content-Type`, `Content-Language`) |
 | `RestValidationException` (rest-core) | 400 | `ValidationProblemDetail` with an `errors` array |
 | any `ValidationException` implementing `ViolationCarrier` (core.validation), including `BeanValidationException` | 400 | `ValidationProblemDetail`; violations become `ValidationErrorDetail` with `location` `null` |
 | `ValidationException` (core.exception) that is not a carrier | 400 | `ProblemDetail` |

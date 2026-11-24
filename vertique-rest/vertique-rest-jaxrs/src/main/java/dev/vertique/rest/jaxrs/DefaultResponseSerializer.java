@@ -115,8 +115,9 @@ public class DefaultResponseSerializer implements ResponseSerializer {
                     entity.getClass().getName(),
                     effectiveContentType != null ? effectiveContentType : "(none)");
             httpResponse.setStatusCode(500);
-            String errorJson = Json.encode(ProblemDetail.of(
-                    500, "No ResponseBodyEncoder for " + entity.getClass().getName()));
+            // The detail is constant: the entity's class is a server-side type (for a lambda return it is a
+            // synthetic class name) and the log line above already records it for operators.
+            String errorJson = Json.encode(ProblemDetail.of(500, "Internal Server Error"));
             BufferedBody errorBody = new BufferedBody(Buffer.buffer(errorJson), "application/problem+json", null);
 
             Response errorResponse =

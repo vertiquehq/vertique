@@ -151,7 +151,9 @@ class DefaultResponseSerializerTest {
 
         verify(httpResponse).setStatusCode(500);
         verify(httpResponse).putHeader("Content-Type", "application/problem+json");
-        verify(httpResponse).end(argThat((String s) -> s.contains(String.class.getName())));
+        verify(httpResponse)
+                .end(argThat((String s) ->
+                        s.contains("\"detail\":\"Internal Server Error\"") && !s.contains(String.class.getName())));
     }
 
     // --- Mismatched Content-Type ---
