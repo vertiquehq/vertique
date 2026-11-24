@@ -49,8 +49,8 @@ import org.junit.jupiter.params.provider.MethodSource;
  *
  * <p>Every row is materialized as its own {@code @WebSocketEndpoint("/ws/ipNN/{id}")} nested class with
  * {@code @OnMessage void onMessage(String message, @PathParam("id") String id)} declared on the
- * concrete class (the scanner only discovers lifecycle annotations via
- * {@code Class#getDeclaredMethods()}); the hierarchy enters only through the policy annotations
+ * concrete class (the scanner also finds inherited handlers, but a handler on the concrete class
+ * keeps each row independent); the hierarchy enters only through the policy annotations
  * themselves, exactly mirroring {@link InvocationPolicyScenarios}'s own carriers (interface/superclass
  * declaration for IP-09/10/12/16/17/18/19; message-parameter (index 0) declaration for IP-07/08/12/15).
  * IP-06's skip sits on the method (mirrors the testkit, not the contract table — ruling A-2, evidence
@@ -246,7 +246,7 @@ class WebSocketInvocationPolicyMatrixTest {
 
     // --- Fixtures ---
     // Every carrier's @OnMessage is onMessage(String message, @PathParam("id") String id), declared on
-    // the concrete class the scanner discovers via getDeclaredMethods(); only the policy annotation
+    // the concrete class, so each row stands alone; only the policy annotation
     // itself is placed per the row (interface/superclass carriers, or the message parameter).
 
     /** Residual R1 (#531): two payload-eligible parameters — rejected at scan/startup. */

@@ -126,6 +126,26 @@ class WebSocketEndpointScannerInheritanceTest {
         assertEquals(String.class, scanner.scan(new BoundGenericEndpoint()).messageType());
     }
 
+    static class PrivateBase {
+
+        @OnOpen
+        private void onOpen(WebSocketSession session) {}
+    }
+
+    @WebSocketEndpoint("/ws/private")
+    static class OwnOpenEndpoint extends PrivateBase {
+
+        @OnOpen
+        void open(WebSocketSession session) {}
+    }
+
+    @Test
+    void privateSuperclassMethodsAreNotInherited() {
+        var meta = scanner.scan(new OwnOpenEndpoint());
+
+        assertEquals(OwnOpenEndpoint.class, meta.onOpen().getDeclaringClass());
+    }
+
     @Test
     void superclassLifecycleMethodsAreDiscovered() {
         var meta = scanner.scan(new InheritingEndpoint());

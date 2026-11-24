@@ -25,6 +25,7 @@ import jakarta.annotation.security.RolesAllowed;
 import jakarta.ws.rs.PathParam;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -261,6 +262,11 @@ class WebSocketEndpointScanner {
         for (Class<?> type = clazz; type != null && type != Object.class; type = type.getSuperclass()) {
             for (Method method : type.getDeclaredMethods()) {
                 if (method.isBridge() || method.isSynthetic()) {
+                    continue;
+                }
+                // A superclass's private or static method is not inherited; only the endpoint class's own are.
+                if (type != clazz
+                        && (Modifier.isPrivate(method.getModifiers()) || Modifier.isStatic(method.getModifiers()))) {
                     continue;
                 }
                 candidates.add(method);
