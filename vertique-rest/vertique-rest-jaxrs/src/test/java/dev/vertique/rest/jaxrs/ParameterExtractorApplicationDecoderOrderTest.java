@@ -308,4 +308,30 @@ class ParameterExtractorApplicationDecoderOrderTest {
                         routeChain));
         assertEquals(0, application.decoded.get(), "the decoder must not run");
     }
+
+    @Test
+    @DisplayName("a decoder whose canDecode throws is skipped on a route with no chain and refuses one with a chain")
+    void throwingCanDecodeIsContained() throws Exception {
+        RequestBodyDecoder throwing = new RequestBodyDecoder() {
+            @Override
+            public boolean canDecode(Class<?> targetType, String contentType) {
+                throw new IllegalStateException("cannot tell");
+            }
+
+            @Override
+            public Object decode(RoutingContext ctx, RequestValue body, Class<?> targetType) {
+                throw new AssertionError("must not be asked");
+            }
+        };
+
+        Object plain = decode(
+                extractor(List.of(throwing, new JsonRequestBodyDecoder()), Plain.class),
+                "application/json",
+                Plain.class);
+        assertEquals("ada", assertInstanceOf(Plain.class, plain).name(), "the framework binds the body");
+
+        assertThrows(
+                ConfigurationException.class,
+                () -> decode(extractor(List.of(throwing, new JsonRequestBodyDecoder())), "application/json"));
+    }
 }

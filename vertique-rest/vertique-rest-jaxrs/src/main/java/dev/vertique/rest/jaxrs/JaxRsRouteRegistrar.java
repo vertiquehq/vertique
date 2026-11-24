@@ -847,19 +847,22 @@ public class JaxRsRouteRegistrar {
                 + " route(s) declare input canonicalization or sanitization on a body that an application "
                 + "RequestBodyDecoder claims, so the declaration would never run:\n"
                 + String.join("\n", offendingRoutes)
-                + "\nRaise the decoder's priority above 1100 so the framework binds these bodies, narrow its "
-                + "canDecode so it no longer claims them, or remove the declared policies and clean the value "
-                + "inside the decoder.");
+                + "\nNarrow the decoder's canDecode so it no longer claims these bodies, raise its priority above "
+                + "1100 where a framework decoder claims them, or remove the declared policies and clean the "
+                + "value inside the decoder.");
     }
 
     @Nullable
     private static RequestBodyDecoder claimingApplicationDecoder(
             ResourceMethodMeta meta, ResourceMethodMeta.ParamMeta param, List<RequestBodyDecoder> decoders) {
         Set<String> probes = new LinkedHashSet<>();
-        probes.add(null);
-        probes.add("application/json");
-        probes.add("application/x-www-form-urlencoded");
-        for (String declared : meta.mediaTypes().consumes()) {
+        List<String> consumes = meta.mediaTypes().consumes();
+        if (consumes.isEmpty()) {
+            probes.add(null);
+            probes.add("application/json");
+            probes.add("application/x-www-form-urlencoded");
+        }
+        for (String declared : consumes) {
             probes.add(declared);
             int parameters = declared.indexOf(';');
             String bare = (parameters < 0 ? declared : declared.substring(0, parameters))

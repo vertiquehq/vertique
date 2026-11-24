@@ -1137,7 +1137,19 @@ final class ParameterExtractor {
         // The inline binding below stands in for the built-in decoders only; an application decoder that
         // sorts ahead of them is the one the chain would have picked, so it decodes the body.
         if (objectProcessor != null && isStructuredBodyTarget(targetType)) {
-            RequestBodyDecoder applicationDecoder = claimingApplicationDecoder(decoders, targetType, contentType);
+            RequestBodyDecoder applicationDecoder;
+            try {
+                applicationDecoder = claimingApplicationDecoder(decoders, targetType, contentType);
+            } catch (RuntimeException e) {
+                // A decoder that cannot answer for this header does not claim it, unless a declared chain
+                // would then be left to an unknown outcome: that is refused like a claim.
+                if (!policies.isEmpty() || bodyDeclaresPolicies(targetType, genericType)) {
+                    throw new ConfigurationException("An application RequestBodyDecoder failed while deciding whether"
+                            + " it claims a body on a route that declares a canonicalizer or sanitizer chain"
+                            + " (operationId=" + meta.operationId() + ")");
+                }
+                applicationDecoder = null;
+            }
             if (applicationDecoder != null) {
                 if (engineBindsInline(targetType, contentType)
                         && (!policies.isEmpty() || bodyDeclaresPolicies(targetType, genericType))) {
