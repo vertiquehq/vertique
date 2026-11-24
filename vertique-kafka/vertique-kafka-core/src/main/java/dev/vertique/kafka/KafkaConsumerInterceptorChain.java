@@ -27,8 +27,9 @@ import lombok.extern.slf4j.Slf4j;
  * {@link StackOverflowError} at warn level each time, by class name; a {@link LinkageError}, which
  * means the callback cannot run at all and would repeat for every record, at error level at a
  * limited rate per interceptor class and callback. Async chain methods ({@code runBeforeInterceptors},
- * {@code runAfterInterceptors}, {@code runRecoverError}) compose interceptor futures sequentially
- * via {@link dev.vertique.core.async.Combinators}.
+ * {@code runAfterInterceptors}, {@code runRecoverError}) compose interceptor futures via
+ * {@link dev.vertique.core.async.Combinators}: before-dispatch and recovery run one after another,
+ * after-dispatch callbacks run in parallel.
  */
 @Slf4j
 final class KafkaConsumerInterceptorChain {
@@ -136,23 +137,23 @@ final class KafkaConsumerInterceptorChain {
     }
 
     /**
-     * Runs all registered interceptors' {@code afterDispatch} callbacks asynchronously, chained in
-     * {@link dev.vertique.core.extension.OrderedExtension} order (phase → priority → orderKey),
-     * via {@link Combinators#foldSequential}.
+     * Launches every registered interceptor's {@code afterDispatch} callback in
+     * {@link dev.vertique.core.extension.OrderedExtension} order (phase → priority → orderKey) and
+     * completes once all of them have settled, via {@link Combinators#joinAllSwallow}. A callback
+     * does not wait for the one before it to finish, so a slow callback never delays the others;
+     * callbacks must not depend on each other.
      *
-     * <p>Failures from individual interceptors are logged and do not abort the chain or
-     * affect the commit strategy. The recover-and-continue policy lives in the per-step lambda.
+     * <p>Failures from individual interceptors, a synchronous throw included, are logged and do not
+     * abort the others or affect the commit strategy.
      *
      * @param ctx the final dispatch context after successful dispatch
      * @return a future that completes when all post-dispatch callbacks have finished
      */
     Future<Void> runAfterInterceptors(KafkaDispatchContext<Object> ctx) {
-        return Combinators.foldSequential(interceptors, (Void) null, (i, v) -> Future.<Void>succeededFuture()
-                .compose(x -> i.afterDispatch(ctx))
-                .recover(cause -> {
-                    log.warn("[{}] Interceptor afterDispatch failed", consumerName, cause);
-                    return Future.succeededFuture();
-                }));
+        return Combinators.joinAllSwallow(
+                interceptors,
+                i -> Future.<Void>succeededFuture().compose(x -> i.afterDispatch(ctx)),
+                (i, cause) -> log.warn("[{}] Interceptor afterDispatch failed", consumerName, cause));
     }
 
     /**

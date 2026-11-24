@@ -1114,7 +1114,7 @@ Async handlers can change the outcome.
 | Callback | Failure behavior |
 |---|---|
 | `Future<KafkaDispatchContext<?>> beforeDispatch(KafkaDispatchContext<?> ctx)` | A failed future short-circuits the dispatch. **Return the context** — this is how `withFiltered(true)` and added attributes propagate |
-| `Future<Void> afterDispatch(KafkaDispatchContext<?> ctx)` | Failures are logged, not propagated |
+| `Future<Void> afterDispatch(KafkaDispatchContext<?> ctx)` | Failures are logged, not propagated. The callbacks of all interceptors are launched in order and run in parallel; one must not depend on another having finished; earlier releases ran them one after another |
 | `Future<Void> recoverError(KafkaDispatchContext<?> ctx, Throwable error)` | A succeeded future means handled — the record is committed. A failed future means proceed with the configured error strategy |
 
 ```java
