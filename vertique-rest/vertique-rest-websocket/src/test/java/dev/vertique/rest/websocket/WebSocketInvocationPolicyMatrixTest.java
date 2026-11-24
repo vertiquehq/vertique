@@ -44,13 +44,13 @@ import org.junit.jupiter.params.provider.MethodSource;
 /**
  * TP-001 (T020, issue #379): {@code WebSocketEndpointRegistrar} resolves and caches the IP-01..IP-19
  * invocation-policy matrix at registration, through
- * the package-private seam {@code cachedRoutePolicies(Method)} /
- * {@code cachedParameterPolicies(Method, int)}.
+ * the package-private seam {@code cachedRoutePolicies(Class, Method)} /
+ * {@code cachedParameterPolicies(Class, Method, int)}.
  *
  * <p>Every row is materialized as its own {@code @WebSocketEndpoint("/ws/ipNN/{id}")} nested class with
  * {@code @OnMessage void onMessage(String message, @PathParam("id") String id)} declared on the
- * concrete class (the scanner only discovers lifecycle annotations via
- * {@code Class#getDeclaredMethods()}); the hierarchy enters only through the policy annotations
+ * concrete class (the scanner also finds inherited handlers, but a handler on the concrete class
+ * keeps each row independent); the hierarchy enters only through the policy annotations
  * themselves, exactly mirroring {@link InvocationPolicyScenarios}'s own carriers (interface/superclass
  * declaration for IP-09/10/12/16/17/18/19; message-parameter (index 0) declaration for IP-07/08/12/15).
  * IP-06's skip sits on the method (mirrors the testkit, not the contract table — ruling A-2, evidence
@@ -115,6 +115,36 @@ class WebSocketInvocationPolicyMatrixTest {
                 "message must name the method: " + failure.getMessage());
     }
 
+    /** A message handler shared by endpoints that declare different class-level policies. */
+    static class SharedMessageHandler {
+        @OnMessage
+        public void onMessage(String message) {}
+    }
+
+    @Sanitize(A.class)
+    @WebSocketEndpoint("/ws/inherited-a")
+    static class InheritingEndpointA extends SharedMessageHandler {}
+
+    @Sanitize(B.class)
+    @WebSocketEndpoint("/ws/inherited-b")
+    static class InheritingEndpointB extends SharedMessageHandler {}
+
+    @Test
+    @DisplayName("an inherited handler is cached per endpoint class, each with its own class-level policy")
+    void cachesAnInheritedHandlerPerEndpointClass() throws Exception {
+        Method shared = SharedMessageHandler.class.getDeclaredMethod("onMessage", String.class);
+        WebSocketEndpointRegistrar registrar = registrar();
+
+        registrar.registerAll(Set.of(new InheritingEndpointA(), new InheritingEndpointB()), router);
+
+        assertEquals(
+                List.of(A.class),
+                registrar.cachedRoutePolicies(InheritingEndpointA.class, shared).sanitizers());
+        assertEquals(
+                List.of(B.class),
+                registrar.cachedRoutePolicies(InheritingEndpointB.class, shared).sanitizers());
+    }
+
     @ParameterizedTest(name = "{0}")
     @DisplayName("registerAll caches route/parameter policies matching the matrix")
     @MethodSource("dev.vertique.input.processing.testkit.InvocationPolicyScenarios#rows")
@@ -138,11 +168,11 @@ class WebSocketInvocationPolicyMatrixTest {
 
         assertDoesNotThrow(() -> registrar.registerAll(Set.of(endpoint), router), row.id() + " must register cleanly");
 
-        EffectiveInputPolicies route = registrar.cachedRoutePolicies(onMessage);
+        EffectiveInputPolicies route = registrar.cachedRoutePolicies(endpoint.getClass(), onMessage);
         assertEquals(chain(row.canonicalize().route()), route.canonicalizers(), row.id() + " route canonicalizers");
         assertEquals(chain(row.sanitize().route()), route.sanitizers(), row.id() + " route sanitizers");
 
-        EffectiveInputPolicies parameter = registrar.cachedParameterPolicies(onMessage, 0);
+        EffectiveInputPolicies parameter = registrar.cachedParameterPolicies(endpoint.getClass(), onMessage, 0);
         assertEquals(
                 chain(row.canonicalize().param()), parameter.canonicalizers(), row.id() + " parameter canonicalizers");
         assertEquals(chain(row.sanitize().param()), parameter.sanitizers(), row.id() + " parameter sanitizers");
@@ -216,7 +246,7 @@ class WebSocketInvocationPolicyMatrixTest {
 
     // --- Fixtures ---
     // Every carrier's @OnMessage is onMessage(String message, @PathParam("id") String id), declared on
-    // the concrete class the scanner discovers via getDeclaredMethods(); only the policy annotation
+    // the concrete class, so each row stands alone; only the policy annotation
     // itself is placed per the row (interface/superclass carriers, or the message parameter).
 
     /** Residual R1 (#531): two payload-eligible parameters — rejected at scan/startup. */

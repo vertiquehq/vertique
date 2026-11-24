@@ -161,6 +161,14 @@ class WebSocketEndpointRegistrar {
     private record MethodPolicies(EffectiveInputPolicies route, EffectiveInputPolicies[] parameters) {}
 
     /**
+     * The cache key: a lifecycle method together with the endpoint class that uses it.
+     *
+     * @param owner  the endpoint class
+     * @param method the lifecycle method, possibly declared by a superclass of {@code owner}
+     */
+    private record PolicyKey(Class<?> owner, Method method) {}
+
+    /**
      * Every registered lifecycle method's invocation policies, resolved once at registration by
      * {@link #resolveInvocationPolicies} and read on the message path.
      *
@@ -169,13 +177,11 @@ class WebSocketEndpointRegistrar {
      * makes the startup composition gate and the message path read the same values by construction
      * rather than by two implementations agreeing.
      *
-     * <p>Keyed by the lifecycle {@link Method} alone although route resolution also reads the owner's
-     * class-level annotations: the scanner discovers lifecycle methods through
-     * {@code getDeclaredMethods()}, so every cached method's declaring class is the endpoint class
-     * itself and one key can never stand for two owners. Widening discovery to inherited lifecycle
-     * methods must key this cache by (method, owner).
+     * <p>Keyed by the endpoint class and the lifecycle {@link Method}: route resolution also reads the
+     * owner's class-level annotations, and a lifecycle method inherited from a shared superclass is
+     * one {@link Method} that several endpoint classes use with different class-level declarations.
      */
-    private final Map<Method, MethodPolicies> policyCache = new ConcurrentHashMap<>();
+    private final Map<PolicyKey, MethodPolicies> policyCache = new ConcurrentHashMap<>();
 
     /**
      * Creates a new registrar.
@@ -297,7 +303,9 @@ class WebSocketEndpointRegistrar {
                 // One method may carry more than one lifecycle annotation; the message parameter is
                 // only meaningful when that method is the @OnMessage one.
                 int messageIndex = lifecycleMethod.equals(meta.onMessage()) ? meta.messageParameterIndex() : -1;
-                policyCache.put(lifecycleMethod, resolveLifecyclePolicies(lifecycleMethod, owner, messageIndex));
+                policyCache.put(
+                        new PolicyKey(owner, lifecycleMethod),
+                        resolveLifecyclePolicies(lifecycleMethod, owner, messageIndex));
             }
         }
     }
@@ -320,9 +328,10 @@ class WebSocketEndpointRegistrar {
         var params = method.getParameters();
         EffectiveInputPolicies[] parameters = new EffectiveInputPolicies[params.length];
         for (int i = 0; i < params.length; i++) {
-            boolean processed = i == messageParameterIndex || params[i].isAnnotationPresent(PathParam.class);
+            boolean processed =
+                    i == messageParameterIndex || WebSocketEndpointScanner.pathParamOf(method, i, owner) != null;
             parameters[i] = processed
-                    ? ReflectiveInvocationPolicies.resolveParameter(method, i, route)
+                    ? ReflectiveInvocationPolicies.resolveParameter(method, i, owner, route)
                     : EffectiveInputPolicies.NONE;
         }
         return new MethodPolicies(route, parameters);
@@ -341,13 +350,14 @@ class WebSocketEndpointRegistrar {
     /**
      * Returns the cached policies of a registered lifecycle method.
      *
+     * @param owner  the endpoint class that uses the method
      * @param method the lifecycle method
      * @return its resolved policies
      * @throws IllegalStateException if the method was never registered, which would mean a value is
      *     about to be handed to the endpoint without the processing its annotations declare
      */
-    private MethodPolicies policiesOf(Method method) {
-        MethodPolicies policies = policyCache.get(method);
+    private MethodPolicies policiesOf(Class<?> owner, Method method) {
+        MethodPolicies policies = policyCache.get(new PolicyKey(owner, method));
         if (policies == null) {
             throw new IllegalStateException("No invocation policies cached for lifecycle method "
                     + method.getDeclaringClass().getSimpleName() + "." + method.getName()
@@ -361,24 +371,26 @@ class WebSocketEndpointRegistrar {
      * Returns the cached route-level policies of a registered lifecycle method. Package-private: the
      * registrar's own tests assert the cached derivation directly.
      *
+     * @param owner  the endpoint class that uses the method
      * @param method the lifecycle method
      * @return its route-level policies
      */
-    EffectiveInputPolicies cachedRoutePolicies(Method method) {
-        return policiesOf(method).route();
+    EffectiveInputPolicies cachedRoutePolicies(Class<?> owner, Method method) {
+        return policiesOf(owner, method).route();
     }
 
     /**
      * Returns the cached policies of one parameter of a registered lifecycle method. Package-private:
      * the registrar's own tests assert the cached derivation directly.
      *
+     * @param owner  the endpoint class that uses the method
      * @param method the lifecycle method
      * @param index  the zero-based parameter index
      * @return that parameter's policies; {@link EffectiveInputPolicies#NONE} for a parameter this
      *     registrar does not process
      */
-    EffectiveInputPolicies cachedParameterPolicies(Method method, int index) {
-        return policiesOf(method).parameters()[index];
+    EffectiveInputPolicies cachedParameterPolicies(Class<?> owner, Method method, int index) {
+        return policiesOf(owner, method).parameters()[index];
     }
 
     /**
@@ -389,7 +401,7 @@ class WebSocketEndpointRegistrar {
      * @return the policies to apply to the decoded payload
      */
     private EffectiveInputPolicies messagePolicies(WebSocketEndpointMeta meta) {
-        MethodPolicies policies = policiesOf(meta.onMessage());
+        MethodPolicies policies = policiesOf(meta.instance().getClass(), meta.onMessage());
         int index = meta.messageParameterIndex();
         return index >= 0 ? policies.parameters()[index] : policies.route();
     }
@@ -534,7 +546,7 @@ class WebSocketEndpointRegistrar {
             if (lifecycleMethod == null) {
                 continue;
             }
-            MethodPolicies policies = policiesOf(lifecycleMethod);
+            MethodPolicies policies = policiesOf(meta.instance().getClass(), lifecycleMethod);
             boolean declaresChain = !policies.route().isEmpty();
             for (EffectiveInputPolicies parameter : policies.parameters()) {
                 declaresChain |= !parameter.isEmpty();
@@ -1363,12 +1375,17 @@ class WebSocketEndpointRegistrar {
                 // Read from the ambient holder rather than a stored field so the value
                 // reflects the current rebound snapshot on every callback invocation.
                 args[i] = securityRuntime != null ? securityRuntime.current() : null;
-            } else if (param.isAnnotationPresent(PathParam.class)) {
-                String name = param.getAnnotation(PathParam.class).value();
+            } else if (WebSocketEndpointScanner.pathParamOf(
+                            method, i, meta.instance().getClass())
+                    != null) {
+                String name = WebSocketEndpointScanner.pathParamOf(
+                                method, i, meta.instance().getClass())
+                        .value();
                 String rawValue = pathParams.get(name);
                 // Apply canonicalization/sanitization to path params if available
                 if (rawValue != null && objectProcessor != null) {
-                    EffectiveInputPolicies policies = cachedParameterPolicies(method, i);
+                    EffectiveInputPolicies policies =
+                            cachedParameterPolicies(meta.instance().getClass(), method, i);
                     Object processed = objectProcessor.processInput(
                             rawValue, String.class, policies, InputLocation.PATH, InputFieldNameResolver.IDENTITY);
                     if (processed instanceof String s) {

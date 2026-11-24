@@ -25,10 +25,13 @@ import jakarta.annotation.security.RolesAllowed;
 import jakarta.ws.rs.PathParam;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -40,7 +43,8 @@ import lombok.extern.slf4j.Slf4j;
  * <ul>
  *   <li>The class must be annotated with {@link WebSocketEndpoint}</li>
  *   <li>At most one method per lifecycle annotation ({@link OnOpen}, {@link OnMessage},
- *       {@link OnClose}, {@link OnError})</li>
+ *       {@link OnClose}, {@link OnError}), counting methods declared by superclasses; an overriding
+ *       method inherits the lifecycle annotations of the declaration it overrides</li>
  *   <li>Lifecycle methods must return {@code void} or {@code Future<Void>}</li>
  *   <li>{@link PathParam} names must match placeholders in the path template</li>
  *   <li>{@link OnMessage} may declare at most one payload-eligible parameter</li>
@@ -131,26 +135,27 @@ class WebSocketEndpointScanner {
         Method onClose = null;
         Method onError = null;
 
-        for (Method method : clazz.getDeclaredMethods()) {
-            if (method.isAnnotationPresent(OnOpen.class)) {
+        for (Method method : lifecycleCandidates(clazz)) {
+            List<Annotation> declared = AnnotationResolver.resolveMethodAnnotations(method, clazz);
+            if (hasAnnotation(declared, OnOpen.class)) {
                 if (onOpen != null) throw duplicateAnnotation("@OnOpen", clazz);
                 validateReturnType(method, "@OnOpen");
                 onOpen = method;
                 onOpen.setAccessible(true);
             }
-            if (method.isAnnotationPresent(OnMessage.class)) {
+            if (hasAnnotation(declared, OnMessage.class)) {
                 if (onMessage != null) throw duplicateAnnotation("@OnMessage", clazz);
                 validateReturnType(method, "@OnMessage");
                 onMessage = method;
                 onMessage.setAccessible(true);
             }
-            if (method.isAnnotationPresent(OnClose.class)) {
+            if (hasAnnotation(declared, OnClose.class)) {
                 if (onClose != null) throw duplicateAnnotation("@OnClose", clazz);
                 validateReturnType(method, "@OnClose");
                 onClose = method;
                 onClose.setAccessible(true);
             }
-            if (method.isAnnotationPresent(OnError.class)) {
+            if (hasAnnotation(declared, OnError.class)) {
                 if (onError != null) throw duplicateAnnotation("@OnError", clazz);
                 validateReturnType(method, "@OnError");
                 onError = method;
@@ -163,7 +168,7 @@ class WebSocketEndpointScanner {
         boolean binaryMessage = false;
         int messageParameterIndex = -1;
         if (onMessage != null) {
-            MessageInfo msgInfo = resolveMessageType(onMessage);
+            MessageInfo msgInfo = resolveMessageType(onMessage, clazz);
             messageType = msgInfo.type();
             binaryMessage = msgInfo.binary();
             messageParameterIndex = msgInfo.index();
@@ -172,10 +177,11 @@ class WebSocketEndpointScanner {
         // --- Resolve @ValidateWith from @OnMessage method ---
         Class<?>[] validationGroups = null;
         if (onMessage != null) {
-            dev.vertique.core.validation.ValidateWith vw =
-                    onMessage.getAnnotation(dev.vertique.core.validation.ValidateWith.class);
-            if (vw != null) {
-                validationGroups = vw.value();
+            for (Annotation resolved : AnnotationResolver.resolveMethodAnnotations(onMessage, clazz)) {
+                if (resolved instanceof dev.vertique.core.validation.ValidateWith vw) {
+                    validationGroups = vw.value();
+                    break;
+                }
             }
         }
 
@@ -239,6 +245,47 @@ class WebSocketEndpointScanner {
                 requiredAction);
     }
 
+    // --- Lifecycle discovery ---
+
+    /**
+     * The methods that can carry a lifecycle annotation: every method declared by the endpoint class
+     * or one of its superclasses (up to, not including, {@link Object}), without compiler-generated
+     * bridges and without a declaration that a more specific method overrides. An overriding method
+     * stands for the declaration it replaces, and it inherits that declaration's annotations.
+     *
+     * @param clazz the endpoint class
+     * @return the candidate methods, most specific class first
+     */
+    private static List<Method> lifecycleCandidates(Class<?> clazz) {
+        List<Method> candidates = new ArrayList<>();
+        Set<Method> overridden = new HashSet<>();
+        for (Class<?> type = clazz; type != null && type != Object.class; type = type.getSuperclass()) {
+            for (Method method : type.getDeclaredMethods()) {
+                if (method.isBridge() || method.isSynthetic()) {
+                    continue;
+                }
+                // A superclass's private or static method is not inherited; only the endpoint class's own are.
+                if (type != clazz
+                        && (Modifier.isPrivate(method.getModifiers()) || Modifier.isStatic(method.getModifiers()))) {
+                    continue;
+                }
+                candidates.add(method);
+                overridden.addAll(AnnotationResolver.inheritedDeclarations(method, clazz));
+            }
+        }
+        candidates.removeIf(overridden::contains);
+        return candidates;
+    }
+
+    private static boolean hasAnnotation(List<Annotation> annotations, Class<? extends Annotation> type) {
+        for (Annotation annotation : annotations) {
+            if (annotation.annotationType() == type) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // --- Security annotation placement (class-level only; WebSocket authorizes once at upgrade) ---
 
     /**
@@ -277,7 +324,7 @@ class WebSocketEndpointScanner {
                 continue;
             }
             for (Class<? extends Annotation> annotationType : LIFECYCLE_FORBIDDEN_SECURITY_ANNOTATIONS) {
-                if (m.isAnnotationPresent(annotationType)) {
+                if (hasAnnotation(AnnotationResolver.resolveMethodAnnotations(m, clazz), annotationType)) {
                     String annotationName = "@" + annotationType.getSimpleName();
                     throw new IllegalArgumentException(annotationName + " on WebSocket lifecycle method "
                             + clazz.getSimpleName() + "." + m.getName()
@@ -311,7 +358,8 @@ class WebSocketEndpointScanner {
             @Nullable Method onClose,
             @Nullable Method onError) {
         for (Method m : new Method[] {onOpen, onMessage, onClose, onError}) {
-            if (m != null && m.isAnnotationPresent(RequiresAction.class)) {
+            if (m != null
+                    && hasAnnotation(AnnotationResolver.resolveMethodAnnotations(m, clazz), RequiresAction.class)) {
                 throw new IllegalArgumentException("@RequiresAction on WebSocket lifecycle method "
                         + clazz.getSimpleName() + "." + m.getName()
                         + " is not supported: WebSocket authorizes once at upgrade, so @RequiresAction is"
@@ -455,16 +503,19 @@ class WebSocketEndpointScanner {
      * chain.
      *
      * @param method the {@link OnMessage} method
+     * @param owner  the endpoint class
      * @return the resolved message info; defaults to {@code String.class} at index {@code -1} if no
      *     message param found
-     * @throws ConfigurationException if the method declares more than one payload-eligible parameter
+     * @throws ConfigurationException if the method declares more than one payload-eligible parameter,
+     *     or a payload parameter whose type is a type variable (an inherited generic handler that the
+     *     endpoint class does not override with a concrete type)
      */
-    private MessageInfo resolveMessageType(Method method) {
+    private MessageInfo resolveMessageType(Method method, Class<?> owner) {
         var params = method.getParameters();
         MessageInfo found = null;
         for (int i = 0; i < params.length; i++) {
             var param = params[i];
-            if (!isPayloadEligible(param)) {
+            if (!isPayloadEligible(method, i, owner)) {
                 continue;
             }
             if (found != null) {
@@ -473,6 +524,14 @@ class WebSocketEndpointScanner {
                         + "."
                         + method.getName()
                         + " declares more than one payload parameter; declare exactly one");
+            }
+            if (param.getParameterizedType() instanceof java.lang.reflect.TypeVariable<?>) {
+                throw new ConfigurationException("@OnMessage method "
+                        + method.getDeclaringClass().getSimpleName()
+                        + "."
+                        + method.getName()
+                        + " has a payload parameter of a generic type; override it in the endpoint class"
+                        + " with a concrete type");
             }
             if (Buffer.class.isAssignableFrom(param.getType())) {
                 found = new MessageInfo(Buffer.class, true, i);
@@ -489,17 +548,37 @@ class WebSocketEndpointScanner {
      * @param param the method parameter
      * @return {@code true} when the parameter is not a session, path param, or security context
      */
-    private static boolean isPayloadEligible(Parameter param) {
+    private static boolean isPayloadEligible(Method method, int index, Class<?> owner) {
+        Parameter param = method.getParameters()[index];
         if (WebSocketSession.class.isAssignableFrom(param.getType())) {
             return false;
         }
-        if (param.isAnnotationPresent(PathParam.class)) {
+        if (pathParamOf(method, index, owner) != null) {
             return false;
         }
         if (SecurityContext.class.isAssignableFrom(param.getType())) {
             return false;
         }
         return true;
+    }
+
+    /**
+     * The {@link PathParam} on a parameter, read through the hierarchy the way the other parameter
+     * policies are: an override inherits it from the declaration it overrides, because Java does not
+     * inherit parameter annotations.
+     *
+     * @param method the lifecycle method
+     * @param index  the parameter index
+     * @param owner  the endpoint class
+     * @return the annotation, or {@code null} when the parameter carries none
+     */
+    static @Nullable PathParam pathParamOf(Method method, int index, Class<?> owner) {
+        for (Annotation annotation : AnnotationResolver.resolveParameterAnnotations(method, index, owner)) {
+            if (annotation instanceof PathParam pathParam) {
+                return pathParam;
+            }
+        }
+        return null;
     }
 
     /**
@@ -516,7 +595,7 @@ class WebSocketEndpointScanner {
             Method method, WebSocketPathMatcher pathMatcher, List<PathParamMeta> collected, Class<?> endpointClass) {
         var params = method.getParameters();
         for (int i = 0; i < params.length; i++) {
-            PathParam pp = params[i].getAnnotation(PathParam.class);
+            PathParam pp = pathParamOf(method, i, endpointClass);
             if (pp == null) continue;
             String name = pp.value();
             if (!pathMatcher.paramNames().contains(name)) {
