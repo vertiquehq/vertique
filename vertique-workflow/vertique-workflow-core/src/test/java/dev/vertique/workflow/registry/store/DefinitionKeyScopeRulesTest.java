@@ -37,13 +37,13 @@ class DefinitionKeyScopeRulesTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("deceptiveScopeKeys")
-    @DisplayName("rejects a scope key with a format character or padding, naming the field")
+    @DisplayName("rejects a scope key with a format character or padding")
     void rejectsDeceptiveScopeKeys(String caseName, String scopeKey) {
         // When a key is built with the deceptive scope key
-        // Then it is refused for the scope key field
+        // Then it is refused as a scope key
         assertThatThrownBy(() -> new DefinitionKey(scopeKey, "purchase-approval", 1))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("scopeKey");
+                .hasMessageContaining("scope key");
     }
 
     @Test

@@ -65,32 +65,32 @@ class StartCommandTest {
     @MethodSource("invalidScopeKeys")
     @DisplayName("rejects an invalid start scope")
     void rejectsInvalidStartScope(String caseName, String startScope) {
-        // When a command is built with an invalid start scope, then it is refused and names the field
+        // When a command is built with an invalid start scope, then it is refused as a scope key
         assertThatThrownBy(() -> command(startScope, null))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("startScope");
+                .hasMessageContaining("scope key");
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("invalidScopeKeys")
     @DisplayName("rejects an invalid requested target scope")
     void rejectsInvalidRequestedTargetScope(String caseName, String targetScope) {
-        // When a command is built with an invalid target scope, then it is refused and names the field
+        // When a command is built with an invalid target scope, then it is refused as a scope key
         assertThatThrownBy(() -> command(null, targetScope))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("requestedTargetScope");
+                .hasMessageContaining("scope key");
     }
 
     @Test
-    @DisplayName("names the field and never repeats a rejected scope key that carries a format character")
+    @DisplayName("never repeats a rejected scope key that carries a format character")
     void doesNotEchoTheRejectedKey() {
         // When a command is built with a scope key that hides a zero-width space around a marker
         String hostile = "leak-marker" + codePoint(0x200B);
 
-        // Then it is refused for the field without repeating the key
+        // Then it is refused without repeating the key
         assertThatThrownBy(() -> command(hostile, null))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("startScope")
+                .hasMessageContaining("scope key")
                 .hasMessageNotContaining("leak-marker");
     }
 

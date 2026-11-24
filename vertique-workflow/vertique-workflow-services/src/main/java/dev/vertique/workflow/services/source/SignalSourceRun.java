@@ -27,7 +27,6 @@ import dev.vertique.workflow.source.SignalNoMatch;
 import dev.vertique.workflow.source.SignalSourceEvent;
 import dev.vertique.workflow.source.SignalSourceEvent.Outcome;
 import dev.vertique.workflow.source.SignalSourceRefusal;
-import dev.vertique.workflow.types.ScopeKeyRules;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.internal.ContextInternal;
@@ -241,7 +240,6 @@ final class SignalSourceRun<T> {
             }
             try {
                 String key = answer.get();
-                ScopeKeyRules.require(key, "scopeKey");
                 scopeContext = new ScopeContext(new ScopeKey(key));
                 scopeKey = key;
             } catch (IllegalArgumentException e) {

@@ -3,7 +3,7 @@
 
 package dev.vertique.workflow.ops;
 
-import dev.vertique.workflow.types.ScopeKeyRules;
+import dev.vertique.core.scope.ScopeKey;
 import jakarta.annotation.Nullable;
 import java.util.Objects;
 
@@ -64,7 +64,7 @@ public record CorrelatedSignal(
             throw new IllegalArgumentException("dedupKey must not be blank");
         }
         if (scopeKey != null) {
-            ScopeKeyRules.require(scopeKey, "scopeKey");
+            ScopeKey.requireValid(scopeKey);
         }
     }
 
@@ -109,7 +109,7 @@ public record CorrelatedSignal(
      * @throws IllegalArgumentException if the scope key breaks the scope key rules
      */
     public CorrelatedSignal withScope(String scopeKey) {
-        ScopeKeyRules.require(scopeKey, "scopeKey");
+        ScopeKey.requireValid(Objects.requireNonNull(scopeKey, "scopeKey"));
         return new CorrelatedSignal(contract, signalName, key, payload, dedupKey, definitionId, scopeKey, provenance);
     }
 

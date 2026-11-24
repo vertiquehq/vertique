@@ -3,8 +3,8 @@
 
 package dev.vertique.workflow.registry.store;
 
+import dev.vertique.core.scope.ScopeKey;
 import dev.vertique.workflow.actor.WorkflowActor;
-import dev.vertique.workflow.types.ScopeKeyRules;
 import jakarta.annotation.Nullable;
 import java.time.Instant;
 import java.util.Objects;
@@ -52,9 +52,9 @@ public record DefinitionActivation(
     }
 
     public DefinitionActivation {
-        ScopeKeyRules.require(scopeKey, "scopeKey");
+        ScopeKey.requireValid(Objects.requireNonNull(scopeKey, "scopeKey"));
         DefinitionValues.identifier(definitionId, "definitionId", 255);
-        ScopeKeyRules.require(targetScopeKey, "targetScopeKey");
+        ScopeKey.requireValid(Objects.requireNonNull(targetScopeKey, "targetScopeKey"));
         if (version <= 0) throw new IllegalArgumentException("version must be positive");
         Objects.requireNonNull(activatedAt, "activatedAt");
         if (!targetScopeKey.equals(scopeKey) && !targetScopeKey.equals(WorkflowScopes.DEFAULT))

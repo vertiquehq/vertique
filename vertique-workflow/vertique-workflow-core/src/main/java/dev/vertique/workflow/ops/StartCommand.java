@@ -3,8 +3,8 @@
 
 package dev.vertique.workflow.ops;
 
+import dev.vertique.core.scope.ScopeKey;
 import dev.vertique.workflow.subject.WorkflowSubjectRef;
-import dev.vertique.workflow.types.ScopeKeyRules;
 import jakarta.annotation.Nullable;
 
 /**
@@ -61,8 +61,7 @@ public record StartCommand(
      *
      * <p>A non-null {@code startScope} or {@code requestedTargetScope} must be nonblank, at most 255 code points
      * long, free of control, format and unpaired surrogate characters, and without leading or trailing
-     * whitespace, the rules of a scope key. The message names
-     * the field and never repeats the value.
+     * whitespace, the rules of {@link ScopeKey}. The message never repeats the value.
      *
      * @throws IllegalArgumentException if {@code contractName} or {@code idempotencyKey} is {@code null} or
      *     blank, or a non-null scope key breaks the scope key rules
@@ -74,13 +73,13 @@ public record StartCommand(
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             throw new IllegalArgumentException("idempotencyKey must not be blank");
         }
-        requireScopeKey(startScope, "startScope");
-        requireScopeKey(requestedTargetScope, "requestedTargetScope");
+        requireScopeKey(startScope);
+        requireScopeKey(requestedTargetScope);
     }
 
-    private static void requireScopeKey(@Nullable String scopeKey, String name) {
+    private static void requireScopeKey(@Nullable String scopeKey) {
         if (scopeKey != null) {
-            ScopeKeyRules.require(scopeKey, name);
+            ScopeKey.requireValid(scopeKey);
         }
     }
 }
