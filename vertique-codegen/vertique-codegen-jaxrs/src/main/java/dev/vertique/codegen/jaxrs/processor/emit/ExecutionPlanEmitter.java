@@ -177,8 +177,7 @@ public final class ExecutionPlanEmitter {
                 Identifiers.generatedClassName(concreteClass, "_" + methodName + "_" + methodIndex + "_ExecutionPlan");
 
         // ClassName.get(TypeElement) yields the source-form nested name (Outer.InnerResource)
-        // when the resource is a static nested class. JaxRsCandidateScanner only surfaces top-level
-        // root elements today, but the four emitters use this same idiom for consistency.
+        // when the resource is a static nested class, which JaxRsCandidateScanner surfaces.
         ClassName resourceClass = ClassName.get(concreteClass);
         ClassName planClass = ClassName.get(pkg, planSimpleName);
 

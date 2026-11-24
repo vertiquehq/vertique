@@ -33,7 +33,7 @@ responsibility for `@RestClient`, `@KafkaListener`, and `DelayedJobExecutor` wir
 
 `JaxRsPipelineProcessor` runs in four logical steps per build:
 
-1. **Discover** — collects the compilation round's top-level concrete (non-abstract, non-interface) classes with an effective `@Path` — direct on the class, on a class in its superclass chain, or on any transitively implemented interface, including an interface a superclass implements. A concrete subclass of an abstract `@Path` base is therefore a candidate: it gets a descriptor, execution plans, validation, and — with an `@Inject` constructor and no `@NoAutoWire` — an auto-wired binding. Annotate a subclass the application registers by hand with `@NoAutoWire` so it is not registered twice. A nested class is not scanned: a `@Path` resource declared inside another type gets no descriptor, execution plan, validation, or binding, and no diagnostic.
+1. **Discover** — collects the compilation round's concrete (non-abstract, non-interface) classes with an effective `@Path` — direct on the class, on a class in its superclass chain, or on any transitively implemented interface, including an interface a superclass implements. A concrete subclass of an abstract `@Path` base is therefore a candidate: it gets a descriptor, execution plans, validation, and — with an `@Inject` constructor and no `@NoAutoWire` — an auto-wired binding. Annotate a subclass the application registers by hand with `@NoAutoWire` so it is not registered twice. A static nested class is scanned like a top-level one (its companions are named `Outer_Inner_JaxRsDescriptor` and so on); a private static nested class is not (generated code cannot reference it), and neither is a non-static inner class: such a `@Path` resource gets no descriptor, execution plan, validation, or binding, and no diagnostic.
 2. **Resolve** — builds an `EffectiveResourceContract` for each candidate applying the precedence rule: direct annotations → superclass chain → BFS interfaces (see "EffectiveJaxRsContractResolver" below). The candidate methods are the ones declared along the superclass chain plus the interface `default` methods the class inherits without overriding (see "Interface-Declared Contracts" below).
 3. **Validate** — all five validators run against each resolved contract.
 4. **Emit** — four artifact types are written when applicable: the `GeneratedJaxRsResourcesModule` Dagger module, `{Resource}_JaxRsDescriptor` companions, `{Bean}_BeanParamModel` companions, and `{Resource}_{method}_{idx}_ExecutionPlan` companions.
@@ -41,6 +41,8 @@ responsibility for `@RestClient`, `@KafkaListener`, and `DelayedJobExecutor` wir
 **Semantic vs. DI candidates.** "Is this a JAX-RS resource?" (semantic) is independent of "Should we generate a Dagger binding for it?" (DI eligibility). Validation and descriptor/plan emission apply to all semantic candidates; Dagger module generation applies only to DI-eligible candidates (those with an `@Inject` constructor that are not annotated `@NoAutoWire`).
 
 ---
+
+**Upgrade note: static nested resources.** Earlier versions ignored a static nested `@Path` class. It is now discovered, validated and given companions, and with an `@Inject` constructor and no `@NoAutoWire` it is auto-wired. A nested resource the application already registers by hand therefore gets a second binding; annotate it `@NoAutoWire` (honoured for nested classes exactly as for top-level ones) to keep the manual registration canonical.
 
 ## Key Classes
 

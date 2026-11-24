@@ -373,7 +373,7 @@ final class ParameterExtractor {
         List<ResourceMethodMeta.ParamMeta> params = meta.params();
         EffectiveInputPolicies[] policies = computeCachedParamPolicies(meta);
         for (int i = 0; i < params.size(); i++) {
-            if (isProcessedParamSource(params.get(i).source()) && !policies[i].isEmpty()) {
+            if (isProcessedParam(params.get(i)) && !policies[i].isEmpty()) {
                 return true;
             }
         }
@@ -400,6 +400,35 @@ final class ParameterExtractor {
             case PATH, QUERY, HEADER, COOKIE, BODY, FORM, BEAN_PARAM -> true;
             case CONTEXT, PRECONDITIONS, FILE_UPLOADS, ENTITY_PARTS -> false;
         };
+    }
+
+    /**
+     * Returns whether values of the given parameter pass through the input-processing engine at
+     * request time: its source is processed ({@link #isProcessedParamSource}) and, for a
+     * {@code FORM} parameter, it is not a native multipart target.
+     *
+     * <p>{@code @FormParam} parameters of type {@link FileUpload}, {@link EntityPart},
+     * {@code List<FileUpload>}, or {@code List<EntityPart>} are returned by
+     * {@link #extractFormParam} as the native parts, untouched, so a policy declared on one is inert
+     * for the same reason as one on a {@code FILE_UPLOADS} or {@code ENTITY_PARTS} parameter.
+     *
+     * @param param the parameter metadata
+     * @return {@code true} when the parameter's values are submitted to the engine
+     */
+    static boolean isProcessedParam(ResourceMethodMeta.ParamMeta param) {
+        if (!isProcessedParamSource(param.source())) {
+            return false;
+        }
+        return !(param.source() == ResourceMethodMeta.ParamSource.FORM && isNativeMultipartFormTarget(param));
+    }
+
+    private static boolean isNativeMultipartFormTarget(ResourceMethodMeta.ParamMeta param) {
+        Class<?> type = param.type();
+        if (type == FileUpload.class || type == EntityPart.class) {
+            return true;
+        }
+        return type == List.class
+                && (param.componentType() == FileUpload.class || param.componentType() == EntityPart.class);
     }
 
     /**

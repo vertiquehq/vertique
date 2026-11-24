@@ -3022,7 +3022,7 @@ final class McpRequestDispatcher {
         for (McpContent item : result.content()) {
             content.add(contentNode(item));
         }
-        if (result.content().isEmpty() && normalizedStructuredContent != null) {
+        if (result.textContent().isEmpty() && normalizedStructuredContent != null) {
             ObjectNode item = OUTPUT_ENCODER.createObjectNode();
             item.put("type", "text");
             item.put("text", canonicalStructuredText(normalizedStructuredContent));

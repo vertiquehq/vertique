@@ -172,9 +172,7 @@ public final class JaxRsDescriptorEmitter {
         String simpleName = Identifiers.generatedClassName(concreteClass, "_JaxRsDescriptor");
 
         // ClassName.get(TypeElement) yields the source-form nested name (Outer.InnerResource)
-        // when the resource is a static nested class. Today the candidate scanner only surfaces
-        // top-level root elements, but using the element-aware overload keeps the four
-        // emitters consistent.
+        // when the resource is a static nested class, which the candidate scanner surfaces.
         ClassName resourceClass = ClassName.get(concreteClass);
         ClassName descriptorClass = ClassName.get(pkg, simpleName);
         ParameterizedTypeName descriptorInterface = ParameterizedTypeName.get(DESCRIPTOR, resourceClass);

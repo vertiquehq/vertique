@@ -19,12 +19,17 @@ import dev.vertique.input.processing.InputObjectProcessor;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.ext.web.FileUpload;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.FormParam;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.core.Context;
+import jakarta.ws.rs.core.EntityPart;
+import jakarta.ws.rs.core.MediaType;
 import java.lang.reflect.Type;
 import java.util.List;
 import java.util.Set;
@@ -230,6 +235,42 @@ class RestInputProcessingCompositionTest {
         }
     }
 
+    /**
+     * Resource declaring a policy on native multipart form targets. These come back from the extractor
+     * untouched, so the policy is inert and must not demand an engine binding.
+     */
+    @Path("/native-multipart")
+    static class NativeMultipartPolicyResource {
+
+        @POST
+        @Path("/file")
+        @Consumes(MediaType.MULTIPART_FORM_DATA)
+        public Future<String> file(@Sanitize(NoopSanitizer.class) @FormParam("doc") FileUpload doc) {
+            return Future.succeededFuture("ok");
+        }
+
+        @POST
+        @Path("/part")
+        @Consumes(MediaType.MULTIPART_FORM_DATA)
+        public Future<String> part(@Sanitize(NoopSanitizer.class) @FormParam("doc") EntityPart doc) {
+            return Future.succeededFuture("ok");
+        }
+
+        @POST
+        @Path("/files")
+        @Consumes(MediaType.MULTIPART_FORM_DATA)
+        public Future<String> files(@Sanitize(NoopSanitizer.class) @FormParam("docs") List<FileUpload> docs) {
+            return Future.succeededFuture("ok");
+        }
+
+        @POST
+        @Path("/parts")
+        @Consumes(MediaType.MULTIPART_FORM_DATA)
+        public Future<String> parts(@Sanitize(NoopSanitizer.class) @FormParam("docs") List<EntityPart> docs) {
+            return Future.succeededFuture("ok");
+        }
+    }
+
     /** Resource that declares no policy anywhere in its parameter graph. */
     @Path("/free")
     static class PolicyFreeResource {
@@ -394,6 +435,15 @@ class RestInputProcessingCompositionTest {
                 () -> register(Set.of(new ExcludedSourcePolicyResource()), null),
                 "a @Context parameter's values never reach the engine, so demanding an engine binding "
                         + "would tell the operator to install a module that changes nothing");
+    }
+
+    @Test
+    @DisplayName("a policy declared on a native multipart form target does not fail startup")
+    void shouldNotFailStartupForAPolicyOnANativeMultipartFormTarget() {
+        assertDoesNotThrow(
+                () -> register(Set.of(new NativeMultipartPolicyResource()), null),
+                "FileUpload and EntityPart form targets are never submitted to the engine, so the policy is "
+                        + "inert and must not demand an engine binding");
     }
 
     @Test

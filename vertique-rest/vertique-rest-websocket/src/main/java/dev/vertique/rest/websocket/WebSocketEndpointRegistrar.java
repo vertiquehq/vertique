@@ -1065,7 +1065,8 @@ class WebSocketEndpointRegistrar {
      * <p><b>Success</b>: {@code ws.resume()} unblocks queued frames only after the {@link OnOpen}
      * future completes successfully.
      *
-     * <p><b>Failure</b>: {@code ws.resume()} is never called, so no frames reach user handlers. The
+     * <p><b>Failure</b>: the failure is first dispatched to {@link OnError} (when declared), then
+     * {@code ws.resume()} is never called, so no frames reach user handlers. The
      * scope is closed only when it is still owned locally ({@code session.contextScope() != null} —
      * the no-adapter path); when the channel adapter took ownership the manager releases the scope via
      * {@link WebSocketChannelAdapter#onClose(String)}, which fires from the WebSocket close handler
@@ -1103,6 +1104,13 @@ class WebSocketEndpointRegistrar {
                         "WebSocket session bootstrap failed for {} — @OnOpen returned a failed future",
                         session.id(),
                         cause);
+                // Dispatch the failure to @OnError (not when the socket already closed, never when @OnOpen itself is
+                // the @OnError method;
+                // an @OnError failure is logged inside invokeLifecycleMethod, not re-dispatched), then
+                // fall through to the 1011 close below.
+                if (meta.onError() != null && meta.onError() != meta.onOpen() && !ws.isClosed()) {
+                    invokeLifecycleMethod(meta.onError(), meta.instance(), session, meta, null, cause);
+                }
                 // Close the scope only if the adapter has NOT taken ownership; otherwise let the
                 // manager clean up via adapter.onClose() which fires from the ws.closeHandler when
                 // the ws.close(1011) below runs.

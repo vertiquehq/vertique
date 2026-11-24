@@ -201,8 +201,8 @@ public class RequestParamsExtension extends AbstractOpenAPIExtension {
 **What it does:**
 - Mirrors Swagger's built-in `@BeanParam` expansion for the framework's own `@RequestParams` class-level marker
 - Expands each `@QueryParam`/`@PathParam`/`@HeaderParam`/`@CookieParam`-annotated record component (or field, for non-record POJOs) into its own OpenAPI `Parameter`
-- Honors `@DefaultValue` (sets the schema default, marks the parameter optional) and `jakarta.annotation.@Nullable` (marks the schema `nullable` and the parameter optional)
-- Registers complex member types in `components/schemas` and references them by `$ref`, rather than inlining
+- Honors `@DefaultValue` (sets the schema default) and `jakarta.annotation.@Nullable` (marks the schema `nullable`); both make a query, header or cookie parameter optional, but a path parameter is always `required: true`, as OpenAPI demands
+- Registers complex member types in `components/schemas` and references them by `$ref` to the resolved schema name (a type declared with `@Schema(name = ...)` is referenced by that name), rather than inlining
 
 **Limitation:** `@FormParam` fields are not included in the generated spec because form parameters belong to a request body, not individual OpenAPI parameters. The runtime correctly binds `@FormParam` record components; only spec generation omits them.
 

@@ -9,13 +9,15 @@ import java.util.Set;
 import javax.annotation.processing.RoundEnvironment;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
+import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.util.Elements;
 
 /**
  * Discovers JAX-RS resource candidates in an annotation processing round by walking
- * {@link RoundEnvironment#getRootElements()} and filtering to concrete classes that have an
- * effective {@code @Path} (direct or via a transitively implemented interface).
+ * {@link RoundEnvironment#getRootElements()} and their static nested types, and filtering to
+ * concrete classes that have an effective {@code @Path} (direct or via a transitively implemented
+ * interface).
  *
  * <p>This scanner separates <em>semantic candidates</em> (any concrete class with an effective
  * {@code @Path}) from <em>DI-emission candidates</em> (those that also have an {@code @Inject}
@@ -33,7 +35,7 @@ public final class JaxRsCandidateScanner {
     // --- Public API ---
 
     /**
-     * Scans the round environment for semantic JAX-RS candidates: non-interface, non-annotation
+     * Scans the round's root types and their static nested types for semantic JAX-RS candidates: non-interface, non-annotation
      * type elements that have an effective {@code @Path} annotation as determined by
      * {@link EffectiveJaxRsContractResolver#hasEffectivePath(TypeElement)}.
      *
@@ -50,21 +52,33 @@ public final class JaxRsCandidateScanner {
     public static Set<TypeElement> scan(RoundEnvironment roundEnv, EffectiveJaxRsContractResolver resolver) {
         Set<TypeElement> result = new LinkedHashSet<>();
         for (Element element : roundEnv.getRootElements()) {
-            if (!(element instanceof TypeElement typeElement)) {
-                continue;
+            if (element instanceof TypeElement typeElement) {
+                collect(typeElement, resolver, result);
             }
-            if (typeElement.getKind() == ElementKind.INTERFACE) {
-                continue;
-            }
-            if (typeElement.getKind() == ElementKind.ANNOTATION_TYPE) {
-                continue;
-            }
-            if (!resolver.hasEffectivePath(typeElement)) {
-                continue;
-            }
-            result.add(typeElement);
         }
         return result;
+    }
+
+    /**
+     * Adds {@code typeElement} when it is a candidate, then descends into its static nested types.
+     * A non-static inner class cannot be constructed without an enclosing instance, so neither it nor
+     * anything nested inside it is a candidate; a private nested type is skipped too, with everything
+     * inside it, because generated code cannot reference it.
+     */
+    private static void collect(
+            TypeElement typeElement, EffectiveJaxRsContractResolver resolver, Set<TypeElement> out) {
+        if (typeElement.getKind() != ElementKind.INTERFACE
+                && typeElement.getKind() != ElementKind.ANNOTATION_TYPE
+                && resolver.hasEffectivePath(typeElement)) {
+            out.add(typeElement);
+        }
+        for (Element enclosed : typeElement.getEnclosedElements()) {
+            if (enclosed instanceof TypeElement nested
+                    && nested.getModifiers().contains(Modifier.STATIC)
+                    && !nested.getModifiers().contains(Modifier.PRIVATE)) {
+                collect(nested, resolver, out);
+            }
+        }
     }
 
     /**

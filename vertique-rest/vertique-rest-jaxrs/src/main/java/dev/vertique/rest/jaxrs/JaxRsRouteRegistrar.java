@@ -838,7 +838,7 @@ public class JaxRsRouteRegistrar {
      * own or its parameters' annotations, derived by the same {@link ParameterExtractor} computation
      * the request path uses) and a policy declared inside a parameter's type graph (answered by
      * {@link InputObjectProcessor#declaresPolicies}). Both halves are scoped by the same
-     * {@link ParameterExtractor#isProcessedParamSource} filter, so neither can report a policy on a
+     * {@link ParameterExtractor#isProcessedParam} filter, so neither can report a policy on a
      * parameter source the engine would never see — telling an operator to install a module that
      * would not make that policy run is worse than saying nothing. Every offending route is collected
      * before throwing, so one startup failure reports the whole surface rather than one route per
@@ -883,7 +883,7 @@ public class JaxRsRouteRegistrar {
             return "the route or one of its parameters declares a canonicalizer or sanitizer chain";
         }
         for (ResourceMethodMeta.ParamMeta param : meta.params()) {
-            if (!ParameterExtractor.isProcessedParamSource(param.source())) {
+            if (!ParameterExtractor.isProcessedParam(param)) {
                 continue;
             }
             Type declaredType = param.genericType() != null ? param.genericType() : param.type();

@@ -200,9 +200,11 @@ public class RequestParamsExtension extends AbstractOpenAPIExtension {
                 .anyMatch(a -> NULLABLE_CLASS.equals(a.annotationType().getName()));
 
         Schema<?> schema = resolveSchema(memberType, components);
+        // OpenAPI requires every path parameter to be required: true, whatever its nullability or default.
+        boolean isPath = param instanceof PathParameter;
         if (nullable) {
             schema.setNullable(true);
-            param.setRequired(false);
+            param.setRequired(isPath);
         } else if (param.getRequired() == null) {
             param.setRequired(true);
         }
@@ -210,7 +212,7 @@ public class RequestParamsExtension extends AbstractOpenAPIExtension {
         DefaultValue dv = element.getAnnotation(DefaultValue.class);
         if (dv != null) {
             schema.setDefault(dv.value());
-            param.setRequired(false);
+            param.setRequired(isPath);
         }
 
         param.setSchema(schema);
@@ -244,10 +246,10 @@ public class RequestParamsExtension extends AbstractOpenAPIExtension {
                     components.addSchemas(name, schema);
                 }
             });
-            // Swagger Core uses the simple class name as the schema name by default.
-            // @Schema(name=...) can override this, but @RequestParams member types are
-            // unlikely to use that annotation. The simple name is the correct $ref target.
-            return new Schema<>().$ref("#/components/schemas/" + type.getSimpleName());
+            // Swagger Core registers the component under the resolved schema name, which honours
+            // @Schema(name = ...); fall back to the simple class name for an unnamed schema.
+            String schemaName = resolved.schema.getName() != null ? resolved.schema.getName() : type.getSimpleName();
+            return new Schema<>().$ref("#/components/schemas/" + schemaName);
         }
         return resolved.schema;
     }

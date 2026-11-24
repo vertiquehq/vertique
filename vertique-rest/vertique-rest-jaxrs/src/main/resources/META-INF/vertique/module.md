@@ -262,8 +262,11 @@ shape the engine cannot process at all; declaring a chain on one is rejected at 
 skipped (see [Startup failures](#startup-failures)).
 
 A policy declared on a parameter the engine never sees — a `@Context` parameter, a `RequestPreconditions`
-parameter, or a raw multipart `FileUpload` / `EntityPart` parameter — is inert and is neither
-processed nor reported: those values are not caller-supplied string input the chain model applies to.
+parameter, or a raw multipart `FileUpload` / `EntityPart` parameter (including a `@FormParam` of those
+types or of `List<FileUpload>` / `List<EntityPart>`) — is inert and is neither
+processed nor reported: a `@Context` value is server-resolved, and a native multipart part is handed to the
+resource untouched. In particular a text form field bound as `EntityPart` is not sanitized; bind text fields
+as `String` to apply input policies.
 
 **Renamed body fields are covered.** A field-level policy is declared on a Java property, while the
 decoded body is keyed by whatever Jackson publishes — `@JsonProperty("user_name")`, a naming
