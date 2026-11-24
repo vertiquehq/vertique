@@ -46,8 +46,9 @@ import javax.lang.model.type.WildcardType;
  *
  * <p>A contract is <b>non-generatable</b> when type variables remain after that substitution —
  * the contract declares its own type parameters, or one of its methods is generic. Such contracts
- * are skipped with an informational {@code NOTE} (never uncompilable output); they keep working
- * through the reflective client proxy at runtime.
+ * are skipped with an informational {@code NOTE} (never uncompilable output) and get no
+ * typed-client binding either; the application provides one with a hand-written {@code @Provides}
+ * method that calls {@code ServiceClientFactory.create(Contract.class)}.
  *
  * <p>Extraction errors (invalid return type, illegal parameters) are emitted as compiler errors
  * via {@link CodegenContext#diagnostics()} and yield {@link Optional#empty()} — the same
@@ -179,9 +180,11 @@ public final class ClientContractExtractor {
         ctx.diagnostics()
                 .note(
                         contractType,
-                        "No service client proxy generated for %s: unresolved type variables remain"
+                        "No service client proxy generated for %1$s: unresolved type variables remain"
                                 + " after substitution (generic contract or generic method)."
-                                + " Clients for this contract use the reflective proxy at runtime.",
+                                + " No typed-client binding is generated either; the application provides one with a"
+                                + " hand-written @Provides method that returns"
+                                + " ServiceClientFactory.create(%1$s.class).",
                         contractType.getQualifiedName());
     }
 

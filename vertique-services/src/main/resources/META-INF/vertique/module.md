@@ -101,6 +101,11 @@ a generated `{Contract}_ServiceClientProxy` companion when one is on the classpa
 JDK dynamic proxy otherwise. Either way, the client captures dispatch context, resolves operation
 metadata, and delegates transport concerns to the framework.
 
+A contract that cannot get a generated proxy because an identifier it uses is reserved by the proxy
+is still bound this way and resolves to the reflective client. A generic contract is not bound at
+all: the application provides it with `@Provides static MyContract myContract(ServiceClientFactory
+factory) { return factory.create(MyContract.class); }`.
+
 `ServiceClientFactory` remains available for deliberate dynamic or manual wiring. A contract
 annotated `@NoAutoWire` suppresses only its generated typed-client binding, so an application-owned
 `@Provides` method can bind it explicitly. `@NoAutoWire` on an implementation keeps its existing
