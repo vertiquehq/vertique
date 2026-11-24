@@ -167,7 +167,7 @@ class WebSocketEndpointScanner {
         boolean binaryMessage = false;
         int messageParameterIndex = -1;
         if (onMessage != null) {
-            MessageInfo msgInfo = resolveMessageType(onMessage);
+            MessageInfo msgInfo = resolveMessageType(onMessage, clazz);
             messageType = msgInfo.type();
             binaryMessage = msgInfo.binary();
             messageParameterIndex = msgInfo.index();
@@ -497,16 +497,19 @@ class WebSocketEndpointScanner {
      * chain.
      *
      * @param method the {@link OnMessage} method
+     * @param owner  the endpoint class
      * @return the resolved message info; defaults to {@code String.class} at index {@code -1} if no
      *     message param found
-     * @throws ConfigurationException if the method declares more than one payload-eligible parameter
+     * @throws ConfigurationException if the method declares more than one payload-eligible parameter,
+     *     or a payload parameter whose type is a type variable (an inherited generic handler that the
+     *     endpoint class does not override with a concrete type)
      */
-    private MessageInfo resolveMessageType(Method method) {
+    private MessageInfo resolveMessageType(Method method, Class<?> owner) {
         var params = method.getParameters();
         MessageInfo found = null;
         for (int i = 0; i < params.length; i++) {
             var param = params[i];
-            if (!isPayloadEligible(param)) {
+            if (!isPayloadEligible(method, i, owner)) {
                 continue;
             }
             if (found != null) {
@@ -515,6 +518,14 @@ class WebSocketEndpointScanner {
                         + "."
                         + method.getName()
                         + " declares more than one payload parameter; declare exactly one");
+            }
+            if (param.getParameterizedType() instanceof java.lang.reflect.TypeVariable<?>) {
+                throw new ConfigurationException("@OnMessage method "
+                        + method.getDeclaringClass().getSimpleName()
+                        + "."
+                        + method.getName()
+                        + " has a payload parameter of a generic type; override it in the endpoint class"
+                        + " with a concrete type");
             }
             if (Buffer.class.isAssignableFrom(param.getType())) {
                 found = new MessageInfo(Buffer.class, true, i);
@@ -531,17 +542,37 @@ class WebSocketEndpointScanner {
      * @param param the method parameter
      * @return {@code true} when the parameter is not a session, path param, or security context
      */
-    private static boolean isPayloadEligible(Parameter param) {
+    private static boolean isPayloadEligible(Method method, int index, Class<?> owner) {
+        Parameter param = method.getParameters()[index];
         if (WebSocketSession.class.isAssignableFrom(param.getType())) {
             return false;
         }
-        if (param.isAnnotationPresent(PathParam.class)) {
+        if (pathParamOf(method, index, owner) != null) {
             return false;
         }
         if (SecurityContext.class.isAssignableFrom(param.getType())) {
             return false;
         }
         return true;
+    }
+
+    /**
+     * The {@link PathParam} on a parameter, read through the hierarchy the way the other parameter
+     * policies are: an override inherits it from the declaration it overrides, because Java does not
+     * inherit parameter annotations.
+     *
+     * @param method the lifecycle method
+     * @param index  the parameter index
+     * @param owner  the endpoint class
+     * @return the annotation, or {@code null} when the parameter carries none
+     */
+    static @Nullable PathParam pathParamOf(Method method, int index, Class<?> owner) {
+        for (Annotation annotation : AnnotationResolver.resolveParameterAnnotations(method, index, owner)) {
+            if (annotation instanceof PathParam pathParam) {
+                return pathParam;
+            }
+        }
+        return null;
     }
 
     /**
@@ -558,7 +589,7 @@ class WebSocketEndpointScanner {
             Method method, WebSocketPathMatcher pathMatcher, List<PathParamMeta> collected, Class<?> endpointClass) {
         var params = method.getParameters();
         for (int i = 0; i < params.length; i++) {
-            PathParam pp = params[i].getAnnotation(PathParam.class);
+            PathParam pp = pathParamOf(method, i, endpointClass);
             if (pp == null) continue;
             String name = pp.value();
             if (!pathMatcher.paramNames().contains(name)) {

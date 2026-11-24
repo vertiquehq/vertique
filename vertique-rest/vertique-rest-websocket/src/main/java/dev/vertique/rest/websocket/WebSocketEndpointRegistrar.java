@@ -328,9 +328,10 @@ class WebSocketEndpointRegistrar {
         var params = method.getParameters();
         EffectiveInputPolicies[] parameters = new EffectiveInputPolicies[params.length];
         for (int i = 0; i < params.length; i++) {
-            boolean processed = i == messageParameterIndex || params[i].isAnnotationPresent(PathParam.class);
+            boolean processed =
+                    i == messageParameterIndex || WebSocketEndpointScanner.pathParamOf(method, i, owner) != null;
             parameters[i] = processed
-                    ? ReflectiveInvocationPolicies.resolveParameter(method, i, route)
+                    ? ReflectiveInvocationPolicies.resolveParameter(method, i, owner, route)
                     : EffectiveInputPolicies.NONE;
         }
         return new MethodPolicies(route, parameters);
@@ -1374,8 +1375,12 @@ class WebSocketEndpointRegistrar {
                 // Read from the ambient holder rather than a stored field so the value
                 // reflects the current rebound snapshot on every callback invocation.
                 args[i] = securityRuntime != null ? securityRuntime.current() : null;
-            } else if (param.isAnnotationPresent(PathParam.class)) {
-                String name = param.getAnnotation(PathParam.class).value();
+            } else if (WebSocketEndpointScanner.pathParamOf(
+                            method, i, meta.instance().getClass())
+                    != null) {
+                String name = WebSocketEndpointScanner.pathParamOf(
+                                method, i, meta.instance().getClass())
+                        .value();
                 String rawValue = pathParams.get(name);
                 // Apply canonicalization/sanitization to path params if available
                 if (rawValue != null && objectProcessor != null) {
