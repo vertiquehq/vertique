@@ -209,9 +209,9 @@ carve-out documented on `RestRequestCompletedEvent`.
 5. Invoke        the resource method, with processed and validated arguments
 ```
 
-When an application decoder claims the body ahead of the framework decoders, steps 2 and 3 are that decoder's
-alone: the engine does not process what it returns (see "A body an application decoder binds is not
-processed" below).
+When an application decoder claims the body ahead of the framework decoders, steps 2 and 3 cannot both
+run: a route that declares a chain on such a body fails startup (see "A body an application decoder claims
+cannot carry a declared chain" below).
 
 Step 4 is skipped when `ValidationModule` is absent. Step 3 is skipped when `SanitizationModule`
 is absent and no route declares a chain; a route that declares one fails startup instead (see
@@ -265,15 +265,19 @@ without the engine installed. A raw binary body (`byte[]`, `io.vertx.core.buffer
 shape the engine cannot process at all; declaring a chain on one is rejected at startup rather than
 skipped (see [Startup failures](#startup-failures)).
 
-**A body an application decoder binds is not processed.** The decoder chain is tried in priority order and
-the first decoder that claims the body decodes it. The engine binds a JSON or form-urlencoded body inline,
-standing in for the framework's own decoders, so an application decoder that sorts ahead of them
-(the default priority `0` does) and claims the body decodes it instead, whatever its content type. The
-engine then does not see that body: a route-, parameter- or type-level `@Canonicalize` or `@Sanitize`
-does not run on what an application decoder returns, exactly as for any content type the framework has no
-decoder for. An application decoder with a priority above `1100` sits behind the framework decoders and
-never claims a JSON or form body they accept. A decoder that must keep the declared chains in force
-should leave the body to the framework, or apply its own cleaning inside `decode`.
+**A body an application decoder claims cannot carry a declared chain.** The decoder chain is tried in priority
+order and the first decoder that claims the body decodes it. The engine binds a JSON, form-urlencoded or
+`String` body inline, standing in for the framework's own decoders, so an application decoder that sorts ahead
+of them (the default priority `0` does) and claims the body decodes it instead, and the engine never sees it:
+a route-, parameter- or type-level `@Canonicalize` or `@Sanitize` would not run on what the decoder returns.
+Rather than skip it silently, startup fails with a `ConfigurationException` that names each such route and the
+decoder, when the engine is bound and a body parameter declares a chain (on the route, the parameter, or the
+fields of its type) that a decoder claims. The check probes the route's `@Consumes` types, or the JSON,
+form-urlencoded and absent types when none is declared, and only the content types the engine would bind inline;
+a decoder for another content type, such as `text/csv`, is not affected. To resolve it, give the decoder a
+priority above `1100` so it sits behind the framework decoders and never claims a JSON or form body they
+accept, narrow its `canDecode`, or remove the declared policies and clean the value inside `decode`. A route
+that declares no chain is unaffected, and so is an application with no engine bound.
 
 A policy declared on a parameter the engine never sees — a `@Context` parameter, a `RequestPreconditions`
 parameter, or a raw multipart `FileUpload` / `EntityPart` parameter (including a `@FormParam` of those

@@ -1135,7 +1135,7 @@ final class ParameterExtractor {
         // The inline binding below stands in for the built-in decoders only; an application decoder that
         // sorts ahead of them is the one the chain would have picked, so it decodes the body.
         if (objectProcessor != null && isStructuredBodyTarget(targetType)) {
-            RequestBodyDecoder applicationDecoder = claimingApplicationDecoder(targetType, contentType);
+            RequestBodyDecoder applicationDecoder = claimingApplicationDecoder(decoders, targetType, contentType);
             if (applicationDecoder != null) {
                 return applicationDecoder.decode(ctx, body, targetType, genericType);
             }
@@ -1312,18 +1312,40 @@ final class ParameterExtractor {
      * registered behind a framework decoder that claims the same body is never returned — it stays the
      * fallback its priority makes it.
      *
+     * @param decoders    the priority-sorted decoder list
      * @param targetType  the raw target class
      * @param contentType the request {@code Content-Type}, or {@code null}
      * @return the claiming application decoder, or {@code null}
      */
     @Nullable
-    private RequestBodyDecoder claimingApplicationDecoder(Class<?> targetType, @Nullable String contentType) {
+    static RequestBodyDecoder claimingApplicationDecoder(
+            List<RequestBodyDecoder> decoders, Class<?> targetType, @Nullable String contentType) {
         for (RequestBodyDecoder decoder : decoders) {
             if (decoder.canDecode(targetType, contentType)) {
                 return isFrameworkDecoder(decoder) ? null : decoder;
             }
         }
         return null;
+    }
+
+    /**
+     * Returns whether the input-processing engine binds a body of this target type and content type
+     * inline, in place of the framework decoders: a non-binary target whose content type is absent, JSON
+     * or form-urlencoded, or a {@code String} target of any content type.
+     *
+     * @param targetType  the raw body target class
+     * @param contentType the declared or request {@code Content-Type}, or {@code null}
+     * @return {@code true} when the engine would bind the body itself
+     */
+    static boolean engineBindsInline(Class<?> targetType, @Nullable String contentType) {
+        if (isBinaryBodyTarget(targetType)) {
+            return false;
+        }
+        String lower = contentType == null ? "" : contentType.toLowerCase(Locale.ROOT);
+        return lower.isEmpty()
+                || lower.contains("json")
+                || lower.startsWith("application/x-www-form-urlencoded")
+                || targetType == String.class;
     }
 
     private static boolean isFrameworkDecoder(RequestBodyDecoder decoder) {
