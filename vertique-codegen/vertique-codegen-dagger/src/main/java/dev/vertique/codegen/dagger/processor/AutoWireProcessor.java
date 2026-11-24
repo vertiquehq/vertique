@@ -89,9 +89,12 @@ import javax.lang.model.element.TypeElement;
  * observed, and emission happens in that round. The {@code emitted} flag prevents re-collection
  * and re-emission on later rounds (e.g., the round triggered when Dagger writes its own generated
  * sources). Consequence: types that are first introduced by another processor's generated source
- * in a later round are NOT auto-wired. No current consumer hits this case in practice, but if a
- * future codegen leaf chains its output through this processor, switch to processingOver-only
- * emission with cross-round accumulation.
+ * in a later round are NOT collected, because collection and emission happen once, in the first
+ * non-final round. The exception is a generated signal-source class: it is bound by its predicted
+ * name, provided the interface it is generated for is present in the round where emission happens
+ * (the first non-final round), and checked in the final round. No other consumer hits this case
+ * in practice, but if a future codegen leaf chains its output through this processor, switch to
+ * processingOver-only emission with cross-round accumulation.
  *
  * <p>Auto-wiring can be globally disabled by passing {@code -Avertique.codegen.autoWire=false}.
  */
