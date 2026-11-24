@@ -3,6 +3,7 @@
 
 package dev.vertique.rest.jaxrs;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -68,6 +69,69 @@ class RoutePathSpecificityTest {
         @DisplayName("a literal is more specific than a regex-constrained param")
         void literalBeatsRegex() {
             assertMoreSpecific("/n/active", "/n/{id:\\d+}");
+        }
+    }
+
+    @Nested
+    @DisplayName("slash inside a regex constraint")
+    class SlashInsideConstraint {
+
+        @Test
+        @DisplayName("a static segment beats a regex whose constraint contains a slash")
+        void staticBeatsRegexWithSlash() {
+            assertMoreSpecific("/files/static", "/files/{name:[^/]+}");
+        }
+
+        @Test
+        @DisplayName("a nested-brace constraint containing a slash stays one segment")
+        void staticBeatsNestedBraceRegexWithSlash() {
+            assertMoreSpecific("/files/static", "/files/{name:[a-z/]{1,3}}");
+        }
+
+        @Test
+        @DisplayName("a {p:.+} constraint counts as one segment, so a longer path still wins")
+        void greedyConstraintIsOneSegment() {
+            assertMoreSpecific("/a/b/c", "/a/{p:.+}");
+            assertMoreSpecific("/a/{p:[^/]+}/c", "/a/{p:[^/]+}");
+        }
+
+        @Test
+        @DisplayName("a literal tail of a separator-spanning constraint ranks as a literal segment")
+        void spanningConstraintLiteralTailBeatsParam() {
+            assertMoreSpecific("/repos/{slug:[^/]+/admin}", "/repos/{owner:\\w+}/{name}");
+            assertMoreSpecific("/repos/{slug:[^/]+/[^/]+}", "/repos/{owner}/{name}");
+            assertMoreSpecific("/repos/{slug:[^/]+\\/admin}", "/repos/{owner}/{name}");
+        }
+
+        @Test
+        @DisplayName("a constraint without a separator, or with one in a class or group, stays one segment")
+        void constraintWithoutLiteralSeparatorStaysOneSegment() {
+            assertMoreSpecific("/a/{x:abc}", "/a/{x}");
+            assertMoreSpecific("/a/b", "/a/{x:abc}");
+            assertMoreSpecific("/a/{p:[^/]+}/{q}", "/a/{p:(x/y)}");
+        }
+
+        @Test
+        @DisplayName("an alternation or an optional separator keeps the constraint one segment")
+        void alternationOrOptionalSeparatorStaysOneSegment() {
+            assertMoreSpecific("/r/{a:\\w+}", "/r/{p:b/c|a}");
+            assertMoreSpecific("/r/{a:\\w+}", "/r/{p:[^/]+/?admin}");
+            assertMoreSpecific("/r/{a:\\w+}", "/r/{p:x/*y}");
+            assertMoreSpecific("/r/{a:\\w+}", "/r/{p:x\\/?y}");
+        }
+
+        @Test
+        @DisplayName("a mixed segment stays literal and beats a regex segment")
+        void mixedSegmentStaysLiteral() {
+            assertMoreSpecific("/files/{name}.txt", "/files/{name:[^/]+}");
+        }
+
+        @Test
+        @DisplayName("unbalanced braces never throw")
+        void unbalancedInputDoesNotThrow() {
+            assertDoesNotThrow(() -> RoutePathSpecificity.compare("/a/{x:[^/]+", "/a/b"));
+            assertDoesNotThrow(() -> RoutePathSpecificity.compare("/a/x}/b", "/a/{y"));
+            assertDoesNotThrow(() -> RoutePathSpecificity.compare("/{{{/", "/}}}"));
         }
     }
 

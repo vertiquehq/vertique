@@ -3,7 +3,9 @@
 
 package dev.vertique.rest.jaxrs;
 
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.List;
 
 /**
  * Computes a deterministic, total-order <em>specificity</em> ordering over JAX-RS {@code @Path}
@@ -17,8 +19,9 @@ import java.util.Comparator;
  * handler never runs. Registering the more-specific {@code /hello/secured} first restores the
  * specificity-before-parameter precedence the pre-rewrite OpenAPI router supplied automatically.
  *
- * <p><strong>Segment classification.</strong> Each template is split into {@code /}-delimited
- * segments, and each segment is classified as one of:
+ * <p><strong>Segment classification.</strong> Each template is split into segments on every
+ * {@code /} outside braces (a {@code /} inside a variable's regex constraint, such as
+ * {@code {name:[^/]+}}, does not split), and each segment is classified as one of:
  * <ul>
  *   <li>{@link SegmentKind#LITERAL} — static text with no variable, e.g. {@code secured};</li>
  *   <li>{@link SegmentKind#REGEX} — a variable carrying a regex constraint, e.g. {@code {id:\d+}};</li>
@@ -109,16 +112,172 @@ final class RoutePathSpecificity {
     }
 
     /**
-     * Splits a path template into its {@code /}-delimited segments, dropping empty segments produced
-     * by a leading slash or a trailing slash.
+     * Splits a path template into its segments on every {@code /} that is outside braces, dropping
+     * empty segments produced by a leading or trailing slash. A {@code /} inside {@code {...}} (for
+     * example the character class in {@code {name:[^/]+}}, or a constraint with nested braces such as
+     * {@code {name:[a-z/]{1,3}}}) does not split, so the whole variable stays one segment. A segment
+     * that is exactly one constrained variable whose constraint contains a literal path separator
+     * (outside a character class or group), such as {@code {slug:[^/]+/admin}}, counts as
+     * one segment per separated piece; a piece without regex metacharacters ({@code admin}) counts as
+     * a literal.
+     *
+     * <p>Unbalanced input never throws: an opening brace with no matching close is treated as ordinary
+     * text and the remainder of the template is split normally.
      *
      * @param path the JAX-RS path template
      * @return the non-empty path segments in order
      */
     private static String[] segments(String path) {
-        return java.util.Arrays.stream(path.split("/"))
-                .filter(s -> !s.isEmpty())
-                .toArray(String[]::new);
+        List<String> result = new ArrayList<>();
+        int start = 0;
+        int depth = 0;
+        int open = -1;
+        int i = 0;
+        int length = path.length();
+        while (i < length) {
+            char c = path.charAt(i);
+            if (c == '{') {
+                if (depth == 0) {
+                    open = i;
+                }
+                depth++;
+            } else if (c == '}') {
+                if (depth > 0) {
+                    depth--;
+                }
+            } else if (c == '/' && depth == 0) {
+                addSegment(result, path, start, i);
+                start = i + 1;
+            }
+            i++;
+            if (i == length && depth > 0) {
+                // The outermost brace never closed: treat it as plain text and rescan after it.
+                i = open + 1;
+                depth = 0;
+                open = -1;
+            }
+        }
+        addSegment(result, path, start, length);
+        return result.toArray(String[]::new);
+    }
+
+    private static void addSegment(List<String> result, String path, int from, int to) {
+        if (to <= from) {
+            return;
+        }
+        String segment = path.substring(from, to);
+        int colon = wholeVariableColon(segment);
+        if (colon < 0) {
+            result.add(segment);
+            return;
+        }
+        // A constraint that itself contains a path separator matches several request segments; rank
+        // it as one piece per separator so that a literal part of the constraint (the "admin" of
+        // {slug:[^/]+/admin}) still counts as a literal against a sibling's plain variable.
+        String name = segment.substring(1, colon);
+        List<String> pieces = splitConstraint(segment.substring(colon + 1, segment.length() - 1));
+        if (pieces.size() < 2) {
+            result.add(segment);
+            return;
+        }
+        for (String piece : pieces) {
+            result.add(isPlainLiteral(piece) ? piece : "{" + name + ":" + piece + "}");
+        }
+    }
+
+    /**
+     * Returns the index of the {@code :} that introduces the constraint when {@code segment} is exactly
+     * one constrained brace variable ({@code {name:constraint}}), otherwise {@code -1}.
+     */
+    private static int wholeVariableColon(String segment) {
+        if (segment.length() < 3 || segment.charAt(0) != '{' || segment.charAt(segment.length() - 1) != '}') {
+            return -1;
+        }
+        int depth = 0;
+        int colon = -1;
+        for (int i = 0; i < segment.length(); i++) {
+            char c = segment.charAt(i);
+            if (c == '{') {
+                depth++;
+            } else if (c == '}') {
+                depth--;
+                if (depth == 0 && i != segment.length() - 1) {
+                    return -1; // the first variable closes before the end: a mixed segment
+                }
+            } else if (c == ':' && depth == 1 && colon < 0) {
+                colon = i;
+            }
+        }
+        return depth == 0 ? colon : -1;
+    }
+
+    /**
+     * Splits a regex constraint on each {@code /} (or an escaped {@code \/}) that matches a required
+     * literal path separator: one outside a character class and a group and not followed by a
+     * quantifier. A constraint without such a separator, or with a top-level alternation or an
+     * optional separator (either of which can let it match fewer segments), is returned whole.
+     */
+    private static List<String> splitConstraint(String constraint) {
+        List<String> pieces = new ArrayList<>();
+        int start = 0;
+        int groups = 0;
+        boolean inClass = false;
+        for (int i = 0; i < constraint.length(); i++) {
+            char c = constraint.charAt(i);
+            if (c == '\\') {
+                if (!inClass && groups == 0 && i + 1 < constraint.length() && constraint.charAt(i + 1) == '/') {
+                    if (quantified(constraint, i + 2)) {
+                        return List.of(constraint);
+                    }
+                    addPiece(pieces, constraint, start, i); // an escaped slash is still a separator
+                    start = i + 2;
+                }
+                i++; // skip the escaped character
+            } else if (inClass) {
+                inClass = c != ']';
+            } else if (c == '[') {
+                inClass = true;
+            } else if (c == '(') {
+                groups++;
+            } else if (c == ')') {
+                groups = Math.max(0, groups - 1);
+            } else if (c == '|' && groups == 0) {
+                return List.of(constraint); // an alternative may match a single segment
+            } else if (c == '/' && groups == 0) {
+                if (quantified(constraint, i + 1)) {
+                    return List.of(constraint);
+                }
+                addPiece(pieces, constraint, start, i);
+                start = i + 1;
+            }
+        }
+        addPiece(pieces, constraint, start, constraint.length());
+        if (pieces.isEmpty()) {
+            pieces.add(constraint);
+        }
+        return pieces;
+    }
+
+    /** Returns whether the character at {@code index} quantifies the separator before it. */
+    private static boolean quantified(String constraint, int index) {
+        return index < constraint.length() && "?*{".indexOf(constraint.charAt(index)) >= 0;
+    }
+
+    private static void addPiece(List<String> pieces, String constraint, int from, int to) {
+        String piece = constraint.substring(from, to).trim();
+        if (!piece.isEmpty()) {
+            pieces.add(piece);
+        }
+    }
+
+    /** Returns whether a constraint piece has no regex metacharacter, so it matches only itself. */
+    private static boolean isPlainLiteral(String piece) {
+        for (int i = 0; i < piece.length(); i++) {
+            if ("\\.[]{}()*+?^$|".indexOf(piece.charAt(i)) >= 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
