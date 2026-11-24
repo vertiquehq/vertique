@@ -6,10 +6,12 @@ package dev.vertique.rest.security;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Utility for extracting roles, scopes, and permissions from JWT claim conventions.
@@ -22,9 +24,12 @@ import java.util.stream.Collectors;
  *   <li>{@code "permissions"} — fine-grained action rights (Auth0 convention)</li>
  * </ul>
  *
- * <p>Only {@link dev.vertique.rest.auth.jwt.JwtClaimAuthorizationProvider} delegates to this class.
- * {@link DefaultSecurityClaimMapper} reads the same claim names but parses them with its own
- * private parser, so the two are kept aligned by convention rather than by shared code.
+ * <p>{@link DefaultSecurityClaimMapper} and {@link dev.vertique.rest.auth.jwt.JwtClaimAuthorizationProvider}
+ * both delegate to this class, so the framework reads a token's authority claims one way.
+ *
+ * <p>A claim value is read only when it is a JSON array or a {@link Collection} (its non-blank
+ * string elements) or a string (split on whitespace). Any other value, such as a number, boolean,
+ * JSON object or map, contributes nothing, so structured data is never read as authority names.
  */
 public final class JwtClaimExtractor {
 
@@ -77,42 +82,31 @@ public final class JwtClaimExtractor {
     }
 
     /**
-     * Extracts string values from a claim that may be either a JSON array or a
-     * space-delimited string. Non-string array elements are skipped.
+     * Extracts string values from a claim that is a JSON array, a {@link Collection}, or a
+     * space-delimited string. Non-string elements and blank values are skipped; any other value
+     * (a number, boolean, JSON object, map, or any other type) contributes nothing.
      *
      * @param principal the JWT principal {@link JsonObject}
      * @param claimName the name of the claim to extract
-     * @return a mutable set of string values from the claim; empty if claim is absent or blank
+     * @return a mutable set of string values from the claim; empty if claim is absent, blank, or of
+     *     another type
      */
     static Set<String> extractClaim(JsonObject principal, String claimName) {
-        // Try as JSON array first
-        JsonArray array = null;
-        try {
-            array = principal.getJsonArray(claimName);
-        } catch (ClassCastException ignored) {
-            // Value exists but is not an array — fall through to string handling
+        // The raw value: JsonObject#getString would turn any value into text.
+        Object value = principal.getMap().get(claimName);
+        Stream<?> items;
+        if (value instanceof JsonArray array) {
+            items = array.stream();
+        } else if (value instanceof Collection<?> collection) {
+            items = collection.stream();
+        } else if (value instanceof String string) {
+            items = Arrays.stream(string.split("\\s+"));
+        } else {
+            return new HashSet<>();
         }
-
-        if (array != null) {
-            return array.stream()
-                    .filter(String.class::isInstance)
-                    .map(String.class::cast)
-                    .filter(s -> !s.isBlank())
-                    .collect(Collectors.toSet());
-        }
-
-        // Try as space-delimited string
-        String str = null;
-        try {
-            str = principal.getString(claimName);
-        } catch (ClassCastException ignored) {
-            // Value exists but is not a string
-        }
-
-        if (str != null && !str.isBlank()) {
-            return Arrays.stream(str.split("\\s+")).filter(s -> !s.isEmpty()).collect(Collectors.toSet());
-        }
-
-        return Set.of();
+        return items.filter(String.class::isInstance)
+                .map(String.class::cast)
+                .filter(s -> !s.isBlank())
+                .collect(Collectors.toCollection(HashSet::new));
     }
 }

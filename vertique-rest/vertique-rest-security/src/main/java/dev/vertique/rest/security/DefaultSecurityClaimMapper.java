@@ -6,13 +6,10 @@ package dev.vertique.rest.security;
 import dev.vertique.security.authz.AuthorityClaim;
 import dev.vertique.security.authz.AuthorityKind;
 import dev.vertique.security.authz.AuthorizationClaims;
-import io.vertx.core.json.JsonArray;
-import java.util.Arrays;
+import io.vertx.core.json.JsonObject;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * Default {@link SecurityClaimMapper} that maps well-known JWT claim conventions to the
@@ -28,9 +25,11 @@ import java.util.stream.Collectors;
  *       resource-server permission convention</li>
  * </ul>
  *
- * <p>Each claim may be provided as a JSON array of strings or as a single space-delimited
- * string (e.g., {@code "read write"}). Non-string array elements and blank values are silently
- * skipped. A missing claim yields no entries for that kind.
+ * <p>The claims are read by {@link JwtClaimExtractor}, the parser
+ * {@code JwtClaimAuthorizationProvider} uses too, so both read a token the same way. A claim may be
+ * a JSON array (or {@link java.util.Collection}) of strings or a single space-delimited string
+ * (e.g., {@code "read write"}); non-string elements and blank values are skipped, and a missing
+ * claim, or a value of any other type, yields no entries for that kind.
  *
  * <p>All produced {@link AuthorityClaim} entries use empty strings for {@code issuer},
  * {@code audience}, and {@code source} — these fields are populated with real values by the
@@ -65,63 +64,20 @@ public class DefaultSecurityClaimMapper implements SecurityClaimMapper {
      */
     @Override
     public AuthorizationClaims map(Map<String, Object> claims) {
-        Set<String> roles = parseClaim(claims, "roles");
-
-        Set<String> scopes = new HashSet<>();
-        scopes.addAll(parseClaim(claims, "scope"));
-        scopes.addAll(parseClaim(claims, "scp"));
-
-        Set<String> permissions = parseClaim(claims, "permissions");
+        // Wraps the map without copying it; the extractor only reads.
+        JsonObject principal = new JsonObject(claims);
 
         Set<AuthorityClaim> authorityClaims = new HashSet<>();
-
-        for (String role : roles) {
+        for (String role : JwtClaimExtractor.extractRoles(principal)) {
             authorityClaims.add(new AuthorityClaim(AuthorityKind.ROLE, role, "", "", "", Map.of()));
         }
-        for (String scope : scopes) {
+        for (String scope : JwtClaimExtractor.extractScopes(principal)) {
             authorityClaims.add(new AuthorityClaim(AuthorityKind.SCOPE, scope, "", "", "", Map.of()));
         }
-        for (String permission : permissions) {
+        for (String permission : JwtClaimExtractor.extractPermissions(principal)) {
             authorityClaims.add(new AuthorityClaim(AuthorityKind.PERMISSION, permission, "", "", "", Map.of()));
         }
 
         return new AuthorizationClaims(authorityClaims, Map.of());
-    }
-
-    /**
-     * Parses a single claim value that may be either a {@link List} of strings or a
-     * space-delimited string. Non-string list elements and blank values are silently skipped.
-     *
-     * @param claims    the raw claims map
-     * @param claimName the claim key to look up
-     * @return a mutable set of extracted string values; empty if claim is absent or blank
-     */
-    private Set<String> parseClaim(Map<String, Object> claims, String claimName) {
-        Object value = claims.get(claimName);
-        if (value == null) {
-            return Set.of();
-        }
-
-        if (value instanceof JsonArray jsonArray) {
-            return jsonArray.stream()
-                    .filter(String.class::isInstance)
-                    .map(String.class::cast)
-                    .filter(s -> !s.isBlank())
-                    .collect(Collectors.toSet());
-        }
-
-        if (value instanceof List<?> list) {
-            return list.stream()
-                    .filter(String.class::isInstance)
-                    .map(String.class::cast)
-                    .filter(s -> !s.isBlank())
-                    .collect(Collectors.toSet());
-        }
-
-        if (value instanceof String str && !str.isBlank()) {
-            return Arrays.stream(str.split("\\s+")).filter(s -> !s.isEmpty()).collect(Collectors.toSet());
-        }
-
-        return Set.of();
     }
 }

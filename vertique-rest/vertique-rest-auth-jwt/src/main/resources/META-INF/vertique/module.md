@@ -520,8 +520,11 @@ authorization cache from the token claims.
 | `permissions` | `PermissionBasedAuthorization` | Auth0 |
 
 Each claim accepts either a JSON array (`["read", "write"]`) or a space-delimited string
-(`"read write"`). Non-string array elements and blank values are skipped. A `null` user or a user
-with no principal is a no-op.
+(`"read write"`); a Java `Collection` counts as an array. Non-string elements and blank values are
+skipped, and a value of any other type (a number, boolean, JSON object or map) contributes nothing.
+The claims are parsed by
+`JwtClaimExtractor` in `dev.vertique:vertique-rest-security`, the same parser the default
+`SecurityClaimMapper` uses. A `null` user or a user with no principal is a no-op.
 
 The cache is there for application code that queries the Vert.x authorization API directly. The
 framework's opt-in import path — `VertxAuthorizationImportModule` in

@@ -285,8 +285,11 @@ AuthorizationClaims map(Map<String, Object> claims);
 ```
 
 The default implementation reads three conventions. Each claim may be a JSON array of strings or a
-single space-delimited string; non-string elements and blank values are skipped, and a missing claim
-contributes nothing.
+single space-delimited string (a Java `Collection` counts as an array); non-string elements and blank
+values are skipped, and a missing claim, or a value of any other type (a number, boolean, JSON object
+or map), contributes nothing. The claims are
+parsed by `JwtClaimExtractor`, the same parser `JwtClaimAuthorizationProvider` in
+`dev.vertique:vertique-rest-auth-jwt` uses, so both read a token the same way.
 
 | Claim | Authority kind |
 |---|---|
