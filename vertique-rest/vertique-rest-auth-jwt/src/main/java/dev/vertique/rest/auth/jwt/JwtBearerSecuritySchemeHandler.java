@@ -108,7 +108,8 @@ import java.util.stream.Collectors;
  *   <li>Inspects the failure exception to derive a stable {@code reasonCode}
  *       ({@code BEARER_MISSING}, {@code BEARER_MALFORMED}, {@code JWT_EXPIRED},
  *       {@code JWT_SIGNATURE_INVALID}, {@code JWT_AUDIENCE_INVALID}, {@code JWT_ISSUER_INVALID},
- *       {@code JWT_ALG_UNSUPPORTED}, or {@code JWT_INVALID}).</li>
+ *       {@code JWT_ALG_UNSUPPORTED} for an unsigned token or one whose algorithm the provider holds
+ *       no key for, or {@code JWT_INVALID}).</li>
  *   <li>Calls {@link CredentialRejectionReporter#report} with a pre-auth
  *       {@link JwksVerificationSource} (issuer/JWKS URI from config; kid/alg empty since the JWT
  *       header is not available before verification completes).</li>
@@ -149,7 +150,9 @@ public class JwtBearerSecuritySchemeHandler implements SecuritySchemeHandler, Ha
 
     /**
      * Suffix of {@link NoSuchKeyIdException#id()} when the provider holds no key for the token's
-     * algorithm at all; an unknown kid on an algorithm with keys ends with that kid instead.
+     * algorithm at all; an unknown kid on an algorithm with keys ends with that kid instead. A token
+     * whose kid is literally {@code <null>} is indistinguishable and is reported as an algorithm
+     * failure, which affects only the audit reason: the request is refused with 401 either way.
      */
     private static final String NO_KEY_ID_SUFFIX = "#<null>";
 
