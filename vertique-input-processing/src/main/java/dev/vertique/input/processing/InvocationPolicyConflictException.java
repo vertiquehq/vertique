@@ -3,15 +3,18 @@
 
 package dev.vertique.input.processing;
 
+import dev.vertique.core.exception.ConfigurationException;
+
 /**
  * Thrown by {@link InvocationPolicyResolver} when one {@link InvocationPolicySource} declares both
  * an additive chain and a skip flag on the same {@link PolicyAxis}.
  *
  * <p>An override may replace an inherited policy but never remove one: declaring both the additive
  * and the skip annotation on the same hierarchy-merged element is therefore always a configuration
- * error, never a resolvable precedence — one of the two annotations must be deleted.
+ * error, never a resolvable precedence — one of the two annotations must be deleted. It is a
+ * {@link ConfigurationException}, so it fails startup like every other configuration error.
  */
-public final class InvocationPolicyConflictException extends IllegalStateException {
+public final class InvocationPolicyConflictException extends ConfigurationException {
 
     private final PolicyAxis axis;
     private final String elementDescription;

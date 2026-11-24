@@ -240,8 +240,8 @@ class ResourceScanner {
             Class<?>[] validationGroups = (validateWith != null) ? validateWith.value() : null;
 
             // Resolve route-level canonicalization/sanitization chains through the shared resolver
-            // (dev.vertique.input.processing). InvocationPolicyConflictException (an
-            // IllegalStateException) propagates uncaught when the method or class declares both an
+            // (dev.vertique.input.processing). InvocationPolicyConflictException (a
+            // ConfigurationException) propagates uncaught when the method or class declares both an
             // additive and a skip annotation on the same axis.
             EffectiveInputPolicies routePolicies = ReflectiveInvocationPolicies.resolveRoute(method, clazz);
             List<Class<? extends Canonicalizer>> routeCanonicalizerChain = routePolicies.canonicalizers();

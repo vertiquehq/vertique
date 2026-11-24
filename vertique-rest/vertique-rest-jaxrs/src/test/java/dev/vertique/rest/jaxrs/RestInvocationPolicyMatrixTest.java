@@ -65,8 +65,8 @@ import org.junit.jupiter.params.provider.MethodSource;
  * {@code []} instead of rejecting the conflicting declaration.
  *
  * <p><b>Conflict rows (IP-14, IP-15, IP-17, IP-19).</b> Every conflict now asserts the specific
- * {@link InvocationPolicyConflictException} type (a subtype of the {@code IllegalStateException} the
- * pre-adoption bespoke checks threw) and that the message names both declaration sites. IP-17's
+ * {@link InvocationPolicyConflictException} type (a {@code ConfigurationException}; the
+ * pre-adoption bespoke checks threw {@code IllegalStateException}) and that the message names both declaration sites. IP-17's
  * fixture reuses the exact {@code IFoo}/{@code FooImpl} names {@code InvocationPolicyScenarios}'s own
  * carrier does, so its assertion pins the exact contract message literal via
  * {@link InvocationPolicyScenarios#expectedConflictMessage}; the other three rows use locally-named

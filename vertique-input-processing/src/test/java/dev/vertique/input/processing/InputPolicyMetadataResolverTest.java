@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.sanitization.Canonicalize;
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputValueContext;
@@ -195,15 +196,27 @@ class InputPolicyMetadataResolverTest {
     class ConflictDetection {
 
         @Test
-        @DisplayName("@Canonicalize + @SkipCanonicalization on same field throws IllegalStateException")
+        @DisplayName("@Canonicalize + @SkipCanonicalization on same field throws ConfigurationException")
         void fieldCanonicalizationConflictThrows() {
-            assertThrows(IllegalStateException.class, () -> resolver.resolve(ConflictingFieldDto.class));
+            assertThrows(ConfigurationException.class, () -> resolver.resolve(ConflictingFieldDto.class));
         }
 
         @Test
-        @DisplayName("@Sanitize + @SkipSanitization on same type throws IllegalStateException")
+        @DisplayName("@Sanitize + @SkipSanitization on same field throws ConfigurationException")
+        void fieldSanitizationConflictThrows() {
+            assertThrows(ConfigurationException.class, () -> resolver.resolve(ConflictingSanitizeFieldDto.class));
+        }
+
+        @Test
+        @DisplayName("@Canonicalize + @SkipCanonicalization on same type throws ConfigurationException")
+        void typeCanonicalizationConflictThrows() {
+            assertThrows(ConfigurationException.class, () -> resolver.resolve(ConflictingCanonicalizeTypeDto.class));
+        }
+
+        @Test
+        @DisplayName("@Sanitize + @SkipSanitization on same type throws ConfigurationException")
         void typeSanitizationConflictThrows() {
-            assertThrows(IllegalStateException.class, () -> resolver.resolve(ConflictingTypeDto.class));
+            assertThrows(ConfigurationException.class, () -> resolver.resolve(ConflictingTypeDto.class));
         }
     }
 
@@ -567,6 +580,18 @@ class InputPolicyMetadataResolverTest {
         @Canonicalize(TestTrimCanonicalizer.class)
         @SkipCanonicalization
         String bad;
+    }
+
+    static class ConflictingSanitizeFieldDto {
+        @Sanitize(TestStripControlsSanitizer.class)
+        @SkipSanitization
+        String bad;
+    }
+
+    @Canonicalize(TestTrimCanonicalizer.class)
+    @SkipCanonicalization
+    static class ConflictingCanonicalizeTypeDto {
+        String name;
     }
 
     @Sanitize(TestStripControlsSanitizer.class)

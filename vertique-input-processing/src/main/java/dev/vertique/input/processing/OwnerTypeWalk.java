@@ -123,7 +123,7 @@ final class OwnerTypeWalk {
      *                                {@code Map} value, a polymorphic subtype the base does not cover,
      *                                or one of the unroutable shapes {@link #checkPromotedFields}
      *                                documents
-     * @throws IllegalStateException if a reachable type declares conflicting policy annotations
+     * @throws ConfigurationException if a reachable type declares conflicting policy annotations
      * @throws RuntimeException      if a reachable type has a generated processor that exists but
      *                               cannot be instantiated — a build defect, and failing at
      *                               registration is the point
