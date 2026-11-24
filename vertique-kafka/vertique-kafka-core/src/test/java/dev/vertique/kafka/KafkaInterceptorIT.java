@@ -400,8 +400,8 @@ public class KafkaInterceptorIT {
                 .toCompletableFuture()
                 .get();
 
-        waitForMessages(received, receivedBefore + 1, 10_000);
-        waitForRecordCompletions(completedBefore + 1, 10_000);
+        waitForMessages(received, receivedBefore + 1, 8_000);
+        waitForRecordCompletions(completedBefore + 1, 8_000);
 
         assertFalse(recordingInterceptor.onRecordCalls.isEmpty(), "onRecord should have been called at least once");
         assertTrue(
@@ -432,8 +432,8 @@ public class KafkaInterceptorIT {
                 .toCompletableFuture()
                 .get();
 
-        waitForMessages(received, sizeBefore + 1, 10_000);
-        waitForRecordCompletions(completedBefore + 1, 10_000);
+        waitForMessages(received, sizeBefore + 1, 8_000);
+        waitForRecordCompletions(completedBefore + 1, 8_000);
 
         assertFalse(recordingInterceptor.onSuccessCalls.isEmpty(), "onSuccess should have been called at least once");
         assertTrue(
@@ -464,7 +464,7 @@ public class KafkaInterceptorIT {
                 .toCompletableFuture()
                 .get();
 
-        waitForRecordCompletions(completedBefore + 1, 10_000);
+        waitForRecordCompletions(completedBefore + 1, 8_000);
 
         assertFalse(recordingInterceptor.onErrorCalls.isEmpty(), "onError should have been called at least once");
         assertTrue(
@@ -508,8 +508,8 @@ public class KafkaInterceptorIT {
                 .toCompletableFuture()
                 .get();
 
-        waitForMessages(received, sizeBefore + 1, 10_000);
-        waitForRecordCompletions(completedBefore + 2, 10_000);
+        waitForMessages(received, sizeBefore + 1, 8_000);
+        waitForRecordCompletions(completedBefore + 2, 8_000);
 
         // The skipped event should NOT be in the received list
         assertFalse(
@@ -544,8 +544,8 @@ public class KafkaInterceptorIT {
                 .toCompletableFuture()
                 .get();
 
-        waitForMessages(received, sizeBefore + 1, 10_000);
-        waitForRecordCompletions(completedBefore + 1, 10_000);
+        waitForMessages(received, sizeBefore + 1, 8_000);
+        waitForRecordCompletions(completedBefore + 1, 8_000);
 
         assertFalse(
                 recordingInterceptor.afterDispatchCalls.isEmpty(),
@@ -588,7 +588,7 @@ public class KafkaInterceptorIT {
                 .toCompletableFuture()
                 .get();
 
-        waitForRecordCompletions(completedBefore + 2, 10_000);
+        waitForRecordCompletions(completedBefore + 2, 8_000);
 
         assertTrue(
                 recoveringInterceptor.recoverCount.get() > recoverCountBefore,
@@ -630,7 +630,7 @@ public class KafkaInterceptorIT {
                 .toCompletableFuture()
                 .get();
 
-        waitForRecordCompletions(completedBefore + 2, 10_000);
+        waitForRecordCompletions(completedBefore + 2, 8_000);
 
         assertFalse(recordingInterceptor.onErrorCalls.isEmpty(), "onError should be called when recoverError declines");
         assertTrue(
