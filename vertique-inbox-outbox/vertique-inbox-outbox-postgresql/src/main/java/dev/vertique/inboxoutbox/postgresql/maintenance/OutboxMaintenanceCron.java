@@ -12,7 +12,10 @@ import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
 
 /**
- * Cron-scheduled implementation of {@link OutboxMaintenanceContract}. Delegates to
+ * INTERNAL framework seam — the cron entry point the framework wires for outbox maintenance; not
+ * an application contract and outside the maturity promise.
+ *
+ * <p>Cron-scheduled implementation of {@link OutboxMaintenanceContract}. Delegates to
  * {@link OutboxMaintenanceService} for the actual logic.
  *
  * <h2>Cadence</h2>

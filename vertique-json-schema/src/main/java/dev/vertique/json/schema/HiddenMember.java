@@ -26,7 +26,7 @@ import jakarta.annotation.Nullable;
  *                               a constructor, {@code of#1} for a static factory named {@code of});
  *                               {@code null} when the entry reports the type itself
  * @param marker                 the hiding marker or markers the declaration carries
- * @param hideableBySchemaHidden provisional: whether declaring {@code @Schema(hidden = true)}
+ * @param hideableBySchemaHidden whether declaring {@code @Schema(hidden = true)}
  *                               directly on the property's own field, or on its getter when the mapper
  *                               sees no field, makes this generator leave the property out at the
  *                               position where it is described; {@code false} for a type, an enum

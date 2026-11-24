@@ -160,7 +160,7 @@ The relay releases the entry's in-flight slot and schedules the next poll as soo
 
 The exception message names only the destination TYPE and reason category — never the offending target value — and carries no cause, so the relay's full-throwable failure log cannot leak target ids into observability pipelines. `ClaimScopeException` is not routed through `PgDbExceptionMapper`; callers can distinguish a misconfigured handler from a transient database error.
 
-**`PgInboxOutboxExceptionMapper` (stage-2, package-private):** `DefaultOutboxService.publish` and `DefaultInboxService.processOnce` wrap any `DataAccessException` that escapes the repository into `InboxOutboxPersistenceException` (via `PgInboxOutboxExceptionMapper.translate`), so these public APIs never expose raw `DataAccessException` to callers. The `retryable()` signal on `InboxOutboxPersistenceException` is `true` for transient and locking failures (deadlock, optimistic/pessimistic lock) and `false` for all other data-access failures. In `processOnce`, the wrapping `recover` is chained on the `tryInsert` future **before** the `.compose` that runs the caller's `work` supplier — so a business-logic failure from `work` propagates unwrapped. `OutboxMaintenanceException` (raised by the maintenance service for cleanup failures) extends `InboxOutboxTechnicalException` directly and is not processed by `PgInboxOutboxExceptionMapper`.
+**`PgInboxOutboxExceptionMapper` (stage-2, package-private):** `DefaultOutboxService.publish` and `DefaultInboxService.processOnce` wrap any `DataAccessException` that escapes the repository into `InboxOutboxPersistenceException` (via `PgInboxOutboxExceptionMapper.translate`), so these public APIs never expose raw `DataAccessException` to callers. The `retryable()` signal on `InboxOutboxPersistenceException` is `true` for transient and locking failures (deadlock, optimistic/pessimistic lock) and `false` for all other data-access failures. In `processOnce`, the wrapping `recover` is chained on the `tryInsert` future **before** the `.compose` that runs the caller's `work` supplier — so a business-logic failure from `work` propagates unwrapped. `OutboxMaintenanceException` (an INTERNAL seam, raised by the maintenance service for cleanup failures) extends `InboxOutboxTechnicalException` directly and is not processed by `PgInboxOutboxExceptionMapper`.
 
 **Stale lease recovery:** A background cron job calls `reclaimStale(leaseTimeout)` to return rows stuck in `PROCESSING` beyond `leaseTimeoutMs`. Multiple relay nodes may share the same database safely.
 
@@ -227,14 +227,19 @@ Deserialized from `inboxOutbox.cleanup`.
 
 ---
 
-### `OutboxMaintenanceService`, `OutboxMaintenanceContract`, and `OutboxMaintenanceCron`
+### Framework seams
 
-The cluster-singleton maintenance path. `OutboxMaintenanceCron` is the `@CronJob` entry point (hence
+`OutboxMaintenanceService`, `OutboxMaintenanceContract`, `OutboxMaintenanceCron`,
+`OutboxMaintenanceException`, and `InboxOutboxPostgresqlComposeValidator` are public for the
+framework's wiring; their Javadoc marks them INTERNAL and they are outside this module's
+compatibility promise. Applications install `TransactionalMessagingPostgresqlModule` and
+`CronPersistenceModule`, tune the maintenance through configuration, and never call these types.
+
+The cluster-singleton maintenance path they implement: `OutboxMaintenanceCron` is the `@CronJob` entry point (hence
 this module's compile dependency on `dev.vertique:vertique-job-cron`); it delegates to
 `OutboxMaintenanceService`, which reclaims stale leases and applies the retention cleanups (published, dead letter, discarded, inbox) through
 `PgInboxOutboxRepository`; a failure message says how many of the four failed. `OutboxMaintenanceContract` is the service contract the cron target
-resolves. Applications install the module and tune the cron through configuration; they do not call
-these types.
+resolves.
 
 ## Database Schema
 

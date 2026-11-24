@@ -249,6 +249,11 @@ class ClientInterfaceScannerTest {
         Future<Item> call(@Url @MatrixParam("m") URI url);
     }
 
+    interface MatrixParamOnBodyClient {
+        @POST
+        Future<Item> call(@MatrixParam("m") String m);
+    }
+
     interface UrlWithDefaultValueClient {
         @GET
         Future<Item> call(@Url @DefaultValue("http://example.com") URI url);
@@ -864,6 +869,16 @@ class ClientInterfaceScannerTest {
     void urlWithMatrixParamOnSameParamRejected() {
         assertThatThrownBy(() -> ClientInterfaceScanner.scan(UrlWithMatrixParamOnSameClient.class))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("a @MatrixParam parameter without @Url is not recognized and is classified as BODY")
+    void matrixParamWithoutUrlIsClassifiedAsBody() {
+        Map<Method, ClientMethodMeta> metas = ClientInterfaceScanner.scan(MatrixParamOnBodyClient.class);
+
+        ClientMethodMeta meta = metas.values().iterator().next();
+        assertThat(meta.params()).hasSize(1);
+        assertThat(meta.params().get(0).source()).isEqualTo(ClientParamMeta.ParamSource.BODY);
     }
 
     @Test

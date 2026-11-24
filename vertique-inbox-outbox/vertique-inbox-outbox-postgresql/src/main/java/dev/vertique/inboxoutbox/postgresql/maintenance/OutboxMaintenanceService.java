@@ -18,7 +18,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Cluster-wide maintenance operations for the inbox/outbox tables. Scheduled as
+ * INTERNAL framework seam — the maintenance logic the framework's cron job runs; not an
+ * application contract and outside the maturity promise.
+ *
+ * <p>Cluster-wide maintenance operations for the inbox/outbox tables. Scheduled as
  * {@code SINGLE_INSTANCE} cron jobs by {@link OutboxMaintenanceCron}.
  *
  * <ol>

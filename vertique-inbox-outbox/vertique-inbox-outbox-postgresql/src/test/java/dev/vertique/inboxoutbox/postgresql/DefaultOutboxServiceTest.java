@@ -511,7 +511,7 @@ class DefaultOutboxServiceTest {
     }
 
     @Nested
-    @DisplayName("F3b row-carrier binding (PRD identity-002 §14.6/A9/F3b)")
+    @DisplayName("Row-carrier binding: the carrier id is generated per row and bound to the stored entry")
     class CarrierBinding {
 
         /** Namespace used by the recording test encoder/decoder pair. */

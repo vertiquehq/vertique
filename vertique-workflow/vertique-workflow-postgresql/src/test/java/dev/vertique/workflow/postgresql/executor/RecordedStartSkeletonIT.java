@@ -169,7 +169,8 @@ class RecordedStartSkeletonIT {
             WorkflowInstanceId id = node.record(start);
             assertThat(fixture.instanceOf(id).status()).isEqualTo("PENDING");
 
-            // And v1 deprecated, with its status moved back past the cooling window
+            // And v1 deprecated, with its status change backdated (retirement does not wait on it: there is no cooling
+            // period)
             await(store.transition(key, DefinitionStatus.AVAILABLE, DefinitionStatus.DEPRECATED));
             await(fixture.observer()
                     .preparedQuery("UPDATE workflow_definitions SET status_changed_at = status_changed_at"

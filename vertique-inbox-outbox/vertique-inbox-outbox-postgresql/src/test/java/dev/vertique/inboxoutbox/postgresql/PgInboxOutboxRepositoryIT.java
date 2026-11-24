@@ -374,7 +374,7 @@ public class PgInboxOutboxRepositoryIT {
 
     @Test
     @DisplayName("carrier_id round-trips through insert -> claimBatch: the claimed row's carrierId equals the"
-            + " producer-generated UUID (PRD identity-002 F3b, per-row carrier binding)")
+            + " producer-generated UUID (per-row carrier binding)")
     void carrierIdRoundTripsThroughInsertAndClaim(VertxTestContext ctx) {
         UUID carrierId = UUID.randomUUID();
         OutboxEntry entry = OutboxEntry.builder()

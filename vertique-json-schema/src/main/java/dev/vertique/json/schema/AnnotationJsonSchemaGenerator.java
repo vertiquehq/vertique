@@ -1020,7 +1020,7 @@ public final class AnnotationJsonSchemaGenerator {
      * name is not reported, and neither is a member the mapper's serialization introspection does not
      * know.
      *
-     * <p><strong>Provisional.</strong> This report may change before the OpenAPI publication wires it.
+     * <p>The OpenAPI publication consumes this report and refuses an output schema that carries a rename.
      *
      * <p>The list is ordered by {@link OutputRename#declaringType() declaringType}, then by {@link
      * OutputRename#member() member}, each by {@link String#compareTo(String)}, and is unmodifiable.
@@ -1082,7 +1082,7 @@ public final class AnnotationJsonSchemaGenerator {
      * registers for the declaration's own class, which reports the mix-in's target. Each entry names its
      * marker ({@link HidingMarker}) and whether {@code @Schema(hidden = true)} on the property's own field,
      * or on its getter when the mapper sees no field, would leave the property out ({@link
-     * HiddenMember#hideableBySchemaHidden()}, provisional).
+     * HiddenMember#hideableBySchemaHidden()}).
      *
      * <p>Each declaration is reported once however often the document reaches it; an entry reached at
      * several positions is hideable only when it is at every one. The list is ordered by {@link

@@ -6,8 +6,11 @@ package dev.vertique.inboxoutbox.postgresql.maintenance;
 import dev.vertique.inboxoutbox.exception.InboxOutboxTechnicalException;
 
 /**
- * Composite failure raised by {@link OutboxMaintenanceService#cleanup()} when one or more of the
- * three cleanup operations (published, dead-letter, inbox) failed.
+ * INTERNAL framework seam — the failure the maintenance service reports to the cron tracking
+ * record; not an application contract and outside the maturity promise.
+ *
+ * <p>Composite failure raised by {@link OutboxMaintenanceService#cleanup()} when one or more of the
+ * four cleanup operations (published, dead-letter, discarded, inbox) failed.
  *
  * <p>The first underlying failure is wired as the {@link Throwable#getCause() cause}, so log
  * formatters that follow standard cause-chain printing surface at least one repository error

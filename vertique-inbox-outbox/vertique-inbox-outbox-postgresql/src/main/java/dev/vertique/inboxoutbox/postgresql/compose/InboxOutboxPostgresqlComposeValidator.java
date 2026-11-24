@@ -11,7 +11,10 @@ import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 
 /**
- * Startup validator that asserts the application's Dagger graph is correctly composed for the
+ * INTERNAL framework seam — the startup composition check the framework runs; not an application
+ * contract and outside the maturity promise.
+ *
+ * <p>Startup validator that asserts the application's Dagger graph is correctly composed for the
  * cluster-singleton outbox/inbox maintenance jobs registered by
  * {@code TransactionalMessagingPostgresqlModule}.
  *
