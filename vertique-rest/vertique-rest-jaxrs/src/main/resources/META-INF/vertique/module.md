@@ -621,6 +621,7 @@ The framework's `ExceptionMapper<Throwable>`, pre-configured by `RestModule`:
 | `NotFoundException` (core.exception) | 404 | `ProblemDetail` |
 | `TooManyRequestsException` (core.exception) | 429 | `ProblemDetail`; when the exception carries a retry hint, a `Retry-After` header in whole seconds, rounded up and at least `1` |
 | `UnavailableException` (core.exception) | 503 | `ProblemDetail` |
+| `OperationTimeoutException` (core.exception) | 504 | `ProblemDetail` — an operation's own deadline elapsed; `ResilienceTimeoutException`, thrown when an inbound `@Timeout` expires, extends it. Like a 503, it is logged as a handled mapping (a warning without a stack), not as an unhandled fault |
 | `Throwable` (catch-all) | 500 | `ProblemDetail` with the fixed detail `"Internal Server Error"` — the exception message is never echoed. Logging is deferred to `ErrorPipeline` (see below) so a Vert.x 4xx fallback is not recorded as an unhandled server fault |
 
 A `ViolationCarrier` detail renders with `detail`, `type` and `args` and neither `pointer` nor `parameter` nor
@@ -1968,6 +1969,9 @@ section-name, shape, key, or non-string problem remains (see [Startup failures](
 | `CONTEXT_PARAM_CONFLICT` | a `@Context` parameter also carries a JAX-RS value-binding annotation — the two are mutually exclusive |
 | `UNSUPPORTED_JAXRS_CONTEXT_TYPE` | a `@Context` parameter declares a reserved JAX-RS type that is not supported (e.g. `UriInfo`, `HttpHeaders`); fails fast instead of injecting `null` |
 | `NON_INJECTABLE_CONTEXT_TYPE` | a `@Context` parameter's type is neither a built-in injectable nor a `ContextValue` subtype |
+| `CONTEXT_ON_RESOURCE_MEMBER` | `@Context` on a resource field or a resource constructor parameter, on the resource or any superclass — the framework injects `@Context` only into resource-method parameters and the application's dependency graph builds the resource, so the member would stay unset; the annotation processor reports the same at compile time |
+| `INVALID_PATH_TEMPLATE` | a path template with a `:regex` constraint declares a variable whose name is not a letter followed by letters and digits (for example `{user_id:[0-9]+}`, `{user-id:\d+}`) — such a template becomes one regex in which every variable, constrained or not, is a named group; a template with no `:regex` constraint is not checked by this rule; the annotation processor reports the same at compile time |
+| `CONFLICTING_CLASS_PATH` | a resource implements two interfaces whose class-level `@Path` values differ and neither the class nor a superclass declares a `@Path` to choose — declare `@Path` on the class; the annotation processor reports the same at compile time |
 | `REQUIRES_ACTION_INVALID` | a `@RequiresAction` declaration is malformed |
 | `REQUIRES_ACTION_POLICY_CONFLICT` | a `@RequiresAction` declaration conflicts with the operation's resolved security policy |
 | `UNRESOLVABLE_PARAM_CONVERTER` | a path/query/header/cookie/form parameter type — or a collection's element type, or a convertible `@BeanParam` field — has no converter resolvable by the `ParamConversionResolver` chain |

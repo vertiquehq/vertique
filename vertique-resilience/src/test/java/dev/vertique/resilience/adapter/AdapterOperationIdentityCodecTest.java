@@ -240,9 +240,7 @@ class AdapterOperationIdentityTest {
                 "dev.vertique.core.exception.UnavailableException",
                 unavailableRoot.getSuperclass().getName());
         assertEquals(
-                Set.of(
-                        load("dev.vertique.resilience.exception.ResilienceTimeoutException"),
-                        load("dev.vertique.resilience.exception.ResiliencePolicyException")),
+                Set.of(load("dev.vertique.resilience.exception.ResiliencePolicyException")),
                 Set.of(technicalRoot.getPermittedSubclasses()));
         assertEquals(
                 Set.of(
@@ -253,7 +251,8 @@ class AdapterOperationIdentityTest {
                 Set.of(unavailableRoot.getPermittedSubclasses()));
 
         Map<String, String> expectedParents = Map.of(
-                "dev.vertique.resilience.exception.ResilienceTimeoutException", technicalRoot.getName(),
+                "dev.vertique.resilience.exception.ResilienceTimeoutException",
+                        "dev.vertique.core.exception.OperationTimeoutException",
                 "dev.vertique.resilience.exception.ResiliencePolicyException", technicalRoot.getName(),
                 "dev.vertique.resilience.exception.CircuitOpenException", unavailableRoot.getName(),
                 "dev.vertique.resilience.exception.BulkheadRejectedException", unavailableRoot.getName(),

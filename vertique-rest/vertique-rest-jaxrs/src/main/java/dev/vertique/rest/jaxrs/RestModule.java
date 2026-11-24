@@ -15,6 +15,7 @@ import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.exception.ConflictException;
+import dev.vertique.core.exception.OperationTimeoutException;
 import dev.vertique.core.exception.TooManyRequestsException;
 import dev.vertique.core.exception.UnavailableException;
 import dev.vertique.core.exception.ValidationException;
@@ -366,6 +367,8 @@ public abstract class RestModule {
      *   <li>{@link ConflictException} (409) — request conflicts with current resource state</li>
      *   <li>{@code dev.vertique.core.exception.NotFoundException} (404) — requested resource does not exist</li>
      *   <li>{@link UnavailableException} (503) — transient service/dependency unavailability</li>
+     *   <li>{@link OperationTimeoutException} (504) — an operation's own deadline elapsed, for example an
+     *       inbound {@code @Timeout}</li>
      *   <li>{@link Throwable} (500) — fallback for all unhandled exceptions</li>
      * </ul>
      *
@@ -471,6 +474,10 @@ public abstract class RestModule {
                         .build())
                 .on(DecoderChainRefusedException.class, ex -> Response.status(500)
                         .entity(ProblemDetail.of(500, "Internal Server Error"))
+                        .type("application/problem+json")
+                        .build())
+                .on(OperationTimeoutException.class, ex -> Response.status(504)
+                        .entity(ProblemDetail.of(504, ex.getMessage()))
                         .type("application/problem+json")
                         .build())
                 .on(

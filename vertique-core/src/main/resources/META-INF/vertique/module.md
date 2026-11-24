@@ -1477,7 +1477,8 @@ VertiqueException (RuntimeException)
 ├── NotFoundException                       — resource absent
 ├── ConfigurationException                  — startup/wiring/contract error
 ├── TechnicalException                      — runtime/infrastructure failure
-│   └── UnavailableException                — capability currently unavailable
+│   ├── UnavailableException                — capability currently unavailable
+│   └── OperationTimeoutException           — an operation's own deadline elapsed
 ├── TooManyRequestsException                — rate/quota limit exceeded (429 analogue of
 │                                              UnavailableException's 503 role) — extends
 │                                              VertiqueException directly, never ValidationException/
@@ -1507,6 +1508,7 @@ The default mapper in `dev.vertique:vertique-rest-jaxrs` registers these core ty
 | `ConflictException` | 409 |
 | `TooManyRequestsException` | 429 |
 | `UnavailableException` | 503 |
+| `OperationTimeoutException` | 504 |
 | `Throwable` (fallback) | 500 |
 
 Mapping is hierarchy-aware, so a subclass inherits its nearest registered ancestor's status.

@@ -457,6 +457,9 @@ Behavior for a dispatch through the generated or proxy client:
   `Authorizer` is called once with only the declared action. A local denial never reaches it.
 - **Failures.** A denial, a throwing or `null` evaluation, a `null` or failed future are all
   non-recoverable denials; `recoverError` cannot turn them into success.
+- **Correlation.** The decision event carries the bound correlation. When none is bound, the gate mints a
+  generated, joinable key (source `generated:service-authorization`), as the action path does. Earlier releases
+  used the unbound sentinel on the typed path, so those events carried the reserved `unavailable` source event id.
 - **Deadline.** An `Authorizer` whose future has not settled within `security.authz.gateDeadlineMs`
   (default `5000`; the same key bounds the REST, WebSocket and MCP authorization gates, which read it
   through the opt-in `AuthorizationGateConfigModule`, while the services module always reads it) is denied with

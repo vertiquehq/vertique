@@ -438,6 +438,7 @@ public class JaxRsRouteRegistrar {
         // scan violations) before any route is registered. Scanning is decoupled from registration so
         // the registration order can be chosen by path specificity in phase 2.
         for (Object resource : resources) {
+            routeViolations.addAll(ResourceClassValidator.validate(resource.getClass()));
             allMethods.addAll(scanner.scanResource(resource, securityViolations));
         }
 
@@ -459,6 +460,7 @@ public class JaxRsRouteRegistrar {
         for (ResourceMethodMeta meta : registrationOrder) {
             // Validate: at most one body parameter; form params and body params are mutually exclusive
             List<RouteRegistrationViolation> paramViolations = RouteValidator.validateMethodParams(meta);
+            paramViolations.addAll(RouteValidator.validatePathTemplate(meta));
             if (!paramViolations.isEmpty()) {
                 routeViolations.addAll(paramViolations);
                 continue;

@@ -214,6 +214,28 @@ public record RouteRegistrationViolation(String operationId, ViolationType type,
          * is {@code true}; without the opt-in, such an operation only produces a warning on the
          * owning application mount, and startup succeeds.
          */
-        NO_EXPLICIT_SECURITY_POLICY
+        NO_EXPLICIT_SECURITY_POLICY,
+
+        /**
+         * A route's path template declares, in a template that carries a {@code :regex} constraint, a
+         * variable whose name a regex group cannot carry (it is not a letter followed by letters and
+         * digits, for example {@code user_id}, {@code user-id}, {@code user.id}). Such a template is
+         * registered as one anchored regex in which every variable is a named group, so the name would
+         * otherwise fail route creation with a raw pattern error.
+         */
+        INVALID_PATH_TEMPLATE,
+
+        /**
+         * {@code @Context} is declared on a resource field or on a resource constructor parameter. The
+         * framework injects {@code @Context} only into resource-method parameters, and the application's
+         * dependency graph builds the resource, so the member would stay unset.
+         */
+        CONTEXT_ON_RESOURCE_MEMBER,
+
+        /**
+         * A resource implements two interfaces whose class-level {@code @Path} values differ, and
+         * neither the resource nor a superclass declares a {@code @Path} to choose between them.
+         */
+        CONFLICTING_CLASS_PATH
     }
 }

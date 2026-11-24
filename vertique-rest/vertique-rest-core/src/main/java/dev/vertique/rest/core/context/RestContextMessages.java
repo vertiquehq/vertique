@@ -88,4 +88,26 @@ public final class RestContextMessages {
                         + " and types marked @ContextValue (bound in ContextHolder).",
                 paramTypeSimpleName, resourceClassName, methodName);
     }
+
+    /**
+     * Returns the error message when {@code @Context} sits on a resource field or a resource
+     * constructor parameter. The framework injects {@code @Context} only into resource-method
+     * parameters; the resource itself is built by the application's dependency graph, so such a member
+     * would stay unset.
+     *
+     * <p>Used by the runtime resource-class validator in {@code vertique-rest-jaxrs} and the
+     * compile-time resource-member validator in {@code vertique-codegen-jaxrs}.
+     *
+     * @param resourceClassName the simple name of the class that declares the member
+     * @param memberDescription what carries the annotation, for example {@code "field 'uriInfo'"} or
+     *                          {@code "parameter 1 of a constructor"}
+     * @return the formatted error message
+     */
+    public static String contextOnResourceMember(String resourceClassName, String memberDescription) {
+        return String.format(
+                "@Context on %s of %s is never injected: the framework injects @Context only into"
+                        + " resource-method parameters, and the resource is built by the application's"
+                        + " dependency graph. Declare it as a resource-method parameter.",
+                memberDescription, resourceClassName);
+    }
 }

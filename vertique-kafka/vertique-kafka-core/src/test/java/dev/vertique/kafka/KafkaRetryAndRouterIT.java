@@ -572,7 +572,7 @@ public class KafkaRetryAndRouterIT {
                 .get();
 
         // Wait for eventual success; allow time for backoff (300ms) + redelivery overhead
-        waitFor(() -> retrySucceededById.containsKey(eventId), 20_000);
+        waitFor(() -> retrySucceededById.containsKey(eventId), 15_000);
 
         assertTrue(retrySucceededById.containsKey(eventId), "Event should eventually succeed after one retry");
         AtomicInteger counter = perEventAttempts.get(eventId);
@@ -617,8 +617,8 @@ public class KafkaRetryAndRouterIT {
                     AtomicInteger counter = perEventAttempts.get(exhaustId);
                     return counter != null && counter.get() >= 3;
                 },
-                25_000);
-        waitFor(() -> exhaustSucceededById.containsKey(normalId), 15_000);
+                12_000);
+        waitFor(() -> exhaustSucceededById.containsKey(normalId), 6_000);
 
         AtomicInteger exhaustCounter = perEventAttempts.get(exhaustId);
         assertTrue(

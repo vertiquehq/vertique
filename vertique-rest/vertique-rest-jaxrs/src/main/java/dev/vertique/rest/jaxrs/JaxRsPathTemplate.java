@@ -3,6 +3,7 @@
 
 package dev.vertique.rest.jaxrs;
 
+import dev.vertique.rest.core.router.PathTemplateVariables;
 import java.util.regex.Pattern;
 
 /**
@@ -30,13 +31,11 @@ import java.util.regex.Pattern;
 final class JaxRsPathTemplate {
 
     /**
-     * Matches a single JAX-RS path variable {@code {name}} or {@code {name:regex}}. Group 1 is the
-     * variable name; group 2 (optional) is the regex constraint without the leading colon. The regex
-     * portion allows nested braces (e.g. {@code \d{3}}) via a reluctant balanced match on non-brace and
-     * brace-delimited runs.
+     * Matches a single JAX-RS path variable {@code {name}} or {@code {name:regex}}: group 1 is the
+     * variable name, group 2 (optional) the regex constraint. Shared with the annotation processor, so
+     * both read one grammar.
      */
-    private static final Pattern VARIABLE =
-            Pattern.compile("\\{\\s*(\\w[\\w.-]*)\\s*(?::\\s*((?:[^{}]|\\{[^{}]*})+))?\\s*}");
+    private static final Pattern VARIABLE = PathTemplateVariables.VARIABLE;
 
     private final boolean regex;
     private final String vertxValue;
