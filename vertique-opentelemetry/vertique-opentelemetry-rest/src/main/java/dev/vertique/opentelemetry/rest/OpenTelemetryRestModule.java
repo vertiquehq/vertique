@@ -10,9 +10,10 @@ import dagger.Module;
  *
  * <p>Install this module in a Dagger component that also installs the JAX-RS REST module
  * ({@code vertique-rest-jaxrs}, for example through {@code RestModule}). Installing it beside
- * {@code RestCoreModule} alone enriches nothing: only the JAX-RS route registrar and router mount
- * run the contributed {@code OperationHandlerContributor} and {@code RequestInterceptor} sets, so
- * the per-operation and outcome enrichment applies to JAX-RS routes only.
+ * {@code RestCoreModule} alone enriches nothing: only the JAX-RS route registrar runs the
+ * contributed {@code OperationHandlerContributor} set, so the per-operation enrichment applies to
+ * JAX-RS routes only. The contributed {@code RequestInterceptor} set runs on the JAX-RS router
+ * mount and, when installed, on the WebSocket mount's upgrade requests.
  *
  * <pre>{@code
  * @Component(modules = {
