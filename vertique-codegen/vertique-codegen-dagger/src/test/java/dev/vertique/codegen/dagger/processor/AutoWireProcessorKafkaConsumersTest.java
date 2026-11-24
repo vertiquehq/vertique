@@ -11,10 +11,8 @@ import org.junit.jupiter.api.Test;
 /**
  * Tests that {@link AutoWireProcessor} generates {@code GeneratedKafkaConsumersModule} containing
  * {@code @Provides @IntoSet @KafkaConsumers Object} methods for classes annotated with
- * {@code @KafkaListener} or {@code @KafkaSource}.
- *
- * <p>Both markers are handled by a single collector; their bindings are unioned into the same
- * generated module.
+ * {@code @KafkaListener}. A class carrying only {@code @KafkaSource} methods (Model 1) gets no
+ * binding: the runtime finds those consumers through the service contract registry.
  */
 class AutoWireProcessorKafkaConsumersTest {
 
@@ -39,7 +37,7 @@ class AutoWireProcessorKafkaConsumersTest {
 
             import java.lang.annotation.*;
 
-            @Target(ElementType.TYPE)
+            @Target(ElementType.METHOD)
             @Retention(RetentionPolicy.RUNTIME)
             @Documented
             public @interface KafkaSource {
@@ -90,34 +88,36 @@ class AutoWireProcessorKafkaConsumersTest {
     }
 
     @Test
-    @DisplayName("@KafkaSource class with @Inject constructor generates @KafkaConsumers multibinding")
-    void kafkaSourceClass_withInjectConstructor_generatesBinding() {
+    @DisplayName("a class with a @KafkaSource method gets no @KafkaConsumers binding; Model 1 is found at runtime")
+    void kafkaSourceMethod_generatesNoBinding() {
         var result = ProcessorTestHarness.run(
                 new AutoWireProcessor(),
                 SourceFiles.inline("dev.vertique.kafka.KafkaListener", KAFKA_LISTENER_ANNOTATION),
                 SourceFiles.inline("dev.vertique.kafka.KafkaSource", KAFKA_SOURCE_ANNOTATION),
                 SourceFiles.inline("dev.vertique.kafka.KafkaConsumers", KAFKA_CONSUMERS_QUALIFIER),
-                SourceFiles.inline("dev.vertique.examples.kafka.OrderEventSource", """
+                SourceFiles.inline("dev.vertique.examples.kafka.OrderService", """
                         package dev.vertique.examples.kafka;
 
                         import dev.vertique.kafka.KafkaSource;
                         import jakarta.inject.Inject;
 
-                        @KafkaSource(topic = "order-events")
-                        public class OrderEventSource {
+                        public class OrderService {
                             @Inject
-                            OrderEventSource() {}
+                            OrderService() {}
+
+                            @KafkaSource(topic = "order-events")
+                            public void onOrder(String payload) {}
                         }
                         """));
 
         result.assertSuccess();
-        result.assertGeneratedSourceContains(GENERATED_MODULE_FQN, "orderEventSourceBinding");
-        result.assertGeneratedSourceContains(GENERATED_MODULE_FQN, "OrderEventSource");
+        org.junit.jupiter.api.Assertions.assertTrue(
+                result.compilation().generatedSourceFile(GENERATED_MODULE_FQN).isEmpty());
     }
 
     @Test
-    @DisplayName("both @KafkaListener and @KafkaSource classes appear in the same generated module")
-    void bothMarkers_appearsInSameModule() {
+    @DisplayName("a @KafkaListener class is bound while a sibling class with a @KafkaSource method is not")
+    void listenerBound_sourceMethodClassNotBound() {
         var result = ProcessorTestHarness.run(
                 new AutoWireProcessor(),
                 SourceFiles.inline("dev.vertique.kafka.KafkaListener", KAFKA_LISTENER_ANNOTATION),
@@ -135,22 +135,24 @@ class AutoWireProcessorKafkaConsumersTest {
                             UserEventConsumer() {}
                         }
                         """),
-                SourceFiles.inline("dev.vertique.examples.kafka.OrderEventSource", """
+                SourceFiles.inline("dev.vertique.examples.kafka.OrderService", """
                         package dev.vertique.examples.kafka;
 
                         import dev.vertique.kafka.KafkaSource;
                         import jakarta.inject.Inject;
 
-                        @KafkaSource(topic = "order-events")
-                        public class OrderEventSource {
+                        public class OrderService {
                             @Inject
-                            OrderEventSource() {}
+                            OrderService() {}
+
+                            @KafkaSource(topic = "order-events")
+                            public void onOrder(String payload) {}
                         }
                         """));
 
         result.assertSuccess();
         result.assertGeneratedSourceContains(GENERATED_MODULE_FQN, "userEventConsumerBinding");
-        result.assertGeneratedSourceContains(GENERATED_MODULE_FQN, "orderEventSourceBinding");
+        result.assertGeneratedSourceDoesNotContain(GENERATED_MODULE_FQN, "orderServiceBinding");
     }
 
     @Test

@@ -21,8 +21,8 @@ import javax.lang.model.util.Elements;
  *   <li>If the processor option {@code -Avertique.codegen.package} is set in the processing
  *       environment, that value is returned verbatim (overrides LCP logic).</li>
  *   <li>Otherwise, computes the longest common prefix (LCP) of the package names of the supplied
- *       origin elements. If only one element is supplied, its own package is used. If the
- *       packages share no common prefix (entirely disjoint top-level packages), a compiler error
+ *       origin elements. If every element is in the same package, that package is used, including
+ *       the unnamed package (an empty string). If the packages share no common prefix (entirely disjoint top-level packages), a compiler error
  *       is emitted and {@code null} is returned so the caller can abort emission.</li>
  * </ol>
  *
@@ -51,13 +51,19 @@ public final class PackageResolver {
      * <p>If the list is empty, this method returns {@code null}. Callers must not invoke their
      * emitters when no origins are present.
      *
-     * <p>If the computed LCP is empty (origins span entirely disjoint top-level packages) and no
+     * <p>When every origin is in one package that package is returned, and it may be the empty
+     * string for the unnamed package; callers must accept {@code ""} as a valid result and only
+     * treat {@code null} as failure.
+     *
+     * <p>If the origins are in different packages whose computed LCP is empty (entirely disjoint
+     * top-level packages, or the unnamed package mixed with a named one) and no
      * override option is set, a compiler error is emitted and {@code null} is returned so the
      * caller can abort emission for this round.
      *
      * @param origins the list of origin elements; must not be {@code null}
      * @param context the codegen context used for diagnostics
-     * @return the resolved package name, or {@code null} when no package can be determined
+     * @return the resolved package name (empty for the unnamed package), or {@code null} when no
+     *         package can be determined
      */
     public String resolve(List<? extends Element> origins, CodegenContext context) {
         if (origins.isEmpty()) {
@@ -69,10 +75,18 @@ public final class PackageResolver {
             return override;
         }
 
-        String lcp = origins.stream()
+        List<String> packages = origins.stream()
                 .map(o -> elements.getPackageOf(o).getQualifiedName().toString())
-                .reduce(PackageResolver::longestCommonPrefix)
-                .orElse("");
+                .distinct()
+                .toList();
+        if (packages.size() == 1) {
+            // Every origin shares one package; this includes the unnamed package (""), whose
+            // empty name is otherwise indistinguishable from "no common prefix".
+            return packages.get(0);
+        }
+
+        String lcp =
+                packages.stream().reduce(PackageResolver::longestCommonPrefix).orElse("");
 
         if (lcp.isEmpty()) {
             context.diagnostics()

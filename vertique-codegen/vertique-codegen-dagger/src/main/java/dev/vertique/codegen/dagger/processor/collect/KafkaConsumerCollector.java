@@ -10,13 +10,12 @@ import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.TypeElement;
 
 /**
- * Annotation-rooted collector for Kafka consumer classes annotated with {@code @KafkaListener}
- * or {@code @KafkaSource}.
+ * Annotation-rooted collector for Kafka consumer classes annotated with {@code @KafkaListener}.
  *
- * <p>Both marker annotations target the same
- * {@link dev.vertique.codegen.dagger.processor.Qualifier#KAFKA_CONSUMERS} qualifier and are
- * handled by a single collector. The two FQNs are iterated in one pass, and their discovered
- * bindings are unioned into a single list for emission.
+ * <p>Bindings go to the {@link dev.vertique.codegen.dagger.processor.Qualifier#KAFKA_CONSUMERS}
+ * qualifier. {@code @KafkaSource} is not a marker here: it targets methods, so a class-rooted
+ * binding can never come from it, and Model 1 consumers are found at runtime through the
+ * service contract registry rather than through {@code @KafkaConsumers}.
  *
  * <p>Concrete consumer classes must have exactly one {@code @Inject} constructor.
  *
@@ -31,7 +30,6 @@ import javax.lang.model.element.TypeElement;
 public final class KafkaConsumerCollector extends AnnotationRootedCollector {
 
     private static final String KAFKA_LISTENER_FQN = "dev.vertique.kafka.KafkaListener";
-    private static final String KAFKA_SOURCE_FQN = "dev.vertique.kafka.KafkaSource";
 
     /**
      * Constructs a {@code KafkaConsumerCollector} bound to the given context.
@@ -43,14 +41,13 @@ public final class KafkaConsumerCollector extends AnnotationRootedCollector {
     }
 
     /**
-     * Returns both Kafka marker annotation FQNs.
+     * Returns the Kafka marker annotation FQN.
      *
-     * @return a list containing {@code "dev.vertique.kafka.KafkaListener"} and
-     *         {@code "dev.vertique.kafka.KafkaSource"}
+     * @return a list containing {@code "dev.vertique.kafka.KafkaListener"}
      */
     @Override
     protected List<String> markerFqns() {
-        return List.of(KAFKA_LISTENER_FQN, KAFKA_SOURCE_FQN);
+        return List.of(KAFKA_LISTENER_FQN);
     }
 
     /**

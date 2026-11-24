@@ -15,7 +15,7 @@ Two framework qualifiers use the multibinding emit shape; one uses a direct sing
 
 | Marker | Discovery | Emitted binding |
 |--------|-----------|-----------------|
-| `@KafkaListener` / `@KafkaSource` | annotation-rooted | `@Provides @IntoSet @KafkaConsumers Object` |
+| `@KafkaListener` (classes) | annotation-rooted | `@Provides @IntoSet @KafkaConsumers Object` |
 | `DelayedJobExecutor<P,C>` impls | root-element scan | `@Provides @IntoSet @DelayedJobs Object` |
 | `@RestClient` interfaces | annotation-rooted | `@Provides @Singleton {Interface} provideXxx(RestClientFactory)` |
 
@@ -144,7 +144,7 @@ Validates `@Inject` constructor count (skipped for interfaces such as `@RestClie
 
 ### `KafkaConsumerCollector`
 
-Handles both `@KafkaListener` and `@KafkaSource` in a single pass (both map to `Qualifier.KAFKA_CONSUMERS`). Skips `@KafkaListener` interfaces with a compiler note — Model 3 routing interfaces use a `Class<?>` literal contribution that must remain manual.
+Handles `@KafkaListener` (maps to `Qualifier.KAFKA_CONSUMERS`). `@KafkaSource` is not a marker: it targets methods, so it never yields a class binding, and Model 1 consumers are found at runtime through the service contract registry. Skips `@KafkaListener` interfaces with a compiler note — Model 3 routing interfaces use a `Class<?>` literal contribution that must remain manual.
 
 ### `RestClientCollector`
 
@@ -347,7 +347,7 @@ By default, the generated module class is in the LCP package of the annotated ty
 
 ### Model 3 Kafka routers are NOT auto-wired
 
-`@KafkaListener` interfaces (Model 3 routing interfaces) are skipped by `KafkaConsumerCollector`. Their contribution to `@KafkaConsumers` is a `Class<?>` literal, not an instance, and is managed manually. Only `@KafkaListener`-annotated **classes** (Model 4) and `@KafkaSource`-annotated classes (Model 1) are auto-wired.
+`@KafkaListener` interfaces (Model 3 routing interfaces) are skipped by `KafkaConsumerCollector`. Their contribution to `@KafkaConsumers` is a `Class<?>` literal, not an instance, and is managed manually. Only `@KafkaListener`-annotated **classes** (Model 4) are auto-wired. `@KafkaSource` methods (Model 1) need no `GeneratedKafkaConsumersModule` entry; the runtime finds them through the service contract registry.
 
 ---
 
