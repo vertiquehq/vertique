@@ -1100,6 +1100,10 @@ final class ParameterExtractor {
      * itself the intermediate the engine walks. Only raw binary targets are excluded — see
      * {@link #isStructuredBodyTarget}.
      *
+     * <p>The engine binds a body inline in place of the framework's own decoders, so an application
+     * decoder that the priority order places ahead of them and that claims the body decodes it
+     * instead, and the engine does not see that body.
+     *
      * <p>This overload is used by {@link GeneratedJaxRsSupport} so that generated execution
      * plans can pass policies computed at codegen time.
      *
@@ -1125,6 +1129,16 @@ final class ParameterExtractor {
             log.warn(
                     "Unexpected multipart body on operation '{}'; use @FormParam or List<EntityPart> instead of a body parameter",
                     meta.operationId());
+        }
+
+        // The decoder chain is ordered by priority and the first decoder that claims the body decodes it.
+        // The inline binding below stands in for the built-in decoders only; an application decoder that
+        // sorts ahead of them is the one the chain would have picked, so it decodes the body.
+        if (objectProcessor != null && isStructuredBodyTarget(targetType)) {
+            RequestBodyDecoder applicationDecoder = claimingApplicationDecoder(targetType, contentType);
+            if (applicationDecoder != null) {
+                return applicationDecoder.decode(ctx, body, targetType, genericType);
+            }
         }
 
         // Two-phase processing for structured bodies when a processor is active
@@ -1287,6 +1301,36 @@ final class ParameterExtractor {
         // No decoder found — fail with 415 so the error pipeline produces a proper response
         // The message is fixed: the request's Content-Type is the caller's and must not be reflected.
         throw new jakarta.ws.rs.NotSupportedException("No RequestBodyDecoder for the request Content-Type");
+    }
+
+    /**
+     * Returns the decoder the chain would pick for this body when that decoder is an application
+     * decoder, or {@code null} when the first decoder to claim it is one of the four framework decoders
+     * (or none claims it).
+     *
+     * <p>The chain is walked in priority order and stops at the first claim, so an application decoder
+     * registered behind a framework decoder that claims the same body is never returned — it stays the
+     * fallback its priority makes it.
+     *
+     * @param targetType  the raw target class
+     * @param contentType the request {@code Content-Type}, or {@code null}
+     * @return the claiming application decoder, or {@code null}
+     */
+    @Nullable
+    private RequestBodyDecoder claimingApplicationDecoder(Class<?> targetType, @Nullable String contentType) {
+        for (RequestBodyDecoder decoder : decoders) {
+            if (decoder.canDecode(targetType, contentType)) {
+                return isFrameworkDecoder(decoder) ? null : decoder;
+            }
+        }
+        return null;
+    }
+
+    private static boolean isFrameworkDecoder(RequestBodyDecoder decoder) {
+        return decoder instanceof JsonRequestBodyDecoder
+                || decoder instanceof FormUrlencodedRequestBodyDecoder
+                || decoder instanceof TextRequestBodyDecoder
+                || decoder instanceof BinaryRequestBodyDecoder;
     }
 
     /**
