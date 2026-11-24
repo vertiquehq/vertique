@@ -282,8 +282,8 @@ silently, the framework refuses in two places.
   `application/octet-stream`. A probe value a decoder cannot answer is ignored.
 - **At request time** the same refusal is the backstop, for a content type the startup probe did not try: a
   request whose body such a decoder claims, in any content type, fails with a generic 500 problem response
-  before the decoder runs. The reason, which names the decoder and the route and never the request's content
-  type, is logged once per route at `WARN`; each refused request adds only the usual one-line mapped-error
+  before the decoder runs. The exception message is constant; the reason, which names the decoder and the route and
+  never the request's content type, is logged once per distinct reason at `WARN`; each refused request adds only the usual one-line mapped-error
   warning. A decoder whose `canDecode` throws is treated as not claiming the body, except on a route that
   declares a chain, where the request is refused the same way.
 

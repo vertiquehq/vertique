@@ -87,8 +87,7 @@ final class ParameterExtractor {
     private final RestContextResolution restContextResolution;
     private final @Nullable InputObjectProcessor objectProcessor;
     private final ConcurrentHashMap<java.lang.reflect.Type, Boolean> declaresBodyPolicies = new ConcurrentHashMap<>();
-    private final java.util.concurrent.atomic.AtomicBoolean decoderRefusalLogged =
-            new java.util.concurrent.atomic.AtomicBoolean();
+    private final Set<String> decoderRefusalLogged = ConcurrentHashMap.newKeySet();
 
     /**
      * The wire &rarr; Java property-name projection applied to every OBJECT body this route processes.
@@ -1360,14 +1359,16 @@ final class ParameterExtractor {
     }
 
     /**
-     * Logs the refusal once per route, at WARN with the decoder and route, and returns the exception that
+     * Logs each distinct refusal once per route, at WARN with the decoder and route, and returns the exception that
      * fails the request. The message carries no request value.
      */
     private DecoderChainRefusedException refuseDecoder(String message) {
-        if (decoderRefusalLogged.compareAndSet(false, true)) {
+        if (decoderRefusalLogged.add(message)) {
             log.warn("{}; requests whose body it claims are refused", message);
         }
-        return new DecoderChainRefusedException(message);
+        // The exception carries a constant message: the decoder and route are in the log only, so a mapper
+        // that echoes an exception message cannot publish them.
+        return new DecoderChainRefusedException("Request body refused");
     }
 
     /**

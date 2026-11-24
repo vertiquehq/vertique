@@ -870,9 +870,10 @@ public class JaxRsRouteRegistrar {
             ResourceMethodMeta meta, ResourceMethodMeta.ParamMeta param, List<RequestBodyDecoder> decoders) {
         Set<String> probes = new LinkedHashSet<>();
         List<String> consumes = meta.mediaTypes().consumes();
+        // An absent type reaches a decoder on a method the consumes gate does not check (GET, DELETE).
+        probes.add(null);
         if (consumes.isEmpty()) {
             // The route admits any application/* or text/* type; the request-time refusal covers the rest.
-            probes.add(null);
             probes.addAll(UNCONSTRAINED_PROBE_TYPES);
         }
         for (String declared : consumes) {
@@ -883,8 +884,13 @@ public class JaxRsRouteRegistrar {
                     .toLowerCase(Locale.ROOT);
             probes.add(bare);
             if (bare.contains("*")) {
-                // A wildcard admits every common type.
-                probes.addAll(UNCONSTRAINED_PROBE_TYPES);
+                // A wildcard admits the common types of its family: "*/*" all, "text/*" the text types.
+                String family = bare.startsWith("*") ? "" : bare.substring(0, bare.indexOf('/') + 1);
+                for (String common : UNCONSTRAINED_PROBE_TYPES) {
+                    if (common.startsWith(family)) {
+                        probes.add(common);
+                    }
+                }
             }
         }
         for (String contentType : probes) {

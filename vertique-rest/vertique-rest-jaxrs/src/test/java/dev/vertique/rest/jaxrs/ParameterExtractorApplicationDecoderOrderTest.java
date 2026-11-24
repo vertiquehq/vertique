@@ -4,12 +4,10 @@
 package dev.vertique.rest.jaxrs;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -285,8 +283,7 @@ class ParameterExtractorApplicationDecoderOrderTest {
         for (String contentType : List.of("application/json", "application/vnd.api+json", "Application/JSON; v=2")) {
             ConfigurationException failure =
                     assertThrows(ConfigurationException.class, () -> decode(extractor, contentType));
-            assertTrue(failure.getMessage().contains(ApplicationDecoder.class.getName()), failure.getMessage());
-            assertFalse(failure.getMessage().contains(contentType), "the message carries no request value");
+            assertEquals("Request body refused", failure.getMessage(), "the exception message is constant");
         }
         assertEquals(0, application.decoded.get(), "the decoder must not run");
     }
