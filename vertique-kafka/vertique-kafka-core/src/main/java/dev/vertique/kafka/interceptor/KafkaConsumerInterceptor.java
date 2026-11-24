@@ -47,7 +47,8 @@ import io.vertx.core.Future;
  *   <li>{@link #beforeDispatch} — returns a (possibly modified) context; can filter by setting
  *       {@code filtered=true}</li>
  *   <li>{@link #afterDispatch} — post-processing after successful dispatch; a failed {@link Future}
- *       is logged but does not affect the outcome</li>
+ *       is logged but does not affect the outcome. The callbacks of all interceptors are launched
+ *       in order and run in parallel, so one must not depend on another having finished</li>
  *   <li>{@link #recoverError} — called on failure; a succeeded {@link Future} means the error is
  *       handled (record committed); a failed {@link Future} proceeds with the normal error strategy</li>
  * </ul>

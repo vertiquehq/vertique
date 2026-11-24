@@ -21,6 +21,7 @@ import dev.vertique.kafka.interceptor.KafkaConsumerRecordView;
 import dev.vertique.kafka.interceptor.KafkaDispatchContext;
 import dev.vertique.kafka.interceptor.KafkaTerminalOutcome;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.util.ArrayList;
@@ -42,8 +43,8 @@ import org.slf4j.LoggerFactory;
  * <ul>
  *   <li>{@code runBeforeInterceptors} — sequential ordering, {@code filtered()} skip, and
  *       fail-fast on failure</li>
- *   <li>{@code runAfterInterceptors} — sequential ordering, recover-and-continue (failure is
- *       logged and the chain continues), and the exact WARN message format</li>
+ *   <li>{@code runAfterInterceptors} — launch in list order, parallel execution, recover-and-continue
+ *       (failure is logged and the others still run), and the exact WARN message format</li>
  *   <li>{@code runRecoverError} — first-wins recovery, later interceptors skipped after success</li>
  *   <li>Sync observers ({@code onRecord}, {@code onSuccess}, {@code onError},
  *       {@code onRecordCompleted}) — in-order invocation, and swallowing of exceptions,
@@ -407,6 +408,31 @@ class KafkaConsumerInterceptorChainTest {
                 tc.verify(() -> assertEquals(List.of("first", "second"), callLog));
                 tc.completeNow();
             }));
+        }
+
+        @Test
+        @DisplayName("an interceptor that has not settled does not hold back the next one, and the join waits for both")
+        void unsettledInterceptorDoesNotBlockTheNext(VertxTestContext tc) {
+            List<String> callLog = new ArrayList<>();
+            Promise<Void> slow = Promise.promise();
+            KafkaConsumerInterceptor first = new KafkaConsumerInterceptor() {
+                @Override
+                public Future<Void> afterDispatch(KafkaDispatchContext<?> ctx) {
+                    callLog.add("first-started");
+                    return slow.future();
+                }
+            };
+            KafkaConsumerInterceptorChain chain = new KafkaConsumerInterceptorChain(
+                    "c", List.of(first, new OrderRecordingInterceptor("second", callLog)));
+
+            Future<Void> joined = chain.runAfterInterceptors(ctx());
+
+            tc.verify(() -> {
+                assertEquals(List.of("first-started", "second"), callLog, "second starts while first is pending");
+                assertFalse(joined.isComplete(), "the join waits for the pending interceptor");
+            });
+            slow.complete();
+            joined.onComplete(tc.succeeding(v -> tc.completeNow()));
         }
 
         @Test
