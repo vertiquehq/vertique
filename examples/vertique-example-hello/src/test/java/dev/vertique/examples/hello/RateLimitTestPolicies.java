@@ -9,8 +9,7 @@ import io.vertx.core.json.JsonObject;
  * Shared {@code rateLimit.policies.hello-limited} fixture (T013).
  *
  * <p>{@code HelloResource#greetLimited} carries {@code @RateLimited}, and the aspect resolves its
- * policy handle at proxy-construction time (contracts/rate-limit-aop.md — constructor-time
- * fail-fast), so every {@code VertiqueAppExtension}-booted test in this module must declare this
+ * policy handle at proxy-construction time, so every {@code VertiqueAppExtension}-booted test in this module must declare this
  * policy, whether or not the test exercises the endpoint. {@link
  * dev.vertique.examples.hello.RateLimitedGreetingIT} keeps its own local copy instead of using this
  * fixture, since its capacity is tightly coupled to its own request-count assertions.

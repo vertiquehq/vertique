@@ -858,7 +858,7 @@ class DurableContextPropagatorTest {
 
     /**
      * Creates a decoder declaring {@code acceptsExplicitCarrier() == false} for the given namespace —
-     * an authenticated-only namespace per ADR-0147.
+     * an authenticated-only namespace.
      *
      * @param namespace the namespace this decoder owns
      * @return the authenticated-only decoder

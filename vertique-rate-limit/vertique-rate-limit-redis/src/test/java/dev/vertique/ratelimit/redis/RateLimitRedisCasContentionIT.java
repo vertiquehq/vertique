@@ -36,8 +36,7 @@ import org.testcontainers.utility.DockerImageName;
  * barrier-fake ({@link ControllableRedis}) in front of the shared Redis connection — at most
  * {@code capacity} clients commit, every remaining client's outcome is exactly {@code
  * QUOTA_EXCEEDED} or {@code TIMEOUT} (never {@code CONTENTION_EXHAUSTED}), and a client held past
- * its own deadline still proves its late Bucket4j completion is discarded
- * (contracts/rate-limit-runtime.md, "Redis integration contract").
+ * its own deadline still proves its late Bucket4j completion is discarded.
  */
 @Testcontainers
 @ExtendWith(VertxExtension.class)

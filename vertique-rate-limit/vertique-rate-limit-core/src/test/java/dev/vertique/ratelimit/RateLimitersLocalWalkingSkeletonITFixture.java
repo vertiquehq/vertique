@@ -21,7 +21,7 @@ import java.time.Duration;
 /**
  * Builds a real Dagger graph installing {@link RateLimitCoreModule} alone, contributing one
  * enabled LOCAL TOKEN_BUCKET policy named {@code walking-skeleton} via the Dagger {@code
- * @IntoSet RateLimitPolicy} source (contracts/rate-limit-runtime.md, "Policy model"), plus an
+ * @IntoSet RateLimitPolicy} source, plus an
  * empty {@code rateLimit} config section (so {@link RateLimitCoreModule}'s config-tree binding
  * resolves to no config policies, leaving this fixture's programmatic policy untouched).
  */

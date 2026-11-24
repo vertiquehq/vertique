@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: EUPL-1.2
 
 /**
- * Guards the swagger-maven-plugin-jakarta realm isolation (vertique-dev#400, #327, #177).
+ * Guards the swagger-maven-plugin-jakarta realm isolation.
  *
  * Maven keys its plugin ClassRealm cache on the plugin coordinates and its dependency list,
  * exclusions included. Example modules whose plugin dependency lists are identical therefore share

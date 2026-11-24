@@ -3,7 +3,7 @@
 
 /**
  * RELEASE-001 S9 — mutable SNAPSHOT publication guard
- * (FR-REL-020, FR-REL-021, FR-REL-022, FR-REL-023; ADR 0006).
+ * (FR-REL-020, FR-REL-021, FR-REL-022, FR-REL-023).
  *
  * SNAPSHOT publication is the one product-owned workflow holding a write
  * credential, so the conditions under which it may run are the security

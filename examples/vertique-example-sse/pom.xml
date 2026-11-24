@@ -128,7 +128,7 @@ SPDX-License-Identifier: EUPL-1.2
                           Order is not load-bearing: FutureModelConverter unwraps Future<T> and
                           restarts resolution so SseModelConverter sees ReadStream<SseEvent>
                           regardless of registration order. Swagger's plugin path also loses
-                          declaration order (HashSet deep-copy). See vertiquehq/vertique-dev#395.
+                          declaration order (HashSet deep-copy).
                         -->
                         <modelConverterClass>dev.vertique.openapi.FutureModelConverter</modelConverterClass>
                         <modelConverterClass>dev.vertique.openapi.SseModelConverter</modelConverterClass>
@@ -142,7 +142,7 @@ SPDX-License-Identifier: EUPL-1.2
                         <!-- Realm salt (do not remove): matches no artifact and excludes nothing. Maven keys
                              the plugin ClassRealm cache on the dependency list including exclusions; this
                              per-module value gives each example its own realm, so Swagger's static
-                             ModelConverters singleton is not shared under -T1C. See vertique-dev#400. -->
+                             ModelConverters singleton is not shared under -T1C. -->
                         <exclusions>
                             <exclusion>
                                 <groupId>dev.vertique.build.plugin-realm-salt</groupId>

@@ -69,7 +69,7 @@ import org.junit.jupiter.api.extension.RegisterExtension;
  *
  * <p>The unit tests in {@code vertique-security-runtime} prove the capture, encode, decode and
  * tamper-rejection logic against an in-memory merge. This test closes the remaining gap named by
- * ADR-0232: the snapshot is written into the `metadata` JSONB column of a real `outbox` row against
+ * the design: the snapshot is written into the `metadata` JSONB column of a real `outbox` row against
  * the row's own `carrier_id`, read back through PostgreSQL, and only then decoded — so a column
  * round trip that mangled the signed document, or a carrier binding that did not survive
  * persistence, would fail here and nowhere else.

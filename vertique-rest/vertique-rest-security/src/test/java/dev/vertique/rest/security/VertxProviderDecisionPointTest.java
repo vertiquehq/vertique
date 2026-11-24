@@ -27,7 +27,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Unit tests for {@link VertxProviderDecisionPoint}.
  *
- * <p>Since ADR-0114 the decision point is a <strong>pure evaluator</strong>: it returns a decision
+ * <p>The decision point is a <strong>pure evaluator</strong>: it returns a decision
  * and emits nothing. These tests verify:
  * <ul>
  *   <li>Permit case: role match (OR semantics) → permitted decision with {@code PERMITTED} reason</li>
@@ -380,10 +380,10 @@ class VertxProviderDecisionPointTest {
         }
     }
 
-    // --- Pure evaluator: emits nothing (ADR-0114) ---
+    // --- Pure evaluator: emits nothing ---
 
     @Nested
-    @DisplayName("Pure evaluator: decide() emits no event (ADR-0114)")
+    @DisplayName("Pure evaluator: decide() emits no event")
     class PureEvaluator {
 
         @Test

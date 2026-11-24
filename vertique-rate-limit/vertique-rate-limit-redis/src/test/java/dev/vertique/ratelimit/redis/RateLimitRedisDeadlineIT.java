@@ -33,7 +33,7 @@ import org.testcontainers.utility.DockerImageName;
  * attempt Bucket4j's own unbounded retry loop would otherwise run — proven by holding the sole CAS
  * round-trip indefinitely (the strongest, most deterministic proof that an unbounded wait would
  * never resolve on its own) — and a Bucket4j completion delivered after the deadline has already
- * fired is discarded (contracts/rate-limit-runtime.md, "Redis integration contract").
+ * fired is discarded.
  */
 @Testcontainers
 @ExtendWith(VertxExtension.class)

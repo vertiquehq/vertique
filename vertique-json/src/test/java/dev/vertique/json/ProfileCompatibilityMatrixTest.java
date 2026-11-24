@@ -26,8 +26,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * TP-002 — pins the compatibility matrix (contracts/json-default-profile.md, "Compatibility
- * matrix") across raw Vert.x ({@link DatabindCodec#mapper()}), the reserved {@code system} profile,
+ * TP-002 — pins the compatibility matrix across raw Vert.x ({@link DatabindCodec#mapper()}), the reserved {@code system} profile,
  * and the reserved {@code vertique} profile, both obtained from a {@link
  * DefaultJsonMapperProfileRegistry} seeded with no application profiles.
  *

@@ -3,8 +3,7 @@
 // SPDX-License-Identifier: EUPL-1.2
 
 /**
- * RELEASE-001 — derives and verifies the public Maven publication inventory
- * (FR-REL-030, FR-REL-032; ADR-0007).
+ * Derives and verifies the public Maven publication inventory.
  *
  * Publication eligibility is *derived* from `release/publication-policy.json`:
  * the root parent, the standalone application parent, the BOM, every

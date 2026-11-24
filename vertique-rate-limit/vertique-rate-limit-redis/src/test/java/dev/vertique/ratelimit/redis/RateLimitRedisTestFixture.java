@@ -35,7 +35,7 @@ final class RateLimitRedisTestFixture {
     static final String POLICY_NAME = "redis-it-policy";
     static final String POLICY_REVISION = "r1";
 
-    /** At least 32 bytes (UTF-8), per contracts/rate-limit-runtime.md's "Storage identity" bound. */
+    /** At least 32 bytes (UTF-8): the minimum storage-identity secret length. */
     static final String SECRET = "rl-redis-it-secret-at-least-32-bytes!!";
 
     private RateLimitRedisTestFixture() {}

@@ -82,8 +82,7 @@ class RateLimiterDisabledPolicyTest {
      * RateLimiter#acquire} never touches a backend at all. A disabled {@code CLUSTERED} policy in a
      * LOCAL-only deployment (no Redis module installed, {@code backends} has no {@code CLUSTERED}
      * entry) must still resolve its handle and yield {@code DISABLED}, mirroring {@code
-     * validateBackendCoverage}'s own {@code policy.enabled() &&} exemption
-     * (contracts/rate-limit-runtime.md, "Backend seam").
+     * validateBackendCoverage}'s own {@code policy.enabled() &&} exemption.
      */
     @Test
     void shouldTreatDisabledPolicyAsBackendIndependentDisabledDecision() {

@@ -9,8 +9,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * P02/P03 review repair (T017, item 7): pure-unit golden vectors for {@link
- * RateLimitEdgeMiddleware#ipKeyComponent}'s IPv6 prefix-aggregation derivation
- * (contracts/rest-adapter.md, "Cardinality caution"), independent of a full HTTP round trip. Every
+ * RateLimitEdgeMiddleware#ipKeyComponent}'s IPv6 prefix-aggregation derivation, independent of a full HTTP round trip. Every
  * expected literal below was independently cross-checked against {@link
  * java.net.InetAddress#getByAddress}'s actual {@code getHostAddress()} rendering, which does not
  * compress a trailing zero-group run into {@code ::} the way a human-authored IPv6 literal would.
@@ -46,7 +45,7 @@ class RateLimitEdgeMiddlewareIpKeyComponentTest {
      * {@code getHostAddress()} form (T021 S1), exactly like a bare IPv4 address, so {@code
      * ::ffff:192.0.2.1} and {@code 192.0.2.1} always key identically — defense-in-depth only:
      * {@code RequestOriginCapturer.normalizeIp} already performs this normalization upstream for
-     * origin-capture flows (contracts/rest-adapter.md, "Cardinality caution").
+     * origin-capture flows.
      */
     @Test
     void shouldNormalizeAnIpv4MappedIpv6LiteralToItsDottedQuadForm() {

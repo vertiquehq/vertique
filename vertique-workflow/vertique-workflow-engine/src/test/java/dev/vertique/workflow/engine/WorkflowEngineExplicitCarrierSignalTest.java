@@ -100,7 +100,7 @@ class WorkflowEngineExplicitCarrierSignalTest {
      * absent-from-carrier namespace. */
     private static final String REGION_NAMESPACE = "region";
 
-    /** Third test namespace, owned by an authenticated-only decoder (ADR-0147 sanitization seam). */
+    /** Third test namespace, owned by an authenticated-only decoder (sanitization seam). */
     private static final String SECURE_NAMESPACE = "secure";
 
     /** Minimal {@link ContextValue} fixture for the authenticated-only sanitization-seam test. */
@@ -109,7 +109,7 @@ class WorkflowEngineExplicitCarrierSignalTest {
     /**
      * Returns a {@link DurableContextMetadataDecoder} for {@link SecureCtx} that declares
      * {@link DurableContextMetadataDecoder#acceptsExplicitCarrier()} {@code == false} — an
-     * authenticated-only namespace per ADR-0147 that must be stripped from a sender-supplied
+     * authenticated-only namespace that must be stripped from a sender-supplied
      * explicit signal carrier but must still fill normally from persisted instance metadata.
      */
     private static DurableContextMetadataDecoder<SecureCtx> secureDecoder() {
@@ -449,7 +449,7 @@ class WorkflowEngineExplicitCarrierSignalTest {
 
     @Test
     @DisplayName("signal(): the sanitization seam strips an authenticated-only namespace from an explicit "
-            + "carrier but persisted instance metadata still fills it normally (ADR-0147)")
+            + "carrier but persisted instance metadata still fills it normally")
     void signal_explicitCarrierWithAuthenticatedOnlyNamespace_strippedFromCarrierButInstanceFillUnsanitized(
             Vertx vertx, VertxTestContext ctx) {
         Harness h = buildHarness(Set.of(TenantCtxCodec.decoder(), secureDecoder()));

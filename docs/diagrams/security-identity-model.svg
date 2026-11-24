@@ -73,5 +73,5 @@ text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Ar
 <path class="dash" d="M490 148 L510 148" marker-end="url(#arrow)"/>
 <path class="dash" d="M440 445 L500 445 L500 380 L510 380" marker-end="url(#arrow)"/>
 
-<g><rect class="fill-amber" x="40" y="492" width="610" height="56" rx="8" stroke-width="0.5"/><text class="title amber-t" x="345" y="510" text-anchor="middle" dominant-baseline="central">Boundary — verifies credentials, is not an identity provider</text><text class="sub amber-s" x="345" y="530" text-anchor="middle" dominant-baseline="central">no user store · no passwords · no login / SAML flows · no server sessions (ADR-0063)</text></g>
+<g><rect class="fill-amber" x="40" y="492" width="610" height="56" rx="8" stroke-width="0.5"/><text class="title amber-t" x="345" y="510" text-anchor="middle" dominant-baseline="central">Boundary — verifies credentials, is not an identity provider</text><text class="sub amber-s" x="345" y="530" text-anchor="middle" dominant-baseline="central">no user store · no passwords · no login / SAML flows · no server sessions</text></g>
 </svg>

@@ -169,10 +169,10 @@ class DefaultJsonMapperProfileRegistryTest {
      * GH-240 — an application profile built on {@link JacksonDefaults#apply(ObjectMapper)} is
      * accepted.
      *
-     * <p>ADR-0135 and the module document both offer that helper as a sanctioned seed for an
+     * <p>The module document offers that helper as a sanctioned seed for an
      * application profile, while the probe used to round-trip a {@link JsonObject} carrying an
      * explicit null field. {@code apply} sets {@code NON_NULL} inclusion, so the field was dropped
-     * and structural equality failed — the registry rejected exactly the seed both documents
+     * and structural equality failed — the registry rejected exactly the seed the module document
      * promise. The probe now carries no null field, because omitting nulls is a
      * serialization-inclusion policy rather than structural corruption.
      */
@@ -180,7 +180,7 @@ class DefaultJsonMapperProfileRegistryTest {
     @DisplayName("application profile built on JacksonDefaults.apply() is accepted by the round-trip probe")
     void appProfileOnJacksonDefaults_acceptedByRoundTripProbe() {
         // Given: an application profile whose mapper is exactly JacksonDefaults.apply(new ObjectMapper()),
-        // the seed ADR-0135 and the module document both sanction.
+        // the seed the module document sanctions.
         JsonMapperProfile app =
                 JsonMapperProfiles.of(JsonProfileId.of("app-on-defaults"), JacksonDefaults.apply(new ObjectMapper()));
 
@@ -228,8 +228,7 @@ class DefaultJsonMapperProfileRegistryTest {
      * applyOpinionated} sets plus comment leniency; {@code system} caches one stable mapper instance;
      * both reserved factories copy the raw Vert.x factory's {@link StreamReadConstraints}; and the
      * registry rejects the retired {@code vertx} id (naming the rename) and any application profile
-     * activating Jackson default typing (contracts/json-default-profile.md, "Reserved profiles" and
-     * "`JsonMapperProfileRegistry` contract strengthening").
+     * activating Jackson default typing.
      */
     @Test
     @DisplayName("registry seeds exactly system/vertique/vertique-strict; system is stable, matches raw "

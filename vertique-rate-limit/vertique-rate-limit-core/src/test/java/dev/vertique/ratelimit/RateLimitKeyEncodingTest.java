@@ -16,8 +16,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * TP-001, TP-002, TP-005: {@link RateLimitKey}'s scalar allowlist, canonical encoding
- * distinctness, and 256-byte key-component byte bound
- * ({@code contracts/rate-limit-runtime.md}, "Key model", "Key-component byte bound").
+ * distinctness, and 256-byte key-component byte bound.
  */
 class RateLimitKeyEncodingTest {
 

@@ -860,8 +860,8 @@ public class PgJobRepositoryIT {
      * accident of the DDL.
      *
      * <p>This is the schema-side counterpart to the cron scheduler's producer-side invariant
-     * that every persisted cron execution carries a resolved, non-blank handler address
-     * (see ADR-0201). The scheduler unit tests use mock repositories, which happily accept a
+     * that every persisted cron execution carries a resolved, non-blank handler address.
+     * The scheduler unit tests use mock repositories, which happily accept a
      * {@code null} handler — so without this test nothing in the build would notice if the
      * constraint were dropped, and the composition defect behind issue #41 could return
      * silently. The delayed-job poller also dispatches to this column
@@ -887,7 +887,7 @@ public class PgJobRepositoryIT {
     /**
      * Builds a cron {@link JobExecution} whose {@code handler} is {@code null} — the exact shape
      * {@code CronScheduler.buildExecution} produced for every {@code service:} target before
-     * ADR-0201. Deliberately a local test helper rather than a {@code withHandler} accessor on
+     * that fix. Deliberately a local test helper rather than a {@code withHandler} accessor on
      * {@link JobExecution}: the production record has no reason to offer a way to null out an
      * address, and a test must not widen a public API to reach a case.
      */

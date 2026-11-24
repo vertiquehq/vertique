@@ -59,7 +59,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * in particular proves that a harness outside {@code dev.vertique.rest.jaxrs} gets the framework's
  * <em>real</em> {@code DefaultExceptionMapper} — the entire capability that widening the framework's
  * default exception mapper (on {@code RestModule}) to {@code public} once bought. With that
- * capability supplied by this module instead, the provider is package-private again (ADR-0205).
+ * capability supplied by this module instead, the provider is package-private again.
  *
  * <p>The second group covers the <b>ROOT middleware tier</b>. {@code JaxRsRouterMount} installs only
  * the API-scoped middlewares; the ROOT-scoped ones — the default scope — are installed above the

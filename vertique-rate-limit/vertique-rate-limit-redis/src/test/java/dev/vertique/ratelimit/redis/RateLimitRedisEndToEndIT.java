@@ -29,8 +29,7 @@ import org.testcontainers.utility.DockerImageName;
  * TP-003: the {@code CLUSTERED} backend's full-graph, first end-to-end wiring — a real Dagger
  * component composing {@code RateLimitCoreModule} and {@code RateLimitRedisModule} (not test
  * doubles for either), driven through {@code RateLimiters.limiter(name).acquire(...)} against a
- * real Testcontainers Redis, asserting both the decision and the physical Redis key format (§6.1)
- * (contracts/rate-limit-runtime.md, "Redis integration contract").
+ * real Testcontainers Redis, asserting both the decision and the physical Redis key format.
  */
 @Testcontainers
 @Timeout(value = 30, unit = TimeUnit.SECONDS)

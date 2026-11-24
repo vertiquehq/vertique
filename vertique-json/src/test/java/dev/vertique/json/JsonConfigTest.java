@@ -77,8 +77,7 @@ class JsonConfigTest {
      * systemProfile}); {@link JsonConfig#effectiveProfile()} floors at the reserved {@code vertique}
      * id and {@link JsonConfig#effectiveSystemProfile()} floors at the reserved {@link
      * JsonProfileId#SYSTEM} id; the retired {@code vertx} id is rejected by {@link
-     * JsonDefaultProfileValidator} naming the rename (contracts/json-default-profile.md, "the
-     * registry rejects it ... naming the rename").
+     * JsonDefaultProfileValidator} naming the rename.
      *
      * <p>Rows (contract table + T010 TP-001 Given/Then):
      *

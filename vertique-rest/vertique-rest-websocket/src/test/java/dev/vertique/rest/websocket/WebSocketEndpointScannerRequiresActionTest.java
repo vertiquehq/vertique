@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for the WebSocket {@code @RequiresAction} discovery and startup-validation rules in
- * {@link WebSocketEndpointScanner} (FR-AUTHZ-048, ADR-0115).
+ * {@link WebSocketEndpointScanner} (FR-AUTHZ-048).
  *
  * <p>Verifies that:
  * <ul>

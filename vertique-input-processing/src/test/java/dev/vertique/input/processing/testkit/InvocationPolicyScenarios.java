@@ -14,8 +14,7 @@ import java.util.Optional;
 import java.util.stream.Stream;
 
 /**
- * The IP-01..IP-19 invocation-policy scenario matrix (contract
- * {@code contracts/invocation-policy-resolver.md} L135-162; T016, issue #379).
+ * The IP-01..IP-19 invocation-policy scenario matrix (T016, issue #379).
  *
  * <p>Every row is expressed twice, from the same declarative description, for the two proofs that
  * consume this class:

@@ -140,8 +140,7 @@ SPDX-License-Identifier: EUPL-1.2
         <logback.version>1.6.7</logback.version>
         <slf4j.version>2.0.20</slf4j.version>
         <caffeine.version>3.3.1</caffeine.version>
-        <!-- Bucket4j is rate-limit-core's private local/cluster engine (contracts/rate-limit-runtime.md
-             "Boundary"): no com.bucket4j type may appear in a public signature. -->
+        <!-- Bucket4j is rate-limit-core's private local/cluster engine: no com.bucket4j type may appear in a public signature. -->
         <bucket4j.version>8.22.0</bucket4j.version>
 
         <!-- Test -->
@@ -1287,8 +1286,7 @@ SPDX-License-Identifier: EUPL-1.2
                         <redirectTestOutputToFile>${test.output.toFile}</redirectTestOutputToFile>
                         <!-- Neutralize an ambient VERTX_CONFIG_LOCATIONS so ConfigBootstrap and
                              example/archetype working-directory proofs resolve the default
-                             project-root config/ directory instead of a developer machine path
-                             (vertique-dev#20). A blank value is treated as unset. -->
+                             project-root config/ directory instead of a developer machine path. A blank value is treated as unset. -->
                         <environmentVariables>
                             <VERTX_CONFIG_LOCATIONS></VERTX_CONFIG_LOCATIONS>
                         </environmentVariables>
@@ -1321,7 +1319,7 @@ SPDX-License-Identifier: EUPL-1.2
                         <!-- Keep the same deterministic premain setup for integration-test forks. -->
                         <argLine>@{argLine} -javaagent:${project.build.directory}/mockito-agent.jar</argLine>
                         <redirectTestOutputToFile>${test.output.toFile}</redirectTestOutputToFile>
-                        <!-- Same VERTX_CONFIG_LOCATIONS neutralization as surefire (vertique-dev#20). -->
+                        <!-- Same VERTX_CONFIG_LOCATIONS neutralization as surefire. -->
                         <environmentVariables>
                             <VERTX_CONFIG_LOCATIONS></VERTX_CONFIG_LOCATIONS>
                         </environmentVariables>

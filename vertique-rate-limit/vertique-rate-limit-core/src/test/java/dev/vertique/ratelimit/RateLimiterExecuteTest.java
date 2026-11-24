@@ -29,8 +29,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * TP-003/TP-004: {@link RateLimiter#execute}/{@link KeyedRateLimiter#execute}'s guarded-wrapper
- * mapping and the cost-vs-capacity pre-engine validation (contracts/rate-limit-runtime.md, "Handle
- * semantics").
+ * mapping and the cost-vs-capacity pre-engine validation.
  */
 class RateLimiterExecuteTest {
 

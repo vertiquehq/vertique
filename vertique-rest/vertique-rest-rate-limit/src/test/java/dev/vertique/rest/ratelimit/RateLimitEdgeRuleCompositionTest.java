@@ -39,8 +39,7 @@ import org.mockito.ArgumentCaptor;
 
 /**
  * TP-003: two ordered rules — a permissive {@code IP} rule then a denying {@code HEADER} rule —
- * against a fake {@link RateLimiters} that records every {@code acquire(...)} call
- * (contracts/rest-adapter.md, "Rule composition semantics").
+ * against a fake {@link RateLimiters} that records every {@code acquire(...)} call.
  */
 class RateLimitEdgeRuleCompositionTest {
 
@@ -75,8 +74,7 @@ class RateLimitEdgeRuleCompositionTest {
     /**
      * P02/P03 review repair (T017, item 5): a rule's declared {@code cost} must not exceed its
      * referenced policy's capacity — validated at middleware construction time, before any request
-     * is ever admitted, mirroring the {@code RateLimiter#acquire} runtime check
-     * (contracts/rate-limit-runtime.md, "Handle semantics").
+     * is ever admitted, mirroring the {@code RateLimiter#acquire} runtime check.
      */
     @Test
     void shouldFailConstructionWhenRuleCostExceedsReferencedPolicyCapacity() {

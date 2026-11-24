@@ -42,7 +42,7 @@ import org.junit.jupiter.api.Test;
  * <p>Before this gate was made validator-independent, the scoped-OR and both-scopes shapes mounted
  * silently with {@code validator == null}: a scoped-OR mounted authenticated-but-not-scope-enforced,
  * and a both-scopes operation had its {@code @Authorized} scopes silently replaced by the
- * {@code @SecurityRequirement} scopes (ADR-0124's promised fail-closed defense was absent).
+ * {@code @SecurityRequirement} scopes (the promised fail-closed defense was absent).
  */
 class JaxRsRouteRegistrarMatrixGateTest {
 

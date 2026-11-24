@@ -28,7 +28,7 @@ import org.slf4j.LoggerFactory;
 /**
  * TP-001/TP-002/TP-006: {@link LocalRateLimitRegistry}'s bounded eviction, {@code
  * CAPACITY_EXHAUSTED} classification through policy {@code failureMode}, and per-policy budget
- * isolation (contracts/rate-limit-runtime.md, "Local engine contract", R2 amendment).
+ * isolation.
  */
 class LocalRateLimitRegistryTest {
 

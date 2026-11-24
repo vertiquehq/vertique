@@ -17,12 +17,12 @@ import org.junit.jupiter.api.Test;
 /**
  * Source-level dependency-boundary guard for {@code vertique-kafka-core}.
  *
- * <p>This test enforces the format-neutral-core invariant (ADR-0075): the core module must never
+ * <p>This test enforces the format-neutral-core invariant: the core module must never
  * acquire direct compile-scope imports of the Jackson serde engine, Avro, or Apicurio. Those
  * serialization concerns belong in dedicated sibling modules ({@code vertique-kafka-json} for Jackson
  * JSON, {@code vertique-kafka-avro} for Avro/Apicurio).
  *
- * <p>Per ADR-0107 (amends ADR-0075 §6), {@code com.fasterxml.jackson.annotation.*} imports are
+ * <p>{@code com.fasterxml.jackson.annotation.*} imports are
  * <em>permitted</em> in {@code src/main} for typed config records (e.g. {@code @JsonCreator},
  * {@code @JsonProperty}). The annotation package carries no runtime serde behavior; actual
  * deserialization is performed by the shared {@code ConfigParser} in {@code vertique-core}.
@@ -62,7 +62,7 @@ import org.junit.jupiter.api.Test;
 class CoreDependencyBoundaryTest {
 
     // --- Banned import prefixes ---
-    // NOTE: com.fasterxml.jackson.annotation is intentionally absent — permitted per ADR-0107.
+    // NOTE: com.fasterxml.jackson.annotation is intentionally absent — permitted.
     // Only the serde engine packages (databind, core, dataformat) remain banned.
 
     private static final List<String> BANNED_PREFIXES = List.of(
@@ -110,7 +110,7 @@ class CoreDependencyBoundaryTest {
             String report = String.join("\n  ", violations);
             fail("vertique-kafka-core src/main must not import Jackson serde engines (databind/core/dataformat),"
                     + " Avro, or Apicurio. Jackson annotation metadata (com.fasterxml.jackson.annotation) is"
-                    + " permitted for typed config records per ADR-0107. JSON serde belongs in"
+                    + " permitted for typed config records. JSON serde belongs in"
                     + " vertique-kafka-json; Avro in vertique-kafka-avro."
                     + "\n  Found " + violations.size() + " violation(s):\n  " + report);
         }

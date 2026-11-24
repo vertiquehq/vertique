@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: EUPL-1.2
 #
 # RELEASE-001 S2 — public file-repository staging integration test
-# (FR-REL-033, FR-REL-034, FR-REL-042; ADR-0007).
+# (FR-REL-033, FR-REL-034, FR-REL-042).
 #
 # Proves that an isolated build + the repository-owned publication tooling
 # stage EXACTLY the derived allowlist into a `file://` repository, with the

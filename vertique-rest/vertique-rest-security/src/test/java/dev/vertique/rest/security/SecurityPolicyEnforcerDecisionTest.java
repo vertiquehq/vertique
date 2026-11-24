@@ -46,8 +46,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 /**
  * Unit tests for {@link SecurityPolicyEnforcer#decide} — the T005 frozen programmatic decision
  * operation that mirrors the existing {@code createHandler} contract without a {@link
- * io.vertx.ext.web.RoutingContext} (ADR-0113 / ADR-0114; {@code
- * contracts/authorization-and-input-pipeline.md} § Frozen programmatic decision operation).
+ * io.vertx.ext.web.RoutingContext}.
  *
  * <p>Every row uses the canonical anonymous context or the bearer subject {@code "alice"} with
  * role {@code "ops"}, and isolates exactly one boundary of the frozen contract.

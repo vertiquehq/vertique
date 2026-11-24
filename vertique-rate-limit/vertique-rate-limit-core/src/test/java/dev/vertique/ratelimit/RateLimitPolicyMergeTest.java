@@ -27,7 +27,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 /**
  * TP-002 (review repair Carried-2): root configuration replaces a same-name Dagger {@code
  * @IntoSet}-contributed (programmatic) policy <strong>wholesale</strong> — fields never merge
- * across tiers (contracts/rate-limit-runtime.md, "Policy model"). {@code
+ * across tiers. {@code
  * RateLimitPolicy#mergeConfigOverProgrammatic} was internalized into {@code RateLimitCoreModule}
  * (no longer public API), so this merge is proven end-to-end through a real, minimal Dagger graph
  * over {@code RateLimitCoreModule} rather than by calling the (now module-private) resolution

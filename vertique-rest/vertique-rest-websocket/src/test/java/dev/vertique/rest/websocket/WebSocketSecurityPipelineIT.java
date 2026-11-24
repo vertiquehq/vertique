@@ -583,7 +583,7 @@ public class WebSocketSecurityPipelineIT {
      * A {@link WebSocketMount.Factory} built from {@link IdentityPipelineFactory} must install the
      * WebSocket identity handler, so a secured upgrade binds origin kind
      * {@link DispatchBoundary#WEBSOCKET} on the emitted {@link AuthorizationDecisionEvent} and never
-     * invokes identity-snapshot capture (ADR-0164). A REST control route on the same pipeline must
+     * invokes identity-snapshot capture. A REST control route on the same pipeline must
      * still bind {@link DispatchBoundary#REST} — origin-conditional policy can distinguish the two
      * transports (vertiquehq/vertique-dev#414).
      *
@@ -611,8 +611,7 @@ public class WebSocketSecurityPipelineIT {
                                     "the authorization decision must carry origin kind websocket");
                             assertFalse(
                                     capture.invoked(),
-                                    "identity-snapshot capture must never be invoked at WebSocket "
-                                            + "upgrade (ADR-0164)");
+                                    "identity-snapshot capture must never be invoked at WebSocket " + "upgrade");
                             return getRestControlOrigin(vertx, srv.actualPort(), TOKEN_ALICE_NO_ROLES);
                         })
                         .eventually(() -> srv.close()))

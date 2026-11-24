@@ -35,7 +35,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * TP-001: every completed rate-limit decision dispatches synchronously to each bound {@link
  * RateLimitObserver}; a throwing observer never affects the admission decision or later
  * observers; every emitted event carries only bounded policy-level fields, never the raw key,
- * caller identity, or an exception (contracts/rate-limit-runtime.md, "Observer SPI"; D016).
+ * caller identity, or an exception.
  */
 class RateLimitObserverDispatchTest {
 

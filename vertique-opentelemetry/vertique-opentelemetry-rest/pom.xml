@@ -31,7 +31,7 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-codegen-dagger</artifactId>
             <scope>provided</scope>
         </dependency>
-        <!-- OpenTelemetry API only — no SDK in compile scope (NFR-TEL-002) -->
+        <!-- OpenTelemetry API only — no SDK in compile scope -->
         <dependency>
             <groupId>io.opentelemetry</groupId>
             <artifactId>opentelemetry-api</artifactId>

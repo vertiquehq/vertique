@@ -39,7 +39,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 /**
  * TP-003: {@link RateLimiters}'s constructor eagerly walks every declared policy against the
  * bound backend map and fails application startup, at construction time and before any handle is
- * requested (contracts/rate-limit-runtime.md, "Startup validation"). Proven here by direct
+ * requested. Proven here by direct
  * construction, independent of the Dagger shutdown-step machinery that later forces this
  * constructor to run eagerly at bootstrap (T004).
  *

@@ -229,7 +229,7 @@ class SanitizationContractsTest {
                             + ")")
                     .collect(Collectors.toCollection(TreeSet::new));
             // promotedFields, promotedField, boundJavaNames and unroutableWireNames joined the
-            // ledger with ADR-0247, all as default methods: an implementation that ignores them is
+            // ledger, all as default methods: an implementation that ignores them is
             // unaffected, which is what keeps the addition compatible on a Stable interface.
             // polymorphicSubtypes joined the same way, as a default returning the empty set.
             assertEquals(

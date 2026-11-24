@@ -44,8 +44,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Contract tests for the isolated rate-limit OpenTelemetry adapter (contracts/observability.md,
- * "OpenTelemetry adapter").
+ * Contract tests for the isolated rate-limit OpenTelemetry adapter.
  */
 class RateLimitSpanObserverTest {
 

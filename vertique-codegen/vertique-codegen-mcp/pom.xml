@@ -18,7 +18,7 @@ SPDX-License-Identifier: EUPL-1.2
 
     <artifactId>vertique-codegen-mcp</artifactId>
     <name>Vertique Codegen MCP</name>
-    <description>Annotation processor (MCP-001) that turns @McpTool-annotated methods into a direct package-private
+    <description>Annotation processor that turns @McpTool-annotated methods into a direct package-private
         invoker with a typed input carrier, an immutable tool descriptor, and an explicit GeneratedMcpToolsModule
         Dagger multibinding — so tool dispatch needs no runtime scanning and no reflective invocation.</description>
 

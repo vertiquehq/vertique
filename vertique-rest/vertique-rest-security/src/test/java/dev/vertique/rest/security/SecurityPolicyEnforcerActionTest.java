@@ -50,8 +50,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 /**
- * Unit tests for {@link SecurityPolicyEnforcer}'s {@code @RequiresAction} composition (slice 12,
- * ADR-0113 / ADR-0114).
+ * Unit tests for {@link SecurityPolicyEnforcer}'s {@code @RequiresAction} composition (slice 12).
  *
  * <p>Verifies the two-argument {@code createHandler(SecurityPolicy, Optional&lt;ActionRef&gt;)} path,
  * which AND-composes the Jakarta role/scope gate with the action gate evaluated by the core
@@ -369,7 +368,7 @@ class SecurityPolicyEnforcerActionTest {
         @Test
         @DisplayName("PermitAll + empty action → null handler, no event (no action gate to compose)")
         void permitAll_noAction_handlerPermits() {
-            // PermitAll with no @RequiresAction is the established no-handler case (ADR-0114): the
+            // PermitAll with no @RequiresAction is the established no-handler case: the
             // route installs no authorization handler and emits nothing. The action-composing path is
             // entered only when a requiredAction is present; PermitAll + @RequiresAction is itself a
             // startup conflict (slice 11), so no PermitAll path ever runs the action gate.
