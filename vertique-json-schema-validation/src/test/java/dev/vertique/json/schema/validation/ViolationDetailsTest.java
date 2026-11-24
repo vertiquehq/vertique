@@ -567,10 +567,11 @@ class ViolationDetailsTest {
             assertThat(pathBeyondAReferenceChain(3)).isEqualTo("#/pet/name");
         }
 
-        @Test
-        @DisplayName("a reference chain far past the hop bound ends the run at the containing location")
-        void aLongReferenceChainEndsTheRun() {
-            assertThat(pathBeyondAReferenceChain(40)).isEqualTo("#/pet");
+        @ParameterizedTest(name = "{0} reference hops")
+        @CsvSource({"3, '#/pet/name'", "15, '#/pet/name'", "16, '#/pet/name'", "17, '#/pet'", "40, '#/pet'"})
+        @DisplayName("a chain of up to 16 local references keeps the declared names, and a longer one ends the run")
+        void theReferenceHopBound(int hops, String expectedPath) {
+            assertThat(pathBeyondAReferenceChain(hops)).isEqualTo(expectedPath);
         }
 
         @Test
@@ -618,12 +619,13 @@ class ViolationDetailsTest {
             assertThat(collectedPath(schema, "#/pet/na%zzme")).isEqualTo("#/pet");
         }
 
+        /** Builds a schema where the {@code pet} property reaches the declaring schema after {@code hops} follows. */
         private String pathBeyondAReferenceChain(int hops) {
             JsonObject definitions = new JsonObject();
-            for (int hop = 0; hop < hops; hop++) {
+            for (int hop = 0; hop < hops - 1; hop++) {
                 definitions.put("h" + hop, new JsonObject().put("$ref", "#/$defs/h" + (hop + 1)));
             }
-            definitions.put("h" + hops, Schemas.json("{'properties':{'name':{'type':'string'}}}"));
+            definitions.put("h" + (hops - 1), Schemas.json("{'properties':{'name':{'type':'string'}}}"));
             JsonObject schema = new JsonObject()
                     .put("properties", new JsonObject().put("pet", new JsonObject().put("$ref", "#/$defs/h0")))
                     .put("$defs", definitions);
