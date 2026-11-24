@@ -13,6 +13,7 @@ import dev.vertique.codegen.jaxrs.EffectiveMethodContract;
 import dev.vertique.codegen.jaxrs.EffectiveParamContract;
 import dev.vertique.codegen.jaxrs.EffectiveResourceContract;
 import dev.vertique.codegen.jaxrs.JaxRsParamSource;
+import dev.vertique.rest.core.router.PathTemplateVariables;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -99,6 +100,7 @@ public final class PathParamAlignmentValidator {
 
         // Step 3: Extract placeholder names (strips :regex suffix automatically)
         Set<String> placeholders = PathPlaceholders.extract(combinedPath);
+        reportInvalidRegexVariableNames(method, combinedPath);
 
         // Step 4: Collect @PathParam names from direct parameters and composites
         String methodName = method.getSimpleName().toString();
@@ -145,6 +147,7 @@ public final class PathParamAlignmentValidator {
 
         // Step 3: Extract placeholder names
         Set<String> placeholders = PathPlaceholders.extract(combinedPath);
+        reportInvalidRegexVariableNames(methodContract.concreteMethod(), combinedPath);
 
         // Step 4: Collect @PathParam names from effective param contracts and composites
         String methodName = methodContract.concreteMethod().getSimpleName().toString();
@@ -168,6 +171,21 @@ public final class PathParamAlignmentValidator {
                                 methodContract.concreteMethod(),
                                 Diagnostics.pathParamMissingPlaceholder(param, methodName));
             }
+        }
+    }
+
+    /**
+     * Emits an {@code ERROR} for each variable that a regex-constrained template cannot register: in a
+     * template with a {@code :regex} constraint every variable becomes a named regex group, so its name
+     * must be a letter followed by letters and digits. The runtime rejects the same templates at startup
+     * through the same rule.
+     *
+     * @param method       the method the diagnostic is reported on
+     * @param combinedPath the normalized class-plus-method path template
+     */
+    private void reportInvalidRegexVariableNames(ExecutableElement method, String combinedPath) {
+        for (String name : PathTemplateVariables.invalidRegexVariableNames(combinedPath)) {
+            ctx.diagnostics().error(method, PathTemplateVariables.invalidRegexVariableNameMessage(combinedPath, name));
         }
     }
 
