@@ -95,7 +95,9 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p><b>Graceful shutdown:</b> On {@link #stop(Promise)}, the poll timer is cancelled and any
  * open LISTEN connection is closed. In-flight delivery attempts are not interrupted — they
- * complete independently but their outcome callbacks may run after the verticle is stopped.
+ * complete independently but their outcome callbacks may run after the verticle is stopped. A
+ * claim that is still in flight when the relay stops delivers nothing: the entries it returns are
+ * released back to {@code PENDING}, available at once and with their attempt count unchanged.
  *
  * <p><b>Threading model:</b> Each verticle instance runs on a single Vert.x event loop context.
  * Timer callbacks, event bus handlers, and the in-flight counter are single-threaded within one
@@ -394,7 +396,11 @@ public class OutboxRelay extends AbstractVerticle {
                     Duration claimDuration = Duration.ofNanos(System.nanoTime() - claimStartedNanos);
                     // The entries are dispatched first: an error that escapes an observer must not strand a
                     // claimed batch until its lease expires.
-                    dispatchClaimed(records);
+                    if (running) {
+                        dispatchClaimed(records);
+                    } else {
+                        releaseClaimedAfterStop(records);
+                    }
                     notifyClaimCompleted(claimDuration, records.size());
                 } else {
                     log.warn(
@@ -410,6 +416,42 @@ public class OutboxRelay extends AbstractVerticle {
                 schedulePoll(again ? IMMEDIATE_MS : currentPollDelay);
             }
         }));
+    }
+
+    /**
+     * Gives back the entries of a claim that settled after {@link #stop(Promise)} ran. A stopped relay
+     * delivers nothing: the entries return to {@code PENDING}, available at once and with their attempt
+     * count unchanged, so the relay that runs next, or another node, takes them. A release that fails
+     * leaves the entry {@code PROCESSING} until stale lease recovery resets it.
+     *
+     * @param records the entries the late claim returned; may be empty
+     */
+    private void releaseClaimedAfterStop(List<OutboxRecord> records) {
+        if (records.isEmpty()) {
+            return;
+        }
+        log.info(
+                "OutboxRelay nodeId={}: stopped before {} claimed entries were dispatched; releasing them",
+                nodeId,
+                records.size());
+        for (OutboxRecord record : records) {
+            try {
+                // markUnresolvable resets an owned entry to PENDING without counting an attempt.
+                outboxRepository
+                        .markUnresolvable(record.id(), nodeId, Duration.ZERO)
+                        .onFailure(e -> log.warn(
+                                "OutboxRelay nodeId={}: could not release entryId={} after stop; stale lease recovery will: {}",
+                                nodeId,
+                                record.id(),
+                                e.getMessage()));
+            } catch (Exception | LinkageError | AssertionError e) {
+                log.warn(
+                        "OutboxRelay nodeId={}: could not release entryId={} after stop; stale lease recovery will: {}",
+                        nodeId,
+                        record.id(),
+                        e.getMessage());
+            }
+        }
     }
 
     /**
