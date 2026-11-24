@@ -200,8 +200,8 @@ the record of the degradation.
   migration) an exception the mapper throws refuses the recording and reaches the caller unchanged; nothing is written. A capture that
   fails on a best-effort path (a definition change, a history failure report) yields no actor and is logged by exception class.
 - **Actor text.** The actor id and the system reason are stored exactly as supplied: the workflow strips, cuts and validates nothing, and
-  a length limit is the store's concern. Whoever prints the text formats it: log lines use `EchoedNames.bounded` (64 code points, with
-  control characters, Unicode line and paragraph separators and unpaired surrogates replaced by `?`), and headers are percent-encoded.
+  a length limit is the store's concern. A log line that names an actor prints the id as it is, and headers are percent-encoded. Cleaning
+  untrusted text is the job of the boundary that accepts it, such as a REST or MCP endpoint, not of the workflow.
 - **Timers.** A timer command is logged as `SYSTEM` with the reason `timer`, whoever's segment recorded it.
 - **Observers.** A command recorded with no actor is reported to the executor observers as `ActorAbsent(kind)` with the command kind
   (`START`, `SIGNAL`, `RETRY` or `MIGRATION`) when the recording call succeeds; an anonymous caller is an actor and is not reported. A caller that owns the transaction

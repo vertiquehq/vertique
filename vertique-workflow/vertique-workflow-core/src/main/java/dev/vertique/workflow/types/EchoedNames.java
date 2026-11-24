@@ -8,8 +8,8 @@ package dev.vertique.workflow.types;
  * error message; it is not an application contract and sits outside the maturity promise.
  *
  * <p>Makes a caller- or document-supplied name safe to echo. At most {@value #MAX_CODE_POINTS} code
- * points are repeated, followed by a cut marker when the name was longer; control characters, the Unicode line and
- * paragraph separators and unpaired surrogates are replaced by a question mark, so a name can neither forge a log line nor
+ * points are repeated, followed by a cut marker when the name was longer; control characters and
+ * unpaired surrogates are replaced by a question mark, so a name can neither forge a log line nor
  * flood a message. Typed accessors on exceptions keep carrying the full identifiers.
  */
 public final class EchoedNames {
@@ -27,7 +27,7 @@ public final class EchoedNames {
      *
      * @param name the untrusted name; may be {@code null}
      * @return the name cut at {@value #MAX_CODE_POINTS} code points with a cut marker when longer, with
-     *     every ISO control character, line or paragraph separator and unpaired surrogate replaced by {@code ?}; the text {@code
+     *     every ISO control character and unpaired surrogate replaced by {@code ?}; the text {@code
      *     null} for a {@code null} name; never {@code null}
      */
     public static String bounded(String name) {
@@ -41,11 +41,7 @@ public final class EchoedNames {
             int codePoint = name.codePointAt(index);
             index += Character.charCount(codePoint);
             boolean unpairedSurrogate = codePoint >= Character.MIN_SURROGATE && codePoint <= Character.MAX_SURROGATE;
-            int type = Character.getType(codePoint);
-            boolean breaksLine = Character.isISOControl(codePoint)
-                    || type == Character.LINE_SEPARATOR
-                    || type == Character.PARAGRAPH_SEPARATOR;
-            out.appendCodePoint(breaksLine || unpairedSurrogate ? REPLACEMENT : codePoint);
+            out.appendCodePoint(Character.isISOControl(codePoint) || unpairedSurrogate ? REPLACEMENT : codePoint);
             echoed++;
         }
         if (index < name.length()) {

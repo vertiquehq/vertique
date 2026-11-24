@@ -27,7 +27,6 @@ import dev.vertique.workflow.source.SignalNoMatch;
 import dev.vertique.workflow.source.SignalSourceEvent;
 import dev.vertique.workflow.source.SignalSourceEvent.Outcome;
 import dev.vertique.workflow.source.SignalSourceRefusal;
-import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.ScopeKeyRules;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
@@ -468,7 +467,7 @@ final class SignalSourceRun<T> {
         log.warn(
                 "Source '{}' recorded no command for actor '{}': contract={}, signal={}, outcome={}",
                 plan.sourceName(),
-                EchoedNames.bounded(identity.actor().id()),
+                identity.actor().id(),
                 target == null ? null : target.contractName(),
                 target == null ? null : target.signalName(),
                 verdict.outcome());
