@@ -255,6 +255,12 @@ security annotations (`@RolesAllowed`, `@PermitAll`, `@DenyAll`, `@Authorized`) 
 `@OnOpen`, `@OnMessage`, `@OnClose`, and `@OnError` are method-level markers with no attributes. At
 most one method per annotation per endpoint; a second one fails startup. All four are optional.
 
+Lifecycle annotations are inherited. A handler declared on a superclass is a handler of the
+endpoint, and an override that does not repeat the annotation keeps it, so a shared base class can
+supply `@OnOpen` or `@OnError` for several endpoints. A superclass handler and a different method
+of the endpoint class for the same annotation count as two and fail startup. Earlier releases read only the
+methods the endpoint class declares itself and ignored lifecycle annotations on superclass methods.
+
 | Annotation | Fires when |
 |---|---|
 | `@OnOpen` | The handshake succeeded and the session context is bound. Runs before any frame is delivered. |

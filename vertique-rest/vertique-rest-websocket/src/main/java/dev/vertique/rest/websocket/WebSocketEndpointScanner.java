@@ -27,8 +27,10 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -40,7 +42,8 @@ import lombok.extern.slf4j.Slf4j;
  * <ul>
  *   <li>The class must be annotated with {@link WebSocketEndpoint}</li>
  *   <li>At most one method per lifecycle annotation ({@link OnOpen}, {@link OnMessage},
- *       {@link OnClose}, {@link OnError})</li>
+ *       {@link OnClose}, {@link OnError}), counting methods declared by superclasses; an overriding
+ *       method inherits the lifecycle annotations of the declaration it overrides</li>
  *   <li>Lifecycle methods must return {@code void} or {@code Future<Void>}</li>
  *   <li>{@link PathParam} names must match placeholders in the path template</li>
  *   <li>{@link OnMessage} may declare at most one payload-eligible parameter</li>
@@ -131,26 +134,27 @@ class WebSocketEndpointScanner {
         Method onClose = null;
         Method onError = null;
 
-        for (Method method : clazz.getDeclaredMethods()) {
-            if (method.isAnnotationPresent(OnOpen.class)) {
+        for (Method method : lifecycleCandidates(clazz)) {
+            List<Annotation> declared = AnnotationResolver.resolveMethodAnnotations(method, clazz);
+            if (hasAnnotation(declared, OnOpen.class)) {
                 if (onOpen != null) throw duplicateAnnotation("@OnOpen", clazz);
                 validateReturnType(method, "@OnOpen");
                 onOpen = method;
                 onOpen.setAccessible(true);
             }
-            if (method.isAnnotationPresent(OnMessage.class)) {
+            if (hasAnnotation(declared, OnMessage.class)) {
                 if (onMessage != null) throw duplicateAnnotation("@OnMessage", clazz);
                 validateReturnType(method, "@OnMessage");
                 onMessage = method;
                 onMessage.setAccessible(true);
             }
-            if (method.isAnnotationPresent(OnClose.class)) {
+            if (hasAnnotation(declared, OnClose.class)) {
                 if (onClose != null) throw duplicateAnnotation("@OnClose", clazz);
                 validateReturnType(method, "@OnClose");
                 onClose = method;
                 onClose.setAccessible(true);
             }
-            if (method.isAnnotationPresent(OnError.class)) {
+            if (hasAnnotation(declared, OnError.class)) {
                 if (onError != null) throw duplicateAnnotation("@OnError", clazz);
                 validateReturnType(method, "@OnError");
                 onError = method;
@@ -172,10 +176,11 @@ class WebSocketEndpointScanner {
         // --- Resolve @ValidateWith from @OnMessage method ---
         Class<?>[] validationGroups = null;
         if (onMessage != null) {
-            dev.vertique.core.validation.ValidateWith vw =
-                    onMessage.getAnnotation(dev.vertique.core.validation.ValidateWith.class);
-            if (vw != null) {
-                validationGroups = vw.value();
+            for (Annotation resolved : AnnotationResolver.resolveMethodAnnotations(onMessage, clazz)) {
+                if (resolved instanceof dev.vertique.core.validation.ValidateWith vw) {
+                    validationGroups = vw.value();
+                    break;
+                }
             }
         }
 
@@ -239,6 +244,42 @@ class WebSocketEndpointScanner {
                 requiredAction);
     }
 
+    // --- Lifecycle discovery ---
+
+    /**
+     * The methods that can carry a lifecycle annotation: every method declared by the endpoint class
+     * or one of its superclasses (up to, not including, {@link Object}), without compiler-generated
+     * bridges and without a declaration that a more specific method overrides. An overriding method
+     * stands for the declaration it replaces, and it inherits that declaration's annotations.
+     *
+     * @param clazz the endpoint class
+     * @return the candidate methods, most specific class first
+     */
+    private static List<Method> lifecycleCandidates(Class<?> clazz) {
+        List<Method> candidates = new ArrayList<>();
+        Set<Method> overridden = new HashSet<>();
+        for (Class<?> type = clazz; type != null && type != Object.class; type = type.getSuperclass()) {
+            for (Method method : type.getDeclaredMethods()) {
+                if (method.isBridge() || method.isSynthetic()) {
+                    continue;
+                }
+                candidates.add(method);
+                overridden.addAll(AnnotationResolver.inheritedDeclarations(method, clazz));
+            }
+        }
+        candidates.removeIf(overridden::contains);
+        return candidates;
+    }
+
+    private static boolean hasAnnotation(List<Annotation> annotations, Class<? extends Annotation> type) {
+        for (Annotation annotation : annotations) {
+            if (annotation.annotationType() == type) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // --- Security annotation placement (class-level only; WebSocket authorizes once at upgrade) ---
 
     /**
@@ -277,7 +318,7 @@ class WebSocketEndpointScanner {
                 continue;
             }
             for (Class<? extends Annotation> annotationType : LIFECYCLE_FORBIDDEN_SECURITY_ANNOTATIONS) {
-                if (m.isAnnotationPresent(annotationType)) {
+                if (hasAnnotation(AnnotationResolver.resolveMethodAnnotations(m, clazz), annotationType)) {
                     String annotationName = "@" + annotationType.getSimpleName();
                     throw new IllegalArgumentException(annotationName + " on WebSocket lifecycle method "
                             + clazz.getSimpleName() + "." + m.getName()
@@ -311,7 +352,8 @@ class WebSocketEndpointScanner {
             @Nullable Method onClose,
             @Nullable Method onError) {
         for (Method m : new Method[] {onOpen, onMessage, onClose, onError}) {
-            if (m != null && m.isAnnotationPresent(RequiresAction.class)) {
+            if (m != null
+                    && hasAnnotation(AnnotationResolver.resolveMethodAnnotations(m, clazz), RequiresAction.class)) {
                 throw new IllegalArgumentException("@RequiresAction on WebSocket lifecycle method "
                         + clazz.getSimpleName() + "." + m.getName()
                         + " is not supported: WebSocket authorizes once at upgrade, so @RequiresAction is"

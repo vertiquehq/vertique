@@ -44,8 +44,8 @@ import org.junit.jupiter.params.provider.MethodSource;
 /**
  * TP-001 (T020, issue #379): {@code WebSocketEndpointRegistrar} resolves and caches the IP-01..IP-19
  * invocation-policy matrix at registration, through
- * the package-private seam {@code cachedRoutePolicies(Method)} /
- * {@code cachedParameterPolicies(Method, int)}.
+ * the package-private seam {@code cachedRoutePolicies(Class, Method)} /
+ * {@code cachedParameterPolicies(Class, Method, int)}.
  *
  * <p>Every row is materialized as its own {@code @WebSocketEndpoint("/ws/ipNN/{id}")} nested class with
  * {@code @OnMessage void onMessage(String message, @PathParam("id") String id)} declared on the
@@ -115,6 +115,36 @@ class WebSocketInvocationPolicyMatrixTest {
                 "message must name the method: " + failure.getMessage());
     }
 
+    /** A message handler shared by endpoints that declare different class-level policies. */
+    static class SharedMessageHandler {
+        @OnMessage
+        public void onMessage(String message) {}
+    }
+
+    @Sanitize(A.class)
+    @WebSocketEndpoint("/ws/inherited-a")
+    static class InheritingEndpointA extends SharedMessageHandler {}
+
+    @Sanitize(B.class)
+    @WebSocketEndpoint("/ws/inherited-b")
+    static class InheritingEndpointB extends SharedMessageHandler {}
+
+    @Test
+    @DisplayName("an inherited handler is cached per endpoint class, each with its own class-level policy")
+    void cachesAnInheritedHandlerPerEndpointClass() throws Exception {
+        Method shared = SharedMessageHandler.class.getDeclaredMethod("onMessage", String.class);
+        WebSocketEndpointRegistrar registrar = registrar();
+
+        registrar.registerAll(Set.of(new InheritingEndpointA(), new InheritingEndpointB()), router);
+
+        assertEquals(
+                List.of(A.class),
+                registrar.cachedRoutePolicies(InheritingEndpointA.class, shared).sanitizers());
+        assertEquals(
+                List.of(B.class),
+                registrar.cachedRoutePolicies(InheritingEndpointB.class, shared).sanitizers());
+    }
+
     @ParameterizedTest(name = "{0}")
     @DisplayName("registerAll caches route/parameter policies matching the matrix")
     @MethodSource("dev.vertique.input.processing.testkit.InvocationPolicyScenarios#rows")
@@ -138,11 +168,11 @@ class WebSocketInvocationPolicyMatrixTest {
 
         assertDoesNotThrow(() -> registrar.registerAll(Set.of(endpoint), router), row.id() + " must register cleanly");
 
-        EffectiveInputPolicies route = registrar.cachedRoutePolicies(onMessage);
+        EffectiveInputPolicies route = registrar.cachedRoutePolicies(endpoint.getClass(), onMessage);
         assertEquals(chain(row.canonicalize().route()), route.canonicalizers(), row.id() + " route canonicalizers");
         assertEquals(chain(row.sanitize().route()), route.sanitizers(), row.id() + " route sanitizers");
 
-        EffectiveInputPolicies parameter = registrar.cachedParameterPolicies(onMessage, 0);
+        EffectiveInputPolicies parameter = registrar.cachedParameterPolicies(endpoint.getClass(), onMessage, 0);
         assertEquals(
                 chain(row.canonicalize().param()), parameter.canonicalizers(), row.id() + " parameter canonicalizers");
         assertEquals(chain(row.sanitize().param()), parameter.sanitizers(), row.id() + " parameter sanitizers");
