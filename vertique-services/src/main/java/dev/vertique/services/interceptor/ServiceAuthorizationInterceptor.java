@@ -450,17 +450,23 @@ public final class ServiceAuthorizationInterceptor implements ServiceInterceptor
      *     future carrying a non-recoverable {@link ForbiddenException}
      */
     private Future<ServiceDispatchContext> beforeTypedDispatch(ServiceDispatchContext ctx) {
-        CorrelationContext correlation = CorrelationContext.unbound();
+        CorrelationContext correlation = null;
         InvocationOrigin origin = InvocationOrigin.unspecified();
         SecurityContext caller = null;
         try {
-            // Capture everything request-scoped before any asynchronous step.
-            correlation = contextHolder.current(CorrelationContext.class).orElse(CorrelationContext.unbound());
+            // Capture everything request-scoped before any asynchronous step. When no ambient
+            // correlation is bound, mint a joinable UUID context, as the other authorization paths do.
+            correlation = contextHolder
+                    .current(CorrelationContext.class)
+                    .orElseGet(() -> CorrelationContext.generated("generated:service-authorization"));
             origin = currentInvocationOrigin();
             caller = contextHolder.current(SecurityContext.class).orElse(null);
             return evaluateTyped(ctx, correlation, origin, caller);
         } catch (RuntimeException e) {
             log.warn("[{}] Typed policy evaluation failed; denying (fail-closed)", ctx.address(), e);
+            if (correlation == null) {
+                correlation = CorrelationContext.generated("generated:service-authorization");
+            }
             return internalErrorDeny(ctx, caller, origin, correlation);
         }
     }
