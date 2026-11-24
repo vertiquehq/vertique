@@ -97,6 +97,9 @@ class ServedContractTest {
     /** A reference chain that comes back to a reference it already followed. */
     private static final String REFERENCE_CYCLE = "reference cycle";
 
+    /** A local reference whose target is not in the document. */
+    private static final String UNRESOLVED_REFERENCE = "does not resolve within the document";
+
     /** A Parameter Object or Link parameter key naming a hidden input of the operation. */
     private static final String HIDDEN_INPUT = "describes a hidden input";
 
@@ -293,6 +296,12 @@ class ServedContractTest {
                             pathItems.set("b", json("{\"$ref\": \"#/components/pathItems/a\"}"));
                         },
                         refused(REFERENCE_CYCLE, "/components/pathItems/b")));
+        rows.put(
+                "(23a) a Path Item reference to a component that does not exist",
+                row(
+                        root -> obj(root, "/paths")
+                                .set("/missing", json("{\"$ref\": \"#/components/pathItems/absent-zq7\"}")),
+                        refused(UNRESOLVED_REFERENCE, "/paths/~1missing").neverEchoing("absent-zq7")));
 
         // ----- OpenAPI version -----
         rows.put(

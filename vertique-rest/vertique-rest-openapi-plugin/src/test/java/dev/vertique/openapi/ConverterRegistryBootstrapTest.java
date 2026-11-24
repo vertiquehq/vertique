@@ -13,16 +13,31 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import org.junit.jupiter.api.Test;
+import java.util.function.Supplier;
+import java.util.stream.Stream;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Proves that converter construction, which the swagger Maven plugin performs before registration,
- * cannot race the first initialization of swagger-core's process-wide registry.
+ * Proves that the construction of each converter of this artifact, which the swagger Maven plugin
+ * performs before registration, cannot race the first initialization of swagger-core's
+ * process-wide registry.
  */
 class ConverterRegistryBootstrapTest {
 
-    @Test
-    void parallelConverterConstructionUsesOneSwaggerRegistry() throws Exception {
+    static Stream<Arguments> converterConstructors() {
+        return Stream.of(
+                Arguments.of("FutureModelConverter", (Supplier<Object>) FutureModelConverter::new),
+                Arguments.of("BigDecimalModelConverter", (Supplier<Object>) BigDecimalModelConverter::new),
+                Arguments.of("SseModelConverter", (Supplier<Object>) SseModelConverter::new),
+                Arguments.of("ScalarOptionalModelConverter", (Supplier<Object>) ScalarOptionalModelConverter::new));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("converterConstructors")
+    void parallelConverterConstructionUsesOneSwaggerRegistry(String converter, Supplier<Object> constructor)
+            throws Exception {
         ModelConverters.reset();
         int workers = 16;
         ExecutorService executor = Executors.newFixedThreadPool(workers);
@@ -33,7 +48,7 @@ class ConverterRegistryBootstrapTest {
             for (int i = 0; i < workers; i++) {
                 results.add(executor.submit(() -> {
                     start.await();
-                    new FutureModelConverter();
+                    constructor.get();
                     return ModelConverters.getInstance(false);
                 }));
             }

@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.rest.core.RestValidationException;
 import dev.vertique.rest.core.config.JaxRsConfig;
+import dev.vertique.rest.core.router.MountMeta;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 import dev.vertique.rest.jaxrs.validation.OperationSchemas;
 import io.vertx.core.Future;
@@ -22,6 +23,7 @@ import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -84,15 +86,20 @@ public class OpenApiContractStrategyIT {
         OpenApiContractValidationStrategy strategy = new OpenApiContractValidationStrategy(
                 vertx, JaxRsConfig.builder().openapiPath(CONTRACT_PATH).build());
 
+        // The gates are built as the framework builds them: the mount is bound first, and each gate closes
+        // over that mount's contract (the two-argument gateFor is a legacy form the framework never calls).
+        MountMeta mount = new MountMeta("jaxrs:/*", "/*", CONTRACT_PATH, Set.of());
+        strategy.bindToMount(mount);
+
         JaxRsOperationDescriptor createWidget = op("POST", "/widgets", "createWidget");
         Handler<RoutingContext> gate =
-                strategy.gateFor(createWidget, OperationSchemas.empty()).orElseThrow();
+                strategy.gateFor(createWidget, OperationSchemas.empty(), mount).orElseThrow();
 
         // Gate for an operationId that does NOT exist in the loaded contract. Used by the
         // missing-operation → server-error test.
         JaxRsOperationDescriptor missingOp = op("POST", "/missing", "operationNotInContract");
         Handler<RoutingContext> missingGate =
-                strategy.gateFor(missingOp, OperationSchemas.empty()).orElseThrow();
+                strategy.gateFor(missingOp, OperationSchemas.empty(), mount).orElseThrow();
 
         Router router = Router.router(vertx);
         router.route().handler(BodyHandler.create());

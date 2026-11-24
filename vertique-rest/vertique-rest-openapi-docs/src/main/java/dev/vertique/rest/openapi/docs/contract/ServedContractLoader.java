@@ -159,8 +159,12 @@ public final class ServedContractLoader {
         };
     }
 
-    /** Parses the content in the chosen format, failing with no cause and no parser text. */
-    private static JsonNode parse(Buffer content, boolean yaml, String subject) {
+    /**
+     * Parses the content in the chosen format, failing with no cause and no parser text. (The project
+     * has no {@code @VisibleForTesting} annotation; this method is package-private so the parser's
+     * limits can be tested without deploying a component per input.)
+     */
+    static JsonNode parse(Buffer content, boolean yaml, String subject) {
         try {
             return (yaml ? YAML : JSON).readTree(content.getBytes());
         } catch (IOException | RuntimeException unparsable) {

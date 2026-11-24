@@ -637,11 +637,19 @@ entry may still set `enabled`; a configured `info` or `serverUrl` is refused (se
   letter case, chooses the parser: `json` for JSON, `yaml` or `yml` for YAML. Any other extension,
   or none, is refused before the location is read. A JSON contract with content after its one JSON
   value is refused as not valid JSON. A YAML contract holds exactly one document: a second document
-  is refused as not valid YAML. A YAML contract larger than the YAML parser's code-point limit
-  (3,145,728 code points, not bytes; the request-validation library applies the same limit) also fails as not valid YAML.
+  is refused as not valid YAML.
+- **Parser limits.** The framework sets none of its own; the two parsers apply their library
+  defaults, and a contract beyond one fails as not valid JSON or not valid YAML. Both formats: nesting
+  of at most 1000 levels, a number of at most 1000 digits. JSON: a member name of at most 50,000
+  characters, a string value of at most 20,000,000 characters, and no limit on the length of the
+  document. YAML: at most 3,145,728 code points (characters, not bytes), and a member name written as a
+  plain key of at most 1,024 characters. Under `openapi-contract` the request-validation library also
+  loads the file and applies its own limits; a YAML contract of twice the YAML code-point limit fails
+  there too.
 - **No YAML anchors.** YAML anchors, aliases, and `<<` merge keys are not expanded: an alias is
-  served as its anchor's name, while the validation strategy expands them. Write a served contract
-  without anchors, aliases, and merge keys.
+  served as its anchor's name and a merge key as a member named `<<` whose value is the anchor's name,
+  while the validation strategy expands them. Write a served contract without anchors, aliases, and
+  merge keys.
 
 ### Where the contract is read from
 
