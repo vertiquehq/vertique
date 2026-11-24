@@ -71,14 +71,14 @@ import org.testcontainers.kafka.KafkaContainer;
  * deploys the consumers of a test and releases every resource in {@code finally}.
  */
 @ExtendWith(VertxExtension.class)
-@org.junit.jupiter.api.Timeout(value = 60, unit = TimeUnit.SECONDS)
+@org.junit.jupiter.api.Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class KafkaBindingHandlerIT {
 
     // --- Testcontainers ---
 
     static final KafkaContainer kafka = KafkaTestContainers.shared();
 
-    private static final long AWAIT_MS = 30_000L;
+    private static final long AWAIT_MS = 15_000L;
 
     // --- Test fixtures ---
 
