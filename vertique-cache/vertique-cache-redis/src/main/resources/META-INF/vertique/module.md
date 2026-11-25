@@ -22,8 +22,8 @@ is test-scope here only.
 Use this provider when cache state must be shared across application instances. Install
 `CacheRedisModule` in the application composition and configure the connection profile through
 `vertique-redis-core`; do not duplicate connection settings in cache annotations. Apps using
-`@Cacheable` / `@CacheEvict` also install `CacheAopModule` and put `vertique-codegen-cache` on the
-compiler's annotation-processor path.
+`@Cacheable` / `@CacheEvict` also install `CacheAopModule`; the `vertique-codegen-all` facade
+supplies the cache processor.
 
 ## Core Concepts
 

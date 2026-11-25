@@ -16,9 +16,11 @@ annotation-processor artifact, not a runtime dependency.
 
 ## When To Use It
 
-The `vertique-codegen-all` facade includes this processor transitively, so applications on
-`vertique-app-parent` or the facade get it automatically; list it directly only in a hand-assembled
-processor path. Runtime applications should declare `vertique-cache-aop` and a concrete provider according to
+The `vertique-codegen-all` facade includes this processor, so an application does not select it.
+An application on `vertique-app-parent` already has it. An application with its own parent imports
+`vertique-bom` and uses the versionless `dagger-compiler` and `vertique-codegen-all` entries; see
+`docs/packaging.md`. Do not list this processor or the generic AOP processor on the processor path
+yourself. Runtime applications should declare `vertique-cache-aop` and a concrete provider according to
 their composition.
 
 ## Core Concepts
@@ -94,8 +96,8 @@ This differs deliberately from the generic AOP processor (`vertique-codegen-aop`
 aspect triggers placed on interface methods. Cache annotations still require concrete class methods
 and reject the misplacement at build time.
 
-The generic AOP processor must be present on the application's annotation-processor path
-alongside this artifact for the validated annotations to produce proxies and metadata.
+The generic AOP processor is part of the same `vertique-codegen-all` facade, so the validated
+annotations produce proxies and metadata without any extra processor-path entry.
 
 ## Key Classes
 
