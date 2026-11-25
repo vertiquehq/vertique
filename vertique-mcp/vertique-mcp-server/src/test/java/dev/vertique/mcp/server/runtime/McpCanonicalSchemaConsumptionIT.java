@@ -19,21 +19,21 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * T009 — end-to-end consumption of JSON-005's {@code generateCanonical(Type)} through
+ * End-to-end consumption of the schema generator's {@code generateCanonical(Type)} through
  * {@link McpToolRuntimeFactory#create}, distinct from {@link McpSchemaHardeningTest} (which exercises
  * {@link McpSchemaHardener} directly against hand-authored fixtures pinned to the real generator's
  * shape) and {@link McpSchemaHardeningDifferentialTest} (which proves {@link McpCanonicalJsonWriter}
- * alone against committed JSON-005-produced bytes).
+ * alone against committed generator-produced bytes).
  *
  * <p>Given a real generated-shaped input carrier — a nested-object parameter and a resolved-map
- * parameter — {@code create(...)} must generate the input schema through JSON-005's own generator,
+ * parameter — {@code create(...)} must generate the input schema through the schema generator,
  * harden it, and publish it on the returned descriptor; a declared structured-output type must
- * publish JSON-005's canonical output schema unchanged (no argument-object hardening applies to
+ * publish the generator's canonical output schema unchanged (no argument-object hardening applies to
  * output).
  */
-@DisplayName("MCP JSON-005 consumption — T009 end-to-end")
+@DisplayName("MCP canonical schema generator consumption — end-to-end")
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
-class McpJson005ConsumptionIT {
+class McpCanonicalSchemaConsumptionIT {
 
     record Address(String city, String street) {}
 
@@ -44,19 +44,19 @@ class McpJson005ConsumptionIT {
     record ConsumptionOutput(String status) {}
 
     @Test
-    @DisplayName("shouldGenerateHardenInputAndPublishOutputThroughTheRealJson005Generator")
-    void shouldGenerateHardenInputAndPublishOutputThroughTheRealJson005Generator() {
+    @DisplayName("shouldGenerateHardenInputAndPublishOutputThroughTheRealCanonicalGenerator")
+    void shouldGenerateHardenInputAndPublishOutputThroughTheRealCanonicalGenerator() {
         // --- Given: the factory wired to the framework vertx profile, and this tool's real metadata ---
-        McpToolRuntimeFactory factory = McpJson005ConsumptionITFixture.factory();
+        McpToolRuntimeFactory factory = McpCanonicalSchemaConsumptionITFixture.factory();
         List<McpToolParameterMetadata> parameters = List.of(
                 new McpToolParameterMetadata("argument0", "addr", "The address."),
                 new McpToolParameterMetadata("argument1", "counts", "Item counts by key."));
 
-        // --- When: create() consumes JSON-005 for both the input carrier and the output type ---
+        // --- When: create() consumes the generator for both the input carrier and the output type ---
         McpToolRuntime<ConsumptionInput> runtime = factory.create(
                 "consumption.tool",
                 null,
-                "Exercises real JSON-005 consumption.",
+                "Exercises real canonical generator consumption.",
                 new McpToolAnnotations(false, false, true, false),
                 ConsumptionInput.class,
                 ConsumptionOutput.class,
@@ -66,7 +66,7 @@ class McpJson005ConsumptionIT {
         McpToolDescriptor descriptor = runtime.descriptor();
 
         // --- Then: the input schema is hardened — root and the nested "addr" object are closed, and
-        // the resolved-map "counts" property now describes its Integer value (rest-023 T003) ---
+        // the resolved-map "counts" property now describes its Integer value ---
         JsonNode inputSchema = McpCanonicalJsonWriter.read(descriptor.inputSchema());
         assertThat(inputSchema.get("additionalProperties").asBoolean())
                 .as("the root carrier object must be closed")
@@ -80,10 +80,10 @@ class McpJson005ConsumptionIT {
         assertThat(inputSchema
                         .at("/properties/counts/additionalProperties/type")
                         .asText())
-                .as("the resolved-map counts property must describe its Integer value (rest-023 T003)")
+                .as("the resolved-map counts property must describe its Integer value")
                 .isEqualTo("integer");
 
-        // --- Then: a declared structured-output type publishes JSON-005's canonical schema unchanged ---
+        // --- Then: a declared structured-output type publishes the generator's canonical schema unchanged ---
         assertThat(descriptor.outputSchema())
                 .as("a declared structured-output type must publish a schema")
                 .isNotNull();

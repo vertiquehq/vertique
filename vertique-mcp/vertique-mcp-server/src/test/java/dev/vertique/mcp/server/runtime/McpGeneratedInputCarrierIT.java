@@ -18,24 +18,24 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * T008 TP-002 — generated carriers materialize through the effective JSON profile mapper.
+ * Generated carriers materialize through the effective JSON profile mapper.
  *
  * <p>Given a composed server exposing one record-parameter tool ({@code identity.register}'s
  * address carrier) and one {@code Optional<T>} tool ({@code identity.register}'s nickname carrier)
  * under a real {@link dev.vertique.json.DefaultJsonMapperProfileRegistry} and a registered {@code
  * strict} profile — with the address carrier resolved through {@link McpJsonProfileResolver}'s
- * unconfigured tail (the {@code vertique} profile, issue #440) and the nickname carrier bound to the
+ * unconfigured tail (the {@code vertique} profile) and the nickname carrier bound to the
  * selected profile ({@code strict} in the Given, swapped to {@code vertx} by the sensitivity
  * mutation).
  *
- * <p>Both carriers are hand-authored to the exact generated shape T008's emitter produces: a
+ * <p>Both carriers are hand-authored to the exact generated shape the emitter produces: a
  * private record whose sole component is named with the collision-safe positional identifier
  * ({@code argument0}) and carries {@code @JsonProperty(externalName)} — proven directly against
  * {@code McpToolInvokerEmitter}'s output by {@code McpToolProcessorCompileTest}. This test proves the
  * runtime half: that shape actually materializes through {@link McpToolRuntime#materializeArguments}
  * bound to the effective profile's mapper.
  */
-@DisplayName("MCP generated input carriers — T008 TP-002")
+@DisplayName("MCP generated input carriers")
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpGeneratedInputCarrierIT {
 

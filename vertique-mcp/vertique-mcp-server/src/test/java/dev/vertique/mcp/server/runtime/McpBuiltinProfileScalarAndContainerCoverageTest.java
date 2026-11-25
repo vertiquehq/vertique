@@ -26,20 +26,19 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * W4 (review finding, checked before every other finding): the input-direction generator's
- * custom-deserializer refusal must apply only to a bean-like type whose own deserializer was
- * replaced, never to a scalar, container, node, or Vert.x type that takes its standard schema.
+ * The input-direction generator's custom-deserializer refusal must apply only to a bean-like type
+ * whose own deserializer was replaced, never to a scalar, container, node, or Vert.x type that
+ * takes its standard schema.
  *
- * <p>Proves a DTO carrying every member kind the finding names — {@link JsonObject}, {@link
+ * <p>Proves a DTO carrying every such member kind — {@link JsonObject}, {@link
  * JsonArray}, {@link Buffer}, {@link com.fasterxml.jackson.databind.JsonNode}, {@link Optional},
  * {@link OptionalInt}, {@code java.time} types, {@link BigDecimal} (exercised under {@code
  * vertique-strict}'s own string wire form), {@link UUID}, an enum, a {@link Map}, a {@link List}, and
  * an array member — generates without throwing under all three built-in profiles: {@code system},
- * {@code vertique}, and {@code vertique-strict}. Before the fix accompanying this test,
- * {@code InputPropertyDescriber.describe} refused any type whose resolved deserializer was not a
- * {@code BeanDeserializerBase}, which included Vert.x's module-registered {@code JsonObjectDeserializer}
- * / {@code JsonArrayDeserializer} / {@code BufferDeserializer} — none of which extend a bean
- * deserializer — so a DTO carrying any of the three Vert.x members failed generation outright.
+ * {@code vertique}, and {@code vertique-strict}. Vert.x's module-registered {@code
+ * JsonObjectDeserializer} / {@code JsonArrayDeserializer} / {@code BufferDeserializer} do not extend
+ * a bean deserializer, so {@code InputPropertyDescriber.describe} must not refuse a type merely
+ * because its resolved deserializer is not a {@code BeanDeserializerBase}.
  */
 class McpBuiltinProfileScalarAndContainerCoverageTest {
 
@@ -49,7 +48,7 @@ class McpBuiltinProfileScalarAndContainerCoverageTest {
         BLUE
     }
 
-    /** Every member kind W4 names, on one type, so one generation call proves the whole list at once. */
+    /** Every member kind named above, on one type, so one generation call proves the whole list at once. */
     public static final class Kitchen {
         public JsonObject json;
         public JsonArray jsonArray;
@@ -74,21 +73,21 @@ class McpBuiltinProfileScalarAndContainerCoverageTest {
     }
 
     @Test
-    @DisplayName("W4: system profile describes every scalar/container/node/Vert.x member without refusing")
+    @DisplayName("system profile describes every scalar/container/node/Vert.x member without refusing")
     void systemProfileDescribesEveryMember() {
         assertDoesNotThrow(() ->
                 AnnotationJsonSchemaGenerator.forInputProfile(profile("system")).generateCanonical(Kitchen.class));
     }
 
     @Test
-    @DisplayName("W4: vertique profile describes every scalar/container/node/Vert.x member without refusing")
+    @DisplayName("vertique profile describes every scalar/container/node/Vert.x member without refusing")
     void vertiqueProfileDescribesEveryMember() {
         assertDoesNotThrow(() -> AnnotationJsonSchemaGenerator.forInputProfile(profile("vertique"))
                 .generateCanonical(Kitchen.class));
     }
 
     @Test
-    @DisplayName("W4: vertique-strict profile describes every scalar/container/node/Vert.x member, BigDecimal included")
+    @DisplayName("vertique-strict profile describes every scalar/container/node/Vert.x member, BigDecimal included")
     void vertiqueStrictProfileDescribesEveryMember() {
         assertDoesNotThrow(() -> AnnotationJsonSchemaGenerator.forInputProfile(profile("vertique-strict"))
                 .generateCanonical(Kitchen.class));

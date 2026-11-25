@@ -49,7 +49,7 @@ final class McpSchemaDeterminismTestFixture {
     }
 
     /**
-     * Builds the same logical JSON-005-shaped nested-object document — a root carrier with a
+     * Builds the same logical canonical-schema-shaped nested-object document — a root carrier with a
      * {@code label} string property and an {@code address} object property carrying {@code city} and
      * {@code street} strings — with its object members inserted in a seed-shuffled order at every
      * level (root's own members, the root's {@code properties} map, the nested object's own members,

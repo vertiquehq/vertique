@@ -24,14 +24,14 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * TP-002 — the generated registry is built once from the explicitly contributed invoker set.
+ * The generated registry is built once from the explicitly contributed invoker set.
  *
  * <p>Two generated descriptors named {@code weather.lookup} and {@code clock.now} are contributed in
  * reversed set order, and a third contribution duplicates {@code weather.lookup}. The unique set must
  * produce the immutable global name order {@code clock.now, weather.lookup}; the duplicate set must
  * fail startup naming the duplicate and produce no registry.
  *
- * <p>The same build also proves the three negatives in the proof title: each contributed invoker is
+ * <p>The same build also proves the three negatives in the display name: each contributed invoker is
  * asked for its descriptor exactly once (built once, no per-request assembly), no invoker is ever
  * prepared or invoked, and a classpath-present but uncontributed invoker never appears (no scanning).
  */

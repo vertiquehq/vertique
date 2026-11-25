@@ -11,9 +11,9 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Verifies that {@link McpInputRejectionException} is rooted in the core
- * {@link ValidationException} semantic root (java-conventions.md § Exception Classes), so
- * callers catching input-validation failures receive tool-input rejections without a separate catch
- * clause, and REST-style default mappers classify it as HTTP 400 without an MCP-specific mapping rule.
+ * {@link ValidationException} semantic root, so callers catching input-validation failures receive
+ * tool-input rejections without a separate catch clause, and REST-style default mappers classify it
+ * as HTTP 400 without an MCP-specific mapping rule.
  */
 class McpInputRejectionExceptionHierarchyTest {
 

@@ -17,11 +17,11 @@ import jakarta.inject.Singleton;
 import java.util.Set;
 
 /**
- * Framework wiring for {@link McpMetricsCompositionTest} (T021 composition proof, review
- * remediation finding #6): builds the omitting graph ({@link McpMicrometerModule} absent from its
- * module list) and the installed graph — {@link McpMicrometerModule} alongside the real {@link
- * MicrometerModule}, exercising both modules' {@code @BindsOptionalOf MetricsConfig} declarations
- * together in one composed graph. Nothing decisive lives here.
+ * Framework wiring for {@link McpMetricsCompositionTest}: builds the omitting graph ({@link
+ * McpMicrometerModule} absent from its module list) and the installed graph — {@link
+ * McpMicrometerModule} alongside the real {@link MicrometerModule}, exercising both modules' {@code
+ * @BindsOptionalOf MetricsConfig} declarations together in one composed graph. Nothing decisive
+ * lives here.
  */
 final class McpMetricsCompositionTestFixture {
 

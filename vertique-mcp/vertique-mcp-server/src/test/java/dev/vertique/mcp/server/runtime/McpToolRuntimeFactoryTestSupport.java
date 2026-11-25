@@ -21,7 +21,7 @@ import java.util.Set;
  * proof living alongside {@code McpGeneratedHelloToolIT} in {@code dev.vertique.mcp.server}, or a
  * hand-loaded generated invoker's reflective construction in {@code McpToolResultTest} — cannot build
  * one directly. This type is the one public seam that does, mirroring the same package-private
- * fixtures ({@code McpJson005ConsumptionITFixture}, {@code McpJsonProfileITFixture}) this package
+ * fixtures ({@code McpCanonicalSchemaConsumptionITFixture}, {@code McpJsonProfileITFixture}) this package
  * already uses for its own tests, bound to the framework's built-in profiles with no MCP boundary or
  * global default configured.
  */
@@ -32,7 +32,7 @@ public final class McpToolRuntimeFactoryTestSupport {
     /**
      * Builds a real {@link McpToolRuntimeFactory} with no application-registered profile, MCP
      * boundary default, or global default configured, so {@link McpJsonProfileResolver}'s tail always
-     * applies — the built-in {@code vertique} profile (issue #440), never the reserved {@code vertx}
+     * applies — the built-in {@code vertique} profile, never the reserved {@code vertx}
      * profile.
      *
      * @return the composed factory
@@ -44,7 +44,7 @@ public final class McpToolRuntimeFactoryTestSupport {
     /**
      * Builds a real {@link McpToolRuntimeFactory} over the framework's built-in profiles plus the
      * given application-registered profiles, with {@code applicationProfiles} bound to the given MCP
-     * boundary default (or the resolver's tail — the built-in {@code vertique} profile, issue #440 —
+     * boundary default (or the resolver's tail — the built-in {@code vertique} profile —
      * when {@code null}).
      *
      * <p>Used by a proof whose tool needs a profile other than the resolver's own tail — e.g. one

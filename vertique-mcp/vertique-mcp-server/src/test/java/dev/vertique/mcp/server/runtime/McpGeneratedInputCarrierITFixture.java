@@ -20,13 +20,12 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Framework wiring for {@link McpGeneratedInputCarrierIT} (T008 TP-002): a real
+ * Framework wiring for {@link McpGeneratedInputCarrierIT}: a real
  * {@link DefaultJsonMapperProfileRegistry} composed with one application-registered {@code strict}
  * profile alongside the always-present framework {@code vertx} profile, a real
  * {@link McpJsonProfileResolver} resolving the effective profile exactly as composition does, and
  * direct {@link McpToolRuntime} construction through its package-private constructor — the same
- * construction path {@code McpToolRuntimeFactory} uses once the profile-aware schema generator binds
- * in a later slice.
+ * construction path {@code McpToolRuntimeFactory} uses.
  *
  * <p>Nothing here decides Given values or asserts outcomes — that stays in the test method.
  */
@@ -38,8 +37,8 @@ final class McpGeneratedInputCarrierITFixture {
      * Builds a resolver over the framework {@code vertx}/{@code vertique} profiles plus one
      * registered {@code strict} profile whose mapper supports JDK8 {@code Optional} materialization
      * and Vert.x JSON types (so it passes the registry's structural round-trip probe), with no
-     * configured MCP-boundary or global default (the tail is the {@code vertique} profile, issue
-     * #440 — not the reserved {@code vertx} profile).
+     * configured MCP-boundary or global default (the tail is the {@code vertique} profile — not the
+     * reserved {@code vertx} profile).
      *
      * @return the composed resolver
      */

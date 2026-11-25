@@ -22,12 +22,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * T021 composition proof (review remediation finding #6): {@link McpMicrometerModule} appeared, pre
- * this proof, in exactly one test as a reflection anchor — no test ever built a Dagger component
- * containing it, so its {@link McpRequestLifecycleObserver} contribution and its {@code
- * @BindsOptionalOf MetricsConfig} declaration were unexercised, including against co-installation
- * with {@code dev.vertique.micrometer.MicrometerModule}, which also declares {@code
- * @BindsOptionalOf MetricsConfig} — the exact composition an application performs. Mirrors {@code
+ * Composition proof: builds Dagger components containing {@link McpMicrometerModule}, so its
+ * {@link McpRequestLifecycleObserver} contribution and its {@code @BindsOptionalOf MetricsConfig}
+ * declaration are exercised, including co-installation with {@code
+ * dev.vertique.micrometer.MicrometerModule}, which also declares {@code @BindsOptionalOf
+ * MetricsConfig} — the exact composition an application performs. Mirrors {@code
  * McpTraceCompositionTest}'s omitting-vs-installed structure. Framework wiring lives behind {@link
  * McpMetricsCompositionTestFixture}; only the Given values, the one action per graph, and the
  * decisive assertions live here.

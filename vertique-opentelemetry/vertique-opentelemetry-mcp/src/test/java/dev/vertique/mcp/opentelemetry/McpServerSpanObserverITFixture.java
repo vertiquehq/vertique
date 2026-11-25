@@ -58,7 +58,7 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Framework wiring for {@code McpServerSpanObserverIT} (T022 TP-002): builds a real, traced Vert.x
+ * Framework wiring for {@code McpServerSpanObserverIT}: builds a real, traced Vert.x
  * instance with an in-memory span exporter, composes a real port-0 MCP server through the exact
  * Dagger modules an application installs ({@code McpServerModule} + {@link McpOpenTelemetryModule}
  * over the real REST-security identity stack), and exposes the one bearer-authenticated fixture tool
@@ -79,10 +79,10 @@ final class McpServerSpanObserverITFixture {
      * {@value #LOOPBACK}) with {@code mcp.bodyTracePolicy=LINK}, and returns everything the test owns
      * for cleanup.
      *
-     * <p>R51: {@code McpBodyTracePolicy.LINK} is the correct, deliberate opt-in for this IT class's
-     * existing R39 body-trace-link rows (default {@code IGNORE} would starve every one of them of the
-     * extraction they exist to prove); {@link #start(McpBodyTracePolicy)} exposes the policy for a row
-     * that specifically needs the default.
+     * <p>{@code McpBodyTracePolicy.LINK} is the deliberate opt-in for this IT class's body-trace-link
+     * rows (default {@code IGNORE} would starve every one of them of the extraction they exist to
+     * prove); {@link #start(McpBodyTracePolicy)} exposes the policy for a row that specifically needs
+     * the default.
      */
     static Started start() throws Exception {
         return start(McpBodyTracePolicy.LINK);
@@ -90,7 +90,7 @@ final class McpServerSpanObserverITFixture {
 
     /**
      * Exactly like {@link #start()}, but with the given {@code mcp.bodyTracePolicy} instead of the
-     * fixed {@code LINK} default (R51) — used by the default-policy row that proves {@code IGNORE}
+     * fixed {@code LINK} default — used by the default-policy row that proves {@code IGNORE}
      * never extracts or links the body trace reference at all.
      */
     static Started start(McpBodyTracePolicy bodyTracePolicy) throws Exception {
@@ -163,7 +163,7 @@ final class McpServerSpanObserverITFixture {
     /**
      * Supplies the bindings only this fixture needs: config, HTTP timeouts, tool, and bearer auth.
      *
-     * <p>R51: an instance-bound module (like {@link VertxModule} above) rather than a purely static
+     * <p>An instance-bound module (like {@link VertxModule} above) rather than a purely static
      * one, so {@link #start(McpBodyTracePolicy)} can thread its caller-chosen {@code
      * mcp.bodyTracePolicy} into the built {@link McpServerConfig} through the component builder.
      */
@@ -211,7 +211,7 @@ final class McpServerSpanObserverITFixture {
         private final McpToolDescriptor descriptor = new McpToolDescriptor(
                 TOOL_NAME,
                 null,
-                "T022 TP-002 fixture tool.",
+                "Span observer fixture tool.",
                 new McpToolAnnotations(true, false, true, false),
                 "{\"type\":\"object\"}",
                 "{\"type\":\"object\",\"properties\":{\"status\":{\"type\":\"string\"}},\"required\":[\"status\"]}",

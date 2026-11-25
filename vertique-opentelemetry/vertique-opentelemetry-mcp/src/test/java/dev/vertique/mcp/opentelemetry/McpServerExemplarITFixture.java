@@ -64,7 +64,7 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Framework wiring for {@code McpServerExemplarIT} (R06, issue #435): builds a real, traced Vert.x
+ * Framework wiring for {@code McpServerExemplarIT}: builds a real, traced Vert.x
  * instance with an in-memory span exporter, composes a real port-0 MCP server through the exact
  * Dagger modules an application installs to get both metrics and tracing ({@code McpServerModule} +
  * {@link McpOpenTelemetryModule} + {@link McpMicrometerModule}) over the real REST-security identity
@@ -224,7 +224,7 @@ final class McpServerExemplarITFixture {
         private final McpToolDescriptor descriptor = new McpToolDescriptor(
                 TOOL_NAME,
                 null,
-                "R06 exemplar fixture tool.",
+                "Exemplar fixture tool.",
                 new McpToolAnnotations(true, false, true, false),
                 "{\"type\":\"object\"}",
                 "{\"type\":\"object\",\"properties\":{\"status\":{\"type\":\"string\"}},\"required\":[\"status\"]}",

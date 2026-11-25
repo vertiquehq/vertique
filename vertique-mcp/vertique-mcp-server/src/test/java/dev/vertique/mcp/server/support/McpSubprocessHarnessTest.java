@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
-/** Proves T025's bounded process, descendant, workspace, and credential-handling contract. */
+/** Proves the bounded process, descendant, workspace, and credential-handling contract. */
 class McpSubprocessHarnessTest {
 
     private static final String FAST_ROW = "shouldReturnTheFastChildOutput";
@@ -30,9 +30,9 @@ class McpSubprocessHarnessTest {
     private static final String DESCENDANT_ROW = "shouldTerminateEveryDescendant";
     private static final String TEMP_ROW = "shouldDeleteTheRestrictedTemporaryDirectory";
     private static final String CREDENTIAL_ROW = "shouldScrubCredentialsFromTheChildEnvironmentAndCapturedOutput";
-    private static final String FAST_OUTPUT = "t025-fast-output";
-    private static final String SAFE_MARKER = "t025-safe-marker";
-    private static final String SECRET = "t025-secret-that-must-not-leak";
+    private static final String FAST_OUTPUT = "fast-output";
+    private static final String SAFE_MARKER = "safe-marker";
+    private static final String SECRET = "harness-secret-that-must-not-leak";
     private static final String PIPE_FILLING_INPUT = "x".repeat(8 * 1024 * 1024);
     private static final List<String> WORKSPACE_PATH_VARIABLES = List.of(
             "HOME",
@@ -51,22 +51,22 @@ class McpSubprocessHarnessTest {
 
     private final McpSubprocessHarness harness = new McpSubprocessHarness(Duration.ofSeconds(2));
 
-    private static Stream<String> t025ContractRows() {
+    private static Stream<String> contractRows() {
         return Stream.of(FAST_ROW, HANG_ROW, DESCENDANT_ROW, TEMP_ROW, CREDENTIAL_ROW);
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("t025ContractRows")
-    @DisplayName("T025 bounded subprocess contract matrix")
+    @MethodSource("contractRows")
+    @DisplayName("bounded subprocess contract matrix")
     @Timeout(value = 12, unit = TimeUnit.SECONDS)
-    void shouldEnforceT025ContractMatrix(String row) throws Exception {
+    void shouldEnforceContractMatrix(String row) throws Exception {
         switch (row) {
             case FAST_ROW -> assertFastChild();
             case HANG_ROW -> assertHangingChild();
             case DESCENDANT_ROW -> assertDescendants();
             case TEMP_ROW -> assertRestrictedTemporaryDirectory();
             case CREDENTIAL_ROW -> assertCredentialsScrubbed();
-            default -> fail("unknown T025 contract row: " + row);
+            default -> fail("unknown contract row: " + row);
         }
     }
 
@@ -125,13 +125,13 @@ class McpSubprocessHarnessTest {
                 .orElseThrow(() -> new AssertionError("no ambient-only environment fixture is available"));
         McpSubprocessHarness.Invocation invocation = fixture("environment", SECRET, ambientOnlyKey)
                 .withEnvironment(Map.of(
-                        "T025_TEST_TOKEN",
+                        "HARNESS_TEST_TOKEN",
                         SECRET,
-                        "T025_SSL_PASSPHRASE",
+                        "HARNESS_SSL_PASSPHRASE",
                         SECRET,
-                        "T025_AUTHORIZATION",
+                        "HARNESS_AUTHORIZATION",
                         SECRET,
-                        "T025_SAFE_MARKER",
+                        "HARNESS_SAFE_MARKER",
                         SAFE_MARKER))
                 .withSensitiveValues(Set.of(SECRET));
 
@@ -173,7 +173,7 @@ class McpSubprocessHarnessTest {
     }
 
     private void assertReservedOverrideRejectedBeforeLaunch() throws Exception {
-        Path markerDirectory = Files.createTempDirectory("t025-launch-marker-");
+        Path markerDirectory = Files.createTempDirectory("launch-marker-");
         Path marker = markerDirectory.resolve("started");
         try {
             McpSubprocessHarness.Invocation invocation = fixture("mark-launch", marker.toString())
@@ -209,7 +209,7 @@ class McpSubprocessHarnessTest {
         return System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT).contains("win");
     }
 
-    /** Subprocess fixture kept in the test class so T025 downloads and starts no external artifact. */
+    /** Subprocess fixture kept in the test class so it downloads and starts no external artifact. */
     public static final class FixtureMain {
 
         private FixtureMain() {}
@@ -253,10 +253,10 @@ class McpSubprocessHarnessTest {
         }
 
         private static void printEnvironment(String secret, String ambientOnlyKey) {
-            System.out.println("TOKEN=" + System.getenv("T025_TEST_TOKEN"));
-            System.out.println("PASSPHRASE=" + System.getenv("T025_SSL_PASSPHRASE"));
-            System.out.println("AUTHORIZATION=" + System.getenv("T025_AUTHORIZATION"));
-            System.out.println("SAFE=" + System.getenv("T025_SAFE_MARKER"));
+            System.out.println("TOKEN=" + System.getenv("HARNESS_TEST_TOKEN"));
+            System.out.println("PASSPHRASE=" + System.getenv("HARNESS_SSL_PASSPHRASE"));
+            System.out.println("AUTHORIZATION=" + System.getenv("HARNESS_AUTHORIZATION"));
+            System.out.println("SAFE=" + System.getenv("HARNESS_SAFE_MARKER"));
             System.out.println("PRINTED=" + secret);
             System.out.println("AMBIENT_KEY=" + ambientOnlyKey);
             System.out.println("AMBIENT_VALUE=" + System.getenv(ambientOnlyKey));
